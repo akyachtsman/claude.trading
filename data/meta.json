@@ -1,30 +1,30 @@
 {
   "asOf": "2026-07-09",
-  "generatedAt": "2026-07-09T19:39:02.844Z",
+  "generatedAt": "2026-07-09T19:43:53.745Z",
   "domains": {
     "accounts": {
       "status": "skipped",
       "asOf": null,
       "detail": "IBKR secrets not set",
-      "at": "2026-07-09T19:39:02.766Z"
+      "at": "2026-07-09T19:43:53.654Z"
     },
     "brief": {
       "status": "skipped",
       "asOf": null,
       "detail": "ANTHROPIC_API_KEY not set",
-      "at": "2026-07-09T19:39:02.806Z"
+      "at": "2026-07-09T19:43:53.701Z"
     },
     "market": {
-      "status": "failed",
-      "asOf": null,
-      "detail": "Stooq returned 0 usable rows for ^spx",
-      "at": "2026-07-09T19:39:02.362Z"
+      "status": "ok",
+      "asOf": "2026-07-09",
+      "detail": "",
+      "at": "2026-07-09T19:43:53.164Z"
     },
     "news": {
       "status": "ok",
       "asOf": "2026-07-09",
       "detail": "",
-      "at": "2026-07-09T19:39:02.713Z"
+      "at": "2026-07-09T19:43:53.589Z"
     }
   }
 }

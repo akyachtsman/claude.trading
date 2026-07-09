@@ -1,7 +1,13 @@
 {
   "asOf": "2026-07-09",
-  "generatedAt": "2026-07-09T19:39:02.712Z",
+  "generatedAt": "2026-07-09T19:43:53.588Z",
   "items": [
+    {
+      "t": "19:43",
+      "src": "MarketWatch",
+      "h": "&#x2018;I get $1,460 in Social Security&#x2019;: My millionaire ex-husband, 74, refuses to pay alimony. What can I do?",
+      "chips": []
+    },
     {
       "t": "19:29",
       "src": "CNBC",
@@ -114,12 +120,6 @@
       "t": "16:04",
       "src": "MarketWatch",
       "h": "This is why paper checks refuse to die",
-      "chips": []
-    },
-    {
-      "t": "15:46",
-      "src": "MarketWatch",
-      "h": "Only 5% of U.S. adults can ace this 8-question financial-literacy test. Can you?",
       "chips": []
     }
   ]
