@@ -49,7 +49,7 @@ every push; qa-pipeline runs at each phase boundary.
       dep: A2
 - [x] A9. Playwright parity run (local): S1–S4 basics + demo render, sort,
       consolidate, timeframes, hover; fix regressions. dep: A2–A8
-- [ ] A10. Gates + qa-pipeline agent (Phase A scope); PR "feat: modular
+- [x] A10. Gates + qa-pipeline agent (Phase A scope); PR "feat: modular
       frontend + auth/locked states (demo)" → merge → update-pages verify
       live. dep: A9
 
@@ -85,42 +85,42 @@ every push; qa-pipeline runs at each phase boundary.
 - [x] B8. Live e2e vs test user: Playwright (or manual via served page)
       — wrong PIN error, correct test PIN renders test data; verify no
       real data reachable without PIN (curl RPC with bad pin). dep: B7
-- [ ] B9. Gates + PR "feat: Supabase PIN gate + private data path" →
+- [x] B9. Gates + PR "feat: Supabase PIN gate + private data path" →
       merge → live verify. dep: B8
 
 ## Phase C — data pipeline
-- [ ] C1. `.github/scripts/refresh/package.json` (+ committed lockfile;
+- [x] C1. `.github/scripts/refresh/package.json` (+ committed lockfile;
       deps: fast-xml-parser only — RSS parsed with it too; node:crypto for
       hashes; no axios, use fetch). dep: —
-- [ ] C2. `refresh/lib/util.js`: retryFetch (backoff), notice() (guarded-
+- [x] C2. `refresh/lib/util.js`: retryFetch (backoff), notice() (guarded-
       secret convention), lastTradingDay(). dep: C1
-- [ ] C3. `refresh/fetch-market.js`: Stooq ^spx/^ndx/^dji/^vix + iwm.us
+- [x] C3. `refresh/fetch-market.js`: Stooq ^spx/^ndx/^dji/^vix + iwm.us
       (labeled proxy) + FRED DGS10 (T-1, "." rows dropped, series-date
       stamped); 30d closes; writes `data/market.json`. Fixture test
       `refresh/test/market.test.mjs` (node --test, canned CSVs). dep: C2  [P]
-- [ ] C4. `refresh/fetch-news.js`: general RSS (CNBC + verified second
+- [x] C4. `refresh/fetch-news.js`: general RSS (CNBC + verified second
       feed) + per-held-ticker feeds (Yahoo → Google News fallback →
       text-match degrade); chips get day % from Stooq quotes; dedupe, rank
       holdings-first, cap 20 → `data/news.json`. Fixture test. dep: C2  [P]
-- [ ] C5. `refresh/fetch-ibkr.js`: Flex SendRequest→GetStatement poll
+- [x] C5. `refresh/fetch-ibkr.js`: Flex SendRequest→GetStatement poll
       (soft-error handling per plan), as-of assertion, XML→2 account
       snapshots + equity rows; `--backfill` flag for the one-time ~1Y
       historical query (kept deliberately — ambition bar; SC4's
       disabled-timeframe fallback covers pre-backfill states). Fixture test
       with sample Flex XML. dep: C2, C6
-- [ ] C6. `refresh/supa.js`: service-key upserts (snapshots, equity,
+- [x] C6. `refresh/supa.js`: service-key upserts (snapshots, equity,
       briefs) via REST; used by C5/C7. dep: C2
-- [ ] C7. `refresh/generate-brief.js`: grounding context → Anthropic
+- [x] C7. `refresh/generate-brief.js`: grounding context → Anthropic
       (model claude-sonnet-5, structured JSON via tool/schema per
       claude-api skill), validate cited numbers ∈ snapshot, store via C6.
       Fixture test with mocked API. dep: C6
-- [ ] C8. `refresh/write-meta.js` + commit step logic: meta.json domains
+- [x] C8. `refresh/write-meta.js` + commit step logic: meta.json domains
       + statuses; `[skip ci]` commit w/ rebase-retry ×3. dep: C3, C4
-- [ ] C9. `.github/workflows/data-refresh.yml`: crons 22:30 + 09:30 UTC
+- [x] C9. `.github/workflows/data-refresh.yml`: crons 22:30 + 09:30 UTC
       weekdays + workflow_dispatch (inputs: backfill bool); steps wire
       C3–C8; per-step secret guards; failure → notify-email.js. YAML
       validate + node --check all scripts. dep: C3–C8
-- [ ] C10. PR "feat: scheduled data pipeline" → merge; `workflow_dispatch`
+- [x] C10. PR "feat: scheduled data pipeline" → merge; `workflow_dispatch`
       run; verify: public JSONs committed + site shows real market/news
       with EOD lamps; IBKR/Anthropic steps no-op politely without secrets.
       dep: C9
