@@ -23,6 +23,11 @@ test('parseFeed tolerates malformed XML', () => {
   assert.deepEqual(parseFeed('<not-a-feed>', 'X'), []);
 });
 
+test('parseFeed decodes numeric/HTML entities in titles', () => {
+  const xml = '<rss><channel><item><title>&#x2018;Rates&#x2019; &amp; more &#8212; a test</title></item></channel></rss>';
+  assert.equal(parseFeed(xml, 'X')[0].title, '‘Rates’ & more — a test');
+});
+
 test('dedupeRank dedupes titles, ranks holdings first, caps 20', async () => {
   const general = parseFeed(await fixture('rss-cnbc.xml'), 'CNBC');
   const tagged = parseFeed(await fixture('rss-google-news.xml'), 'Google News').map(it => ({ ...it, chip: 'NVDA' }));

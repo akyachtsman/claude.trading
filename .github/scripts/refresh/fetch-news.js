@@ -20,7 +20,9 @@ const GENERAL_FEEDS = [
 const MAX_ITEMS = 20;
 const MAX_TICKERS = 8;
 
-const parser = new XMLParser({ ignoreAttributes: false, textNodeName: '#text' });
+/* htmlEntities: feeds encode punctuation as numeric/HTML entities (&#x2018;
+   etc.) which would otherwise reach the page as literal text. */
+const parser = new XMLParser({ ignoreAttributes: false, textNodeName: '#text', htmlEntities: true });
 const asArray = x => (x === undefined || x === null ? [] : Array.isArray(x) ? x : [x]);
 const textOf = v => (typeof v === 'object' && v !== null ? v['#text'] || '' : String(v ?? ''));
 
