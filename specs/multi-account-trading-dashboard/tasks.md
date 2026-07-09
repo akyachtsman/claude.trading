@@ -14,7 +14,11 @@ every push; qa-pipeline runs at each phase boundary.
       LABELS/EQUITY builders) and `scripts/app.js` (el/svg helpers, strip/
       accounts/news/chart renderers, makeSortable, interactions);
       `index.html` keeps markup + 3 script tags. Demo now renders 2
-      accounts. dep: A1
+      accounts; the static 3-account AI-brief markup is retired — data.js
+      gains a demo-brief generator (2-account numbers derived from the demo
+      snapshot) rendered by the same brief renderer D1 later reuses; the 1Y
+      seg button becomes data-days="252"; update design.md's reference-page
+      description to two account windows. dep: A1
 - [ ] A3. Add `.lamp--locked`/`.lamp--stale` + `.panel-lock` (PIN form:
       48px `.input`, 44px `.btn`, error line) to `styles/components.css`,
       tokens only; extend `check-contrast.js` pairs if a new color pair
@@ -64,8 +68,12 @@ every push; qa-pipeline runs at each phase boundary.
       grant execute … to anon;`. dep: B2
 - [ ] B4. Seed migration `003_seed.sql`: owner row (random placeholder PIN
       hash — owner rotates via SQL editor; instructions in PR body), test
-      row (PIN = TEST_AUTH_CREDENTIAL value the owner sets; demo-grade
-      snapshots + 260d equity + one brief for the test user). dep: B2
+      row with a session-generated test PIN (demo-grade snapshots + 260d
+      equity + one brief for the test user). dep: B2
+- [ ] B4a. OWNER: add that generated test PIN as the
+      `TEST_AUTH_CREDENTIAL` repo secret (needed by qa-live/E1; B8 uses the
+      value directly in-session, so B-phase e2e is not blocked on this).
+      dep: B4
 - [ ] B5. `get_advisors` (security + performance) — fix every finding or
       record accepted residual. dep: B3, B4
 - [ ] B6. Vendor `scripts/vendor/supabase.js` (pinned @supabase/supabase-js@2
@@ -96,7 +104,9 @@ every push; qa-pipeline runs at each phase boundary.
 - [ ] C5. `refresh/fetch-ibkr.js`: Flex SendRequest→GetStatement poll
       (soft-error handling per plan), as-of assertion, XML→2 account
       snapshots + equity rows; `--backfill` flag for the one-time ~1Y
-      historical query. Fixture test with sample Flex XML. dep: C2
+      historical query (kept deliberately — ambition bar; SC4's
+      disabled-timeframe fallback covers pre-backfill states). Fixture test
+      with sample Flex XML. dep: C2, C6
 - [ ] C6. `refresh/supa.js`: service-key upserts (snapshots, equity,
       briefs) via REST; used by C5/C7. dep: C2
 - [ ] C7. `refresh/generate-brief.js`: grounding context → Anthropic
@@ -113,10 +123,17 @@ every push; qa-pipeline runs at each phase boundary.
       run; verify: public JSONs committed + site shows real market/news
       with EOD lamps; IBKR/Anthropic steps no-op politely without secrets.
       dep: C9
+- [ ] C10b. SC7 verification: dispatch a refresh with one domain forced to
+      fail (temporarily point fetch-market at an invalid host via a
+      workflow input used only for this test); assert the site keeps
+      serving the previous `data/market.json` with its older as-of stamp
+      visible, and the failure email fires. Record evidence in
+      `.agent-reports/test-report.md`. dep: C10
 - [ ] C11. OWNER: add secrets (IBKR_FLEX_TOKEN, IBKR_FLEX_QUERY_ID,
-      ANTHROPIC_API_KEY, DB_SERVICE_KEY, TEST_AUTH_CREDENTIAL) + variables
-      (DB_URL, DB_ANON_KEY); set real PIN; then dispatch with backfill.
-      Blocking for live accounts only. dep: C10, B9
+      ANTHROPIC_API_KEY, DB_SERVICE_KEY — TEST_AUTH_CREDENTIAL already done
+      at B4a) + variables (DB_URL, DB_ANON_KEY); set real PIN; then
+      dispatch with backfill. Blocking for live accounts only.
+      dep: C10, B9
 
 ## Phase D — brief panel + polish
 - [ ] D1. Brief panel live wiring: render from RPC payload; missing/stale
@@ -141,6 +158,6 @@ every push; qa-pipeline runs at each phase boundary.
 
 ## Traceability (requirement → tasks)
 FR-A1..4→A1/A2/B7 · FR-C1→A2/A9 · FR-CH1..4→A2/A8/B7 · FR-M1..2→A4/C3 ·
-FR-N1..3→A4/C4 · FR-AI1..4→C7/D1 · FR-D1→B*/C* (no secrets client-side) ·
+FR-N1..3→A4/C4 · FR-AI1..4→A2(demo)/C7/D1 · FR-D1→B*/C* (no secrets client-side) ·
 FR-D2→A7/C8 · FR-D3→A4/A7 · FR-D4→C9/A7 · FR-Q1..4→A3/A5/E1/D2 ·
-FR-AUTH1..3→A5/A6/B3/B4/E1 · SC1-9→A9/B8/C10/E1/E3
+FR-AUTH1..3→A5/A6/B3/B4/E1 · SC1-9→A9/B8/C10/C10b/E1/E3 · FR-Q3→A2 (textContent preserved; enforced at review)
