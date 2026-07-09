@@ -12,7 +12,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { XMLParser } from 'fast-xml-parser';
 import { retryFetch, sleep, writeStatus, notice, warn, errorLine, isoDate, lastTradingDay } from './lib/util.js';
-import { dayPctMap } from './lib/stooq.js';
+import { dayPctMap } from './lib/quotes.js';
 import { supaConfigured, ownerUserId, supaUpsert, supaSelect } from './supa.js';
 
 const FLEX_BASE = process.env.IBKR_FLEX_BASE_URL

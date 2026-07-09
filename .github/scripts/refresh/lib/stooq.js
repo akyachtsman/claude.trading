@@ -1,8 +1,9 @@
 'use strict';
-/* ── lib/stooq.js — Stooq daily-CSV access shared by market, news chips and
-   position day-% lookups. Stooq is keyless but rate-limits shared Actions
-   IPs: callers fetch SEQUENTIALLY with retry, never in parallel. ──────────── */
-import { retryFetch, sleep, isoDate } from './util.js';
+/* ── lib/stooq.js — Stooq daily-CSV access (primary quote source) ────────────
+   Keyless but daily-limited per IP; shared Actions runners can exhaust the
+   limit, so lib/quotes.js wraps this with a Yahoo fallback. Callers fetch
+   SEQUENTIALLY with retry, never in parallel. */
+import { retryFetch, isoDate } from './util.js';
 
 export const STOOQ_BASE = () => process.env.MARKET_BASE_URL || 'https://stooq.com';
 
@@ -22,34 +23,18 @@ export function parseStooqDaily(csv) {
   return rows;
 }
 
-/* Last ~90 calendar days of daily closes for one symbol (^spx, iwm.us, …). */
+/* Last ~90 calendar days of daily closes for one symbol (^spx, iwm.us, …).
+   A limit/empty body surfaces its first line in the error for the run log. */
 export async function fetchDailyCloses(symbol, { days = 90 } = {}) {
   const d2 = new Date();
   const d1 = new Date(d2.getTime() - days * 86400000);
   const ymd = d => isoDate(d).replaceAll('-', '');
   const url = `${STOOQ_BASE()}/q/d/l/?s=${encodeURIComponent(symbol)}&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`;
   const res = await retryFetch(url);
-  const rows = parseStooqDaily(await res.text());
-  if (rows.length < 2) throw new Error(`Stooq returned ${rows.length} usable rows for ${symbol}`);
-  return rows;
-}
-
-/* Day % (last close vs previous close, 2dp) for a US ticker chip. Returns
-   null instead of throwing — a chip without a % is fine, a dead panel isn't. */
-export async function dayPctFor(symbol) {
-  try {
-    const rows = await fetchDailyCloses(symbol.toLowerCase() + '.us', { days: 21 });
-    const [prev, last] = rows.slice(-2);
-    await sleep(400); // politeness gap between sequential Stooq calls
-    return Number(((last.close / prev.close - 1) * 100).toFixed(2));
-  } catch {
-    return null;
+  const body = await res.text();
+  const rows = parseStooqDaily(body);
+  if (rows.length < 2) {
+    throw new Error(`Stooq returned ${rows.length} usable rows for ${symbol} (body starts: ${JSON.stringify(body.slice(0, 60))})`);
   }
-}
-
-/* Sequential day-% map for a symbol list (deduped, order preserved). */
-export async function dayPctMap(symbols) {
-  const out = {};
-  for (const sym of [...new Set(symbols)]) out[sym] = await dayPctFor(sym);
-  return out;
+  return rows;
 }

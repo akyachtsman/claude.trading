@@ -60,7 +60,9 @@ jobs:
       - name: Fetch market summary (Stooq + FRED)
         if: ${{ !cancelled() }}
         env:
+          # SC7 drill overrides BOTH quote sources so the fallback can't rescue it
           MARKET_BASE_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
+          MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
         run: node fetch-market.js
 
       - name: Fetch news (RSS + fallbacks)
