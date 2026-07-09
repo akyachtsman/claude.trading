@@ -9,8 +9,10 @@ daylight-ledger contract (design.md) — build against `styles/*`, don't fork it
 ## Stack
 - **Frontend:** plain HTML + CSS + vanilla JS on GitHub Pages (existing
   `index.html` evolves; JS moves to `scripts/app.js` + `scripts/data.js`;
-  no framework, no build). `@supabase/supabase-js@2` loaded from CDN as an
-  ES module import (pinned version) — constitution-compatible (no build).
+  no framework, no build). `@supabase/supabase-js@2` **vendored** as one
+  pinned, integrity-noted file in `scripts/vendor/` (fetched once at
+  implement, committed) — equally no-build, and drops the external CDN
+  runtime dependency a module import would add.
 - **Private data:** Supabase (hosted Postgres) — RLS default-deny; browser
   uses the publishable/anon key (repo variable `DB_URL` + `DB_ANON_KEY`)
   and reads exclusively through SECURITY DEFINER RPCs that validate the PIN.
@@ -51,10 +53,14 @@ RPCs; direct table grants revoked):
   content jsonb)` — content = {state, levels[], scenarios[]}.
 
 RPCs (SECURITY DEFINER, `search_path` pinned, EXECUTE revoked from
-`authenticated`, granted to `anon` per data.md):
+**PUBLIC and `authenticated`** — Postgres default-grants EXECUTE to PUBLIC —
+then granted to `anon` only, per data.md; this zero-table-grant/all-RPC
+posture is deliberately stronger than the recipe's baseline):
 - `desk_login(pin text) → {ok bool, label text}` — constant-time hash compare.
 - `desk_get_dashboard(pin text) → jsonb` — validates pin, returns latest
-  snapshots + equity history + latest brief in one round-trip.
+  snapshots + equity history (bounded: most recent ~400 rows per account,
+  ≈19 months daily — payload stays <100KB by design, revisit if accounts
+  multiply) + latest brief in one round-trip.
 Wrong pin → `{ok:false}`; reveals nothing (FR-AUTH2). Test user's rows are
 demo-grade data only (FR-AUTH3).
 
@@ -67,29 +73,56 @@ Jobs (single workflow, sequential steps; Node 20; secrets guarded like
 `notify-task.js` — missing secret ⇒ clear notice + demo-safe no-op, never a
 cryptic crash):
 1. **fetch-ibkr** — IBKR Flex Web Service: `SendRequest` (token + query id)
-   → poll `GetStatement` with backoff. Parses XML for both accounts (one
-   Flex query spanning the 2 accounts). Secrets: `IBKR_FLEX_TOKEN`,
-   `IBKR_FLEX_QUERY_ID`. Upserts snapshots + equity_history via
-   `DB_SERVICE_KEY` (service role, server-side only per data.md).
-2. **fetch-market** — Stooq CSV endpoints (free, keyless): ^spx, ^ndq, ^dji,
-   ^rut? (Russell on stooq: ^rut unavailable → use IWM proxy or ^rus if
-   present — resolve at implement), ^vix, 10Y via FRED `DGS10` public CSV.
-   Last value + change + 30-day closes for sparklines → `data/market.json`.
+   → poll `GetStatement` with backoff, handling Flex's soft errors
+   distinctly: "statement generation in progress" ⇒ keep polling; error
+   1018 (rate limit) ⇒ back off longer; token invalid/expired ⇒ email a
+   **renew-token notice** (never a silent demo-safe no-op — expiry is
+   actionable). **As-of assertion:** the parsed statement date must equal
+   the expected trading day; if IBKR hasn't produced day-T data yet (it is
+   frequently late evening or T+1), exit as "not ready" WITHOUT upserting,
+   and let the **second cron at 09:30 UTC next morning** pick it up — the
+   two fixed-UTC crons also absorb DST drift of "after close." Parses XML
+   for both accounts (one Flex query spanning the 2 accounts). Secrets:
+   `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`. Upserts snapshots +
+   equity_history via `DB_SERVICE_KEY` (service role only, per data.md).
+   **First live run** also executes a one-time historical Flex query
+   (period NAV / Change-in-NAV section) to backfill ~1Y of equity_history
+   so the 1Y timeframe is real at launch, not after a year (SC-4).
+2. **fetch-market** — Stooq CSV endpoints (free, keyless): `^spx`,
+   **`^ndx`** (Nasdaq 100 — `^ndq` is the Composite), `^dji`, `^vix`, and
+   **`iwm.us` labeled "IWM (Russell 2000 proxy)"** per the trust-metadata
+   bar; 10Y via FRED `fredgraph.csv?id=DGS10` — which publishes **T-1**
+   and uses `"."` for holidays, so parse those out and stamp the panel
+   with the **series date**, not the run date. Requests are sequential
+   with retry (Stooq rate-limits shared Actions IPs; it is also
+   proxy-blocked in dev sandboxes — symbol availability is verified from
+   an Actions run, not locally). Last value + change + 30-day closes for
+   sparklines → `data/market.json`.
 3. **fetch-news** — keyless RSS: Yahoo Finance per-ticker feeds for held
    symbols (tickers read from the private snapshot in-job, but only
    PUBLIC headlines are written out; the holdings-first ordering leaks that
-   a symbol is followed — acceptable, it's also in the demo) + 2–3 general
-   market feeds (CNBC/MarketWatch RSS). Dedupe, rank holdings-first, cap 20
-   → `data/news.json`.
+   a symbol is followed — accepted, it's also visible in demo) + 2–3
+   general market feeds (CNBC confirmed; verify MarketWatch at implement).
+   **Fallback (Yahoo RSS is unofficial and may vanish):** Google News RSS
+   ticker queries, then degrade to general feeds with holdings matching
+   against headline text. **Ticker-chip day % (FR-N2) is public data:**
+   this job fetches each tagged symbol's day % from Stooq and embeds it in
+   `news.json` — it never comes from the private snapshot (the news panel
+   renders pre-auth). Dedupe, rank holdings-first, cap 20 →
+   `data/news.json`.
 4. **generate-brief** — compose grounding context (latest private snapshot +
    market.json + news.json), call Anthropic (`ANTHROPIC_API_KEY`), require
    structured JSON out; validate numbers-cited-exist before storing to
    `ai_briefs`. Any failure ⇒ skip write (panel shows stale per FR-AI4).
 5. **commit-public** — write `data/*.json` + `meta.json` (per-domain as-of +
    status) and push to `main` [bot data commit — same standing exception as
-   the template `keepalive.yml`; code changes still go through PRs]. The
-   push triggers the Pages deploy; `pages-monitor.yml`/`pages-retry.yml`
-   already watch it.
+   the template `keepalive.yml`; code changes still go through PRs; the
+   exception gets **recorded in CLAUDE.md** in Phase E]. Push uses
+   fetch/rebase/retry (×3) to survive a race with a concurrently merged
+   PR, and the commit message carries `[skip ci]` so the daily data commit
+   doesn't burn a QA run (workflow triggers themselves are never edited).
+   The push triggers the Pages deploy; `pages-monitor.yml` /
+   `pages-retry.yml` already watch it.
 6. **on-failure** — job failure emails via the existing `notify-email.js`
    (SMTP secrets from bootstrap); last-good data keeps serving (FR-D4).
 
@@ -114,7 +147,14 @@ cleanly without a data commit.
   PIN kept in sessionStorage; a "Lock" control clears it.
 - Staleness: every panel's lamp derives from `meta.json`/row dates — EOD
   (fresh), STALE (older than last trading day, shown with its true date),
-  DEMO, LOCKED. Masthead shows overall snapshot time (FR-D2).
+  DEMO, LOCKED. ALL public fetches (`meta.json` included) are cache-busted
+  with a `?v=` query. **CDN generation skew** (meta and a domain file from
+  different deploys within the ~10-min window): each domain file embeds its
+  own as-of, which always wins over meta — meta only supplies the overall
+  masthead stamp and last-success status. Masthead shows overall snapshot
+  time (FR-D2). `lamp--locked` and `lamp--stale` are **contract
+  additions** to `styles/components.css` (token-based, AA-checked), not
+  app-local styles.
 - Charts unchanged in design; series count now follows config (2 + the
   consolidated line). Equity history may be short initially — the chart
   renders whatever exists and the timeframe buttons disable when history is
@@ -136,6 +176,11 @@ private render. Anthropic is called only inside the workflow.
 | Wrong PIN | inline error, no info leak (FR-AUTH2) |
 | Missing secret | step prints a clear notice and exits 0 for that domain (bootstrap convention) |
 | Duplicate run / holiday | idempotent upserts; unchanged as_of ⇒ no commit |
+| Flex day-T statement not yet generated | as-of assertion fails ⇒ "not ready" exit, no upsert; 09:30 UTC cron retries |
+| Flex token expired | explicit renew-token email — actionable, never a silent no-op |
+| Supabase free-tier auto-pause (pipeline dead ≥ ~1 wk) | login outage looks unrelated — pipeline emails on upsert failure; runbook note in CLAUDE.md |
+| iPad Safari discards tab / sessionStorage evicted | page reloads into LOCKED state cleanly; re-enter PIN (the locked render IS the recovery path) |
+| Daily data commit races a PR merge | fetch/rebase/retry ×3 in commit-public |
 
 ## Owner setup checklist (blocking live mode, not the build)
 Secrets: `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`, `ANTHROPIC_API_KEY`,
@@ -160,8 +205,23 @@ Service token.
 A. Frontend restructure + 2-account config + locked/demo states (pure
    static, verifiable on Pages immediately).
 B. Supabase schema + RPCs + seeded test user (Supabase MCP; advisors run).
-C. Pipeline: IBKR fetch → upserts; market/news/meta publics; failure mails.
+C. Pipeline: IBKR fetch (incl. one-time ~1Y equity-history backfill) →
+   upserts; market/news/meta publics; failure mails.
 D. AI brief generation + panel wiring.
-E. qa-live wiring (TEST_AUTH_CREDENTIAL), CLAUDE.md updates (UI Test
-   Configuration, scenarios S5+, security residuals, architecture), polish
-   pass against design.md craft rules.
+E. qa-live wiring — TEST_AUTH_CREDENTIAL stays a **secret only**; the
+   CLAUDE.md UI Test Configuration table references the secret's *name*,
+   never a committed value. CLAUDE.md updates (architecture, scenarios
+   S5+, security residuals incl. the bot-data-commit exception and the
+   Supabase auto-pause runbook note), polish pass against design.md craft
+   rules.
+
+## Self-review record
+Fresh-context reviewer scored the draft 8/8/6/8 (completeness/simplicity/
+failure-modes/constitution). All ten prioritized revisions applied: Flex
+as-of assertion + dual cron + token-expiry notice; public ticker-chip day %
+source + news fallback chain; corrected market symbols (^ndx, labeled IWM
+proxy) + DGS10 T-1/"." handling; 1Y backfill promoted into Phase C;
+meta.json cache-bust + CDN-skew rule + lamp contract additions; RPC REVOKE
+FROM PUBLIC + auto-pause failure row + bounded payload; commit race/skip-ci
+handling; SC-1/SC-4 reworded in spec.md; supabase-js vendored (no CDN);
+test credential secret-only.

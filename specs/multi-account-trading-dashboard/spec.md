@@ -114,14 +114,17 @@ showing them side by side with charts, market context, news, and analysis.
   shell), including on a cold cache.
 
 ## Success criteria (testable)
-1. Opening the live URL shows: market strip, all account windows, combined
-   chart, news, AI brief — populated, each with as-of stamp + lamp (US1, US6).
+1. Opening the live URL immediately shows market strip + news populated;
+   account windows, combined chart, and AI brief render populated after PIN
+   entry (locked panels before) — every panel with as-of stamp + lamp
+   (US1, US6, FR-AUTH1).
 2. Sorting any positions column reorders rows correctly, both directions,
    "—" values sinking last (FR-A2).
 3. Consolidate toggle switches chart + summary between per-account and
    aggregate and back, with legend/labels updating (FR-C1).
-4. Timeframe buttons re-render the chart to the selected window; hover shows
-   correct per-series values for a known date (FR-CH1/2).
+4. Timeframe buttons re-render the chart to the selected window (windows
+   longer than available history are disabled with the reason visible);
+   hover shows correct per-series values for a known date (FR-CH1/2).
 5. With demo data: DEMO lamps visible on masthead and every panel (FR-D3).
 6. With real data configured: fresh snapshot appears after the scheduled run
    with updated as-of stamps, and no secret appears in any served file or
