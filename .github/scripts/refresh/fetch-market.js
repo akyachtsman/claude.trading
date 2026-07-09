@@ -8,7 +8,7 @@
    keeps serving with its older as-of stamp visible (FR-D4 / SC7). */
 import path from 'node:path';
 import { DATA_DIR, retryFetch, writeJson, writeStatus, errorLine, sleep } from './lib/util.js';
-import { fetchDailyCloses } from './lib/stooq.js';
+import { dailyCloses } from './lib/quotes.js';
 
 export const MARKET_SYMBOLS = [
   { sym: '^spx', name: 'S&P 500' },
@@ -60,8 +60,8 @@ export function tenYearTile(rows) {
 async function main() {
   const tiles = [];
   for (const { sym, name } of MARKET_SYMBOLS) {
-    tiles.push(tileFrom(name, await fetchDailyCloses(sym)));
-    await sleep(600); // sequential + spaced — Stooq rate-limits Actions IPs
+    tiles.push(tileFrom(name, await dailyCloses(sym)));
+    await sleep(600); // sequential + spaced — quote sources rate-limit Actions IPs
   }
   const fredBase = process.env.FRED_BASE_URL || 'https://fred.stlouisfed.org';
   const cosd = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);

@@ -10,7 +10,7 @@
 import path from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
 import { DATA_DIR, retryFetch, writeJson, writeStatus, notice, warn, errorLine, isoDate, nyToday } from './lib/util.js';
-import { dayPctMap } from './lib/stooq.js';
+import { dayPctMap } from './lib/quotes.js';
 import { supaConfigured, ownerUserId, latestSnapshots } from './supa.js';
 
 const GENERAL_FEEDS = [
