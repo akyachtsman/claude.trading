@@ -1,0 +1,176 @@
+/* ── components.css — claude.trading reusable components ─────────────────────
+   One uniform module grammar: every surface is a .panel with the same chrome;
+   every panel carries a data-state lamp + as-of stamp (the trust layer is the
+   visual identity). All values read var(--…) from tokens.css. Meets design.md
+   universal rules: 44px targets, :focus-visible, reduced motion. */
+
+/* buttons */
+.btn {
+  min-height: 44px; padding: 10px 20px; border: none; cursor: pointer;
+  border-radius: var(--radius-md);
+  background: var(--color-accent); color: #fff;
+  font: 500 var(--font-base)/1.2 var(--font-sans);
+  box-shadow: var(--shadow-sm); transition: background .15s ease, border-color .15s ease;
+}
+.btn:hover, .btn:focus-visible { background: var(--color-accent-hover); }
+.btn:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
+.btn-secondary {
+  background: var(--color-surface-2); color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+.btn-secondary:hover, .btn-secondary:focus-visible {
+  background: var(--color-surface-2); border-color: var(--color-border-hover);
+}
+
+/* segmented control (timeframes, view toggles) */
+.seg { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
+.seg button {
+  min-width: 44px; min-height: 44px; padding: 8px 14px; border: none; cursor: pointer;
+  background: transparent; color: var(--color-text-secondary);
+  font: 500 var(--font-sm)/1 var(--font-mono);
+  border-left: 1px solid var(--color-border); transition: background .15s ease, color .15s ease;
+}
+.seg button:first-child { border-left: none; }
+.seg button:hover, .seg button:focus-visible { color: var(--color-text-primary); background: var(--color-surface-2); }
+.seg button:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
+.seg button[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
+
+/* inputs */
+.input {
+  min-height: 48px; padding: 10px 14px; font-size: 16px; /* 16px: no iOS zoom */
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface-2); color: var(--color-text-primary);
+}
+.input:focus-visible { outline: none; border-color: var(--color-accent-bright); box-shadow: 0 0 0 3px var(--color-accent-light); }
+
+/* panel — THE module. Same chrome everywhere. */
+.panel {
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+  display: flex; flex-direction: column; min-width: 0;
+}
+.panel-header {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.panel-title {
+  font: 600 var(--font-sm)/1.2 var(--font-sans);
+  text-transform: uppercase; letter-spacing: .07em;
+  color: var(--color-text-secondary); margin: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.panel-body { padding: var(--space-4); min-width: 0; }
+
+/* data-state lamp + as-of stamp — the signature trust layer */
+.lamp {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 500 var(--font-xs)/1 var(--font-mono);
+  color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em;
+  white-space: nowrap;
+}
+.lamp::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--color-text-secondary); flex: none;
+}
+.lamp--live::before  { background: var(--color-gain); box-shadow: 0 0 6px var(--color-gain); }
+.lamp--eod::before   { background: var(--color-accent-bright); box-shadow: 0 0 6px var(--color-accent-bright); }
+.lamp--demo::before  { background: var(--color-series-3); box-shadow: 0 0 6px var(--color-series-3); }
+.stamp { font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+
+/* P&L pill — text carries meaning, color reinforces */
+.pill {
+  display: inline-flex; align-items: center; padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font: 500 var(--font-xs)/1.5 var(--font-mono); white-space: nowrap;
+}
+.pill--gain { background: var(--color-gain-dim); color: var(--color-gain); }
+.pill--loss { background: var(--color-loss-dim); color: var(--color-loss); }
+.pill--flat { background: var(--color-surface-2); color: var(--color-text-secondary); }
+
+/* ticker chip (news rows, positions) */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  font: 500 var(--font-xs)/1.5 var(--font-mono); color: var(--color-text-primary);
+  background: var(--color-surface-2); white-space: nowrap;
+}
+.chip .up   { color: var(--color-gain); }
+.chip .down { color: var(--color-loss); }
+
+/* stat block (label over value) */
+.stat { min-width: 0; }
+.stat-label {
+  font: 500 var(--font-xs)/1.4 var(--font-sans);
+  color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em;
+}
+.stat-value { font: 500 var(--font-lg)/1.3 var(--font-mono); color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.stat-value.up   { color: var(--color-gain); }
+.stat-value.down { color: var(--color-loss); }
+
+/* hero number (per-account NAV) */
+.hero-number {
+  font: 600 var(--font-3xl)/1.1 var(--font-mono);
+  color: var(--color-text-primary); font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* dense data table — sortable per design.md (header IS the control) */
+.data-table { width: 100%; border-collapse: collapse; font: 400 var(--font-sm)/1.4 var(--font-mono); font-variant-numeric: tabular-nums; }
+.data-table th {
+  font: 600 var(--font-xs)/1.2 var(--font-sans); text-transform: uppercase; letter-spacing: .05em;
+  color: var(--color-text-secondary); text-align: right; padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border); cursor: pointer; min-height: 44px;
+  white-space: nowrap;
+}
+.data-table th:first-child, .data-table td:first-child { text-align: left; padding-left: 0; }
+.data-table th:last-child, .data-table td:last-child { padding-right: 0; }
+.data-table th:hover, .data-table th:focus-visible { color: var(--color-text-primary); }
+.data-table th:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
+.data-table th[aria-sort="ascending"]::after  { content: " ↑"; color: var(--color-accent-bright); }
+.data-table th[aria-sort="descending"]::after { content: " ↓"; color: var(--color-accent-bright); }
+.data-table td {
+  padding: 6px 8px; text-align: right; color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border); white-space: nowrap;
+}
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table td.up   { color: var(--color-gain); }
+.data-table td.down { color: var(--color-loss); }
+
+/* compact variant — dense per-account positions */
+.data-table--compact { font-size: var(--font-xs); }
+.data-table--compact th { font-size: 11px; padding: 6px 5px; }
+.data-table--compact td { padding: 5px; }
+.data-table--compact td:first-child { max-width: 108px; overflow: hidden; text-overflow: ellipsis; }
+
+/* series key dot (account identity) */
+.key-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.key-dot--1 { background: var(--color-series-1); }
+.key-dot--2 { background: var(--color-series-2); }
+.key-dot--3 { background: var(--color-series-3); }
+
+/* news row */
+.news-row {
+  display: flex; gap: var(--space-3); align-items: baseline;
+  padding: var(--space-2) 0; border-top: 1px solid var(--color-border);
+}
+.news-row:first-child { border-top: none; }
+.news-time { font: 400 var(--font-xs)/1.5 var(--font-mono); color: var(--color-text-secondary); flex: none; width: 52px; }
+.news-main { min-width: 0; }
+.news-headline { font: 500 var(--font-sm)/1.4 var(--font-sans); color: var(--color-text-primary); margin: 0; }
+.news-meta { font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+
+/* AI brief */
+.brief-section { margin: 0 0 var(--space-3); }
+.brief-section h3 {
+  font: 600 var(--font-xs)/1.4 var(--font-sans); text-transform: uppercase;
+  letter-spacing: .06em; color: var(--color-accent-bright); margin: 0 0 var(--space-1);
+}
+.brief-section p, .brief-section li { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0; }
+.brief-section ul { margin: 0; padding-left: 18px; }
+.ai-disclaimer {
+  font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary);
+  border-top: 1px solid var(--color-border); padding-top: var(--space-2); margin-top: var(--space-3);
+}
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

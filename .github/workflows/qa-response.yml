@@ -1,0 +1,117 @@
+# qa-response.yml — Event-driven QA triggered by repository_dispatch.
+# Copy to .github/workflows/qa-response.yml in your project.
+# Triggers on qa-email-received, test-failure-reported, or manual-qa-trigger events.
+# Active sessions receive results and act autonomously without human intervention.
+#
+# Dispatch this workflow from a Claude Code session using the GitHub API:
+#   curl -X POST https://api.github.com/repos/<owner>/<repo>/dispatches \
+#     -H "Authorization: token <GITHUB_TOKEN>" \
+#     -d '{"event_type":"manual-qa-trigger"}'
+#
+# Required setup:
+#   - Add TEST_AUTH_CREDENTIAL as a repository secret (value from CLAUDE.md)
+#   - Add APP_URL as a repository variable (live URL)
+#   - Set UI_TESTS_DIR below to the path of your Playwright test directory
+
+name: QA — Event-Driven Response
+
+on:
+  repository_dispatch:
+    types:
+      - qa-email-received       # triggered when Gmail monitor detects a relevant email
+      - test-failure-reported   # triggered when another workflow reports a failure
+      - manual-qa-trigger       # triggered manually by an active session
+
+  # Also allow manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger'
+        required: false
+        default: 'Manual session trigger'
+
+# Least privilege: read the repo and run tests.
+permissions:
+  contents: read
+
+env:
+  UI_TESTS_DIR: .github/scripts/ui-tests
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Event data is passed through env, never interpolated directly into the
+      # run: script — a repository_dispatch client_payload is attacker-influenceable,
+      # and inlining `${{ github.event.* }}` into a shell body is a script-injection vector.
+      - name: Log trigger reason
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          CLIENT_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          echo "Trigger: $EVENT_NAME"
+          echo "Event type: $EVENT_ACTION"
+          echo "Payload: $CLIENT_PAYLOAD"
+
+      - name: Secret scan
+        run: |
+          # Canonical secret-scan pattern — keep identical to global.md and qa.yml.
+          if grep -rE \
+            'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb-' \
+            --include="*.js" --include="*.html" --include="*.css" --include="*.json" \
+            --exclude-dir=node_modules --exclude-dir=.git .; then
+            echo "ERROR: potential API token found in source files"
+            exit 1
+          fi
+
+  ui-tests:
+    needs: static-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.UI_TESTS_DIR }}/package-lock.json
+
+      - name: Install test dependencies
+        run: npm install
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Install Playwright browsers
+        # Both browsers: playwright.config.js defines a webkit project (iPhone 12)
+        # alongside chromium (Pixel 5). Installing chromium alone fails that project.
+        run: npx playwright install --with-deps chromium webkit
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Run Playwright tests
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+        run: npx playwright test --reporter=list
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-response-${{ github.run_id }}
+          path: |
+            .agent-reports/screenshots/
+            .agent-reports/playwright-results.json
+          retention-days: 7
+
+      # Results are available in the Actions tab for the active session to read
+      # and act on via the GitHub MCP tools (pull_request_read, get_job_logs, etc.)

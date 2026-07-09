@@ -1,0 +1,110 @@
+name: Pages Monitor
+# Zero-model GitHub Pages deploy monitor. Fires on every Pages build (page_build),
+# verifies the deploy is healthy and the live URL is serving, and on a problem
+# opens/updates a single deduplicated tracking issue (which notifies the owner).
+# Success is reported in the job summary only — no inbox noise. Uses only
+# GITHUB_TOKEN — no external services. workflow_dispatch allows a manual liveness
+# re-check. The live URL comes from the Pages API (so user-site repos and custom
+# domains work), with a generic derivation as fallback — portable as-is.
+on:
+  page_build:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pages: read   # lets the Pages API return the real html_url
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify Pages deploy and report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          BUILD_STATUS: ${{ github.event.build.status }}
+          BUILD_ERROR: ${{ github.event.build.error.message }}
+          BUILD_COMMIT: ${{ github.event.build.commit }}
+          ISSUE_LABEL: 'pages-deploy-failure'
+        run: |
+          set -euo pipefail
+          # Real Pages URL from the API (covers <owner>.github.io user-site
+          # repos and custom domains); generic derivation as the fallback.
+          url=$(gh api "repos/$REPO/pages" --jq '.html_url // empty' 2>/dev/null || true)
+          if [ -z "$url" ]; then
+            repo_name="${REPO#*/}"
+            url="https://${OWNER}.github.io/${repo_name}/"
+          fi
+          case "$url" in */) ;; *) url="${url}/" ;; esac
+          status="${BUILD_STATUS:-manual}"
+          short="${BUILD_COMMIT:0:7}"
+          echo "page_build status: $status (commit ${short:-n/a}) — target $url"
+
+          problems=""
+
+          # 1) Build status straight from the event (authoritative).
+          if [ "$status" = "errored" ]; then
+            problems="${problems}- Pages build **errored**: ${BUILD_ERROR:-no message provided}\n"
+          fi
+
+          # 2) Liveness: the live URL must return 200 (cache-busted, with retries
+          #    so we wait out CDN propagation rather than false-alarming).
+          code="000"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "${url}?cb=${GITHUB_RUN_ID}-${attempt}" || echo "000")
+            [ "$code" = "200" ] && break
+            sleep $((attempt * 6))
+          done
+          if [ "$code" != "200" ]; then
+            problems="${problems}- Live site did not return 200 at ${url} (last HTTP ${code})\n"
+          fi
+
+          stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          if [ -n "$problems" ]; then
+            body=$(printf 'Pages deploy problem(s) detected at %s for commit `%s`:\n\n%b\nLive URL: %s' "$stamp" "${short:-n/a}" "$problems" "$url")
+            gh label create "$ISSUE_LABEL" --repo "$REPO" --color B60205 \
+              --description "Open GitHub Pages deploy failure tracked by Pages Monitor" 2>/dev/null || true
+            existing=$(gh issue list --repo "$REPO" --state all --label "$ISSUE_LABEL" \
+              --json number,state --jq 'sort_by(.number) | last // empty')
+            num=$(echo "$existing" | jq -r '.number // empty')
+            state=$(echo "$existing" | jq -r '(.state // "") | ascii_downcase')
+            if [ -n "$num" ]; then
+              [ "$state" = "closed" ] && gh issue reopen "$num" --repo "$REPO"
+              gh issue comment "$num" --repo "$REPO" --body "$body"
+            else
+              gh issue create --repo "$REPO" \
+                --title "Pages deploy failing" \
+                --label "$ISSUE_LABEL" \
+                --body "$body
+
+          ---
+          Auto-managed by \`.github/workflows/pages-monitor.yml\`. It closes automatically on the next healthy deploy."
+            fi
+            {
+              echo "## ❌ Pages deploy problem"
+              echo ""
+              printf '%b\n' "$problems"
+              echo "Live URL: $url"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # Healthy: close any open tracking issue, report green in the summary.
+          open_num=$(gh issue list --repo "$REPO" --state open --label "$ISSUE_LABEL" \
+            --json number --jq 'sort_by(.number) | last | .number // empty' || true)
+          if [ -n "${open_num:-}" ]; then
+            gh issue comment "$open_num" --repo "$REPO" \
+              --body "Pages deploy healthy again at $stamp (commit ${short:-n/a}). Closing." || true
+            gh issue close "$open_num" --repo "$REPO" || true
+          fi
+          {
+            echo "## ✅ Pages deploy live"
+            echo ""
+            echo "- Commit: \`${short:-n/a}\`"
+            echo "- URL: $url"
+            echo "- Verified: HTTP 200"
+          } >> "$GITHUB_STEP_SUMMARY"

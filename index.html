@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude.trading — multi-account desk</title>
+<meta name="description" content="Private multi-account trading dashboard: account windows, charts, market summary, news, and AI brief.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/components.css">
+<style>
+  * { box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: var(--color-bg); color: var(--color-text-primary);
+    font: 400 var(--font-base)/1.5 var(--font-sans);
+  }
+  .shell { max-width: 1440px; margin: 0 auto; padding: var(--space-4) var(--space-4) var(--space-8); }
+
+  /* masthead */
+  .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
+  .wordmark { margin: 0; font: 600 var(--font-xl)/1.1 var(--font-mono); letter-spacing: .04em; }
+  .wordmark .tld { color: var(--color-accent-bright); }
+  .tagline { margin: 2px 0 0; font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .12em; }
+  .masthead-state { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+
+  /* market strip */
+  .market-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-3); margin-bottom: var(--space-4); }
+  .mkt-tile { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-3); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mkt-name { font: 500 var(--font-xs)/1.3 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mkt-last { font: 600 var(--font-lg)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .mkt-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .mkt-spark { width: 76px; height: 24px; flex: none; }
+
+  /* layout */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--space-4); align-items: start; }
+  .col-main { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+  .col-rail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+
+  /* accounts */
+  .accounts-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+  .accounts-head h2 { margin: 0; font: 600 var(--font-lg)/1.2 var(--font-sans); }
+  .account-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-3); }
+  .account .panel-header { gap: var(--space-2); }
+  .acct-code { font: 400 var(--font-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
+  .acct-nav { padding: var(--space-3) var(--space-4) 0; }
+  .acct-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-4); }
+  .acct-spark { display: block; width: 100%; height: 56px; }
+  .acct-positions { padding: 0 var(--space-4) var(--space-3); overflow-x: auto; }
+
+  /* combined chart */
+  .chart-head-tools { margin-left: auto; display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .legend { display: flex; gap: var(--space-3); flex-wrap: wrap; font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .chart-wrap { position: relative; }
+  #equityChart { display: block; width: 100%; height: auto; }
+  .chart-tip {
+    position: absolute; pointer-events: none; display: none; z-index: 2;
+    background: var(--color-surface-2); border: 1px solid var(--color-border-hover);
+    border-radius: var(--radius-sm); padding: 6px 10px; box-shadow: var(--shadow-md);
+    font: 400 var(--font-xs)/1.6 var(--font-mono); white-space: nowrap;
+  }
+  .chart-tip .tip-date { color: var(--color-text-secondary); }
+  .chart-data summary { cursor: pointer; font: 500 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); min-height: 44px; display: flex; align-items: center; }
+  .chart-data summary:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
+
+  .ml-auto { margin-left: auto; }
+
+  /* footer */
+  .site-footer { margin-top: var(--space-8); border-top: 1px solid var(--color-border); padding-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+  .site-footer p { margin: 0; font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); }
+
+  @media (max-width: 1160px) {
+    .market-strip { grid-template-columns: repeat(3, 1fr); }
+    .account-grid { grid-template-columns: 1fr; }
+    .layout { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 620px) {
+    .market-strip { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="masthead">
+    <div>
+      <h1 class="wordmark">claude<span class="tld">.trading</span></h1>
+      <p class="tagline">Private multi-account desk</p>
+    </div>
+    <div class="masthead-state">
+      <span class="lamp lamp--demo">Demo data</span>
+      <span class="lamp lamp--eod">EOD snapshot</span>
+      <span class="stamp">As of Jul 9, 4:00 PM ET</span>
+    </div>
+  </header>
+
+  <section class="market-strip" id="marketStrip" aria-label="Market summary"></section>
+
+  <div class="layout">
+    <div class="col-main">
+
+      <section aria-labelledby="accountsTitle">
+        <div class="accounts-head">
+          <h2 id="accountsTitle">Accounts</h2>
+          <button type="button" class="btn-secondary btn" id="consolidateBtn" aria-pressed="false">Consolidate accounts</button>
+        </div>
+        <div class="account-grid" id="accountGrid"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="equityTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="equityTitle">Equity curves</h2>
+          <span class="lamp lamp--eod">EOD</span>
+          <div class="chart-head-tools">
+            <div class="legend" id="equityLegend"></div>
+            <div class="seg" role="group" aria-label="Timeframe" id="timeframeSeg">
+              <button type="button" data-days="21" aria-pressed="false">1M</button>
+              <button type="button" data-days="63" aria-pressed="false">3M</button>
+              <button type="button" data-days="126" aria-pressed="true">6M</button>
+              <button type="button" data-days="9999" aria-pressed="false">1Y</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="chart-wrap">
+            <svg id="equityChart" viewBox="0 0 840 300" role="img" aria-label="Equity curves per account over the selected timeframe"></svg>
+            <div class="chart-tip" id="chartTip"></div>
+          </div>
+          <details class="chart-data">
+            <summary>View data table</summary>
+            <table class="data-table" id="equityDataTable"></table>
+          </details>
+          <p class="stamp">Source: IBKR Flex report · Demo data · Values at market close</p>
+        </div>
+      </section>
+
+    </div>
+
+    <aside class="col-rail">
+
+      <section class="panel" aria-labelledby="briefTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="briefTitle">AI daily brief</h2>
+          <span class="lamp lamp--demo">Demo</span>
+          <span class="stamp ml-auto">Jul 9, 5:05 AM</span>
+        </div>
+        <div class="panel-body">
+          <div class="brief-section">
+            <h3>Portfolio state</h3>
+            <p>Net liquidation across the three accounts is $777.7K, up 0.5% on the day. Core Equities drove the gain — NVDA and MSFT added $2.9K combined. Options Income gave back 0.9% as short premium marked against you into the close.</p>
+          </div>
+          <div class="brief-section">
+            <h3>Key levels</h3>
+            <ul>
+              <li>SPY closed at 630.4 — 1.1% below the Jul 3 high of 637.2.</li>
+              <li>NVDA holds above its 20-day average (168.3); position is 14% of Core Equities.</li>
+              <li>Portfolio cash is 11% of NAV — lowest since May.</li>
+            </ul>
+          </div>
+          <div class="brief-section">
+            <h3>Scenarios</h3>
+            <ul>
+              <li>CPI prints Thursday — a hot print pressures the rate-sensitive IRA sleeve (TLT, SCHD).</li>
+              <li>Options Income has 3 positions expiring Jul 18; assignment risk concentrates in SPY 625P.</li>
+            </ul>
+          </div>
+          <p class="ai-disclaimer">Generated from your committed account and market snapshots — not the open internet. AI-generated; can make mistakes. Informational only, not financial advice.</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="newsTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="newsTitle">News — holdings first</h2>
+          <span class="lamp lamp--eod">EOD</span>
+        </div>
+        <div class="panel-body" id="newsList"></div>
+      </section>
+
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <p>Data: IBKR Flex reports (accounts) · market and news snapshots committed by scheduled jobs. Every panel shows its own as-of stamp — this dashboard renders snapshots, not live quotes.</p>
+    <p>This page currently shows demo data. Nothing here is investment, tax, or legal advice. Past performance is not a guarantee of future results.</p>
+  </footer>
+
+</div>
+
+<script>
+'use strict';
+/* ── demo data ─────────────────────────────────────────────────────────── */
+const ACCOUNTS = [
+  { key: 1, label: 'Core Equities', code: 'U1234567', nav: 412386.54, day: 3241.12, total: 58212.40, cash: 31200.00,
+    positions: [
+      ['NVDA', 340, 171.42, 58282.80, 1.84, 21140.20],
+      ['MSFT', 120, 512.10, 61452.00, 0.92, 9822.00],
+      ['AAPL', 260, 232.66, 60491.60, -0.34, 6410.40],
+      ['AMZN', 180, 246.05, 44289.00, 1.12, 5230.80],
+      ['SPY',  220, 630.40, 138688.00, 0.54, 12904.00],
+    ]},
+  { key: 2, label: 'Options Income', code: 'U2345678', nav: 96412.08, day: -842.55, total: 7311.02, cash: 41880.00,
+    positions: [
+      ['SPY 18Jul 625P', -4, 6.85, -2740.00, -8.40, 1120.00],
+      ['QQQ 18Jul 560C', -3, 4.12, -1236.00, 6.20, -310.00],
+      ['IWM 15Aug 225P', -5, 3.40, -1700.00, -2.10, 445.00],
+      ['SPY', 60, 630.40, 37824.00, 0.54, 3510.00],
+    ]},
+  { key: 3, label: 'Long-Term IRA', code: 'U3456789', nav: 268930.77, day: 1102.36, total: 41008.19, cash: 12400.00,
+    positions: [
+      ['VTI',  480, 312.55, 150024.00, 0.48, 28110.00],
+      ['SCHD', 620, 29.84, 18500.80, 0.21, 2205.60],
+      ['TLT',  310, 88.62, 27472.20, -0.65, -1830.40],
+      ['BRK.B', 240, 247.90, 59496.00, 0.35, 12523.00],
+    ]},
+];
+const MARKET = [
+  { name: 'S&P 500',      last: '6,318.42', chg: 0.54,  seed: 11 },
+  { name: 'Nasdaq 100',   last: '23,104.88', chg: 0.81, seed: 23 },
+  { name: 'Dow Jones',    last: '44,912.30', chg: 0.12, seed: 37 },
+  { name: 'Russell 2000', last: '2,281.16', chg: -0.33, seed: 41 },
+  { name: 'VIX',          last: '14.82',    chg: -4.20, seed: 53 },
+  { name: 'US 10Y',       last: '4.31%',    chg: 0.05,  seed: 67 },
+];
+const NEWS = [
+  { t: '15:58', src: 'Reuters',   h: 'S&P 500 ends higher as megacap tech extends July rally', chips: [['SPY', 0.54]] },
+  { t: '15:41', src: 'Bloomberg', h: 'Nvidia supplier checks point to firm H2 data-center demand', chips: [['NVDA', 1.84]] },
+  { t: '14:55', src: 'CNBC',      h: 'Microsoft to detail AI capex plans at July 22 earnings call', chips: [['MSFT', 0.92]] },
+  { t: '14:02', src: 'Reuters',   h: 'Treasury yields edge up ahead of Thursday CPI report', chips: [['TLT', -0.65]] },
+  { t: '13:20', src: 'Bloomberg', h: 'Apple services growth seen slowing in June quarter, analysts say', chips: [['AAPL', -0.34]] },
+  { t: '11:47', src: 'Reuters',   h: 'Small caps lag as rate-cut bets get pushed to September', chips: [['IWM', -0.41]] },
+  { t: '10:15', src: 'CNBC',      h: 'Amazon Prime Day sales tracking ahead of last year', chips: [['AMZN', 1.12]] },
+  { t: '09:36', src: 'Bloomberg', h: 'Volatility drifts lower; VIX under 15 for third straight session', chips: [['VIX', -4.20]] },
+];
+const SERIES_COLORS = { 1: 'var(--color-series-1)', 2: 'var(--color-series-2)', 3: 'var(--color-series-3)' };
+const DAYS = 189; /* ~9 months of trading days */
+
+/* seeded walk so demo charts are stable run-to-run */
+function lcg(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+function walk(seed, start, drift, vol, n, end) {
+  const rnd = lcg(seed), out = [start]; let v = start;
+  for (let i = 1; i < n; i++) { v *= 1 + drift + (rnd() - 0.5) * vol; out.push(v); }
+  if (end === undefined) return out;
+  const scale = end / out[n - 1]; /* blend multiplicatively so the series lands exactly on `end` */
+  return out.map((x, i) => x * Math.pow(scale, i / (n - 1)));
+}
+const EQUITY = {
+  1: walk(101, ACCOUNTS[0].nav - ACCOUNTS[0].total * 0.6, 0.0004, 0.016, DAYS, ACCOUNTS[0].nav),
+  2: walk(202, ACCOUNTS[1].nav - ACCOUNTS[1].total * 0.6, 0.0002, 0.022, DAYS, ACCOUNTS[1].nav),
+  3: walk(303, ACCOUNTS[2].nav - ACCOUNTS[2].total * 0.6, 0.0003, 0.010, DAYS, ACCOUNTS[2].nav),
+};
+
+/* trading-day labels ending Jul 9 (demo) */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function dayLabels(n) {
+  const out = []; let d = new Date(2026, 6, 9);
+  while (out.length < n) {
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) out.unshift(MONTHS[d.getMonth()] + ' ' + d.getDate());
+    d.setDate(d.getDate() - 1);
+  }
+  return out;
+}
+const LABELS = dayLabels(DAYS);
+
+/* ── formatters ────────────────────────────────────────────────────────── */
+const fmtUsd = v => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtUsd0 = v => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+const fmtSigned = v => (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPct = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%';
+
+/* ── tiny DOM helpers (textContent only — never innerHTML) ─────────────── */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+function pathFrom(points) { return points.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(''); }
+
+/* sparkline: series → svg (line + soft area) */
+function sparkline(values, w, h, stroke) {
+  const svg = svgEl('svg', { viewBox: '0 0 ' + w + ' ' + h, 'aria-hidden': 'true', focusable: 'false' });
+  const min = Math.min(...values), max = Math.max(...values), span = (max - min) || 1;
+  const pts = values.map((v, i) => [i / (values.length - 1) * (w - 2) + 1, h - 2 - (v - min) / span * (h - 4)]);
+  const area = pathFrom(pts) + 'L' + pts[pts.length - 1][0].toFixed(1) + ' ' + (h - 1) + 'L' + pts[0][0].toFixed(1) + ' ' + (h - 1) + 'Z';
+  svg.appendChild(svgEl('path', { d: area, fill: stroke, opacity: '0.12' }));
+  svg.appendChild(svgEl('path', { d: pathFrom(pts), fill: 'none', stroke: stroke, 'stroke-width': '1.5' }));
+  return svg;
+}
+
+/* ── market strip ──────────────────────────────────────────────────────── */
+(function renderStrip() {
+  const strip = document.getElementById('marketStrip');
+  for (const m of MARKET) {
+    const tile = el('div', 'mkt-tile');
+    tile.appendChild(el('span', 'mkt-name', m.name));
+    const row = el('div', 'mkt-row');
+    const left = el('div');
+    left.appendChild(el('div', 'mkt-last', m.last));
+    left.appendChild(el('span', m.chg >= 0 ? 'pill pill--gain' : 'pill pill--loss', fmtPct(m.chg)));
+    row.appendChild(left);
+    const spark = walk(m.seed, 100, m.chg >= 0 ? 0.001 : -0.001, 0.02, 30, m.chg >= 0 ? 102 : 98);
+    const sp = sparkline(spark, 76, 24, m.chg >= 0 ? 'var(--color-gain)' : 'var(--color-loss)');
+    sp.classList.add('mkt-spark');
+    row.appendChild(sp);
+    tile.appendChild(row);
+    strip.appendChild(tile);
+  }
+})();
+
+/* ── sortable tables (design.md standard) ──────────────────────────────── */
+function makeSortable(table) {
+  const heads = [...table.tHead.rows[0].cells], body = table.tBodies[0];
+  const blank = v => v === '' || v === '—' || v == null;
+  const go = th => {
+    const i = th.cellIndex, num = th.dataset.type === 'number';
+    const dir = th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+    const s = dir === 'ascending' ? 1 : -1;
+    heads.forEach(h => h.setAttribute('aria-sort', 'none'));
+    th.setAttribute('aria-sort', dir);
+    const val = tr => { const c = tr.cells[i]; return c.dataset.sort ?? c.textContent.trim(); };
+    [...body.rows].sort((a, b) => {
+      const x = val(a), y = val(b);
+      if (blank(x) && blank(y)) return 0;
+      if (blank(x)) return 1;
+      if (blank(y)) return -1;
+      return (num ? x - y : ('' + x).localeCompare(y, undefined, { sensitivity: 'base', numeric: true })) * s;
+    }).forEach(tr => body.appendChild(tr));
+  };
+  heads.forEach(th => {
+    th.onclick = () => go(th);
+    th.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(th); } };
+  });
+}
+
+/* ── account windows ───────────────────────────────────────────────────── */
+(function renderAccounts() {
+  const grid = document.getElementById('accountGrid');
+  for (const a of ACCOUNTS) {
+    const panel = el('section', 'panel account');
+    panel.setAttribute('aria-label', a.label + ' account');
+
+    const head = el('div', 'panel-header');
+    const dot = el('span', 'key-dot key-dot--' + a.key); head.appendChild(dot);
+    head.appendChild(el('h3', 'panel-title', a.label));
+    head.appendChild(el('span', 'acct-code', a.code));
+    const lamp = el('span', 'lamp lamp--eod', 'EOD'); lamp.style.marginLeft = 'auto'; head.appendChild(lamp);
+    panel.appendChild(head);
+
+    const navWrap = el('div', 'acct-nav');
+    navWrap.appendChild(el('div', 'stat-label', 'Net liquidation'));
+    navWrap.appendChild(el('div', 'hero-number', fmtUsd(a.nav)));
+    panel.appendChild(navWrap);
+
+    const stats = el('div', 'acct-stats');
+    const statDefs = [
+      ['Day P&L', fmtSigned(a.day) + ' (' + fmtPct(a.day / (a.nav - a.day) * 100) + ')', a.day],
+      ['Total unrealized', fmtSigned(a.total), a.total],
+      ['Cash', fmtUsd0(a.cash), 0],
+      ['Positions', String(a.positions.length), 0],
+    ];
+    for (const [label, value, sign] of statDefs) {
+      const s = el('div', 'stat');
+      s.appendChild(el('div', 'stat-label', label));
+      s.appendChild(el('div', 'stat-value' + (sign > 0 ? ' up' : sign < 0 ? ' down' : ''), value));
+      stats.appendChild(s);
+    }
+    panel.appendChild(stats);
+
+    const spark = sparkline(EQUITY[a.key].slice(-126), 360, 56, SERIES_COLORS[a.key]);
+    spark.setAttribute('preserveAspectRatio', 'none');
+    spark.classList.add('acct-spark');
+    spark.setAttribute('role', 'img');
+    spark.removeAttribute('aria-hidden');
+    spark.setAttribute('aria-label', a.label + ' equity, last 6 months');
+    panel.appendChild(spark);
+
+    const tblWrap = el('div', 'acct-positions');
+    const table = el('table', 'data-table data-table--compact');
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    const cols = [['Symbol', 'text'], ['Mkt val', 'number'], ['Day %', 'number'], ['Unrl P&L', 'number']];
+    for (const [name, type] of cols) {
+      const th = document.createElement('th');
+      th.textContent = name; th.dataset.type = type;
+      th.setAttribute('tabindex', '0'); th.setAttribute('aria-sort', 'none');
+      th.setAttribute('scope', 'col');
+      hr.appendChild(th);
+    }
+    thead.appendChild(hr); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const [sym, qty, last, mkt, dayPct, unrl] of a.positions) {
+      const tr = document.createElement('tr');
+      const cells = [
+        [sym + ' × ' + qty, sym, ''],
+        [fmtUsd0(mkt), mkt, ''],
+        [fmtPct(dayPct), dayPct, dayPct > 0 ? 'up' : dayPct < 0 ? 'down' : ''],
+        [fmtSigned(unrl), unrl, unrl > 0 ? 'up' : unrl < 0 ? 'down' : ''],
+      ];
+      for (const [text, sort, cls] of cells) {
+        const td = document.createElement('td');
+        td.textContent = text; td.dataset.sort = sort;
+        if (cls) td.className = cls;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    tblWrap.appendChild(table);
+    panel.appendChild(tblWrap);
+    makeSortable(table);
+    grid.appendChild(panel);
+  }
+})();
+
+/* ── news ──────────────────────────────────────────────────────────────── */
+(function renderNews() {
+  const list = document.getElementById('newsList');
+  for (const n of NEWS) {
+    const row = el('div', 'news-row');
+    row.appendChild(el('span', 'news-time', n.t));
+    const main = el('div', 'news-main');
+    main.appendChild(el('p', 'news-headline', n.h));
+    const meta = el('div', 'news-meta');
+    meta.appendChild(el('span', '', n.src));
+    for (const [sym, chg] of n.chips) {
+      const chip = el('span', 'chip');
+      chip.appendChild(el('span', '', sym));
+      chip.appendChild(el('span', chg >= 0 ? 'up' : 'down', fmtPct(chg)));
+      meta.appendChild(chip);
+    }
+    main.appendChild(meta);
+    row.appendChild(main);
+    list.appendChild(row);
+  }
+})();
+
+/* ── combined equity chart ─────────────────────────────────────────────── */
+const chart = {
+  svg: document.getElementById('equityChart'),
+  tip: document.getElementById('chartTip'),
+  legend: document.getElementById('equityLegend'),
+  W: 840, H: 300, padL: 64, padR: 96, padT: 16, padB: 30,
+  days: 126, consolidated: false,
+};
+
+function activeSeries() {
+  if (chart.consolidated) {
+    const sum = EQUITY[1].map((v, i) => v + EQUITY[2][i] + EQUITY[3][i]);
+    return [{ name: 'All accounts', color: 'var(--color-accent-bright)', values: sum }];
+  }
+  return ACCOUNTS.map(a => ({ name: a.label, color: SERIES_COLORS[a.key], values: EQUITY[a.key] }));
+}
+
+function drawChart() {
+  const svg = chart.svg;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const series = activeSeries().map(s => ({ ...s, values: s.values.slice(-chart.days) }));
+  const labels = LABELS.slice(-chart.days);
+  const n = series[0].values.length;
+  const all = series.flatMap(s => s.values);
+  const min = Math.min(...all), max = Math.max(...all);
+  const span = (max - min) || 1;
+  const x = i => chart.padL + i / (n - 1) * (chart.W - chart.padL - chart.padR);
+  const y = v => chart.padT + (1 - (v - min) / span) * (chart.H - chart.padT - chart.padB);
+
+  /* gridlines + y labels (recessive) */
+  for (let g = 0; g <= 4; g++) {
+    const v = min + span * g / 4, gy = y(v);
+    svg.appendChild(svgEl('line', { x1: chart.padL, x2: chart.W - chart.padR, y1: gy, y2: gy, stroke: 'var(--color-border)', 'stroke-width': '1' }));
+    const t = svgEl('text', { x: chart.padL - 8, y: gy + 4, 'text-anchor': 'end', fill: 'var(--color-text-secondary)', 'font-size': '11', 'font-family': 'var(--font-mono)' });
+    t.textContent = '$' + Math.round(v / 1000) + 'K';
+    svg.appendChild(t);
+  }
+  /* x labels: 4 evenly spaced */
+  for (let g = 0; g <= 3; g++) {
+    const i = Math.round((n - 1) * g / 3);
+    const t = svgEl('text', { x: x(i), y: chart.H - 8, 'text-anchor': g === 0 ? 'start' : g === 3 ? 'end' : 'middle', fill: 'var(--color-text-secondary)', 'font-size': '11', 'font-family': 'var(--font-mono)' });
+    t.textContent = labels[i];
+    svg.appendChild(t);
+  }
+  /* series lines + direct end labels */
+  for (const s of series) {
+    const pts = s.values.map((v, i) => [x(i), y(v)]);
+    svg.appendChild(svgEl('path', { d: pathFrom(pts), fill: 'none', stroke: s.color, 'stroke-width': '2', 'stroke-linejoin': 'round' }));
+    const last = pts[pts.length - 1];
+    const label = svgEl('text', { x: last[0] + 8, y: last[1] + 4, fill: s.color, 'font-size': '11', 'font-weight': '600', 'font-family': 'var(--font-sans)' });
+    label.textContent = s.name;
+    svg.appendChild(label);
+  }
+  /* crosshair (hidden until hover) */
+  svg.appendChild(svgEl('line', { id: 'crosshair', x1: 0, x2: 0, y1: chart.padT, y2: chart.H - chart.padB, stroke: 'var(--color-border-hover)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' }));
+
+  chart._state = { series, labels, n, x, y };
+  renderLegend(series);
+  renderDataTable(series, labels);
+}
+
+function renderLegend(series) {
+  const lg = chart.legend;
+  while (lg.firstChild) lg.removeChild(lg.firstChild);
+  for (const s of series) {
+    const item = el('span');
+    const dot = el('span', 'key-dot'); dot.style.background = s.color;
+    item.appendChild(dot);
+    item.appendChild(el('span', '', s.name));
+    lg.appendChild(item);
+  }
+}
+
+function renderDataTable(series, labels) {
+  const table = document.getElementById('equityDataTable');
+  while (table.firstChild) table.removeChild(table.firstChild);
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  for (const name of ['Date', ...series.map(s => s.name)]) {
+    const th = document.createElement('th');
+    th.textContent = name; th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  const step = Math.max(1, Math.floor(labels.length / 8));
+  for (let i = labels.length - 1; i >= 0; i -= step) {
+    const tr = document.createElement('tr');
+    const dt = document.createElement('td'); dt.textContent = labels[i]; tr.appendChild(dt);
+    for (const s of series) { const td = document.createElement('td'); td.textContent = fmtUsd0(s.values[i]); tr.appendChild(td); }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+}
+
+/* hover: crosshair + tooltip */
+chart.svg.addEventListener('pointermove', e => {
+  const st = chart._state; if (!st) return;
+  const rect = chart.svg.getBoundingClientRect();
+  const sx = (e.clientX - rect.left) / rect.width * chart.W;
+  const frac = (sx - chart.padL) / (chart.W - chart.padL - chart.padR);
+  const i = Math.max(0, Math.min(st.n - 1, Math.round(frac * (st.n - 1))));
+  const cx = st.x(i);
+  const cross = chart.svg.querySelector('#crosshair');
+  cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+  cross.setAttribute('visibility', 'visible');
+  const tip = chart.tip;
+  while (tip.firstChild) tip.removeChild(tip.firstChild);
+  tip.appendChild(el('div', 'tip-date', st.labels[i]));
+  for (const s of st.series) tip.appendChild(el('div', '', s.name + '  ' + fmtUsd0(s.values[i])));
+  tip.style.display = 'block';
+  const px = cx / chart.W * rect.width;
+  tip.style.left = Math.min(px + 12, rect.width - 170) + 'px';
+  tip.style.top = '12px';
+});
+chart.svg.addEventListener('pointerleave', () => {
+  chart.tip.style.display = 'none';
+  const cross = chart.svg.querySelector('#crosshair');
+  if (cross) cross.setAttribute('visibility', 'hidden');
+});
+
+/* timeframe seg */
+document.getElementById('timeframeSeg').addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  for (const b of document.querySelectorAll('#timeframeSeg button')) b.setAttribute('aria-pressed', String(b === btn));
+  chart.days = Math.min(Number(btn.dataset.days), DAYS);
+  drawChart();
+});
+
+/* consolidate toggle */
+document.getElementById('consolidateBtn').addEventListener('click', function () {
+  chart.consolidated = !chart.consolidated;
+  this.setAttribute('aria-pressed', String(chart.consolidated));
+  this.textContent = chart.consolidated ? 'Show accounts separately' : 'Consolidate accounts';
+  drawChart();
+});
+
+drawChart();
+</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+name: Codex Monitor
+
+# Watches the Codex automated reviewer and flags PRs where it raised concerns,
+# so they aren't merged blind when no session is active. Codex comments on every
+# PR — including clean passes — so this acts only on reviews that carry actual
+# suggestions: state == changes_requested, or a COMMENTED review that left inline
+# comments. Approving / empty reviews are ignored. Flagged PRs get a
+# `codex-flagged` label (Codex already posted suggestions inline, so no duplicate
+# comment). Uses only GITHUB_TOKEN.
+on:
+  pull_request_review:
+    types: [submitted]
+permissions:
+  pull-requests: write
+  issues: write   # labels are an issues-API scope
+jobs:
+  flag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ github.event.review.user.login == 'chatgpt-codex-connector[bot]' }}
+    steps:
+      - name: Flag PR when Codex raised concerns
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW_ID: ${{ github.event.review.id }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          FLAG_LABEL: 'codex-flagged'
+        run: |
+          set -euo pipefail
+          echo "Codex review $REVIEW_ID on PR #$PR_NUMBER — state=$REVIEW_STATE"
+          # No fallback here on purpose: a transient API failure must fail the
+          # step (and get retried) rather than read as "0 inline comments" and
+          # silently skip the flag.
+          inline=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews/$REVIEW_ID/comments" \
+            --jq 'length')
+          echo "Inline comments on this review: $inline"
+          state_lc=$(echo "$REVIEW_STATE" | tr '[:upper:]' '[:lower:]')
+          if [ "$state_lc" = "changes_requested" ] || \
+             { [ "$state_lc" = "commented" ] && [ "$inline" -gt 0 ]; }; then
+            echo "Codex raised concerns — flagging PR #$PR_NUMBER"
+            gh label create "$FLAG_LABEL" --repo "$REPO" --color D93F0B \
+              --description "Codex reviewer raised concerns — review before merge" 2>/dev/null || true
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$FLAG_LABEL"
+          else
+            echo "No actionable Codex concerns (clean/approving review). Skipping."
+          fi

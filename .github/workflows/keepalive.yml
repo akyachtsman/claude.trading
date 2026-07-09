@@ -1,0 +1,29 @@
+name: Keepalive
+
+# GitHub auto-disables scheduled workflows after 60 days with no repo commits.
+# A weekly empty commit resets that clock for EVERY scheduled workflow in the repo.
+# Pushed with a PAT (secrets.KEEPALIVE_PAT) — GITHUB_TOKEN commits don't reliably
+# count as the activity that resets the timer.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # weekly — well within 60 days
+  workflow_dispatch:
+
+# Least privilege for GITHUB_TOKEN — the push itself uses the PAT from checkout.
+permissions:
+  contents: read
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.KEEPALIVE_PAT }}
+      - run: |
+          git config user.name "keepalive-bot"
+          git config user.email "keepalive@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive — reset 60-day scheduler clock"
+          git push

@@ -1,0 +1,8 @@
+{
+  "name": "scripts",
+  "private": true,
+  "description": "Scheduled-task scripts (copy into .github/scripts/). Run `npm install` to generate a lockfile.",
+  "dependencies": {
+    "nodemailer": "^6.9.0"
+  }
+}

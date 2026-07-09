@@ -1,0 +1,49 @@
+name: Pages Deploy Retry
+# Auto-heals transient GitHub Pages deploy failures. The managed "pages build and
+# deployment" workflow occasionally fails its publish step with "Deployment failed,
+# try again later." — a GitHub-side blip, not a build problem — which otherwise
+# leaves the site on the previous version until someone manually re-runs it.
+#
+# This workflow watches that managed deploy and, on a failure, re-runs it
+# automatically (a full re-run, which is what reliably clears the transient
+# error). It is bounded by run_attempt so a genuinely broken deploy can't loop:
+# after a few tries it stops and lets pages-monitor.yml open its tracking issue.
+#
+# Purely additive — no change to the Pages source or the existing deploy/monitor.
+on:
+  workflow_run:
+    # The managed Pages workflow's actual `name` is its file slug
+    # "pages-build-deployment" (verified via the Actions API), not the prose
+    # title shown in the UI — the prose form never matches, so the retry
+    # would never fire.
+    workflows: [pages-build-deployment]
+    types: [completed]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  retry:
+    # Only when the Pages deploy failed, and only for the first few attempts.
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 4
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run the failed Pages deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          echo "Pages deploy run ${RUN_ID} (commit ${SHA:0:7}) failed on attempt ${ATTEMPT}."
+          echo "Re-running — transient 'try again later' publish failures clear on retry."
+          # Give the Pages backend a moment before asking again.
+          sleep 20
+          # Full re-run (not just failed jobs): re-running the whole run is what
+          # reliably clears the transient publish error.
+          gh run rerun "${RUN_ID}" --repo "${REPO}"
+          echo "Requested re-run of Pages deploy ${RUN_ID}."
