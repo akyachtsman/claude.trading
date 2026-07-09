@@ -1,0 +1,171 @@
+# qa.yml — Static checks + Playwright against a local server.
+# Copy to .github/workflows/qa.yml in your project.
+#
+# Jobs:
+#   static-checks — secret scan; the blocking gate, runs on every trigger.
+#   ui-changes    — diffs the PR against its base and decides whether the
+#                   browser job is needed. Non-PR events (push to main)
+#                   always run UI tests.
+#   ui-tests      — Playwright against a local server; runs only when an
+#                   index.html exists and UI-relevant paths changed (so the
+#                   scaffold/bootstrap PR stays clean). Non-blocking here (the
+#                   backend is unreachable on CI runners); qa-live.yml is
+#                   the authoritative UI gate.
+#
+# Required setup:
+#   - Add TEST_AUTH_CREDENTIAL as a repository secret (value from CLAUDE.md)
+#   - Set UI_TESTS_DIR below to the path of your Playwright test directory
+#   - Adjust the UI_PATHS regex in the ui-changes job to your project layout
+
+name: QA — Static + UI Tests
+
+on:
+  pull_request:
+    branches: [main]
+  # push covers only main (the post-merge run). Feature-branch commits are
+  # covered by the pull_request trigger — listing them here too made every
+  # PR commit run the whole workflow twice. Accepted trade-off: commits
+  # pushed before a PR exists get no run; the draft-PR-immediately flow
+  # makes that window moments.
+  push:
+    branches: [main]
+
+# Least privilege: these jobs only read the repo and run tests.
+permissions:
+  contents: read
+
+env:
+  # Path to the directory containing playwright.config.js and package.json
+  UI_TESTS_DIR: .github/scripts/ui-tests
+
+jobs:
+  static-checks:
+    name: Static Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Secret scan ────────────────────────────────────────────────────────
+      # Flags common API token patterns before any tests run.
+      - name: Secret scan
+        run: |
+          # Canonical secret-scan pattern — keep identical to global.md and qa-response.yml.
+          if grep -rE \
+            'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb-' \
+            --include="*.js" --include="*.html" --include="*.css" --include="*.json" \
+            --exclude-dir=node_modules --exclude-dir=.git .; then
+            echo "ERROR: potential API token found in source files"
+            exit 1
+          fi
+
+      # ── Contrast guardrail ───────────────────────────────────────────────────
+      # WCAG AA check against styles/tokens.css (this project's design tokens).
+      # Exits with a notice (no failure) until /design-intake creates tokens.css.
+      - name: Contrast guardrail (WCAG AA)
+        run: node .github/scripts/check-contrast.js
+
+  ui-changes:
+    name: Detect UI-relevant changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ui: ${{ steps.diff.outputs.ui }}
+
+    steps:
+      - name: Checkout (full history for base diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff against PR base
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Per-project: paths whose changes warrant a browser run.
+          UI_PATHS: '^(index\.html$|\.github/scripts/ui-tests/|\.github/workflows/qa\.yml$)'
+        run: |
+          # No app yet (no index.html in the repo) → nothing to browser-test.
+          # Keeps the scaffold/bootstrap PR clean: skip until the app exists.
+          if [ ! -f index.html ]; then
+            echo "ui=false" >> "$GITHUB_OUTPUT"
+            echo "No index.html yet — skipping browser job."
+            exit 0
+          fi
+          # Non-PR events (push to main) always run UI tests unconditionally.
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "ui=true" >> "$GITHUB_OUTPUT"
+            echo "Non-PR event — UI tests run unconditionally."
+            exit 0
+          fi
+          if git diff --name-only "$BASE_SHA"...HEAD | grep -qE "$UI_PATHS"; then
+            echo "ui=true" >> "$GITHUB_OUTPUT"
+            echo "UI-relevant changes detected."
+          else
+            echo "ui=false" >> "$GITHUB_OUTPUT"
+            echo "No UI-relevant changes — skipping browser job."
+          fi
+
+  ui-tests:
+    name: UI Tests (local server)
+    needs: [static-checks, ui-changes]
+    if: needs.ui-changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # `cache: npm` requires a committed package-lock.json at the path below.
+      # Generate it once (`npm install` in UI_TESTS_DIR) and COMMIT it, or this
+      # step fails with "Dependencies lock file is not found".
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.UI_TESTS_DIR }}/package-lock.json
+
+      - name: Install test dependencies
+        run: npm install
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      # ── Start local server ─────────────────────────────────────────────────
+      # http-server is a pinned devDependency installed in UI_TESTS_DIR (above). Invoke
+      # its binary by path while staying at the repo root, so '.' still serves the app
+      # root AND nothing is fetched at runtime (works under locked egress). `npx
+      # --no-install` from the root would fail — the bin lives under UI_TESTS_DIR, not root.
+      # Adjust '.' to your build output directory if needed (e.g. dist, public).
+      - name: Start local server
+        run: |
+          "./$UI_TESTS_DIR/node_modules/.bin/http-server" . -p 8080 --silent &
+          sleep 2
+
+      # UI Tests against the local server are non-blocking: the backend API is
+      # unreachable on CI runners, so API-dependent scenarios fail with
+      # "API status: no call" by design. The authoritative UI gate is qa-live.yml.
+      - name: Run Playwright tests
+        continue-on-error: true
+        env:
+          APP_URL: http://localhost:8080
+          TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+        run: npx playwright test --reporter=list
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-local
+          path: |
+            .agent-reports/screenshots/
+            .agent-reports/playwright-results.json
+          retention-days: 7

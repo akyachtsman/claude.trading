@@ -1,0 +1,86 @@
+# qa-live.yml — Playwright against the live deployed URL.
+# Copy to .github/workflows/qa-live.yml in your project.
+# Triggers automatically after GitHub Pages deploys, or manually via workflow_dispatch.
+# pages-build-deployment is auto-created by GitHub when Pages is enabled — no extra setup.
+#
+# Required setup:
+#   - Add TEST_AUTH_CREDENTIAL as a repository secret (value from CLAUDE.md)
+#   - Add APP_URL as a repository variable: Settings → Secrets and variables → Variables
+#     e.g. https://<your-username>.github.io/<your-repo>/
+#   - Set UI_TESTS_DIR below to the path of your Playwright test directory
+
+name: QA — UI Tests (live)
+
+on:
+  workflow_run:
+    workflows: [pages-build-deployment]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: 'Override live app URL (optional)'
+        required: false
+
+# Only one live run per ref at a time; a newer trigger cancels the older/queued
+# one. Without this, repeated Pages deploys queue up qa-live runs that can sit
+# for hours (the job timeout below does not start counting until a runner is
+# assigned, so a queued run is not bounded by it).
+concurrency:
+  group: qa-live-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: read the repo and run tests against the live URL.
+permissions:
+  contents: read
+
+env:
+  UI_TESTS_DIR: .github/scripts/ui-tests
+
+jobs:
+  ui-tests-live:
+    # For workflow_run: only run when Pages deploy succeeded.
+    # For workflow_dispatch: always run.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.UI_TESTS_DIR }}/package-lock.json
+
+      - name: Install test dependencies
+        run: npm install
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Install Playwright browsers
+        timeout-minutes: 8
+        run: npx playwright install --with-deps chromium webkit
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Run Playwright tests (live)
+        timeout-minutes: 12
+        env:
+          # workflow_dispatch input overrides repo variable if provided
+          APP_URL: ${{ github.event.inputs.app_url || vars.APP_URL }}
+          TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+        run: npx playwright test --reporter=list
+        working-directory: ${{ env.UI_TESTS_DIR }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-live
+          path: |
+            .agent-reports/screenshots/
+            .agent-reports/playwright-results.json
+          retention-days: 7

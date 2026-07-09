@@ -1,0 +1,109 @@
+name: CI Monitor
+
+# Event-driven CI failure monitor. Fires the moment the project's QA workflow
+# completes; on failure it opens/updates a single deduplicated tracking issue.
+# The trigger is the completed workflow run itself, GitHub-side — no session, no
+# commit-hook. Uses only GITHUB_TOKEN — no Gmail, no OAuth. workflow_dispatch is
+# kept only for manual testing (window scan).
+#
+# Drop-in: the watched names below match the QA workflows shipped in the same
+# template set (qa.yml -> 'QA — Static + UI Tests'; qa-live.yml -> 'QA — UI
+# Tests (live)', the authoritative live gate; qa-response.yml -> 'QA —
+# Event-Driven Response', optional — the entry is inert if you didn't copy it),
+# so copying them verbatim needs no edits. Only change this list if you rename
+# those workflows' `name:`.
+# Listing watched workflows by name also prevents self-recursion (CI Monitor /
+# Codex Monitor are not in the list).
+on:
+  workflow_run:
+    workflows:
+      - 'QA — Static + UI Tests'
+      - 'QA — UI Tests (live)'
+      - 'QA — Event-Driven Response'
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      lookback_minutes:
+        description: 'How far back to scan for failed runs (minutes) — manual dispatch only'
+        required: false
+        default: '1440'
+permissions:
+  actions: read
+  issues: write
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Detect failures and report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          WR_NAME: ${{ github.event.workflow_run.name }}
+          WR_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WR_SHA: ${{ github.event.workflow_run.head_sha }}
+          WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WR_URL: ${{ github.event.workflow_run.html_url }}
+          WR_ID: ${{ github.event.workflow_run.id }}
+          LOOKBACK: ${{ github.event.inputs.lookback_minutes || '1440' }}
+          ISSUE_LABEL: 'ci-failure'
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_run" ]; then
+            echo "workflow_run: $WR_NAME concluded $WR_CONCLUSION"
+            case "$WR_CONCLUSION" in
+              failure|timed_out|startup_failure)
+                body="- **$WR_NAME** on \`$WR_BRANCH\` @ \`${WR_SHA:0:7}\` — [run $WR_ID]($WR_URL)"
+                ;;
+              *)
+                echo "Not a failure. Nothing to report."
+                exit 0
+                ;;
+            esac
+          else
+            # Manual dispatch: scan a time window.
+            since=$(date -u -d "-${LOOKBACK} minutes" +%Y-%m-%dT%H:%M:%SZ)
+            echo "Scanning $REPO for failed runs since $since"
+            runs=$(gh api "repos/$REPO/actions/runs?per_page=50&status=completed" \
+              --jq "[.workflow_runs[]
+                     | select(.conclusion==\"failure\" or .conclusion==\"timed_out\" or .conclusion==\"startup_failure\")
+                     | select(.name != \"CI Monitor\" and .name != \"Codex Monitor\" and .name != \"Pages Monitor\")
+                     | select(.updated_at >= \"$since\")
+                     | {name, id, sha: .head_sha[0:7], branch: .head_branch, url: .html_url}]")
+            count=$(echo "$runs" | jq 'length')
+            echo "Found $count failed run(s) in window"
+            [ "$count" -eq 0 ] && { echo "Nothing to report."; exit 0; }
+            body=$(echo "$runs" | jq -r '.[]
+              | "- **\(.name)** on `\(.branch)` @ `\(.sha)` — [run \(.id)](\(.url))"')
+          fi
+          stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # gh issue/label need explicit --repo: no git checkout in this job.
+          gh label create "$ISSUE_LABEL" --repo "$REPO" --color B60205 \
+            --description "Open CI failure tracked by CI Monitor" 2>/dev/null || true
+          # Dedupe across ALL states so a previously-closed issue is reopened
+          # rather than duplicated. Pick the most recent tracking issue.
+          existing=$(gh issue list --repo "$REPO" --state all --label "$ISSUE_LABEL" \
+            --json number,state --jq 'sort_by(.number) | last // empty')
+          num=$(echo "$existing" | jq -r '.number // empty')
+          state=$(echo "$existing" | jq -r '(.state // "") | ascii_downcase')
+          if [ -n "$num" ]; then
+            if [ "$state" = "closed" ]; then
+              echo "Reopening tracking issue #$num"
+              gh issue reopen "$num" --repo "$REPO"
+            fi
+            echo "Commenting on tracking issue #$num"
+            gh issue comment "$num" --repo "$REPO" --body "CI failures detected at $stamp:
+          $body"
+          else
+            echo "Opening new tracking issue"
+            gh issue create \
+              --repo "$REPO" \
+              --title "CI failures detected" \
+              --label "$ISSUE_LABEL" \
+              --body "CI Monitor detected failing workflow run(s) at $stamp:
+          $body
+          ---
+          This issue is auto-managed by \`.github/workflows/ci-monitor.yml\`.
+          Close it once the failures are resolved; new failures will reopen tracking."
+          fi
