@@ -114,14 +114,17 @@ showing them side by side with charts, market context, news, and analysis.
   shell), including on a cold cache.
 
 ## Success criteria (testable)
-1. Opening the live URL shows: market strip, all account windows, combined
-   chart, news, AI brief — populated, each with as-of stamp + lamp (US1, US6).
+1. Opening the live URL immediately shows market strip + news populated;
+   account windows, combined chart, and AI brief render populated after PIN
+   entry (locked panels before) — every panel with as-of stamp + lamp
+   (US1, US6, FR-AUTH1).
 2. Sorting any positions column reorders rows correctly, both directions,
    "—" values sinking last (FR-A2).
 3. Consolidate toggle switches chart + summary between per-account and
    aggregate and back, with legend/labels updating (FR-C1).
-4. Timeframe buttons re-render the chart to the selected window; hover shows
-   correct per-series values for a known date (FR-CH1/2).
+4. Timeframe buttons re-render the chart to the selected window (windows
+   longer than available history are disabled with the reason visible);
+   hover shows correct per-series values for a known date (FR-CH1/2).
 5. With demo data: DEMO lamps visible on masthead and every panel (FR-D3).
 6. With real data configured: fresh snapshot appears after the scheduled run
    with updated as-of stamps, and no secret appears in any served file or
@@ -140,13 +143,32 @@ showing them side by side with charts, market context, news, and analysis.
 - No native apps; responsive web only.
 - No historical trade analytics (win rate, per-trade stats) — candidate v2.
 
-## Open clarifications (blocking `plan`)
-1. [NEEDS CLARIFICATION] Account inventory: how many IBKR accounts, their
-   labels, and are all under one IBKR login?
-2. [NEEDS CLARIFICATION] Public-repo privacy: commit real balances/positions
-   to the public repo, redact values, make the repo private, or gate data
-   behind a backend?
-3. [NEEDS CLARIFICATION] Snapshot cadence: daily after US close, or intraday
-   too?
-4. [NEEDS CLARIFICATION] News/market data source preference (free tiers ok?).
-5. [NEEDS CLARIFICATION] LLM provider + key for the AI brief.
+## Clarifications (resolved 2026-07-09, owner)
+
+1. **Account inventory — 2 IBKR accounts.** Labels not yet supplied; the
+   account list is configuration-driven (FR-A4) with placeholder labels the
+   owner can rename in one place. Demo mode mirrors the real count (2).
+2. **Privacy — Supabase + PIN gate.** Real account snapshots and the AI
+   brief (which quotes account numbers) live in Supabase behind RLS, readable
+   only after PIN login via the data directive's client-auth pattern
+   (SECURITY DEFINER login function; anon key client-side; service-role key
+   only in scheduled jobs). Market summary and news are not private and may
+   be served as committed public JSON. This adds derived requirements:
+   - FR-AUTH1: account windows, equity charts, and AI brief render only
+     after successful PIN entry; market strip and news may render pre-auth.
+   - FR-AUTH2: a wrong PIN shows a clear error (what happened + what to do)
+     and never reveals whether data exists.
+   - FR-AUTH3: a seeded read-only test credential (TEST_AUTH_CREDENTIAL)
+     exists for live QA per the test directive; it maps to demo-grade data,
+     not the owner's real accounts.
+   - Accepted residuals per data.md (PIN space brute-forceable through the
+     login function; RLS cannot rate-limit) — record in CLAUDE.md.
+3. **Cadence — daily after US market close.** One scheduled run per trading
+   day (target ~22:30 UTC, after IBKR Flex generation); manual re-run
+   possible via workflow dispatch. FR-D4 failure behavior unchanged.
+4. **News/market data source — delegated to `plan`.** Owner accepted
+   free-tier sources chosen at plan time; any API key ships as a repo
+   secret, never client-side.
+5. **AI brief — Anthropic API.** Owner supplies ANTHROPIC_API_KEY as a repo
+   secret; the scheduled job generates the brief server-side and stores it
+   with the private data (see 2). Model choice is a `plan` decision.
