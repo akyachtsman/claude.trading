@@ -1,11 +1,17 @@
 {
   "asOf": "2026-07-09",
-  "generatedAt": "2026-07-09T19:43:53.588Z",
+  "generatedAt": "2026-07-09T19:48:17.350Z",
   "items": [
+    {
+      "t": "19:44",
+      "src": "CNBC",
+      "h": "Kalshi traders think gas prices will stay higher for longer as U.S.-Iran tensions heat back up",
+      "chips": []
+    },
     {
       "t": "19:43",
       "src": "MarketWatch",
-      "h": "&#x2018;I get $1,460 in Social Security&#x2019;: My millionaire ex-husband, 74, refuses to pay alimony. What can I do?",
+      "h": "‘I get $1,460 in Social Security’: My millionaire ex-husband, 74, refuses to pay alimony. What can I do?",
       "chips": []
     },
     {
@@ -35,7 +41,7 @@
     {
       "t": "19:11",
       "src": "MarketWatch",
-      "h": "Gen Z-ers share how they&#x2019;re achieving financial freedom &#x2014; and the old ideas they&#x2019;re leaving behind",
+      "h": "Gen Z-ers share how they’re achieving financial freedom — and the old ideas they’re leaving behind",
       "chips": []
     },
     {
@@ -63,15 +69,9 @@
       "chips": []
     },
     {
-      "t": "18:11",
-      "src": "CNBC",
-      "h": "Kalshi traders think gas prices will stay higher for longer as U.S.-Iran tensions heat back up",
-      "chips": []
-    },
-    {
       "t": "18:00",
       "src": "MarketWatch",
-      "h": "&#x2018;I&#x2019;ve no idea how they got her number&#x2019;: My student-loan servicer called a friend after I missed a payment. Is that legal?",
+      "h": "‘I’ve no idea how they got her number’: My student-loan servicer called a friend after I missed a payment. Is that legal?",
       "chips": []
     },
     {
@@ -107,7 +107,7 @@
     {
       "t": "16:13",
       "src": "MarketWatch",
-      "h": "Micron&#x2019;s stock surges on multibillion-dollar U.S. manufacturing push",
+      "h": "Micron’s stock surges on multibillion-dollar U.S. manufacturing push",
       "chips": []
     },
     {
