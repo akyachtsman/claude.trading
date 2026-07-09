@@ -1,0 +1,23 @@
+<FlexQueryResponse queryName="desk-daily" type="AF">
+  <FlexStatements count="2">
+    <FlexStatement accountId="U1111111" fromDate="20260707" toDate="20260708" period="LastTwoBusinessDays" whenGenerated="20260708;220505">
+      <EquitySummaryInBase>
+        <EquitySummaryByReportDateInBase accountId="U1111111" reportDate="2026-07-07" total="410000.42" cash="31000.00" />
+        <EquitySummaryByReportDateInBase accountId="U1111111" reportDate="2026-07-08" total="412386.54" cash="31200.00" />
+      </EquitySummaryInBase>
+      <OpenPositions>
+        <OpenPosition accountId="U1111111" symbol="NVDA" position="340" positionValue="58282.80" fifoPnlUnrealized="21140.20" />
+        <OpenPosition accountId="U1111111" symbol="SPY" position="220" positionValue="138688.00" fifoPnlUnrealized="12904.00" />
+      </OpenPositions>
+    </FlexStatement>
+    <FlexStatement accountId="U2222222" fromDate="20260707" toDate="20260708" period="LastTwoBusinessDays" whenGenerated="20260708;220505">
+      <EquitySummaryInBase>
+        <EquitySummaryByReportDateInBase accountId="U2222222" reportDate="20260707" total="268000.00" cash="12300.00" />
+        <EquitySummaryByReportDateInBase accountId="U2222222" reportDate="20260708" total="268930.77" cash="12400.00" />
+      </EquitySummaryInBase>
+      <OpenPositions>
+        <OpenPosition accountId="U2222222" symbol="VTI" position="480" positionValue="150024.00" fifoPnlUnrealized="28110.00" />
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

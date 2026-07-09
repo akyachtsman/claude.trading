@@ -2,3 +2,6 @@ node_modules/
 .claude/mcp.json
 .env
 .env.*
+
+# refresh pipeline runtime status files (read by write-meta.js, never committed)
+.github/scripts/refresh/.status/

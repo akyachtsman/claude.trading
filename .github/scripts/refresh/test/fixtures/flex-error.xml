@@ -1,0 +1,5 @@
+<FlexStatementResponse timestamp="08 July, 2026 05:05 PM EDT">
+  <Status>Fail</Status>
+  <ErrorCode>1019</ErrorCode>
+  <ErrorMessage>Statement generation in progress. Please try again shortly.</ErrorMessage>
+</FlexStatementResponse>
