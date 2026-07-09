@@ -76,6 +76,8 @@
 .lamp--live::before  { background: var(--color-gain); box-shadow: 0 0 6px var(--color-gain); }
 .lamp--eod::before   { background: var(--color-accent-bright); box-shadow: 0 0 6px var(--color-accent-bright); }
 .lamp--demo::before  { background: var(--color-series-3); box-shadow: 0 0 6px var(--color-series-3); }
+.lamp--locked::before { background: var(--color-text-secondary); }
+.lamp--stale::before  { background: var(--color-border-hover); }
 .stamp { font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
 
 /* P&L pill — text carries meaning, color reinforces */
@@ -172,5 +174,11 @@
   font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary);
   border-top: 1px solid var(--color-border); padding-top: var(--space-2); margin-top: var(--space-3);
 }
+
+/* locked panel (PIN gate) */
+.panel-lock .lock-explain { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0 0 var(--space-3); }
+.lock-form { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.lock-form .input { flex: 1 1 160px; max-width: 240px; }
+.lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-loss); margin: var(--space-2) 0 0; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

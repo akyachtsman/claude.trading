@@ -6,10 +6,10 @@ within its phase. Every task names its files. Check off as landed. Gates
 every push; qa-pipeline runs at each phase boundary.
 
 ## Phase A — frontend restructure (demo-first, pure static)
-- [ ] A1. Create `scripts/config.js`: `DESK_ACCOUNTS` (2 entries — key,
+- [x] A1. Create `scripts/config.js`: `DESK_ACCOUNTS` (2 entries — key,
       label placeholder, short-id mask, series slot), `DESK_DB` ({url:'',
       anonKey:''} — empty until Phase B ⇒ demo mode). dep: —
-- [ ] A2. Extract inline JS from `index.html` into `scripts/data.js`
+- [x] A2. Extract inline JS from `index.html` into `scripts/data.js`
       (formatters, seeded demo generator now driven by `DESK_ACCOUNTS`,
       LABELS/EQUITY builders) and `scripts/app.js` (el/svg helpers, strip/
       accounts/news/chart renderers, makeSortable, interactions);
@@ -19,35 +19,35 @@ every push; qa-pipeline runs at each phase boundary.
       snapshot) rendered by the same brief renderer D1 later reuses; the 1Y
       seg button becomes data-days="252"; update design.md's reference-page
       description to two account windows. dep: A1
-- [ ] A3. Add `.lamp--locked`/`.lamp--stale` + `.panel-lock` (PIN form:
+- [x] A3. Add `.lamp--locked`/`.lamp--stale` + `.panel-lock` (PIN form:
       48px `.input`, 44px `.btn`, error line) to `styles/components.css`,
       tokens only; extend `check-contrast.js` pairs if a new color pair
       appears (expected: none — reuse existing tokens). dep: —  [P]
-- [ ] A4. Mode resolution in `scripts/data.js`: `demo` when `?demo=1` or
+- [x] A4. Mode resolution in `scripts/data.js`: `demo` when `?demo=1` or
       `!DESK_DB.url`; else `live`. In live: fetch `data/meta.json`,
       `data/market.json`, `data/news.json` with `?v=<Date.now()>`;
       per-domain fallback to last-known/demo-labeled with correct lamp.
       dep: A2
-- [ ] A5. Locked-state rendering in `scripts/app.js`: in live mode
+- [x] A5. Locked-state rendering in `scripts/app.js`: in live mode
       pre-auth, account grid + equity panel + brief panel render locked
       variants (lamp LOCKED, one-line explain, PIN form once — in the
       accounts header area); market strip + news render normally. dep: A2, A3
-- [ ] A6. Auth flow in `scripts/app.js`: submit PIN → (Phase B wires real
+- [x] A6. Auth flow in `scripts/app.js`: submit PIN → (Phase B wires real
       RPC; until then a stub rejects) → error line "PIN not recognized —
       try again"; success path renders full dashboard from payload;
       sessionStorage `desk_pin`; masthead "Lock" button clears + re-renders
       locked. dep: A5
-- [ ] A7. Staleness engine in `scripts/data.js`: per-panel lamp state from
+- [x] A7. Staleness engine in `scripts/data.js`: per-panel lamp state from
       each domain's embedded as-of (EOD if == last US trading day, else
       STALE + true date); masthead overall stamp from meta; DEMO overrides
       all in demo mode. Include last-trading-day helper (weekends/observed
       holidays list). dep: A4
-- [ ] A8. Timeframe guard in `scripts/app.js`: disable seg buttons whose
+- [x] A8. Timeframe guard in `scripts/app.js`: disable seg buttons whose
       window exceeds available history (aria-disabled + title reason). Demo
       generator (data.js) produces 260 trading days so every timeframe is
       exercisable in demo; the guard is for live mode's growing history.
       dep: A2
-- [ ] A9. Playwright parity run (local): S1–S4 basics + demo render, sort,
+- [x] A9. Playwright parity run (local): S1–S4 basics + demo render, sort,
       consolidate, timeframes, hover; fix regressions. dep: A2–A8
 - [ ] A10. Gates + qa-pipeline agent (Phase A scope); PR "feat: modular
       frontend + auth/locked states (demo)" → merge → update-pages verify

@@ -33,7 +33,7 @@ most recognizable visual motif of the page.
 ## Reference page
 `index.html` — the dashboard itself, on deterministic demo data (seeded
 walks, stable screenshots): masthead + lamps, market-summary strip with
-sparklines, three account windows (NAV hero, stat grid, equity sparkline,
+sparklines, two account windows (config-driven roster in scripts/config.js) (NAV hero, stat grid, equity sparkline,
 sortable compact positions table), combined equity chart (3 series, direct
 end-labels + legend, crosshair + tooltip, timeframe seg, consolidate toggle,
 "view data table" fallback), AI daily brief (structured: state → levels →
@@ -57,7 +57,7 @@ provenance footer.
   full interaction layer + data-table fallback.
 
 ## Status
-Awaiting look-gate sign-off on the reference page (presented as screenshots;
-deploys to Pages on merge). Next: `/sdd-loop` — it builds everything else
-against `styles/tokens.css` + `styles/components.css`, so every page matches
-this one.
+Look approved at the gate (white/light revision) and live on Pages. The
+build proceeds via `/sdd-loop` against `styles/tokens.css` +
+`styles/components.css`. Phase A added `.lamp--locked`/`.lamp--stale` and
+the `.panel-lock` PIN form to the contract (token-based, AA-checked).
