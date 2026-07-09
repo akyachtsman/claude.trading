@@ -148,10 +148,63 @@ function lampFor(asOfIso, now) {
     : { cls: 'lamp--stale', text: 'STALE', stamp: 'As of ' + asOfIso + ' — refresh overdue' };
 }
 
-/* Auth: Phase A ships a stub; Phase B replaces these with Supabase RPCs. */
-async function deskLogin(_pin) {
-  return { ok: false, error: 'Backend not connected yet — the desk runs in demo mode until Phase B.' };
+/* Auth: PIN-validated Supabase RPCs (SECURITY DEFINER, anon-only EXECUTE).
+   Two plain fetch calls — no client library needed for /rest/v1/rpc. */
+async function deskRpc(fn, pin) {
+  const res = await fetch(DESK_DB.url + '/rest/v1/rpc/' + fn, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: DESK_DB.anonKey,
+      authorization: 'Bearer ' + DESK_DB.anonKey,
+    },
+    body: JSON.stringify({ pin }),
+  });
+  if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
+  return res.json();
 }
-async function deskGetDashboard(_pin) {
-  return null;
+async function deskLogin(pin) {
+  const out = await deskRpc('desk_login', pin);
+  return out && out.ok ? out : { ok: false, error: 'PIN not recognized — try again.' };
+}
+async function deskGetDashboard(pin) {
+  const out = await deskRpc('desk_get_dashboard', pin);
+  return out && out.ok ? out : null;
+}
+
+/* Map the RPC payload into the render model app.js uses (same shape demo
+   mode builds). Equity series are aligned on dates present for EVERY
+   account so the consolidated sum is well-defined. */
+function mapDashboardPayload(payload) {
+  const byDate = new Map();
+  for (const row of payload.equity) {
+    if (!byDate.has(row.as_of)) byDate.set(row.as_of, {});
+    byDate.get(row.as_of)[row.account_key] = Number(row.nav);
+  }
+  const acctKeys = payload.accounts.map(a => a.account_key);
+  const dates = [...byDate.keys()].sort().filter(d => acctKeys.every(k => byDate.get(d)[k] !== undefined));
+  const labels = dates.map(d => {
+    const [y, m, day] = d.split('-').map(Number);
+    return MONTHS[m - 1] + ' ' + day;
+  });
+  const cfgByKey = Object.fromEntries(DESK_ACCOUNTS.map(a => [a.key, a]));
+  const accounts = payload.accounts.map(a => ({
+    key: a.account_key,
+    label: a.label || (cfgByKey[a.account_key] || {}).label || 'Account ' + a.account_key,
+    code: (cfgByKey[a.account_key] || {}).code || '',
+    nav: Number(a.nav), day: Number(a.day_pnl), total: Number(a.total_unrl), cash: Number(a.cash),
+    positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: Number(p.mkt), dayPct: Number(p.dayPct), unrl: Number(p.unrl) })),
+    equity: dates.map(d => byDate.get(d)[a.account_key]),
+    asOf: a.as_of,
+  }));
+  let brief = null;
+  if (payload.brief && payload.brief.content) {
+    const c = payload.brief.content;
+    brief = {
+      generatedAt: (payload.brief.generated_at || '').slice(0, 16).replace('T', ' ') + ' UTC',
+      state: c.state || '', levels: c.levels || [], scenarios: c.scenarios || [],
+      asOf: payload.brief.as_of,
+    };
+  }
+  return { accounts, labels, brief, asOf: accounts.length ? accounts[0].asOf : null };
 }

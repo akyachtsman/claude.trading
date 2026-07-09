@@ -9,10 +9,11 @@ daylight-ledger contract (design.md) — build against `styles/*`, don't fork it
 ## Stack
 - **Frontend:** plain HTML + CSS + vanilla JS on GitHub Pages (existing
   `index.html` evolves; JS moves to `scripts/app.js` + `scripts/data.js`;
-  no framework, no build). `@supabase/supabase-js@2` **vendored** as one
-  pinned, integrity-noted file in `scripts/vendor/` (fetched once at
-  implement, committed) — equally no-build, and drops the external CDN
-  runtime dependency a module import would add.
+  no framework, no build). [Implement-time decision, Phase B: the planned
+  vendored `@supabase/supabase-js` was dropped — the app makes exactly two
+  RPC POSTs, done with a 15-line `fetch` wrapper in `scripts/data.js`. Zero
+  dependencies beats a ~100KB vendored blob for this surface; data.md's
+  "prefer supabase-js" targets query-building layers, which this is not.]
 - **Private data:** Supabase (hosted Postgres) — RLS default-deny; browser
   uses the publishable/anon key (repo variable `DB_URL` + `DB_ANON_KEY`)
   and reads exclusively through SECURITY DEFINER RPCs that validate the PIN.

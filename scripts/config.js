@@ -9,6 +9,9 @@ const DESK_ACCOUNTS = [
   { key: 2, label: 'Account B', code: 'U***2222', seed: 303, drift: 0.0003, vol: 0.010 },
 ];
 
-/* Filled in Phase B (Supabase project URL + publishable anon key — public by
-   design, RLS + PIN RPCs are the enforcement boundary). Empty ⇒ DEMO mode. */
-const DESK_DB = { url: '', anonKey: '' };
+/* Supabase project URL + publishable key — public by design; RLS + PIN RPCs
+   are the enforcement boundary (data.md). Clear both to force DEMO mode. */
+const DESK_DB = {
+  url: 'https://bdsegmjcgfmgzuxwiplj.supabase.co',
+  anonKey: 'sb_publishable_38rZb9UyalhHQ8rFyr-77A_2NXk2bht',
+};

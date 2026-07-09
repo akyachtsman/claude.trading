@@ -464,9 +464,11 @@ function renderPrivate() {
 }
 
 async function loadPrivate(pin) {
-  const payload = await deskGetDashboard(pin);
+  const payload = await deskGetDashboard(pin).catch(() => null);
   if (!payload) { DESK.authed = false; renderLockedPanels(); return; }
-  /* Phase B maps the RPC payload into DESK.data here. */
+  const mapped = mapDashboardPayload(payload);
+  DESK.data = { ...DESK.data, accounts: mapped.accounts, labels: mapped.labels, brief: mapped.brief };
+  DESK.privateAsOf = mapped.asOf;
   renderPrivate();
 }
 
@@ -485,15 +487,18 @@ async function boot() {
   try {
     DESK.meta = await fetchPublic('data/meta.json');
   } catch { DESK.meta = null; }
+  /* Public domains: real committed JSON when the pipeline has run; until
+     then fall back to clearly-labeled DEMO data (A4 per-domain fallback —
+     never an empty strip, never demo masquerading as real). */
   try {
     const market = await fetchPublic('data/market.json');
     renderStrip(market.tiles || []);
-  } catch { renderStrip([]); }
+  } catch { renderStrip(DESK.data.market); }
   try {
     const news = await fetchPublic('data/news.json');
     renderNews(news.items || [], lampFor(news.asOf, new Date()));
   } catch {
-    renderNews([], { cls: 'lamp--stale', text: 'NO DATA' });
+    renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
   }
   renderMasthead();
   const pin = sessionStorage.getItem('desk_pin');
