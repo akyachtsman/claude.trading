@@ -93,8 +93,11 @@ showing them side by side with charts, market context, news, and analysis.
 - FR-D2: Every panel shows an as-of timestamp and a data-state lamp
   (LIVE/EOD/DEMO per the design contract); the masthead shows the overall
   snapshot time.
-- FR-D3: Until real credentials are configured, the dashboard runs fully on
-  labeled DEMO data — the demo state must be visually unmistakable.
+- FR-D3: When no backend is configured (or `?demo=1`), the dashboard runs
+  fully on labeled DEMO data — visually unmistakable. Once the backend is
+  wired but before real broker data exists, private panels show their
+  LOCKED state (per FR-AUTH1) — never demo data masquerading as real, and
+  never real-looking placeholders.
 - FR-D4: If a scheduled refresh fails, the dashboard keeps serving the last
   good snapshot with its true (older) as-of time; the failure is surfaced to
   the owner (notification per repo standards), not hidden.
@@ -163,9 +166,11 @@ showing them side by side with charts, market context, news, and analysis.
      not the owner's real accounts.
    - Accepted residuals per data.md (PIN space brute-forceable through the
      login function; RLS cannot rate-limit) — record in CLAUDE.md.
-3. **Cadence — daily after US market close.** One scheduled run per trading
-   day (target ~22:30 UTC, after IBKR Flex generation); manual re-run
-   possible via workflow dispatch. FR-D4 failure behavior unchanged.
+3. **Cadence — daily after US market close.** One refresh per trading day
+   (target ~22:30 UTC, after IBKR Flex generation), with a same-day-retry
+   cron the next early-UTC morning that only acts if the close run found
+   IBKR data not yet generated — a retry of the same refresh, not a second
+   refresh. Manual re-run via workflow dispatch. FR-D4 unchanged.
 4. **News/market data source — delegated to `plan`.** Owner accepted
    free-tier sources chosen at plan time; any API key ships as a repo
    secret, never client-side.
