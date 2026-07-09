@@ -124,7 +124,7 @@ every push; qa-pipeline runs at each phase boundary.
       run; verify: public JSONs committed + site shows real market/news
       with EOD lamps; IBKR/Anthropic steps no-op politely without secrets.
       dep: C9
-- [ ] C10b. SC7 verification: dispatch a refresh with one domain forced to
+- [x] C10b. SC7 verification: dispatch a refresh with one domain forced to
       fail (temporarily point fetch-market at an invalid host via a
       workflow input used only for this test); assert the site keeps
       serving the previous `data/market.json` with its older as-of stamp
