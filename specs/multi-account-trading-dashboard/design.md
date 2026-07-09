@@ -1,11 +1,12 @@
 # Design record — claude.trading
 
-## Look: "Midnight desk ledger"
-A private trading desk instrument, not a SaaS product. Deep ink-blue ground
-(never pure black), warm paper ink (not stark white), and a brass/amber
-accent nodding to classic terminal hardware — while green/red stay strictly
-reserved for P&L semantics. Deliberately not the category's default
-blue-accent dark theme, and not the acid-green-on-black cliché.
+## Look: "Daylight desk ledger" (v2 — user feedback at look-gate)
+A private trading desk instrument on paper: white panels on a warm paper
+ground, warm near-black ink, and a brass/amber accent nodding to classic
+terminal hardware — while green/red stay strictly reserved for P&L
+semantics. v1 was dark ("midnight ledger"); the owner asked for a white
+background at the look-gate, so light is now the committed theme. Same
+structure, grammar, and signature; only tokens.css changed.
 
 ## Signature element
 **The trust layer is the identity**: every panel carries a data-state lamp
@@ -16,12 +17,12 @@ most recognizable visual motif of the page.
 
 ## Contract
 - `styles/tokens.css` — all primitives. Key decisions:
-  - `--color-accent` #9C6410 (brass; white button text 4.95:1, surface 3.66:1)
-  - `--color-accent-bright` #E5AE45 — lamps/wordmark/focus only (decorative/large)
-  - `--color-gain` #4CC38A / `--color-loss` #F07575 — P&L ONLY, never decorative
-  - `--color-series-1..3` (#3987E5 blue, #C98500 amber, #9085E9 violet) —
+  - `--color-accent` #96610F (brass; white button text 5.23:1, bg 4.76:1)
+  - `--color-accent-bright` #8F5D12 — wordmark/lamps/active states, text-safe on white
+  - `--color-gain` #177C4B / `--color-loss` #C13636 — P&L ONLY, never decorative
+  - `--color-series-1..3` (#2A78D6 blue, #C98500 amber, #4A3AA7 violet) —
     account identity; CVD-validated as an ordered set with the dataviz
-    validator (worst adjacent ΔE 112, all ≥3:1 on surface). **Do not reorder.**
+    validator (light surface, worst adjacent ΔE 114, all ≥3:1). **Do not reorder.**
   - Type: IBM Plex Sans (UI) + IBM Plex Mono (all numerics, tabular figures),
     via Google Fonts with system fallbacks.
 - `styles/components.css` — the module grammar: `.panel` (+header/title/body),
@@ -42,7 +43,7 @@ provenance footer.
 ## Verification (all fresh at time of record)
 - `npx html-validate index.html` — clean
 - `node .github/scripts/check-contrast.js` — all pairs AA
-- dataviz `validate_palette.js` — series trio passes (dark, surface #12161F)
+- dataviz `validate_palette.js` — series trio passes (light, surface #FFFFFF)
 - Playwright renders at 1440px and 834px (iPad): no JS errors (the single
   network error is the Google Fonts fetch blocked in the sandbox; system
   fallbacks apply), tables fit, hover tooltip works
@@ -51,7 +52,7 @@ provenance footer.
 - Price-change percentages use 2 decimals (finance convention) — a deliberate
   project-level exception to the editorial "whole-number percentages" rule;
   allocation-style percentages stay whole.
-- Dark-only in v1; a light theme is a token-block swap later if wanted.
+- Light-only (owner request); a dark theme is a token-block swap later if wanted.
 - Account sparklines are passive (no tooltip); the combined chart carries the
   full interaction layer + data-table fallback.
 

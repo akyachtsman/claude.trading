@@ -1,38 +1,38 @@
 /* ── tokens.css — claude.trading brand primitives ────────────────────────────
-   "Midnight desk ledger": deep ink-blue ground, warm paper ink, brass
-   instrument accent. Green/red are reserved for P&L semantics only; account
-   series colors are a CVD-validated categorical trio (dataviz-validated,
-   ordering is the safety mechanism — do not reorder). The CI contrast
-   guardrail (.github/scripts/check-contrast.js) checks the core pairs. */
+   "Daylight desk ledger": white panels on warm paper, warm near-black ink,
+   brass instrument accent. Green/red are reserved for P&L semantics only;
+   account series colors are a CVD-validated categorical trio (dataviz
+   validator, light surface — ordering is the safety mechanism, do not
+   reorder). The CI contrast guardrail checks the core pairs. */
 :root {
   /* color — ground */
-  --color-bg:             #0B0E14;
-  --color-surface:        #12161F;
-  --color-surface-2:      #191F2B;
-  --color-border:         #232B3A;
-  --color-border-hover:   #3A465C;
+  --color-bg:             #F6F4EF;
+  --color-surface:        #FFFFFF;
+  --color-surface-2:      #F1EEE6;
+  --color-border:         #E2DDD1;
+  --color-border-hover:   #C7C0AE;
 
-  /* color — ink (warm paper on midnight) */
-  --color-text-primary:   #E9E4D8;
-  --color-text-secondary: #A9A392;
+  /* color — ink (warm near-black on paper) */
+  --color-text-primary:   #1D1A13;
+  --color-text-secondary: #5E594B;
 
   /* color — brass accent (instrument hardware; white btn text ≥ 4.5:1) */
-  --color-accent:         #9C6410;
-  --color-accent-hover:   #855507;
-  --color-accent-bright:  #E5AE45; /* lamps, wordmark, focus ring — large/decorative only */
-  --color-accent-light:   #2A2210; /* amber tint for focus halos / selected rows */
+  --color-accent:         #96610F;
+  --color-accent-hover:   #7E5008;
+  --color-accent-bright:  #8F5D12; /* wordmark, lamps, active states — text-safe on white */
+  --color-accent-light:   #F3E8CC; /* amber tint for focus halos / selected rows */
 
   /* color — P&L semantics ONLY (never decorative) */
-  --color-gain:           #4CC38A;
-  --color-loss:           #F07575;
-  --color-gain-dim:       #142A20;
-  --color-loss-dim:       #2A181A;
-  --color-danger:         #F07575;
+  --color-gain:           #177C4B;
+  --color-loss:           #C13636;
+  --color-gain-dim:       #E3F2E9;
+  --color-loss-dim:       #FAE8E8;
+  --color-danger:         #C13636;
 
   /* color — account series (categorical, fixed order, CVD-validated) */
-  --color-series-1:       #3987E5;
+  --color-series-1:       #2A78D6;
   --color-series-2:       #C98500;
-  --color-series-3:       #9085E9;
+  --color-series-3:       #4A3AA7;
 
   /* type — IBM Plex: instrument-panel heritage; mono carries all numerics */
   --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -47,7 +47,7 @@
   /* radius — tight, instrument-like */
   --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px;
 
-  /* shadow — hairline lift on a dark ground */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.5);
-  --shadow-md: 0 4px 12px rgba(0,0,0,.45);
+  /* shadow — hairline lift on paper */
+  --shadow-sm: 0 1px 2px rgba(29,26,19,.07), 0 1px 1px rgba(29,26,19,.04);
+  --shadow-md: 0 4px 12px rgba(29,26,19,.10);
 }
