@@ -54,19 +54,20 @@ every push; qa-pipeline runs at each phase boundary.
       live. dep: A9
 
 ## Phase B — Supabase (private data + PIN)
-- [ ] B1. Supabase MCP: `list_projects`; if none suitable, get owner
-      cost-confirmation then `create_project` "claude-trading". Record
-      project ref + `DB_URL` + anon key. dep: —
-- [ ] B2. Migration `001_tables.sql` via `apply_migration`: desk_users,
+- [x] B1. Supabase MCP: free tier full (2/2 projects); dedicated project
+      blocked — desk tables live `desk_`-prefixed in the lighter existing
+      project ("insurance", ref bdsegmjcgfmgzuxwiplj), reversible via
+      schema move if the owner later frees a slot/upgrades. dep: —
+- [x] B2. Migration `001_tables.sql` via `apply_migration`: desk_users,
       account_snapshots, equity_history, ai_briefs (+uniques per plan),
       `alter table … enable row level security` on all; no policies (all
       default-deny). dep: B1
-- [ ] B3. Migration `002_rpcs.sql`: `desk_login(pin)` +
+- [x] B3. Migration `002_rpcs.sql`: `desk_login(pin)` +
       `desk_get_dashboard(pin)` (SECURITY DEFINER, `set search_path`,
       salted sha256 via pgcrypto, constant-time compare, history bounded
       400 rows/account); `revoke execute … from public, authenticated;
       grant execute … to anon;`. dep: B2
-- [ ] B4. Seed migration `003_seed.sql`: owner row (random placeholder PIN
+- [x] B4. Seed migration `003_seed.sql`: owner row (random placeholder PIN
       hash — owner rotates via SQL editor; instructions in PR body), test
       row with a session-generated test PIN (demo-grade snapshots + 260d
       equity + one brief for the test user). dep: B2
@@ -74,14 +75,14 @@ every push; qa-pipeline runs at each phase boundary.
       `TEST_AUTH_CREDENTIAL` repo secret (needed by qa-live/E1; B8 uses the
       value directly in-session, so B-phase e2e is not blocked on this).
       dep: B4
-- [ ] B5. `get_advisors` (security + performance) — fix every finding or
+- [x] B5. `get_advisors` (security + performance) — fix every finding or
       record accepted residual. dep: B3, B4
-- [ ] B6. Vendor `scripts/vendor/supabase.js` (pinned @supabase/supabase-js@2
+- [x] B6. (replaced by decision — plain fetch RPC wrapper in data.js; see plan.md Stack note) Vendor `scripts/vendor/supabase.js` (pinned @supabase/supabase-js@2
       UMD build, version + integrity noted in header comment). dep: —  [P]
-- [ ] B7. Wire `scripts/data.js`: fill `DESK_DB` from B1; `desk_login` /
+- [x] B7. Wire `scripts/data.js`: fill `DESK_DB` from B1; `desk_login` /
       `desk_get_dashboard` calls replace the A6 stub; map payload → render
       model (snapshots, equity, brief). dep: B3, B6, A10
-- [ ] B8. Live e2e vs test user: Playwright (or manual via served page)
+- [x] B8. Live e2e vs test user: Playwright (or manual via served page)
       — wrong PIN error, correct test PIN renders test data; verify no
       real data reachable without PIN (curl RPC with bad pin). dep: B7
 - [ ] B9. Gates + PR "feat: Supabase PIN gate + private data path" →
