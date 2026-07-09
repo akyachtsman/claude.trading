@@ -1,29 +1,107 @@
 {
   "asOf": "2026-07-09",
-  "generatedAt": "2026-07-09T19:48:17.350Z",
+  "generatedAt": "2026-07-09T23:45:03.486Z",
   "items": [
     {
-      "t": "19:44",
+      "t": "23:38",
       "src": "CNBC",
-      "h": "Kalshi traders think gas prices will stay higher for longer as U.S.-Iran tensions heat back up",
+      "h": "OpenAI exec Fidji Simo says she's stepping down due to chronic illness, will transition to advisor",
       "chips": []
     },
     {
-      "t": "19:43",
+      "t": "23:00",
+      "src": "CNBC",
+      "h": "Inside NATO's extraordinary 48 hours that revealed Trump's grip on global diplomacy",
+      "chips": []
+    },
+    {
+      "t": "23:00",
+      "src": "CNBC",
+      "h": "New Fed task force members share Chairman Kevin Warsh's embrace of AI",
+      "chips": []
+    },
+    {
+      "t": "22:47",
+      "src": "CNBC",
+      "h": "Where Jim Cramer stands on SK Hynix's massive offering",
+      "chips": []
+    },
+    {
+      "t": "22:30",
       "src": "MarketWatch",
-      "h": "‘I get $1,460 in Social Security’: My millionaire ex-husband, 74, refuses to pay alimony. What can I do?",
+      "h": "Taco Bell is reportedly pulling produce from some stores. Here’s what to know.",
       "chips": []
     },
     {
-      "t": "19:29",
+      "t": "22:19",
+      "src": "MarketWatch",
+      "h": "Why a hidden divergence between the VIX and Nasdaq volatility has the smart money on edge",
+      "chips": []
+    },
+    {
+      "t": "22:07",
+      "src": "MarketWatch",
+      "h": "SK Hynix is about to hit the U.S. market. Here’s what to know about the deal.",
+      "chips": []
+    },
+    {
+      "t": "22:00",
+      "src": "MarketWatch",
+      "h": "‘I’ve no idea how they got her number’: My student-loan servicer called a friend after I missed a payment. Is that legal?",
+      "chips": []
+    },
+    {
+      "t": "21:52",
+      "src": "MarketWatch",
+      "h": "Can Walmart help the Fed harness real-time U.S. economic data? We’re about to find out.",
+      "chips": []
+    },
+    {
+      "t": "21:29",
+      "src": "MarketWatch",
+      "h": "A junior employee saved this company six figures using AI. Here’s how.",
+      "chips": []
+    },
+    {
+      "t": "21:09",
+      "src": "MarketWatch",
+      "h": "The dot-com crash was a $5 trillion blip. Why the next financial crisis could hit 4 times harder.",
+      "chips": []
+    },
+    {
+      "t": "21:00",
+      "src": "MarketWatch",
+      "h": "‘The money would have been life-changing’: My father told my grandmother to slash my inheritance. Is that fair?",
+      "chips": []
+    },
+    {
+      "t": "20:58",
+      "src": "MarketWatch",
+      "h": "Meta’s stock rebounds as agentic AI coding and custom chips ease spending fears",
+      "chips": []
+    },
+    {
+      "t": "20:56",
+      "src": "MarketWatch",
+      "h": "A slower AI payoff risks tipping the economy into recession, Apollo says",
+      "chips": []
+    },
+    {
+      "t": "20:55",
+      "src": "CNBC",
+      "h": "Florida's Palm Beach airport renamed for Trump",
+      "chips": []
+    },
+    {
+      "t": "20:45",
+      "src": "CNBC",
+      "h": "Anduril CEO says it's bad to IPO in ‘middle of a hype cycle’",
+      "chips": []
+    },
+    {
+      "t": "19:53",
       "src": "CNBC",
       "h": "Kevin Warsh names members of his Federal Reserve task forces, including Marc Andreessen, Doug McMillon",
-      "chips": []
-    },
-    {
-      "t": "19:29",
-      "src": "MarketWatch",
-      "h": "What affordability crisis? Rich home buyers are powering the housing market.",
       "chips": []
     },
     {
@@ -39,87 +117,9 @@
       "chips": []
     },
     {
-      "t": "19:11",
-      "src": "MarketWatch",
-      "h": "Gen Z-ers share how they’re achieving financial freedom — and the old ideas they’re leaving behind",
-      "chips": []
-    },
-    {
-      "t": "18:52",
-      "src": "CNBC",
-      "h": "Anduril CEO says it's bad to IPO in ‘middle of a hype cycle’",
-      "chips": []
-    },
-    {
       "t": "18:52",
       "src": "CNBC",
       "h": "Prediction markets spark insider trading concerns. Here's how Goldman and other companies are responding",
-      "chips": []
-    },
-    {
-      "t": "18:50",
-      "src": "CNBC",
-      "h": "Palo Alto CEO Arora says AI pricing needs to fall 90% as token costs skyrocket",
-      "chips": []
-    },
-    {
-      "t": "18:27",
-      "src": "CNBC",
-      "h": "Florida's Palm Beach airport renamed for Trump",
-      "chips": []
-    },
-    {
-      "t": "18:00",
-      "src": "MarketWatch",
-      "h": "‘I’ve no idea how they got her number’: My student-loan servicer called a friend after I missed a payment. Is that legal?",
-      "chips": []
-    },
-    {
-      "t": "17:52",
-      "src": "MarketWatch",
-      "h": "Risky leveraged ETFs are booming in 2026. Some worry they could be making the stock market more volatile.",
-      "chips": []
-    },
-    {
-      "t": "17:35",
-      "src": "CNBC",
-      "h": "Alleged Reflecting Pool vandal David Hearn pleads not guilty; lawyer calls him 'scapegoat'",
-      "chips": []
-    },
-    {
-      "t": "17:23",
-      "src": "CNBC",
-      "h": "Anthropic appoints former Fed Chair Ben Bernanke to its independent trust",
-      "chips": []
-    },
-    {
-      "t": "16:31",
-      "src": "MarketWatch",
-      "h": "Home prices hit new all-time high, deepening affordability woes",
-      "chips": []
-    },
-    {
-      "t": "16:30",
-      "src": "MarketWatch",
-      "h": "Mortgage rates jump as tensions with Iran spook bond investors",
-      "chips": []
-    },
-    {
-      "t": "16:13",
-      "src": "MarketWatch",
-      "h": "Micron’s stock surges on multibillion-dollar U.S. manufacturing push",
-      "chips": []
-    },
-    {
-      "t": "16:08",
-      "src": "CNBC",
-      "h": "These 10 states are best positioned to land AI data center deals despite rising public opposition",
-      "chips": []
-    },
-    {
-      "t": "16:04",
-      "src": "MarketWatch",
-      "h": "This is why paper checks refuse to die",
       "chips": []
     }
   ]

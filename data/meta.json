@@ -1,30 +1,30 @@
 {
   "asOf": "2026-07-09",
-  "generatedAt": "2026-07-09T19:48:17.509Z",
+  "generatedAt": "2026-07-09T23:45:03.635Z",
   "domains": {
     "accounts": {
       "status": "skipped",
       "asOf": null,
       "detail": "IBKR secrets not set",
-      "at": "2026-07-09T19:48:17.419Z"
+      "at": "2026-07-09T23:45:03.549Z"
     },
     "brief": {
       "status": "skipped",
       "asOf": null,
       "detail": "ANTHROPIC_API_KEY not set",
-      "at": "2026-07-09T19:48:17.468Z"
+      "at": "2026-07-09T23:45:03.595Z"
     },
     "market": {
-      "status": "failed",
+      "status": "ok",
       "asOf": "2026-07-09",
-      "detail": "fetch failed",
-      "at": "2026-07-09T19:48:16.973Z"
+      "detail": "",
+      "at": "2026-07-09T23:45:02.833Z"
     },
     "news": {
       "status": "ok",
       "asOf": "2026-07-09",
       "detail": "",
-      "at": "2026-07-09T19:48:17.352Z"
+      "at": "2026-07-09T23:45:03.487Z"
     }
   }
 }
