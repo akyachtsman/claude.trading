@@ -10,10 +10,10 @@ const DESK_ACCOUNTS = [
 ];
 
 /* Supabase project URL + publishable key — public by design; RLS + PIN RPCs
-   are the enforcement boundary (data.md). Empty ⇒ DEMO mode. Awaiting a
-   DEDICATED Supabase project for the desk (the previous backend was removed
-   from an unrelated project at the owner's direction — never share one). */
+   are the enforcement boundary (data.md). Empty ⇒ DEMO mode. This is the
+   desk's DEDICATED project ("trading dashboard", owner-created 2026-07-10);
+   per learnings.jsonl, desk objects never live in any other project. */
 const DESK_DB = {
-  url: '',
-  anonKey: '',
+  url: 'https://kwugzhyfjevzwgplhtsd.supabase.co',
+  anonKey: 'sb_publishable_5SCxDQzd0D7aEbbgG3C_3w_4cvGNP0E',
 };
