@@ -10,8 +10,10 @@ const DESK_ACCOUNTS = [
 ];
 
 /* Supabase project URL + publishable key — public by design; RLS + PIN RPCs
-   are the enforcement boundary (data.md). Clear both to force DEMO mode. */
+   are the enforcement boundary (data.md). Empty ⇒ DEMO mode. Awaiting a
+   DEDICATED Supabase project for the desk (the previous backend was removed
+   from an unrelated project at the owner's direction — never share one). */
 const DESK_DB = {
-  url: 'https://bdsegmjcgfmgzuxwiplj.supabase.co',
-  anonKey: 'sb_publishable_38rZb9UyalhHQ8rFyr-77A_2NXk2bht',
+  url: '',
+  anonKey: '',
 };
