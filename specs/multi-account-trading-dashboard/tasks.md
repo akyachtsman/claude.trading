@@ -137,7 +137,7 @@ every push; qa-pipeline runs at each phase boundary.
       dep: C10, B9
 
 ## Phase D — brief panel + polish
-- [ ] D1. Brief panel live wiring: render from RPC payload; missing/stale
+- [x] D1. Brief panel live wiring: render from RPC payload; missing/stale
       handling per FR-AI4 (stale date line); disclaimers + generated-at
       always visible. dep: B7, C7
 - [ ] D2. Polish pass vs design.md craft + research.md bar: states
