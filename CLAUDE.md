@@ -11,7 +11,10 @@ https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/
 ## Project Overview
 - **Project name:** claude.trading — multi-account trading dashboard
 - **Live URL:** https://akyachtsman.github.io/claude.trading/
-- **Stack:** Static tier — plain HTML + CSS + vanilla JS on GitHub Pages (no build); [confirm or upgrade to production tier post-merge]
+- **Stack:** Static tier — plain HTML + CSS + vanilla JS on GitHub Pages (no
+  build), confirmed. Dynamic data arrives two ways: public JSON committed by a
+  scheduled pipeline, and (when live mode is enabled) private data behind
+  PIN-validated Supabase RPCs.
 - **Branch policy:** Develop on a `claude/<name>` feature branch; PRs target `main`
 
 ## Design
@@ -19,27 +22,75 @@ This project's look is its own — established at kickoff via `/design-intake`
 (per `directives/design.md`), not a shared company theme. It lives in:
 - `styles/tokens.css` — brand primitives (color, type, spacing, radius, shadow)
 - `styles/components.css` — reusable components
-- **Reference page:** `[set at /design-intake]`
+- **Reference page:** `index.html` on demo data (see `specs/multi-account-trading-dashboard/design.md` — "Daylight desk ledger")
 
 ## Application Architecture
-- [main source file/folder] — [brief description]
+- `index.html` — markup only + 3 script tags; all render-blocking assets share
+  ONE `?v=` cache-bust token (bump them together on every asset change).
+- `scripts/config.js` — account roster (`DESK_ACCOUNTS`) + backend endpoints
+  (`DESK_DB`). **Empty `DESK_DB.url` ⇒ the whole site runs in DEMO mode**
+  (current state — awaiting a dedicated Supabase project).
+- `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
+  mode resolution, public JSON loaders (cache-busted), staleness lamps,
+  Supabase RPC + edge-function fetch wrappers.
+- `scripts/app.js` — all rendering + interactions (accounts, chart, brief with
+  FR-AI4 staleness, news, ask-the-desk panel, PIN lock/unlock flow).
+- `data/*.json` — public market/news/meta snapshots, committed daily by the
+  pipeline (never edited by hand).
+- `config/news-feeds.json` — owner-editable news source roster; merged over
+  built-in defaults by the pipeline.
+- `.github/scripts/refresh/` — the data pipeline (Node 20, `fast-xml-parser`
+  only): Stooq→Yahoo quote chain, FRED 10Y, RSS news, IBKR Flex, Anthropic
+  brief, meta writer. Fixture tests via `node --test`.
+- `.github/workflows/data-refresh.yml` — dual cron (22:30 UTC + 09:30 UTC
+  retry) + dispatch (`backfill`, `force_fail_market`).
+- `supabase/functions/desk-ask/` — versioned source of the PIN-gated Claude
+  Q&A edge function (deployed only to the desk's dedicated project).
+- `specs/multi-account-trading-dashboard/` — the SDD artifact chain
+  (brief/spec/plan/tasks/design/analysis).
 
 ## Required Commands
 | Purpose | Command |
 |---|---|
 | Validate HTML | `npx html-validate index.html` |
+| Contrast gate (WCAG AA) | `node .github/scripts/check-contrast.js` |
+| Pipeline fixture tests | `cd .github/scripts/refresh && npm ci && npm test` |
 | Validate workflow YAML | `python3 -c "import yaml, sys; yaml.safe_load(open('.github/workflows/qa.yml'))"` |
 
 ## Project-Specific Security Constraints
-- [List any accepted security trade-offs, e.g. client-side token usage]
+- **Dedicated Supabase project ONLY** (owner ruling, 2026-07-10; see
+  `learnings.jsonl`): never place desk tables/RPCs/functions in any existing
+  project. If no slot exists, stop and ask the owner. Any resource decision
+  outside this repo needs explicit owner approval first.
+- The Supabase **anon key is public by design**; RLS default-deny + SECURITY
+  DEFINER PIN RPCs are the enforcement boundary (data.md pattern).
+- **Accepted residuals (live mode):** the PIN space is brute-forceable through
+  the RPC (RLS cannot rate-limit); the PIN sits in sessionStorage for the tab
+  session. Real balances never enter this repo or the served files.
+- **Bot-data-commit exception:** `data-refresh.yml` pushes `data/*.json` to
+  `main` directly with `[skip ci]` (same standing as `keepalive.yml`); code
+  changes still go through PRs.
+- Server-side keys (`DB_SERVICE_KEY`, `ANTHROPIC_API_KEY`, IBKR tokens) live
+  only in Actions/edge-function secrets — never client-side, never committed.
+- **Supabase free-tier auto-pause runbook:** if live login suddenly fails after
+  ~1 week of pipeline inactivity, the project likely auto-paused — restore it
+  from the Supabase dashboard; the pipeline's upsert-failure email is the
+  early-warning signal.
 
 ## Project-Specific Coding Standards
-- [Add project-specific rules here]
+- Price-change percentages use **2 decimals** (finance convention) — a
+  deliberate exception to the editorial whole-number rule; allocation-style
+  percentages stay whole.
+- All dynamic DOM text via `textContent` — never `innerHTML`.
+- Series colors/order are CVD-validated (`--color-series-1..3`): do not reorder.
+- Gain/loss colors are P&L-only, never decorative.
+- Every panel carries a data-state lamp + as-of stamp (the design signature);
+  new panels must too.
 
 ## Agent Workflow
 1. Use a `claude/<name>` feature branch
 2. For a non-trivial feature, run `/sdd-loop` (`specify` → `clarify` → `plan` → `tasks`) before coding — separate WHAT from HOW; trivial changes skip to step 3
-3. Implement changes in [main source file] — or `/sdd-loop analyze` then `/sdd-loop implement` to check consistency and work the task list
+3. Implement changes per the Application Architecture map above — or `/sdd-loop analyze` then `/sdd-loop implement` to check consistency and work the task list
 4. Run Required Commands above — all must pass
 5. Prefer `qa-pipeline`; run steps individually only if it fails:
    `test-verifier` → `pr-review-toolkit:code-reviewer` → `/security-review` (if security-relevant) → `pr-readiness-reviewer`
@@ -49,22 +100,28 @@ This project's look is its own — established at kickoff via `/design-intake`
 Read by `ui-tester` and the Playwright kit at runtime — fill in before invoking agents:
 | Key | Value |
 |---|---|
-| App URL | `https://akyachtsman.github.io/claude.trading/` |
-| Valid test credential | `[a real read-only TEST_AUTH_CREDENTIAL]` |
-| Invalid test credential | `[any value the app rejects]` |
-| Primary nav button | `[label of the first feature button]` |
-| Primary content selector | `[CSS selector for loaded content, e.g. .task]` |
-| Nav cards | `[top-level menu labels, e.g. ['Morning','Evening','Dashboard']]` |
+| App URL | `https://akyachtsman.github.io/claude.trading/` (demo state: append `?demo=1` for deterministic data) |
+| Valid test credential | repo secret `TEST_AUTH_CREDENTIAL` (name only — never commit the value; unset while the site runs demo-only) |
+| Invalid test credential | `000000` |
+| Primary nav button | `Consolidate accounts` |
+| Primary content selector | `.account .hero-number` |
+| Nav cards | n/a — single-page dashboard (panels: Accounts, Equity curves, AI daily brief, Ask the desk, News) |
 | Playwright test directory | `.github/scripts/ui-tests` |
-| Key selectors | `[login / home / error element selectors]` |
+| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.lock-error` · lamps: `#equityLamp #briefLamp #newsLamp #askLamp` · chart: `#equityChart` · news rows: `.news-row` |
 
 ## Project-Specific Test Scenarios
-Authoritative list of coverage beyond the generic S1–S4 suite — the ui-tester
-adds one `app.spec.js` scenario per row, numbered from S5. Fill in before
-invoking agents (the ui-tester stops and asks if this table is missing).
+Authoritative list of coverage beyond the generic S1–S4 suite — one
+`app.spec.js` scenario per row, numbered from S5. Live-gated rows skip
+cleanly while `DESK_DB` is empty (demo-only state).
 | # | Feature | What to verify | Failure indicator |
 |---|---|---|---|
-| S5 | [feature name] | [what correct behavior looks like] | [what broken looks like] |
+| S5 | Demo lamps | With `?demo=1`, masthead shows "Demo data" and every panel lamp (equity, brief, news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
+| S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; first-row value order changes accordingly | Order/aria-sort unchanged after click |
+| S7 | Consolidate toggle | Button collapses the chart to one "All accounts" series (legend 2→1) and back; `aria-pressed` tracks | Legend count wrong or toggle text stuck |
+| S8 | Timeframe guard | All four seg buttons enabled on 260-day demo history; clicking 1M moves `aria-pressed` and redraws | Disabled buttons in demo, or pressed state stuck |
+| S9 | Brief structure | Demo brief renders Portfolio state / Key levels / Scenarios sections + disclaimer + stamp | Missing section or missing disclaimer |
+| S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts/chart/brief | Skips while demo-only; fails if unlock doesn't render |
+| S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:

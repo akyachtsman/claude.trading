@@ -145,10 +145,10 @@ every push; qa-pipeline runs at each phase boundary.
       editorial rules; screenshot review desktop + iPad. dep: A10, B9, D1
 
 ## Phase E — QA + docs closeout
-- [ ] E1. `app.spec.js` project scenarios S5+: demo lamps; locked→login→
+- [x] E1. `app.spec.js` project scenarios S5+: demo lamps; locked→login→
       render (TEST_AUTH_CREDENTIAL from secret); wrong-PIN error; sort;
       consolidate; timeframe disable. dep: B9
-- [ ] E2. CLAUDE.md: Stack confirm, Application Architecture, UI Test
+- [x] E2. CLAUDE.md: Stack confirm, Application Architecture, UI Test
       Configuration (secret NAME not value), Project-Specific Test
       Scenarios table, Security Constraints (PIN residuals, anon key,
       bot-data-commit exception, Supabase auto-pause runbook), coding
