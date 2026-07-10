@@ -175,10 +175,23 @@
   border-top: 1px solid var(--color-border); padding-top: var(--space-2); margin-top: var(--space-3);
 }
 
-/* locked panel (PIN gate) */
-.panel-lock .lock-explain { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0 0 var(--space-3); }
+/* locked panel (PIN gate) — .lock-explain also serves the equity/ask shells */
+.lock-explain { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0 0 var(--space-3); }
 .lock-form { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .lock-form .input { flex: 1 1 160px; max-width: 240px; }
 .lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-loss); margin: var(--space-2) 0 0; }
+
+/* ask-the-desk (PIN-gated Claude Q&A) */
+.ask-thread { display: flex; flex-direction: column; gap: var(--space-2); max-height: 280px; overflow-y: auto; margin: 0 0 var(--space-3); }
+.ask-thread:empty { display: none; }
+.ask-q {
+  font: 500 var(--font-sm)/1.5 var(--font-sans); color: var(--color-text-primary); margin: 0;
+  padding: var(--space-2) var(--space-3); background: var(--color-surface-2);
+  border-radius: var(--radius-sm); align-self: flex-end; max-width: 92%;
+}
+.ask-a {
+  font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0;
+  padding: var(--space-2) var(--space-3); border-left: 2px solid var(--color-accent-bright); max-width: 92%;
+}
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
