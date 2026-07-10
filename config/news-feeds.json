@@ -1,0 +1,17 @@
+{
+  "_readme": [
+    "Owner-editable news sources for the daily refresh (fetch-news.js).",
+    "general: RSS/Atom feeds shown to everyone — add/remove/reorder freely.",
+    "perTicker: feeds looked up for each held symbol (Yahoo first, Google",
+    "News as fallback, then plain text-matching of tickers in general",
+    "headlines). Set enabled:false to run general feeds only.",
+    "maxItems caps the rendered list. Edit on GitHub; the next scheduled",
+    "refresh (or a manual Data Refresh dispatch) picks it up."
+  ],
+  "general": [
+    { "src": "CNBC", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
+    { "src": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories" }
+  ],
+  "perTicker": { "enabled": true, "maxPerSymbol": 3 },
+  "maxItems": 20
+}

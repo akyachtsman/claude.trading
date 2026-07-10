@@ -250,6 +250,78 @@ function renderBrief(brief, lamp) {
     'Generated from your committed account and market snapshots — not the open internet. AI-generated; can make mistakes. Informational only, not financial advice.'));
 }
 
+/* ── ask the desk (PIN-gated Claude Q&A over the page content) ─────────── */
+function buildAskContext() {
+  const d = DESK.data || {};
+  return {
+    mode: DESK.mode,
+    asOf: DESK.mode === 'demo' ? lastLabel() : (DESK.privateAsOf || null),
+    accounts: (d.accounts || []).map(a => ({
+      label: a.label, nav: a.nav, dayPnl: a.day, totalUnrealized: a.total, cash: a.cash,
+      positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: p.dayPct, unrl: p.unrl })),
+    })),
+    market: (d.market || []).map(m => ({ name: m.name, last: m.last, dayChgPct: m.chg })),
+    headlines: (d.news || []).slice(0, 10).map(n => n.h),
+    brief: d.brief ? { state: d.brief.state, levels: d.brief.levels, scenarios: d.brief.scenarios } : null,
+  };
+}
+
+function renderAsk() {
+  const body = document.getElementById('askBody');
+  const lampEl = document.getElementById('askLamp');
+  while (body.firstChild) body.removeChild(body.firstChild);
+
+  if (DESK.mode === 'demo') {
+    lampEl.className = 'lamp lamp--demo'; lampEl.textContent = 'Demo';
+    body.appendChild(el('p', 'lock-explain',
+      'Ask Claude about anything on this page — positions, moves, headlines. The window unlocks with the desk PIN in live mode; demo data has nothing private to discuss.'));
+    return;
+  }
+  if (!DESK.authed) {
+    lampEl.className = 'lamp lamp--locked'; lampEl.textContent = 'Locked';
+    body.appendChild(el('p', 'lock-explain', 'Unlocks with the desk PIN.'));
+    return;
+  }
+
+  lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live';
+  const thread = el('div', 'ask-thread');
+  const form = document.createElement('form');
+  form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
+  const input = document.createElement('input');
+  input.type = 'text'; input.className = 'input'; input.maxLength = 500;
+  input.placeholder = 'Ask about this page…';
+  input.setAttribute('aria-label', 'Ask a question about the dashboard');
+  const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
+  const err = el('p', 'lock-error', ''); err.hidden = true;
+  form.appendChild(input); form.appendChild(btn);
+  body.appendChild(thread); body.appendChild(form); body.appendChild(err);
+  body.appendChild(el('p', 'ai-disclaimer',
+    'Answers come from the page’s current snapshot only. AI-generated; can make mistakes. Not financial advice.'));
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+    err.hidden = true;
+    btn.disabled = true; btn.textContent = 'Asking…'; input.disabled = true;
+    thread.appendChild(el('p', 'ask-q', q));
+    thread.scrollTop = thread.scrollHeight;
+    const pin = sessionStorage.getItem('desk_pin');
+    const res = await deskAsk(pin, q, buildAskContext())
+      .catch(() => ({ ok: false, error: 'Could not reach the ask service — try again in a moment.' }));
+    btn.disabled = false; btn.textContent = 'Ask'; input.disabled = false;
+    if (res && res.ok) {
+      thread.appendChild(el('p', 'ask-a', res.answer));
+      input.value = '';
+    } else {
+      err.textContent = (res && res.error) || 'Something went wrong — try again.';
+      err.hidden = false;
+    }
+    thread.scrollTop = thread.scrollHeight;
+    input.focus();
+  });
+}
+
 /* ── locked state (live mode, pre-auth) ────────────────────────────────── */
 function renderLockedPanels() {
   const grid = document.getElementById('accountGrid');
@@ -290,10 +362,11 @@ function renderLockedPanels() {
     }
   });
 
-  /* equity + brief panels show locked shells */
+  /* equity + brief + ask panels show locked shells */
   lockChartPanel(true);
   renderBrief(null, { cls: 'lamp--locked', text: 'Locked' });
   document.getElementById('briefBody').replaceChildren(el('p', 'stamp', 'Unlocks with the desk PIN.'));
+  renderAsk();
 }
 function lockChartPanel(locked) {
   const wrap = document.getElementById('equityPanelBody');
@@ -458,8 +531,9 @@ function renderPrivate() {
     renderAccounts(DESK.data.accounts, lamp);
     renderBrief(DESK.data.brief, lamp);
     drawChart();
+    renderAsk();
   } else {
-    renderLockedPanels();
+    renderLockedPanels(); /* renders the ask panel's locked shell too */
   }
 }
 
@@ -492,11 +566,13 @@ async function boot() {
      never an empty strip, never demo masquerading as real). */
   try {
     const market = await fetchPublic('data/market.json');
-    renderStrip(market.tiles || []);
+    DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
+    renderStrip(DESK.data.market);
   } catch { renderStrip(DESK.data.market); }
   try {
     const news = await fetchPublic('data/news.json');
-    renderNews(news.items || [], lampFor(news.asOf, new Date()));
+    DESK.data.news = news.items || [];
+    renderNews(DESK.data.news, lampFor(news.asOf, new Date()));
   } catch {
     renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
   }

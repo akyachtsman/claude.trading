@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { parseFeed, dedupeRank } from '../fetch-news.js';
+import { parseFeed, dedupeRank, mergeFeedConfig } from '../fetch-news.js';
 
 const fixture = f => readFile(new URL('./fixtures/' + f, import.meta.url), 'utf8');
 
@@ -26,6 +26,21 @@ test('parseFeed tolerates malformed XML', () => {
 test('parseFeed decodes numeric/HTML entities in titles', () => {
   const xml = '<rss><channel><item><title>&#x2018;Rates&#x2019; &amp; more &#8212; a test</title></item></channel></rss>';
   assert.equal(parseFeed(xml, 'X')[0].title, '‘Rates’ & more — a test');
+});
+
+test('mergeFeedConfig: owner file wins, junk falls back to defaults', () => {
+  const merged = mergeFeedConfig({
+    general: [{ src: 'Reuters', url: 'https://feeds.example.com/reuters' }, { src: 'bad', url: 'http://insecure' }],
+    perTicker: { enabled: false },
+    maxItems: 12,
+  });
+  assert.deepEqual(merged.general.map(f => f.src), ['Reuters'], 'non-https feed dropped');
+  assert.equal(merged.perTicker.enabled, false);
+  assert.equal(merged.maxItems, 12);
+  const fallback = mergeFeedConfig(null);
+  assert.equal(fallback.source, 'defaults');
+  assert.equal(fallback.general.length, 2);
+  assert.equal(mergeFeedConfig({ general: [] }).general.length, 2, 'empty roster falls back');
 });
 
 test('dedupeRank dedupes titles, ranks holdings first, caps 20', async () => {

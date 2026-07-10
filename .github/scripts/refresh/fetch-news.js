@@ -9,16 +9,38 @@
    the snapshot — the news panel renders pre-auth (FR-N2). */
 import path from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
-import { DATA_DIR, retryFetch, writeJson, writeStatus, notice, warn, errorLine, isoDate, nyToday } from './lib/util.js';
+import { ROOT, DATA_DIR, retryFetch, writeJson, writeStatus, readJsonIfExists, notice, warn, errorLine, isoDate, nyToday } from './lib/util.js';
 import { dayPctMap } from './lib/quotes.js';
 import { supaConfigured, ownerUserId, latestSnapshots } from './supa.js';
 
-const GENERAL_FEEDS = [
-  { src: 'CNBC', url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
-  { src: 'MarketWatch', url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories' },
-];
-const MAX_ITEMS = 20;
+/* Built-in defaults — the owner controls the roster via config/news-feeds.json
+   (committed, editable straight from the GitHub UI); loadFeedConfig() merges
+   that file over these so a missing/partial file never kills the feed. */
+const DEFAULT_FEED_CONFIG = {
+  general: [
+    { src: 'CNBC', url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
+    { src: 'MarketWatch', url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories' },
+  ],
+  perTicker: { enabled: true, maxPerSymbol: 3 },
+  maxItems: 20,
+};
 const MAX_TICKERS = 8;
+
+export function mergeFeedConfig(fileCfg, defaults = DEFAULT_FEED_CONFIG) {
+  if (!fileCfg || typeof fileCfg !== 'object') return { ...defaults, source: 'defaults' };
+  const general = Array.isArray(fileCfg.general)
+    ? fileCfg.general.filter(f => f && typeof f.url === 'string' && /^https:\/\//.test(f.url) && f.src)
+    : defaults.general;
+  return {
+    general: general.length ? general : defaults.general,
+    perTicker: {
+      enabled: fileCfg.perTicker?.enabled !== false,
+      maxPerSymbol: Number(fileCfg.perTicker?.maxPerSymbol) > 0 ? Number(fileCfg.perTicker.maxPerSymbol) : defaults.perTicker.maxPerSymbol,
+    },
+    maxItems: Number(fileCfg.maxItems) > 0 ? Math.min(Number(fileCfg.maxItems), 50) : defaults.maxItems,
+    source: 'config/news-feeds.json',
+  };
+}
 
 /* htmlEntities: feeds encode punctuation as numeric/HTML entities (&#x2018;
    etc.) which would otherwise reach the page as literal text. */
@@ -69,7 +91,7 @@ async function heldTickers() {
   }
 }
 
-export function dedupeRank(items, held) {
+export function dedupeRank(items, held, maxItems = 20) {
   const seen = new Set();
   const uniq = [];
   for (const it of items) {
@@ -86,14 +108,16 @@ export function dedupeRank(items, held) {
     if (ha !== hb) return hb - ha;                       // holdings-first
     return (b.at?.getTime() || 0) - (a.at?.getTime() || 0); // then newest
   });
-  return uniq.slice(0, MAX_ITEMS);
+  return uniq.slice(0, maxItems);
 }
 
 async function main() {
-  const held = await heldTickers();
+  const cfg = mergeFeedConfig(await readJsonIfExists(path.join(ROOT, 'config', 'news-feeds.json')));
+  console.log(`feed roster from ${cfg.source}: ${cfg.general.map(f => f.src).join(', ')} · perTicker=${cfg.perTicker.enabled} · cap ${cfg.maxItems}`);
+  const held = cfg.perTicker.enabled ? await heldTickers() : [];
   const items = [];
 
-  for (const feed of GENERAL_FEEDS) {
+  for (const feed of cfg.general) {
     try { items.push(...(await fetchFeed(feed.url, feed.src)).slice(0, 15)); }
     catch (e) { warn(`News feed failed: ${feed.src}`, String(e.message || e)); }
   }
@@ -108,12 +132,12 @@ async function main() {
         got = await fetchFeed(`https://news.google.com/rss/search?q=${encodeURIComponent(sym + ' stock')}&hl=en-US&gl=US&ceid=US:en`, 'Google News');
       } catch { /* degrade: text-match against general headlines in dedupeRank */ }
     }
-    items.push(...got.slice(0, 3).map(it => ({ ...it, chip: sym })));
+    items.push(...got.slice(0, cfg.perTicker.maxPerSymbol).map(it => ({ ...it, chip: sym })));
   }
 
   if (!items.length) throw new Error('every news source failed — keeping last committed news.json');
 
-  const ranked = dedupeRank(items, held);
+  const ranked = dedupeRank(items, held, cfg.maxItems);
   const pct = await dayPctMap(ranked.flatMap(it => it.chips)); // public Stooq day % (FR-N2)
   const asOf = isoDate(nyToday());
   await writeJson(path.join(DATA_DIR, 'news.json'), {

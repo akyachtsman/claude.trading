@@ -172,6 +172,23 @@ async function deskGetDashboard(pin) {
   return out && out.ok ? out : null;
 }
 
+/* Ask-the-desk: PIN-gated Claude Q&A over the visible dashboard content.
+   The Anthropic key lives only in the edge function's secrets (FR-D1). */
+async function deskAsk(pin, question, context) {
+  const res = await fetch(DESK_DB.url + '/functions/v1/desk-ask', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: DESK_DB.anonKey,
+      authorization: 'Bearer ' + DESK_DB.anonKey,
+    },
+    body: JSON.stringify({ pin, question, context }),
+  });
+  const out = await res.json().catch(() => null);
+  if (!out) throw new Error('desk-ask → HTTP ' + res.status);
+  return out; /* {ok:true, answer} | {ok:false, error} */
+}
+
 /* Map the RPC payload into the render model app.js uses (same shape demo
    mode builds). Equity series are aligned on dates present for EVERY
    account so the consolidated sum is well-defined. */
