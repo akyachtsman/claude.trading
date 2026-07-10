@@ -140,7 +140,7 @@ every push; qa-pipeline runs at each phase boundary.
 - [x] D1. Brief panel live wiring: render from RPC payload; missing/stale
       handling per FR-AI4 (stale date line); disclaimers + generated-at
       always visible. dep: B7, C7
-- [ ] D2. Polish pass vs design.md craft + research.md bar: states
+- [x] D2. Polish pass vs design.md craft + research.md bar: states
       (loading/empty/error/locked), focus order, reduced-motion, copy per
       editorial rules; screenshot review desktop + iPad. dep: A10, B9, D1
 

@@ -377,6 +377,9 @@ function lockChartPanel(locked) {
   lockedMsg.hidden = !locked;
   const lampEl = document.getElementById('equityLamp');
   if (locked) { lampEl.className = 'lamp lamp--locked'; lampEl.textContent = 'Locked'; }
+  /* dead controls disappear with the data they act on */
+  document.querySelector('.chart-head-tools').hidden = locked;
+  document.getElementById('consolidateBtn').hidden = locked;
 }
 
 /* ── combined equity chart ─────────────────────────────────────────────── */
