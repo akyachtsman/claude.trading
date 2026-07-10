@@ -222,7 +222,7 @@ function renderNews(news, lamp) {
 }
 
 /* ── AI brief ──────────────────────────────────────────────────────────── */
-function renderBrief(brief, lamp) {
+function renderBrief(brief, lamp, staleNote) {
   const body = document.getElementById('briefBody');
   while (body.firstChild) body.removeChild(body.firstChild);
   const lampEl = document.getElementById('briefLamp');
@@ -232,6 +232,8 @@ function renderBrief(brief, lamp) {
     body.appendChild(el('p', 'stamp', 'No brief for the latest snapshot yet — it generates after each data refresh.'));
     return;
   }
+  /* FR-AI4: a brief older than the account snapshot says so plainly. */
+  if (staleNote) body.appendChild(el('p', 'lock-error', staleNote));
   const mk = (title, items) => {
     const sec = el('div', 'brief-section');
     sec.appendChild(el('h3', '', title));
@@ -529,7 +531,21 @@ function renderPrivate() {
     const lampEl = document.getElementById('equityLamp');
     lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
     renderAccounts(DESK.data.accounts, lamp);
-    renderBrief(DESK.data.brief, lamp);
+    /* FR-AI4: the brief carries its own freshness — generation can fail
+       while snapshots keep flowing, so its lamp derives from brief.asOf,
+       not the account lamp. Demo always shows DEMO. */
+    const brief = DESK.data.brief;
+    let briefLamp = lamp, staleNote = null;
+    if (DESK.mode !== 'demo') {
+      if (!brief) {
+        briefLamp = { cls: 'lamp--stale', text: 'No brief' };
+      } else if (brief.asOf && DESK.privateAsOf && brief.asOf < DESK.privateAsOf) {
+        briefLamp = { cls: 'lamp--stale', text: 'Stale' };
+        staleNote = 'Brief is stale — generated for ' + brief.asOf
+          + ', while accounts show ' + DESK.privateAsOf + '. It regenerates on the next successful refresh.';
+      }
+    }
+    renderBrief(brief, briefLamp, staleNote);
     drawChart();
     renderAsk();
   } else {
