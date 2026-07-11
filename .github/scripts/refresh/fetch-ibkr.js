@@ -19,6 +19,12 @@ const FLEX_BASE = process.env.IBKR_FLEX_BASE_URL
   || 'https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService';
 const TOKEN_ERROR_CODES = new Set(['1012', '1015']); // expired / invalid token
 
+/* Public repo ⇒ public Actions logs: real account ids never appear in log
+   output. ::add-mask:: makes the runner redact any accidental occurrence;
+   maskId() is used for intentional mentions. */
+const maskId = id => String(id).slice(0, 2) + '***' + String(id).slice(-2);
+const registerMask = id => { if (id) console.log(`::add-mask::${id}`); };
+
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 const asArray = x => (x === undefined || x === null ? [] : Array.isArray(x) ? x : [x]);
 const normDate = s => {
@@ -164,12 +170,13 @@ async function main() {
 
   const accounts = parseStatements(doc);
   if (!accounts.length) throw new Error('Flex statement parsed to zero accounts — check the Flex query sections');
+  for (const a of accounts) registerMask(a.accountId);
 
   const expected = isoDate(lastTradingDay());
   if (!backfill) {
     const behind = accounts.filter(a => a.asOf < expected);
     if (behind.length) {
-      notice('IBKR statement not ready', `expected as-of ${expected}, got ${behind.map(a => `${a.accountId}=${a.asOf}`).join(', ')} — no upsert; the 09:30 UTC cron retries.`);
+      notice('IBKR statement not ready', `expected as-of ${expected}, got ${behind.map(a => `${maskId(a.accountId)}=${a.asOf}`).join(', ')} — no upsert; the 09:30 UTC cron retries.`);
       await writeStatus('accounts', { status: 'not-ready', asOf: behind[0].asOf, detail: `expected ${expected}` });
       return;
     }
@@ -177,7 +184,7 @@ async function main() {
 
   const keyFor = accountKeyMap(accounts.map(a => a.accountId));
   if (!process.env.IBKR_ACCOUNT_MAP) {
-    notice('IBKR account mapping', `no IBKR_ACCOUNT_MAP set — mapping by sorted account id: ${accounts.map(a => `${a.accountId}→${keyFor(a.accountId)}`).join(', ')}`);
+    notice('IBKR account mapping', `no IBKR_ACCOUNT_MAP set — mapping by sorted account id: ${accounts.map(a => `${maskId(a.accountId)}→${keyFor(a.accountId)}`).join(', ')}`);
   }
 
   /* Position day % is PUBLIC data (Stooq) — the Flex snapshot has no prev
