@@ -37,7 +37,10 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # generous: Yahoo 429 cooldowns + Flex transient retries are bounded by
+    # in-script circuit breakers, but the job must ALWAYS reach the meta/
+    # commit/notify steps rather than die at the timeout
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: .github/scripts/refresh

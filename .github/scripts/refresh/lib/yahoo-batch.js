@@ -39,16 +39,21 @@ export async function getCrumb() {
    EVERY batch fails; partial coverage is returned and reported by size. */
 export async function quoteBatch(symbols, { cookie, crumb }, batchSize = 150) {
   const out = new Map();
+  let deadStreak = 0;
   for (let i = 0; i < symbols.length; i += batchSize) {
+    if (deadStreak >= 2) { warn('Yahoo quote aborted', '2 consecutive dead batches'); break; }
     const chunk = symbols.slice(i, i + batchSize);
     const url = `${Q1()}/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,marketCap&crumb=${encodeURIComponent(crumb)}`;
     try {
       const res = await fetch429(url, { headers: { 'user-agent': UA, cookie } });
+      const before = out.size;
       for (const q of (await res.json())?.quoteResponse?.result || []) {
         const pct = Number(q.regularMarketChangePercent);
         if (Number.isFinite(pct)) out.set(String(q.symbol), { pct: Number(pct.toFixed(2)), cap: Number(q.marketCap) || null });
       }
+      deadStreak = out.size > before ? 0 : deadStreak + 1;
     } catch (e) {
+      deadStreak++;
       warn('Yahoo quote batch failed', `${chunk[0]}… (${chunk.length} syms): ${String(e.message || e)}`);
     }
     await sleep(500);
@@ -69,15 +74,25 @@ export function parseSpark(json) {
   return out;
 }
 
-export async function sparkBatch(symbols, batchSize = 25) {
+export async function sparkBatch(symbols, batchSize = 25, { budgetMs = 6 * 60000 } = {}) {
   const out = new Map();
+  const t0 = Date.now();
+  let deadStreak = 0;
   for (let i = 0; i < symbols.length; i += batchSize) {
+    /* circuit breakers: a hard-blocked IP fails every batch — stop burning
+       the job's timeout budget (the run itself must survive to commit the
+       honest meta + fire the failure email). */
+    if (deadStreak >= 3) { warn('Yahoo spark aborted', '3 consecutive dead batches — IP is hard-throttled'); break; }
+    if (Date.now() - t0 > budgetMs) { warn('Yahoo spark aborted', 'time budget exhausted'); break; }
     const chunk = symbols.slice(i, i + batchSize);
     const url = `${Q1()}/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=5d&interval=1d`;
     try {
-      const res = await fetch429(url, { headers: { 'user-agent': UA } }, { tries: 2 });
+      const res = await fetch429(url, { headers: { 'user-agent': UA } }, { tries: 2, waitMs: 20000 });
+      const before = out.size;
       for (const [sym, v] of parseSpark(await res.json())) out.set(sym, v);
+      deadStreak = out.size > before ? 0 : deadStreak + 1;
     } catch (e) {
+      deadStreak++;
       warn('Yahoo spark batch failed', `${chunk[0]}… (${chunk.length} syms): ${String(e.message || e)}`);
     }
     await sleep(1500);
