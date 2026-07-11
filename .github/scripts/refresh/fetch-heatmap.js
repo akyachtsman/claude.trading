@@ -8,6 +8,7 @@
 import path from 'node:path';
 import { DATA_DIR, retryFetch, writeJson, readJsonIfExists, writeStatus, warn, errorLine, isoDate, lastTradingDay } from './lib/util.js';
 import { getCrumb, quoteBatch, sparkBatch, yahooTicker } from './lib/yahoo-batch.js';
+import { nasdaqScreener } from './lib/screener.js';
 
 const CONSTITUENTS_URL = process.env.SP500_CONSTITUENTS_URL
   || 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv';
@@ -78,15 +79,26 @@ async function main() {
   const prev = await readJsonIfExists(path.join(DATA_DIR, 'heatmap.json'));
   const prevCaps = new Map((prev?.sectors || []).flatMap(s => s.tiles.map(t => [t.sym, t.cap])));
 
-  let quotes, source = 'yahoo-quote';
+  /* source chain: Nasdaq screener (one bulk call) → Yahoo v7 (crumb) →
+     Yahoo spark + previous caps. Coverage counts CONSTITUENT hits, not raw
+     map size — the screener returns thousands of non-index symbols. */
+  const hits = q => constituents.filter(c => q.get(yahooTicker(c.sym)) || q.get(c.sym)).length;
+  let quotes, source = 'nasdaq-screener';
   try {
-    quotes = await quoteBatch(constituents.map(c => c.sym), await getCrumb());
-    if (quotes.size < 300) throw new Error(`quote coverage too thin (${quotes.size})`);
+    quotes = await nasdaqScreener();
+    if (hits(quotes) < 300) throw new Error(`screener coverage too thin (${hits(quotes)})`);
   } catch (e) {
-    warn('Heatmap: quote API unavailable', String(e.message || e) + ' — falling back to spark + previous caps');
-    quotes = await sparkBatch(constituents.map(c => c.sym));
-    source = 'yahoo-spark+prev-caps';
-    if (quotes.size < 300) throw new Error(`spark coverage too thin (${quotes.size})`);
+    warn('Heatmap: screener unavailable', String(e.message || e) + ' — falling back to Yahoo quote');
+    try {
+      quotes = await quoteBatch(constituents.map(c => c.sym), await getCrumb());
+      source = 'yahoo-quote';
+      if (hits(quotes) < 300) throw new Error(`quote coverage too thin (${hits(quotes)})`);
+    } catch (e2) {
+      warn('Heatmap: quote API unavailable', String(e2.message || e2) + ' — falling back to spark + previous caps');
+      quotes = await sparkBatch(constituents.map(c => c.sym));
+      source = 'yahoo-spark+prev-caps';
+      if (hits(quotes) < 300) throw new Error(`spark coverage too thin (${hits(quotes)})`);
+    }
   }
 
   const { sectors, covered } = buildHeatmap(constituents, quotes, prevCaps);

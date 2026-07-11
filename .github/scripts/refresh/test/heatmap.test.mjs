@@ -57,3 +57,19 @@ test('parseSpark computes day % from last two closes', () => {
   assert.equal(m.get('AAPL').pct, 1.0); // 204.02/202 - 1
   assert.equal(m.has('MSFT'), false, 'single close is unusable');
 });
+
+test('parseScreener maps pct/cap, dual-keys dotted symbols, tolerates -- and junk', async () => {
+  const { parseScreener } = await import('../lib/screener.js');
+  const m = parseScreener({ data: { rows: [
+    { symbol: 'AAPL', pctchange: '-0.79%', marketCap: '3,300,000,000,000.00' },
+    { symbol: 'BRK.B', pctchange: '--', marketCap: '$1,000,000,000,000' },
+    { symbol: 'XYZ', pctchange: 'n/a', marketCap: '' },
+    { symbol: 'NVDA', pctchange: '+4.03%', marketCap: '4200000000000' },
+  ] } });
+  assert.equal(m.get('AAPL').pct, -0.79);
+  assert.equal(m.get('AAPL').cap, 3.3e12);
+  assert.equal(m.get('BRK.B').pct, 0, '"--" means unchanged');
+  assert.equal(m.get('BRK-B').pct, 0, 'dash variant keyed too');
+  assert.equal(m.has('XYZ'), false, 'unparseable pct dropped');
+  assert.equal(m.get('NVDA').pct, 4.03);
+});
