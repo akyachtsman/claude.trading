@@ -8,8 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260711a">
-<link rel="stylesheet" href="styles/components.css?v=20260711a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260711b">
+<link rel="stylesheet" href="styles/components.css?v=20260711b">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -68,6 +68,14 @@
   .chart-data summary:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
 
   .ml-auto { margin-left: auto; }
+
+  /* heatmap */
+  .heat-panel { margin-top: var(--space-4); }
+  .heat-wrap { position: relative; }
+  #heatmapSvg { display: block; width: 100%; height: clamp(320px, 44vw, 560px); }
+  #heatmapSvg text { pointer-events: none; }
+  .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
+  .heat-legend .swatch { width: 26px; height: 12px; border-radius: 2px; display: inline-block; }
 
   /* footer */
   .site-footer { margin-top: var(--space-8); border-top: 1px solid var(--color-border); padding-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
@@ -169,6 +177,26 @@
     </aside>
   </div>
 
+  <section class="panel heat-panel" aria-labelledby="heatTitle">
+    <div class="panel-header">
+      <h2 class="panel-title" id="heatTitle">S&amp;P 500 — day heat</h2>
+      <span class="lamp lamp--demo" id="heatLamp">Demo</span>
+      <span class="stamp ml-auto" id="heatStamp">—</span>
+    </div>
+    <div class="panel-body">
+      <div class="heat-wrap">
+        <svg id="heatmapSvg" viewBox="0 0 1200 520" preserveAspectRatio="none" role="img" aria-label="S&amp;P 500 heatmap: tile size is market cap, color is day change; a movers table follows"></svg>
+        <div class="chart-tip" id="heatTip"></div>
+      </div>
+      <div class="heat-legend" id="heatLegend"></div>
+      <details class="chart-data">
+        <summary>View movers table</summary>
+        <table class="data-table" id="heatTable"></table>
+      </details>
+      <p class="stamp" id="heatSource">Sized by market cap · colored by day % change</p>
+    </div>
+  </section>
+
   <footer class="site-footer">
     <p>Data: IBKR Flex reports (accounts) · market and news snapshots committed by scheduled jobs. Every panel shows its own as-of stamp — this dashboard renders snapshots, not live quotes.</p>
     <p>Nothing here is investment, tax, or legal advice. Past performance is not a guarantee of future results.</p>
@@ -176,8 +204,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260711a"></script>
-<script src="scripts/data.js?v=20260711a"></script>
-<script src="scripts/app.js?v=20260711a"></script>
+<script src="scripts/config.js?v=20260711b"></script>
+<script src="scripts/data.js?v=20260711b"></script>
+<script src="scripts/app.js?v=20260711b"></script>
 </body>
 </html>

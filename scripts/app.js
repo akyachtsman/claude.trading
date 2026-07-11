@@ -531,6 +531,171 @@ function wireChart() {
   });
 }
 
+/* ── S&P 500 heatmap (squarified treemap) ──────────────────────────────────
+   Size = market cap, color = day % on a diverging ramp with a NEUTRAL gray
+   midpoint (dataviz rule); gain/loss hues are P&L semantics here, not
+   decoration. CVD/contrast relief: printed labels + movers table. */
+const HEAT = { neutral: [214, 211, 204], gain: [23, 124, 75], loss: [193, 54, 54], cap: 3 };
+
+function heatColor(pct) {
+  const t = Math.min(Math.abs(pct), HEAT.cap) / HEAT.cap;
+  const pole = pct >= 0 ? HEAT.gain : HEAT.loss;
+  const c = HEAT.neutral.map((n, i) => Math.round(n + (pole[i] - n) * t));
+  return 'rgb(' + c.join(',') + ')';
+}
+function heatInk(pct) {
+  const t = Math.min(Math.abs(pct), HEAT.cap) / HEAT.cap;
+  return t > 0.42 ? '#FFFFFF' : '#1A1713'; /* ramp is light until ~±1.3% */
+}
+const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
+
+/* Squarified treemap (Bruls et al.): items [{value}] DESC → rects. */
+function squarify(items, x, y, w, h) {
+  const total = items.reduce((s, it) => s + it.value, 0) || 1;
+  const scale = (w * h) / total;
+  const out = [];
+  let row = [], rowSum = 0, i = 0;
+  const worst = (sum, min, max, side) => {
+    const s2 = sum * sum, side2 = side * side;
+    return Math.max((side2 * max) / s2, s2 / (side2 * min));
+  };
+  const layoutRow = () => {
+    const horiz = w < h;                       /* lay along the shorter side */
+    const side = horiz ? w : h;
+    const thick = (rowSum * scale) / side;
+    let off = 0;
+    for (const it of row) {
+      const len = (it.value * scale) / thick;
+      out.push(horiz
+        ? { ...it, x: x + off, y, w: len, h: thick }
+        : { ...it, x, y: y + off, w: thick, h: len });
+      off += len;
+    }
+    if (horiz) { y += thick; h -= thick; } else { x += thick; w -= thick; }
+  };
+  while (i < items.length) {
+    const it = { ...items[i], value: items[i].value * 1 };
+    const side = Math.min(w, h);
+    const areas = row.map(r => r.value * scale);
+    const cur = row.length
+      ? worst(rowSum * scale, Math.min(...areas), Math.max(...areas), side) : Infinity;
+    const nextSum = rowSum + it.value;
+    const nextAreas = [...areas, it.value * scale];
+    const nxt = worst(nextSum * scale, Math.min(...nextAreas), Math.max(...nextAreas), side);
+    if (row.length && nxt > cur) { layoutRow(); row = []; rowSum = 0; }
+    else { row.push(it); rowSum = nextSum; i++; }
+  }
+  if (row.length) layoutRow();
+  return out;
+}
+
+function renderHeatmap(hm, lamp) {
+  const svg = document.getElementById('heatmapSvg');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const lampEl = document.getElementById('heatLamp');
+  lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
+  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf : '—';
+  if (!hm || !hm.sectors || !hm.sectors.length) {
+    document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
+    return;
+  }
+  const W = 1200, H = 520, HEAD = 16;
+  const tip = document.getElementById('heatTip');
+  const sectorRects = squarify(hm.sectors.map(s => ({ ...s, value: s.cap })), 0, 0, W, H);
+  for (const s of sectorRects) {
+    if (s.w < 4 || s.h < HEAD + 6) continue;
+    if (s.w > 64 && s.h > 40) {
+      const label = svgEl('text', { x: s.x + 4, y: s.y + 12, fill: 'var(--color-text-secondary)', 'font-size': '10', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
+      label.textContent = s.name.toUpperCase().slice(0, Math.floor(s.w / 7));
+      svg.appendChild(label);
+    }
+    const tiles = squarify(s.tiles.map(t => ({ ...t, value: t.cap })), s.x, s.y + HEAD, s.w, s.h - HEAD);
+    for (const t of tiles) {
+      if (t.w < 3 || t.h < 3) continue;
+      const rect = svgEl('rect', {
+        x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1),
+        fill: heatColor(t.pct), rx: 2,
+      });
+      svg.appendChild(rect);
+      if (t.w >= 44 && t.h >= 22) {
+        const sym = svgEl('text', { x: t.x + t.w / 2, y: t.y + t.h / 2 + (t.h >= 38 ? -3 : 4), 'text-anchor': 'middle', fill: heatInk(t.pct), 'font-size': Math.min(14, Math.max(10, t.w / 6)), 'font-weight': '600', 'font-family': 'var(--font-mono)' });
+        sym.textContent = t.sym;
+        svg.appendChild(sym);
+        if (t.h >= 38) {
+          const pctEl = svgEl('text', { x: t.x + t.w / 2, y: t.y + t.h / 2 + 12, 'text-anchor': 'middle', fill: heatInk(t.pct), 'font-size': '10', 'font-family': 'var(--font-mono)' });
+          pctEl.textContent = fmtPct(t.pct);
+          svg.appendChild(pctEl);
+        }
+      }
+      rect.addEventListener('pointerenter', () => {
+        while (tip.firstChild) tip.removeChild(tip.firstChild);
+        tip.appendChild(el('div', 'tip-date', t.name === t.sym ? t.sym : t.sym + ' — ' + t.name));
+        tip.appendChild(el('div', '', s.name));
+        tip.appendChild(el('div', '', fmtCap(t.cap) + '  ' + fmtPct(t.pct)));
+        tip.style.display = 'block';
+        const wrap = svg.parentElement.getBoundingClientRect();
+        const sx = wrap.width / W, sy = wrap.height / H;
+        tip.style.left = Math.min((t.x + t.w) * sx + 8, wrap.width - 190) + 'px';
+        tip.style.top = Math.max(t.y * sy - 8, 0) + 'px';
+      });
+      rect.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+    }
+  }
+  renderHeatLegend();
+  renderHeatTable(hm);
+}
+
+function renderHeatLegend() {
+  const lg = document.getElementById('heatLegend');
+  while (lg.firstChild) lg.removeChild(lg.firstChild);
+  lg.appendChild(el('span', '', '−' + HEAT.cap + '%'));
+  for (let p = -HEAT.cap; p <= HEAT.cap; p += 1) {
+    const sw = el('span', 'swatch');
+    sw.style.background = heatColor(p);
+    lg.appendChild(sw);
+  }
+  lg.appendChild(el('span', '', '+' + HEAT.cap + '%'));
+  lg.appendChild(el('span', '', '· tile size = market cap'));
+}
+
+function renderHeatTable(hm) {
+  const table = document.getElementById('heatTable');
+  while (table.firstChild) table.removeChild(table.firstChild);
+  const movers = hm.sectors.flatMap(s => s.tiles.map(t => ({ ...t, sector: s.name })))
+    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 12);
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  for (const name of ['Symbol', 'Sector', 'Mkt cap', 'Day %']) {
+    const th = document.createElement('th'); th.textContent = name; th.setAttribute('scope', 'col');
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const m of movers) {
+    const tr = document.createElement('tr');
+    for (const [text, cls] of [[m.sym, ''], [m.sector, ''], [fmtCap(m.cap), ''], [fmtPct(m.pct), m.pct > 0 ? 'up' : m.pct < 0 ? 'down' : '']]) {
+      const td = document.createElement('td'); td.textContent = text;
+      if (cls) td.className = cls;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+}
+
+async function loadHeatmap() {
+  if (DESK.mode === 'demo') {
+    renderHeatmap(buildDemoHeatmap(), { cls: 'lamp--demo', text: 'Demo' });
+    return;
+  }
+  try {
+    const hm = await fetchPublic('data/heatmap.json');
+    renderHeatmap(hm, lampFor(hm.asOf, new Date()));
+  } catch {
+    renderHeatmap(buildDemoHeatmap(), { cls: 'lamp--demo', text: 'Demo' });
+  }
+}
+
 /* ── render orchestration ──────────────────────────────────────────────── */
 function renderPrivate() {
   if (DESK.mode === 'demo' || DESK.authed) {
@@ -580,6 +745,7 @@ async function boot() {
     renderStrip(DESK.data.market);
     renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
     renderPrivate();
+    loadHeatmap();
     return;
   }
   /* live: public domains render immediately; private waits for PIN */
@@ -603,6 +769,7 @@ async function boot() {
     renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
   }
   renderMasthead();
+  loadHeatmap();
   const pin = sessionStorage.getItem('desk_pin');
   if (pin) {
     const res = await deskLogin(pin).catch(() => ({ ok: false }));

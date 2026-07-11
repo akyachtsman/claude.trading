@@ -72,6 +72,12 @@ jobs:
           DB_SERVICE_KEY: ${{ secrets.DB_SERVICE_KEY }}
         run: node fetch-news.js
 
+      - name: Fetch S&P 500 heatmap (constituents + Yahoo batch)
+        if: ${{ !cancelled() }}
+        env:
+          MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
+        run: node fetch-heatmap.js
+
       - name: Fetch IBKR snapshots (Flex → Supabase)
         if: ${{ !cancelled() }}
         env:
