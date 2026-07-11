@@ -39,10 +39,22 @@ async function flexCall(url) {
   return parser.parse(await res.text());
 }
 
+/* Transient Flex conditions (observed 1001 "could not be generated at this
+   time"; 1019 in-progress) — retry in-run, then exit not-ready for the
+   morning cron rather than failing the domain. */
+const isTransientFlex = e => e && (e.code === '1001' || e.code === '1019' || /try again|in progress|at this time/i.test(e.message));
+
 async function requestStatement(token, queryId) {
-  const send = await flexCall(`${FLEX_BASE}.SendRequest?t=${token}&q=${queryId}&v=3`);
-  const err = flexError(send);
-  if (err) throw Object.assign(new Error(`Flex SendRequest ${err.code}: ${err.message}`), { flex: err });
+  let send, err;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt) await sleep(30000);
+    send = await flexCall(`${FLEX_BASE}.SendRequest?t=${token}&q=${queryId}&v=3`);
+    err = flexError(send);
+    if (!err) break;
+    if (!isTransientFlex(err)) throw Object.assign(new Error(`Flex SendRequest ${err.code}: ${err.message}`), { flex: err });
+    warn('Flex transient error', `${err.code}: ${err.message} — retry ${attempt + 1}/3`);
+  }
+  if (err) throw Object.assign(new Error(`Flex SendRequest ${err.code}: ${err.message}`), { flex: err, transient: true });
   const ref = send.FlexStatementResponse.ReferenceCode;
   const getUrl = send.FlexStatementResponse.Url || `${FLEX_BASE}.GetStatement`;
 
@@ -141,6 +153,11 @@ async function main() {
       await sendRenewTokenEmail(err.message);
       await writeStatus('accounts', { status: 'failed', detail: 'Flex token invalid/expired — renewal email sent' });
       process.exit(1);
+    }
+    if (err.transient) {
+      notice('IBKR statement not ready', err.message + ' — no upsert; the next cron retries.');
+      await writeStatus('accounts', { status: 'not-ready', detail: err.message });
+      return;
     }
     throw err;
   }

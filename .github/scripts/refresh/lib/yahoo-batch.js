@@ -12,11 +12,24 @@ const Q1 = () => process.env.MARKET_FALLBACK_URL || 'https://query1.finance.yaho
 /* Constituent lists use dots (BRK.B); Yahoo wants dashes (BRK-B). */
 export const yahooTicker = sym => String(sym).trim().toUpperCase().replace(/\./g, '-');
 
+/* Yahoo 429s shared Actions IPs in ~half-minute windows; short exponential
+   backoff never survives it. On 429: wait long, then retry (observed run
+   29135632333: every call 429'd for the rest of the job). */
+async function fetch429(url, opts, { tries = 3, waitMs = 30000 } = {}) {
+  for (let i = 0; ; i++) {
+    const res = await retryFetch(url, opts, { tries: 2, baseMs: 1500 }).catch(e => e);
+    if (!(res instanceof Error)) return res;
+    if (i >= tries - 1 || !/429/.test(String(res.message))) throw res;
+    warn('Yahoo 429 — cooling down', `${Math.round(waitMs / 1000)}s before retry ${i + 2}/${tries}`);
+    await sleep(waitMs);
+  }
+}
+
 export async function getCrumb() {
   const init = await fetch('https://fc.yahoo.com/', { headers: { 'user-agent': UA }, redirect: 'manual' });
   const cookie = (init.headers.get('set-cookie') || '').split(';')[0];
   if (!cookie) throw new Error('no Yahoo session cookie issued');
-  const res = await retryFetch(`${Q1()}/v1/test/getcrumb`, { headers: { 'user-agent': UA, cookie } }, { tries: 2 });
+  const res = await fetch429(`${Q1()}/v1/test/getcrumb`, { headers: { 'user-agent': UA, cookie } });
   const crumb = (await res.text()).trim();
   if (!crumb || crumb.length > 32 || crumb.includes('<')) throw new Error('no Yahoo crumb issued');
   return { cookie, crumb };
@@ -30,7 +43,7 @@ export async function quoteBatch(symbols, { cookie, crumb }, batchSize = 150) {
     const chunk = symbols.slice(i, i + batchSize);
     const url = `${Q1()}/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,marketCap&crumb=${encodeURIComponent(crumb)}`;
     try {
-      const res = await retryFetch(url, { headers: { 'user-agent': UA, cookie } }, { tries: 2, baseMs: 2000 });
+      const res = await fetch429(url, { headers: { 'user-agent': UA, cookie } });
       for (const q of (await res.json())?.quoteResponse?.result || []) {
         const pct = Number(q.regularMarketChangePercent);
         if (Number.isFinite(pct)) out.set(String(q.symbol), { pct: Number(pct.toFixed(2)), cap: Number(q.marketCap) || null });
@@ -62,12 +75,12 @@ export async function sparkBatch(symbols, batchSize = 25) {
     const chunk = symbols.slice(i, i + batchSize);
     const url = `${Q1()}/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=5d&interval=1d`;
     try {
-      const res = await retryFetch(url, { headers: { 'user-agent': UA } }, { tries: 2, baseMs: 2000 });
+      const res = await fetch429(url, { headers: { 'user-agent': UA } }, { tries: 2 });
       for (const [sym, v] of parseSpark(await res.json())) out.set(sym, v);
     } catch (e) {
       warn('Yahoo spark batch failed', `${chunk[0]}… (${chunk.length} syms): ${String(e.message || e)}`);
     }
-    await sleep(400);
+    await sleep(1500);
   }
   return out;
 }
