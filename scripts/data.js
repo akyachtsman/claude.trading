@@ -127,23 +127,23 @@ function buildDemoBrief(accounts) {
 /* Demo heatmap — deterministic (seeded pct), rough caps; same shape as the
    pipeline's data/heatmap.json so the renderer is shared. */
 const DEMO_HEAT_SECTORS = [
-  ['Information Technology', [['NVDA', 4200], ['MSFT', 3700], ['AAPL', 3300], ['AVGO', 1200], ['ORCL', 620], ['AMD', 340], ['CRM', 250], ['INTC', 130]]],
-  ['Communication Services', [['GOOGL', 2400], ['META', 1700], ['NFLX', 540], ['DIS', 210], ['T', 150]]],
-  ['Consumer Discretionary', [['AMZN', 2300], ['TSLA', 1100], ['HD', 380], ['MCD', 220], ['NKE', 110]]],
-  ['Financials', [['BRK.B', 1000], ['JPM', 700], ['V', 620], ['MA', 500], ['BAC', 330], ['WFC', 240]]],
-  ['Health Care', [['LLY', 800], ['UNH', 480], ['JNJ', 420], ['ABBV', 340], ['MRK', 260]]],
-  ['Industrials', [['GE', 260], ['CAT', 200], ['RTX', 190], ['UPS', 110], ['BA', 130]]],
-  ['Consumer Staples', [['WMT', 800], ['COST', 430], ['PG', 400], ['KO', 300], ['PEP', 230]]],
-  ['Energy', [['XOM', 520], ['CVX', 280], ['COP', 130]]],
-  ['Utilities', [['NEE', 170], ['SO', 100], ['DUK', 90]]],
-  ['Real Estate', [['PLD', 110], ['AMT', 95], ['EQIX', 85]]],
-  ['Materials', [['LIN', 220], ['SHW', 90], ['APD', 65]]],
+  ['Information Technology', [['NVDA', 4200, 'Semiconductors'], ['MSFT', 3700, 'Software - Infrastructure'], ['AAPL', 3300, 'Consumer Electronics'], ['AVGO', 1200, 'Semiconductors'], ['ORCL', 620, 'Software - Infrastructure'], ['AMD', 340, 'Semiconductors'], ['CRM', 250, 'Software - Application'], ['INTC', 130, 'Semiconductors']]],
+  ['Communication Services', [['GOOGL', 2400, 'Internet Content'], ['META', 1700, 'Internet Content'], ['NFLX', 540, 'Entertainment'], ['DIS', 210, 'Entertainment'], ['T', 150, 'Telecom Services']]],
+  ['Consumer Discretionary', [['AMZN', 2300, 'Internet Retail'], ['TSLA', 1100, 'Auto Manufacturers'], ['HD', 380, 'Home Improvement'], ['MCD', 220, 'Restaurants'], ['NKE', 110, 'Apparel']]],
+  ['Financials', [['BRK.B', 1000, 'Insurance - Diversified'], ['JPM', 700, 'Banks - Diversified'], ['V', 620, 'Credit Services'], ['MA', 500, 'Credit Services'], ['BAC', 330, 'Banks - Diversified'], ['WFC', 240, 'Banks - Diversified']]],
+  ['Health Care', [['LLY', 800, 'Drug Manufacturers'], ['UNH', 480, 'Healthcare Plans'], ['JNJ', 420, 'Drug Manufacturers'], ['ABBV', 340, 'Drug Manufacturers'], ['MRK', 260, 'Drug Manufacturers']]],
+  ['Industrials', [['GE', 260, 'Aerospace & Defense'], ['CAT', 200, 'Farm & Heavy Machinery'], ['RTX', 190, 'Aerospace & Defense'], ['UPS', 110, 'Integrated Freight'], ['BA', 130, 'Aerospace & Defense']]],
+  ['Consumer Staples', [['WMT', 800, 'Discount Stores'], ['COST', 430, 'Discount Stores'], ['PG', 400, 'Household Products'], ['KO', 300, 'Beverages'], ['PEP', 230, 'Beverages']]],
+  ['Energy', [['XOM', 520, 'Oil & Gas Integrated'], ['CVX', 280, 'Oil & Gas Integrated'], ['COP', 130, 'Oil & Gas E&P']]],
+  ['Utilities', [['NEE', 170, 'Utilities - Regulated'], ['SO', 100, 'Utilities - Regulated'], ['DUK', 90, 'Utilities - Regulated']]],
+  ['Real Estate', [['PLD', 110, 'REIT - Industrial'], ['AMT', 95, 'REIT - Specialty'], ['EQIX', 85, 'REIT - Specialty']]],
+  ['Materials', [['LIN', 220, 'Specialty Chemicals'], ['SHW', 90, 'Specialty Chemicals'], ['APD', 65, 'Specialty Chemicals']]],
 ];
 function buildDemoHeatmap() {
   const rnd = lcg(97);
   const sectors = DEMO_HEAT_SECTORS.map(([name, list]) => {
-    const tiles = list.map(([sym, capB]) => ({
-      sym, name: sym, cap: capB * 1e9,
+    const tiles = list.map(([sym, capB, ind]) => ({
+      sym, name: sym, cap: capB * 1e9, ind,
       pct: Number(((rnd() - 0.47) * 3.4).toFixed(2)),
     }));
     return { name, cap: tiles.reduce((s, t) => s + t.cap, 0), tiles };

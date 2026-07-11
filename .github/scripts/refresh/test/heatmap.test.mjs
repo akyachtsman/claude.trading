@@ -19,7 +19,7 @@ test('parseCsv survives quoted fields with commas', () => {
 test('parseConstituents maps symbol/name/sector', () => {
   const c = parseConstituents(CSV);
   assert.equal(c.length, 4);
-  assert.deepEqual(c[2], { sym: 'BRK.B', name: 'Berkshire Hathaway', sector: 'Financials' });
+  assert.deepEqual(c[2], { sym: 'BRK.B', name: 'Berkshire Hathaway', sector: 'Financials', ind: 'Multi-Sector Holdings' });
 });
 
 test('yahooTicker converts dots to dashes', () => {

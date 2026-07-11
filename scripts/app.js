@@ -599,18 +599,32 @@ function renderHeatmap(hm, lamp) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
   }
-  const W = 1200, H = 520, HEAD = 16;
+  const W = 1200, H = 520, HEAD = 16, BAND = 11;
   const tip = document.getElementById('heatTip');
-  const sectorRects = squarify(hm.sectors.map(s => ({ ...s, value: s.cap })), 0, 0, W, H);
-  for (const s of sectorRects) {
-    if (s.w < 4 || s.h < HEAD + 6) continue;
-    if (s.w > 64 && s.h > 40) {
-      const label = svgEl('text', { x: s.x + 4, y: s.y + 12, fill: 'var(--color-text-secondary)', 'font-size': '10', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
-      label.textContent = s.name.toUpperCase().slice(0, Math.floor(s.w / 7));
-      svg.appendChild(label);
+
+  /* finviz-style hover: the hovered stock's industry peers, stacked. */
+  const showPeers = (t, sector, px, py) => {
+    while (tip.firstChild) tip.removeChild(tip.firstChild);
+    tip.appendChild(el('div', 'tip-date', t.name && t.name !== t.sym ? t.sym + ' — ' + t.name : t.sym));
+    tip.appendChild(el('div', '', (t.ind || sector.name) + ' · ' + fmtCap(t.cap)));
+    const peers = sector.tiles
+      .filter(p => (t.ind ? p.ind === t.ind : true))
+      .sort((a, b) => b.cap - a.cap).slice(0, 8);
+    for (const p of peers) {
+      const row = el('div', 'tip-row' + (p.sym === t.sym ? ' tip-cur' : ''));
+      row.appendChild(el('span', '', p.sym));
+      row.appendChild(el('span', p.pct > 0 ? 'up' : p.pct < 0 ? 'down' : '', fmtPct(p.pct)));
+      tip.appendChild(row);
     }
-    const tiles = squarify(s.tiles.map(t => ({ ...t, value: t.cap })), s.x, s.y + HEAD, s.w, s.h - HEAD);
-    for (const t of tiles) {
+    tip.style.display = 'block';
+    const wrap = svg.parentElement.getBoundingClientRect();
+    const sx = wrap.width / W, sy = wrap.height / H;
+    tip.style.left = Math.min(px * sx + 8, wrap.width - 200) + 'px';
+    tip.style.top = Math.min(Math.max(py * sy - 8, 0), wrap.height - 40) + 'px';
+  };
+
+  const drawTiles = (tiles, x, y, w, h, sector) => {
+    for (const t of squarify(tiles.map(t => ({ ...t, value: t.cap })), x, y, w, h)) {
       if (t.w < 3 || t.h < 3) continue;
       const rect = svgEl('rect', {
         x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1),
@@ -627,18 +641,44 @@ function renderHeatmap(hm, lamp) {
           svg.appendChild(pctEl);
         }
       }
-      rect.addEventListener('pointerenter', () => {
-        while (tip.firstChild) tip.removeChild(tip.firstChild);
-        tip.appendChild(el('div', 'tip-date', t.name === t.sym ? t.sym : t.sym + ' — ' + t.name));
-        tip.appendChild(el('div', '', s.name));
-        tip.appendChild(el('div', '', fmtCap(t.cap) + '  ' + fmtPct(t.pct)));
-        tip.style.display = 'block';
-        const wrap = svg.parentElement.getBoundingClientRect();
-        const sx = wrap.width / W, sy = wrap.height / H;
-        tip.style.left = Math.min((t.x + t.w) * sx + 8, wrap.width - 190) + 'px';
-        tip.style.top = Math.max(t.y * sy - 8, 0) + 'px';
-      });
+      rect.addEventListener('pointerenter', () => showPeers(t, sector, t.x + t.w, t.y));
       rect.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+    }
+  };
+
+  const sectorRects = squarify(hm.sectors.map(s => ({ ...s, value: s.cap })), 0, 0, W, H);
+  for (const s of sectorRects) {
+    if (s.w < 4 || s.h < HEAD + 6) continue;
+    if (s.w > 64 && s.h > 40) {
+      const label = svgEl('text', { x: s.x + 4, y: s.y + 12, fill: 'var(--color-text-secondary)', 'font-size': '10', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
+      label.textContent = s.name.toUpperCase().slice(0, Math.floor(s.w / 7));
+      svg.appendChild(label);
+    }
+    const body = { x: s.x, y: s.y + HEAD, w: s.w, h: s.h - HEAD };
+
+    /* finviz-style sub-industry nesting when the sector has room + data */
+    const byInd = new Map();
+    for (const t of s.tiles) {
+      const k = t.ind || '';
+      if (!byInd.has(k)) byInd.set(k, []);
+      byInd.get(k).push(t);
+    }
+    const groups = [...byInd.entries()].map(([ind, tiles]) => ({
+      ind, tiles, cap: tiles.reduce((c, t) => c + t.cap, 0),
+    }));
+    if (groups.length > 1 && groups.every(g => g.ind) && body.h > 76 && body.w > 100) {
+      for (const g of squarify(groups.map(g => ({ ...g, value: g.cap })), body.x, body.y, body.w, body.h)) {
+        const hasBand = g.w > 58 && g.h > 40;
+        if (hasBand) {
+          svg.appendChild(svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: 'var(--color-surface-2)' }));
+          const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: 'var(--color-text-secondary)', 'font-size': '7', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
+          bl.textContent = g.ind.toUpperCase().slice(0, Math.floor(g.w / 5));
+          svg.appendChild(bl);
+        }
+        drawTiles(g.tiles, g.x, g.y + (hasBand ? BAND + 1 : 0), g.w, g.h - (hasBand ? BAND + 1 : 0), s);
+      }
+    } else {
+      drawTiles(s.tiles, body.x, body.y, body.w, body.h, s);
     }
   }
   renderHeatLegend();
