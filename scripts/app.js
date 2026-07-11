@@ -724,16 +724,18 @@ function renderHeatTable(hm) {
 }
 
 async function loadHeatmap() {
-  if (DESK.mode === 'demo') {
-    renderHeatmap(buildDemoHeatmap(), { cls: 'lamp--demo', text: 'Demo' });
-    return;
+  /* Fetch the file only once meta says the pipeline has published it — a
+     404 would log a console error (fails test S1) even when handled. */
+  const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.heatmap
+    && DESK.meta.domains.heatmap.asOf;
+  if (DESK.mode !== 'demo' && published) {
+    try {
+      const hm = await fetchPublic('data/heatmap.json');
+      renderHeatmap(hm, lampFor(hm.asOf, new Date()));
+      return;
+    } catch { /* fall through to demo-labeled */ }
   }
-  try {
-    const hm = await fetchPublic('data/heatmap.json');
-    renderHeatmap(hm, lampFor(hm.asOf, new Date()));
-  } catch {
-    renderHeatmap(buildDemoHeatmap(), { cls: 'lamp--demo', text: 'Demo' });
-  }
+  renderHeatmap(buildDemoHeatmap(), { cls: 'lamp--demo', text: 'Demo' });
 }
 
 /* ── render orchestration ──────────────────────────────────────────────── */
