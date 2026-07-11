@@ -1,9 +1,27 @@
 {
-  "asOf": "2026-07-10",
-  "generatedAt": "2026-07-11T02:19:18.621Z",
+  "asOf": "2026-07-11",
+  "generatedAt": "2026-07-11T10:42:50.736Z",
   "items": [
     {
-      "t": "00:08",
+      "t": "10:15",
+      "src": "MarketWatch",
+      "h": "‘It’s heartbreaking’: My brother claimed Social Security at 70. He died from cancer after one payment. Why wait to claim?",
+      "chips": []
+    },
+    {
+      "t": "09:36",
+      "src": "CNBC",
+      "h": "Trump threatens to 'decimate' Iran if it tries to kill him, as Treasury sanctions alleged Iranian financier",
+      "chips": []
+    },
+    {
+      "t": "05:00",
+      "src": "CNBC",
+      "h": "AstraZeneca's trial flop raises a bigger question: Is its pipeline premium becoming more vulnerable?",
+      "chips": []
+    },
+    {
+      "t": "04:09",
       "src": "CNBC",
       "h": "Apple sues OpenAI alleging trade secret theft, says scheme was 'at every level'",
       "chips": []
@@ -75,12 +93,6 @@
       "chips": []
     },
     {
-      "t": "19:57",
-      "src": "CNBC",
-      "h": "Trump Accounts may help foster children build a financial safety net. What to know",
-      "chips": []
-    },
-    {
       "t": "19:40",
       "src": "MarketWatch",
       "h": "Summer travel season is here: Make this vital purchase before your next vacation",
@@ -90,12 +102,6 @@
       "t": "19:30",
       "src": "MarketWatch",
       "h": "Where to put cash right now: Should you lock in at 4% — or wait for the next Fed rate decision?",
-      "chips": []
-    },
-    {
-      "t": "19:12",
-      "src": "CNBC",
-      "h": "The ETF market is pushing the limits of the leverage it can handle. SK Hynix is the latest example",
       "chips": []
     },
     {
@@ -111,15 +117,9 @@
       "chips": []
     },
     {
-      "t": "19:02",
-      "src": "MarketWatch",
-      "h": "Prepare for the Fed to undo rate cuts that stabilized the economy, expert cautions",
-      "chips": []
-    },
-    {
-      "t": "18:05",
+      "t": "17:44",
       "src": "CNBC",
-      "h": "Trump purges Election Assistance Commission members, months before midterms",
+      "h": "Senate Democrats want hearings on Trump’s crypto holdings and foreign investors",
       "chips": []
     }
   ]

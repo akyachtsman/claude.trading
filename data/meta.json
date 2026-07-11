@@ -1,36 +1,36 @@
 {
-  "asOf": "2026-07-10",
-  "generatedAt": "2026-07-11T02:20:53.070Z",
+  "asOf": "2026-07-11",
+  "generatedAt": "2026-07-11T10:43:04.658Z",
   "domains": {
     "accounts": {
-      "status": "not-ready",
-      "asOf": "2026-07-09",
-      "detail": "Flex SendRequest 1001: Statement could not be generated at this time. Please try again shortly.",
-      "at": "2026-07-11T02:20:52.297Z"
+      "status": "ok",
+      "asOf": "2026-07-10",
+      "detail": "",
+      "at": "2026-07-11T10:42:56.705Z"
     },
     "brief": {
-      "status": "skipped",
-      "asOf": null,
-      "detail": "no snapshots to ground on",
-      "at": "2026-07-11T02:20:53.026Z"
+      "status": "ok",
+      "asOf": "2026-07-10",
+      "detail": "",
+      "at": "2026-07-11T10:43:04.606Z"
     },
     "market": {
       "status": "ok",
       "asOf": "2026-07-10",
       "detail": "",
-      "at": "2026-07-11T02:19:17.547Z"
+      "at": "2026-07-11T10:42:49.949Z"
     },
     "news": {
       "status": "ok",
-      "asOf": "2026-07-10",
+      "asOf": "2026-07-11",
       "detail": "",
-      "at": "2026-07-11T02:19:18.622Z"
+      "at": "2026-07-11T10:42:50.738Z"
     },
     "heatmap": {
       "status": "failed",
       "asOf": null,
       "detail": "spark coverage too thin (0)",
-      "at": "2026-07-11T02:19:12.913Z"
+      "at": "2026-07-11T10:42:45.115Z"
     }
   }
 }
