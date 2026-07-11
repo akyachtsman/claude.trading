@@ -43,13 +43,14 @@ export async function quoteBatch(symbols, { cookie, crumb }, batchSize = 150) {
   for (let i = 0; i < symbols.length; i += batchSize) {
     if (deadStreak >= 2) { warn('Yahoo quote aborted', '2 consecutive dead batches'); break; }
     const chunk = symbols.slice(i, i + batchSize);
-    const url = `${Q1()}/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,marketCap&crumb=${encodeURIComponent(crumb)}`;
+    const url = `${Q1()}/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,regularMarketPrice,marketCap&crumb=${encodeURIComponent(crumb)}`;
     try {
       const res = await fetch429(url, { headers: { 'user-agent': UA, cookie } });
       const before = out.size;
       for (const q of (await res.json())?.quoteResponse?.result || []) {
         const pct = Number(q.regularMarketChangePercent);
-        if (Number.isFinite(pct)) out.set(String(q.symbol), { pct: Number(pct.toFixed(2)), cap: Number(q.marketCap) || null });
+        const last = Number(q.regularMarketPrice);
+        if (Number.isFinite(pct)) out.set(String(q.symbol), { pct: Number(pct.toFixed(2)), cap: Number(q.marketCap) || null, last: Number.isFinite(last) && last > 0 ? last : null });
       }
       deadStreak = out.size > before ? 0 : deadStreak + 1;
     } catch (e) {
@@ -68,7 +69,7 @@ export function parseSpark(json) {
     const closes = (node?.close || []).filter(c => Number.isFinite(c) && c > 0);
     if (closes.length >= 2) {
       const pct = (closes.at(-1) / closes.at(-2) - 1) * 100;
-      out.set(sym, { pct: Number(pct.toFixed(2)) });
+      out.set(sym, { pct: Number(pct.toFixed(2)), last: Number(closes.at(-1).toFixed(2)) });
     }
   }
   return out;

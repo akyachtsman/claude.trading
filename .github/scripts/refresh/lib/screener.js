@@ -19,8 +19,13 @@ export function parseScreener(json) {
     const rawPct = String(r.pctchange ?? '').replace(/[%,+]/g, '').trim();
     const pct = rawPct === '' || rawPct === '--' ? 0 : Number(rawPct);
     const cap = Number(String(r.marketCap ?? '').replace(/[$,]/g, ''));
+    const last = Number(String(r.lastsale ?? '').replace(/[$,]/g, ''));
     if (!Number.isFinite(pct)) continue;
-    const q = { pct: Number(pct.toFixed(2)), cap: Number.isFinite(cap) && cap > 0 ? cap : null };
+    const q = {
+      pct: Number(pct.toFixed(2)),
+      cap: Number.isFinite(cap) && cap > 0 ? cap : null,
+      last: Number.isFinite(last) && last > 0 ? last : null,
+    };
     out.set(sym, q);
     out.set(sym.replace(/\./g, '-'), q);
   }
