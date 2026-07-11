@@ -63,9 +63,10 @@ jobs:
       # Heatmap runs FIRST among the Yahoo consumers: its crumb path needs only
       # ~5 calls, while later steps' per-symbol fallbacks can trip Yahoo's
       # per-IP throttle for the rest of the job (observed run 29135632333).
-      - name: Fetch S&P 500 heatmap (constituents + Yahoo batch)
+      - name: Fetch S&P 500 heatmap (screener + Yahoo fallbacks)
         if: ${{ !cancelled() }}
         env:
+          SCREENER_BASE_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
           MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
         run: node fetch-heatmap.js
 
