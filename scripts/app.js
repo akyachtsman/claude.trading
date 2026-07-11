@@ -113,6 +113,12 @@ function makeSortable(table) {
 function renderAccounts(accounts, lamp) {
   const grid = document.getElementById('accountGrid');
   while (grid.firstChild) grid.removeChild(grid.firstChild);
+  if (!accounts.length) {
+    /* authed but pre-first-refresh: say so plainly instead of a blank grid */
+    grid.appendChild(el('p', 'stamp',
+      'No account data yet — the first IBKR snapshot lands after the next market close (retried each morning).'));
+    return;
+  }
   for (const a of accounts) {
     const panel = el('section', 'panel account');
     panel.setAttribute('aria-label', a.label + ' account');
@@ -397,6 +403,7 @@ function activeSeries() {
 function drawChart() {
   const svg = document.getElementById('equityChart');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (!DESK.data.accounts.length) return; /* authed, zero history yet */
   const histLen = DESK.data.accounts[0].equity.length;
   const days = Math.min(DESK.chart.days, histLen);
   const series = activeSeries().map(s => ({ ...s, values: s.values.slice(-days) }));
