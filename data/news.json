@@ -1,17 +1,17 @@
 {
   "asOf": "2026-07-10",
-  "generatedAt": "2026-07-10T23:27:25.090Z",
+  "generatedAt": "2026-07-11T01:42:49.821Z",
   "items": [
+    {
+      "t": "00:08",
+      "src": "CNBC",
+      "h": "Apple sues OpenAI alleging trade secret theft, says scheme was 'at every level'",
+      "chips": []
+    },
     {
       "t": "23:06",
       "src": "MarketWatch",
       "h": "Apple sues OpenAI for alleged theft of confidential info — and says that’s just ‘the tip of the iceberg’",
-      "chips": []
-    },
-    {
-      "t": "22:44",
-      "src": "CNBC",
-      "h": "Apple sues OpenAI alleging trade secret theft, says scheme was 'at every level'",
       "chips": []
     },
     {
