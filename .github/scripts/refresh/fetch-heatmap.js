@@ -36,12 +36,14 @@ export function parseConstituents(csv) {
   const head = rows[0].map(h => h.trim().toLowerCase());
   const iSym = head.findIndex(h => h === 'symbol');
   const iName = head.findIndex(h => /security|name/.test(h));
-  const iSector = head.findIndex(h => /sector/.test(h));
+  const iSector = head.findIndex(h => /sector/.test(h) && !/sub/.test(h));
+  const iInd = head.findIndex(h => /sub-industry|sub industry/.test(h));
   if (iSym < 0 || iSector < 0) throw new Error('constituents CSV missing symbol/sector columns');
   return rows.slice(1).map(r => ({
     sym: r[iSym].trim().toUpperCase(),
     name: (r[iName] || '').trim(),
     sector: r[iSector].trim(),
+    ind: iInd >= 0 ? (r[iInd] || '').trim() : '',
   })).filter(c => c.sym && c.sector);
 }
 
@@ -56,7 +58,7 @@ export function buildHeatmap(constituents, quotes, prevCaps = new Map()) {
     if (!cap || !Number.isFinite(q.pct)) continue;
     covered++;
     if (!bySector.has(c.sector)) bySector.set(c.sector, []);
-    bySector.get(c.sector).push({ sym: c.sym, name: c.name, cap, pct: q.pct });
+    bySector.get(c.sector).push({ sym: c.sym, name: c.name, cap, pct: q.pct, ind: c.ind || '' });
   }
   const sectors = [...bySector.entries()]
     .map(([name, tiles]) => ({

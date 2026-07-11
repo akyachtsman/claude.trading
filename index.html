@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>claude.trading — multi-account desk</title>
 <meta name="description" content="Private multi-account trading dashboard: account windows, charts, market summary, news, and AI brief.">
+<link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260711b">
-<link rel="stylesheet" href="styles/components.css?v=20260711b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260711c">
+<link rel="stylesheet" href="styles/components.css?v=20260711c">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -75,6 +76,11 @@
   #heatmapSvg { display: block; width: 100%; height: clamp(320px, 44vw, 560px); }
   #heatmapSvg text { pointer-events: none; }
   .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
+  #heatTip { min-width: 168px; }
+  #heatTip .tip-row { display: flex; justify-content: space-between; gap: 14px; }
+  #heatTip .tip-row.tip-cur { font-weight: 700; }
+  #heatTip .tip-row .up { color: var(--color-gain); }
+  #heatTip .tip-row .down { color: var(--color-loss); }
   .heat-legend .swatch { width: 26px; height: 12px; border-radius: 2px; display: inline-block; }
 
   /* footer */
@@ -204,8 +210,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260711b"></script>
-<script src="scripts/data.js?v=20260711b"></script>
-<script src="scripts/app.js?v=20260711b"></script>
+<script src="scripts/config.js?v=20260711c"></script>
+<script src="scripts/data.js?v=20260711c"></script>
+<script src="scripts/app.js?v=20260711c"></script>
 </body>
 </html>
