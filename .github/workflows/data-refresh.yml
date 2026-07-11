@@ -57,6 +57,15 @@ jobs:
       - name: Unit tests (fixtures)
         run: npm test
 
+      # Heatmap runs FIRST among the Yahoo consumers: its crumb path needs only
+      # ~5 calls, while later steps' per-symbol fallbacks can trip Yahoo's
+      # per-IP throttle for the rest of the job (observed run 29135632333).
+      - name: Fetch S&P 500 heatmap (constituents + Yahoo batch)
+        if: ${{ !cancelled() }}
+        env:
+          MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
+        run: node fetch-heatmap.js
+
       - name: Fetch market summary (Stooq + FRED)
         if: ${{ !cancelled() }}
         env:
@@ -71,12 +80,6 @@ jobs:
           DB_URL: ${{ vars.DB_URL }}
           DB_SERVICE_KEY: ${{ secrets.DB_SERVICE_KEY }}
         run: node fetch-news.js
-
-      - name: Fetch S&P 500 heatmap (constituents + Yahoo batch)
-        if: ${{ !cancelled() }}
-        env:
-          MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
-        run: node fetch-heatmap.js
 
       - name: Fetch IBKR snapshots (Flex → Supabase)
         if: ${{ !cancelled() }}
