@@ -124,6 +124,33 @@ function buildDemoBrief(accounts) {
   };
 }
 
+/* Demo heatmap — deterministic (seeded pct), rough caps; same shape as the
+   pipeline's data/heatmap.json so the renderer is shared. */
+const DEMO_HEAT_SECTORS = [
+  ['Information Technology', [['NVDA', 4200], ['MSFT', 3700], ['AAPL', 3300], ['AVGO', 1200], ['ORCL', 620], ['AMD', 340], ['CRM', 250], ['INTC', 130]]],
+  ['Communication Services', [['GOOGL', 2400], ['META', 1700], ['NFLX', 540], ['DIS', 210], ['T', 150]]],
+  ['Consumer Discretionary', [['AMZN', 2300], ['TSLA', 1100], ['HD', 380], ['MCD', 220], ['NKE', 110]]],
+  ['Financials', [['BRK.B', 1000], ['JPM', 700], ['V', 620], ['MA', 500], ['BAC', 330], ['WFC', 240]]],
+  ['Health Care', [['LLY', 800], ['UNH', 480], ['JNJ', 420], ['ABBV', 340], ['MRK', 260]]],
+  ['Industrials', [['GE', 260], ['CAT', 200], ['RTX', 190], ['UPS', 110], ['BA', 130]]],
+  ['Consumer Staples', [['WMT', 800], ['COST', 430], ['PG', 400], ['KO', 300], ['PEP', 230]]],
+  ['Energy', [['XOM', 520], ['CVX', 280], ['COP', 130]]],
+  ['Utilities', [['NEE', 170], ['SO', 100], ['DUK', 90]]],
+  ['Real Estate', [['PLD', 110], ['AMT', 95], ['EQIX', 85]]],
+  ['Materials', [['LIN', 220], ['SHW', 90], ['APD', 65]]],
+];
+function buildDemoHeatmap() {
+  const rnd = lcg(97);
+  const sectors = DEMO_HEAT_SECTORS.map(([name, list]) => {
+    const tiles = list.map(([sym, capB]) => ({
+      sym, name: sym, cap: capB * 1e9,
+      pct: Number(((rnd() - 0.47) * 3.4).toFixed(2)),
+    }));
+    return { name, cap: tiles.reduce((s, t) => s + t.cap, 0), tiles };
+  }).sort((a, b) => b.cap - a.cap);
+  return { asOf: isoDate(lastTradingDay(new Date())), source: 'demo', sectors };
+}
+
 /* ── mode resolution + public loaders (live mode) ──────────────────────── */
 function resolveMode() {
   const q = new URLSearchParams(location.search);
