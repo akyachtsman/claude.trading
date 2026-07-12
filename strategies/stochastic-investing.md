@@ -5,6 +5,22 @@
 > own words, not course content. One file per strategy; this is the angle the
 > watchlist-charts panel is built to serve.
 
+## The three tiers
+
+The strategy runs at three horizons simultaneously — the three workspace
+panes in the source platform are not just layouts, they are the tiers
+(owner, 2026-07-12):
+
+| Tier | Pane | Horizon | Pane setup (from the reference screenshot) |
+|---|---|---|---|
+| **Pro 1** | left | **Short-term trading** | Daily candles, moving average, R/S ladder (R3/R1/S1/S3), volume + stochastic |
+| **Pro 2** | middle | **Long-term trading** | Daily candles over a longer window, volume + stochastic strips |
+| **Pro 3** | right | **Day trading** | Intraday bars with Bollinger-style bands, volume |
+
+Workbench coverage: our panel serves the Pro 1/Pro 2 tiers today (EOD daily
++ weekly data); the Pro 3 day-trading tier requires intraday data — the
+quote-proxy backend, which is its own approval-gated phase.
+
 ## Core idea
 
 Time entries and exits with a **slow stochastic oscillator read on two
