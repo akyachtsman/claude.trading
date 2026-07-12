@@ -45,43 +45,27 @@ for (const [fg, bg, thr, name] of pairs) {
   if (!ok) failed = true;
   console.log(`${ok ? '  ok' : 'FAIL'}  ${name.padEnd(30)} ${r.toFixed(2)} (need ${thr.toFixed(1)})`);
 }
-// Heatmap tile labels use an ink-flip (white↔black) over a DYNAMIC piecewise
-// ramp (HEAT.stops in scripts/app.js) — colors the token pairs above can't
-// see. Re-derive the ramp here and assert the best-available ink clears AA
-// across the whole range. The flat color IS the glyph background: labeled
-// tiles carry no bevel overlay (drawTiles applies the vignette only to tiles
-// too small for a label). Skips cleanly if the panel is absent.
+// Heatmap tile labels are consistently white over a DYNAMIC piecewise ramp
+// (owner directive 2026-07-12); AA is carried by the solid halo stroke painted
+// under every glyph (paint-order:stroke in heatText), finviz-style — so the
+// glyph's contrast pair is HEAT.ink vs HEAT.halo, independent of tile color.
+// Parse both from scripts/app.js and assert that pair. Skips cleanly if the
+// panel is absent.
 const APP = 'scripts/app.js';
 if (existsSync(APP)) {
   const app = readFileSync(APP, 'utf8');
-  const stopsM = app.match(/stops:\s*\[([\s\S]*?)\]\s*,\s*\n\s*cap:/);
-  const stops = stopsM
-    ? [...stopsM[1].matchAll(/\[\s*(-?\d+(?:\.\d+)?)\s*,\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]\s*\]/g)]
-        .map((m) => [parseFloat(m[1]), [+m[2], +m[3], +m[4]]])
-    : null;
-  if (stops && stops.length >= 2) {
-    const lumRGB = (rgb) => 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
-    const heatRGB = (p) => {
-      p = Math.max(stops[0][0], Math.min(stops[stops.length - 1][0], p));
-      let i = 0;
-      while (i < stops.length - 2 && p > stops[i + 1][0]) i++;
-      const [p0, c0] = stops[i], [p1, c1] = stops[i + 1];
-      const t = (p - p0) / (p1 - p0);
-      return c0.map((c, k) => c + (c1[k] - c) * t);
-    };
-    // Best ink = max(white, black) contrast — the same flip heatInk applies.
-    const bestInk = (rgb) => { const L = lumRGB(rgb); return Math.max(1.05 / (L + 0.05), (L + 0.05) / 0.05); };
-    const lo = stops[0][0], hi = stops[stops.length - 1][0];
-    let worst = Infinity, worstPct = 0;
-    for (let p = lo; p <= hi + 1e-9; p += (hi - lo) / 120) {
-      const r = bestInk(heatRGB(p));
-      if (r < worst) { worst = r; worstPct = p; }
-    }
-    const ok = worst >= AA;
+  const hex = (k) => { const m = app.match(new RegExp(k + ":\\s*'(#[0-9a-fA-F]{6})'")); return m ? m[1] : null; };
+  const ink = hex('ink'), halo = hex('halo');
+  const haloed = /paint-order/.test(app);
+  if (ink && halo && haloed) {
+    const r = ratio(ink, halo), ok = r >= AA;
     if (!ok) failed = true;
-    console.log(`${ok ? '  ok' : 'FAIL'}  ${'heatmap label ink (ramp)'.padEnd(30)} ${worst.toFixed(2)} (need ${AA.toFixed(1)}, worst @ ${worstPct.toFixed(2)}%)`);
+    console.log(`${ok ? '  ok' : 'FAIL'}  ${'heatmap label ink / halo'.padEnd(30)} ${r.toFixed(2)} (need ${AA.toFixed(1)})`);
+  } else if (ink || halo) {
+    failed = true;
+    console.log(`FAIL  heatmap label ink / halo — HEAT.ink/HEAT.halo/paint-order incomplete in scripts/app.js`);
   } else {
-    console.log('  skip  heatmap label ink (ramp) — HEAT.stops not found in scripts/app.js');
+    console.log('  skip  heatmap label ink / halo — HEAT constants not found in scripts/app.js');
   }
 }
 

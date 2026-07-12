@@ -553,9 +553,11 @@ const HEAT = {
   ],
   cap: 3,
   canvas: '#262931',         /* mosaic backdrop */
-  label: '#B9BFCC',          /* sector/band captions on the dark canvas */
+  label: '#CBD2DE',          /* sector/band captions on the dark canvas */
   band: '#31353F',           /* sub-industry band fill */
   focus: '#FDE047',          /* hover outline for the industry group */
+  ink: '#FFFFFF',            /* tile label ink — consistently white (owner, 2026-07-12) */
+  halo: '#23262D',           /* solid stroke behind every glyph; white-vs-halo is the AA pair */
 };
 
 function heatRGB(pct) {
@@ -568,20 +570,17 @@ function heatRGB(pct) {
   return c0.map((c, k) => Math.round(c + (c1[k] - c) * t));
 }
 const heatColor = pct => 'rgb(' + heatRGB(pct).join(',') + ')';
-/* WCAG relative luminance of an [r,g,b] triplet (0–255 channels). */
-function relLum(rgb) {
-  const f = c => (c /= 255) <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
-}
-/* Ink flip for tile labels: the ramp is dark near 0% (white ink wins) and
-   mid-luminance at the saturated poles (black wins) — no single ink clears AA
-   end to end, so pick per tile. Labeled tiles carry NO bevel overlay (see
-   drawTiles), so this flat color is exactly the glyph background — the model
-   check-contrast.js asserts against (Codex P2 on #29). */
-function heatInk(pct) {
-  const L = relLum(heatRGB(pct));
-  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#FFFFFF' : '#000000';
-}
+/* Tile labels are consistently WHITE (owner directive 2026-07-12 — the earlier
+   per-tile black flip on bright poles read inconsistent next to finviz). AA is
+   carried by a solid dark halo painted under every glyph (paint-order:stroke),
+   exactly finviz's trick: the glyph's contrast pair is ink-vs-halo (15.9:1),
+   independent of tile color. check-contrast.js asserts that pair. */
+const heatText = (attrs, fs) => svgEl('text', {
+  ...attrs, fill: HEAT.ink, stroke: HEAT.halo, 'paint-order': 'stroke',
+  /* halo stays a shadow, not an outline: ~1px at small sizes, capped so
+     display-size tickers don't read as cartoon-stroked */
+  'stroke-width': Math.min(1.8, Math.max(0.8, fs / 12)).toFixed(2), 'stroke-linejoin': 'round',
+});
 const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
 const fmtPrice = v => Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
@@ -640,9 +639,9 @@ function renderHeatmap(hm, lamp) {
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: HEAT.canvas }));
 
   /* shared tile bevel: a corner-weighted vignette (clear center → shaded
-     rim; r=70.7% puts the full shade exactly at the corners). Applied ONLY
-     to unlabeled tiles — a labeled tile's fill must stay exactly the flat
-     ramp color that heatInk and check-contrast.js model (Codex P2 on #29). */
+     rim; r=70.7% puts the full shade exactly at the corners). Text-safe on
+     every tile because glyph contrast is carried by the label halo, not the
+     tile fill (see heatText). */
   const defs = svgEl('defs', {});
   const gloss = svgEl('radialGradient', { id: 'heatGloss', r: '70.7%' });
   for (const [off, op] of [[0, 0], [0.72, 0], [1, 0.16]]) {
@@ -725,24 +724,23 @@ function renderHeatmap(hm, lamp) {
       const geo = { x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1), rx: 2 };
       const rect = svgEl('rect', { ...geo, fill: heatColor(t.pct) });
       svg.appendChild(rect);
+      svg.appendChild(svgEl('rect', { ...geo, fill: 'url(#heatGloss)', 'pointer-events': 'none' }));
 
       /* finviz label scaling: the ticker grows to fill its tile (mega-caps read
-         from across the room), tiny tiles still print at 7px. Bold sans glyphs
-         run ~0.62em wide. Unlabeled tiles get the bevel; labeled tiles stay
-         flat so the glyph background is exactly what heatInk models. */
-      const ink = heatInk(t.pct);
-      const fs = Math.min(t.h * 0.44, (t.w - 8) / (t.sym.length * 0.62), 38);
-      if (fs < 7) svg.appendChild(svgEl('rect', { ...geo, fill: 'url(#heatGloss)', 'pointer-events': 'none' }));
-      if (fs >= 7) {
-        const pfs = Math.max(8, Math.round(fs * 0.42));
-        const withPct = fs >= 10 && t.h >= fs + pfs + 12 && t.w >= 40;
+         from across the room), tiny tiles still print at 6px. Bold sans glyphs
+         run ~0.60em wide. The halo carries glyph contrast on any fill, so the
+         bevel overlay is text-safe and every threshold can run tight. */
+      const fs = Math.min(t.h * 0.46, (t.w - 6) / (t.sym.length * 0.64), 38);
+      if (fs >= 6) {
+        const pfs = Math.max(6, Math.round(fs * 0.42));
+        const withPct = fs >= 8 && t.h >= fs + pfs + 7 && t.w >= 30;
         const cy = t.y + t.h / 2;
-        const symY = withPct ? cy - 2 : cy + fs * 0.36;
-        const sym = svgEl('text', { x: t.x + t.w / 2, y: symY, 'text-anchor': 'middle', fill: ink, 'font-size': fs.toFixed(1), 'font-weight': '700', 'font-family': 'var(--font-sans)' });
+        const symY = withPct ? cy - 1 : cy + fs * 0.36;
+        const sym = heatText({ x: t.x + t.w / 2, y: symY, 'text-anchor': 'middle', 'font-size': fs.toFixed(1), 'font-weight': '700', 'font-family': 'var(--font-sans)' }, fs);
         sym.textContent = t.sym;
         svg.appendChild(sym);
         if (withPct) {
-          const pctEl = svgEl('text', { x: t.x + t.w / 2, y: cy + pfs + 3, 'text-anchor': 'middle', fill: ink, 'fill-opacity': '0.85', 'font-size': pfs, 'font-family': 'var(--font-mono)' });
+          const pctEl = heatText({ x: t.x + t.w / 2, y: cy + pfs + 2, 'text-anchor': 'middle', 'font-size': pfs, 'font-family': 'var(--font-mono)' }, pfs);
           pctEl.textContent = fmtPct(t.pct);
           svg.appendChild(pctEl);
         }
