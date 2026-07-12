@@ -624,17 +624,43 @@ function renderHeatmap(hm, lamp) {
   const tip = document.getElementById('heatTip');
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: HEAT.canvas }));
 
+  /* shared tile bevel: faint light at the top edge, faint shade at the bottom
+     (the finviz gloss). Kept subtle so the label ink-flip's AA margin holds. */
+  const defs = svgEl('defs', {});
+  const gloss = svgEl('linearGradient', { id: 'heatGloss', x1: 0, y1: 0, x2: 0, y2: 1 });
+  for (const [off, col, op] of [[0, '#FFFFFF', 0.07], [0.5, '#FFFFFF', 0], [1, '#000000', 0.12]]) {
+    gloss.appendChild(svgEl('stop', { offset: off, 'stop-color': col, 'stop-opacity': op }));
+  }
+  defs.appendChild(gloss);
+  svg.appendChild(defs);
+
   /* hover chrome (appended last so it paints above the tiles): a yellow
      outline around the hovered stock's whole industry group + a white
      outline on the tile itself — the finviz interaction. */
   const groupRects = new Map();
+  const bandEls = new Map();   /* sector|ind → {rect, text} for the lit-band hover */
+  let litBand = null;
   const focusGroup = svgEl('rect', { fill: 'none', stroke: HEAT.focus, 'stroke-width': 2, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
   const focusTile = svgEl('rect', { fill: 'none', stroke: '#FFFFFF', 'stroke-width': 1.5, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
+  const unlightBand = () => {
+    if (!litBand) return;
+    litBand.rect.setAttribute('fill', HEAT.band);
+    litBand.text.setAttribute('fill', HEAT.label);
+    litBand = null;
+  };
 
   /* finviz-style hover card: SECTOR — INDUSTRY header, the hovered stock in
      bold with last price + full name, then its industry peers by cap. */
   const showPeers = (t, sector, px, py) => {
-    const g = groupRects.get(sector.name + '|' + (t.ind || ''));
+    const key = sector.name + '|' + (t.ind || '');
+    unlightBand();
+    const band = bandEls.get(key);   /* light the industry caption, finviz-style */
+    if (band) {
+      band.rect.setAttribute('fill', HEAT.focus);
+      band.text.setAttribute('fill', '#111111');
+      litBand = band;
+    }
+    const g = groupRects.get(key);
     if (g) {
       focusGroup.setAttribute('x', g.x + 1); focusGroup.setAttribute('y', g.y + 1);
       focusGroup.setAttribute('width', Math.max(g.w - 2, 1)); focusGroup.setAttribute('height', Math.max(g.h - 2, 1));
@@ -646,10 +672,11 @@ function renderHeatmap(hm, lamp) {
 
     while (tip.firstChild) tip.removeChild(tip.firstChild);
     tip.appendChild(el('div', 'tip-head', (sector.name + (t.ind ? ' — ' + t.ind : '')).toUpperCase()));
+    const dir = p => p > 0 ? 'up' : p < 0 ? 'down' : '';
     const cur = el('div', 'tip-main');
     cur.appendChild(el('span', 'tip-sym', t.sym));
-    if (Number.isFinite(t.last)) cur.appendChild(el('span', 'tip-price', fmtPrice(t.last)));
-    cur.appendChild(el('span', t.pct > 0 ? 'up' : t.pct < 0 ? 'down' : '', fmtPct(t.pct)));
+    if (Number.isFinite(t.last)) cur.appendChild(el('span', 'tip-price ' + dir(t.pct), fmtPrice(t.last)));
+    cur.appendChild(el('span', dir(t.pct), fmtPct(t.pct)));
     tip.appendChild(cur);
     tip.appendChild(el('div', 'tip-name', (t.name && t.name !== t.sym ? t.name + ' · ' : '') + fmtCap(t.cap)));
     const peers = sector.tiles
@@ -659,7 +686,7 @@ function renderHeatmap(hm, lamp) {
       const row = el('div', 'tip-row' + (p.sym === t.sym ? ' tip-cur' : ''));
       row.appendChild(el('span', '', p.sym));
       row.appendChild(el('span', 'tip-price', Number.isFinite(p.last) ? fmtPrice(p.last) : ''));
-      row.appendChild(el('span', p.pct > 0 ? 'up' : p.pct < 0 ? 'down' : '', fmtPct(p.pct)));
+      row.appendChild(el('span', dir(p.pct), fmtPct(p.pct)));
       tip.appendChild(row);
     }
     tip.style.display = 'block';
@@ -670,6 +697,7 @@ function renderHeatmap(hm, lamp) {
   };
   const hideHover = () => {
     tip.style.display = 'none';
+    unlightBand();
     focusGroup.setAttribute('visibility', 'hidden');
     focusTile.setAttribute('visibility', 'hidden');
   };
@@ -677,17 +705,26 @@ function renderHeatmap(hm, lamp) {
   const drawTiles = (tiles, x, y, w, h, sector) => {
     for (const t of squarify(tiles.map(t => ({ ...t, value: t.cap })), x, y, w, h)) {
       if (t.w < 3 || t.h < 3) continue;
-      const rect = svgEl('rect', {
-        x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1),
-        fill: heatColor(t.pct), rx: 2,
-      });
+      const geo = { x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1), rx: 2 };
+      const rect = svgEl('rect', { ...geo, fill: heatColor(t.pct) });
       svg.appendChild(rect);
-      if (t.w >= 44 && t.h >= 22) {
-        const sym = svgEl('text', { x: t.x + t.w / 2, y: t.y + t.h / 2 + (t.h >= 38 ? -3 : 4), 'text-anchor': 'middle', fill: heatInk(t.pct), 'font-size': Math.min(14, Math.max(10, t.w / 6)), 'font-weight': '600', 'font-family': 'var(--font-mono)' });
+      svg.appendChild(svgEl('rect', { ...geo, fill: 'url(#heatGloss)', 'pointer-events': 'none' }));
+
+      /* finviz label scaling: the ticker grows to fill its tile (mega-caps read
+         from across the room), tiny tiles still print at 7px. Mono glyphs are
+         ~0.62em wide; the gloss overlay is faint enough that heatInk holds AA. */
+      const ink = heatInk(t.pct);
+      const fs = Math.min(t.h * 0.44, (t.w - 8) / (t.sym.length * 0.66), 38);
+      if (fs >= 7) {
+        const pfs = Math.max(8, Math.round(fs * 0.42));
+        const withPct = fs >= 10 && t.h >= fs + pfs + 12 && t.w >= 40;
+        const cy = t.y + t.h / 2;
+        const symY = withPct ? cy - 2 : cy + fs * 0.36;
+        const sym = svgEl('text', { x: t.x + t.w / 2, y: symY, 'text-anchor': 'middle', fill: ink, 'font-size': fs.toFixed(1), 'font-weight': '700', 'font-family': 'var(--font-mono)' });
         sym.textContent = t.sym;
         svg.appendChild(sym);
-        if (t.h >= 38) {
-          const pctEl = svgEl('text', { x: t.x + t.w / 2, y: t.y + t.h / 2 + 12, 'text-anchor': 'middle', fill: heatInk(t.pct), 'font-size': '10', 'font-family': 'var(--font-mono)' });
+        if (withPct) {
+          const pctEl = svgEl('text', { x: t.x + t.w / 2, y: cy + pfs + 3, 'text-anchor': 'middle', fill: ink, 'fill-opacity': '0.85', 'font-size': pfs, 'font-family': 'var(--font-mono)' });
           pctEl.textContent = fmtPct(t.pct);
           svg.appendChild(pctEl);
         }
@@ -701,7 +738,9 @@ function renderHeatmap(hm, lamp) {
   for (const s of sectorRects) {
     if (s.w < 4 || s.h < HEAD + 6) continue;
     if (s.w > 64 && s.h > 40) {
-      const label = svgEl('text', { x: s.x + 4, y: s.y + 12, fill: HEAT.label, 'font-size': '10', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
+      /* solid header strip (finviz) instead of a floating caption */
+      svg.appendChild(svgEl('rect', { x: s.x + 1, y: s.y + 1, width: Math.max(s.w - 2, 1), height: HEAD - 2, fill: '#1E2129' }));
+      const label = svgEl('text', { x: s.x + 5, y: s.y + 12, fill: '#D9DEE8', 'font-size': '10', 'font-weight': '600', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
       label.textContent = s.name.toUpperCase().slice(0, Math.floor(s.w / 7));
       svg.appendChild(label);
     }
@@ -722,10 +761,12 @@ function renderHeatmap(hm, lamp) {
         groupRects.set(s.name + '|' + g.ind, { x: g.x, y: g.y, w: g.w, h: g.h });
         const hasBand = g.w > 58 && g.h > 40;
         if (hasBand) {
-          svg.appendChild(svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: HEAT.band }));
-          const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: HEAT.label, 'font-size': '7', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
+          const bandRect = svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: HEAT.band });
+          svg.appendChild(bandRect);
+          const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: HEAT.label, 'font-size': '7', 'font-weight': '600', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
           bl.textContent = g.ind.toUpperCase().slice(0, Math.floor(g.w / 5));
           svg.appendChild(bl);
+          bandEls.set(s.name + '|' + g.ind, { rect: bandRect, text: bl });
         }
         drawTiles(g.tiles, g.x, g.y + (hasBand ? BAND + 1 : 0), g.w, g.h - (hasBand ? BAND + 1 : 0), s);
       }
