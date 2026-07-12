@@ -145,6 +145,7 @@ function buildDemoHeatmap() {
     const tiles = list.map(([sym, capB, ind]) => ({
       sym, name: sym, cap: capB * 1e9, ind,
       pct: Number(((rnd() - 0.47) * 3.4).toFixed(2)),
+      last: Number((30 + rnd() * 500).toFixed(2)),
     }));
     return { name, cap: tiles.reduce((s, t) => s + t.cap, 0), tiles };
   }).sort((a, b) => b.cap - a.cap);

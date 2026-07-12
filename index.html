@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260711c">
-<link rel="stylesheet" href="styles/components.css?v=20260711c">
+<link rel="stylesheet" href="styles/tokens.css?v=20260712a">
+<link rel="stylesheet" href="styles/components.css?v=20260712a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -76,11 +76,17 @@
   #heatmapSvg { display: block; width: 100%; height: clamp(320px, 44vw, 560px); }
   #heatmapSvg text { pointer-events: none; }
   .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
-  #heatTip { min-width: 168px; }
-  #heatTip .tip-row { display: flex; justify-content: space-between; gap: 14px; }
+  #heatTip { min-width: 230px; padding: 0 0 6px; overflow: hidden; }
+  #heatTip .tip-head { background: var(--color-surface-2); border-bottom: 1px solid var(--color-border); padding: 5px 10px; font: 600 10px/1.4 var(--font-sans); letter-spacing: .06em; color: var(--color-text-secondary); }
+  #heatTip .tip-main { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px 0; font: 700 var(--font-base)/1.4 var(--font-mono); }
+  #heatTip .tip-main .tip-sym { font-size: var(--font-lg); }
+  #heatTip .tip-name { padding: 0 10px 4px; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border); margin-bottom: 4px; }
+  #heatTip .tip-row { display: flex; align-items: baseline; gap: 10px; padding: 0 10px; }
   #heatTip .tip-row.tip-cur { font-weight: 700; }
-  #heatTip .tip-row .up { color: var(--color-gain); }
-  #heatTip .tip-row .down { color: var(--color-loss); }
+  #heatTip .tip-price { margin-left: auto; }
+  #heatTip .tip-row > span:last-child, #heatTip .tip-main > span:last-child { min-width: 58px; text-align: right; }
+  #heatTip .up { color: var(--color-gain); }
+  #heatTip .down { color: var(--color-loss); }
   .heat-legend .swatch { width: 26px; height: 12px; border-radius: 2px; display: inline-block; }
 
   /* footer */
@@ -210,8 +216,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260711c"></script>
-<script src="scripts/data.js?v=20260711c"></script>
-<script src="scripts/app.js?v=20260711c"></script>
+<script src="scripts/config.js?v=20260712a"></script>
+<script src="scripts/data.js?v=20260712a"></script>
+<script src="scripts/app.js?v=20260712a"></script>
 </body>
 </html>

@@ -532,22 +532,43 @@ function wireChart() {
 }
 
 /* ── S&P 500 heatmap (squarified treemap) ──────────────────────────────────
-   Size = market cap, color = day % on a diverging ramp with a NEUTRAL gray
+   Size = market cap, color = day % on a diverging ramp with a NEUTRAL slate
    midpoint (dataviz rule); gain/loss hues are P&L semantics here, not
-   decoration. CVD/contrast relief: printed labels + movers table. */
-const HEAT = { neutral: [214, 211, 204], gain: [23, 124, 75], loss: [193, 54, 54], cap: 3 };
+   decoration. The panel is a deliberate dark inset (finviz-parity, owner
+   request 2026-07-11): saturated poles on slate, white ink ≥3:1 across the
+   whole ramp. CVD/contrast relief: printed labels + movers table. */
+const HEAT = {
+  neutral: [65, 69, 84],     /* #414554 slate — 0% */
+  gain: [42, 167, 79],       /* deep green pole (white ink 3.1:1 at ±cap) */
+  loss: [246, 53, 56],       /* red pole (white ink 3.8:1 at ±cap) */
+  cap: 3,
+  canvas: '#262931',         /* mosaic backdrop */
+  label: '#B9BFCC',          /* sector/band captions on the dark canvas */
+  band: '#31353F',           /* sub-industry band fill */
+  focus: '#FDE047',          /* hover outline for the industry group */
+};
 
-function heatColor(pct) {
+function heatRGB(pct) {
   const t = Math.min(Math.abs(pct), HEAT.cap) / HEAT.cap;
   const pole = pct >= 0 ? HEAT.gain : HEAT.loss;
-  const c = HEAT.neutral.map((n, i) => Math.round(n + (pole[i] - n) * t));
-  return 'rgb(' + c.join(',') + ')';
+  return HEAT.neutral.map((n, i) => Math.round(n + (pole[i] - n) * t));
 }
+const heatColor = pct => 'rgb(' + heatRGB(pct).join(',') + ')';
+/* WCAG relative luminance of an [r,g,b] triplet (0–255 channels). */
+function relLum(rgb) {
+  const f = c => (c /= 255) <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+/* Ink flip for tile labels: the slate→pole ramp is dark at 0% (white ink wins)
+   and mid-luminance at the saturated poles (black wins) — no single ink clears
+   AA across the whole ramp, so pick whichever does. max(white,black) contrast
+   stays ≥4.5:1 for these ≤14px labels end to end (guarded by check-contrast.js). */
 function heatInk(pct) {
-  const t = Math.min(Math.abs(pct), HEAT.cap) / HEAT.cap;
-  return t > 0.42 ? '#FFFFFF' : '#1A1713'; /* ramp is light until ~±1.3% */
+  const L = relLum(heatRGB(pct));
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#FFFFFF' : '#000000';
 }
 const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
+const fmtPrice = v => Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
 /* Squarified treemap (Bruls et al.): items [{value}] DESC → rects. */
 function squarify(items, x, y, w, h) {
@@ -601,26 +622,56 @@ function renderHeatmap(hm, lamp) {
   }
   const W = 1200, H = 520, HEAD = 16, BAND = 11;
   const tip = document.getElementById('heatTip');
+  svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: HEAT.canvas }));
 
-  /* finviz-style hover: the hovered stock's industry peers, stacked. */
+  /* hover chrome (appended last so it paints above the tiles): a yellow
+     outline around the hovered stock's whole industry group + a white
+     outline on the tile itself — the finviz interaction. */
+  const groupRects = new Map();
+  const focusGroup = svgEl('rect', { fill: 'none', stroke: HEAT.focus, 'stroke-width': 2, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
+  const focusTile = svgEl('rect', { fill: 'none', stroke: '#FFFFFF', 'stroke-width': 1.5, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
+
+  /* finviz-style hover card: SECTOR — INDUSTRY header, the hovered stock in
+     bold with last price + full name, then its industry peers by cap. */
   const showPeers = (t, sector, px, py) => {
+    const g = groupRects.get(sector.name + '|' + (t.ind || ''));
+    if (g) {
+      focusGroup.setAttribute('x', g.x + 1); focusGroup.setAttribute('y', g.y + 1);
+      focusGroup.setAttribute('width', Math.max(g.w - 2, 1)); focusGroup.setAttribute('height', Math.max(g.h - 2, 1));
+      focusGroup.setAttribute('visibility', 'visible');
+    }
+    focusTile.setAttribute('x', t.x + 1); focusTile.setAttribute('y', t.y + 1);
+    focusTile.setAttribute('width', Math.max(t.w - 2, 1)); focusTile.setAttribute('height', Math.max(t.h - 2, 1));
+    focusTile.setAttribute('visibility', 'visible');
+
     while (tip.firstChild) tip.removeChild(tip.firstChild);
-    tip.appendChild(el('div', 'tip-date', t.name && t.name !== t.sym ? t.sym + ' — ' + t.name : t.sym));
-    tip.appendChild(el('div', '', (t.ind || sector.name) + ' · ' + fmtCap(t.cap)));
+    tip.appendChild(el('div', 'tip-head', (sector.name + (t.ind ? ' — ' + t.ind : '')).toUpperCase()));
+    const cur = el('div', 'tip-main');
+    cur.appendChild(el('span', 'tip-sym', t.sym));
+    if (Number.isFinite(t.last)) cur.appendChild(el('span', 'tip-price', fmtPrice(t.last)));
+    cur.appendChild(el('span', t.pct > 0 ? 'up' : t.pct < 0 ? 'down' : '', fmtPct(t.pct)));
+    tip.appendChild(cur);
+    tip.appendChild(el('div', 'tip-name', (t.name && t.name !== t.sym ? t.name + ' · ' : '') + fmtCap(t.cap)));
     const peers = sector.tiles
       .filter(p => (t.ind ? p.ind === t.ind : true))
       .sort((a, b) => b.cap - a.cap).slice(0, 8);
     for (const p of peers) {
       const row = el('div', 'tip-row' + (p.sym === t.sym ? ' tip-cur' : ''));
       row.appendChild(el('span', '', p.sym));
+      row.appendChild(el('span', 'tip-price', Number.isFinite(p.last) ? fmtPrice(p.last) : ''));
       row.appendChild(el('span', p.pct > 0 ? 'up' : p.pct < 0 ? 'down' : '', fmtPct(p.pct)));
       tip.appendChild(row);
     }
     tip.style.display = 'block';
     const wrap = svg.parentElement.getBoundingClientRect();
     const sx = wrap.width / W, sy = wrap.height / H;
-    tip.style.left = Math.min(px * sx + 8, wrap.width - 200) + 'px';
+    tip.style.left = Math.min(px * sx + 8, wrap.width - 250) + 'px';
     tip.style.top = Math.min(Math.max(py * sy - 8, 0), wrap.height - 40) + 'px';
+  };
+  const hideHover = () => {
+    tip.style.display = 'none';
+    focusGroup.setAttribute('visibility', 'hidden');
+    focusTile.setAttribute('visibility', 'hidden');
   };
 
   const drawTiles = (tiles, x, y, w, h, sector) => {
@@ -642,7 +693,7 @@ function renderHeatmap(hm, lamp) {
         }
       }
       rect.addEventListener('pointerenter', () => showPeers(t, sector, t.x + t.w, t.y));
-      rect.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+      rect.addEventListener('pointerleave', hideHover);
     }
   };
 
@@ -650,7 +701,7 @@ function renderHeatmap(hm, lamp) {
   for (const s of sectorRects) {
     if (s.w < 4 || s.h < HEAD + 6) continue;
     if (s.w > 64 && s.h > 40) {
-      const label = svgEl('text', { x: s.x + 4, y: s.y + 12, fill: 'var(--color-text-secondary)', 'font-size': '10', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
+      const label = svgEl('text', { x: s.x + 4, y: s.y + 12, fill: HEAT.label, 'font-size': '10', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
       label.textContent = s.name.toUpperCase().slice(0, Math.floor(s.w / 7));
       svg.appendChild(label);
     }
@@ -668,19 +719,23 @@ function renderHeatmap(hm, lamp) {
     }));
     if (groups.length > 1 && groups.every(g => g.ind) && body.h > 76 && body.w > 100) {
       for (const g of squarify(groups.map(g => ({ ...g, value: g.cap })), body.x, body.y, body.w, body.h)) {
+        groupRects.set(s.name + '|' + g.ind, { x: g.x, y: g.y, w: g.w, h: g.h });
         const hasBand = g.w > 58 && g.h > 40;
         if (hasBand) {
-          svg.appendChild(svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: 'var(--color-surface-2)' }));
-          const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: 'var(--color-text-secondary)', 'font-size': '7', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
+          svg.appendChild(svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: HEAT.band }));
+          const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: HEAT.label, 'font-size': '7', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
           bl.textContent = g.ind.toUpperCase().slice(0, Math.floor(g.w / 5));
           svg.appendChild(bl);
         }
         drawTiles(g.tiles, g.x, g.y + (hasBand ? BAND + 1 : 0), g.w, g.h - (hasBand ? BAND + 1 : 0), s);
       }
     } else {
+      for (const g of groups) groupRects.set(s.name + '|' + g.ind, { x: body.x, y: body.y, w: body.w, h: body.h });
       drawTiles(s.tiles, body.x, body.y, body.w, body.h, s);
     }
   }
+  svg.appendChild(focusGroup);
+  svg.appendChild(focusTile);
   renderHeatLegend();
   renderHeatTable(hm);
 }
@@ -705,7 +760,7 @@ function renderHeatTable(hm) {
     .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 12);
   const thead = document.createElement('thead');
   const hr = document.createElement('tr');
-  for (const name of ['Symbol', 'Sector', 'Mkt cap', 'Day %']) {
+  for (const name of ['Symbol', 'Sector', 'Last', 'Mkt cap', 'Day %']) {
     const th = document.createElement('th'); th.textContent = name; th.setAttribute('scope', 'col');
     hr.appendChild(th);
   }
@@ -713,7 +768,7 @@ function renderHeatTable(hm) {
   const tbody = document.createElement('tbody');
   for (const m of movers) {
     const tr = document.createElement('tr');
-    for (const [text, cls] of [[m.sym, ''], [m.sector, ''], [fmtCap(m.cap), ''], [fmtPct(m.pct), m.pct > 0 ? 'up' : m.pct < 0 ? 'down' : '']]) {
+    for (const [text, cls] of [[m.sym, ''], [m.sector, ''], [Number.isFinite(m.last) ? fmtPrice(m.last) : '—', ''], [fmtCap(m.cap), ''], [fmtPct(m.pct), m.pct > 0 ? 'up' : m.pct < 0 ? 'down' : '']]) {
       const td = document.createElement('td'); td.textContent = text;
       if (cls) td.className = cls;
       tr.appendChild(td);

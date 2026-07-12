@@ -30,7 +30,7 @@ test('yahooTicker converts dots to dashes', () => {
 test('buildHeatmap groups by sector, sorts by cap, merges prev caps', () => {
   const constituents = parseConstituents(CSV);
   const quotes = new Map([
-    ['AAPL', { pct: 1.2, cap: 3200e9 }],
+    ['AAPL', { pct: 1.2, cap: 3200e9, last: 208.1 }],
     ['AMZN', { pct: -0.6, cap: 2100e9 }],
     ['BRK-B', { pct: 0.1, cap: null }],   // cap missing → prev caps
     ['XOM', { pct: 0.4, cap: 520e9 }],
@@ -39,6 +39,7 @@ test('buildHeatmap groups by sector, sorts by cap, merges prev caps', () => {
   const { sectors, covered } = buildHeatmap(constituents, quotes, prevCaps);
   assert.equal(covered, 4);
   assert.equal(sectors[0].name, 'Information Technology'); // largest cap first
+  assert.equal(sectors[0].tiles[0].last, 208.1, 'price carried onto tile');
   const fin = sectors.find(s => s.name === 'Financials');
   assert.equal(fin.tiles[0].cap, 950e9, 'prev cap carried forward');
 });
@@ -55,21 +56,25 @@ test('buildHeatmap drops symbols with no cap anywhere', () => {
 test('parseSpark computes day % from last two closes', () => {
   const m = parseSpark({ AAPL: { close: [200, 202, null, 204.02] }, MSFT: { close: [500] } });
   assert.equal(m.get('AAPL').pct, 1.0); // 204.02/202 - 1
+  assert.equal(m.get('AAPL').last, 204.02, 'last close carried as price');
   assert.equal(m.has('MSFT'), false, 'single close is unusable');
 });
 
 test('parseScreener maps pct/cap, dual-keys dotted symbols, tolerates -- and junk', async () => {
   const { parseScreener } = await import('../lib/screener.js');
   const m = parseScreener({ data: { rows: [
-    { symbol: 'AAPL', pctchange: '-0.79%', marketCap: '3,300,000,000,000.00' },
+    { symbol: 'AAPL', pctchange: '-0.79%', marketCap: '3,300,000,000,000.00', lastsale: '$212.41' },
     { symbol: 'BRK.B', pctchange: '--', marketCap: '$1,000,000,000,000' },
     { symbol: 'XYZ', pctchange: 'n/a', marketCap: '' },
-    { symbol: 'NVDA', pctchange: '+4.03%', marketCap: '4200000000000' },
+    { symbol: 'NVDA', pctchange: '+4.03%', marketCap: '4200000000000', lastsale: '$1,024.50' },
   ] } });
   assert.equal(m.get('AAPL').pct, -0.79);
   assert.equal(m.get('AAPL').cap, 3.3e12);
+  assert.equal(m.get('AAPL').last, 212.41, 'lastsale $ stripped');
   assert.equal(m.get('BRK.B').pct, 0, '"--" means unchanged');
+  assert.equal(m.get('BRK.B').last, null, 'missing lastsale → null');
   assert.equal(m.get('BRK-B').pct, 0, 'dash variant keyed too');
   assert.equal(m.has('XYZ'), false, 'unparseable pct dropped');
   assert.equal(m.get('NVDA').pct, 4.03);
+  assert.equal(m.get('NVDA').last, 1024.5, 'comma in price stripped');
 });

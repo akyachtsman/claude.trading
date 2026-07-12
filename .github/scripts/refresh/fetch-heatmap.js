@@ -59,7 +59,7 @@ export function buildHeatmap(constituents, quotes, prevCaps = new Map()) {
     if (!cap || !Number.isFinite(q.pct)) continue;
     covered++;
     if (!bySector.has(c.sector)) bySector.set(c.sector, []);
-    bySector.get(c.sector).push({ sym: c.sym, name: c.name, cap, pct: q.pct, ind: c.ind || '' });
+    bySector.get(c.sector).push({ sym: c.sym, name: c.name, cap, pct: q.pct, ind: c.ind || '', last: q.last ?? null });
   }
   const sectors = [...bySector.entries()]
     .map(([name, tiles]) => ({
