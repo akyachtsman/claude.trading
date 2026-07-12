@@ -538,9 +538,19 @@ function wireChart() {
    request 2026-07-11): saturated poles on slate, white ink ≥3:1 across the
    whole ramp. CVD/contrast relief: printed labels + movers table. */
 const HEAT = {
-  neutral: [65, 69, 84],     /* #414554 slate — 0% */
-  gain: [42, 167, 79],       /* deep green pole (white ink 3.1:1 at ±cap) */
-  loss: [246, 53, 56],       /* red pole (white ink 3.8:1 at ±cap) */
+  /* finviz's published 7-stop map scale (legend: −3…+3), interpolated
+     piecewise so small moves already carry color — a straight slate→pole
+     lerp leaves sub-1% movers gray, which is why the panel read muted
+     next to finviz (owner screenshot comparison, 2026-07-12). */
+  stops: [
+    [-3, [246, 53, 56]],   /* #F63538 */
+    [-2, [191, 64, 69]],   /* #BF4045 */
+    [-1, [139, 68, 78]],   /* #8B444E */
+    [0, [65, 69, 84]],     /* #414554 slate — 0% */
+    [1, [53, 118, 78]],    /* #35764E */
+    [2, [47, 158, 79]],    /* #2F9E4F */
+    [3, [48, 204, 90]],    /* #30CC5A */
+  ],
   cap: 3,
   canvas: '#262931',         /* mosaic backdrop */
   label: '#B9BFCC',          /* sector/band captions on the dark canvas */
@@ -549,9 +559,13 @@ const HEAT = {
 };
 
 function heatRGB(pct) {
-  const t = Math.min(Math.abs(pct), HEAT.cap) / HEAT.cap;
-  const pole = pct >= 0 ? HEAT.gain : HEAT.loss;
-  return HEAT.neutral.map((n, i) => Math.round(n + (pole[i] - n) * t));
+  const s = HEAT.stops;
+  const p = Math.max(s[0][0], Math.min(s[s.length - 1][0], pct));
+  let i = 0;
+  while (i < s.length - 2 && p > s[i + 1][0]) i++;
+  const [p0, c0] = s[i], [p1, c1] = s[i + 1];
+  const t = (p - p0) / (p1 - p0);
+  return c0.map((c, k) => Math.round(c + (c1[k] - c) * t));
 }
 const heatColor = pct => 'rgb(' + heatRGB(pct).join(',') + ')';
 /* WCAG relative luminance of an [r,g,b] triplet (0–255 channels). */
@@ -559,10 +573,11 @@ function relLum(rgb) {
   const f = c => (c /= 255) <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
 }
-/* Ink flip for tile labels: the slate→pole ramp is dark at 0% (white ink wins)
-   and mid-luminance at the saturated poles (black wins) — no single ink clears
-   AA across the whole ramp, so pick whichever does. max(white,black) contrast
-   stays ≥4.5:1 for these ≤14px labels end to end (guarded by check-contrast.js). */
+/* Ink flip for tile labels: the ramp is dark near 0% (white ink wins) and
+   mid-luminance at the saturated poles (black wins) — no single ink clears AA
+   end to end, so pick per tile. Labeled tiles carry NO bevel overlay (see
+   drawTiles), so this flat color is exactly the glyph background — the model
+   check-contrast.js asserts against (Codex P2 on #29). */
 function heatInk(pct) {
   const L = relLum(heatRGB(pct));
   return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#FFFFFF' : '#000000';
@@ -624,12 +639,14 @@ function renderHeatmap(hm, lamp) {
   const tip = document.getElementById('heatTip');
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: HEAT.canvas }));
 
-  /* shared tile bevel: faint light at the top edge, faint shade at the bottom
-     (the finviz gloss). Kept subtle so the label ink-flip's AA margin holds. */
+  /* shared tile bevel: a corner-weighted vignette (clear center → shaded
+     rim; r=70.7% puts the full shade exactly at the corners). Applied ONLY
+     to unlabeled tiles — a labeled tile's fill must stay exactly the flat
+     ramp color that heatInk and check-contrast.js model (Codex P2 on #29). */
   const defs = svgEl('defs', {});
-  const gloss = svgEl('linearGradient', { id: 'heatGloss', x1: 0, y1: 0, x2: 0, y2: 1 });
-  for (const [off, col, op] of [[0, '#FFFFFF', 0.07], [0.5, '#FFFFFF', 0], [1, '#000000', 0.12]]) {
-    gloss.appendChild(svgEl('stop', { offset: off, 'stop-color': col, 'stop-opacity': op }));
+  const gloss = svgEl('radialGradient', { id: 'heatGloss', r: '70.7%' });
+  for (const [off, op] of [[0, 0], [0.72, 0], [1, 0.16]]) {
+    gloss.appendChild(svgEl('stop', { offset: off, 'stop-color': '#000000', 'stop-opacity': op }));
   }
   defs.appendChild(gloss);
   svg.appendChild(defs);
@@ -708,19 +725,20 @@ function renderHeatmap(hm, lamp) {
       const geo = { x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1), rx: 2 };
       const rect = svgEl('rect', { ...geo, fill: heatColor(t.pct) });
       svg.appendChild(rect);
-      svg.appendChild(svgEl('rect', { ...geo, fill: 'url(#heatGloss)', 'pointer-events': 'none' }));
 
       /* finviz label scaling: the ticker grows to fill its tile (mega-caps read
-         from across the room), tiny tiles still print at 7px. Mono glyphs are
-         ~0.62em wide; the gloss overlay is faint enough that heatInk holds AA. */
+         from across the room), tiny tiles still print at 7px. Bold sans glyphs
+         run ~0.62em wide. Unlabeled tiles get the bevel; labeled tiles stay
+         flat so the glyph background is exactly what heatInk models. */
       const ink = heatInk(t.pct);
-      const fs = Math.min(t.h * 0.44, (t.w - 8) / (t.sym.length * 0.66), 38);
+      const fs = Math.min(t.h * 0.44, (t.w - 8) / (t.sym.length * 0.62), 38);
+      if (fs < 7) svg.appendChild(svgEl('rect', { ...geo, fill: 'url(#heatGloss)', 'pointer-events': 'none' }));
       if (fs >= 7) {
         const pfs = Math.max(8, Math.round(fs * 0.42));
         const withPct = fs >= 10 && t.h >= fs + pfs + 12 && t.w >= 40;
         const cy = t.y + t.h / 2;
         const symY = withPct ? cy - 2 : cy + fs * 0.36;
-        const sym = svgEl('text', { x: t.x + t.w / 2, y: symY, 'text-anchor': 'middle', fill: ink, 'font-size': fs.toFixed(1), 'font-weight': '700', 'font-family': 'var(--font-mono)' });
+        const sym = svgEl('text', { x: t.x + t.w / 2, y: symY, 'text-anchor': 'middle', fill: ink, 'font-size': fs.toFixed(1), 'font-weight': '700', 'font-family': 'var(--font-sans)' });
         sym.textContent = t.sym;
         svg.appendChild(sym);
         if (withPct) {
