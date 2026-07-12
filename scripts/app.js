@@ -548,13 +548,25 @@ const HEAT = {
   focus: '#FDE047',          /* hover outline for the industry group */
 };
 
-function heatColor(pct) {
+function heatRGB(pct) {
   const t = Math.min(Math.abs(pct), HEAT.cap) / HEAT.cap;
   const pole = pct >= 0 ? HEAT.gain : HEAT.loss;
-  const c = HEAT.neutral.map((n, i) => Math.round(n + (pole[i] - n) * t));
-  return 'rgb(' + c.join(',') + ')';
+  return HEAT.neutral.map((n, i) => Math.round(n + (pole[i] - n) * t));
 }
-const heatInk = () => '#FFFFFF'; /* slate→pole ramp keeps white ≥3:1 throughout */
+const heatColor = pct => 'rgb(' + heatRGB(pct).join(',') + ')';
+/* WCAG relative luminance of an [r,g,b] triplet (0–255 channels). */
+function relLum(rgb) {
+  const f = c => (c /= 255) <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+/* Ink flip for tile labels: the slate→pole ramp is dark at 0% (white ink wins)
+   and mid-luminance at the saturated poles (black wins) — no single ink clears
+   AA across the whole ramp, so pick whichever does. max(white,black) contrast
+   stays ≥4.5:1 for these ≤14px labels end to end (guarded by check-contrast.js). */
+function heatInk(pct) {
+  const L = relLum(heatRGB(pct));
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#FFFFFF' : '#000000';
+}
 const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
 const fmtPrice = v => Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
