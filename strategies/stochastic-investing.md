@@ -4,9 +4,10 @@
 > materials (Beginner's-license tier, 2026-07) — method and rules restated in
 > our own words, not course content. One file per strategy; this is the angle
 > the watchlist-charts panel is built to serve.
-> Lessons covered (complete Beginner's-license set): Definitions · Stochastic
+> Lessons covered — Beginner's license (complete): Definitions · Stochastic
 > Lesson · Relative Strength · Bulls and Bears · Earnings · Order Entry ·
-> Stops · Taking Profits.
+> Stops · Taking Profits. Pattern series (in progress): Dark Cloud · Head
+> and Shoulders · Power Stocks · W Formations · Doji.
 
 ## The three tiers
 
@@ -169,6 +170,47 @@ price minus entry, divided by the current price (their example: in at
 $1,000, at $1,500 → 500/1500 ≈ 33%). *Note: conventional return divides by
 ENTRY (500/1000 = 50%); the course's divide-by-current convention reads
 lower — flagging the discrepancy rather than silently normalizing it.*
+
+## Pattern series (second batch — more to come)
+
+Chart- and candle-pattern recognition lessons; each read WITH the stochastic
+and level context, never in isolation.
+
+### Dark Cloud
+Bearish reversal candle after strength: a heavy red bar that opens above the
+prior green candle's close, then drives deep down into its body. Spotted on
+the intraday tier in the example (AAPL) — a sell-into-strength warning when
+it prints at resistance or with the stochastic rolling in the overbought
+band.
+
+### Head and Shoulders Pattern
+The three-peak top — middle peak (head) above two lower shoulders; the low
+between the peaks defines the neckline. The pattern completes when price
+breaks the neckline, confirming the downtrend (demoed on a name that topped
+and bled for months after). The weekly stochastic rolling over as the right
+shoulder forms is the tell that the top is real.
+
+### Power Stocks
+Trade a curated universe, not the whole market: a fixed roster of liquid
+large-cap names, reviewed one by one on the daily tier (MAs + volume +
+stochastic). Familiarity compounds — the same names cycled repeatedly
+through the stochastic anatomy beat novelty-chasing. This is the course's
+version of our watchlist discipline (and pairs with the 500K volume floor).
+
+### Identify W Formations
+The W (double bottom): first decline, bounce, retest that HOLDS at or above
+the first low, then the breakout through the middle peak — that breakout is
+the buy structure. The stochastic typically prints its bottom-cross on the
+W's second leg. The red mirror-image M (double top) is the bearish version:
+second peak fails at/below the first, breakdown through the middle low.
+
+### Doji
+Candle anatomy of indecision: open ≈ close (the cross shape). The lesson's
+progression — full body → shrinking body → doji — is momentum dying in one
+picture. Variants by geometry: the spindle (long wick AND tail, tiny body)
+and Thor's Hammer (long tail, body boxed at the top — bullish at a low; the
+inverted version bearish at a high). A doji AT a stochastic extreme or a
+level is the reversal candidate; mid-range dojis are noise.
 
 ## Candle vocabulary
 
