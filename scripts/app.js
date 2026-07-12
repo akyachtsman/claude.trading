@@ -868,6 +868,227 @@ window.addEventListener('resize', () => {
   heatResizeTimer = setTimeout(() => renderHeatmap(heatState.hm, heatState.lamp), 150);
 });
 
+/* ── watchlist charts (candles + volume + daily/weekly-13 stochastics) ─────
+   The desk's chart workbench, in the dashboard's own idiom: EOD candlesticks
+   for a fixed public watchlist, classic floor-trader pivots from the prior
+   calendar month, and the signature 13-period slow stochastic on BOTH daily
+   bars and weekly bars (owner spec: "daily and weekly (13)"). Candle green/
+   red is price-direction semantics (like the heatmap), not decoration. */
+const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)' };
+const WB_ZOOMS = [['3M', 63], ['6M', 126], ['1Y', 252], ['All', 9999]];
+let wbState = null;   /* { data, lamp, sym, days } */
+
+const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.round(v / 1e3) + 'K';
+
+/* Classic pivots from the prior calendar month's H/L/C of the daily series. */
+function monthlyPivots(s) {
+  const lastMonth = s.t[s.t.length - 1].slice(0, 7);
+  let hi = -Infinity, lo = Infinity, close = null, seen = false;
+  for (let i = s.t.length - 1; i >= 0; i--) {
+    const m = s.t[i].slice(0, 7);
+    if (m === lastMonth) continue;
+    if (!seen) { seen = true; close = s.c[i]; }
+    else if (s.t[i].slice(0, 7) !== s.t[i + 1].slice(0, 7)) break; /* left prior month */
+    hi = Math.max(hi, s.h[i]); lo = Math.min(lo, s.l[i]);
+  }
+  if (!seen || !Number.isFinite(hi)) return [];
+  const p = (hi + lo + close) / 3;
+  return [
+    ['R3', hi + 2 * (p - lo)], ['R2', p + (hi - lo)], ['R1', 2 * p - lo],
+    ['P', p], ['S1', 2 * p - hi], ['S2', p - (hi - lo)], ['S3', lo - 2 * (hi - p)],
+  ];
+}
+
+function renderCharts(data, lamp) {
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 126 };
+  wbState.lamp = lamp;
+  const lampEl = document.getElementById('chartsLamp');
+  lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
+  document.getElementById('chartsStamp').textContent = data ? 'As of ' + data.asOf : '—';
+
+  /* symbol select (rebuild only when the roster changed) */
+  const sel = document.getElementById('chartSymSel');
+  const roster = Object.keys(data.symbols);
+  if (sel.options.length !== roster.length) {
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    for (const sym of roster) {
+      const o = document.createElement('option');
+      o.value = sym; o.textContent = sym;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = wbState.sym;
+
+  const svg = document.getElementById('wbChart');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const tip = document.getElementById('wbTip');
+  const s = data.symbols[wbState.sym];
+  if (!s || s.c.length < 30) return;
+
+  const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 900));
+  const H = 620;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.style.height = H + 'px';
+
+  const weekly = toWeeklyBars(s);
+  const dStoch = stochSeries(s);
+  const wStoch = stochSeries(weekly);
+
+  const n = Math.min(wbState.days, s.c.length);
+  const i0 = s.c.length - n;
+  const padR = 56, padL = 8;
+  const plotW = W - padL - padR;
+  const x = i => padL + (i - i0 + 0.5) / n * plotW;
+  const slotW = plotW / n;
+  const bodyW = Math.max(1, Math.min(11, slotW * 0.66));
+
+  /* pane geometry: price · volume · daily stoch · weekly stoch */
+  const panes = { price: [8, 328], vol: [344, 64], sd: [432, 82], sw: [538, 82] };
+
+  const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, ...attrs }));
+  const text = (str, tx, ty, attrs) => { const t = svgEl('text', { x: tx, y: ty, 'font-family': 'var(--font-mono)', 'font-size': 10, fill: WB.label, ...attrs }); t.textContent = str; svg.appendChild(t); };
+
+  /* price scale over visible bars (pivots included when nearby) */
+  let hi = -Infinity, lo = Infinity;
+  for (let i = i0; i < s.c.length; i++) { hi = Math.max(hi, s.h[i]); lo = Math.min(lo, s.l[i]); }
+  const pivots = monthlyPivots(s).filter(([, v]) => v > lo * 0.92 && v < hi * 1.08);
+  for (const [, v] of pivots) { hi = Math.max(hi, v); lo = Math.min(lo, v); }
+  const pad = (hi - lo) * 0.04 || 1;
+  hi += pad; lo -= pad;
+  const [pY, pH] = panes.price;
+  const py = v => pY + (hi - v) / (hi - lo) * pH;
+
+  /* price gridlines + right-side tick labels */
+  const step = Math.pow(10, Math.floor(Math.log10((hi - lo) / 4)));
+  const tick = (hi - lo) / step > 8 ? step * 2 : step;
+  for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
+    line(padL, py(v), W - padR, py(v), { stroke: WB.grid, 'stroke-width': 1 });
+    text(fmtPrice(v), W - padR + 6, py(v) + 3, {});
+  }
+
+  /* pivots: dashed amber lines with left labels */
+  for (const [name, v] of pivots) {
+    line(padL, py(v), W - padR, py(v), { stroke: 'var(--color-accent)', 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
+    text(name + ' ' + fmtPrice(v), padL + 2, py(v) - 3, { fill: 'var(--color-accent)' });
+  }
+
+  /* candles + volume */
+  const [vY, vH] = panes.vol;
+  let vMax = 0;
+  for (let i = i0; i < s.c.length; i++) vMax = Math.max(vMax, s.v[i]);
+  for (let i = i0; i < s.c.length; i++) {
+    const up = s.c[i] >= s.o[i];
+    const col = up ? WB.up : WB.down;
+    const cx = x(i);
+    line(cx, py(s.h[i]), cx, py(s.l[i]), { stroke: col, 'stroke-width': 1 });
+    const yTop = py(Math.max(s.o[i], s.c[i]));
+    svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: yTop, width: bodyW, height: Math.max(1, Math.abs(py(s.o[i]) - py(s.c[i]))), fill: col }));
+    if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (s.v[i] / vMax) * vH, width: bodyW, height: (s.v[i] / vMax) * vH, fill: col, 'fill-opacity': 0.55 }));
+  }
+  text('VOLUME', padL + 2, vY + 10, { 'font-size': 8, 'letter-spacing': '.08em' });
+
+  /* stochastic strips: daily on daily bars, weekly(13) mapped to daily slots */
+  const wkIdxFor = t => { let j = weekly.t.length - 1; while (j > 0 && weekly.t[j] > t) j--; return j; };
+  const strip = ([sY, sH], series, idxOf, caption) => {
+    for (const g of [20, 80]) {
+      line(padL, sY + sH - g / 100 * sH, W - padR, sY + sH - g / 100 * sH, { stroke: WB.grid, 'stroke-width': 1, 'stroke-dasharray': '3 3' });
+      text(String(g), W - padR + 6, sY + sH - g / 100 * sH + 3, {});
+    }
+    for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
+      let dPath = '';
+      for (let i = i0; i < s.c.length; i++) {
+        const val = series[key][idxOf(i)];
+        if (val == null) continue;
+        dPath += (dPath ? 'L' : 'M') + x(i).toFixed(1) + ' ' + (sY + sH - val / 100 * sH).toFixed(1);
+      }
+      if (dPath) svg.appendChild(svgEl('path', { d: dPath, fill: 'none', stroke: col, 'stroke-width': 1.6 }));
+    }
+    text(caption, padL + 2, sY + 10, { 'font-size': 8, 'letter-spacing': '.08em' });
+  };
+  strip(panes.sd, dStoch, i => i, 'STOCH 13-3-3 · DAILY');
+  strip(panes.sw, wStoch, i => wkIdxFor(s.t[i]), 'STOCH 13-3-3 · WEEKLY (13)');
+
+  /* month gridlines + labels along the bottom */
+  for (let i = i0 + 1; i < s.c.length; i++) {
+    if (s.t[i].slice(0, 7) !== s.t[i - 1].slice(0, 7)) {
+      line(x(i) - slotW / 2, pY, x(i) - slotW / 2, H - 14, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.6 });
+      if (n <= 260 || s.t[i].slice(5, 7) === '01') text(s.t[i].slice(0, 7), x(i) - slotW / 2 + 3, H - 4, {});
+    }
+  }
+
+  /* crosshair + readout */
+  const cross = svgEl('line', { y1: pY, y2: H - 14, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none' });
+  svg.appendChild(cross);
+  const overlay = svgEl('rect', { x: padL, y: 0, width: plotW, height: H, fill: 'transparent' });
+  svg.appendChild(overlay);
+  overlay.addEventListener('pointermove', ev => {
+    const box = svg.getBoundingClientRect();
+    const i = Math.min(s.c.length - 1, Math.max(i0, i0 + Math.floor((ev.clientX - box.left) * (W / box.width) / slotW - padL / slotW)));
+    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+    cross.setAttribute('visibility', 'visible');
+    while (tip.firstChild) tip.removeChild(tip.firstChild);
+    tip.appendChild(el('div', 'tip-date', s.t[i] + ' · ' + wbState.sym));
+    const chg = i > 0 ? (s.c[i] / s.c[i - 1] - 1) * 100 : 0;
+    tip.appendChild(el('div', '', 'O ' + fmtPrice(s.o[i]) + '  H ' + fmtPrice(s.h[i]) + '  L ' + fmtPrice(s.l[i])));
+    const cRow = el('div', '', 'C ' + fmtPrice(s.c[i]) + ' ');
+    cRow.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
+    tip.appendChild(cRow);
+    tip.appendChild(el('div', '', 'Vol ' + fmtVol(s.v[i])));
+    const dk = dStoch.k[i], dd = dStoch.d[i];
+    const wj = wkIdxFor(s.t[i]);
+    const wk = wStoch.k[wj], wd = wStoch.d[wj];
+    if (dk != null) tip.appendChild(el('div', '', 'Stoch D  %K ' + dk.toFixed(0) + ' · %D ' + (dd == null ? '—' : dd.toFixed(0))));
+    if (wk != null) tip.appendChild(el('div', '', 'Stoch W13 %K ' + wk.toFixed(0) + ' · %D ' + (wd == null ? '—' : wd.toFixed(0))));
+    tip.style.display = 'block';
+    const wrap = svg.parentElement.getBoundingClientRect();
+    const sx = wrap.width / W;
+    tip.style.left = Math.min(x(i) * sx + 10, wrap.width - 190) + 'px';
+    tip.style.top = '12px';
+  });
+  overlay.addEventListener('pointerleave', () => { tip.style.display = 'none'; cross.setAttribute('visibility', 'hidden'); });
+}
+
+function wireCharts() {
+  document.getElementById('chartSymSel').addEventListener('change', ev => {
+    if (!wbState) return;
+    wbState.sym = ev.target.value;
+    renderCharts(wbState.data, wbState.lamp);
+  });
+  const seg = document.getElementById('chartZoom');
+  for (const [label, days] of WB_ZOOMS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    b.setAttribute('aria-pressed', String(days === 126));
+    b.addEventListener('click', () => {
+      if (!wbState) return;
+      wbState.days = days;
+      for (const btn of seg.children) btn.setAttribute('aria-pressed', String(btn === b));
+      renderCharts(wbState.data, wbState.lamp);
+    });
+    seg.appendChild(b);
+  }
+}
+
+async function loadCharts() {
+  const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.charts
+    && DESK.meta.domains.charts.asOf;
+  if (DESK.mode !== 'demo' && published) {
+    try {
+      const data = await fetchPublic('data/charts.json');
+      renderCharts(data, lampFor(data.asOf, new Date()));
+      return;
+    } catch { /* fall through to demo-labeled */ }
+  }
+  renderCharts(buildDemoCharts(), { cls: 'lamp--demo', text: 'Demo' });
+}
+
+let wbResizeTimer = 0;
+window.addEventListener('resize', () => {
+  if (!wbState) return;
+  clearTimeout(wbResizeTimer);
+  wbResizeTimer = setTimeout(() => renderCharts(wbState.data, wbState.lamp), 150);
+});
+
 /* ── render orchestration ──────────────────────────────────────────────── */
 function renderPrivate() {
   if (DESK.mode === 'demo' || DESK.authed) {
@@ -918,6 +1139,7 @@ async function boot() {
     renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
     renderPrivate();
     loadHeatmap();
+    loadCharts();
     return;
   }
   /* live: public domains render immediately; private waits for PIN */
@@ -942,6 +1164,7 @@ async function boot() {
   }
   renderMasthead();
   loadHeatmap();
+  loadCharts();
   const pin = sessionStorage.getItem('desk_pin');
   if (pin) {
     const res = await deskLogin(pin).catch(() => ({ ok: false }));
@@ -952,4 +1175,5 @@ async function boot() {
 }
 
 wireChart();
+wireCharts();
 boot();

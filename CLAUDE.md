@@ -41,7 +41,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   built-in defaults by the pipeline.
 - `.github/scripts/refresh/` — the data pipeline (Node 20, `fast-xml-parser`
   only): Stooq→Yahoo quote chain, FRED 10Y, RSS news, IBKR Flex, Anthropic
-  brief, meta writer. Fixture tests via `node --test`.
+  brief, watchlist OHLC histories (`fetch-charts.js` → `data/charts.json`;
+  roster override in `config/chart-watchlist.json`, NEVER derived from
+  holdings — public repo), meta writer. Fixture tests via `node --test`.
 - `.github/workflows/data-refresh.yml` — dual cron (22:30 UTC + 09:30 UTC
   retry) + dispatch (`backfill`, `force_fail_market`).
 - `supabase/functions/desk-ask/` — versioned source of the PIN-gated Claude
@@ -121,6 +123,7 @@ cleanly while `DESK_DB` is empty (demo-only state).
 | S8 | Timeframe guard | All four seg buttons enabled on 260-day demo history; clicking 1M moves `aria-pressed` and redraws | Disabled buttons in demo, or pressed state stuck |
 | S9 | Brief structure | Demo brief renders Portfolio state / Key levels / Scenarios sections + disclaimer + stamp | Missing section or missing disclaimer |
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts/chart/brief | Skips while demo-only; fails if unlock doesn't render |
+| S12 | Charts panel | With `?demo=1`, `#wbChart` renders candles + 4 stochastic paths; symbol select and zoom seg redraw; hover shows OHLC + daily/weekly-13 stoch readout | Empty SVG, dead controls, or missing stoch strips |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 
 ## Reporting Requirements

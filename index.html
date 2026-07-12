@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260712e">
-<link rel="stylesheet" href="styles/components.css?v=20260712e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260712f">
+<link rel="stylesheet" href="styles/components.css?v=20260712f">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -73,6 +73,14 @@
   .chart-data summary:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
 
   .ml-auto { margin-left: auto; }
+
+  /* watchlist charts */
+  #wbChart { display: block; width: 100%; height: 620px; }
+  #wbChart text { pointer-events: none; }
+  .wb-sym { padding: 4px 8px; font: 600 var(--font-xs)/1.4 var(--font-mono); min-width: 84px; }
+  #wbTip { line-height: 1.7; }
+  #wbTip .up { color: var(--color-gain); }
+  #wbTip .down { color: var(--color-loss); }
 
   /* heatmap (in the main column; height set by JS to match render size) */
   .heat-wrap { position: relative; }
@@ -155,6 +163,25 @@
         </div>
       </section>
 
+      <section class="panel" aria-labelledby="chartsTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="chartsTitle">Watchlist charts</h2>
+          <span class="lamp lamp--demo" id="chartsLamp">Demo</span>
+          <div class="chart-head-tools">
+            <select class="input wb-sym" id="chartSymSel" aria-label="Chart symbol"></select>
+            <div class="seg" role="group" aria-label="Chart timeframe" id="chartZoom"></div>
+          </div>
+          <span class="stamp ml-auto" id="chartsStamp">—</span>
+        </div>
+        <div class="panel-body">
+          <div class="chart-wrap">
+            <svg id="wbChart" viewBox="0 0 900 620" preserveAspectRatio="none" role="img" aria-label="Candlestick chart with volume and 13-period stochastics on daily and weekly bars"></svg>
+            <div class="chart-tip" id="wbTip"></div>
+          </div>
+          <p class="stamp">EOD candles · classic monthly pivots · slow stochastic 13-3-3 on daily and weekly bars</p>
+        </div>
+      </section>
+
       <section class="panel" aria-labelledby="equityTitle">
         <div class="panel-header">
           <h2 class="panel-title" id="equityTitle">Equity curves</h2>
@@ -228,8 +255,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260712e"></script>
-<script src="scripts/data.js?v=20260712e"></script>
-<script src="scripts/app.js?v=20260712e"></script>
+<script src="scripts/config.js?v=20260712f"></script>
+<script src="scripts/data.js?v=20260712f"></script>
+<script src="scripts/app.js?v=20260712f"></script>
 </body>
 </html>

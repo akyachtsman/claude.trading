@@ -152,6 +152,89 @@ function buildDemoHeatmap() {
   return { asOf: isoDate(lastTradingDay(new Date())), source: 'demo', sectors };
 }
 
+/* ── charts panel: demo OHLCV, weekly aggregation, stochastics ─────────── */
+const CHART_BARS = 330; /* matches the pipeline's KEEP_BARS: 1y view + warmup */
+const STOCH = { k: 13, kSmooth: 3, d: 3 }; /* 13-period slow — 13 days / 13 weeks */
+
+function tradingISODates(n, endDate) {
+  const out = []; const d = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  while (out.length < n) {
+    if (isTradingDay(d)) out.unshift(isoDate(d));
+    d.setDate(d.getDate() - 1);
+  }
+  return out;
+}
+
+const DEMO_CHART_SYMBOLS = [
+  ['SPY', 5, 630, 0.00035, 0.010, 60], ['QQQ', 7, 560, 0.00045, 0.014, 45],
+  ['DIA', 11, 449, 0.00025, 0.008, 4], ['IWM', 13, 228, 0.0001, 0.014, 30],
+  ['SMH', 17, 285, 0.0006, 0.019, 8], ['XLF', 19, 52, 0.0002, 0.009, 40],
+  ['XLE', 23, 92, -0.0001, 0.013, 18], ['GLD', 29, 312, 0.0004, 0.008, 7],
+  ['TLT', 31, 87, -0.0002, 0.007, 25], ['VXX', 37, 44, -0.0009, 0.035, 6],
+];
+function buildDemoCharts() {
+  const t = tradingISODates(CHART_BARS, lastTradingDay(new Date()));
+  const symbols = {};
+  for (const [sym, seed, end, drift, vol, mVol] of DEMO_CHART_SYMBOLS) {
+    const rnd = lcg(seed * 1013);
+    const s = { t, o: [], h: [], l: [], c: [], v: [] };
+    let close = end / Math.exp(drift * CHART_BARS); /* walk forward toward `end` */
+    for (let i = 0; i < CHART_BARS; i++) {
+      const prev = close;
+      close = prev * (1 + drift + (rnd() - 0.5) * 2 * vol);
+      const open = prev * (1 + (rnd() - 0.5) * vol * 0.6);
+      const hi = Math.max(open, close) * (1 + rnd() * vol * 0.7);
+      const lo = Math.min(open, close) * (1 - rnd() * vol * 0.7);
+      s.o.push(+open.toFixed(2)); s.h.push(+hi.toFixed(2));
+      s.l.push(+lo.toFixed(2)); s.c.push(+close.toFixed(2));
+      s.v.push(Math.round(mVol * 1e6 * (0.55 + rnd() * 0.9)));
+    }
+    symbols[sym] = s;
+  }
+  return { asOf: t[t.length - 1], source: 'demo', count: DEMO_CHART_SYMBOLS.length, symbols };
+}
+
+/* Daily packed series → weekly bars (t = last trading day of each ISO week). */
+function toWeeklyBars(s) {
+  const w = { t: [], o: [], h: [], l: [], c: [], v: [] };
+  let key = null;
+  for (let i = 0; i < s.t.length; i++) {
+    const d = new Date(s.t[i] + 'T12:00:00Z');
+    const monday = new Date(d.getTime() - (((d.getUTCDay() + 6) % 7) * 86400000));
+    const k = monday.toISOString().slice(0, 10);
+    if (k !== key) {
+      key = k;
+      w.t.push(s.t[i]); w.o.push(s.o[i]); w.h.push(s.h[i]); w.l.push(s.l[i]); w.c.push(s.c[i]); w.v.push(s.v[i]);
+    } else {
+      const j = w.t.length - 1;
+      w.t[j] = s.t[i];
+      w.h[j] = Math.max(w.h[j], s.h[i]); w.l[j] = Math.min(w.l[j], s.l[i]);
+      w.c[j] = s.c[i]; w.v[j] += s.v[i];
+    }
+  }
+  return w;
+}
+
+/* Slow stochastic on packed bars: raw %K over `k` bars → SMA(kSmooth) → %D =
+   SMA(d). Warmup slots are null. Flat ranges read 50 (no signal, not a spike). */
+function stochSeries(s, { k, kSmooth, d } = STOCH) {
+  const n = s.c.length;
+  const raw = new Array(n).fill(null);
+  for (let i = k - 1; i < n; i++) {
+    let hi = -Infinity, lo = Infinity;
+    for (let j = i - k + 1; j <= i; j++) { if (s.h[j] > hi) hi = s.h[j]; if (s.l[j] < lo) lo = s.l[j]; }
+    raw[i] = hi === lo ? 50 : (s.c[i] - lo) / (hi - lo) * 100;
+  }
+  const sma = (arr, len) => arr.map((_, i) => {
+    if (i < len - 1) return null;
+    let sum = 0;
+    for (let j = i - len + 1; j <= i; j++) { if (arr[j] == null) return null; sum += arr[j]; }
+    return sum / len;
+  });
+  const kLine = sma(raw, kSmooth);
+  return { k: kLine, d: sma(kLine, d) };
+}
+
 /* ── mode resolution + public loaders (live mode) ──────────────────────── */
 function resolveMode() {
   const q = new URLSearchParams(location.search);
