@@ -46,6 +46,34 @@ support/resistance lines; risk is managed with stops and hard hygiene rules
   guides at 80/20). The daily oscillates fast; the weekly turns slowly — a
   weekly turn is trend information, not noise.
 
+## The stochastic cycle (Stochastic Lesson)
+
+Anatomy of one full cycle, %K vs %D between the bands:
+
+1. **Entry trigger = the bottom crossover.** %K crossing UP through %D while
+   both sit at/below the oversold band. Being oversold is a condition; the
+   cross is the signal.
+2. **The Sweet Spot** is the mid-range between the bands — where the
+   strongest, freshest part of the move happens after a bottom cross. The
+   base pattern: enter on the cross, ride the sweet spot.
+3. **Exit warning = the top roll.** Lines enter the overbought band, then %K
+   rolls back down through %D and drops out of the band — that exit from the
+   band is the take-profits zone, mirrored from the entry.
+4. **The pinned/embedded exception.** In a strong trend the stochastic can
+   ride flat ALONG the overbought band while price keeps stair-stepping
+   higher. Pinned-overbought = trend strength, not an automatic sell. The
+   sell signal remains the roll-and-drop-out, never the level alone.
+5. **The failure case.** A fast spike into overbought that immediately
+   collapses back through the sweet spot to oversold marks a failed move —
+   the pattern not to chase (and the short-side read of the same anatomy).
+6. **Dual-timeframe confirmation.** Read the identical anatomy on daily and
+   weekly at once: the daily produces these cycle signals frequently; the
+   weekly says which half of the cycle the TREND is in. Take daily entries
+   in the direction the weekly permits.
+
+*Study note: distilled from the drawn animation (visual channel); narration
+was unavailable — spoken-only nuances may be missing pending owner review.*
+
 ## Price levels
 
 - Resistance ladder **R1…R4** above price, support ladder **S1…S4** below
