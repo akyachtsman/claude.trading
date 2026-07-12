@@ -1,9 +1,11 @@
 # Stochastic Investing
 
 > Desk strategy file #1. Distilled from the owner's Phil's Gang course
-> materials (Definitions lesson, 2026-07) — method and rules restated in our
-> own words, not course content. One file per strategy; this is the angle the
-> watchlist-charts panel is built to serve.
+> materials (Beginner's-license tier, 2026-07) — method and rules restated in
+> our own words, not course content. One file per strategy; this is the angle
+> the watchlist-charts panel is built to serve.
+> Lessons covered: Definitions · Stochastic Lesson · Relative Strength ·
+> Bulls and Bears · Earnings · Order Entry · Taking Profits (one more to come).
 
 ## The three tiers
 
@@ -105,6 +107,50 @@ was unavailable — spoken-only nuances may be missing pending owner review.*
 7. **Capitulation** (panic selling on heavy volume after extended declines)
    is a regime marker: expect it near correction lows; it often precedes the
    washout that resets the weekly stochastic.
+
+## Beginner's-license lessons (subcategories)
+
+The course tier this strategy file covers (owner: one more lesson to come).
+Each lesson distilled from its video, own words:
+
+### Relative strength
+Judge every name AGAINST the benchmark, not in isolation: overlay the stock
+with SPY. Relative **strength** = the name rising while SPY falls or stalls;
+relative **weakness** = the name falling while SPY rises. Prefer longs in
+names showing relative strength; treat relative weakness as disqualifying
+(or as the short-side candidate list). The platform read: stock line (green)
+vs SPY line (red) on the same pane, both with their stochastics.
+
+### Bulls and bears
+Regime first: trace the index trend (higher-highs trendline = bull; the
+roll-over through the trendline = bear) and read the WEEKLY stochastic as
+the regime confirmation. The regime decides which side of the stochastic
+cycle is tradeable — bottom-crosses in a bull, top-rolls/inverse vehicles in
+a bear.
+
+### Earnings workflow
+Operational companion to the earnings hygiene rule: check the weekly
+earnings calendar routinely (their Daily Info page aggregates calendar +
+whisper-number tools), know the report date for every holding, review the
+chart + stochastics as the date approaches, and de-risk BEFORE the print
+(take profits; at most a Scout through earnings).
+
+### Order entry mechanics
+Broker-agnostic ticket walkthrough (demoed on two platforms, paper account):
+choose market vs limit, set share count and day duration, submit, then
+VERIFY — the order in the orders screen and the fill in positions. Market
+orders guarantee the fill, limit orders the price (consistent with the
+stop-order definitions above). Practice the round trip on paper before real
+size.
+
+### Taking profits
+The exit is the stochastic top-roll (see the cycle anatomy): when %K rolls
+through %D inside the overbought band and drops out, sell into it — shown
+across all three tiers on live charts. Track the gain as taught: current
+price minus entry, divided by the current price (their example: in at
+$1,000, at $1,500 → 500/1500 ≈ 33%). *Note: conventional return divides by
+ENTRY (500/1000 = 50%); the course's divide-by-current convention reads
+lower — flagging the discrepancy rather than silently normalizing it.*
 
 ## Candle vocabulary
 
