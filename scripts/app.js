@@ -624,7 +624,10 @@ function squarify(items, x, y, w, h) {
   return out;
 }
 
+let heatState = null;   /* last-rendered data, so a resize can re-render */
+
 function renderHeatmap(hm, lamp) {
+  heatState = { hm, lamp };
   const svg = document.getElementById('heatmapSvg');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const lampEl = document.getElementById('heatLamp');
@@ -634,7 +637,14 @@ function renderHeatmap(hm, lamp) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
   }
-  const W = 1200, H = 520, HEAD = 16, BAND = 11;
+  /* Render at the container's true pixel size (the panel now lives in the
+     main column, not full-width): 1 viewBox unit = 1 rendered px, so label
+     px thresholds are honest and text isn't stretched by aspect mismatch. */
+  const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 1200));
+  const H = Math.round(Math.min(Math.max(W * 0.62, 420), 640));
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.style.height = H + 'px';
+  const HEAD = 16, BAND = 11;
   const tip = document.getElementById('heatTip');
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: HEAT.canvas }));
 
@@ -849,6 +859,14 @@ async function loadHeatmap() {
   }
   renderHeatmap(buildDemoHeatmap(), { cls: 'lamp--demo', text: 'Demo' });
 }
+
+/* re-render the treemap at the new container size (debounced) */
+let heatResizeTimer = 0;
+window.addEventListener('resize', () => {
+  if (!heatState) return;
+  clearTimeout(heatResizeTimer);
+  heatResizeTimer = setTimeout(() => renderHeatmap(heatState.hm, heatState.lamp), 150);
+});
 
 /* ── render orchestration ──────────────────────────────────────────────── */
 function renderPrivate() {
