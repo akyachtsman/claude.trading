@@ -1,36 +1,36 @@
 {
-  "asOf": "2026-07-11",
-  "generatedAt": "2026-07-11T17:41:15.156Z",
+  "asOf": "2026-07-12",
+  "generatedAt": "2026-07-12T11:27:26.930Z",
   "domains": {
     "accounts": {
-      "status": "not-ready",
+      "status": "ok",
       "asOf": "2026-07-10",
-      "detail": "Flex SendRequest 1001: Statement could not be generated at this time. Please try again shortly.",
-      "at": "2026-07-11T17:41:02.874Z"
+      "detail": "",
+      "at": "2026-07-12T11:27:19.575Z"
     },
     "brief": {
       "status": "ok",
       "asOf": "2026-07-10",
       "detail": "",
-      "at": "2026-07-11T17:41:15.108Z"
+      "at": "2026-07-12T11:27:26.890Z"
     },
     "market": {
       "status": "ok",
       "asOf": "2026-07-10",
       "detail": "",
-      "at": "2026-07-11T17:39:30.203Z"
+      "at": "2026-07-12T11:27:11.703Z"
     },
     "news": {
       "status": "ok",
-      "asOf": "2026-07-11",
+      "asOf": "2026-07-12",
       "detail": "",
-      "at": "2026-07-11T17:39:31.387Z"
+      "at": "2026-07-12T11:27:13.068Z"
     },
     "heatmap": {
       "status": "ok",
       "asOf": "2026-07-10",
       "detail": "501 tiles via nasdaq-screener",
-      "at": "2026-07-11T17:39:25.034Z"
+      "at": "2026-07-12T11:27:06.818Z"
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "asOf": "2026-07-10",
-  "generatedAt": "2026-07-11T17:39:25.027Z",
+  "generatedAt": "2026-07-12T11:27:06.809Z",
   "source": "nasdaq-screener",
   "count": 501,
   "sectors": [
@@ -13,518 +13,592 @@
           "name": "Nvidia",
           "cap": 5105232000000,
           "pct": 4.03,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 210.96
         },
         {
           "sym": "AAPL",
           "name": "Apple Inc.",
           "cap": 4631217093920,
           "pct": -0.28,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 315.32
         },
         {
           "sym": "MSFT",
           "name": "Microsoft",
           "cap": 2860690204510,
           "pct": 0.19,
-          "ind": "Systems Software"
+          "ind": "Systems Software",
+          "last": 385.1
         },
         {
           "sym": "AVGO",
           "name": "Broadcom",
           "cap": 1902889351794,
           "pct": -0.28,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 399.97
         },
         {
           "sym": "MU",
           "name": "Micron Technology",
           "cap": 1106014712774,
           "pct": -1.24,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 979.3
         },
         {
           "sym": "AMD",
           "name": "Advanced Micro Devices",
           "cap": 909695790492,
           "pct": 2.04,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 557.89
         },
         {
           "sym": "INTC",
           "name": "Intel",
           "cap": 552055840000,
           "pct": -2.4,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 109.84
         },
         {
           "sym": "AMAT",
           "name": "Applied Materials",
           "cap": 478360556575,
           "pct": 2.35,
-          "ind": "Semiconductor Materials & Equipment"
+          "ind": "Semiconductor Materials & Equipment",
+          "last": 602.5
         },
         {
           "sym": "CSCO",
           "name": "Cisco",
           "cap": 478135439211,
           "pct": 2.54,
-          "ind": "Communications Equipment"
+          "ind": "Communications Equipment",
+          "last": 121.31
         },
         {
           "sym": "LRCX",
           "name": "Lam Research",
           "cap": 438112538430,
           "pct": -0.8,
-          "ind": "Semiconductor Materials & Equipment"
+          "ind": "Semiconductor Materials & Equipment",
+          "last": 350.33
         },
         {
           "sym": "ORCL",
           "name": "Oracle Corporation",
           "cap": 405109441440,
           "pct": -2.48,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 140.64
         },
         {
           "sym": "PLTR",
           "name": "Palantir Technologies",
           "cap": 303955185564,
           "pct": -1.74,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 126.79
         },
         {
           "sym": "KLAC",
           "name": "KLA Corporation",
           "cap": 302428836619,
           "pct": 0.87,
-          "ind": "Semiconductor Materials & Equipment"
+          "ind": "Semiconductor Materials & Equipment",
+          "last": 231.52
         },
         {
           "sym": "SNDK",
           "name": "Sandisk",
           "cap": 283728129147,
           "pct": 3.1,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 1915.92
         },
         {
           "sym": "TXN",
           "name": "Texas Instruments",
           "cap": 283457500685,
           "pct": 0.95,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 311.46
         },
         {
           "sym": "DELL",
           "name": "Dell Technologies",
           "cap": 281907532845,
           "pct": -3.39,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 434.97
         },
         {
           "sym": "IBM",
           "name": "IBM",
           "cap": 270273411117,
           "pct": -2.62,
-          "ind": "IT Consulting & Other Services"
+          "ind": "IT Consulting & Other Services",
+          "last": 287.56
         },
         {
           "sym": "PANW",
           "name": "Palo Alto Networks",
           "cap": 265616650000,
           "pct": -3.67,
-          "ind": "Systems Software"
+          "ind": "Systems Software",
+          "last": 325.91
         },
         {
           "sym": "ANET",
           "name": "Arista Networks",
           "cap": 235420516787,
           "pct": 1.23,
-          "ind": "Communications Equipment"
+          "ind": "Communications Equipment",
+          "last": 186.96
         },
         {
           "sym": "MRVL",
           "name": "Marvell Technology",
           "cap": 206286588000,
           "pct": -3.04,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 235.81
         },
         {
           "sym": "STX",
           "name": "Seagate Technology",
           "cap": 204124620577,
           "pct": 2.27,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 910.34
         },
         {
           "sym": "WDC",
           "name": "Western Digital",
           "cap": 200806639289,
           "pct": 0.79,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 582.585
         },
         {
           "sym": "QCOM",
           "name": "Qualcomm",
           "cap": 199374640000,
           "pct": -1.02,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 189.16
         },
         {
           "sym": "APH",
           "name": "Amphenol",
           "cap": 195681090822,
           "pct": -1.96,
-          "ind": "Electronic Components"
+          "ind": "Electronic Components",
+          "last": 159.06
         },
         {
           "sym": "ADI",
           "name": "Analog Devices",
           "cap": 192715987376,
           "pct": 0.51,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 395.65
         },
         {
           "sym": "CRWD",
           "name": "CrowdStrike",
           "cap": 190597772030,
           "pct": -5.66,
-          "ind": "Systems Software"
+          "ind": "Systems Software",
+          "last": 187.18
         },
         {
           "sym": "APP",
           "name": "AppLovin",
           "cap": 170314861200,
           "pct": -2.58,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 506.98
         },
         {
           "sym": "GLW",
           "name": "Corning Inc.",
           "cap": 164287154414,
           "pct": -0.78,
-          "ind": "Electronic Components"
+          "ind": "Electronic Components",
+          "last": 190.89
         },
         {
           "sym": "CRM",
           "name": "Salesforce",
           "cap": 133759080000,
           "pct": 0.51,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 163.32
         },
         {
           "sym": "FTNT",
           "name": "Fortinet",
           "cap": 115399448066,
           "pct": -3.8,
-          "ind": "Systems Software"
+          "ind": "Systems Software",
+          "last": 157.51
         },
         {
           "sym": "NOW",
           "name": "ServiceNow",
           "cap": 111049010000,
           "pct": -1.04,
-          "ind": "Systems Software"
+          "ind": "Systems Software",
+          "last": 107.71
         },
         {
           "sym": "CDNS",
           "name": "Cadence Design Systems",
           "cap": 105960232720,
           "pct": -0.46,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 384.17
         },
         {
           "sym": "DDOG",
           "name": "Datadog",
           "cap": 91673987075,
           "pct": -4.26,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 257.54
         },
         {
           "sym": "ACN",
           "name": "Accenture",
           "cap": 90267405698,
           "pct": -2.75,
-          "ind": "IT Consulting & Other Services"
+          "ind": "IT Consulting & Other Services",
+          "last": 135.23
         },
         {
           "sym": "ADBE",
           "name": "Adobe Inc.",
           "cap": 88896900000,
           "pct": 0.45,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 223.64
         },
         {
           "sym": "SNPS",
           "name": "Synopsys",
           "cap": 85304039288,
           "pct": 0.48,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 445.5
         },
         {
           "sym": "INTU",
           "name": "Intuit",
           "cap": 75211733520,
           "pct": 0.58,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 274.96
         },
         {
           "sym": "NXPI",
           "name": "NXP Semiconductors",
           "cap": 73787197549,
           "pct": 0.59,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 292.26
         },
         {
           "sym": "MSI",
           "name": "Motorola Solutions",
           "cap": 70196211716,
           "pct": 1.36,
-          "ind": "Communications Equipment"
+          "ind": "Communications Equipment",
+          "last": 422.88
         },
         {
           "sym": "MPWR",
           "name": "Monolithic Power Systems",
           "cap": 66460116200,
           "pct": -1.56,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 1352.74
         },
         {
           "sym": "CIEN",
           "name": "Ciena",
           "cap": 65216262224,
           "pct": -0.35,
-          "ind": "Communications Equipment"
+          "ind": "Communications Equipment",
+          "last": 460.72
         },
         {
           "sym": "HPE",
           "name": "Hewlett Packard Enterprise",
           "cap": 64276838909,
           "pct": -1.16,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 48.54
         },
         {
           "sym": "COHR",
           "name": "Coherent Corp.",
           "cap": 63484959665,
           "pct": -0.84,
-          "ind": "Electronic Components"
+          "ind": "Electronic Components",
+          "last": 324.5
         },
         {
           "sym": "LITE",
           "name": "Lumentum",
           "cap": 62396378000,
           "pct": 2.07,
-          "ind": "Communications Equipment"
+          "ind": "Communications Equipment",
+          "last": 802.01
         },
         {
           "sym": "TEL",
           "name": "TE Connectivity",
           "cap": 58484242288,
           "pct": 0.73,
-          "ind": "Electronic Manufacturing Services"
+          "ind": "Electronic Manufacturing Services",
+          "last": 200.36
         },
         {
           "sym": "TER",
           "name": "Teradyne",
           "cap": 56292561455,
           "pct": -0.87,
-          "ind": "Semiconductor Materials & Equipment"
+          "ind": "Semiconductor Materials & Equipment",
+          "last": 359.6
         },
         {
           "sym": "KEYS",
           "name": "Keysight Technologies",
           "cap": 55036853264,
           "pct": -0.04,
-          "ind": "Electronic Equipment & Instruments"
+          "ind": "Electronic Equipment & Instruments",
+          "last": 322.05
         },
         {
           "sym": "FLEX",
           "name": "Flex Ltd.",
           "cap": 49755701433,
           "pct": -2.96,
-          "ind": "Electronic Manufacturing Services"
+          "ind": "Electronic Manufacturing Services",
+          "last": 135.8
         },
         {
           "sym": "MCHP",
           "name": "Microchip Technology",
           "cap": 48105111498,
           "pct": 0.37,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 88.59
         },
         {
           "sym": "ADSK",
           "name": "Autodesk",
           "cap": 43982950000,
           "pct": -0.06,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 208.45
         },
         {
           "sym": "ON",
           "name": "ON Semiconductor",
           "cap": 37607030208,
           "pct": -1.95,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 95.96
         },
         {
           "sym": "ROP",
           "name": "Roper Technologies",
           "cap": 35916488068,
           "pct": -0.01,
-          "ind": "Electronic Equipment & Instruments"
+          "ind": "Electronic Equipment & Instruments",
+          "last": 355.9
         },
         {
           "sym": "JBL",
           "name": "Jabil",
           "cap": 34610127626,
           "pct": -0.67,
-          "ind": "Electronic Manufacturing Services"
+          "ind": "Electronic Manufacturing Services",
+          "last": 330.29
         },
         {
           "sym": "WDAY",
           "name": "Workday, Inc.",
           "cap": 34320650000,
           "pct": 0.44,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 138.95
         },
         {
           "sym": "NTAP",
           "name": "NetApp",
           "cap": 33084998072,
           "pct": -1.37,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 168.87
         },
         {
           "sym": "Q",
           "name": "Qnity Electronics",
           "cap": 30102977967,
           "pct": 0.24,
-          "ind": "Semiconductor Materials & Equipment"
+          "ind": "Semiconductor Materials & Equipment",
+          "last": 143.8
         },
         {
           "sym": "TDY",
           "name": "Teledyne Technologies",
           "cap": 29400470975,
           "pct": 0.49,
-          "ind": "Electronic Equipment & Instruments"
+          "ind": "Electronic Equipment & Instruments",
+          "last": 634.6
         },
         {
           "sym": "FICO",
           "name": "Fair Isaac",
           "cap": 29009504315,
           "pct": -2.23,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 1250.9
         },
         {
           "sym": "VRSN",
           "name": "Verisign",
           "cap": 24580010000,
           "pct": 0.05,
-          "ind": "Internet Services & Infrastructure"
+          "ind": "Internet Services & Infrastructure",
+          "last": 270.11
         },
         {
           "sym": "FSLR",
           "name": "First Solar",
           "cap": 24481099692,
           "pct": -0.29,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 227.83
         },
         {
           "sym": "FFIV",
           "name": "F5, Inc.",
           "cap": 24282279716,
           "pct": 0.02,
-          "ind": "Communications Equipment"
+          "ind": "Communications Equipment",
+          "last": 430.39
         },
         {
           "sym": "HPQ",
           "name": "HP Inc.",
           "cap": 22149739552,
           "pct": 0.37,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 24.22
         },
         {
           "sym": "CTSH",
           "name": "Cognizant",
           "cap": 20172623295,
           "pct": -1.91,
-          "ind": "IT Consulting & Other Services"
+          "ind": "IT Consulting & Other Services",
+          "last": 42.57
         },
         {
           "sym": "CDW",
           "name": "CDW Corporation",
           "cap": 18446320790,
           "pct": 2.98,
-          "ind": "Technology Distributors"
+          "ind": "Technology Distributors",
+          "last": 144.39
         },
         {
           "sym": "AKAM",
           "name": "Akamai Technologies",
           "cap": 18346190062,
           "pct": -2.57,
-          "ind": "Internet Services & Infrastructure"
+          "ind": "Internet Services & Infrastructure",
+          "last": 126.19
         },
         {
           "sym": "SMCI",
           "name": "Supermicro",
           "cap": 17026157225,
           "pct": 0.25,
-          "ind": "Technology Hardware, Storage & Peripherals"
+          "ind": "Technology Hardware, Storage & Peripherals",
+          "last": 28.31
         },
         {
           "sym": "GEN",
           "name": "Gen Digital",
           "cap": 15609061157,
           "pct": -0.31,
-          "ind": "Systems Software"
+          "ind": "Systems Software",
+          "last": 25.91
         },
         {
           "sym": "PTC",
           "name": "PTC Inc.",
           "cap": 14408192369,
           "pct": 0.77,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 124.74
         },
         {
           "sym": "TYL",
           "name": "Tyler Technologies",
           "cap": 13049983973,
           "pct": -0.49,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 309.48
         },
         {
           "sym": "ZBRA",
           "name": "Zebra Technologies",
           "cap": 12981051988,
           "pct": -0.05,
-          "ind": "Electronic Equipment & Instruments"
+          "ind": "Electronic Equipment & Instruments",
+          "last": 272.52
         },
         {
           "sym": "TRMB",
           "name": "Trimble Inc.",
           "cap": 12312950434,
           "pct": 0.21,
-          "ind": "Application Software"
+          "ind": "Application Software",
+          "last": 52.82
         },
         {
           "sym": "GDDY",
           "name": "GoDaddy",
           "cap": 11773883595,
           "pct": 1.2,
-          "ind": "Internet Services & Infrastructure"
+          "ind": "Internet Services & Infrastructure",
+          "last": 88.92
         },
         {
           "sym": "SWKS",
           "name": "Skyworks Solutions",
           "cap": 9081512046,
           "pct": 0.72,
-          "ind": "Semiconductors"
+          "ind": "Semiconductors",
+          "last": 60.38
         },
         {
           "sym": "IT",
           "name": "Gartner",
           "cap": 8920669690,
           "pct": 0.41,
-          "ind": "IT Consulting & Other Services"
+          "ind": "IT Consulting & Other Services",
+          "last": 133.24
         }
       ]
     },
@@ -537,161 +611,184 @@
           "name": "Alphabet Inc. (Class A)",
           "cap": 4327592880000,
           "pct": -0.48,
-          "ind": "Interactive Media & Services"
+          "ind": "Interactive Media & Services",
+          "last": 357.18
         },
         {
           "sym": "GOOG",
           "name": "Alphabet Inc. (Class C)",
           "cap": 4301543480000,
           "pct": -0.34,
-          "ind": "Interactive Media & Services"
+          "ind": "Interactive Media & Services",
+          "last": 355.03
         },
         {
           "sym": "META",
           "name": "Meta Platforms",
           "cap": 1698738259270,
           "pct": 5.97,
-          "ind": "Interactive Media & Services"
+          "ind": "Interactive Media & Services",
+          "last": 669.21
         },
         {
           "sym": "NFLX",
           "name": "Netflix",
           "cap": 308946287999,
           "pct": -2.78,
-          "ind": "Movies & Entertainment"
+          "ind": "Movies & Entertainment",
+          "last": 73.37
         },
         {
           "sym": "TMUS",
           "name": "T-Mobile US",
           "cap": 203032426956,
           "pct": 3.38,
-          "ind": "Wireless Telecommunication Services"
+          "ind": "Wireless Telecommunication Services",
+          "last": 187.61
         },
         {
           "sym": "VZ",
           "name": "Verizon",
           "cap": 175874541289,
           "pct": -0.28,
-          "ind": "Integrated Telecommunication Services"
+          "ind": "Integrated Telecommunication Services",
+          "last": 42.12
         },
         {
           "sym": "DIS",
           "name": "Walt Disney Company (The)",
           "cap": 166045222363,
           "pct": -0.57,
-          "ind": "Movies & Entertainment"
+          "ind": "Movies & Entertainment",
+          "last": 95.62
         },
         {
           "sym": "T",
           "name": "AT&T",
           "cap": 146818399584,
           "pct": 0.43,
-          "ind": "Integrated Telecommunication Services"
+          "ind": "Integrated Telecommunication Services",
+          "last": 21.13
         },
         {
           "sym": "CMCSA",
           "name": "Comcast",
           "cap": 84234972048,
           "pct": 0.96,
-          "ind": "Cable & Satellite"
+          "ind": "Cable & Satellite",
+          "last": 23.57
         },
         {
           "sym": "WBD",
           "name": "Warner Bros. Discovery",
           "cap": 66664764906,
           "pct": -0.15,
-          "ind": "Broadcasting"
+          "ind": "Broadcasting",
+          "last": 26.59
         },
         {
           "sym": "EA",
           "name": "Electronic Arts",
           "cap": 51757613812,
           "pct": -0.07,
-          "ind": "Interactive Home Entertainment"
+          "ind": "Interactive Home Entertainment",
+          "last": 206.41
         },
         {
           "sym": "TTWO",
           "name": "Take-Two Interactive",
           "cap": 45154132442,
           "pct": -1.18,
-          "ind": "Interactive Home Entertainment"
+          "ind": "Interactive Home Entertainment",
+          "last": 243.2
         },
         {
           "sym": "LYV",
           "name": "Live Nation Entertainment",
           "cap": 42349006816,
           "pct": -1.53,
-          "ind": "Movies & Entertainment"
+          "ind": "Movies & Entertainment",
+          "last": 179.79
         },
         {
           "sym": "TKO",
           "name": "TKO Group Holdings",
           "cap": 35243687507,
           "pct": -2.01,
-          "ind": "Movies & Entertainment"
+          "ind": "Movies & Entertainment",
+          "last": 184.4
         },
         {
           "sym": "ECHO",
           "name": "EchoStar",
           "cap": 27822094848,
           "pct": -2,
-          "ind": "Wireless Telecommunication Services"
+          "ind": "Wireless Telecommunication Services",
+          "last": 96
         },
         {
           "sym": "OMC",
           "name": "Omnicom Group",
           "cap": 23350557638,
           "pct": 1.36,
-          "ind": "Advertising"
+          "ind": "Advertising",
+          "last": 81.93
         },
         {
           "sym": "FOXA",
           "name": "Fox Corporation (Class A)",
           "cap": 22740483368,
           "pct": 0.71,
-          "ind": "Broadcasting"
+          "ind": "Broadcasting",
+          "last": 54.12
         },
         {
           "sym": "FOX",
           "name": "Fox Corporation (Class B)",
           "cap": 20484082856,
           "pct": 0.64,
-          "ind": "Broadcasting"
+          "ind": "Broadcasting",
+          "last": 48.75
         },
         {
           "sym": "CHTR",
           "name": "Charter Communications",
           "cap": 18169448522,
           "pct": -2.69,
-          "ind": "Cable & Satellite"
+          "ind": "Cable & Satellite",
+          "last": 130.73
         },
         {
           "sym": "NWS",
           "name": "News Corp (Class B)",
           "cap": 16932528287,
           "pct": -0.64,
-          "ind": "Publishing"
+          "ind": "Publishing",
+          "last": 30.93
         },
         {
           "sym": "NWSA",
           "name": "News Corp (Class A)",
           "cap": 14983617821,
           "pct": -0.44,
-          "ind": "Publishing"
+          "ind": "Publishing",
+          "last": 27.37
         },
         {
           "sym": "PSKY",
           "name": "Paramount Skydance Corporation",
           "cap": 10531418476,
           "pct": 0.86,
-          "ind": "Movies & Entertainment"
+          "ind": "Movies & Entertainment",
+          "last": 9.41
         },
         {
           "sym": "TTD",
           "name": "Trade Desk (The)",
           "cap": 9181216290,
           "pct": -1.11,
-          "ind": "Advertising"
+          "ind": "Advertising",
+          "last": 19.53
         }
       ]
     },
@@ -704,525 +801,600 @@
           "name": "JPMorgan Chase",
           "cap": 901575206814,
           "pct": 0.3,
-          "ind": "Diversified Banks"
+          "ind": "Diversified Banks",
+          "last": 336.47
         },
         {
           "sym": "V",
           "name": "Visa Inc.",
           "cap": 661112482954,
           "pct": 0.22,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 348.97
         },
         {
           "sym": "MA",
           "name": "Mastercard",
           "cap": 465418959783,
           "pct": 0.68,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 526.74
         },
         {
           "sym": "BAC",
           "name": "Bank of America",
           "cap": 423453564145,
           "pct": 0.71,
-          "ind": "Diversified Banks"
+          "ind": "Diversified Banks",
+          "last": 59.67
         },
         {
           "sym": "MS",
           "name": "Morgan Stanley",
           "cap": 350598869123,
           "pct": 0.07,
-          "ind": "Investment Banking & Brokerage"
+          "ind": "Investment Banking & Brokerage",
+          "last": 222.28
         },
         {
           "sym": "GS",
           "name": "Goldman Sachs",
           "cap": 311285930491,
           "pct": -0.07,
-          "ind": "Investment Banking & Brokerage"
+          "ind": "Investment Banking & Brokerage",
+          "last": 1055.18
         },
         {
           "sym": "WFC",
           "name": "Wells Fargo",
           "cap": 266726116297,
           "pct": 0.29,
-          "ind": "Diversified Banks"
+          "ind": "Diversified Banks",
+          "last": 87.16
         },
         {
           "sym": "C",
           "name": "Citigroup",
           "cap": 240128179494,
           "pct": 0.87,
-          "ind": "Diversified Banks"
+          "ind": "Diversified Banks",
+          "last": 140.79
         },
         {
           "sym": "AXP",
           "name": "American Express",
           "cap": 239210004387,
           "pct": 1.11,
-          "ind": "Consumer Finance"
+          "ind": "Consumer Finance",
+          "last": 350.58
         },
         {
           "sym": "SCHW",
           "name": "Charles Schwab Corporation",
           "cap": 179339653482,
           "pct": 1.19,
-          "ind": "Investment Banking & Brokerage"
+          "ind": "Investment Banking & Brokerage",
+          "last": 103.12
         },
         {
           "sym": "BLK",
           "name": "BlackRock",
           "cap": 160839488343,
           "pct": 1.61,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 1036.11
         },
         {
           "sym": "IBKR",
           "name": "Interactive Brokers",
           "cap": 159609923585,
           "pct": -1.25,
-          "ind": "Investment Banking & Brokerage"
+          "ind": "Investment Banking & Brokerage",
+          "last": 94.09
         },
         {
           "sym": "CB",
           "name": "Chubb Limited",
           "cap": 134909380670,
           "pct": 0.01,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 347.83
         },
         {
           "sym": "PGR",
           "name": "Progressive Corporation",
           "cap": 134818108974,
           "pct": 0.52,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 230.72
         },
         {
           "sym": "SPGI",
           "name": "S&P Global",
           "cap": 127428000000,
           "pct": -0.57,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 430.5
         },
         {
           "sym": "COF",
           "name": "Capital One",
           "cap": 124140245811,
           "pct": 0.71,
-          "ind": "Consumer Finance"
+          "ind": "Consumer Finance",
+          "last": 201.52
         },
         {
           "sym": "BNY",
           "name": "BNY Mellon",
           "cap": 104274704516,
           "pct": -0.22,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 151.92
         },
         {
           "sym": "PNC",
           "name": "PNC Financial Services",
           "cap": 101158146447,
           "pct": 0.4,
-          "ind": "Diversified Banks"
+          "ind": "Diversified Banks",
+          "last": 251.91
         },
         {
           "sym": "HOOD",
           "name": "Robinhood Markets",
           "cap": 100829551232,
           "pct": -2.73,
-          "ind": "Investment Banking & Brokerage"
+          "ind": "Investment Banking & Brokerage",
+          "last": 111.97
         },
         {
           "sym": "USB",
           "name": "U.S. Bancorp",
           "cap": 96806097755,
           "pct": 0.82,
-          "ind": "Diversified Banks"
+          "ind": "Diversified Banks",
+          "last": 62.41
         },
         {
           "sym": "BX",
           "name": "Blackstone Inc.",
           "cap": 91441075444,
           "pct": 0.77,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 123.09
         },
         {
           "sym": "CME",
           "name": "CME Group",
           "cap": 87064080304,
           "pct": 0.23,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 240.27
         },
         {
           "sym": "KKR",
           "name": "KKR & Co.",
           "cap": 87039802901,
           "pct": 0.7,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 96.94
         },
         {
           "sym": "MRSH",
           "name": "Marsh McLennan",
           "cap": 85908777473,
           "pct": -0.39,
-          "ind": "Insurance Brokers"
+          "ind": "Insurance Brokers",
+          "last": 178.31
         },
         {
           "sym": "MCO",
           "name": "Moody's Corporation",
           "cap": 85127816000,
           "pct": 0.05,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 487.28
         },
         {
           "sym": "ICE",
           "name": "Intercontinental Exchange",
           "cap": 76491220074,
           "pct": 0.11,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 135.26
         },
         {
           "sym": "AON",
           "name": "Aon plc",
           "cap": 76234156176,
           "pct": 0.39,
-          "ind": "Insurance Brokers"
+          "ind": "Insurance Brokers",
+          "last": 356.94
         },
         {
           "sym": "TRV",
           "name": "Travelers Companies (The)",
           "cap": 72069539352,
           "pct": 0.43,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 338.92
         },
         {
           "sym": "APO",
           "name": "Apollo Global Management",
           "cap": 69378117514,
           "pct": 0.42,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 120.34
         },
         {
           "sym": "AJG",
           "name": "Arthur J. Gallagher & Co.",
           "cap": 65018821000,
           "pct": -0.26,
-          "ind": "Insurance Brokers"
+          "ind": "Insurance Brokers",
+          "last": 253.09
         },
         {
           "sym": "ALL",
           "name": "Allstate",
           "cap": 64769680197,
           "pct": 1.19,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 251.61
         },
         {
           "sym": "TFC",
           "name": "Truist Financial",
           "cap": 64374582139,
           "pct": 0.58,
-          "ind": "Diversified Banks"
+          "ind": "Diversified Banks",
+          "last": 51.67
         },
         {
           "sym": "AFL",
           "name": "Aflac",
           "cap": 62050349647,
           "pct": -0.07,
-          "ind": "Life & Health Insurance"
+          "ind": "Life & Health Insurance",
+          "last": 121.91
         },
         {
           "sym": "MET",
           "name": "MetLife",
           "cap": 58970980795,
           "pct": 0.55,
-          "ind": "Life & Health Insurance"
+          "ind": "Life & Health Insurance",
+          "last": 91.65
         },
         {
           "sym": "FITB",
           "name": "Fifth Third Bancorp",
           "cap": 51723200044,
           "pct": 0.94,
-          "ind": "Regional Banks"
+          "ind": "Regional Banks",
+          "last": 57.07
         },
         {
           "sym": "STT",
           "name": "State Street Corporation",
           "cap": 49878954687,
           "pct": 0.03,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 180.22
         },
         {
           "sym": "NDAQ",
           "name": "Nasdaq, Inc.",
           "cap": 49812833488,
           "pct": 0.64,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 88.08
         },
         {
           "sym": "XYZ",
           "name": "Block, Inc.",
           "cap": 46021460647,
           "pct": -0.15,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 77.3
         },
         {
           "sym": "AMP",
           "name": "Ameriprise Financial",
           "cap": 45556246288,
           "pct": 1.32,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 506.76
         },
         {
           "sym": "MSCI",
           "name": "MSCI Inc.",
           "cap": 44022888000,
           "pct": 0.23,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 604.71
         },
         {
           "sym": "AIG",
           "name": "American International Group",
           "cap": 41976426517,
           "pct": 0.08,
-          "ind": "Multi-line Insurance"
+          "ind": "Multi-line Insurance",
+          "last": 79.17
         },
         {
           "sym": "COIN",
           "name": "Coinbase",
           "cap": 41900805904,
           "pct": 0.4,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 159.07
         },
         {
           "sym": "PYPL",
           "name": "PayPal",
           "cap": 40859126436,
           "pct": 2.21,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 46.32
         },
         {
           "sym": "ARES",
           "name": "Ares Management",
           "cap": 40178739323,
           "pct": 0.12,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 121.81
         },
         {
           "sym": "PRU",
           "name": "Prudential Financial",
           "cap": 40033390000,
           "pct": 0.32,
-          "ind": "Life & Health Insurance"
+          "ind": "Life & Health Insurance",
+          "last": 115.37
         },
         {
           "sym": "HIG",
           "name": "Hartford (The)",
           "cap": 38043875200,
           "pct": 0.19,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 138.78
         },
         {
           "sym": "HBAN",
           "name": "Huntington Bancshares",
           "cap": 36224823590,
           "pct": 0.62,
-          "ind": "Regional Banks"
+          "ind": "Regional Banks",
+          "last": 17.87
         },
         {
           "sym": "MTB",
           "name": "M&T Bank",
           "cap": 35489495840,
           "pct": 1.85,
-          "ind": "Regional Banks"
+          "ind": "Regional Banks",
+          "last": 242.34
         },
         {
           "sym": "ACGL",
           "name": "Arch Capital Group",
           "cap": 35309311763,
           "pct": -0.63,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 101.06
         },
         {
           "sym": "NTRS",
           "name": "Northern Trust",
           "cap": 33965424206,
           "pct": 0.38,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 183.55
         },
         {
           "sym": "RJF",
           "name": "Raymond James Financial",
           "cap": 32763735676,
           "pct": -0.36,
-          "ind": "Investment Banking & Brokerage"
+          "ind": "Investment Banking & Brokerage",
+          "last": 168.12
         },
         {
           "sym": "CBOE",
           "name": "Cboe Global Markets",
           "cap": 29975252313,
           "pct": 0.08,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 268.07
         },
         {
           "sym": "CFG",
           "name": "Citizens Financial Group",
           "cap": 29745515800,
           "pct": 0.69,
-          "ind": "Regional Banks"
+          "ind": "Regional Banks",
+          "last": 70.34
         },
         {
           "sym": "CINF",
           "name": "Cincinnati Financial",
           "cap": 27732239106,
           "pct": 2.19,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 179.28
         },
         {
           "sym": "WTW",
           "name": "Willis Towers Watson",
           "cap": 27356856248,
           "pct": 0.18,
-          "ind": "Insurance Brokers"
+          "ind": "Insurance Brokers",
+          "last": 289.65
         },
         {
           "sym": "FISV",
           "name": "Fiserv",
           "cap": 26902663594,
           "pct": -2.32,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 50.45
         },
         {
           "sym": "WRB",
           "name": "W. R. Berkley Corporation",
           "cap": 26874657283,
           "pct": 0.52,
-          "ind": "Property & Casualty Insurance"
+          "ind": "Property & Casualty Insurance",
+          "last": 72.19
         },
         {
           "sym": "RF",
           "name": "Regions Financial Corporation",
           "cap": 26471833269,
           "pct": 1.44,
-          "ind": "Regional Banks"
+          "ind": "Regional Banks",
+          "last": 31.02
         },
         {
           "sym": "TROW",
           "name": "T. Rowe Price",
           "cap": 25401306141,
           "pct": 1.28,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 118.55
         },
         {
           "sym": "KEY",
           "name": "KeyCorp",
           "cap": 25262458530,
           "pct": 0.87,
-          "ind": "Regional Banks"
+          "ind": "Regional Banks",
+          "last": 23.3
         },
         {
           "sym": "SYF",
           "name": "Synchrony Financial",
           "cap": 24366660330,
           "pct": 1.22,
-          "ind": "Consumer Finance"
+          "ind": "Consumer Finance",
+          "last": 72.44
         },
         {
           "sym": "PFG",
           "name": "Principal Financial Group",
           "cap": 24243069856,
           "pct": 0.5,
-          "ind": "Life & Health Insurance"
+          "ind": "Life & Health Insurance",
+          "last": 112.23
         },
         {
           "sym": "L",
           "name": "Loews Corporation",
           "cap": 23661362706,
           "pct": -0.14,
-          "ind": "Multi-line Insurance"
+          "ind": "Multi-line Insurance",
+          "last": 114.99
         },
         {
           "sym": "CPAY",
           "name": "Corpay",
           "cap": 23114589035,
           "pct": 0.71,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 353.64
         },
         {
           "sym": "BRO",
           "name": "Brown & Brown",
           "cap": 22933210922,
           "pct": -0.27,
-          "ind": "Insurance Brokers"
+          "ind": "Insurance Brokers",
+          "last": 67.66
         },
         {
           "sym": "FIS",
           "name": "Fidelity National Information Services",
           "cap": 21698586759,
           "pct": 0.89,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 41.98
         },
         {
           "sym": "GPN",
           "name": "Global Payments",
           "cap": 20800248272,
           "pct": 2.23,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 76.04
         },
         {
           "sym": "BEN",
           "name": "Franklin Resources",
           "cap": 17407844927,
           "pct": -0.53,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 33.5
         },
         {
           "sym": "EG",
           "name": "Everest Group",
           "cap": 14664444269,
           "pct": -0.11,
-          "ind": "Reinsurance"
+          "ind": "Reinsurance",
+          "last": 370.58
         },
         {
           "sym": "GL",
           "name": "Globe Life",
           "cap": 13908506038,
           "pct": 0.15,
-          "ind": "Life & Health Insurance"
+          "ind": "Life & Health Insurance",
+          "last": 179.13
         },
         {
           "sym": "AIZ",
           "name": "Assurant",
           "cap": 13818340483,
           "pct": -0.11,
-          "ind": "Multi-line Insurance"
+          "ind": "Multi-line Insurance",
+          "last": 278.89
         },
         {
           "sym": "IVZ",
           "name": "Invesco",
           "cap": 12846736308,
           "pct": 1.29,
-          "ind": "Asset Management & Custody Banks"
+          "ind": "Asset Management & Custody Banks",
+          "last": 28.98
         },
         {
           "sym": "ERIE",
           "name": "Erie Indemnity",
           "cap": 11631509314,
           "pct": 1.61,
-          "ind": "Insurance Brokers"
+          "ind": "Insurance Brokers",
+          "last": 251.81
         },
         {
           "sym": "JKHY",
           "name": "Jack Henry & Associates",
           "cap": 10680353250,
           "pct": 0.07,
-          "ind": "Transaction & Payment Processing Services"
+          "ind": "Transaction & Payment Processing Services",
+          "last": 150.32
         },
         {
           "sym": "FDS",
           "name": "FactSet",
           "cap": 8788601331,
           "pct": 2.15,
-          "ind": "Financial Exchanges & Data"
+          "ind": "Financial Exchanges & Data",
+          "last": 247.11
         }
       ]
     },
@@ -1235,329 +1407,376 @@
           "name": "Amazon",
           "cap": 2639149229028,
           "pct": -0.69,
-          "ind": "Broadline Retail"
+          "ind": "Broadline Retail",
+          "last": 245.34
         },
         {
           "sym": "TSLA",
           "name": "Tesla, Inc.",
           "cap": 1531433965639,
           "pct": 0.3,
-          "ind": "Automobile Manufacturers"
+          "ind": "Automobile Manufacturers",
+          "last": 407.76
         },
         {
           "sym": "HD",
           "name": "Home Depot (The)",
           "cap": 342310156931,
           "pct": 1.35,
-          "ind": "Home Improvement Retail"
+          "ind": "Home Improvement Retail",
+          "last": 343.3
         },
         {
           "sym": "MCD",
           "name": "McDonald's",
           "cap": 195104908881,
           "pct": -0.68,
-          "ind": "Restaurants"
+          "ind": "Restaurants",
+          "last": 274.6
         },
         {
           "sym": "TJX",
           "name": "TJX Companies",
           "cap": 167185970858,
           "pct": 0.29,
-          "ind": "Apparel Retail"
+          "ind": "Apparel Retail",
+          "last": 151.34
         },
         {
           "sym": "BKNG",
           "name": "Booking Holdings",
           "cap": 138230564198,
           "pct": 1.64,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 178.39
         },
         {
           "sym": "SBUX",
           "name": "Starbucks",
           "cap": 120819597000,
           "pct": -0.38,
-          "ind": "Restaurants"
+          "ind": "Restaurants",
+          "last": 106.01
         },
         {
           "sym": "LOW",
           "name": "Lowe's",
           "cap": 118662431087,
           "pct": -0.64,
-          "ind": "Home Improvement Retail"
+          "ind": "Home Improvement Retail",
+          "last": 211.63
         },
         {
           "sym": "MAR",
           "name": "Marriott International",
           "cap": 99175927997,
           "pct": 0.98,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 376.11
         },
         {
           "sym": "ABNB",
           "name": "Airbnb",
           "cap": 89574005656,
           "pct": 1.18,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 148.62
         },
         {
           "sym": "DASH",
           "name": "DoorDash",
           "cap": 83579565254,
           "pct": -0.28,
-          "ind": "Specialized Consumer Services"
+          "ind": "Specialized Consumer Services",
+          "last": 191.82
         },
         {
           "sym": "RCL",
           "name": "Royal Caribbean Group",
           "cap": 76534800872,
           "pct": -0.94,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 285.37
         },
         {
           "sym": "HLT",
           "name": "Hilton Worldwide",
           "cap": 76371475839,
           "pct": -0.64,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 335.48
         },
         {
           "sym": "CVNA",
           "name": "Carvana",
           "cap": 72204696764,
           "pct": -1.92,
-          "ind": "Automotive Retail"
+          "ind": "Automotive Retail",
+          "last": 65.83
         },
         {
           "sym": "ORLY",
           "name": "O’Reilly Automotive",
           "cap": 71501537016,
           "pct": 1.36,
-          "ind": "Automotive Retail"
+          "ind": "Automotive Retail",
+          "last": 86.28
         },
         {
           "sym": "ROST",
           "name": "Ross Stores",
           "cap": 71495686219,
           "pct": 1.03,
-          "ind": "Apparel Retail"
+          "ind": "Apparel Retail",
+          "last": 222.88
         },
         {
           "sym": "GM",
           "name": "General Motors",
           "cap": 70194635431,
           "pct": 1.57,
-          "ind": "Automobile Manufacturers"
+          "ind": "Automobile Manufacturers",
+          "last": 77.85
         },
         {
           "sym": "NKE",
           "name": "Nike, Inc.",
           "cap": 65706957654,
           "pct": 3.72,
-          "ind": "Apparel, Accessories & Luxury Goods"
+          "ind": "Apparel, Accessories & Luxury Goods",
+          "last": 44.37
         },
         {
           "sym": "F",
           "name": "Ford Motor Company",
           "cap": 55785696820,
           "pct": 2.87,
-          "ind": "Automobile Manufacturers"
+          "ind": "Automobile Manufacturers",
+          "last": 14
         },
         {
           "sym": "EBAY",
           "name": "eBay Inc.",
           "cap": 52155310413,
           "pct": -0.11,
-          "ind": "Broadline Retail"
+          "ind": "Broadline Retail",
+          "last": 117.2
         },
         {
           "sym": "AZO",
           "name": "AutoZone",
           "cap": 50161938787,
           "pct": 2.07,
-          "ind": "Automotive Retail"
+          "ind": "Automotive Retail",
+          "last": 3072.64
         },
         {
           "sym": "GRMN",
           "name": "Garmin",
           "cap": 46885272241,
           "pct": -0.57,
-          "ind": "Consumer Electronics"
+          "ind": "Consumer Electronics",
+          "last": 243.11
         },
         {
           "sym": "CMG",
           "name": "Chipotle Mexican Grill",
           "cap": 45216373500,
           "pct": 1.88,
-          "ind": "Restaurants"
+          "ind": "Restaurants",
+          "last": 35.25
         },
         {
           "sym": "YUM",
           "name": "Yum! Brands",
           "cap": 45075091375,
           "pct": 0.71,
-          "ind": "Restaurants"
+          "ind": "Restaurants",
+          "last": 163.54
         },
         {
           "sym": "DHI",
           "name": "D. R. Horton",
           "cap": 42984997739,
           "pct": 1.36,
-          "ind": "Homebuilding"
+          "ind": "Homebuilding",
+          "last": 151.58
         },
         {
           "sym": "CCL",
           "name": "Carnival Corporation",
           "cap": 36747685863,
           "pct": 0.41,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 26.83
         },
         {
           "sym": "EXPE",
           "name": "Expedia Group",
           "cap": 32505579114,
           "pct": 1.14,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 270.83
         },
         {
           "sym": "LVS",
           "name": "Las Vegas Sands",
           "cap": 30938536704,
           "pct": 0.52,
-          "ind": "Casinos & Gaming"
+          "ind": "Casinos & Gaming",
+          "last": 46.69
         },
         {
           "sym": "TPR",
           "name": "Tapestry, Inc.",
           "cap": 28433752601,
           "pct": 0.57,
-          "ind": "Apparel, Accessories & Luxury Goods"
+          "ind": "Apparel, Accessories & Luxury Goods",
+          "last": 140.73
         },
         {
           "sym": "WSM",
           "name": "Williams-Sonoma, Inc.",
           "cap": 26110310989,
           "pct": 0.9,
-          "ind": "Homefurnishing Retail"
+          "ind": "Homefurnishing Retail",
+          "last": 221.75
         },
         {
           "sym": "PHM",
           "name": "PulteGroup",
           "cap": 23763172537,
           "pct": 0.83,
-          "ind": "Homebuilding"
+          "ind": "Homebuilding",
+          "last": 124.75
         },
         {
           "sym": "RL",
           "name": "Ralph Lauren Corporation",
           "cap": 23503005035,
           "pct": 1.89,
-          "ind": "Apparel, Accessories & Luxury Goods"
+          "ind": "Apparel, Accessories & Luxury Goods",
+          "last": 394.9
         },
         {
           "sym": "DRI",
           "name": "Darden Restaurants",
           "cap": 23393774363,
           "pct": 1.15,
-          "ind": "Restaurants"
+          "ind": "Restaurants",
+          "last": 204.25
         },
         {
           "sym": "LEN",
           "name": "Lennar",
           "cap": 20300233616,
           "pct": -0.1,
-          "ind": "Homebuilding"
+          "ind": "Homebuilding",
+          "last": 84.27
         },
         {
           "sym": "ULTA",
           "name": "Ulta Beauty",
           "cap": 20170584721,
           "pct": 1.95,
-          "ind": "Other Specialty Retail"
+          "ind": "Other Specialty Retail",
+          "last": 469.2
         },
         {
           "sym": "NVR",
           "name": "NVR, Inc.",
           "cap": 17489765592,
           "pct": 0.12,
-          "ind": "Homebuilding"
+          "ind": "Homebuilding",
+          "last": 6479.39
         },
         {
           "sym": "BBY",
           "name": "Best Buy",
           "cap": 17451518033,
           "pct": 3.51,
-          "ind": "Computer & Electronics Retail"
+          "ind": "Computer & Electronics Retail",
+          "last": 82.8
         },
         {
           "sym": "GPC",
           "name": "Genuine Parts Company",
           "cap": 17288395343,
           "pct": 1.09,
-          "ind": "Distributors"
+          "ind": "Distributors",
+          "last": 125.62
         },
         {
           "sym": "TSCO",
           "name": "Tractor Supply",
           "cap": 15959001815,
           "pct": 1.03,
-          "ind": "Other Specialty Retail"
+          "ind": "Other Specialty Retail",
+          "last": 30.43
         },
         {
           "sym": "DECK",
           "name": "Deckers Brands",
           "cap": 14719992632,
           "pct": 1.66,
-          "ind": "Footwear"
+          "ind": "Footwear",
+          "last": 105.99
         },
         {
           "sym": "LULU",
           "name": "Lululemon Athletica",
           "cap": 12932310752,
           "pct": 2.36,
-          "ind": "Apparel, Accessories & Luxury Goods"
+          "ind": "Apparel, Accessories & Luxury Goods",
+          "last": 119.26
         },
         {
           "sym": "APTV",
           "name": "Aptiv",
           "cap": 12817855320,
           "pct": 1.19,
-          "ind": "Automotive Parts & Equipment"
+          "ind": "Automotive Parts & Equipment",
+          "last": 60.57
         },
         {
           "sym": "MGM",
           "name": "MGM Resorts",
           "cap": 11994305897,
           "pct": 0.95,
-          "ind": "Casinos & Gaming"
+          "ind": "Casinos & Gaming",
+          "last": 46.88
         },
         {
           "sym": "HAS",
           "name": "Hasbro",
           "cap": 11172105040,
           "pct": 2.03,
-          "ind": "Leisure Products"
+          "ind": "Leisure Products",
+          "last": 78.96
         },
         {
           "sym": "WYNN",
           "name": "Wynn Resorts",
           "cap": 10354801952,
           "pct": 0.95,
-          "ind": "Casinos & Gaming"
+          "ind": "Casinos & Gaming",
+          "last": 99.77
         },
         {
           "sym": "DPZ",
           "name": "Domino's",
           "cap": 9960599590,
           "pct": -0.47,
-          "ind": "Restaurants"
+          "ind": "Restaurants",
+          "last": 299.46
         },
         {
           "sym": "NCLH",
           "name": "Norwegian Cruise Line Holdings",
           "cap": 9003149845,
           "pct": -0.76,
-          "ind": "Hotels, Resorts & Cruise Lines"
+          "ind": "Hotels, Resorts & Cruise Lines",
+          "last": 19.61
         }
       ]
     },
@@ -1570,413 +1789,472 @@
           "name": "Lilly (Eli)",
           "cap": 1119335000343,
           "pct": -2.33,
-          "ind": "Pharmaceuticals"
+          "ind": "Pharmaceuticals",
+          "last": 1188.58
         },
         {
           "sym": "JNJ",
           "name": "Johnson & Johnson",
           "cap": 618606617208,
           "pct": -0.82,
-          "ind": "Pharmaceuticals"
+          "ind": "Pharmaceuticals",
+          "last": 256.98
         },
         {
           "sym": "ABBV",
           "name": "AbbVie",
           "cap": 438305963034,
           "pct": -0.73,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 248.08
         },
         {
           "sym": "UNH",
           "name": "UnitedHealth Group",
           "cap": 385616276826,
           "pct": -1.64,
-          "ind": "Managed Health Care"
+          "ind": "Managed Health Care",
+          "last": 424.62
         },
         {
           "sym": "MRK",
           "name": "Merck & Co.",
           "cap": 305122108229,
           "pct": -1.22,
-          "ind": "Pharmaceuticals"
+          "ind": "Pharmaceuticals",
+          "last": 123.54
         },
         {
           "sym": "AMGN",
           "name": "Amgen",
           "cap": 196124589689,
           "pct": -0.06,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 363.39
         },
         {
           "sym": "TMO",
           "name": "Thermo Fisher Scientific",
           "cap": 195863093128,
           "pct": 0.45,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 527.05
         },
         {
           "sym": "ABT",
           "name": "Abbott Laboratories",
           "cap": 163608441456,
           "pct": -0.5,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 93.93
         },
         {
           "sym": "GILD",
           "name": "Gilead Sciences",
           "cap": 161193016741,
           "pct": -3.72,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 129.83
         },
         {
           "sym": "ISRG",
           "name": "Intuitive Surgical",
           "cap": 144066360869,
           "pct": -1.16,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 406.78
         },
         {
           "sym": "DHR",
           "name": "Danaher Corporation",
           "cap": 140881743304,
           "pct": 1.57,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 199.05
         },
         {
           "sym": "PFE",
           "name": "Pfizer",
           "cap": 137755565565,
           "pct": -0.33,
-          "ind": "Pharmaceuticals"
+          "ind": "Pharmaceuticals",
+          "last": 24.17
         },
         {
           "sym": "CVS",
           "name": "CVS Health",
           "cap": 132887829024,
           "pct": 1.3,
-          "ind": "Health Care Services"
+          "ind": "Health Care Services",
+          "last": 104.15
         },
         {
           "sym": "SYK",
           "name": "Stryker Corporation",
           "cap": 126424712092,
           "pct": 0.82,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 329.78
         },
         {
           "sym": "VRTX",
           "name": "Vertex Pharmaceuticals",
           "cap": 123194611358,
           "pct": -2.24,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 485.39
         },
         {
           "sym": "BMY",
           "name": "Bristol Myers Squibb",
           "cap": 117582462402,
           "pct": -0.62,
-          "ind": "Pharmaceuticals"
+          "ind": "Pharmaceuticals",
+          "last": 57.58
         },
         {
           "sym": "MDT",
           "name": "Medtronic",
           "cap": 107357390085,
           "pct": 1.8,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 83.87
         },
         {
           "sym": "MCK",
           "name": "McKesson Corporation",
           "cap": 96879656944,
           "pct": 1.66,
-          "ind": "Health Care Distributors"
+          "ind": "Health Care Distributors",
+          "last": 805.96
         },
         {
           "sym": "ELV",
           "name": "Elevance Health",
           "cap": 90389497427,
           "pct": -0.99,
-          "ind": "Managed Health Care"
+          "ind": "Managed Health Care",
+          "last": 416.23
         },
         {
           "sym": "HCA",
           "name": "HCA Healthcare",
           "cap": 90197844282,
           "pct": -0.59,
-          "ind": "Health Care Facilities"
+          "ind": "Health Care Facilities",
+          "last": 406.59
         },
         {
           "sym": "CI",
           "name": "Cigna",
           "cap": 77629679278,
           "pct": 0.57,
-          "ind": "Health Care Services"
+          "ind": "Health Care Services",
+          "last": 293.46
         },
         {
           "sym": "REGN",
           "name": "Regeneron Pharmaceuticals",
           "cap": 69667633545,
           "pct": -0.51,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 664.52
         },
         {
           "sym": "BSX",
           "name": "Boston Scientific",
           "cap": 66544121364,
           "pct": -0.49,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 44.77
         },
         {
           "sym": "COR",
           "name": "Cencora",
           "cap": 59037608046,
           "pct": 0.32,
-          "ind": "Health Care Distributors"
+          "ind": "Health Care Distributors",
+          "last": 303.44
         },
         {
           "sym": "CAH",
           "name": "Cardinal Health",
           "cap": 55225740609,
           "pct": 0.87,
-          "ind": "Health Care Distributors"
+          "ind": "Health Care Distributors",
+          "last": 235.8
         },
         {
           "sym": "EW",
           "name": "Edwards Lifesciences",
           "cap": 53094518000,
           "pct": 0.96,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 92.21
         },
         {
           "sym": "HUM",
           "name": "Humana",
           "cap": 47090521530,
           "pct": -1.39,
-          "ind": "Managed Health Care"
+          "ind": "Managed Health Care",
+          "last": 392.22
         },
         {
           "sym": "IDXX",
           "name": "Idexx Laboratories",
           "cap": 44456090619,
           "pct": 0.89,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 563.57
         },
         {
           "sym": "BDX",
           "name": "Becton Dickinson",
           "cap": 41865612478,
           "pct": 0.72,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 151.94
         },
         {
           "sym": "A",
           "name": "Agilent Technologies",
           "cap": 37927785760,
           "pct": 0.52,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 134.29
         },
         {
           "sym": "WAT",
           "name": "Waters Corporation",
           "cap": 36960101398,
           "pct": -0.19,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 376.43
         },
         {
           "sym": "IQV",
           "name": "IQVIA",
           "cap": 34690165000,
           "pct": -0.54,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 207.85
         },
         {
           "sym": "CNC",
           "name": "Centene Corporation",
           "cap": 33257227950,
           "pct": -0.37,
-          "ind": "Managed Health Care"
+          "ind": "Managed Health Care",
+          "last": 67.35
         },
         {
           "sym": "ZTS",
           "name": "Zoetis",
           "cap": 31676876596,
           "pct": 0.64,
-          "ind": "Pharmaceuticals"
+          "ind": "Pharmaceuticals",
+          "last": 75.56
         },
         {
           "sym": "VEEV",
           "name": "Veeva Systems",
           "cap": 31027336464,
           "pct": 0.22,
-          "ind": "Health Care Technology"
+          "ind": "Health Care Technology",
+          "last": 190.12
         },
         {
           "sym": "RMD",
           "name": "ResMed",
           "cap": 29572645006,
           "pct": -2.2,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 203.87
         },
         {
           "sym": "GEHC",
           "name": "GE HealthCare",
           "cap": 29431498554,
           "pct": 0,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 64.7
         },
         {
           "sym": "BIIB",
           "name": "Biogen",
           "cap": 29401931851,
           "pct": 0.12,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 199.15
         },
         {
           "sym": "DXCM",
           "name": "Dexcom",
           "cap": 28925038356,
           "pct": 2.66,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 74.96
         },
         {
           "sym": "MRNA",
           "name": "Moderna",
           "cap": 27088597902,
           "pct": -10.83,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 68.27
         },
         {
           "sym": "MTD",
           "name": "Mettler Toledo",
           "cap": 26192486188,
           "pct": 0.63,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 1296.17
         },
         {
           "sym": "WST",
           "name": "West Pharmaceutical Services",
           "cap": 24988760827,
           "pct": -1.1,
-          "ind": "Health Care Supplies"
+          "ind": "Health Care Supplies",
+          "last": 353.71
         },
         {
           "sym": "INCY",
           "name": "Incyte",
           "cap": 23313726769,
           "pct": -1.53,
-          "ind": "Biotechnology"
+          "ind": "Biotechnology",
+          "last": 116.71
         },
         {
           "sym": "DGX",
           "name": "Quest Diagnostics",
           "cap": 22962867232,
           "pct": -0.29,
-          "ind": "Health Care Services"
+          "ind": "Health Care Services",
+          "last": 207.44
         },
         {
           "sym": "LH",
           "name": "Labcorp",
           "cap": 22698420000,
           "pct": -0.29,
-          "ind": "Health Care Services"
+          "ind": "Health Care Services",
+          "last": 276.81
         },
         {
           "sym": "STE",
           "name": "Steris",
           "cap": 21082136760,
           "pct": 0,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 216
         },
         {
           "sym": "VTRS",
           "name": "Viatris",
           "cap": 18947271681,
           "pct": -0.43,
-          "ind": "Pharmaceuticals"
+          "ind": "Pharmaceuticals",
+          "last": 16.27
         },
         {
           "sym": "ZBH",
           "name": "Zimmer Biomet",
           "cap": 17670863106,
           "pct": 2.37,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 91.34
         },
         {
           "sym": "DVA",
           "name": "DaVita",
           "cap": 14945760000,
           "pct": 1.45,
-          "ind": "Health Care Services"
+          "ind": "Health Care Services",
+          "last": 232.8
         },
         {
           "sym": "COO",
           "name": "Cooper Companies (The)",
           "cap": 13788665541,
           "pct": -0.45,
-          "ind": "Health Care Supplies"
+          "ind": "Health Care Supplies",
+          "last": 70.7
         },
         {
           "sym": "SOLV",
           "name": "Solventum",
           "cap": 13282500410,
           "pct": 0.97,
-          "ind": "Health Care Technology"
+          "ind": "Health Care Technology",
+          "last": 76.7
         },
         {
           "sym": "ALGN",
           "name": "Align Technology",
           "cap": 12851872890,
           "pct": 0.72,
-          "ind": "Health Care Supplies"
+          "ind": "Health Care Supplies",
+          "last": 179.45
         },
         {
           "sym": "RVTY",
           "name": "Revvity",
           "cap": 12527046910,
           "pct": -0.58,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 112.29
         },
         {
           "sym": "BAX",
           "name": "Baxter International",
           "cap": 11682528961,
           "pct": 0.71,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 22.62
         },
         {
           "sym": "CRL",
           "name": "Charles River Laboratories",
           "cap": 11242829859,
           "pct": -0.08,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 233.41
         },
         {
           "sym": "PODD",
           "name": "Insulet Corporation",
           "cap": 11171006623,
           "pct": 1.89,
-          "ind": "Health Care Equipment"
+          "ind": "Health Care Equipment",
+          "last": 161.28
         },
         {
           "sym": "TECH",
           "name": "Bio-Techne",
           "cap": 11163351946,
           "pct": 0.21,
-          "ind": "Life Sciences Tools & Services"
+          "ind": "Life Sciences Tools & Services",
+          "last": 71.3
         },
         {
           "sym": "HSIC",
           "name": "Henry Schein",
           "cap": 9614574291,
           "pct": 0.64,
-          "ind": "Health Care Distributors"
+          "ind": "Health Care Distributors",
+          "last": 84.4
         },
         {
           "sym": "UHS",
           "name": "Universal Health Services",
           "cap": 9417640125,
           "pct": 0.24,
-          "ind": "Health Care Facilities"
+          "ind": "Health Care Facilities",
+          "last": 155.57
         }
       ]
     },
@@ -1989,567 +2267,648 @@
           "name": "Caterpillar Inc.",
           "cap": 438715309933,
           "pct": 1.49,
-          "ind": "Construction Machinery & Heavy Transportation Equipment"
+          "ind": "Construction Machinery & Heavy Transportation Equipment",
+          "last": 952.41
         },
         {
           "sym": "GE",
           "name": "GE Aerospace",
           "cap": 374839768418,
           "pct": 0.06,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 359.27
         },
         {
           "sym": "GEV",
           "name": "GE Vernova",
           "cap": 293326684942,
           "pct": 1.52,
-          "ind": "Heavy Electrical Equipment"
+          "ind": "Heavy Electrical Equipment",
+          "last": 1091.57
         },
         {
           "sym": "RTX",
           "name": "RTX Corporation",
           "cap": 263855684048,
           "pct": 0.37,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 195.93
         },
         {
           "sym": "BA",
           "name": "Boeing",
           "cap": 175223842135,
           "pct": -0.37,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 222.28
         },
         {
           "sym": "UNP",
           "name": "Union Pacific Corporation",
           "cap": 170371943602,
           "pct": 0.67,
-          "ind": "Rail Transportation"
+          "ind": "Rail Transportation",
+          "last": 286.96
         },
         {
           "sym": "DE",
           "name": "Deere & Company",
           "cap": 158415477236,
           "pct": -1.02,
-          "ind": "Agricultural & Farm Machinery"
+          "ind": "Agricultural & Farm Machinery",
+          "last": 586.86
         },
         {
           "sym": "ETN",
           "name": "Eaton Corporation",
           "cap": 158146824000,
           "pct": 0.36,
-          "ind": "Electrical Components & Equipment"
+          "ind": "Electrical Components & Equipment",
+          "last": 407.28
         },
         {
           "sym": "UBER",
           "name": "Uber",
           "cap": 151733550429,
           "pct": 0.26,
-          "ind": "Passenger Ground Transportation"
+          "ind": "Passenger Ground Transportation",
+          "last": 74.54
         },
         {
           "sym": "VRT",
           "name": "Vertiv",
           "cap": 122476937070,
           "pct": -1.56,
-          "ind": "Electrical Components & Equipment"
+          "ind": "Electrical Components & Equipment",
+          "last": 318.86
         },
         {
           "sym": "PH",
           "name": "Parker Hannifin",
           "cap": 121203063154,
           "pct": 1.27,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 961.27
         },
         {
           "sym": "LMT",
           "name": "Lockheed Martin",
           "cap": 120635490978,
           "pct": 0.96,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 523.22
         },
         {
           "sym": "HWM",
           "name": "Howmet Aerospace",
           "cap": 108369111771,
           "pct": -1.07,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 270.85
         },
         {
           "sym": "TT",
           "name": "Trane Technologies",
           "cap": 106040312317,
           "pct": 1.63,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 479.7
         },
         {
           "sym": "GD",
           "name": "General Dynamics",
           "cap": 101427545936,
           "pct": 0.12,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 375.06
         },
         {
           "sym": "PWR",
           "name": "Quanta Services",
           "cap": 98823611725,
           "pct": -1.44,
-          "ind": "Construction & Engineering"
+          "ind": "Construction & Engineering",
+          "last": 658.56
         },
         {
           "sym": "ADP",
           "name": "Automatic Data Processing",
           "cap": 97407724539,
           "pct": 0.27,
-          "ind": "Human Resource & Employment Services"
+          "ind": "Human Resource & Employment Services",
+          "last": 241.92
         },
         {
           "sym": "UPS",
           "name": "United Parcel Service",
           "cap": 95600206199,
           "pct": 1.56,
-          "ind": "Air Freight & Logistics"
+          "ind": "Air Freight & Logistics",
+          "last": 112.47
         },
         {
           "sym": "WM",
           "name": "Waste Management",
           "cap": 93699670214,
           "pct": 0.72,
-          "ind": "Environmental & Facilities Services"
+          "ind": "Environmental & Facilities Services",
+          "last": 233.33
         },
         {
           "sym": "CMI",
           "name": "Cummins",
           "cap": 93273709839,
           "pct": 0.38,
-          "ind": "Construction Machinery & Heavy Transportation Equipment"
+          "ind": "Construction Machinery & Heavy Transportation Equipment",
+          "last": 675.95
         },
         {
           "sym": "CSX",
           "name": "CSX Corporation",
           "cap": 91810640875,
           "pct": 0.12,
-          "ind": "Rail Transportation"
+          "ind": "Rail Transportation",
+          "last": 49.41
         },
         {
           "sym": "JCI",
           "name": "Johnson Controls",
           "cap": 87130609264,
           "pct": 1.62,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 142.81
         },
         {
           "sym": "MMM",
           "name": "3M",
           "cap": 82157274953,
           "pct": 1.4,
-          "ind": "Industrial Conglomerates"
+          "ind": "Industrial Conglomerates",
+          "last": 157.52
         },
         {
           "sym": "EMR",
           "name": "Emerson Electric",
           "cap": 77786688000,
           "pct": 0.78,
-          "ind": "Electrical Components & Equipment"
+          "ind": "Electrical Components & Equipment",
+          "last": 138.88
         },
         {
           "sym": "ITW",
           "name": "Illinois Tool Works",
           "cap": 77336637000,
           "pct": 1.25,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 268.81
         },
         {
           "sym": "NOC",
           "name": "Northrop Grumman",
           "cap": 76645524654,
           "pct": 1.39,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 539.63
         },
         {
           "sym": "FDX",
           "name": "FedEx",
           "cap": 75087160046,
           "pct": 1.24,
-          "ind": "Air Freight & Logistics"
+          "ind": "Air Freight & Logistics",
+          "last": 314.69
         },
         {
           "sym": "NSC",
           "name": "Norfolk Southern",
           "cap": 73547797507,
           "pct": 1.14,
-          "ind": "Rail Transportation"
+          "ind": "Rail Transportation",
+          "last": 327.47
         },
         {
           "sym": "TDG",
           "name": "TransDigm Group",
           "cap": 72229832407,
           "pct": -0.34,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 1291.35
         },
         {
           "sym": "CTAS",
           "name": "Cintas",
           "cap": 71880589303,
           "pct": 1.1,
-          "ind": "Diversified Support Services"
+          "ind": "Diversified Support Services",
+          "last": 179.64
         },
         {
           "sym": "HON",
           "name": "Honeywell Technologies",
           "cap": 71735869715,
           "pct": 1.34,
-          "ind": "Industrial Conglomerates"
+          "ind": "Industrial Conglomerates",
+          "last": 226.42
         },
         {
           "sym": "HONA",
           "name": "Honeywell Aerospace",
           "cap": 69964449813,
           "pct": -1.06,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 220.75
         },
         {
           "sym": "URI",
           "name": "United Rentals",
           "cap": 68632435521,
           "pct": 0.63,
-          "ind": "Trading Companies & Distributors"
+          "ind": "Trading Companies & Distributors",
+          "last": 1095.55
         },
         {
           "sym": "RSG",
           "name": "Republic Services",
           "cap": 67439967870,
           "pct": 0.23,
-          "ind": "Environmental & Facilities Services"
+          "ind": "Environmental & Facilities Services",
+          "last": 219.2
         },
         {
           "sym": "PCAR",
           "name": "Paccar",
           "cap": 65559475547,
           "pct": 1.05,
-          "ind": "Construction Machinery & Heavy Transportation Equipment"
+          "ind": "Construction Machinery & Heavy Transportation Equipment",
+          "last": 124.57
         },
         {
           "sym": "GWW",
           "name": "W. W. Grainger",
           "cap": 64953920595,
           "pct": 0.8,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 1375.76
         },
         {
           "sym": "FIX",
           "name": "Comfort Systems USA",
           "cap": 61818624762,
           "pct": -1.42,
-          "ind": "Construction & Engineering"
+          "ind": "Construction & Engineering",
+          "last": 1756.09
         },
         {
           "sym": "CARR",
           "name": "Carrier Global",
           "cap": 57957414778,
           "pct": 2.26,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 69.34
         },
         {
           "sym": "DAL",
           "name": "Delta Air Lines",
           "cap": 57414735373,
           "pct": -1.81,
-          "ind": "Passenger Airlines"
+          "ind": "Passenger Airlines",
+          "last": 87.39
         },
         {
           "sym": "LHX",
           "name": "L3Harris",
           "cap": 54168982902,
           "pct": 0.31,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 290.77
         },
         {
           "sym": "AME",
           "name": "Ametek",
           "cap": 53628918408,
           "pct": 0.42,
-          "ind": "Electrical Components & Equipment"
+          "ind": "Electrical Components & Equipment",
+          "last": 233.98
         },
         {
           "sym": "FAST",
           "name": "Fastenal",
           "cap": 53372149986,
           "pct": 0.3,
-          "ind": "Trading Companies & Distributors"
+          "ind": "Trading Companies & Distributors",
+          "last": 46.49
         },
         {
           "sym": "ROK",
           "name": "Rockwell Automation",
           "cap": 52534658690,
           "pct": 0.99,
-          "ind": "Electrical Components & Equipment"
+          "ind": "Electrical Components & Equipment",
+          "last": 472.12
         },
         {
           "sym": "ODFL",
           "name": "Old Dominion",
           "cap": 47338780418,
           "pct": 0.79,
-          "ind": "Cargo Ground Transportation"
+          "ind": "Cargo Ground Transportation",
+          "last": 227.625
         },
         {
           "sym": "AXON",
           "name": "Axon Enterprise",
           "cap": 45604655167,
           "pct": -2.78,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 565.8
         },
         {
           "sym": "WAB",
           "name": "Wabtec",
           "cap": 44321419549,
           "pct": 0.55,
-          "ind": "Construction Machinery & Heavy Transportation Equipment"
+          "ind": "Construction Machinery & Heavy Transportation Equipment",
+          "last": 261.21
         },
         {
           "sym": "UAL",
           "name": "United Airlines Holdings",
           "cap": 40895911728,
           "pct": -2.36,
-          "ind": "Passenger Airlines"
+          "ind": "Passenger Airlines",
+          "last": 126
         },
         {
           "sym": "PAYX",
           "name": "Paychex",
           "cap": 38530601343,
           "pct": 1.21,
-          "ind": "Human Resource & Employment Services"
+          "ind": "Human Resource & Employment Services",
+          "last": 107.54
         },
         {
           "sym": "EME",
           "name": "Emcor",
           "cap": 34742520535,
           "pct": -0.21,
-          "ind": "Construction & Engineering"
+          "ind": "Construction & Engineering",
+          "last": 781.78
         },
         {
           "sym": "IR",
           "name": "Ingersoll Rand",
           "cap": 30856909361,
           "pct": 2.34,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 78.85
         },
         {
           "sym": "DOV",
           "name": "Dover Corporation",
           "cap": 28996642277,
           "pct": 1.78,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 215.33
         },
         {
           "sym": "XYL",
           "name": "Xylem Inc.",
           "cap": 28813205221,
           "pct": 1.96,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 121.22
         },
         {
           "sym": "OTIS",
           "name": "Otis Worldwide",
           "cap": 28045807995,
           "pct": 1.51,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 73.09
         },
         {
           "sym": "JBHT",
           "name": "J.B. Hunt",
           "cap": 26400004872,
           "pct": -0.94,
-          "ind": "Cargo Ground Transportation"
+          "ind": "Cargo Ground Transportation",
+          "last": 279.96
         },
         {
           "sym": "HUBB",
           "name": "Hubbell Incorporated",
           "cap": 25942142000,
           "pct": 1.14,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 490.94
         },
         {
           "sym": "CPRT",
           "name": "Copart",
           "cap": 25473702927,
           "pct": -2.88,
-          "ind": "Diversified Support Services"
+          "ind": "Diversified Support Services",
+          "last": 27.515
         },
         {
           "sym": "VRSK",
           "name": "Verisk Analytics",
           "cap": 24290138918,
           "pct": -0.87,
-          "ind": "Research & Consulting Services"
+          "ind": "Research & Consulting Services",
+          "last": 185.39
         },
         {
           "sym": "LUV",
           "name": "Southwest Airlines",
           "cap": 23671310921,
           "pct": -1.6,
-          "ind": "Passenger Airlines"
+          "ind": "Passenger Airlines",
+          "last": 48.43
         },
         {
           "sym": "CHRW",
           "name": "C.H. Robinson",
           "cap": 22808433627,
           "pct": 0.38,
-          "ind": "Air Freight & Logistics"
+          "ind": "Air Freight & Logistics",
+          "last": 193.5
         },
         {
           "sym": "VLTO",
           "name": "Veralto",
           "cap": 22767051958,
           "pct": 0.65,
-          "ind": "Environmental & Facilities Services"
+          "ind": "Environmental & Facilities Services",
+          "last": 92.7
         },
         {
           "sym": "EXPD",
           "name": "Expeditors International",
           "cap": 22498690699,
           "pct": 0.82,
-          "ind": "Air Freight & Logistics"
+          "ind": "Air Freight & Logistics",
+          "last": 172.02
         },
         {
           "sym": "ROL",
           "name": "Rollins, Inc.",
           "cap": 21410689094,
           "pct": -0.67,
-          "ind": "Environmental & Facilities Services"
+          "ind": "Environmental & Facilities Services",
+          "last": 44.47
         },
         {
           "sym": "SNA",
           "name": "Snap-on",
           "cap": 20821262117,
           "pct": 0.48,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 401.94
         },
         {
           "sym": "EFX",
           "name": "Equifax",
           "cap": 19818411754,
           "pct": -0.13,
-          "ind": "Research & Consulting Services"
+          "ind": "Research & Consulting Services",
+          "last": 166.44
         },
         {
           "sym": "LII",
           "name": "Lennox International",
           "cap": 19210626335,
           "pct": 2.7,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 552.03
         },
         {
           "sym": "FTV",
           "name": "Fortive",
           "cap": 18962355506,
           "pct": 1.72,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 62.2
         },
         {
           "sym": "FDXF",
           "name": "FedEx Freight",
           "cap": 17835016248,
           "pct": -3.06,
-          "ind": "Cargo Ground Transportation"
+          "ind": "Cargo Ground Transportation",
+          "last": 149.53
         },
         {
           "sym": "BR",
           "name": "Broadridge Financial Solutions",
           "cap": 17056129059,
           "pct": 0.1,
-          "ind": "Data Processing & Outsourced Services"
+          "ind": "Data Processing & Outsourced Services",
+          "last": 147.47
         },
         {
           "sym": "IEX",
           "name": "IDEX Corporation",
           "cap": 16443183952,
           "pct": 1.1,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 222.16
         },
         {
           "sym": "NDSN",
           "name": "Nordson Corporation",
           "cap": 15968763897,
           "pct": 0.08,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 286.6
         },
         {
           "sym": "TXT",
           "name": "Textron",
           "cap": 15808247263,
           "pct": 0.53,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 90.91
         },
         {
           "sym": "MAS",
           "name": "Masco",
           "cap": 15703008576,
           "pct": 1.57,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 77.84
         },
         {
           "sym": "J",
           "name": "Jacobs Solutions",
           "cap": 14858117005,
           "pct": -0.01,
-          "ind": "Construction & Engineering"
+          "ind": "Construction & Engineering",
+          "last": 125.83
         },
         {
           "sym": "GNRC",
           "name": "Generac",
           "cap": 13771739233,
           "pct": -0.81,
-          "ind": "Heavy Electrical Equipment"
+          "ind": "Heavy Electrical Equipment",
+          "last": 233.94
         },
         {
           "sym": "SWK",
           "name": "Stanley Black & Decker",
           "cap": 13714289856,
           "pct": 1.61,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 88.22
         },
         {
           "sym": "LDOS",
           "name": "Leidos",
           "cap": 13461560571,
           "pct": 0.38,
-          "ind": "Diversified Support Services"
+          "ind": "Diversified Support Services",
+          "last": 107.02
         },
         {
           "sym": "PNR",
           "name": "Pentair",
           "cap": 12312726169,
           "pct": 2.17,
-          "ind": "Industrial Machinery & Supplies & Components"
+          "ind": "Industrial Machinery & Supplies & Components",
+          "last": 76.19
         },
         {
           "sym": "ALLE",
           "name": "Allegion",
           "cap": 11741416688,
           "pct": 1.16,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 136.63
         },
         {
           "sym": "HII",
           "name": "Huntington Ingalls Industries",
           "cap": 11273098657,
           "pct": -0.04,
-          "ind": "Aerospace & Defense"
+          "ind": "Aerospace & Defense",
+          "last": 286.09
         },
         {
           "sym": "AOS",
           "name": "A. O. Smith",
           "cap": 8330362035,
           "pct": 2.41,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 60.44
         },
         {
           "sym": "BLDR",
           "name": "Builders FirstSource",
           "cap": 8141207014,
           "pct": 1.54,
-          "ind": "Building Products"
+          "ind": "Building Products",
+          "last": 75.69
         }
       ]
     },
@@ -2562,231 +2921,264 @@
           "name": "Walmart",
           "cap": 906425215755,
           "pct": 1.51,
-          "ind": "Consumer Staples Merchandise Retail"
+          "ind": "Consumer Staples Merchandise Retail",
+          "last": 113.9
         },
         {
           "sym": "COST",
           "name": "Costco",
           "cap": 406337454165,
           "pct": 0.36,
-          "ind": "Consumer Staples Merchandise Retail"
+          "ind": "Consumer Staples Merchandise Retail",
+          "last": 916.25
         },
         {
           "sym": "KO",
           "name": "Coca-Cola Company (The)",
           "cap": 359353723701,
           "pct": 1.04,
-          "ind": "Soft Drinks & Non-alcoholic Beverages"
+          "ind": "Soft Drinks & Non-alcoholic Beverages",
+          "last": 83.49
         },
         {
           "sym": "PG",
           "name": "Procter & Gamble",
           "cap": 342397193725,
           "pct": 0.13,
-          "ind": "Personal Care Products"
+          "ind": "Personal Care Products",
+          "last": 147.04
         },
         {
           "sym": "PM",
           "name": "Philip Morris International",
           "cap": 283065457611,
           "pct": 0.25,
-          "ind": "Tobacco"
+          "ind": "Tobacco",
+          "last": 181.62
         },
         {
           "sym": "PEP",
           "name": "PepsiCo",
           "cap": 187766631115,
           "pct": -0.35,
-          "ind": "Soft Drinks & Non-alcoholic Beverages"
+          "ind": "Soft Drinks & Non-alcoholic Beverages",
+          "last": 137.38
         },
         {
           "sym": "MO",
           "name": "Altria",
           "cap": 119881491761,
           "pct": 0.28,
-          "ind": "Tobacco"
+          "ind": "Tobacco",
+          "last": 71.79
         },
         {
           "sym": "MNST",
           "name": "Monster Beverage",
           "cap": 95248209833,
           "pct": 0.87,
-          "ind": "Soft Drinks & Non-alcoholic Beverages"
+          "ind": "Soft Drinks & Non-alcoholic Beverages",
+          "last": 97.39
         },
         {
           "sym": "MDLZ",
           "name": "Mondelez International",
           "cap": 75517115734,
           "pct": 0.91,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 58.83
         },
         {
           "sym": "CL",
           "name": "Colgate-Palmolive",
           "cap": 73809461954,
           "pct": 1.35,
-          "ind": "Household Products"
+          "ind": "Household Products",
+          "last": 92.24
         },
         {
           "sym": "TGT",
           "name": "Target Corporation",
           "cap": 61379386876,
           "pct": 2.17,
-          "ind": "Consumer Staples Merchandise Retail"
+          "ind": "Consumer Staples Merchandise Retail",
+          "last": 135.14
         },
         {
           "sym": "KDP",
           "name": "Keurig Dr Pepper",
           "cap": 43088918447,
           "pct": 3.09,
-          "ind": "Soft Drinks & Non-alcoholic Beverages"
+          "ind": "Soft Drinks & Non-alcoholic Beverages",
+          "last": 31.67
         },
         {
           "sym": "SYY",
           "name": "Sysco",
           "cap": 40086048029,
           "pct": 2.19,
-          "ind": "Food Distributors"
+          "ind": "Food Distributors",
+          "last": 83.83
         },
         {
           "sym": "ADM",
           "name": "Archer Daniels Midland",
           "cap": 38754124336,
           "pct": 1.81,
-          "ind": "Agricultural Products & Services"
+          "ind": "Agricultural Products & Services",
+          "last": 80.41
         },
         {
           "sym": "KVUE",
           "name": "Kenvue",
           "cap": 37401768853,
           "pct": 1.56,
-          "ind": "Personal Care Products"
+          "ind": "Personal Care Products",
+          "last": 19.48
         },
         {
           "sym": "KMB",
           "name": "Kimberly-Clark",
           "cap": 37313415530,
           "pct": 2.26,
-          "ind": "Household Products"
+          "ind": "Household Products",
+          "last": 112.41
         },
         {
           "sym": "KR",
           "name": "Kroger",
           "cap": 37089666452,
           "pct": 1.14,
-          "ind": "Food Retail"
+          "ind": "Food Retail",
+          "last": 60.54
         },
         {
           "sym": "HSY",
           "name": "Hershey Company (The)",
           "cap": 35225779982,
           "pct": 1.17,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 173.66
         },
         {
           "sym": "CASY",
           "name": "Casey's",
           "cap": 30337738645,
           "pct": -0.26,
-          "ind": "Food Retail"
+          "ind": "Food Retail",
+          "last": 819.83
         },
         {
           "sym": "EL",
           "name": "Estée Lauder Companies (The)",
           "cap": 29905967674,
           "pct": 0.82,
-          "ind": "Personal Care Products"
+          "ind": "Personal Care Products",
+          "last": 82.66
         },
         {
           "sym": "KHC",
           "name": "Kraft Heinz",
           "cap": 29466574304,
           "pct": 0.69,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 24.85
         },
         {
           "sym": "DG",
           "name": "Dollar General",
           "cap": 26232164061,
           "pct": 2.76,
-          "ind": "Consumer Staples Merchandise Retail"
+          "ind": "Consumer Staples Merchandise Retail",
+          "last": 118.92
         },
         {
           "sym": "DLTR",
           "name": "Dollar Tree",
           "cap": 24004527787,
           "pct": 3.3,
-          "ind": "Consumer Staples Merchandise Retail"
+          "ind": "Consumer Staples Merchandise Retail",
+          "last": 124.91
         },
         {
           "sym": "STZ",
           "name": "Constellation Brands",
           "cap": 22894556862,
           "pct": 1.22,
-          "ind": "Distillers & Vintners"
+          "ind": "Distillers & Vintners",
+          "last": 134.06
         },
         {
           "sym": "CHD",
           "name": "Church & Dwight",
           "cap": 22831885489,
           "pct": 0.72,
-          "ind": "Household Products"
+          "ind": "Household Products",
+          "last": 96.36
         },
         {
           "sym": "BG",
           "name": "Bunge Global",
           "cap": 22180150907,
           "pct": 0.62,
-          "ind": "Agricultural Products & Services"
+          "ind": "Agricultural Products & Services",
+          "last": 114.32
         },
         {
           "sym": "TSN",
           "name": "Tyson Foods",
           "cap": 20363643318,
           "pct": 0.21,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 57.83
         },
         {
           "sym": "GIS",
           "name": "General Mills",
           "cap": 19330918103,
           "pct": 1.03,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 36.22
         },
         {
           "sym": "MKC",
           "name": "McCormick & Company",
           "cap": 14101263902,
           "pct": 1.77,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 52.45
         },
         {
           "sym": "HRL",
           "name": "Hormel Foods",
           "cap": 13609288936,
           "pct": 1.64,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 24.73
         },
         {
           "sym": "SJM",
           "name": "J.M. Smucker Company (The)",
           "cap": 11927885004,
           "pct": 0.66,
-          "ind": "Packaged Foods & Meats"
+          "ind": "Packaged Foods & Meats",
+          "last": 111.6
         },
         {
           "sym": "CLX",
           "name": "Clorox",
           "cap": 11676165653,
           "pct": 3.75,
-          "ind": "Household Products"
+          "ind": "Household Products",
+          "last": 96.56
         },
         {
           "sym": "TAP",
           "name": "Molson Coors Beverage Company",
           "cap": 7346386771,
           "pct": 1.11,
-          "ind": "Brewers"
+          "ind": "Brewers",
+          "last": 39.17
         }
       ]
     },
@@ -2799,147 +3191,168 @@
           "name": "ExxonMobil",
           "cap": 575650261859,
           "pct": 1.03,
-          "ind": "Integrated Oil & Gas"
+          "ind": "Integrated Oil & Gas",
+          "last": 138.88
         },
         {
           "sym": "CVX",
           "name": "Chevron Corporation",
           "cap": 351317839925,
           "pct": 1.35,
-          "ind": "Integrated Oil & Gas"
+          "ind": "Integrated Oil & Gas",
+          "last": 176.4
         },
         {
           "sym": "COP",
           "name": "ConocoPhillips",
           "cap": 132842778523,
           "pct": 0.94,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 109.04
         },
         {
           "sym": "WMB",
           "name": "Williams Companies",
           "cap": 91749329840,
           "pct": -0.57,
-          "ind": "Oil & Gas Storage & Transportation"
+          "ind": "Oil & Gas Storage & Transportation",
+          "last": 75.02
         },
         {
           "sym": "VLO",
           "name": "Valero Energy",
           "cap": 83346062580,
           "pct": -0.2,
-          "ind": "Oil & Gas Refining & Marketing"
+          "ind": "Oil & Gas Refining & Marketing",
+          "last": 280.69
         },
         {
           "sym": "MPC",
           "name": "Marathon Petroleum",
           "cap": 82834100815,
           "pct": 0.15,
-          "ind": "Oil & Gas Refining & Marketing"
+          "ind": "Oil & Gas Refining & Marketing",
+          "last": 283.74
         },
         {
           "sym": "PSX",
           "name": "Phillips 66",
           "cap": 75520120367,
           "pct": -0.77,
-          "ind": "Oil & Gas Refining & Marketing"
+          "ind": "Oil & Gas Refining & Marketing",
+          "last": 188.36
         },
         {
           "sym": "KMI",
           "name": "Kinder Morgan",
           "cap": 71461403315,
           "pct": -0.86,
-          "ind": "Oil & Gas Storage & Transportation"
+          "ind": "Oil & Gas Storage & Transportation",
+          "last": 32.12
         },
         {
           "sym": "EOG",
           "name": "EOG Resources",
           "cap": 71425485873,
           "pct": 0.42,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 134.1
         },
         {
           "sym": "SLB",
           "name": "Schlumberger",
           "cap": 71403953889,
           "pct": 1.1,
-          "ind": "Oil & Gas Equipment & Services"
+          "ind": "Oil & Gas Equipment & Services",
+          "last": 47.76
         },
         {
           "sym": "TRGP",
           "name": "Targa Resources",
           "cap": 58672910885,
           "pct": 0.12,
-          "ind": "Oil & Gas Storage & Transportation"
+          "ind": "Oil & Gas Storage & Transportation",
+          "last": 273.35
         },
         {
           "sym": "BKR",
           "name": "Baker Hughes",
           "cap": 57103474199,
           "pct": 0.63,
-          "ind": "Oil & Gas Equipment & Services"
+          "ind": "Oil & Gas Equipment & Services",
+          "last": 57.56
         },
         {
           "sym": "OKE",
           "name": "Oneok",
           "cap": 56662857985,
           "pct": 0.47,
-          "ind": "Oil & Gas Storage & Transportation"
+          "ind": "Oil & Gas Storage & Transportation",
+          "last": 89.92
         },
         {
           "sym": "OXY",
           "name": "Occidental Petroleum",
           "cap": 52606229336,
           "pct": 1.13,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 52.89
         },
         {
           "sym": "FANG",
           "name": "Diamondback Energy",
           "cap": 51590045537,
           "pct": 0.76,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 183.39
         },
         {
           "sym": "DVN",
           "name": "Devon Energy",
           "cap": 48708213209,
           "pct": 0.5,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 42.23
         },
         {
           "sym": "EQT",
           "name": "EQT Corporation",
           "cap": 30554600300,
           "pct": -2.59,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 48.85
         },
         {
           "sym": "HAL",
           "name": "Halliburton",
           "cap": 28729328107,
           "pct": 0.79,
-          "ind": "Oil & Gas Equipment & Services"
+          "ind": "Oil & Gas Equipment & Services",
+          "last": 34.39
         },
         {
           "sym": "TPL",
           "name": "Texas Pacific Land Corporation",
           "cap": 27439407345,
           "pct": 1.8,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 397.82
         },
         {
           "sym": "EXE",
           "name": "Expand Energy",
           "cap": 20872717075,
           "pct": -1.93,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 87.25
         },
         {
           "sym": "APA",
           "name": "APA Corporation",
           "cap": 11820044391,
           "pct": 0.45,
-          "ind": "Oil & Gas Exploration & Production"
+          "ind": "Oil & Gas Exploration & Production",
+          "last": 33.44
         }
       ]
     },
@@ -2952,217 +3365,248 @@
           "name": "NextEra Energy",
           "cap": 183426634470,
           "pct": 0.99,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 87.96
         },
         {
           "sym": "SO",
           "name": "Southern Company",
           "cap": 107878658468,
           "pct": 0.46,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 95.61
         },
         {
           "sym": "DUK",
           "name": "Duke Energy",
           "cap": 97823733309,
           "pct": 0.18,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 125.48
         },
         {
           "sym": "CEG",
           "name": "Constellation Energy",
           "cap": 90795958037,
           "pct": 0.26,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 251.38
         },
         {
           "sym": "AEP",
           "name": "American Electric Power",
           "cap": 73688144484,
           "pct": 1.18,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 135.43
         },
         {
           "sym": "D",
           "name": "Dominion Energy",
           "cap": 61632234642,
           "pct": 0.91,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 70.08
         },
         {
           "sym": "SRE",
           "name": "Sempra",
           "cap": 61579237174,
           "pct": -0.44,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 94.2
         },
         {
           "sym": "VST",
           "name": "Vistra Corp.",
           "cap": 53564806866,
           "pct": 0.56,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 158.86
         },
         {
           "sym": "ETR",
           "name": "Entergy",
           "cap": 52679881747,
           "pct": 0.98,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 115.05
         },
         {
           "sym": "XEL",
           "name": "Xcel Energy",
           "cap": 49979020974,
           "pct": 1.32,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 80.06
         },
         {
           "sym": "EXC",
           "name": "Exelon",
           "cap": 47886141046,
           "pct": 0.91,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 46.8
         },
         {
           "sym": "PCG",
           "name": "PG&E Corporation",
           "cap": 46015056020,
           "pct": -0.06,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 17.17
         },
         {
           "sym": "ED",
           "name": "Consolidated Edison",
           "cap": 40951020820,
           "pct": 0.77,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 111.12
         },
         {
           "sym": "PEG",
           "name": "Public Service Enterprise Group",
           "cap": 40139788931,
           "pct": 0.47,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 80.55
         },
         {
           "sym": "WEC",
           "name": "WEC Energy Group",
           "cap": 37445423943,
           "pct": 0.06,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 114.96
         },
         {
           "sym": "DTE",
           "name": "DTE Energy",
           "cap": 31260414595,
           "pct": 0.67,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 150.27
         },
         {
           "sym": "AEE",
           "name": "Ameren",
           "cap": 31256327511,
           "pct": 1.05,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 112.94
         },
         {
           "sym": "NRG",
           "name": "NRG Energy",
           "cap": 29626720117,
           "pct": -0.04,
-          "ind": "Independent Power Producers & Energy Traders"
+          "ind": "Independent Power Producers & Energy Traders",
+          "last": 140.42
         },
         {
           "sym": "ATO",
           "name": "Atmos Energy",
           "cap": 29411272636,
           "pct": 0.85,
-          "ind": "Gas Utilities"
+          "ind": "Gas Utilities",
+          "last": 176.2
         },
         {
           "sym": "EIX",
           "name": "Edison International",
           "cap": 28936504363,
           "pct": 0.75,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 75.2
         },
         {
           "sym": "CNP",
           "name": "CenterPoint Energy",
           "cap": 28482539159,
           "pct": 0.51,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 43.54
         },
         {
           "sym": "ES",
           "name": "Eversource Energy",
           "cap": 28138307471,
           "pct": 1.2,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 74.82
         },
         {
           "sym": "FE",
           "name": "FirstEnergy",
           "cap": 27718421906,
           "pct": 0.61,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 47.92
         },
         {
           "sym": "PPL",
           "name": "PPL Corporation",
           "cap": 26919095952,
           "pct": 0.34,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 35.78
         },
         {
           "sym": "AWK",
           "name": "American Water Works",
           "cap": 25521211289,
           "pct": 0.11,
-          "ind": "Water Utilities"
+          "ind": "Water Utilities",
+          "last": 130.69
         },
         {
           "sym": "CMS",
           "name": "CMS Energy",
           "cap": 23292537991,
           "pct": 0.53,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 75.4
         },
         {
           "sym": "NI",
           "name": "NiSource",
           "cap": 22380470310,
           "pct": 0.51,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 46.9
         },
         {
           "sym": "EVRG",
           "name": "Evergy",
           "cap": 19757271373,
           "pct": 0.5,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 85.71
         },
         {
           "sym": "LNT",
           "name": "Alliant Energy",
           "cap": 19732365627,
           "pct": 0.93,
-          "ind": "Electric Utilities"
+          "ind": "Electric Utilities",
+          "last": 76.4
         },
         {
           "sym": "PNW",
           "name": "Pinnacle West Capital",
           "cap": 13102756388,
           "pct": 1.28,
-          "ind": "Multi-Utilities"
+          "ind": "Multi-Utilities",
+          "last": 108.12
         },
         {
           "sym": "AES",
           "name": "AES Corporation",
           "cap": 10540470998,
           "pct": 0.34,
-          "ind": "Independent Power Producers & Energy Traders"
+          "ind": "Independent Power Producers & Energy Traders",
+          "last": 14.78
         }
       ]
     },
@@ -3175,217 +3619,248 @@
           "name": "Welltower",
           "cap": 163482727476,
           "pct": -0.23,
-          "ind": "Health Care REITs"
+          "ind": "Health Care REITs",
+          "last": 231.59
         },
         {
           "sym": "PLD",
           "name": "Prologis",
           "cap": 134104859120,
           "pct": -0.35,
-          "ind": "Industrial REITs"
+          "ind": "Industrial REITs",
+          "last": 140.87
         },
         {
           "sym": "EQIX",
           "name": "Equinix",
           "cap": 103674795740,
           "pct": 1.58,
-          "ind": "Data Center REITs"
+          "ind": "Data Center REITs",
+          "last": 1051.21
         },
         {
           "sym": "AMT",
           "name": "American Tower",
           "cap": 78544912503,
           "pct": 2.18,
-          "ind": "Telecom Tower REITs"
+          "ind": "Telecom Tower REITs",
+          "last": 168.59
         },
         {
           "sym": "SPG",
           "name": "Simon Property Group",
           "cap": 70944904048,
           "pct": -0.43,
-          "ind": "Retail REITs"
+          "ind": "Retail REITs",
+          "last": 218.77
         },
         {
           "sym": "DLR",
           "name": "Digital Realty",
           "cap": 67955938013,
           "pct": 0.6,
-          "ind": "Data Center REITs"
+          "ind": "Data Center REITs",
+          "last": 180.41
         },
         {
           "sym": "O",
           "name": "Realty Income",
           "cap": 59036102074,
           "pct": 0.22,
-          "ind": "Retail REITs"
+          "ind": "Retail REITs",
+          "last": 63.31
         },
         {
           "sym": "PSA",
           "name": "Public Storage",
           "cap": 56272944979,
           "pct": 0.38,
-          "ind": "Self-Storage REITs"
+          "ind": "Self-Storage REITs",
+          "last": 320.56
         },
         {
           "sym": "VTR",
           "name": "Ventas",
           "cap": 44076147087,
           "pct": -1.18,
-          "ind": "Health Care REITs"
+          "ind": "Health Care REITs",
+          "last": 90.66
         },
         {
           "sym": "CBRE",
           "name": "CBRE Group",
           "cap": 40856697268,
           "pct": -1.08,
-          "ind": "Real Estate Services"
+          "ind": "Real Estate Services",
+          "last": 139.53
         },
         {
           "sym": "IRM",
           "name": "Iron Mountain",
           "cap": 36152223988,
           "pct": 1.7,
-          "ind": "Other Specialized REITs"
+          "ind": "Other Specialized REITs",
+          "last": 121.51
         },
         {
           "sym": "CCI",
           "name": "Crown Castle",
           "cap": 34767764966,
           "pct": 3.89,
-          "ind": "Telecom Tower REITs"
+          "ind": "Telecom Tower REITs",
+          "last": 79.66
         },
         {
           "sym": "EXR",
           "name": "Extra Space Storage",
           "cap": 30413124347,
           "pct": 0.9,
-          "ind": "Self-Storage REITs"
+          "ind": "Self-Storage REITs",
+          "last": 143.96
         },
         {
           "sym": "VICI",
           "name": "Vici Properties",
           "cap": 27805475164,
           "pct": 0.31,
-          "ind": "Hotel & Resort REITs"
+          "ind": "Hotel & Resort REITs",
+          "last": 26.01
         },
         {
           "sym": "AVB",
           "name": "AvalonBay Communities",
           "cap": 26687259317,
           "pct": 1.26,
-          "ind": "Multi-Family Residential REITs"
+          "ind": "Multi-Family Residential REITs",
+          "last": 191.84
         },
         {
           "sym": "EQR",
           "name": "Equity Residential",
           "cap": 25736201477,
           "pct": 0.88,
-          "ind": "Multi-Family Residential REITs"
+          "ind": "Multi-Family Residential REITs",
+          "last": 68.69
         },
         {
           "sym": "SBAC",
           "name": "SBA Communications",
           "cap": 20155155121,
           "pct": 4.14,
-          "ind": "Telecom Tower REITs"
+          "ind": "Telecom Tower REITs",
+          "last": 190.03
         },
         {
           "sym": "ESS",
           "name": "Essex Property Trust",
           "cap": 18864364314,
           "pct": 0.83,
-          "ind": "Multi-Family Residential REITs"
+          "ind": "Multi-Family Residential REITs",
+          "last": 293.55
         },
         {
           "sym": "INVH",
           "name": "Invitation Homes",
           "cap": 17583641898,
           "pct": 0.78,
-          "ind": "Single-Family Residential REITs"
+          "ind": "Single-Family Residential REITs",
+          "last": 29.6
         },
         {
           "sym": "WY",
           "name": "Weyerhaeuser",
           "cap": 16908458350,
           "pct": 4.22,
-          "ind": "Timber REITs"
+          "ind": "Timber REITs",
+          "last": 23.45
         },
         {
           "sym": "KIM",
           "name": "Kimco Realty",
           "cap": 16778818025,
           "pct": -0.2,
-          "ind": "Retail REITs"
+          "ind": "Retail REITs",
+          "last": 24.88
         },
         {
           "sym": "HST",
           "name": "Host Hotels & Resorts",
           "cap": 15875501734,
           "pct": 0.09,
-          "ind": "Hotel & Resort REITs"
+          "ind": "Hotel & Resort REITs",
+          "last": 23.18
         },
         {
           "sym": "MAA",
           "name": "Mid-America Apartment Communities",
           "cap": 15741044471,
           "pct": -0.55,
-          "ind": "Multi-Family Residential REITs"
+          "ind": "Multi-Family Residential REITs",
+          "last": 135.25
         },
         {
           "sym": "DOC",
           "name": "Healthpeak Properties",
           "cap": 14925936548,
           "pct": 0.37,
-          "ind": "Health Care REITs"
+          "ind": "Health Care REITs",
+          "last": 21.65
         },
         {
           "sym": "REG",
           "name": "Regency Centers",
           "cap": 14578166420,
           "pct": 0.23,
-          "ind": "Retail REITs"
+          "ind": "Retail REITs",
+          "last": 79.62
         },
         {
           "sym": "UDR",
           "name": "UDR, Inc.",
           "cap": 12908898894,
           "pct": 0.1,
-          "ind": "Multi-Family Residential REITs"
+          "ind": "Multi-Family Residential REITs",
+          "last": 39.73
         },
         {
           "sym": "CSGP",
           "name": "CoStar Group",
           "cap": 11593218749,
           "pct": -2.74,
-          "ind": "Real Estate Services"
+          "ind": "Real Estate Services",
+          "last": 28.39
         },
         {
           "sym": "CPT",
           "name": "Camden Property Trust",
           "cap": 11354708927,
           "pct": -0.29,
-          "ind": "Multi-Family Residential REITs"
+          "ind": "Multi-Family Residential REITs",
+          "last": 112.96
         },
         {
           "sym": "BXP",
           "name": "BXP, Inc.",
           "cap": 10656279267,
           "pct": -0.16,
-          "ind": "Office REITs"
+          "ind": "Office REITs",
+          "last": 66.82
         },
         {
           "sym": "FRT",
           "name": "Federal Realty Investment Trust",
           "cap": 10447909485,
           "pct": 0.17,
-          "ind": "Retail REITs"
+          "ind": "Retail REITs",
+          "last": 120.94
         },
         {
           "sym": "ARE",
           "name": "Alexandria Real Estate Equities",
           "cap": 8344022702,
           "pct": -1.3,
-          "ind": "Office REITs"
+          "ind": "Office REITs",
+          "last": 47.88
         }
       ]
     },
@@ -3398,182 +3873,208 @@
           "name": "Linde plc",
           "cap": 245080609767,
           "pct": 0.81,
-          "ind": "Industrial Gases"
+          "ind": "Industrial Gases",
+          "last": 529.79
         },
         {
           "sym": "NEM",
           "name": "Newmont",
           "cap": 101727102882,
           "pct": 0.51,
-          "ind": "Gold"
+          "ind": "Gold",
+          "last": 95.29
         },
         {
           "sym": "FCX",
           "name": "Freeport-McMoRan",
           "cap": 88438682895,
           "pct": 1.64,
-          "ind": "Copper"
+          "ind": "Copper",
+          "last": 61.52
         },
         {
           "sym": "SHW",
           "name": "Sherwin-Williams",
           "cap": 82373831058,
           "pct": 0.59,
-          "ind": "Specialty Chemicals"
+          "ind": "Specialty Chemicals",
+          "last": 333.99
         },
         {
           "sym": "ECL",
           "name": "Ecolab",
           "cap": 77201121174,
           "pct": 0.47,
-          "ind": "Specialty Chemicals"
+          "ind": "Specialty Chemicals",
+          "last": 274.31
         },
         {
           "sym": "CRH",
           "name": "CRH plc",
           "cap": 70086531925,
           "pct": 0.34,
-          "ind": "Construction Materials"
+          "ind": "Construction Materials",
+          "last": 104.71
         },
         {
           "sym": "APD",
           "name": "Air Products",
           "cap": 66699545878,
           "pct": 1.24,
-          "ind": "Industrial Gases"
+          "ind": "Industrial Gases",
+          "last": 299.53
         },
         {
           "sym": "CTVA",
           "name": "Corteva",
           "cap": 57304497600,
           "pct": 2.17,
-          "ind": "Fertilizers & Agricultural Chemicals"
+          "ind": "Fertilizers & Agricultural Chemicals",
+          "last": 85.68
         },
         {
           "sym": "NUE",
           "name": "Nucor",
           "cap": 51781459802,
           "pct": 2.29,
-          "ind": "Steel"
+          "ind": "Steel",
+          "last": 227.37
         },
         {
           "sym": "VMC",
           "name": "Vulcan Materials Company",
           "cap": 38310129796,
           "pct": 2.26,
-          "ind": "Construction Materials"
+          "ind": "Construction Materials",
+          "last": 295.25
         },
         {
           "sym": "MLM",
           "name": "Martin Marietta Materials",
           "cap": 34811216486,
           "pct": 1.02,
-          "ind": "Construction Materials"
+          "ind": "Construction Materials",
+          "last": 577.72
         },
         {
           "sym": "STLD",
           "name": "Steel Dynamics",
           "cap": 32941083436,
           "pct": 2.86,
-          "ind": "Steel"
+          "ind": "Steel",
+          "last": 228.42
         },
         {
           "sym": "PPG",
           "name": "PPG Industries",
           "cap": 26025804000,
           "pct": 0.69,
-          "ind": "Specialty Chemicals"
+          "ind": "Specialty Chemicals",
+          "last": 116.76
         },
         {
           "sym": "SW",
           "name": "Smurfit Westrock",
           "cap": 23197046170,
           "pct": 2.88,
-          "ind": "Paper & Plastic Packaging Products & Materials"
+          "ind": "Paper & Plastic Packaging Products & Materials",
+          "last": 44.23
         },
         {
           "sym": "DOW",
           "name": "Dow Inc.",
           "cap": 20923123945,
           "pct": 1.86,
-          "ind": "Commodity Chemicals"
+          "ind": "Commodity Chemicals",
+          "last": 29.03
         },
         {
           "sym": "PKG",
           "name": "Packaging Corporation of America",
           "cap": 20383097474,
           "pct": 1.91,
-          "ind": "Paper & Plastic Packaging Products & Materials"
+          "ind": "Paper & Plastic Packaging Products & Materials",
+          "last": 228.77
         },
         {
           "sym": "IP",
           "name": "International Paper",
           "cap": 20084578824,
           "pct": 2.02,
-          "ind": "Paper & Plastic Packaging Products & Materials"
+          "ind": "Paper & Plastic Packaging Products & Materials",
+          "last": 37.93
         },
         {
           "sym": "AMCR",
           "name": "Amcor",
           "cap": 19964086894,
           "pct": 1.12,
-          "ind": "Paper & Plastic Packaging Products & Materials"
+          "ind": "Paper & Plastic Packaging Products & Materials",
+          "last": 43.18
         },
         {
           "sym": "IFF",
           "name": "International Flavors & Fragrances",
           "cap": 19793678262,
           "pct": -1.27,
-          "ind": "Specialty Chemicals"
+          "ind": "Specialty Chemicals",
+          "last": 77.53
         },
         {
           "sym": "DD",
           "name": "DuPont",
           "cap": 18400314664,
           "pct": -0.08,
-          "ind": "Specialty Chemicals"
+          "ind": "Specialty Chemicals",
+          "last": 134.68
         },
         {
           "sym": "LYB",
           "name": "LyondellBasell",
           "cap": 18188921959,
           "pct": 1.73,
-          "ind": "Specialty Chemicals"
+          "ind": "Specialty Chemicals",
+          "last": 56.35
         },
         {
           "sym": "CF",
           "name": "CF Industries",
           "cap": 17962334716,
           "pct": 2.54,
-          "ind": "Fertilizers & Agricultural Chemicals"
+          "ind": "Fertilizers & Agricultural Chemicals",
+          "last": 116.92
         },
         {
           "sym": "BALL",
           "name": "Ball Corporation",
           "cap": 16424747264,
           "pct": 1.13,
-          "ind": "Metal, Glass & Plastic Containers"
+          "ind": "Metal, Glass & Plastic Containers",
+          "last": 61.69
         },
         {
           "sym": "ALB",
           "name": "Albemarle Corporation",
           "cap": 14865662759,
           "pct": -1.85,
-          "ind": "Specialty Chemicals"
+          "ind": "Specialty Chemicals",
+          "last": 126.05
         },
         {
           "sym": "AVY",
           "name": "Avery Dennison",
           "cap": 12292769773,
           "pct": 1.03,
-          "ind": "Paper & Plastic Packaging Products & Materials"
+          "ind": "Paper & Plastic Packaging Products & Materials",
+          "last": 160.71
         },
         {
           "sym": "MOS",
           "name": "Mosaic Company (The)",
           "cap": 6836881312,
           "pct": 3.66,
-          "ind": "Fertilizers & Agricultural Chemicals"
+          "ind": "Fertilizers & Agricultural Chemicals",
+          "last": 21.51
         }
       ]
     }
