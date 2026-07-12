@@ -7,7 +7,8 @@
 > Lessons covered — Beginner's license (complete): Definitions · Stochastic
 > Lesson · Relative Strength · Bulls and Bears · Earnings · Order Entry ·
 > Stops · Taking Profits. Pattern series (in progress): Dark Cloud · Head
-> and Shoulders · Power Stocks · W Formations · Doji.
+> and Shoulders · Power Stocks · W Formations · Doji · PRO 2 Snapback ·
+> PRO 2 Quick Lesson · Broken Stair Step · Brothers Grimm.
 
 ## The three tiers
 
@@ -211,6 +212,38 @@ picture. Variants by geometry: the spindle (long wick AND tail, tiny body)
 and Thor's Hammer (long tail, body boxed at the top — bullish at a low; the
 inverted version bearish at a high). A doji AT a stochastic extreme or a
 level is the reversal candidate; mid-range dojis are noise.
+
+### PRO 2 Snapback Pattern
+A long-term-tier (Pro 2) buy setup: in a name whose WEEKLY stochastic is in
+an established climb, a sharp multi-day drop against that rising weekly is
+the setup — price "snaps back" to the trend rather than breaking it. The
+demo (ANF): circled consolidation, a violent dip marked off, then the snap
+back up, all while the weekly stochastic's ascent stays intact. The dip
+against a healthy weekly is the entry, not the exit.
+
+### PRO 2 Quick Lesson
+The two stochastics as nested waves, drawn on one chart (weekly in orange,
+daily in blue): the daily cycles several times INSIDE each weekly wave. The
+weekly is the governing tide — its bottom-hook caught the entire multi-month
+run in the demo — and the daily's repeated cycles within it are the entry
+opportunities. The boxed moments where a daily bottom-cross happens WHILE
+the weekly is rising are the highest-quality entries (the same
+dual-timeframe rule as the cycle anatomy, seen from the Pro 2 chair).
+
+### Broken Stair Step
+An uptrend is a staircase: each pullback low is a step that holds above the
+prior one. Box the steps; the trend is intact while each new step is
+higher. The FIRST step that breaks — a pullback undercutting the prior
+boxed low — declares the staircase broken and ends the long thesis (AAPL
+demo on the daily tier). This is the structural exit that complements the
+stochastic top-roll: whichever fires first gets respected.
+
+### Brothers Grimm
+A paired bearish warning on the daily tier: two adjacent boxed candle
+clusters at a failed bounce into the moving-average/resistance zone — the
+"brothers" — after which the downtrend resumes (AAPL demo during a
+sell-off). ⚠️ Visual-only study: the precise defining rules for the pair
+are spoken, not drawn — owner should confirm/refine this one's definition.
 
 ## Candle vocabulary
 
