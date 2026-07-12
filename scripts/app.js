@@ -538,35 +538,49 @@ function wireChart() {
    request 2026-07-11): saturated poles on slate, white ink ≥3:1 across the
    whole ramp. CVD/contrast relief: printed labels + movers table. */
 const HEAT = {
-  neutral: [65, 69, 84],     /* #414554 slate — 0% */
-  gain: [42, 167, 79],       /* deep green pole (white ink 3.1:1 at ±cap) */
-  loss: [246, 53, 56],       /* red pole (white ink 3.8:1 at ±cap) */
+  /* finviz's published 7-stop map scale (legend: −3…+3), interpolated
+     piecewise so small moves already carry color — a straight slate→pole
+     lerp leaves sub-1% movers gray, which is why the panel read muted
+     next to finviz (owner screenshot comparison, 2026-07-12). */
+  stops: [
+    [-3, [246, 53, 56]],   /* #F63538 */
+    [-2, [191, 64, 69]],   /* #BF4045 */
+    [-1, [139, 68, 78]],   /* #8B444E */
+    [0, [65, 69, 84]],     /* #414554 slate — 0% */
+    [1, [53, 118, 78]],    /* #35764E */
+    [2, [47, 158, 79]],    /* #2F9E4F */
+    [3, [48, 204, 90]],    /* #30CC5A */
+  ],
   cap: 3,
   canvas: '#262931',         /* mosaic backdrop */
-  label: '#B9BFCC',          /* sector/band captions on the dark canvas */
+  label: '#CBD2DE',          /* sector/band captions on the dark canvas */
   band: '#31353F',           /* sub-industry band fill */
   focus: '#FDE047',          /* hover outline for the industry group */
+  ink: '#FFFFFF',            /* tile label ink — consistently white (owner, 2026-07-12) */
+  halo: '#23262D',           /* solid stroke behind every glyph; white-vs-halo is the AA pair */
 };
 
 function heatRGB(pct) {
-  const t = Math.min(Math.abs(pct), HEAT.cap) / HEAT.cap;
-  const pole = pct >= 0 ? HEAT.gain : HEAT.loss;
-  return HEAT.neutral.map((n, i) => Math.round(n + (pole[i] - n) * t));
+  const s = HEAT.stops;
+  const p = Math.max(s[0][0], Math.min(s[s.length - 1][0], pct));
+  let i = 0;
+  while (i < s.length - 2 && p > s[i + 1][0]) i++;
+  const [p0, c0] = s[i], [p1, c1] = s[i + 1];
+  const t = (p - p0) / (p1 - p0);
+  return c0.map((c, k) => Math.round(c + (c1[k] - c) * t));
 }
 const heatColor = pct => 'rgb(' + heatRGB(pct).join(',') + ')';
-/* WCAG relative luminance of an [r,g,b] triplet (0–255 channels). */
-function relLum(rgb) {
-  const f = c => (c /= 255) <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
-}
-/* Ink flip for tile labels: the slate→pole ramp is dark at 0% (white ink wins)
-   and mid-luminance at the saturated poles (black wins) — no single ink clears
-   AA across the whole ramp, so pick whichever does. max(white,black) contrast
-   stays ≥4.5:1 for these ≤14px labels end to end (guarded by check-contrast.js). */
-function heatInk(pct) {
-  const L = relLum(heatRGB(pct));
-  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#FFFFFF' : '#000000';
-}
+/* Tile labels are consistently WHITE (owner directive 2026-07-12 — the earlier
+   per-tile black flip on bright poles read inconsistent next to finviz). AA is
+   carried by a solid dark halo painted under every glyph (paint-order:stroke),
+   exactly finviz's trick: the glyph's contrast pair is ink-vs-halo (15.9:1),
+   independent of tile color. check-contrast.js asserts that pair. */
+const heatText = (attrs, fs) => svgEl('text', {
+  ...attrs, fill: HEAT.ink, stroke: HEAT.halo, 'paint-order': 'stroke',
+  /* halo stays a shadow, not an outline: ~1px at small sizes, capped so
+     display-size tickers don't read as cartoon-stroked */
+  'stroke-width': Math.min(1.8, Math.max(0.8, fs / 12)).toFixed(2), 'stroke-linejoin': 'round',
+});
 const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
 const fmtPrice = v => Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
@@ -624,17 +638,45 @@ function renderHeatmap(hm, lamp) {
   const tip = document.getElementById('heatTip');
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: HEAT.canvas }));
 
+  /* shared tile bevel: a corner-weighted vignette (clear center → shaded
+     rim; r=70.7% puts the full shade exactly at the corners). Text-safe on
+     every tile because glyph contrast is carried by the label halo, not the
+     tile fill (see heatText). */
+  const defs = svgEl('defs', {});
+  const gloss = svgEl('radialGradient', { id: 'heatGloss', r: '70.7%' });
+  for (const [off, op] of [[0, 0], [0.72, 0], [1, 0.16]]) {
+    gloss.appendChild(svgEl('stop', { offset: off, 'stop-color': '#000000', 'stop-opacity': op }));
+  }
+  defs.appendChild(gloss);
+  svg.appendChild(defs);
+
   /* hover chrome (appended last so it paints above the tiles): a yellow
      outline around the hovered stock's whole industry group + a white
      outline on the tile itself — the finviz interaction. */
   const groupRects = new Map();
+  const bandEls = new Map();   /* sector|ind → {rect, text} for the lit-band hover */
+  let litBand = null;
   const focusGroup = svgEl('rect', { fill: 'none', stroke: HEAT.focus, 'stroke-width': 2, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
   const focusTile = svgEl('rect', { fill: 'none', stroke: '#FFFFFF', 'stroke-width': 1.5, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
+  const unlightBand = () => {
+    if (!litBand) return;
+    litBand.rect.setAttribute('fill', HEAT.band);
+    litBand.text.setAttribute('fill', HEAT.label);
+    litBand = null;
+  };
 
   /* finviz-style hover card: SECTOR — INDUSTRY header, the hovered stock in
      bold with last price + full name, then its industry peers by cap. */
   const showPeers = (t, sector, px, py) => {
-    const g = groupRects.get(sector.name + '|' + (t.ind || ''));
+    const key = sector.name + '|' + (t.ind || '');
+    unlightBand();
+    const band = bandEls.get(key);   /* light the industry caption, finviz-style */
+    if (band) {
+      band.rect.setAttribute('fill', HEAT.focus);
+      band.text.setAttribute('fill', '#111111');
+      litBand = band;
+    }
+    const g = groupRects.get(key);
     if (g) {
       focusGroup.setAttribute('x', g.x + 1); focusGroup.setAttribute('y', g.y + 1);
       focusGroup.setAttribute('width', Math.max(g.w - 2, 1)); focusGroup.setAttribute('height', Math.max(g.h - 2, 1));
@@ -646,10 +688,11 @@ function renderHeatmap(hm, lamp) {
 
     while (tip.firstChild) tip.removeChild(tip.firstChild);
     tip.appendChild(el('div', 'tip-head', (sector.name + (t.ind ? ' — ' + t.ind : '')).toUpperCase()));
+    const dir = p => p > 0 ? 'up' : p < 0 ? 'down' : '';
     const cur = el('div', 'tip-main');
     cur.appendChild(el('span', 'tip-sym', t.sym));
-    if (Number.isFinite(t.last)) cur.appendChild(el('span', 'tip-price', fmtPrice(t.last)));
-    cur.appendChild(el('span', t.pct > 0 ? 'up' : t.pct < 0 ? 'down' : '', fmtPct(t.pct)));
+    if (Number.isFinite(t.last)) cur.appendChild(el('span', 'tip-price ' + dir(t.pct), fmtPrice(t.last)));
+    cur.appendChild(el('span', dir(t.pct), fmtPct(t.pct)));
     tip.appendChild(cur);
     tip.appendChild(el('div', 'tip-name', (t.name && t.name !== t.sym ? t.name + ' · ' : '') + fmtCap(t.cap)));
     const peers = sector.tiles
@@ -659,7 +702,7 @@ function renderHeatmap(hm, lamp) {
       const row = el('div', 'tip-row' + (p.sym === t.sym ? ' tip-cur' : ''));
       row.appendChild(el('span', '', p.sym));
       row.appendChild(el('span', 'tip-price', Number.isFinite(p.last) ? fmtPrice(p.last) : ''));
-      row.appendChild(el('span', p.pct > 0 ? 'up' : p.pct < 0 ? 'down' : '', fmtPct(p.pct)));
+      row.appendChild(el('span', dir(p.pct), fmtPct(p.pct)));
       tip.appendChild(row);
     }
     tip.style.display = 'block';
@@ -670,6 +713,7 @@ function renderHeatmap(hm, lamp) {
   };
   const hideHover = () => {
     tip.style.display = 'none';
+    unlightBand();
     focusGroup.setAttribute('visibility', 'hidden');
     focusTile.setAttribute('visibility', 'hidden');
   };
@@ -677,17 +721,26 @@ function renderHeatmap(hm, lamp) {
   const drawTiles = (tiles, x, y, w, h, sector) => {
     for (const t of squarify(tiles.map(t => ({ ...t, value: t.cap })), x, y, w, h)) {
       if (t.w < 3 || t.h < 3) continue;
-      const rect = svgEl('rect', {
-        x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1),
-        fill: heatColor(t.pct), rx: 2,
-      });
+      const geo = { x: t.x + 1, y: t.y + 1, width: Math.max(t.w - 2, 1), height: Math.max(t.h - 2, 1), rx: 2 };
+      const rect = svgEl('rect', { ...geo, fill: heatColor(t.pct) });
       svg.appendChild(rect);
-      if (t.w >= 44 && t.h >= 22) {
-        const sym = svgEl('text', { x: t.x + t.w / 2, y: t.y + t.h / 2 + (t.h >= 38 ? -3 : 4), 'text-anchor': 'middle', fill: heatInk(t.pct), 'font-size': Math.min(14, Math.max(10, t.w / 6)), 'font-weight': '600', 'font-family': 'var(--font-mono)' });
+      svg.appendChild(svgEl('rect', { ...geo, fill: 'url(#heatGloss)', 'pointer-events': 'none' }));
+
+      /* finviz label scaling: the ticker grows to fill its tile (mega-caps read
+         from across the room), tiny tiles still print at 6px. Bold sans glyphs
+         run ~0.60em wide. The halo carries glyph contrast on any fill, so the
+         bevel overlay is text-safe and every threshold can run tight. */
+      const fs = Math.min(t.h * 0.46, (t.w - 6) / (t.sym.length * 0.64), 38);
+      if (fs >= 6) {
+        const pfs = Math.max(6, Math.round(fs * 0.42));
+        const withPct = fs >= 8 && t.h >= fs + pfs + 7 && t.w >= 30;
+        const cy = t.y + t.h / 2;
+        const symY = withPct ? cy - 1 : cy + fs * 0.36;
+        const sym = heatText({ x: t.x + t.w / 2, y: symY, 'text-anchor': 'middle', 'font-size': fs.toFixed(1), 'font-weight': '700', 'font-family': 'var(--font-sans)' }, fs);
         sym.textContent = t.sym;
         svg.appendChild(sym);
-        if (t.h >= 38) {
-          const pctEl = svgEl('text', { x: t.x + t.w / 2, y: t.y + t.h / 2 + 12, 'text-anchor': 'middle', fill: heatInk(t.pct), 'font-size': '10', 'font-family': 'var(--font-mono)' });
+        if (withPct) {
+          const pctEl = heatText({ x: t.x + t.w / 2, y: cy + pfs + 2, 'text-anchor': 'middle', 'font-size': pfs, 'font-family': 'var(--font-mono)' }, pfs);
           pctEl.textContent = fmtPct(t.pct);
           svg.appendChild(pctEl);
         }
@@ -701,7 +754,9 @@ function renderHeatmap(hm, lamp) {
   for (const s of sectorRects) {
     if (s.w < 4 || s.h < HEAD + 6) continue;
     if (s.w > 64 && s.h > 40) {
-      const label = svgEl('text', { x: s.x + 4, y: s.y + 12, fill: HEAT.label, 'font-size': '10', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
+      /* solid header strip (finviz) instead of a floating caption */
+      svg.appendChild(svgEl('rect', { x: s.x + 1, y: s.y + 1, width: Math.max(s.w - 2, 1), height: HEAD - 2, fill: '#1E2129' }));
+      const label = svgEl('text', { x: s.x + 5, y: s.y + 12, fill: '#D9DEE8', 'font-size': '10', 'font-weight': '600', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
       label.textContent = s.name.toUpperCase().slice(0, Math.floor(s.w / 7));
       svg.appendChild(label);
     }
@@ -722,10 +777,12 @@ function renderHeatmap(hm, lamp) {
         groupRects.set(s.name + '|' + g.ind, { x: g.x, y: g.y, w: g.w, h: g.h });
         const hasBand = g.w > 58 && g.h > 40;
         if (hasBand) {
-          svg.appendChild(svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: HEAT.band }));
-          const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: HEAT.label, 'font-size': '7', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
+          const bandRect = svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: HEAT.band });
+          svg.appendChild(bandRect);
+          const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: HEAT.label, 'font-size': '7', 'font-weight': '600', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
           bl.textContent = g.ind.toUpperCase().slice(0, Math.floor(g.w / 5));
           svg.appendChild(bl);
+          bandEls.set(s.name + '|' + g.ind, { rect: bandRect, text: bl });
         }
         drawTiles(g.tiles, g.x, g.y + (hasBand ? BAND + 1 : 0), g.w, g.h - (hasBand ? BAND + 1 : 0), s);
       }
