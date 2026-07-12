@@ -8,7 +8,8 @@
 > Lesson · Relative Strength · Bulls and Bears · Earnings · Order Entry ·
 > Stops · Taking Profits. Pattern series (in progress): Dark Cloud · Head
 > and Shoulders · Power Stocks · W Formations · Doji · PRO 2 Snapback ·
-> PRO 2 Quick Lesson · Broken Stair Step · Brothers Grimm.
+> PRO 2 Quick Lesson · Broken Stair Step · Brothers Grimm. Advanced: Short
+> Pro 1/Pro 2 · SMA Lines · Daily Stochastic Pro 1 · Pro 2 and Pro 3 lesson.
 
 ## The three tiers
 
@@ -244,6 +245,44 @@ clusters at a failed bounce into the moving-average/resistance zone — the
 "brothers" — after which the downtrend resumes (AAPL demo during a
 sell-off). ⚠️ Visual-only study: the precise defining rules for the pair
 are spoken, not drawn — owner should confirm/refine this one's definition.
+
+## Advanced lessons
+
+### Short Pro 2
+The short side of the long-term tier (older course name: "Shorting MV2"):
+the WEEKLY stochastic topping and rolling out of the overbought band is the
+short trigger — the exact mirror of the snapback/bottom-hook buy. Expressed
+long-only via inverse ETFs per the desk rules. The weekly roll is the
+regime-scale signal; it outranks anything the daily is doing.
+
+### Short Pro 1
+The daily-tier short ("Shorting MV1"): the DAILY stochastic's top-roll out
+of the overbought band, taken only when the weekly regime is already
+bearish — the mirror of "daily entries in the direction the weekly
+permits." Boxed demos pair the daily roll with the price breakdown.
+
+### SMA Lines
+The moving-average stack as layered dynamic support/resistance: several
+SMAs of increasing lookback on the daily chart. Price above the stack =
+healthy; price slicing through the short SMAs and falling toward the long
+ones maps the decline's depth. The MA zone is also where failed bounces
+stall (see Brothers Grimm) — making the stack the natural placement guide
+for stops and short entries.
+
+### Daily Stochastic Pro 1
+A full year of SPY's daily stochastic annotated signal-by-signal: every
+bottom-cross circled as a buy, every top-roll circled as a sell, plus a
+third marked class for filtered/failed signals. The lesson's point is
+repetition — the SAME two signals fire all year long; the skill is taking
+them mechanically in the weekly's direction and skipping the filtered
+class. (This is precisely the marker overlay planned for the workbench.)
+
+### Phil's Pro 2 and Pro 3 lesson
+The applied review routine, run across many names in sequence: for each
+candidate read the WEEKLY stochastic's position first (the per-name %K/%D
+readout), then drop to the daily and intraday tiers for timing and
+execution. Same rhythm, name after name — the tiers are one funnel:
+weekly state → daily signal → intraday entry.
 
 ## Candle vocabulary
 
