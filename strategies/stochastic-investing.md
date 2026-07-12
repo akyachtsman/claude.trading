@@ -4,8 +4,9 @@
 > materials (Beginner's-license tier, 2026-07) — method and rules restated in
 > our own words, not course content. One file per strategy; this is the angle
 > the watchlist-charts panel is built to serve.
-> Lessons covered: Definitions · Stochastic Lesson · Relative Strength ·
-> Bulls and Bears · Earnings · Order Entry · Taking Profits (one more to come).
+> Lessons covered (complete Beginner's-license set): Definitions · Stochastic
+> Lesson · Relative Strength · Bulls and Bears · Earnings · Order Entry ·
+> Stops · Taking Profits.
 
 ## The three tiers
 
@@ -142,6 +143,23 @@ VERIFY — the order in the orders screen and the fill in positions. Market
 orders guarantee the fill, limit orders the price (consistent with the
 stop-order definitions above). Practice the round trip on paper before real
 size.
+
+### Stops
+Protection is placed IN THE BROKER, not in your head — the lesson is a
+ticket walkthrough of every protective order type on a live position (their
+example runs on SH, the inverse ETF, so it covers both directions):
+- **Stop-market** ("absolute" stop): trigger price → market order. The
+  default for protection — guarantees the exit, not the price.
+- **Stop-limit**: trigger + limit pair (e.g., stop $15.31 / limit $14.01) —
+  guarantees price, risks no fill in a gap; the pair is set with the limit
+  BELOW the stop to leave fill room.
+- **Percentage trailing stop**: the stop ratchets up with price by a set
+  percent — locks in gains mechanically along the sweet-spot ride.
+- **Duration matters**: protective stops run **GTC** (good-till-canceled),
+  not Day — protection that expires at the close isn't protection.
+- Inverse positions get the mirror treatment (buy-to-cover stops above).
+Placement logic follows the levels section: stops live just beyond the
+S/R line that invalidates the trade.
 
 ### Taking profits
 The exit is the stochastic top-roll (see the cycle anatomy): when %K rolls
