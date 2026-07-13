@@ -882,17 +882,25 @@ const WB3_ZOOMS = [['5D', 5], ['10D', 10], ['1M', 21]];     /* Pro 3 window, in 
 /* per-pane configuration (their settings menu, in our idiom) — persisted */
 const WB_CFG_KEY = 'wb_cfg_v2';
 const WB_CFG_DEFAULT = () => ({
-  p1: { type: 'candle', vol: true, stoch: true, smas: { 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true } },
-  p2: { type: 'candle', vol: true, stoch: true, smas: { 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false } },
-  p3: { type: 'candle', vol: true, stoch: true, smas: { 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false } },
+  p1: { type: 'candle', vol: true, stoch: true, stochW: false, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p2: { type: 'candle', vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p3: { type: 'candle', vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
 });
 function loadWbCfg() {
   try {
     const raw = JSON.parse(localStorage.getItem(WB_CFG_KEY));
     if (raw && raw.p1 && raw.p2) {
-      /* older stored shapes lack p3/type — merge over defaults */
+      /* older stored shapes lack newer keys — deep-merge over defaults */
       const def = WB_CFG_DEFAULT();
-      for (const k of ['p1', 'p2', 'p3']) raw[k] = Object.assign(def[k], raw[k]);
+      for (const k of ['p1', 'p2', 'p3']) {
+        const d = def[k], r = raw[k] || {};
+        raw[k] = {
+          ...d, ...r,
+          smas: { ...d.smas, ...(r.smas || {}) },
+          sr: { ...d.sr, ...(r.sr || {}) },
+          smaPrice: { ...d.smaPrice, ...(r.smaPrice || {}) },
+        };
+      }
       return raw;
     }
   } catch { /* fall through */ }
@@ -901,7 +909,7 @@ function loadWbCfg() {
 function saveWbCfg() {
   try { localStorage.setItem(WB_CFG_KEY, JSON.stringify(wbState.cfg)); } catch { /* storage unavailable — session-only */ }
 }
-const SMA_COLORS = { 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-series-2)', 200: 'var(--color-text-secondary)' };
+const SMA_COLORS = { 1: 'var(--color-text-primary)', 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-series-2)', 200: 'var(--color-text-secondary)' };
 const ytdBars = bars => { const y = bars.t[bars.t.length - 1].slice(0, 4); let n = 0; for (let i = bars.t.length - 1; i >= 0 && bars.t[i].slice(0, 4) === y; i--) n++; return Math.max(n, 5); };
 const paneWindow = (spec, bars) => spec === 'ytd' ? ytdBars(bars) : spec;
 let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg } */
@@ -945,6 +953,22 @@ function monthlyPivots(s) {
    through %D from at/below the oversold band; a SELL is the top-roll — %K
    crossing down through %D from at/above the overbought band. (strategies/
    stochastic-investing.md — the cycle anatomy.) */
+/* Weekly stochastic projected onto daily bars (step lines): each daily bar
+   carries the last COMPLETED week's %K/%D — matches how the reference
+   platform overlays its weekly stochastic on the daily tier. */
+function weeklyStochOnDaily(daily) {
+  const wk = toWeeklyBars(daily);
+  const wst = stochSeries(wk);
+  const k = new Array(daily.c.length).fill(null);
+  const d = new Array(daily.c.length).fill(null);
+  let wi = -1;
+  for (let i = 0; i < daily.c.length; i++) {
+    while (wi + 1 < wk.t.length && wk.t[wi + 1] <= daily.t[i]) wi++;
+    if (wi >= 0) { k[i] = wst.k[wi]; d[i] = wst.d[wi]; }
+  }
+  return { k, d };
+}
+
 function stochMarks(st) {
   const buys = [], sells = [];
   for (let i = 1; i < st.k.length; i++) {
@@ -1044,9 +1068,19 @@ function renderCharts(data, lamp) {
     const x = i => x0 + 6 + (i - i0 + 0.5) / n * plotW;
     const slotW = plotW / n;
     const bodyW = Math.max(1, Math.min(9, slotW * 0.66));
-    const pY = 22, pH = H - 22 - 58 - 96 - 30;   /* caption/price/volume/stoch/labels */
-    const vY = pY + pH + 8, vH = 50;
-    const sY = vY + vH + 14, sH = 88;
+    /* vertical layout flexes with the toggles: price takes whatever the
+       volume strip and 1–2 stochastic strips (native + weekly) leave over */
+    const strips = [];
+    if (opts.cfg.stoch) strips.push(['native', st, opts.stochCaption, true]);
+    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || 'STOCH 13-3-3 · WEEKLY (13)', false]);
+    const vH = opts.cfg.vol ? 50 : 0;
+    const sH = strips.length === 2 ? 68 : 88;
+    const pY = 22;
+    const pH = H - pY - 30 - (vH ? vH + 8 : 0) - strips.length * (sH + 14);
+    const vY = pY + pH + (vH ? 8 : 0);
+    let stripCursor = vY + vH;
+    const stripTops = strips.map(() => { stripCursor += 14; const y = stripCursor; stripCursor += sH; return y; });
+    const chartBot = strips.length ? stripCursor : vY + vH;
 
     text(caption, x0 + 6, 13, { 'font-size': 9, 'font-weight': 600, 'letter-spacing': '.08em', 'font-family': 'var(--font-sans)' });
 
@@ -1085,6 +1119,19 @@ function renderCharts(data, lamp) {
       if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 1, 'stroke-opacity': 0.8 }));
     }
 
+    /* SMA price display — right-edge tag at each enabled SMA's latest
+       visible value, colored to match its line */
+    for (const len of [1, 25, 50, 100, 200]) {
+      if (!(opts.cfg.smaPrice || {})[len] || end < len) continue;
+      let sum = 0;
+      for (let j = end - len; j < end; j++) sum += bars.c[j];
+      const v = sum / len;
+      if (v <= lo || v >= hi) continue;
+      const yv = py(v);
+      svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW + 2, y: yv - 6, width: padR - 10, height: 12, rx: 2, fill: SMA_COLORS[len] }));
+      text(fmtPrice(v), x0 + 6 + plotW + 5, yv + 3, { fill: 'var(--color-bg)', 'font-size': 8, 'font-weight': 600 });
+    }
+
     let vMax = 0;
     if (opts.cfg.vol) for (let i = i0; i < end; i++) vMax = Math.max(vMax, bars.v[i]);
     const isLine = opts.cfg.type === 'line';
@@ -1105,38 +1152,43 @@ function renderCharts(data, lamp) {
     if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
     if (opts.cfg.vol) text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
 
-    /* stochastic strip + doctrine markers */
-    const sy = v => sY + sH - v / 100 * sH;
-    if (opts.cfg.stoch) {
-    for (const g of [20, 80]) {
-      line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.grid, 'stroke-width': 1, 'stroke-dasharray': '3 3' });
-      text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
-    }
-    for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
-      let d = '';
-      for (let i = i0; i < end; i++) {
-        if (st[key][i] == null) continue;
-        d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sy(st[key][i]).toFixed(1);
+    /* stochastic strips (native + optional weekly) + doctrine markers */
+    strips.forEach(([which, series, capText, withMarks], si) => {
+      const yTop = stripTops[si];
+      const sy = v => yTop + sH - v / 100 * sH;
+      for (const g of [20, 80]) {
+        line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.grid, 'stroke-width': 1, 'stroke-dasharray': '3 3' });
+        text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
       }
-      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 1.5 }));
-    }
-    for (const i of marks.buys) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
-    for (const i of marks.sells) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
-    text(opts.stochCaption, x0 + 6, sY - 4, { 'font-size': 8, 'letter-spacing': '.08em' });
-    const pinned = stochPinned(st);
-    if (pinned) {
-      const bx = x0 + plotW - 104;
-      svg.appendChild(svgEl('rect', { x: bx, y: sY - 12, width: 112, height: 12, rx: 2, fill: 'var(--color-accent)', 'fill-opacity': 0.15 }));
-      text(pinned + ' — TREND', bx + 4, sY - 3, { 'font-size': 7, fill: 'var(--color-accent)', 'letter-spacing': '.04em' });
-    }
-    }
+      for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
+        let d = '';
+        for (let i = i0; i < end; i++) {
+          if (series[key][i] == null) continue;
+          d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sy(series[key][i]).toFixed(1);
+        }
+        if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 1.5 }));
+      }
+      if (withMarks) {
+        for (const i of marks.buys) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
+        for (const i of marks.sells) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
+      }
+      text(capText, x0 + 6, yTop - 4, { 'font-size': 8, 'letter-spacing': '.08em' });
+      if (which === 'native') {
+        const pinned = stochPinned(st);
+        if (pinned) {
+          const bx = x0 + plotW - 104;
+          svg.appendChild(svgEl('rect', { x: bx, y: yTop - 12, width: 112, height: 12, rx: 2, fill: 'var(--color-accent)', 'fill-opacity': 0.15 }));
+          text(pinned + ' — TREND', bx + 4, yTop - 3, { 'font-size': 7, fill: 'var(--color-accent)', 'letter-spacing': '.04em' });
+        }
+      }
+    });
 
     /* month gridlines (labels only where they have ≥48px of room) */
     let lastLabelX = -Infinity;
     for (let i = i0 + 1; i < end; i++) {
       if (bars.t[i].slice(0, 7) !== bars.t[i - 1].slice(0, 7)) {
         const gx = x(i) - slotW / 2;
-        line(gx, pY, gx, sY + sH, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.5 });
+        line(gx, pY, gx, chartBot, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.5 });
         if (gx - lastLabelX >= 48) {
           text(bars.t[i].slice(0, 7), gx + 2, H - 4, { 'font-size': 8 });
           lastLabelX = gx;
@@ -1145,9 +1197,9 @@ function renderCharts(data, lamp) {
     }
 
     /* per-pane crosshair + readout */
-    const cross = svgEl('line', { y1: pY, y2: sY + sH, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    const cross = svgEl('line', { y1: pY, y2: chartBot, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(cross);
-    const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: sY + sH - pY, fill: 'transparent', style: 'cursor: grab' });
+    const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: chartBot - pY, fill: 'transparent', style: 'cursor: grab' });
     svg.appendChild(overlay);
     overlay.addEventListener('pointerdown', ev => {
       ev.preventDefault();
@@ -1179,6 +1231,7 @@ function renderCharts(data, lamp) {
       }
       if (smaParts.length) tip.appendChild(el('div', '', smaParts.join(' · ')));
       if (st.k[i] != null) tip.appendChild(el('div', '', 'Stoch %K ' + st.k[i].toFixed(0) + ' · %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0))));
+      if (opts.cfg.stochW && opts.stW && opts.stW.k[i] != null) tip.appendChild(el('div', '', 'Weekly %K ' + opts.stW.k[i].toFixed(0) + ' · %D ' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0))));
       tip.style.display = 'block';
       const wrap = svg.parentElement.getBoundingClientRect();
       const sx = wrap.width / W;
@@ -1206,6 +1259,7 @@ function renderCharts(data, lamp) {
       window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off',
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
       pivots: d.piv, smas: smaList(wbState.cfg.p1),
+      stW: wbState.cfg.p1.stochW ? weeklyStochOnDaily(d.bars) : null,
       stochCaption: 'STOCH 13-3-3 · DAILY',
     }]);
   }
@@ -1218,6 +1272,7 @@ function renderCharts(data, lamp) {
       window: paneWindow(wbState.wdays, wk), offset: wbState.woff, panKey: 'woff',
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
+      stW: wbState.cfg.p2.stochW ? wst : null,
       stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
     }]);
   }
@@ -1230,6 +1285,7 @@ function renderCharts(data, lamp) {
       window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3',
       tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
       pivots: d.piv, smas: smaList(wbState.cfg.p3),
+      stW: wbState.cfg.p3.stochW ? weeklyStochOnDaily(d.bars) : null,
       stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
     }]);
   }
@@ -1300,11 +1356,14 @@ function buildWbSettings() {
     group('Indicators', [
       ['Volume', () => cfg.vol, v => { cfg.vol = v; }],
       ['Stochastic', () => cfg.stoch, v => { cfg.stoch = v; }],
+      ['Stochastic weekly', () => cfg.stochW, v => { cfg.stochW = v; }],
     ]);
-    group('Moving averages', [25, 50, 100, 200].map(n =>
+    group('Moving averages', [25, 50, 100, 200, 1].map(n =>
       ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));
     group('Support / resistance', [1, 2, 3].map(n =>
       ['S' + n + ' / R' + n, () => cfg.sr[n], v => { cfg.sr[n] = v; }]));
+    group('SMA price display', [25, 50, 100, 200, 1].map(n =>
+      ['SMA (' + n + ')', () => cfg.smaPrice[n], v => { cfg.smaPrice[n] = v; }]));
     cols.appendChild(col);
   }
   pop.appendChild(cols);
