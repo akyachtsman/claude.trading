@@ -144,6 +144,13 @@ run for real against the dedicated project on every PR.
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER rail cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps` delayed quotes, live mode only) and Russell 2000 render disabled in demo | Cut doesn't re-render, period gating wrong, or pending rows clickable |
 | S14 | Live-feed canary (live only) | Masthead lamp reads LIVE with a "Fetched" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 allowlists console errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design; S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or S1 allowlist widened beyond the feed origin |
 
+## Owner Communication Preferences
+- **Explanations of how things work (data flows, architecture, processes):
+  lead with a simple table** — one row per component, plain-language columns
+  (what / where it comes from / when it updates / how it reaches the user) —
+  followed by at most two takeaway sentences. No jargon in the cells;
+  mechanism detail only if asked. (Owner preference, 2026-07-13.)
+
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:
 - `implementation-summary.md`, `test-report.md`, `ui-test-report.md`
