@@ -21,7 +21,7 @@ group. `[P]` = parallel-safe within its group.
   `fetch-heatmap.js`; chain = Nasdaq screener → Yahoo v7 crumb quote →
   spark + 24h module cap cache; 300-tile floor → `ok:false`; same
   `{sectors}` shape as `data/heatmap.json`; session-aware TTL.
-- [ ] **A3 [P]** `supabase/functions/desk-charts/index.ts`: port
+- [x] **A3 [P]** `supabase/functions/desk-charts/index.ts`: port
   `fetch-charts.js` (Stooq EOD → Yahoo v8 chart per symbol) with parallel
   batches (no etiquette sleeps), per-symbol cache priming, 30-min TTL for
   history bars + session-aware TTL for the latest bar, `partial:true` under
