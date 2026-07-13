@@ -54,12 +54,12 @@ group. `[P]` = parallel-safe within its group.
 
 ## Group B — scheduled jobs (PR B)
 
-- [ ] **B1 [P]** `supabase/functions/desk-ibkr-sync/index.ts`: port
+- [x] **B1 [P]** `supabase/functions/desk-ibkr-sync/index.ts`: port
   `fetch-ibkr.js` — Flex SendRequest/GetStatement with polling capped at
   60s (not-ready exits honestly; the retry slot is the recovery), same
   idempotent upsert + expected-as-of guard; requires
   `x-cron-secret` header matching `CRON_SECRET` env; 401 otherwise.
-- [ ] **B2 [P]** `supabase/functions/desk-brief/index.ts`: port
+- [x] **B2 [P]** `supabase/functions/desk-brief/index.ts`: port
   `generate-brief.js` with the FR-AI4 grounding guard verbatim; grounding
   context assembled from `desk-market`/`desk-charts`/`desk-heatmap`
   responses (not `data/*.json`); same `CRON_SECRET` gate; writes the same
@@ -79,7 +79,7 @@ group. `[P]` = parallel-safe within its group.
   `desk-ibkr-sync` once via pg_net with the secret and verify the upsert
   guard response; verify `desk-brief` at its next slot (or fire once) —
   check `cron.job_run_details` and the brief row.
-- [ ] **B6** `.github/workflows/data-refresh.yml`: remove the IBKR and
+- [x] **B6** `.github/workflows/data-refresh.yml`: remove the IBKR and
   brief steps (workflow shell remains until Group C).
 - [ ] **B7** Gates + `qa-pipeline`; PR B merge on green + owner approval
   (backend class); confirm next-morning accounts/brief lamps are fresh.
