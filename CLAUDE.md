@@ -28,8 +28,11 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `index.html` — markup only + 3 script tags; all render-blocking assets share
   ONE `?v=` cache-bust token (bump them together on every asset change).
 - `scripts/config.js` — account roster (`DESK_ACCOUNTS`) + backend endpoints
-  (`DESK_DB`). **Empty `DESK_DB.url` ⇒ the whole site runs in DEMO mode**
-  (current state — awaiting a dedicated Supabase project).
+  (`DESK_DB`). **Empty `DESK_DB.url` ⇒ the whole site runs in DEMO mode.**
+  Current state: **LIVE** on the dedicated Supabase project ("trading
+  dashboard", `kwugzhyfjevzwgplhtsd`, wired in PR #19) — RLS tables +
+  SECURITY DEFINER PIN RPCs + the `desk-ask` edge function are deployed and
+  the pipeline upserts nightly. Demo remains reachable via `?demo=1`.
 - `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
   mode resolution, public JSON loaders (cache-busted), staleness lamps,
   Supabase RPC + edge-function fetch wrappers.
@@ -103,7 +106,7 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | Key | Value |
 |---|---|
 | App URL | `https://akyachtsman.github.io/claude.trading/` (demo state: append `?demo=1` for deterministic data) |
-| Valid test credential | repo secret `TEST_AUTH_CREDENTIAL` (name only — never commit the value; unset while the site runs demo-only) |
+| Valid test credential | repo secret `TEST_AUTH_CREDENTIAL` (name only — never commit the value; set — S10 exercises the live unlock path in CI) |
 | Invalid test credential | `000000` |
 | Primary nav button | `Consolidate accounts` |
 | Primary content selector | `.account .hero-number` |
@@ -114,7 +117,8 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 ## Project-Specific Test Scenarios
 Authoritative list of coverage beyond the generic S1–S4 suite — one
 `app.spec.js` scenario per row, numbered from S5. Live-gated rows skip
-cleanly while `DESK_DB` is empty (demo-only state).
+cleanly while `DESK_DB` is empty; with the desk LIVE (current state) S10/S11
+run for real against the dedicated project on every PR.
 | # | Feature | What to verify | Failure indicator |
 |---|---|---|---|
 | S5 | Demo lamps | With `?demo=1`, masthead shows "Demo data" and every panel lamp (equity, brief, news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |

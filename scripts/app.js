@@ -1355,6 +1355,41 @@ function wireCharts() {
     layoutSeg.appendChild(b);
   }
 
+  /* Any-ticker box: watchlist symbols switch instantly; unknown tickers go
+     through the PIN-gated quote-proxy in live mode (demo/locked ⇒ note). */
+  const symForm = document.getElementById('wbSymForm');
+  const symInput = document.getElementById('wbSymInput');
+  const symNote = document.getElementById('wbSymNote');
+  symForm.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!wbState) return;
+    const sym = symInput.value.trim().toUpperCase();
+    if (!/^[A-Z0-9.^-]{1,10}$/.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
+    const pick = () => {
+      wbState.sym = sym;
+      wbState.off = wbState.woff = wbState.off3 = 0;
+      renderCharts(wbState.data, wbState.lamp);
+    };
+    if (wbState.data.symbols[sym]) { symNote.textContent = ''; pick(); return; }
+    if (DESK.mode === 'demo' || !DESK.authed) {
+      symNote.textContent = 'Unlock the desk to load tickers beyond the watchlist';
+      return;
+    }
+    symNote.textContent = 'Loading ' + sym + '…';
+    try {
+      const out = await deskQuote(sessionStorage.getItem('desk_pin'), sym, 'daily');
+      if (!out.ok || !out.series || out.series.c.length < 30) {
+        symNote.textContent = out.error || 'No data found for ' + sym;
+        return;
+      }
+      wbState.data.symbols[sym] = out.series;
+      symNote.textContent = sym + ' · live fetch · as of ' + out.asOf;
+      pick();
+    } catch {
+      symNote.textContent = 'Quote service unreachable — try again';
+    }
+  });
+
   const gear = document.getElementById('wbGear');
   const pop = document.getElementById('wbSettings');
   gear.addEventListener('click', () => {
