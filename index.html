@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260713l">
-<link rel="stylesheet" href="styles/components.css?v=20260713l">
+<link rel="stylesheet" href="styles/tokens.css?v=20260713m">
+<link rel="stylesheet" href="styles/components.css?v=20260713m">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -125,6 +125,21 @@
   .wb-set-reset:hover, .wb-set-reset:focus-visible { border-color: var(--color-border-hover); }
   .wb-set-reset:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
 
+  /* heatmap MAP FILTER rail (finviz-parity side panel; owner request) */
+  .heat-grid { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+  .map-filter-title { margin: 0 0 4px; font: 600 10px/1.4 var(--font-sans); letter-spacing: .1em; text-transform: uppercase; color: var(--color-text-secondary); }
+  #mapFilterNav { display: flex; flex-direction: column; }
+  .map-filter-btn { display: block; width: 100%; text-align: left; padding: 7px 6px; border: 0; border-bottom: 1px solid var(--color-border); background: none; font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-accent); cursor: pointer; }
+  .map-filter-btn:hover { color: var(--color-accent-bright); }
+  .map-filter-btn[aria-current="true"] { color: var(--color-text-primary); font-weight: 700; }
+  .map-filter-btn:disabled { color: var(--color-text-secondary); opacity: .55; cursor: default; }
+  .map-period { width: 100%; margin-top: 8px; min-height: 40px; padding: 4px 6px; font: 500 var(--font-xs)/1.4 var(--font-sans); }
+  @media (max-width: 900px) {
+    .heat-grid { grid-template-columns: 1fr; }
+    #mapFilterNav { flex-direction: row; flex-wrap: wrap; gap: 2px; }
+    .map-filter-btn { width: auto; border-bottom: 0; }
+  }
+
   /* heatmap (in the main column; height set by JS to match render size) */
   .heat-wrap { position: relative; }
   #heatmapSvg { display: block; width: 100%; height: 520px; }
@@ -193,9 +208,16 @@
           <span class="stamp ml-auto" id="heatStamp">—</span>
         </div>
         <div class="panel-body">
-          <div class="heat-wrap">
-            <svg id="heatmapSvg" viewBox="0 0 1200 520" preserveAspectRatio="none" role="img" aria-label="S&amp;P 500 heatmap: tile size is market cap, color is day change; a movers table follows"></svg>
-            <div class="chart-tip" id="heatTip"></div>
+          <div class="heat-grid">
+            <aside class="map-filter" aria-label="Map filter">
+              <p class="map-filter-title">Map filter</p>
+              <nav id="mapFilterNav" aria-label="Heatmap universe"></nav>
+              <select class="input map-period" id="heatPeriod" aria-label="Performance period"></select>
+            </aside>
+            <div class="heat-wrap">
+              <svg id="heatmapSvg" viewBox="0 0 1200 520" preserveAspectRatio="none" role="img" aria-label="Market heatmap: tile size is market cap, color is performance; a movers table follows"></svg>
+              <div class="chart-tip" id="heatTip"></div>
+            </div>
           </div>
           <div class="heat-legend" id="heatLegend"></div>
           <details class="chart-data">
@@ -329,8 +351,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260713l"></script>
-<script src="scripts/data.js?v=20260713l"></script>
-<script src="scripts/app.js?v=20260713l"></script>
+<script src="scripts/config.js?v=20260713m"></script>
+<script src="scripts/data.js?v=20260713m"></script>
+<script src="scripts/app.js?v=20260713m"></script>
 </body>
 </html>
