@@ -719,9 +719,10 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await page.locator('#chartLayout button', { hasText: 'Split' }).click();
   await expect(chart).toContainText('PRO 1 · DAILY');
 
-  // settings popover opens with per-pane controls (3 panes × 6 radios + 27 checkboxes)
+  // settings popover opens with per-pane controls (3 panes × 6 radios + 48 checkboxes:
+  // vol, stoch, stoch-weekly, 5 SMAs, 3 S/R, 5 SMA-price per pane)
   await page.locator('#wbGear').click();
   await expect(page.locator('#wbSettings')).toBeVisible();
   expect(await page.locator('#wbSettings input[type=radio]').count()).toBe(6);
-  expect(await page.locator('#wbSettings input[type=checkbox]').count()).toBe(27);
+  expect(await page.locator('#wbSettings input[type=checkbox]').count()).toBe(48);
 });
