@@ -73,7 +73,8 @@ export function mergeFeedConfig(fileCfg: any, defaults = DEFAULT_FEED_CONFIG): F
     ? fileCfg.general.filter((f: any) => f && typeof f.url === 'string' && /^https:\/\//.test(f.url) && f.src)
     : defaults.general;
   return {
-    general: general.length ? general : defaults.general,
+    // cap 8: bounds server-side egress even if the committed config balloons
+    general: (general.length ? general : defaults.general).slice(0, 8),
     perTicker: {
       enabled: fileCfg.perTicker?.enabled !== false,
       maxPerSymbol: Number(fileCfg.perTicker?.maxPerSymbol) > 0 ? Number(fileCfg.perTicker.maxPerSymbol) : defaults.perTicker.maxPerSymbol,
@@ -147,7 +148,7 @@ export function dedupeRank(items: Item[], held: string[], maxItems = 20): Item[]
     if (!key || seen.has(key)) continue;
     seen.add(key);
     const chips = it.chip ? [it.chip]
-      : held.filter((sym) => new RegExp(`\\b${sym.replace('.', '\\.')}\\b`).test(it.title.toUpperCase())).slice(0, 2);
+      : held.filter((sym) => new RegExp(`\\b${sym.replaceAll('.', '\\.')}\\b`).test(it.title.toUpperCase())).slice(0, 2);
     uniq.push({ ...it, chips });
   }
   uniq.sort((a, b) => {
@@ -177,14 +178,10 @@ function nyTodayIso(): string {
 }
 
 let cache: { at: number; body: unknown } | null = null;
+let inflight: Promise<unknown> | null = null; // single-flight: one refresh per burst
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
-
-  if (cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
-
-  try {
+async function refresh(): Promise<unknown> {
+  {
     const cfgRes = await fetch(CONFIG_URL, { headers: UA }).catch(() => null);
     const cfg = mergeFeedConfig(cfgRes && cfgRes.ok ? await cfgRes.json().catch(() => null) : null);
     const held = cfg.perTicker.enabled ? await heldTickers() : [];
@@ -224,7 +221,19 @@ Deno.serve(async (req) => {
       })),
     };
     cache = { at: Date.now(), body };
-    return reply(200, body);
+    return body;
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
+
+  if (cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
+
+  try {
+    inflight ??= refresh().finally(() => { inflight = null; });
+    return reply(200, await inflight);
   } catch (e) {
     if (cache) return reply(200, cache.body); // stale-but-honest
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });

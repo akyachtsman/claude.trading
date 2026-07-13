@@ -104,6 +104,7 @@ export function packSeries(rows: Row[]): Packed {
 // ── caches ───────────────────────────────────────────────────────────────────
 let rosterCache: { at: number; list: string[] } | null = null;                    // 1h
 const seriesCache = new Map<string, { at: number; packed: Packed; last: string }>(); // per symbol, 30 min
+let sweepInflight: Promise<void> | null = null;
 
 async function loadWatchlist(): Promise<string[]> {
   if (rosterCache && Date.now() - rosterCache.at < 3_600_000) return rosterCache.list;
@@ -112,7 +113,8 @@ async function loadWatchlist(): Promise<string[]> {
     if (res.ok) {
       const list = await res.json();
       if (Array.isArray(list) && list.length && list.every((s) => typeof s === 'string')) {
-        rosterCache = { at: Date.now(), list: list.map((s: string) => s.trim().toUpperCase()).filter(Boolean) };
+        // cap 40: bounds the upstream fan-out even if the committed roster balloons
+        rosterCache = { at: Date.now(), list: list.map((s: string) => s.trim().toUpperCase()).filter(Boolean).slice(0, 40) };
         return rosterCache.list;
       }
     }
@@ -141,11 +143,14 @@ Deno.serve(async (req) => {
   if (stale.length) {
     // Parallel batches with a first-response budget: don't block the panel
     // paint on a full cold sweep — stragglers finish for the next call.
-    const work = (async () => {
+    // Single-flight: a concurrent burst shares one sweep instead of each
+    // caller launching its own ~25-fetch storm.
+    sweepInflight ??= (async () => {
       for (let i = 0; i < stale.length; i += BATCH) {
         await Promise.all(stale.slice(i, i + BATCH).map(primeSymbol));
       }
-    })();
+    })().finally(() => { sweepInflight = null; });
+    const work = sweepInflight;
     await Promise.race([work, new Promise((r) => setTimeout(r, FIRST_RESPONSE_BUDGET_MS))]);
     // deno-lint-ignore no-explicit-any
     (globalThis as any).EdgeRuntime?.waitUntil?.(work); // let stragglers finish filling the cache

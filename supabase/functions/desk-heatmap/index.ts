@@ -214,14 +214,10 @@ function lastTradingDayIso(): string {
 let constituentsCache: { at: number; list: Constituent[] } | null = null; // 24h
 let capCache: { at: number; caps: Map<string, number> } | null = null;    // 24h, cap-bearing passes only
 let payloadCache: { at: number; body: unknown } | null = null;            // session-aware
+let inflight: Promise<unknown> | null = null; // single-flight: one sweep per burst
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
-
-  if (payloadCache && Date.now() - payloadCache.at < ttlMs()) return reply(200, payloadCache.body);
-
-  try {
+async function refresh(): Promise<unknown> {
+  {
     if (!constituentsCache || Date.now() - constituentsCache.at > 86_400_000) {
       const res = await fetch(CONSTITUENTS_URL, { headers: UA });
       if (!res.ok) throw new Error(`constituents HTTP ${res.status}`);
@@ -258,7 +254,19 @@ Deno.serve(async (req) => {
 
     const body = { ok: true, asOf: lastTradingDayIso(), generatedAt: new Date().toISOString(), source, count: covered, sectors };
     payloadCache = { at: Date.now(), body };
-    return reply(200, body);
+    return body;
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
+
+  if (payloadCache && Date.now() - payloadCache.at < ttlMs()) return reply(200, payloadCache.body);
+
+  try {
+    inflight ??= refresh().finally(() => { inflight = null; });
+    return reply(200, await inflight);
   } catch (e) {
     if (payloadCache) return reply(200, payloadCache.body); // stale-but-honest
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });

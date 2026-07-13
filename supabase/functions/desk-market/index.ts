@@ -156,6 +156,26 @@ export function tenYearTile(rows: { date: string; value: number }[]) {
 
 // ── handler ──────────────────────────────────────────────────────────────────
 let cache: { at: number; body: unknown } | null = null;
+let inflight: Promise<unknown> | null = null; // single-flight: a concurrent burst shares one sweep
+
+async function refresh(): Promise<unknown> {
+  // Parallel: Supabase egress has no runner-IP rate-limit history; the
+  // pipeline's sequential 600ms spacing was an Actions-IP mitigation.
+  const cosd = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const [idxRows, fredCsv] = await Promise.all([
+    Promise.all(MARKET_SYMBOLS.map((m) => dailyCloses(m.sym))),
+    fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }).then((r) => r.text()),
+  ]);
+  const tiles = MARKET_SYMBOLS.map((m, i) => tileFrom(m.name, idxRows[i]));
+  const fredRows = parseFred(fredCsv);
+  if (fredRows.length < 2) throw new Error(`FRED DGS10: ${fredRows.length} usable rows`);
+  tiles.push(tenYearTile(fredRows));
+
+  const asOf = tiles.map((t) => t.asOf).sort().at(-1);
+  const body = { ok: true, asOf, generatedAt: new Date().toISOString(), tiles };
+  cache = { at: Date.now(), body };
+  return body;
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
@@ -164,22 +184,8 @@ Deno.serve(async (req) => {
   if (cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
 
   try {
-    // Parallel: Supabase egress has no runner-IP rate-limit history; the
-    // pipeline's sequential 600ms spacing was an Actions-IP mitigation.
-    const cosd = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-    const [idxRows, fredCsv] = await Promise.all([
-      Promise.all(MARKET_SYMBOLS.map((m) => dailyCloses(m.sym))),
-      fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }).then((r) => r.text()),
-    ]);
-    const tiles = MARKET_SYMBOLS.map((m, i) => tileFrom(m.name, idxRows[i]));
-    const fredRows = parseFred(fredCsv);
-    if (fredRows.length < 2) throw new Error(`FRED DGS10: ${fredRows.length} usable rows`);
-    tiles.push(tenYearTile(fredRows));
-
-    const asOf = tiles.map((t) => t.asOf).sort().at(-1);
-    const body = { ok: true, asOf, generatedAt: new Date().toISOString(), tiles };
-    cache = { at: Date.now(), body };
-    return reply(200, body);
+    inflight ??= refresh().finally(() => { inflight = null; });
+    return reply(200, await inflight);
   } catch (e) {
     if (cache) return reply(200, cache.body); // stale-but-honest beats a dead strip
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });
