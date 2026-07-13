@@ -78,6 +78,16 @@ jobs:
           MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
         run: node fetch-market.js
 
+      # Sequential Stooq CSVs (Yahoo chart fallback per symbol) for the
+      # charts-panel watchlist; runs after market so a Stooq limit surfaces
+      # there first with fewer wasted calls.
+      - name: Fetch chart histories (watchlist OHLCV)
+        if: ${{ !cancelled() }}
+        env:
+          MARKET_BASE_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
+          MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
+        run: node fetch-charts.js
+
       - name: Fetch news (RSS + fallbacks)
         if: ${{ !cancelled() }}
         env:
