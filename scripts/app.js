@@ -1688,6 +1688,13 @@ function wireCharts() {
       renderCharts(wbState.data, wbState.lamp);
     }
   });
+  /* WebKit consumes Enter on a datalist-backed input (no change/implicit
+     submit fires) — route the key to the form's submit path explicitly */
+  symInput.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    symForm.requestSubmit();
+  });
   symForm.addEventListener('submit', async ev => {
     ev.preventDefault();
     if (!wbState) return;

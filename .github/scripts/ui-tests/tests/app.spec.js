@@ -297,10 +297,12 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
 // SCENARIO 3 — Element Mapping & Interaction Sweep
 // ─────────────────────────────────────────────────────────────────────────────
 test('S3: interactive elements discovered and exercised without errors', async ({ page }) => {
-  // The sweep scales with element count (~1.5s settle per element plus
-  // navigation waits) and cannot fit the 30s global timeout on element-rich
-  // apps or mobile-emulated projects.
-  test.setTimeout(240_000);
+  // The sweep scales with element count (settle + capped idle wait per
+  // element) and cannot fit the 30s global timeout on element-rich apps or
+  // mobile-emulated projects. 480s covers ~80 elements at the worst-case
+  // per-element cost; the idle wait below is capped so one slow-settling
+  // page can't eat the whole budget.
+  test.setTimeout(480_000);
   // Public-first apps (knowledge hub, questionnaire) are swept even with no credential;
   // only auth-gated apps with no credential are skipped (decided after page load below).
   const consoleErrors = [];
@@ -351,8 +353,12 @@ test('S3: interactive elements discovered and exercised without errors', async (
 
       if (['button', 'a'].includes(el.tag) || el.type === 'submit' || el.selector.includes('role=button')) {
         await locator.click({ timeout: 3000 });
-        await page.waitForTimeout(1500);
-        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForTimeout(800);
+        // Capped: uncapped networkidle defaults to 30s — a handful of
+        // slow-settling interactions on the live site blows the test budget.
+        // 1.5s: on an unlocked live desk some requests stay pending long
+        // enough that every element would otherwise pay the full cap.
+        await page.waitForLoadState('networkidle', { timeout: 1500 }).catch(() => {});
       } else if (el.tag === 'textarea' ||
                  (el.tag === 'input' &&
                   [null, 'text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(el.type))) {
@@ -364,7 +370,9 @@ test('S3: interactive elements discovered and exercised without errors', async (
         await locator.click({ timeout: 3000 });
       } else if (el.tag === 'select') {
         const options = await locator.locator('option').allTextContents();
-        if (options.length > 1) await locator.selectOption({ index: 1 });
+        // Explicit timeout: a select whose target option is disabled (gated
+        // period dropdown) otherwise waits the 30s default before throwing.
+        if (options.length > 1) await locator.selectOption({ index: 1 }, { timeout: 3000 });
       }
 
       const snapAfter      = await domSnapshot(page);
