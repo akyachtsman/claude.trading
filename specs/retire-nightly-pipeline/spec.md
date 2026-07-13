@@ -101,7 +101,16 @@ definitions, demo mode, and privacy architecture remain authoritative.
 5. **Heatmap upstream source:** delegated to the plan phase (source choice is
    HOW, not WHAT; the requirement is fixed at full-coverage tiles at 5-minute
    freshness).
-6. **FR-R8 amendment (plan-phase finding, 2026-07-13):** browsers log a
+6. **Session-aware cadence (owner, 2026-07-13):** "Real time news when the
+   markets are open; during holidays or when markets are closed it could be
+   much longer intervals — whatever is most practical." → The 5-minute cycle
+   applies while the US equities session is open (Mon–Fri 09:30–16:00 ET,
+   DST-correct, minus a small maintained NYSE holiday list); outside it, all
+   equity-driven feeds (market, heatmap, charts, news) relax to a 60-minute
+   cycle. The crypto/futures map universes keep their own short cadence —
+   those markets don't close. FR-R1..R4's "≤ 5 min" is understood as
+   "≤ 5 min while the session is open."
+7. **FR-R8 amendment (plan-phase finding, 2026-07-13):** browsers log a
    console resource error for *handled* fetch failures too, so "no console
    errors with all feeds down" is not implementable as written. FR-R8 now
    reads: no **unhandled** errors on load; feed-origin resource errors from a

@@ -63,10 +63,18 @@ functions mid-run.
 ### Client (`scripts/data.js`, `scripts/app.js`)
 
 - `deskFeed(name)` wrapper (one function, parameterized) beside `deskMaps()`.
-- **Feed poller:** `startFeedPolling()` — after first successful paint of a
-  live panel, re-fetch its feed every 5 min (`setInterval`, paused on
-  `document.hidden` via `visibilitychange` to save invocations, resumed with
-  an immediate refresh). Every poll failure keeps last-good (FR-R9).
+- **Feed poller, session-aware (Clarification 6):** `startFeedPolling()` —
+  after first successful paint of a live panel, re-fetch its feed on a
+  cadence set by `marketSessionOpen()`: **5 min while the US equities
+  session is open** (Mon–Fri 09:30–16:00 America/New_York via
+  `Intl.DateTimeFormat` — DST-correct with no library — minus an embedded
+  NYSE holiday list, ~10 dates/year, annual-refresh comment attached),
+  **60 min otherwise**. Paused on `document.hidden` via `visibilitychange`,
+  resumed with an immediate refresh. Every poll failure keeps last-good
+  (FR-R9). The same open/closed rule, duplicated in a small Deno helper,
+  stretches each public function's server cache TTL from 5 → 60 min when the
+  session is closed (equity feeds only; desk-maps keeps its own cadence —
+  crypto trades 24/7).
 - **Lazy first load + FR-R8 amendment:** the initial fetch of each feed fires
   from the existing per-panel loaders *after* first paint of the shell — and,
   like desk-maps, a failed feed sets an honest per-panel unavailable state
