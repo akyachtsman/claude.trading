@@ -70,6 +70,12 @@ jobs:
           MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
         run: node fetch-heatmap.js
 
+      # Extra MAP FILTER universes (crypto/futures/world) ride the same v7
+      # crumb right after the heatmap — one small batch (~40 symbols).
+      - name: Fetch extra map universes (crypto/futures/world)
+        if: ${{ !cancelled() }}
+        run: node fetch-maps.js
+
       - name: Fetch market summary (Stooq + FRED)
         if: ${{ !cancelled() }}
         env:

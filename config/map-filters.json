@@ -1,5 +1,60 @@
 {
-  "comment": "MAP FILTER rosters for the heatmap side panel. Hand-maintained snapshots (index membership changes a few times a year) — edit freely; unknown symbols are ignored at render time because every cut intersects the fetched dataset. etfCats groups the chart-watchlist ETFs into map bands.",
+  "comment": "MAP FILTER rosters for the heatmap side panel. Hand-maintained snapshots (index membership changes a few times a year) — edit freely; unknown symbols are ignored at render time because every cut intersects the fetched dataset. etfCats groups the chart-watchlist ETFs into map bands. themes regroups S&P tiles client-side. extra feeds fetch-maps.js: [yahooSymbol, tileTicker, name, group, weightB] — crypto sizes by real market cap, futures/world by the hand weight (× $1B).",
+  "themes": {
+    "AI & semiconductors": ["NVDA", "AVGO", "AMD", "INTC", "MU", "QCOM", "TXN", "AMAT", "LRCX", "KLAC", "MSFT", "GOOGL", "META", "ORCL", "SMCI", "ANET", "MRVL"],
+    "Mega-cap tech": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "NFLX"],
+    "Defense & aerospace": ["BA", "RTX", "LMT", "NOC", "GD", "GE", "HON", "LHX", "HWM"],
+    "Energy & power": ["XOM", "CVX", "COP", "SLB", "EOG", "NEE", "SO", "DUK", "VST", "CEG", "GEV"],
+    "Banks & payments": ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "PYPL"],
+    "Health & pharma": ["LLY", "MRK", "PFE", "ABBV", "JNJ", "AMGN", "BMY", "UNH", "TMO", "ABT"],
+    "Consumer strength": ["WMT", "COST", "HD", "MCD", "NKE", "SBUX", "TGT", "KO", "PG", "PEP", "DIS"]
+  },
+  "extra": {
+    "crypto": [
+      ["BTC-USD", "BTC", "Bitcoin", "Majors"],
+      ["ETH-USD", "ETH", "Ethereum", "Majors"],
+      ["XRP-USD", "XRP", "XRP", "Payments & DeFi"],
+      ["BNB-USD", "BNB", "BNB", "Alt layer-1s"],
+      ["SOL-USD", "SOL", "Solana", "Alt layer-1s"],
+      ["DOGE-USD", "DOGE", "Dogecoin", "Payments & DeFi"],
+      ["ADA-USD", "ADA", "Cardano", "Alt layer-1s"],
+      ["LINK-USD", "LINK", "Chainlink", "Payments & DeFi"],
+      ["AVAX-USD", "AVAX", "Avalanche", "Alt layer-1s"],
+      ["DOT-USD", "DOT", "Polkadot", "Alt layer-1s"],
+      ["LTC-USD", "LTC", "Litecoin", "Payments & DeFi"],
+      ["BCH-USD", "BCH", "Bitcoin Cash", "Payments & DeFi"]
+    ],
+    "futures": [
+      ["ES=F", "ES", "S&P 500 E-mini", "Equity index", 10],
+      ["NQ=F", "NQ", "Nasdaq 100 E-mini", "Equity index", 8],
+      ["YM=F", "YM", "Dow E-mini", "Equity index", 4],
+      ["RTY=F", "RTY", "Russell 2000 E-mini", "Equity index", 3],
+      ["CL=F", "CL", "WTI Crude", "Energy", 6],
+      ["NG=F", "NG", "Natural Gas", "Energy", 3],
+      ["GC=F", "GC", "Gold", "Metals", 6],
+      ["SI=F", "SI", "Silver", "Metals", 3],
+      ["HG=F", "HG", "Copper", "Metals", 2],
+      ["ZN=F", "ZN", "10-Year Note", "Rates", 4],
+      ["ZB=F", "ZB", "30-Year Bond", "Rates", 3],
+      ["ZT=F", "ZT", "2-Year Note", "Rates", 2]
+    ],
+    "world": [
+      ["^GSPC", "SPX", "S&P 500 (US)", "Americas", 60],
+      ["^GSPTSE", "TSX", "TSX (Canada)", "Americas", 4],
+      ["^BVSP", "BOVESPA", "Bovespa (Brazil)", "Americas", 2],
+      ["^MXX", "IPC", "IPC (Mexico)", "Americas", 1],
+      ["^FTSE", "FTSE", "FTSE 100 (UK)", "Europe", 4],
+      ["^GDAXI", "DAX", "DAX (Germany)", "Europe", 3],
+      ["^FCHI", "CAC", "CAC 40 (France)", "Europe", 3],
+      ["^STOXX50E", "SX5E", "Euro Stoxx 50", "Europe", 5],
+      ["^SSMI", "SMI", "SMI (Switzerland)", "Europe", 2],
+      ["^N225", "NIKKEI", "Nikkei 225 (Japan)", "Asia-Pacific", 6],
+      ["^HSI", "HSI", "Hang Seng (HK)", "Asia-Pacific", 4],
+      ["^KS11", "KOSPI", "KOSPI (Korea)", "Asia-Pacific", 2],
+      ["^AXJO", "ASX", "ASX 200 (Australia)", "Asia-Pacific", 2],
+      ["^NSEI", "NIFTY", "Nifty 50 (India)", "Asia-Pacific", 4]
+    ]
+  },
   "dj30": [
     "AAPL", "AMGN", "AMZN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS",
     "GS", "HD", "HON", "IBM", "JNJ", "JPM", "KO", "MCD", "MMM", "MRK",

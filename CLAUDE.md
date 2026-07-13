@@ -129,7 +129,7 @@ run for real against the dedicated project on every PR.
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts/chart/brief | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 daily / Pro 2 weekly / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
-| S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER rail cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); unfetched feeds (Russell 2000/World/Crypto/Futures/Themes) render disabled | Cut doesn't re-render, period gating wrong, or pending rows clickable |
+| S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER rail cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; nightly-fed universes (World/Crypto/Futures) and Russell 2000 render disabled in demo | Cut doesn't re-render, period gating wrong, or pending rows clickable |
 
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:

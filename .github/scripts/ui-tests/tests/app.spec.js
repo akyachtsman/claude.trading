@@ -760,8 +760,13 @@ test('S13: heatmap map-filter cuts and period select respond', async ({ page }) 
   await page.locator('#heatPeriod').selectOption('1m');
   await expect(page.locator('#heatSource')).toContainText(/1-month/i);
 
-  // unfetched feeds visible but disabled
-  for (const label of ['Russell 2000', 'World', 'Crypto', 'Futures', 'Themes']) {
+  // Themes regroups the S&P dataset client-side
+  await page.locator('.map-filter-btn', { hasText: 'Themes' }).click();
+  await expect(page.locator('#heatTitle')).toContainText('Themes');
+  expect(await svg.locator('rect').count()).toBeGreaterThan(10);
+
+  // feeds that need the nightly maps run stay disabled in demo
+  for (const label of ['Russell 2000', 'World', 'Crypto', 'Futures']) {
     await expect(page.locator('.map-filter-btn', { hasText: label })).toBeDisabled();
   }
 });
