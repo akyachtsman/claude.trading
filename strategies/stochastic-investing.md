@@ -10,7 +10,8 @@
 > and Shoulders · Power Stocks · W Formations · Doji · PRO 2 Snapback ·
 > PRO 2 Quick Lesson · Broken Stair Step · Brothers Grimm. Advanced: Short
 > Pro 1/Pro 2 · SMA Lines · Daily Stochastic Pro 1 · Pro 2 and Pro 3 lesson ·
-> Pro 3 Basics · 50% Rule · Advanced Pro 2 · Dog Stocks · Shorting w/ Mostafa.
+> Pro 3 Basics · 50% Rule · Advanced Pro 2 · Dog Stocks · Shorting w/ Mostafa ·
+> Swing Trade vs Position Trade. (Course study complete, 24 lessons.)
 
 ## The three tiers
 
@@ -330,6 +331,21 @@ with SDS for the inverse expression):
    floats), limit (no worse than X), or stop (triggers on breakdown below
    X); worked examples anchor each type one dollar around the current
    price.
+
+### Swing Trade vs Position Trade
+The capstone distinction, and it maps exactly onto the tiers: a **swing
+trade** lives on the DAILY stochastic — one cycle from bottom-cross to
+top-roll, days to a few weeks, several opportunities per quarter in the
+same name. A **position trade** lives on the WEEKLY stochastic — one cycle
+can run months, entered at the weekly bottom-hook and held through the
+daily's intermediate wobbles until the weekly itself tops. Same anatomy,
+different clock: the choice of which stochastic governs the exit IS the
+choice of trade type. Demoed on TSLA and NFLX with trendlines drawn on the
+stochastic strips: the daily whipsaws that shake out swing traders are
+invisible at the weekly scale, and conversely a weekly top-roll outranks
+any daily buy signal. Decide which trade you are in BEFORE entry — the
+stops lesson's placement and the profit-taking lesson's triggers all key
+off the governing timeframe.
 
 ## Candle vocabulary
 
