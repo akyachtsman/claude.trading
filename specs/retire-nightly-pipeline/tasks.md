@@ -32,17 +32,17 @@ group. `[P]` = parallel-safe within its group.
   feeds, Stooq `dayPctMap` chips; RSS parse via `npm:fast-xml-parser`;
   feeds roster from Pages `config/news-feeds.json`; same `{items}` shape as
   `data/news.json`.
-- [ ] **A5** `scripts/data.js`: add `deskFeed(name)` POST wrapper (mirrors
+- [x] **A5** `scripts/data.js`: add `deskFeed(name)` POST wrapper (mirrors
   `deskMaps`); add `marketSessionOpen()` (same rule as A1, comment linking
   the two); add two-tier `liveLampFor(generatedAt, dataAsOf)` returning
   LIVE ≤ 6 min / STALE beyond, stamp carrying both times.
-- [ ] **A6** `scripts/app.js`: each live panel loader (market strip,
+- [x] **A6** `scripts/app.js`: each live panel loader (market strip,
   heatmap, charts, news) tries `deskFeed(...)` first, falls back to the
   existing `fetchPublic('data/….json')` snapshot on failure (fallback dies
   in Group C); wire `startFeedPolling()` — interval from
   `marketSessionOpen()` (5/60 min), `visibilitychange` pause + resume-refresh.
-- [ ] **A7** `index.html`: bump all five `?v=` tokens together.
-- [ ] **A8** Gates: html-validate, contrast, workflow YAML, fixture tests,
+- [x] **A7** `index.html`: bump all five `?v=` tokens together.
+- [x] **A8** Gates: html-validate, contrast, workflow YAML, fixture tests,
   `node --check` both scripts; local Playwright demo subset
   (S1/S5–S9/S12/S13 on mobile-chrome) — demo behavior must be unchanged.
 - [ ] **A9** `/security-review` on the diff (desk-news service-key surface)

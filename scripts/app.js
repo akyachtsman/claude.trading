@@ -1027,15 +1027,26 @@ async function loadHeatmap() {
       b.removeAttribute('title');
     }
   }
-  const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.heatmap
-    && DESK.meta.domains.heatmap.asOf;
-  if (DESK.mode !== 'demo' && published) {
+  if (DESK.mode !== 'demo') {
+    /* live feed first (desk-heatmap); committed snapshot as the Group A
+       transition fallback (removed in Group C) */
     try {
-      const hm = await fetchPublic('data/heatmap.json');
-      heatBase = { hm, lamp: lampFor(hm.asOf, new Date()) };
+      const hm = await deskFeed('desk-heatmap');
+      heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf) };
       applyMapView();
       return;
-    } catch { /* fall through to demo-labeled */ }
+    } catch { /* fall through to snapshot */ }
+    const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.heatmap
+      && DESK.meta.domains.heatmap.asOf;
+    if (published) {
+      try {
+        const hm = await fetchPublic('data/heatmap.json');
+        heatBase = { hm, lamp: lampFor(hm.asOf, new Date()) };
+        applyMapView();
+        return;
+      } catch { /* fall through to demo-labeled */ }
+    }
+    if (heatBase) return; /* poller failure: keep the last good map */
   }
   heatBase = { hm: buildDemoHeatmap(), lamp: { cls: 'lamp--demo', text: 'Demo' } };
   applyMapView();
@@ -1768,14 +1779,32 @@ function wireCharts() {
 }
 
 async function loadCharts() {
-  const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.charts
-    && DESK.meta.domains.charts.asOf;
-  if (DESK.mode !== 'demo' && published) {
+  if (DESK.mode !== 'demo') {
+    /* live feed first (desk-charts); committed snapshot as the Group A
+       transition fallback (removed in Group C) */
     try {
-      const data = await fetchPublic('data/charts.json');
-      renderCharts(data, lampFor(data.asOf, new Date()));
+      const data = await deskFeed('desk-charts');
+      if (wbState) {
+        /* poller path: refresh bars in place so the user's selected symbol,
+           zoom, and pan survive — renderCharts keys state on data identity */
+        wbState.data.symbols = data.symbols;
+        wbState.data.asOf = data.asOf;
+        renderCharts(wbState.data, liveLampFor(data.generatedAt, data.asOf));
+      } else {
+        renderCharts(data, liveLampFor(data.generatedAt, data.asOf));
+      }
       return;
-    } catch { /* fall through to demo-labeled */ }
+    } catch { /* fall through to snapshot */ }
+    const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.charts
+      && DESK.meta.domains.charts.asOf;
+    if (published) {
+      try {
+        const data = await fetchPublic('data/charts.json');
+        renderCharts(data, lampFor(data.asOf, new Date()));
+        return;
+      } catch { /* fall through to demo-labeled */ }
+    }
+    if (wbState) return; /* poller failure: keep the last good workbench */
   }
   renderCharts(buildDemoCharts(), { cls: 'lamp--demo', text: 'Demo' });
 }
@@ -1828,6 +1857,67 @@ async function loadPrivate(pin) {
   renderPrivate();
 }
 
+/* ── live public feeds: refreshers + the session-aware poller ────────────
+   Each refresher is live-feed-first (desk-* edge function), committed-
+   snapshot second (Group A transition, dies in Group C), demo-labeled last
+   — and on a POLLER failure it keeps the last good render (FR-R9). */
+let stripLive = false, newsLive = false;
+
+async function refreshMarket() {
+  try {
+    const market = await deskFeed('desk-market');
+    DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
+    renderStrip(DESK.data.market);
+    stripLive = true;
+    return;
+  } catch { /* fall through */ }
+  if (stripLive) return; /* keep last good */
+  try {
+    const market = await fetchPublic('data/market.json');
+    DESK.data.market = market.tiles || [];
+    renderStrip(DESK.data.market);
+  } catch { renderStrip(DESK.data.market); }
+}
+
+async function refreshNews() {
+  try {
+    const news = await deskFeed('desk-news');
+    DESK.data.news = news.items || [];
+    renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
+    newsLive = true;
+    return;
+  } catch { /* fall through */ }
+  if (newsLive) return; /* keep last good */
+  try {
+    const news = await fetchPublic('data/news.json');
+    DESK.data.news = news.items || [];
+    renderNews(DESK.data.news, lampFor(news.asOf, new Date()));
+  } catch {
+    renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
+  }
+}
+
+/* 5 min while the US session is open, 60 min closed (Clarification 6);
+   paused while the tab is hidden, refreshed immediately on return. */
+let feedPollTimer = 0;
+function startFeedPolling() {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  const tick = async () => {
+    await Promise.all([refreshMarket(), refreshNews(), loadHeatmap(), loadCharts()]);
+    schedule();
+  };
+  const schedule = () => {
+    clearTimeout(feedPollTimer);
+    if (document.hidden) return; /* visibilitychange rearms */
+    feedPollTimer = setTimeout(tick, marketSessionOpen() ? 5 * 60000 : 60 * 60000);
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearTimeout(feedPollTimer);
+    else tick();
+  });
+  schedule();
+}
+
 async function boot() {
   DESK.mode = resolveMode();
   if (DESK.mode === 'demo') {
@@ -1845,24 +1935,14 @@ async function boot() {
   try {
     DESK.meta = await fetchPublic('data/meta.json');
   } catch { DESK.meta = null; }
-  /* Public domains: real committed JSON when the pipeline has run; until
-     then fall back to clearly-labeled DEMO data (A4 per-domain fallback —
-     never an empty strip, never demo masquerading as real). */
-  try {
-    const market = await fetchPublic('data/market.json');
-    DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
-    renderStrip(DESK.data.market);
-  } catch { renderStrip(DESK.data.market); }
-  try {
-    const news = await fetchPublic('data/news.json');
-    DESK.data.news = news.items || [];
-    renderNews(DESK.data.news, lampFor(news.asOf, new Date()));
-  } catch {
-    renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
-  }
+  /* Public domains: live feeds first, committed snapshots as the Group A
+     transition fallback, clearly-labeled DEMO data last (never an empty
+     strip, never demo masquerading as real). */
+  await Promise.all([refreshMarket(), refreshNews()]);
   renderMasthead();
   loadHeatmap();
   loadCharts();
+  startFeedPolling();
   const pin = sessionStorage.getItem('desk_pin');
   if (pin) {
     const res = await deskLogin(pin).catch(() => ({ ok: false }));
