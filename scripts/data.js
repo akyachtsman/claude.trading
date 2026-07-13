@@ -336,6 +336,59 @@ async function deskMaps() {
   return out; /* {ok:true, asOf, generatedAt, cuts:{crypto|futures|world}} | {ok:false, error} */
 }
 
+/* Public live feeds (retire-nightly-pipeline Group A): each desk-* edge
+   function replaces one committed data/*.json snapshot with the same shape
+   plus {ok, generatedAt}. Anon-callable, fixed upstreams server-side. */
+async function deskFeed(name) {
+  const res = await fetch(DESK_DB.url + '/functions/v1/' + name, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: DESK_DB.anonKey,
+      authorization: 'Bearer ' + DESK_DB.anonKey,
+    },
+    body: '{}',
+  });
+  const out = await res.json().catch(() => null);
+  if (!out || !out.ok) throw new Error(name + ' → ' + (out && out.error ? out.error : 'HTTP ' + res.status));
+  return out;
+}
+
+/* US equities session gate for the feed poller cadence (spec Clarification
+   6). Mirrors the Deno copies in supabase/functions/desk-* — keep the
+   holiday list in sync there when refreshing it annually (2026–2027). */
+const NYSE_HOLIDAYS = new Set([
+  '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03', '2026-05-25',
+  '2026-06-19', '2026-07-03', '2026-09-07', '2026-11-26', '2026-12-25',
+  '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31',
+  '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24',
+]);
+function marketSessionOpen(now) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now || new Date());
+  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+}
+
+/* Two-tier lamp for live feeds (FR-R7): the lamp class answers "how fresh
+   is the FETCH" (LIVE ≤ 6 min), the stamp always carries the payload's own
+   data as-of so a LIVE lamp can never overstate quote freshness. */
+function liveLampFor(generatedAt, dataAsOf) {
+  const ageMs = Date.now() - new Date(generatedAt).getTime();
+  const t = String(generatedAt).slice(11, 16) + ' UTC';
+  const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
+  return fresh
+    ? { cls: 'lamp--live', text: 'LIVE', stamp: 'Fetched ' + t + (dataAsOf ? ' · data as of ' + dataAsOf : '') }
+    : { cls: 'lamp--stale', text: 'STALE', stamp: 'Last fetch ' + t + ' — refresh overdue' };
+}
+
 /* Map the RPC payload into the render model app.js uses (same shape demo
    mode builds). Equity series are aligned on dates present for EVERY
    account so the consolidated sum is well-defined. */

@@ -104,13 +104,9 @@ function lastTradingDayIso(): string {
 
 let configCache: { at: number; extra: Record<string, RosterRow[]> } | null = null;
 let quoteCache: { at: number; body: unknown } | null = null;
+let inflight: Promise<Response> | null = null; // single-flight: one batch per burst
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
-
-  if (quoteCache && Date.now() - quoteCache.at < QUOTE_TTL_MS) return reply(200, quoteCache.body);
-
+async function refresh(): Promise<Response> {
   if (!configCache || Date.now() - configCache.at > CONFIG_TTL_MS) {
     const res = await fetch(CONFIG_URL, { headers: UA }).catch(() => null);
     const cfg = res && res.ok ? await res.json().catch(() => null) : null;
@@ -131,4 +127,15 @@ Deno.serve(async (req) => {
   const body = { ok: true, asOf: lastTradingDayIso(), generatedAt: new Date().toISOString(), cuts };
   quoteCache = { at: Date.now(), body };
   return reply(200, body);
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
+
+  if (quoteCache && Date.now() - quoteCache.at < QUOTE_TTL_MS) return reply(200, quoteCache.body);
+
+  inflight ??= refresh().finally(() => { inflight = null; });
+  const res = await inflight;
+  return res.clone();
 });
