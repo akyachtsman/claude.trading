@@ -300,6 +300,24 @@ async function deskAsk(pin, question, context) {
   return out; /* {ok:true, answer} | {ok:false, error} */
 }
 
+/* Quote-proxy: PIN-gated OHLC for ANY ticker, fetched server-side through
+   the pipeline's free-source chain (Stooq → Yahoo; Yahoo for intraday).
+   Free-tier quotes by owner ruling — near-real-time US, delayed elsewhere. */
+async function deskQuote(pin, symbol, kind) {
+  const res = await fetch(DESK_DB.url + '/functions/v1/quote-proxy', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: DESK_DB.anonKey,
+      authorization: 'Bearer ' + DESK_DB.anonKey,
+    },
+    body: JSON.stringify({ pin, symbol, kind: kind || 'daily' }),
+  });
+  const out = await res.json().catch(() => null);
+  if (!out) throw new Error('quote-proxy → HTTP ' + res.status);
+  return out; /* {ok:true, symbol, kind, asOf, series:{t,o,h,l,c,v}} | {ok:false, error} */
+}
+
 /* Map the RPC payload into the render model app.js uses (same shape demo
    mode builds). Equity series are aligned on dates present for EVERY
    account so the consolidated sum is well-defined. */

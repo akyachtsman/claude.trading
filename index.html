@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260713e">
-<link rel="stylesheet" href="styles/components.css?v=20260713e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260713f">
+<link rel="stylesheet" href="styles/components.css?v=20260713f">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -92,6 +92,8 @@
   .wb-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
   .wb-zoom-pair { display: inline-flex; align-items: center; gap: 6px; }
   .wb-seg-tag { font: 600 10px/1.4 var(--font-mono); letter-spacing: .08em; color: var(--color-text-secondary); }
+  .wb-any { display: inline-flex; align-items: center; gap: 6px; }
+  .wb-any-input { width: 118px; min-height: 44px; padding: 4px 10px; font: 600 var(--font-xs)/1.4 var(--font-mono); text-transform: uppercase; }
   .wb-settings-wrap { position: relative; margin-left: auto; }
   .wb-gear { min-height: 44px; padding: 8px 14px; font: 500 var(--font-xs)/1.4 var(--font-sans); }
   .wb-settings {
@@ -220,6 +222,11 @@
               <span class="wb-seg-tag">PANE</span>
               <div class="seg" role="group" aria-label="Pane layout" id="chartLayout"></div>
             </div>
+            <form class="wb-any" id="wbSymForm">
+              <input type="text" class="input wb-any-input" id="wbSymInput" placeholder="Any ticker…" aria-label="Load any ticker" maxlength="10" autocomplete="off">
+              <button type="submit" class="btn btn-secondary wb-gear">Load</button>
+            </form>
+            <span class="stamp" id="wbSymNote"></span>
             <div class="wb-settings-wrap">
               <button type="button" class="btn btn-secondary wb-gear" id="wbGear" aria-expanded="false" aria-controls="wbSettings">Settings</button>
               <div class="wb-settings" id="wbSettings" hidden></div>
@@ -309,8 +316,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260713e"></script>
-<script src="scripts/data.js?v=20260713e"></script>
-<script src="scripts/app.js?v=20260713e"></script>
+<script src="scripts/config.js?v=20260713f"></script>
+<script src="scripts/data.js?v=20260713f"></script>
+<script src="scripts/app.js?v=20260713f"></script>
 </body>
 </html>
