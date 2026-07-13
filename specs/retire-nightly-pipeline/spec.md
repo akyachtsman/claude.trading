@@ -101,3 +101,9 @@ definitions, demo mode, and privacy architecture remain authoritative.
 5. **Heatmap upstream source:** delegated to the plan phase (source choice is
    HOW, not WHAT; the requirement is fixed at full-coverage tiles at 5-minute
    freshness).
+6. **FR-R8 amendment (plan-phase finding, 2026-07-13):** browsers log a
+   console resource error for *handled* fetch failures too, so "no console
+   errors with all feeds down" is not implementable as written. FR-R8 now
+   reads: no **unhandled** errors on load; feed-origin resource errors from a
+   downed live feed are allowlisted in S1 with a written reason in the test
+   file (test.md's allow-list rule). Lazy post-paint loading is unchanged.
