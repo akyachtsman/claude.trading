@@ -64,18 +64,18 @@ group. `[P]` = parallel-safe within its group.
   context assembled from `desk-market`/`desk-charts`/`desk-heatmap`
   responses (not `data/*.json`); same `CRON_SECRET` gate; writes the same
   brief table/row shape.
-- [ ] **B3** Owner provisions (dashboard, one-time): Vault secrets
+- [x] **B3** Owner provisions (dashboard, one-time): Vault secrets
   `cron_secret` + `anon_key`; function secrets `IBKR_FLEX_TOKEN`,
   `IBKR_FLEX_QUERY_ID`, `ANTHROPIC_API_KEY`, `CRON_SECRET`, plus
   `SUPABASE_SERVICE_ROLE_KEY` availability check (present by default).
-- [ ] **B4** Migration `desk_005_cron_schedule` (via `apply_migration`):
+- [x] **B4** Migration `desk_005_cron_schedule` (via `apply_migration`):
   `create extension pg_cron`; four `cron.schedule` entries — sync
   22:35/09:35 UTC, brief 23:05/10:05 UTC — each `net.http_post` with
   `timeout_milliseconds := 150000`, headers built from
   `vault.decrypted_secrets` lookups (`anon_key` Bearer + `cron_secret`);
   header comment carries the `cron.unschedule` inverses. No literals —
   the migration is public.
-- [ ] **B5** Deploy both functions + apply migration (owner prompts); fire
+- [x] **B5** Deploy both functions + apply migration (owner prompts); fire
   `desk-ibkr-sync` once via pg_net with the secret and verify the upsert
   guard response; verify `desk-brief` at its next slot (or fire once) —
   check `cron.job_run_details` and the brief row.
