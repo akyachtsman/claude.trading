@@ -17,7 +17,7 @@ group. `[P]` = parallel-safe within its group.
   `sessionOpen()` helper (Mon–Fri 09:30–16:00 America/New_York via
   `Intl.DateTimeFormat`, NYSE holiday list 2026–2027 with annual-refresh
   comment); cache TTL 5 min open / 60 min closed.
-- [ ] **A2 [P]** `supabase/functions/desk-heatmap/index.ts`: port
+- [x] **A2 [P]** `supabase/functions/desk-heatmap/index.ts`: port
   `fetch-heatmap.js`; chain = Nasdaq screener → Yahoo v7 crumb quote →
   spark + 24h module cap cache; 300-tile floor → `ok:false`; same
   `{sectors}` shape as `data/heatmap.json`; session-aware TTL.
