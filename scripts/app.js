@@ -1082,6 +1082,7 @@ let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg 
 /* drag-to-pan lives at window level so the SVG rebuild mid-drag (each pan
    frame re-renders) can't drop the pointer stream */
 let wbDrag = null, wbPanRaf = 0;
+const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
 window.addEventListener('pointermove', ev => {
   if (!wbDrag || !wbState) return;
   const next = Math.min(wbDrag.max, Math.max(0, wbDrag.off0 + Math.round((ev.clientX - wbDrag.x0) / wbDrag.slotPx)));
@@ -1379,14 +1380,17 @@ function renderCharts(data, lamp) {
       }
     });
 
-    /* month gridlines (labels only where they have ≥48px of room) */
+    /* time gridlines: month boundaries on daily/weekly panes, session (day)
+       boundaries on intraday ones. Labels only where they have ≥48px. */
+    const gridKey = opts.intraday ? (t => t.slice(0, 10)) : (t => t.slice(0, 7));
+    const gridLabel = opts.intraday ? (t => t.slice(5, 10)) : (t => t.slice(0, 7));
     let lastLabelX = -Infinity;
     for (let i = i0 + 1; i < end; i++) {
-      if (bars.t[i].slice(0, 7) !== bars.t[i - 1].slice(0, 7)) {
+      if (gridKey(bars.t[i]) !== gridKey(bars.t[i - 1])) {
         const gx = x(i) - slotW / 2;
         line(gx, pY, gx, chartBot, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.5 });
         if (gx - lastLabelX >= 48) {
-          text(bars.t[i].slice(0, 7), gx + 2, H - 4, { 'font-size': 8 });
+          text(gridLabel(bars.t[i]), gx + 2, H - 4, { 'font-size': 8 });
           lastLabelX = gx;
         }
       }
@@ -1457,6 +1461,23 @@ function renderCharts(data, lamp) {
 
   const smaList = cfg => Object.entries(cfg.smas).filter(([, on]) => on).map(([len]) => [Number(len), SMA_COLORS[len]]);
   const show = p => wbState.layout === 'split' || wbState.layout === p;
+  /* Pro 3 upgrades itself to real 5-minute bars via the quote-proxy when
+     the desk is unlocked in live mode; EOD stays the quiet fallback. */
+  const maybeFetchIntraday = sym => {
+    if (DESK.mode === 'demo' || !DESK.authed || !DESK_DB.url) return;
+    wbState.intraday = wbState.intraday || {};
+    if (wbState.intraday[sym] || wbIntradayPending.has(sym)) return;
+    wbIntradayPending.add(sym);
+    deskQuote(sessionStorage.getItem('desk_pin'), sym, 'intraday')
+      .then(out => {
+        if (out.ok && out.series && out.series.c.length >= 30) {
+          wbState.intraday[sym] = out.series;
+          renderCharts(wbState.data, wbState.lamp);
+        }
+      })
+      .catch(() => { /* keep EOD */ })
+      .finally(() => wbIntradayPending.delete(sym));
+  };
   /* each pane may pin its own ticker (cfg.sym); empty = follow the desk
      symbol. Guarded against symbols missing from the loaded roster. */
   const effSym = cfg => (cfg.sym && data.symbols[cfg.sym] && data.symbols[cfg.sym].c.length >= 30) ? cfg.sym : wbState.sym;
@@ -1495,13 +1516,27 @@ function renderCharts(data, lamp) {
   if (show('p3')) {
     const sym = effSym(wbState.cfg.p3);
     const d = daily(sym);
-    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
-      window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3',
-      tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
-      pivots: d.piv, smas: smaList(wbState.cfg.p3),
-      stW: wbState.cfg.p3.stochW ? weeklyStochOnDaily(d.bars) : null,
-      stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
-    }]);
+    const intra = wbState.intraday && wbState.intraday[sym];
+    if (intra) {
+      const ist = stochSeries(intra);
+      panes.push([intra, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 5-MIN', {
+        /* P3 zoom presets count DAYS; a 5-min session is ~78 bars */
+        window: paneWindow(Math.min(wbState.days3, 5) * 78, intra), offset: wbState.off3, panKey: 'off3',
+        tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
+        pivots: d.piv, smas: smaList(wbState.cfg.p3),
+        stW: null,
+        stochCaption: 'STOCH 13-3-3 · 5-MIN',
+      }]);
+    } else {
+      maybeFetchIntraday(sym);
+      panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
+        window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3',
+        tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
+        pivots: d.piv, smas: smaList(wbState.cfg.p3),
+        stW: wbState.cfg.p3.stochW ? weeklyStochOnDaily(d.bars) : null,
+        stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
+      }]);
+    }
   }
   for (const k of ['p1', 'p2', 'p3']) document.getElementById('wbBar-' + k).hidden = !show(k);
   const pw = (W - GAP * (panes.length - 1)) / panes.length;
