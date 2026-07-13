@@ -356,7 +356,9 @@ test('S3: interactive elements discovered and exercised without errors', async (
         await page.waitForTimeout(800);
         // Capped: uncapped networkidle defaults to 30s — a handful of
         // slow-settling interactions on the live site blows the test budget.
-        await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
+        // 1.5s: on an unlocked live desk some requests stay pending long
+        // enough that every element would otherwise pay the full cap.
+        await page.waitForLoadState('networkidle', { timeout: 1500 }).catch(() => {});
       } else if (el.tag === 'textarea' ||
                  (el.tag === 'input' &&
                   [null, 'text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(el.type))) {
@@ -368,7 +370,9 @@ test('S3: interactive elements discovered and exercised without errors', async (
         await locator.click({ timeout: 3000 });
       } else if (el.tag === 'select') {
         const options = await locator.locator('option').allTextContents();
-        if (options.length > 1) await locator.selectOption({ index: 1 });
+        // Explicit timeout: a select whose target option is disabled (gated
+        // period dropdown) otherwise waits the 30s default before throwing.
+        if (options.length > 1) await locator.selectOption({ index: 1 }, { timeout: 3000 });
       }
 
       const snapAfter      = await domSnapshot(page);
