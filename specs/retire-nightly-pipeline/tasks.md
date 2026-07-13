@@ -1,6 +1,6 @@
 # Tasks: Retire the Nightly Pipeline
 
-**Status:** Phase 4 (tasks) — plan approved 2026-07-13
+**Status:** COMPLETE 2026-07-13 — all groups shipped (PRs #53 #54 #55 #56); see analysis.md
 **Phase 0 (done):** PR #53 merged (`1fb7264`) — desk-maps live, pattern set,
 verified 200/38-of-38 via pg_net. `desk_004_enable_pg_net` migration applied.
 
@@ -102,10 +102,10 @@ group. `[P]` = parallel-safe within its group.
   Commands row; rewrite the pipeline architecture bullets (edge functions +
   cron are the data layer now); add the desk-news service-key accepted
   residual; update the S13/S14 scenario table rows.
-- [ ] **C5** Gates + `qa-pipeline`; PR C merge on green + owner approval;
+- [x] **C5** Gates + `qa-pipeline`; PR C merge on green + owner approval;
   verify production panels post-deploy (cache-busted); **dispatch
   `keepalive.yml` and confirm the empty commit lands** — it is now the only
   writer resetting the 60-day Actions scheduler clock.
-- [ ] **C6** Close the loop: `specs/retire-nightly-pipeline/analysis.md`
+- [x] **C6** Close the loop: `specs/retire-nightly-pipeline/analysis.md`
   via `/sdd-loop analyze`; append a learnings.jsonl entry (nightly→live
   migration pattern, pg_net verification trick).
