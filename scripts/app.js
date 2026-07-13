@@ -1228,9 +1228,17 @@ function renderCharts(data, lamp) {
       }
     }
 
-    /* per-pane crosshair + readout */
+    /* per-pane crosshair + readout — full cross like the reference: the
+       horizontal line tracks the pointer through the price area with a
+       live price tag pinned to the axis */
     const cross = svgEl('line', { y1: pY, y2: chartBot, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(cross);
+    const crossH = svgEl('line', { x1: x0 + 6, x2: x0 + 6 + plotW, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    svg.appendChild(crossH);
+    const crossTagBg = svgEl('rect', { x: x0 + 6 + plotW + 2, width: padR - 10, height: 13, rx: 2, fill: 'var(--color-surface-2)', stroke: 'var(--color-border-hover)', 'stroke-width': 1, visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    svg.appendChild(crossTagBg);
+    const crossTag = svgEl('text', { x: x0 + 6 + plotW + 5, 'font-size': 8, 'font-weight': 600, fill: 'var(--color-text-primary)', 'font-family': 'var(--font-mono)', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    svg.appendChild(crossTag);
     const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: chartBot - pY, fill: 'transparent', style: 'cursor: grab' });
     svg.appendChild(overlay);
     overlay.addEventListener('pointerdown', ev => {
@@ -1247,6 +1255,16 @@ function renderCharts(data, lamp) {
       hideTip();
       cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
       cross.setAttribute('visibility', 'visible');
+      const my = (ev.clientY - box.top) * (H / box.height);
+      if (my >= pY && my <= pY + pH) {
+        crossH.setAttribute('y1', my); crossH.setAttribute('y2', my);
+        crossH.setAttribute('visibility', 'visible');
+        crossTagBg.setAttribute('y', my - 6.5);
+        crossTagBg.setAttribute('visibility', 'visible');
+        crossTag.setAttribute('y', my + 3);
+        crossTag.textContent = fmtPrice(hi - (my - pY) / pH * (hi - lo));
+        crossTag.setAttribute('visibility', 'visible');
+      }
       tip.appendChild(el('div', 'tip-date', bars.t[i] + ' · ' + (opts.sym || wbState.sym) + ' · ' + opts.tier));
       const chg = i > 0 ? (bars.c[i] / bars.c[i - 1] - 1) * 100 : 0;
       tip.appendChild(el('div', '', 'O ' + fmtPrice(bars.o[i]) + '  H ' + fmtPrice(bars.h[i]) + '  L ' + fmtPrice(bars.l[i])));
