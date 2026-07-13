@@ -89,13 +89,10 @@ jobs:
           MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
         run: node fetch-charts.js
 
-      # Extra MAP FILTER universes (crypto/futures/world): one small Yahoo
-      # batch (~40 symbols), placed AFTER the Stooq-first steps so the
-      # heatmap's crumb has cooled — and with a crumbless spark fallback
-      # because runner IPs are routinely 429'd on getcrumb.
-      - name: Fetch extra map universes (crypto/futures/world)
-        if: ${{ !cancelled() }}
-        run: node fetch-maps.js
+      # Extra MAP FILTER universes (crypto/futures/world) are NOT fetched
+      # nightly anymore — the desk-maps edge function serves them as delayed
+      # quotes on demand (owner ruling 2026-07-13; runner IPs were hard-429'd
+      # by Yahoo on every path).
 
       - name: Fetch news (RSS + fallbacks)
         if: ${{ !cancelled() }}

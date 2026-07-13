@@ -318,6 +318,24 @@ async function deskQuote(pin, symbol, kind) {
   return out; /* {ok:true, symbol, kind, asOf, series:{t,o,h,l,c,v}} | {ok:false, error} */
 }
 
+/* Extra map universes (Crypto/Futures/World): delayed quotes fetched on
+   demand through the desk-maps edge function (fixed server-side roster, no
+   PIN — public data; owner ruling 2026-07-13 replaced the nightly batch). */
+async function deskMaps() {
+  const res = await fetch(DESK_DB.url + '/functions/v1/desk-maps', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: DESK_DB.anonKey,
+      authorization: 'Bearer ' + DESK_DB.anonKey,
+    },
+    body: '{}',
+  });
+  const out = await res.json().catch(() => null);
+  if (!out) throw new Error('desk-maps → HTTP ' + res.status);
+  return out; /* {ok:true, asOf, generatedAt, cuts:{crypto|futures|world}} | {ok:false, error} */
+}
+
 /* Map the RPC payload into the render model app.js uses (same shape demo
    mode builds). Equity series are aligned on dates present for EVERY
    account so the consolidated sum is well-defined. */

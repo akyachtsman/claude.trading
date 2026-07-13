@@ -49,8 +49,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   holdings — public repo), meta writer. Fixture tests via `node --test`.
 - `.github/workflows/data-refresh.yml` — dual cron (22:30 UTC + 09:30 UTC
   retry) + dispatch (`backfill`, `force_fail_market`).
-- `supabase/functions/desk-ask/` — versioned source of the PIN-gated Claude
-  Q&A edge function (deployed only to the desk's dedicated project).
+- `supabase/functions/` — versioned sources of the desk's edge functions
+  (deployed only to the dedicated project): `desk-ask` (PIN-gated Claude Q&A),
+  `quote-proxy` (PIN-gated OHLC for any ticker), `desk-maps` (anon delayed-quote
+  batch for the Crypto/Futures/World map cuts — fixed server-side roster,
+  2-min cache; replaced the nightly maps fetch, owner ruling 2026-07-13).
 - `specs/multi-account-trading-dashboard/` — the SDD artifact chain
   (brief/spec/plan/tasks/design/analysis).
 
@@ -71,7 +74,10 @@ This project's look is its own — established at kickoff via `/design-intake`
   DEFINER PIN RPCs are the enforcement boundary (data.md pattern).
 - **Accepted residuals (live mode):** the PIN space is brute-forceable through
   the RPC (RLS cannot rate-limit); the PIN sits in sessionStorage for the tab
-  session. Real balances never enter this repo or the served files.
+  session. Real balances never enter this repo or the served files. The
+  `desk-maps` edge function is anon-callable by design (public quotes, roster
+  fixed server-side — not an open proxy); unauthenticated invocations can burn
+  free-tier quota, bounded by its in-function 2-min cache.
 - **Bot-data-commit exception:** `data-refresh.yml` pushes `data/*.json` to
   `main` directly with `[skip ci]` (same standing as `keepalive.yml`); code
   changes still go through PRs.
@@ -129,7 +135,7 @@ run for real against the dedicated project on every PR.
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts/chart/brief | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 daily / Pro 2 weekly / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
-| S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER rail cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; nightly-fed universes (World/Crypto/Futures) and Russell 2000 render disabled in demo | Cut doesn't re-render, period gating wrong, or pending rows clickable |
+| S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER rail cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps` delayed quotes, live mode only) and Russell 2000 render disabled in demo | Cut doesn't re-render, period gating wrong, or pending rows clickable |
 
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:
