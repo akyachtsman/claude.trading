@@ -877,17 +877,24 @@ window.addEventListener('resize', () => {
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)' };
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
 const WB2_ZOOMS = [['6M', 26], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars */
+const WB3_ZOOMS = [['5D', 5], ['10D', 10], ['1M', 21]];     /* Pro 3 window, in daily bars */
 
 /* per-pane configuration (their settings menu, in our idiom) — persisted */
 const WB_CFG_KEY = 'wb_cfg_v2';
 const WB_CFG_DEFAULT = () => ({
-  p1: { vol: true, stoch: true, smas: { 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true } },
-  p2: { vol: true, stoch: true, smas: { 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false } },
+  p1: { type: 'candle', vol: true, stoch: true, smas: { 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true } },
+  p2: { type: 'candle', vol: true, stoch: true, smas: { 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false } },
+  p3: { type: 'candle', vol: true, stoch: true, smas: { 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false } },
 });
 function loadWbCfg() {
   try {
     const raw = JSON.parse(localStorage.getItem(WB_CFG_KEY));
-    if (raw && raw.p1 && raw.p2) return raw;
+    if (raw && raw.p1 && raw.p2) {
+      /* older stored shapes lack p3/type — merge over defaults */
+      const def = WB_CFG_DEFAULT();
+      for (const k of ['p1', 'p2', 'p3']) raw[k] = Object.assign(def[k], raw[k]);
+      return raw;
+    }
   } catch { /* fall through */ }
   return WB_CFG_DEFAULT();
 }
@@ -976,7 +983,7 @@ function renderWbSidebar(data) {
     b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
     b.addEventListener('click', () => {
       wbState.sym = sym;
-      wbState.off = wbState.woff = 0;
+      wbState.off = wbState.woff = wbState.off3 = 0;
       renderCharts(wbState.data, wbState.lamp);
     });
     nav.appendChild(b);
@@ -987,7 +994,7 @@ function renderWbSidebar(data) {
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, off: 0, woff: 0, layout: 'split', cfg: loadWbCfg() };
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, days3: 10, off: 0, woff: 0, off3: 0, layout: 'split', cfg: loadWbCfg() };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -1018,7 +1025,6 @@ function renderCharts(data, lamp) {
   svg.style.height = H + 'px';
 
   const GAP = 16;
-  const paneW = (W - GAP) / 2;
   const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, ...attrs }));
   const text = (str, tx, ty, attrs) => { const t = svgEl('text', { x: tx, y: ty, 'font-family': 'var(--font-mono)', 'font-size': 10, fill: WB.label, ...attrs }); t.textContent = str; svg.appendChild(t); };
   const hideTip = () => { tip.style.display = 'none'; while (tip.firstChild) tip.removeChild(tip.firstChild); for (const c of svg.querySelectorAll('[data-cross]')) c.setAttribute('visibility', 'hidden'); };
@@ -1078,14 +1084,22 @@ function renderCharts(data, lamp) {
 
     let vMax = 0;
     if (opts.cfg.vol) for (let i = i0; i < end; i++) vMax = Math.max(vMax, bars.v[i]);
+    const isLine = opts.cfg.type === 'line';
+    let closeD = '';
     for (let i = i0; i < end; i++) {
       const up = bars.c[i] >= bars.o[i];
       const col = up ? WB.up : WB.down;
       const cx = x(i);
-      line(cx, py(bars.h[i]), cx, py(bars.l[i]), { stroke: col, 'stroke-width': 1 });
-      svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col }));
+      if (isLine) {
+        closeD += (closeD ? 'L' : 'M') + cx.toFixed(1) + ' ' + py(bars.c[i]).toFixed(1);
+      } else {
+        line(cx, py(bars.h[i]), cx, py(bars.l[i]), { stroke: col, 'stroke-width': 1 });
+        svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col }));
+      }
       if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: col, 'fill-opacity': 0.55 }));
     }
+    /* line style draws closes in gain-green, like the reference platform */
+    if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
     if (opts.cfg.vol) text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
 
     /* stochastic strip + doctrine markers */
@@ -1175,25 +1189,33 @@ function renderCharts(data, lamp) {
   const dStoch = stochSeries(s);
   const wStoch = stochSeries(weekly);
   const smaList = cfg => Object.entries(cfg.smas).filter(([, on]) => on).map(([len]) => [Number(len), SMA_COLORS[len]]);
+  const dMarks = stochMarks(dStoch);
+  const show = p => wbState.layout === 'split' || wbState.layout === p;
   const panes = [];
-  if (wbState.layout !== 'p2') panes.push([s, dStoch, stochMarks(dStoch), 'PRO 1 · DAILY · SHORT-TERM', {
+  if (show('p1')) panes.push([s, dStoch, dMarks, 'PRO 1 · DAILY · SHORT-TERM', {
     window: paneWindow(wbState.days, s), offset: wbState.off, panKey: 'off',
     tier: 'Pro 1', cfg: wbState.cfg.p1,
     pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p1),
     stochCaption: 'STOCH 13-3-3 · DAILY',
   }]);
-  if (wbState.layout !== 'p1') panes.push([weekly, wStoch, stochMarks(wStoch), 'PRO 2 · WEEKLY · LONG-TERM', {
+  if (show('p2')) panes.push([weekly, wStoch, stochMarks(wStoch), 'PRO 2 · WEEKLY · LONG-TERM', {
     window: paneWindow(wbState.wdays, weekly), offset: wbState.woff, panKey: 'woff',
     tier: 'Pro 2', cfg: wbState.cfg.p2,
     pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p2),
     stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
   }]);
-  if (panes.length === 2) {
-    drawPane(0, paneW, ...panes[0]);
-    drawPane(paneW + GAP, paneW, ...panes[1]);
-    line(paneW + GAP / 2, 8, paneW + GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
-  } else {
-    drawPane(0, W, ...panes[0]);
+  /* Pro 3 = the day-trading tier; honest EOD placeholder (tight daily
+     window) until the intraday quote-proxy backend is approved */
+  if (show('p3')) panes.push([s, dStoch, dMarks, 'PRO 3 · DAY TRADING · EOD BARS', {
+    window: paneWindow(wbState.days3, s), offset: wbState.off3, panKey: 'off3',
+    tier: 'Pro 3', cfg: wbState.cfg.p3,
+    pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p3),
+    stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
+  }]);
+  const pw = (W - GAP * (panes.length - 1)) / panes.length;
+  panes.forEach((p, idx) => drawPane(idx * (pw + GAP), pw, ...p));
+  for (let idx = 1; idx < panes.length; idx++) {
+    line(idx * (pw + GAP) - GAP / 2, 8, idx * (pw + GAP) - GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
   }
 }
 
@@ -1203,10 +1225,24 @@ function buildWbSettings() {
   const pop = document.getElementById('wbSettings');
   while (pop.firstChild) pop.removeChild(pop.firstChild);
   const cols = el('div', 'wb-set-cols');
-  for (const [key, title] of [['p1', 'PRO 1 · DAILY'], ['p2', 'PRO 2 · WEEKLY']]) {
+  for (const [key, title] of [['p1', 'PRO 1 · DAILY'], ['p2', 'PRO 2 · WEEKLY'], ['p3', 'PRO 3 · DAY']]) {
     const cfg = wbState.cfg[key];
     const col = el('div', 'wb-set-col');
     col.appendChild(el('h3', 'wb-set-title', title));
+    col.appendChild(el('p', 'wb-set-group', 'Chart style'));
+    for (const [name, val] of [['Candles', 'candle'], ['Line', 'line']]) {
+      const lab = el('label', 'wb-set-row');
+      const rb = document.createElement('input');
+      rb.type = 'radio'; rb.name = 'wb-type-' + key; rb.checked = (cfg.type || 'candle') === val;
+      rb.addEventListener('change', () => {
+        if (!rb.checked) return;
+        cfg.type = val; saveWbCfg();
+        renderCharts(wbState.data, wbState.lamp);
+      });
+      lab.appendChild(rb);
+      lab.appendChild(el('span', '', name));
+      col.appendChild(lab);
+    }
     const group = (label, rows) => {
       col.appendChild(el('p', 'wb-set-group', label));
       for (const [name, get, set] of rows) {
@@ -1247,7 +1283,7 @@ function wireCharts() {
   document.getElementById('chartSymSel').addEventListener('change', ev => {
     if (!wbState) return;
     wbState.sym = ev.target.value;
-    wbState.off = wbState.woff = 0;
+    wbState.off = wbState.woff = wbState.off3 = 0;
     renderCharts(wbState.data, wbState.lamp);
   });
   const wireZoom = (segId, zooms, initial, apply) => {
@@ -1267,9 +1303,10 @@ function wireCharts() {
   };
   wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; wbState.off = 0; });
   wireZoom('chartZoom2', WB2_ZOOMS, 9999, spec => { wbState.wdays = spec; wbState.woff = 0; });
+  wireZoom('chartZoom3', WB3_ZOOMS, 10, spec => { wbState.days3 = spec; wbState.off3 = 0; });
 
   const layoutSeg = document.getElementById('chartLayout');
-  for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p1'], ['Pro 2', 'p2']]) {
+  for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p1'], ['Pro 2', 'p2'], ['Pro 3', 'p3']]) {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = label;
     b.setAttribute('aria-pressed', String(mode === 'split'));

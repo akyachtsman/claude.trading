@@ -683,3 +683,45 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   await expect(page.locator('#equityLamp')).toHaveText(/locked/i);
   await expect(page.locator('#accountGrid .hero-number')).toHaveCount(0);
 });
+
+// S12 — Charts workbench: three doctrine panes with candles, stochastics,
+// zoom presets, symbol select, pane layouts, and the settings popover.
+// Defaults must render candles + k/%d stochastic paths in every pane.
+test('S12: charts workbench renders panes and controls respond', async ({ page }) => {
+  await page.goto('./?demo=1');
+  const chart = page.locator('#wbChart');
+  await expect(chart.locator('rect').first()).toBeVisible({ timeout: 10000 });
+
+  // default split: all three pane captions, candles, and stoch paths (k+d ×3)
+  for (const cap of ['PRO 1 · DAILY', 'PRO 2 · WEEKLY', 'PRO 3 · DAY TRADING']) {
+    await expect(chart, `missing pane caption ${cap}`).toContainText(cap);
+  }
+  expect(await chart.locator('rect').count(), 'candle/volume rects must render').toBeGreaterThan(30);
+  expect(await chart.locator('path').count(), 'stochastic %K/%D paths must render').toBeGreaterThanOrEqual(6);
+
+  // Pro 1 zoom seg: clicking 1M moves aria-pressed and redraws
+  const before = await chart.locator('rect').count();
+  const oneMonth = page.locator('#chartZoom button', { hasText: '1M' });
+  await oneMonth.click();
+  await expect(oneMonth).toHaveAttribute('aria-pressed', 'true');
+  expect(await chart.locator('rect').count(), 'zoom must redraw').not.toBe(before);
+
+  // symbol select re-renders and the sidebar tracks aria-current
+  const sel = page.locator('#chartSymSel');
+  const other = await sel.locator('option').nth(1).getAttribute('value');
+  await sel.selectOption(other);
+  await expect(page.locator(`#wbSidebar button[aria-current="true"]`)).toContainText(other);
+
+  // pane layout seg maximizes a single tier and returns to split
+  await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();
+  await expect(chart).not.toContainText('PRO 1 · DAILY');
+  await expect(chart).toContainText('PRO 2 · WEEKLY');
+  await page.locator('#chartLayout button', { hasText: 'Split' }).click();
+  await expect(chart).toContainText('PRO 1 · DAILY');
+
+  // settings popover opens with per-pane controls (3 panes × 6 radios + 27 checkboxes)
+  await page.locator('#wbGear').click();
+  await expect(page.locator('#wbSettings')).toBeVisible();
+  expect(await page.locator('#wbSettings input[type=radio]').count()).toBe(6);
+  expect(await page.locator('#wbSettings input[type=checkbox]').count()).toBe(27);
+});
