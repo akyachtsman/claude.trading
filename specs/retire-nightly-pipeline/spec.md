@@ -74,22 +74,30 @@ definitions, demo mode, and privacy architecture remain authoritative.
   design contract.
 - Intraday history retention/archival of the retired `data/*.json` snapshots.
 
-## Open items
+## Clarifications (Phase 2 — owner, 2026-07-13)
 
-- [NEEDS CLARIFICATION: Brief + IBKR schedule — keep the current dual-attempt
-  cadence (22:30 UTC + 09:30 UTC retry) on the new scheduler, or simplify to
-  one daily run?]
-- [NEEDS CLARIFICATION: Failure alerting for the two remaining scheduled jobs —
-  the old pipeline had an (unconfigured) email step; is "owner checks the
-  dashboard lamps + Supabase logs" acceptable, or is an alert channel
-  required?]
-- [NEEDS CLARIFICATION: Free-tier invocation budget — on-demand feeds mean
-  every cold visitor can trigger several function calls (bounded by short
-  server-side caches). Accept as a residual like desk-maps, or add a
-  client-side session cache floor?]
-- [NEEDS CLARIFICATION: `cron-notify.yml` and the pipeline-adjacent monitors —
-  retire together with the pipeline, or keep any of them for the two remaining
-  scheduled jobs?]
-- [NEEDS CLARIFICATION: Should the heatmap keep its current upstream source
-  (bulk screener endpoint) when fetched from the new egress, or is source
-  choice delegated to the plan phase?]
+1. **Freshness bar (owner, verbatim intent):** "All news and data should be
+   coming in real time. Updated every 5 minutes instead of overnight." →
+   Every public feed (market strip, heatmap + derived cuts, watchlist charts,
+   news, extra map universes) refreshes on a **≤ 5-minute cycle while the
+   dashboard is open** — not merely on page load. FR-R1's 5-minute staleness
+   bound generalizes to FR-R1..R4.
+   **Recorded carve-out (owner may override):** IBKR account snapshots and
+   the AI brief stay **daily** — Flex statements are a once-daily product
+   (intraday NAV would require persistent gateway infrastructure, outside
+   the free-tier constraint), and a 5-minute Claude regeneration cycle
+   spends real API budget on an editorial artifact. Their schedule question
+   resolves to: one daily run + one retry, mirroring today's cadence.
+2. **Failure alerting:** lamps on the dashboard + platform logs are the
+   alerting surface (the old email step was never configured — no regression).
+   Recorded as an accepted residual; an alert channel can be added later
+   without re-architecture.
+3. **Invocation budget:** accepted residual, desk-maps precedent. Bounded by
+   short server-side caches; an always-open tab polling 4 feeds at 5-minute
+   cadence ≈ 35K invocations/month — comfortably inside the free tier.
+4. **Pipeline-adjacent monitors:** retire `cron-notify.yml` with the
+   pipeline; `ci-monitor.yml` / `pages-monitor.yml` / `keepalive.yml` stay
+   (they watch surfaces that still exist, and keepalive becomes load-bearing).
+5. **Heatmap upstream source:** delegated to the plan phase (source choice is
+   HOW, not WHAT; the requirement is fixed at full-coverage tiles at 5-minute
+   freshness).
