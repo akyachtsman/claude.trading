@@ -9,7 +9,8 @@
 > Stops · Taking Profits. Pattern series (in progress): Dark Cloud · Head
 > and Shoulders · Power Stocks · W Formations · Doji · PRO 2 Snapback ·
 > PRO 2 Quick Lesson · Broken Stair Step · Brothers Grimm. Advanced: Short
-> Pro 1/Pro 2 · SMA Lines · Daily Stochastic Pro 1 · Pro 2 and Pro 3 lesson.
+> Pro 1/Pro 2 · SMA Lines · Daily Stochastic Pro 1 · Pro 2 and Pro 3 lesson ·
+> Pro 3 Basics · 50% Rule · Advanced Pro 2 · Dog Stocks · Shorting w/ Mostafa.
 
 ## The three tiers
 
@@ -283,6 +284,52 @@ candidate read the WEEKLY stochastic's position first (the per-name %K/%D
 readout), then drop to the daily and intraday tiers for timing and
 execution. Same rhythm, name after name — the tiers are one funnel:
 weekly state → daily signal → intraday entry.
+
+### Pro 3 Basics
+The day-trading pane's setup and read (older name: MV3): the intraday chart
+carries its own session boundaries, bar series, and stochastic strip — the
+same cycle anatomy compressed into the trading day, always read with the
+daily panes beside it for context. Demoed on JPM: session window
+highlighted, intraday signals taken inside it.
+
+### 50% Rule
+Measure a completed move (top to bottom), mark the halfway level: the
+counter-move tends to gravitate to and stall near that 50% retracement.
+Use it as the natural target for bounces, the decision level for whether a
+recovery is corrective (stalls at half) or real (takes the level back),
+and a sanity check before chasing. Demoed by drawing the move's endpoints
+and the midline on a beaten-down name.
+
+### Advanced Pro 2
+The weekly-tier position trade end-to-end (demoed on a long base): the
+weekly stochastic bottoms and hooks (circled), the recovery leg rides a
+drawn channel, and the position is held through the channel with periodic
+weekly %K/%D checks until the breakout leg. The Pro 2 chair's job is
+patience — one weekly cycle can span months and one entry.
+
+### Dog Stocks
+The anti-watchlist: a dog is a name capped under a DECLINING trendline and
+the whole SMA stack, with overhead resistance zones and bounces that die
+early. Recognition rule: lower highs into the falling line + price below
+the stack = do not bottom-fish, regardless of how oversold the stochastic
+looks; dogs belong on the skip list (or the short-candidate list). Demoed
+on a chronically weak name.
+
+### How to Short with Mostafa
+A complete short-side checklist (guest-taught, ~25 min, demoed on FRC/BP
+with SDS for the inverse expression):
+1. **Regime and structure first** — M-formations (the double-top mirror of
+   the W) mark the short structure.
+2. **Stochastic under 80** — the entry waits for the roll OUT of the
+   overbought band, never shorting while still pinned above it (the
+   embedded exception in reverse).
+3. **Adding on downside engulfing** — scale INTO the working short as
+   bearish engulfing bars print along the decline (marked bar by bar in
+   the demo), rather than sizing all at once.
+4. **Order mechanics for shorts** — sell-short via market (fill now, price
+   floats), limit (no worse than X), or stop (triggers on breakdown below
+   X); worked examples anchor each type one dollar around the current
+   price.
 
 ## Candle vocabulary
 
