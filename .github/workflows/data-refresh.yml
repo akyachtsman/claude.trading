@@ -101,32 +101,10 @@ jobs:
           DB_SERVICE_KEY: ${{ secrets.DB_SERVICE_KEY }}
         run: node fetch-news.js
 
-      - name: Fetch IBKR snapshots (Flex → Supabase)
-        if: ${{ !cancelled() }}
-        env:
-          IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
-          IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
-          IBKR_FLEX_BACKFILL_QUERY_ID: ${{ secrets.IBKR_FLEX_BACKFILL_QUERY_ID }}
-          IBKR_ACCOUNT_MAP: ${{ vars.IBKR_ACCOUNT_MAP }}
-          DB_URL: ${{ vars.DB_URL }}
-          DB_SERVICE_KEY: ${{ secrets.DB_SERVICE_KEY }}
-          # renew-token notice goes straight to email (actionable, never silent)
-          ALERT_TO: ${{ vars.ALERT_TO || vars.SMTP_USER }}
-          ALERT_FROM: ${{ vars.ALERT_FROM }}
-          SMTP_HOST: ${{ vars.SMTP_HOST }}
-          SMTP_PORT: ${{ vars.SMTP_PORT }}
-          SMTP_USER: ${{ vars.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-        run: node fetch-ibkr.js ${{ inputs.backfill == true && '--backfill' || '' }}
-
-      - name: Generate AI brief (Anthropic)
-        if: ${{ !cancelled() }}
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          BRIEF_MODEL: ${{ vars.BRIEF_MODEL }}
-          DB_URL: ${{ vars.DB_URL }}
-          DB_SERVICE_KEY: ${{ secrets.DB_SERVICE_KEY }}
-        run: node generate-brief.js
+      # IBKR snapshots and the AI brief are NOT run here anymore — they moved
+      # to Supabase Cron invoking desk-ibkr-sync / desk-brief (Group B of the
+      # retire-nightly-pipeline plan). This whole workflow is deleted in
+      # Group C.
 
       - name: Write meta.json
         if: ${{ !cancelled() }}
