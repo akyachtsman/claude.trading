@@ -70,11 +70,6 @@ jobs:
           MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
         run: node fetch-heatmap.js
 
-      # Extra MAP FILTER universes (crypto/futures/world) ride the same v7
-      # crumb right after the heatmap — one small batch (~40 symbols).
-      - name: Fetch extra map universes (crypto/futures/world)
-        if: ${{ !cancelled() }}
-        run: node fetch-maps.js
 
       - name: Fetch market summary (Stooq + FRED)
         if: ${{ !cancelled() }}
@@ -93,6 +88,14 @@ jobs:
           MARKET_BASE_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
           MARKET_FALLBACK_URL: ${{ inputs.force_fail_market == true && 'https://invalid.invalid' || '' }}
         run: node fetch-charts.js
+
+      # Extra MAP FILTER universes (crypto/futures/world): one small Yahoo
+      # batch (~40 symbols), placed AFTER the Stooq-first steps so the
+      # heatmap's crumb has cooled — and with a crumbless spark fallback
+      # because runner IPs are routinely 429'd on getcrumb.
+      - name: Fetch extra map universes (crypto/futures/world)
+        if: ${{ !cancelled() }}
+        run: node fetch-maps.js
 
       - name: Fetch news (RSS + fallbacks)
         if: ${{ !cancelled() }}

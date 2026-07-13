@@ -59,3 +59,19 @@ test('missing/NaN quotes are skipped without crashing', () => {
   const cuts = buildMapCuts(EXTRA, quotes);
   assert.deepEqual(Object.keys(cuts), []);
 });
+
+test('spark-shaped fallback (pct only) sizes crypto by config weight', () => {
+  const EXTRA_W = {
+    crypto: [
+      ['BTC-USD', 'BTC', 'Bitcoin', 'Majors', 2100],
+      ['ETH-USD', 'ETH', 'Ethereum', 'Majors', 450],
+    ],
+  };
+  const quotes = new Map([
+    ['BTC-USD', { pct: 1.2, cap: null, last: 108000 }],
+    ['ETH-USD', { pct: -0.8, cap: null, last: undefined }],
+  ]);
+  const cuts = buildMapCuts(EXTRA_W, quotes);
+  assert.equal(cuts.crypto.sectors[0].tiles[0].cap, 2100e9);   // weight, not cap
+  assert.equal(cuts.crypto.sectors[0].tiles[1].cap, 450e9);
+});
