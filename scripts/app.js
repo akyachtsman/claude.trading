@@ -882,9 +882,10 @@ const WB3_ZOOMS = [['5D', 5], ['10D', 10], ['1M', 21]];     /* Pro 3 window, in 
 /* per-pane configuration (their settings menu, in our idiom) — persisted */
 const WB_CFG_KEY = 'wb_cfg_v2';
 const WB_CFG_DEFAULT = () => ({
-  p1: { type: 'candle', vol: true, stoch: true, stochW: false, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
-  p2: { type: 'candle', vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
-  p3: { type: 'candle', vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: false, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling) */
+  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
 });
 function loadWbCfg() {
   try {
@@ -1086,6 +1087,21 @@ function renderCharts(data, lamp) {
 
     let hi = -Infinity, lo = Infinity;
     for (let i = i0; i < end; i++) { hi = Math.max(hi, bars.h[i]); lo = Math.min(lo, bars.l[i]); }
+    /* Bollinger Bands (20, 2) — the day-trading envelope; bands join the
+       price range so they never clip */
+    let bb = null;
+    if (opts.cfg.bb) {
+      bb = { u: [], m: [], l: [] };
+      for (let i = i0; i < end; i++) {
+        if (i < 19) { bb.u.push(null); bb.m.push(null); bb.l.push(null); continue; }
+        let sum = 0, sum2 = 0;
+        for (let j = i - 19; j <= i; j++) { sum += bars.c[j]; sum2 += bars.c[j] * bars.c[j]; }
+        const m = sum / 20;
+        const sd = Math.sqrt(Math.max(0, sum2 / 20 - m * m));
+        bb.u.push(m + 2 * sd); bb.m.push(m); bb.l.push(m - 2 * sd);
+        hi = Math.max(hi, m + 2 * sd); lo = Math.min(lo, m - 2 * sd);
+      }
+    }
     const srOn = opts.cfg.sr;
     const pivots = (opts.pivots || [])
       .filter(([name]) => name === 'P' ? (srOn[1] || srOn[2] || srOn[3]) : srOn[Number(name.slice(1))])
@@ -1104,6 +1120,22 @@ function renderCharts(data, lamp) {
     for (const [name, v] of pivots) {
       line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: 'var(--color-accent)', 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
       text(name + ' ' + fmtPrice(v), x0 + 8, py(v) - 3, { fill: 'var(--color-accent)', 'font-size': 9 });
+    }
+
+    /* Bollinger envelope — dashed, neutral, like the reference Pro 3 */
+    if (bb) {
+      const mk = arr => {
+        let d = '';
+        for (let rel = 0; rel < arr.length; rel++) {
+          if (arr[rel] == null) continue;
+          d += (d ? 'L' : 'M') + x(i0 + rel).toFixed(1) + ' ' + py(arr[rel]).toFixed(1);
+        }
+        return d;
+      };
+      for (const [key, dash, op] of [['u', '5 4', 0.75], ['l', '5 4', 0.75], ['m', '2 4', 0.45]]) {
+        const d = mk(bb[key]);
+        if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: 'var(--color-text-secondary)', 'stroke-width': 1, 'stroke-dasharray': dash, 'stroke-opacity': op }));
+      }
     }
 
     /* SMA stack (doctrine: layered dynamic S/R) */
@@ -1353,17 +1385,24 @@ function buildWbSettings() {
         col.appendChild(lab);
       }
     };
-    group('Indicators', [
+    /* Pro 3 (day trading) keeps a slim panel by owner ruling: Bollinger
+       Bands / Volume / Stochastic only. Pro 1/2 carry the full set. */
+    const full = key !== 'p3';
+    const ind = [
+      ['Bollinger Bands', () => cfg.bb, v => { cfg.bb = v; }],
       ['Volume', () => cfg.vol, v => { cfg.vol = v; }],
       ['Stochastic', () => cfg.stoch, v => { cfg.stoch = v; }],
-      ['Stochastic weekly', () => cfg.stochW, v => { cfg.stochW = v; }],
-    ]);
-    group('Moving averages', [25, 50, 100, 200, 1].map(n =>
-      ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));
-    group('Support / resistance', [1, 2, 3].map(n =>
-      ['S' + n + ' / R' + n, () => cfg.sr[n], v => { cfg.sr[n] = v; }]));
-    group('SMA price display', [25, 50, 100, 200, 1].map(n =>
-      ['SMA (' + n + ')', () => cfg.smaPrice[n], v => { cfg.smaPrice[n] = v; }]));
+    ];
+    if (full) ind.push(['Stochastic weekly', () => cfg.stochW, v => { cfg.stochW = v; }]);
+    group('Indicators', ind);
+    if (full) {
+      group('Moving averages', [25, 50, 100, 200, 1].map(n =>
+        ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));
+      group('Support / resistance', [1, 2, 3].map(n =>
+        ['S' + n + ' / R' + n, () => cfg.sr[n], v => { cfg.sr[n] = v; }]));
+      group('SMA price display', [25, 50, 100, 200, 1].map(n =>
+        ['SMA (' + n + ')', () => cfg.smaPrice[n], v => { cfg.smaPrice[n] = v; }]));
+    }
     cols.appendChild(col);
   }
   pop.appendChild(cols);
