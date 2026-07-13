@@ -125,7 +125,7 @@ function buildDemoBrief(accounts) {
 }
 
 /* Demo heatmap — deterministic (seeded pct), rough caps; same shape as the
-   pipeline's data/heatmap.json so the renderer is shared. */
+   desk-heatmap feed payload so the renderer is shared. */
 const DEMO_HEAT_SECTORS = [
   ['Information Technology', [['NVDA', 4200, 'Semiconductors'], ['MSFT', 3700, 'Software - Infrastructure'], ['AAPL', 3300, 'Consumer Electronics'], ['AVGO', 1200, 'Semiconductors'], ['ORCL', 620, 'Software - Infrastructure'], ['AMD', 340, 'Semiconductors'], ['CRM', 250, 'Software - Application'], ['INTC', 130, 'Semiconductors']]],
   ['Communication Services', [['GOOGL', 2400, 'Internet Content'], ['META', 1700, 'Internet Content'], ['NFLX', 540, 'Entertainment'], ['DIS', 210, 'Entertainment'], ['T', 150, 'Telecom Services']]],
@@ -248,8 +248,8 @@ async function fetchPublic(path) {
   return res.json();
 }
 
-/* Panel lamp state from a domain's own embedded as-of date (wins over meta —
-   CDN generation skew rule). Returns {cls, text, stampText}. */
+/* Panel lamp state from a domain's own embedded as-of date (EOD-class data:
+   private snapshots, brief). Live feeds use liveLampFor instead. */
 function lampFor(asOfIso, now) {
   const ltd = isoDate(lastTradingDay(now || new Date()));
   if (!asOfIso) return { cls: 'lamp--stale', text: 'NO DATA', stamp: '—' };

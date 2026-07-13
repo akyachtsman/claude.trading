@@ -86,19 +86,19 @@ group. `[P]` = parallel-safe within its group.
 
 ## Group C — the deletion (PR C)
 
-- [ ] **C1** Delete `.github/workflows/data-refresh.yml`,
+- [x] **C1** Delete `.github/workflows/data-refresh.yml`,
   `.github/workflows/cron-notify.yml`, the whole
   `.github/scripts/refresh/` tree, and `data/*.json`.
-- [ ] **C2** `scripts/data.js` + `scripts/app.js`: delete meta loading,
+- [x] **C2** `scripts/data.js` + `scripts/app.js`: delete meta loading,
   `DESK.meta`, meta-driven gates, and every `fetchPublic('data/…')`
   snapshot fallback from A6 — live feeds + demo generator are the only two
   sources left; lamps fully live-derived.
-- [ ] **C3** `.github/scripts/ui-tests/tests/app.spec.js`: S1 gains the
+- [x] **C3** `.github/scripts/ui-tests/tests/app.spec.js`: S1 gains the
   narrowly-scoped feed-origin console-error allowlist with the written
   reason (spec Clarifications #7); add S14 (live only): market-strip lamp
   reads LIVE with stamp < 6 min — the live-feed-layer canary; confirm S5
   demo lamps untouched.
-- [ ] **C4** `CLAUDE.md`: drop the "Pipeline fixture tests" Required
+- [x] **C4** `CLAUDE.md`: drop the "Pipeline fixture tests" Required
   Commands row; rewrite the pipeline architecture bullets (edge functions +
   cron are the data layer now); add the desk-news service-key accepted
   residual; update the S13/S14 scenario table rows.

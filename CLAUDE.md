@@ -31,29 +31,31 @@ This project's look is its own — established at kickoff via `/design-intake`
   (`DESK_DB`). **Empty `DESK_DB.url` ⇒ the whole site runs in DEMO mode.**
   Current state: **LIVE** on the dedicated Supabase project ("trading
   dashboard", `kwugzhyfjevzwgplhtsd`, wired in PR #19) — RLS tables +
-  SECURITY DEFINER PIN RPCs + the `desk-ask` edge function are deployed and
-  the pipeline upserts nightly. Demo remains reachable via `?demo=1`.
+  SECURITY DEFINER PIN RPCs + the edge-function data layer below.
+  Demo remains reachable via `?demo=1`.
 - `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
-  mode resolution, public JSON loaders (cache-busted), staleness lamps,
-  Supabase RPC + edge-function fetch wrappers.
+  mode resolution, `deskFeed()` live-feed wrapper, `marketSessionOpen()`,
+  two-tier `liveLampFor` staleness lamps, Supabase RPC fetch wrappers.
 - `scripts/app.js` — all rendering + interactions (accounts, chart, brief with
-  FR-AI4 staleness, news, ask-the-desk panel, PIN lock/unlock flow).
-- `data/*.json` — public market/news/meta snapshots, committed daily by the
-  pipeline (never edited by hand).
-- `config/news-feeds.json` — owner-editable news source roster; merged over
-  built-in defaults by the pipeline.
-- `.github/scripts/refresh/` — the data pipeline (Node 20, `fast-xml-parser`
-  only): Stooq→Yahoo quote chain, FRED 10Y, RSS news, IBKR Flex, Anthropic
-  brief, watchlist OHLC histories (`fetch-charts.js` → `data/charts.json`;
-  roster override in `config/chart-watchlist.json`, NEVER derived from
-  holdings — public repo), meta writer. Fixture tests via `node --test`.
-- `.github/workflows/data-refresh.yml` — dual cron (22:30 UTC + 09:30 UTC
-  retry) + dispatch (`backfill`, `force_fail_market`).
-- `supabase/functions/` — versioned sources of the desk's edge functions
-  (deployed only to the dedicated project): `desk-ask` (PIN-gated Claude Q&A),
-  `quote-proxy` (PIN-gated OHLC for any ticker), `desk-maps` (anon delayed-quote
-  batch for the Crypto/Futures/World map cuts — fixed server-side roster,
-  2-min cache; replaced the nightly maps fetch, owner ruling 2026-07-13).
+  FR-AI4 staleness, news, ask-the-desk panel, PIN lock/unlock flow) + the
+  session-aware feed poller (5 min market-open / 60 min closed, paused
+  while the tab is hidden).
+- `config/news-feeds.json` / `config/chart-watchlist.json` /
+  `config/map-filters.json` — owner-editable rosters read by the edge
+  functions at runtime (watchlist NEVER derived from holdings — public repo).
+- `supabase/functions/` — versioned sources of the edge-function data layer
+  (deployed only to the dedicated project). Anon-callable public feeds:
+  `desk-market` (Stooq→Yahoo tiles + FRED 10Y), `desk-heatmap` (Nasdaq
+  screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
+  (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
+  session-aware cached + single-flight. PIN-gated: `desk-ask` (Claude Q&A),
+  `quote-proxy` (OHLC for any ticker). Cron-secret-gated: `desk-ibkr-sync`
+  (Flex → tables), `desk-brief` (Opus brief with the FR-AI4 grounding
+  guard). Scheduled by pg_cron (`desk_005` migration): sync 22:35/09:35,
+  brief 23:05/10:05 UTC — dual-slot because IBKR statements roll overnight.
+- `.github/workflows/keepalive.yml` — monthly empty commit; **the only
+  writer resetting GitHub's 60-day Actions scheduler clock** now that the
+  nightly pipeline is retired (PRs #54/#55/#56, 2026-07-13).
 - `specs/multi-account-trading-dashboard/` — the SDD artifact chain
   (brief/spec/plan/tasks/design/analysis).
 
@@ -62,7 +64,6 @@ This project's look is its own — established at kickoff via `/design-intake`
 |---|---|
 | Validate HTML | `npx html-validate index.html` |
 | Contrast gate (WCAG AA) | `node .github/scripts/check-contrast.js` |
-| Pipeline fixture tests | `cd .github/scripts/refresh && npm ci && npm test` |
 | Validate workflow YAML | `python3 -c "import yaml, sys; yaml.safe_load(open('.github/workflows/qa.yml'))"` |
 
 ## Project-Specific Security Constraints
@@ -74,19 +75,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   DEFINER PIN RPCs are the enforcement boundary (data.md pattern).
 - **Accepted residuals (live mode):** the PIN space is brute-forceable through
   the RPC (RLS cannot rate-limit); the PIN sits in sessionStorage for the tab
-  session. Real balances never enter this repo or the served files. The
-  `desk-maps` edge function is anon-callable by design (public quotes, roster
-  fixed server-side — not an open proxy); unauthenticated invocations can burn
-  free-tier quota, bounded by its in-function 2-min cache.
-- **Bot-data-commit exception:** `data-refresh.yml` pushes `data/*.json` to
-  `main` directly with `[skip ci]` (same standing as `keepalive.yml`); code
-  changes still go through PRs.
-- Server-side keys (`DB_SERVICE_KEY`, `ANTHROPIC_API_KEY`, IBKR tokens) live
-  only in Actions/edge-function secrets — never client-side, never committed.
-- **Supabase free-tier auto-pause runbook:** if live login suddenly fails after
-  ~1 week of pipeline inactivity, the project likely auto-paused — restore it
-  from the Supabase dashboard; the pipeline's upsert-failure email is the
-  early-warning signal.
+  session. Real balances never enter this repo or the served files. The five
+  public feed functions are anon-callable by design (public market data,
+  rosters fixed server-side / in committed config — not open proxies);
+  unauthenticated invocations can burn free-tier quota, bounded by
+  session-aware caches + single-flight. `desk-news` holds the service key to
+  read held tickers for ranking, but only public headlines and Stooq day-%
+  ever leave it — payload byte-shape-identical to the formerly-committed
+  public news.json.
+- Server-side keys (`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, IBKR
+  token/query-id, `CRON_SECRET`) live only in edge-function secrets;
+  `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —
+  never client-side, never committed. GitHub keeps only `KEEPALIVE_PAT` +
+  `TEST_AUTH_CREDENTIAL`.
+- **Supabase free-tier auto-pause runbook:** if live panels lamp STALE and
+  login fails, the project likely auto-paused — restore it from the Supabase
+  dashboard. Early-warning signals: the S14 canary failing in CI and
+  `cron.job_run_details` gaps. The IBKR Flex token expires **2027-06-14**
+  (renew in Client Portal → update the `IBKR_FLEX_TOKEN` function secret).
 
 ## Project-Specific Coding Standards
 - Price-change percentages use **2 decimals** (finance convention) — a
@@ -136,6 +142,7 @@ run for real against the dedicated project on every PR.
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 daily / Pro 2 weekly / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER rail cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps` delayed quotes, live mode only) and Russell 2000 render disabled in demo | Cut doesn't re-render, period gating wrong, or pending rows clickable |
+| S14 | Live-feed canary (live only) | Masthead lamp reads LIVE with a "Fetched" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 allowlists console errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design; S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or S1 allowlist widened beyond the feed origin |
 
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:
