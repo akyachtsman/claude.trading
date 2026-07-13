@@ -9,8 +9,8 @@
    maps-extra.json keeps serving (FR-D4). */
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { DATA_DIR, writeJson, writeStatus, errorLine, isoDate, lastTradingDay } from './lib/util.js';
-import { getCrumb, quoteBatch } from './lib/yahoo-batch.js';
+import { DATA_DIR, writeJson, writeStatus, warn, errorLine, isoDate, lastTradingDay } from './lib/util.js';
+import { getCrumb, quoteBatch, sparkBatch } from './lib/yahoo-batch.js';
 
 const CONFIG_URL = new URL('../../../config/map-filters.json', import.meta.url);
 
@@ -48,8 +48,21 @@ async function main() {
   const extra = cfg.extra || {};
   const symbols = Object.values(extra).flat().map(r => r[0]);
   if (!symbols.length) throw new Error('no extra rosters configured in map-filters.json');
-  const auth = await getCrumb();
-  const quotes = await quoteBatch(symbols, auth, 50);
+  /* v7 crumb path first (gives crypto market caps); GitHub runner IPs are
+     routinely 429'd on getcrumb, so the crumbless v8 spark is the fallback
+     (pct + last only — tiles then size by the config weights). */
+  let quotes = new Map();
+  try {
+    const auth = await getCrumb();
+    quotes = await quoteBatch(symbols, auth, 50);
+  } catch (e) {
+    warn('maps v7 quote path failed', String(e.message || e));
+  }
+  if (quotes.size < Math.ceil(symbols.length / 2)) {
+    warn('maps falling back to spark', `${quotes.size}/${symbols.length} via v7`);
+    const spark = await sparkBatch(symbols, 20);
+    for (const [sym, q] of spark) if (!quotes.has(sym)) quotes.set(sym, { pct: q.pct, cap: null, last: q.last });
+  }
   const cuts = buildMapCuts(extra, quotes);
   const keys = Object.keys(cuts);
   if (!keys.length) throw new Error(`all extra cuts below half coverage (${quotes.size}/${symbols.length} quotes)`);
