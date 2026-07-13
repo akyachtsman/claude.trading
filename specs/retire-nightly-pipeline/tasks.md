@@ -26,7 +26,7 @@ group. `[P]` = parallel-safe within its group.
   batches (no etiquette sleeps), per-symbol cache priming, 30-min TTL for
   history bars + session-aware TTL for the latest bar, `partial:true` under
   a 4s first-response budget; roster from Pages `config/chart-watchlist.json`.
-- [ ] **A4 [P]** `supabase/functions/desk-news/index.ts`: port
+- [x] **A4 [P]** `supabase/functions/desk-news/index.ts`: port
   `fetch-news.js` incl. holdings-first ranking (service key via
   `SUPABASE_SERVICE_ROLE_KEY` env — quote-proxy precedent), per-ticker
   feeds, Stooq `dayPctMap` chips; RSS parse via `npm:fast-xml-parser`;
