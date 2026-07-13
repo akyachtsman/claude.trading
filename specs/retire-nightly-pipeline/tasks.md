@@ -11,7 +11,7 @@ group. `[P]` = parallel-safe within its group.
 
 ## Group A — public feeds (PR A)
 
-- [ ] **A1 [P]** `supabase/functions/desk-market/index.ts`: port
+- [x] **A1 [P]** `supabase/functions/desk-market/index.ts`: port
   `fetch-market.js` (Stooq quote chain + FRED DGS10 CSV) to Deno; emit
   `{ok, generatedAt, asOf, tiles}` matching `data/market.json`; inline
   `sessionOpen()` helper (Mon–Fri 09:30–16:00 America/New_York via
