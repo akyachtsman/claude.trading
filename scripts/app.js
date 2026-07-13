@@ -1321,6 +1321,7 @@ function renderCharts(data, lamp) {
       stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
     }]);
   }
+  for (const k of ['p1', 'p2', 'p3']) document.getElementById('wbBar-' + k).hidden = !show(k);
   const pw = (W - GAP * (panes.length - 1)) / panes.length;
   panes.forEach((p, idx) => drawPane(idx * (pw + GAP), pw, ...p));
   for (let idx = 1; idx < panes.length; idx++) {
@@ -1330,11 +1331,11 @@ function renderCharts(data, lamp) {
 
 /* the per-pane settings popover (their platform's gear menu, in our idiom):
    indicator + SMA + S/R checkboxes for each tier, persisted via saveWbCfg */
-let wbSetPane = null; /* which pane's settings the popover shows */
+let wbSetPane = null; /* which pane's settings popover is open */
 function buildWbSettings() {
-  const pop = document.getElementById('wbSettings');
-  while (pop.firstChild) pop.removeChild(pop.firstChild);
   if (!wbState || !wbSetPane) return;
+  const pop = document.getElementById('wbSettings-' + wbSetPane);
+  while (pop.firstChild) pop.removeChild(pop.firstChild);
   const cols = el('div', 'wb-set-cols');
   {
     const key = wbSetPane;
@@ -1500,25 +1501,27 @@ function wireCharts() {
     }
   });
 
-  /* one gear per chart — each opens ONLY that pane's settings (owner ruling) */
-  const pop = document.getElementById('wbSettings');
-  const gears = ['p1', 'p2', 'p3'].map(k => [k, document.getElementById('wbGear-' + k)]);
+  /* one header bar per chart — its gear opens that pane's own popover,
+     anchored above the pane like the reference platform */
+  const gears = ['p1', 'p2', 'p3'].map(k => [k, document.getElementById('wbGear-' + k), document.getElementById('wbSettings-' + k)]);
   const closePop = () => {
-    pop.hidden = true; wbSetPane = null;
-    for (const [, b] of gears) b.setAttribute('aria-expanded', 'false');
+    wbSetPane = null;
+    for (const [, b, pop] of gears) { pop.hidden = true; b.setAttribute('aria-expanded', 'false'); }
   };
-  for (const [k, b] of gears) {
+  for (const [k, b, pop] of gears) {
     b.addEventListener('click', () => {
       if (!wbState) return;
-      if (!pop.hidden && wbSetPane === k) { closePop(); return; }
+      if (!pop.hidden) { closePop(); return; }
+      closePop();
       wbSetPane = k;
       buildWbSettings();
       pop.hidden = false;
-      for (const [k2, b2] of gears) b2.setAttribute('aria-expanded', String(k2 === k));
+      b.setAttribute('aria-expanded', 'true');
     });
   }
   document.addEventListener('pointerdown', ev => {
-    if (pop.hidden || pop.contains(ev.target) || gears.some(([, b]) => b.contains(ev.target))) return;
+    if (!wbSetPane) return;
+    if (gears.some(([, b, pop]) => b.contains(ev.target) || pop.contains(ev.target))) return;
     closePop();
   });
 }
