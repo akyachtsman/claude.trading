@@ -856,14 +856,15 @@ const MAP_CUTS = [
   ['dj30', 'Dow Jones 30', 'roster'],
   ['ndx100', 'Nasdaq 100', 'roster'],
   ['etf', 'ETFs', 'live'],
+  ['themes', 'Themes', 'roster'],
+  ['world', 'World', 'extra'],
+  ['crypto', 'Crypto', 'extra'],
+  ['futures', 'Futures', 'extra'],
   ['r2k', 'Russell 2000', 'pending'],
-  ['world', 'World', 'pending'],
-  ['crypto', 'Crypto', 'pending'],
-  ['futures', 'Futures', 'pending'],
-  ['themes', 'Themes', 'pending'],
 ];
 const MAP_PERIODS = [['1d', '1-Day Performance'], ['1w', '1-Week Performance'], ['1m', '1-Month Performance'], ['ytd', 'YTD Performance']];
 let heatBase = null;                        /* raw dataset + lamp from loadHeatmap */
+let heatExtra = null;                       /* data/maps-extra.json (crypto/futures/world) */
 let mapView = { key: 'sp500', period: '1d', filters: null };
 
 function buildEtfHeatmap(period) {
@@ -918,6 +919,24 @@ function applyMapView() {
     out = buildEtfHeatmap(mapView.period);
     lamp = wbState && wbState.lamp ? wbState.lamp : lamp;
     note = out ? 'Sized by 21-day avg dollar volume · colored by ' + periodLabel.toLowerCase() : 'ETF map needs the charts panel data — still loading';
+  } else if (mapView.key === 'themes') {
+    /* thematic regroup of the S&P dataset — rosters in config/map-filters.json */
+    const themes = (mapView.filters || {}).themes || {};
+    const bySym = new Map();
+    for (const s of heatBase.hm.sectors) for (const t of s.tiles) bySym.set(t.sym, t);
+    const sectors = Object.entries(themes).map(([name, syms]) => {
+      const tiles = syms.map(sym => bySym.get(sym)).filter(Boolean).map(t => ({ ...t, ind: '' }));
+      return { name, cap: tiles.reduce((a, t) => a + t.cap, 0), tiles };
+    }).filter(s => s.tiles.length).sort((a, b) => b.cap - a.cap);
+    out = { ...heatBase.hm, sectors };
+    note = 'Hand-kept theme baskets over the S&P dataset · sized by cap · day %';
+  } else if (mapView.key === 'crypto' || mapView.key === 'futures' || mapView.key === 'world') {
+    const cut = heatExtra && heatExtra.cuts && heatExtra.cuts[mapView.key];
+    out = cut ? { asOf: heatExtra.asOf, sectors: cut.sectors } : null;
+    lamp = cut ? lampFor(heatExtra.asOf, new Date()) : lamp;
+    note = !cut ? 'This universe fills in after the next nightly refresh'
+      : mapView.key === 'crypto' ? 'Sized by market cap · colored by day % change'
+      : 'Hand-weighted tiles (config/map-filters.json) · colored by day % change';
   }
   document.getElementById('heatTitle').textContent = label + ' — heat';
   renderHeatmap(out, lamp);
@@ -940,6 +959,16 @@ function wireMapFilter() {
     if (kind === 'pending') {
       b.disabled = true;
       b.title = 'Needs a new data feed — ask the desk to wire it';
+    } else if (kind === 'extra') {
+      b.disabled = true;                       /* enabled once maps-extra.json loads */
+      b.title = 'Fills in after the next nightly refresh';
+      b.dataset.extra = '1';
+      b.addEventListener('click', () => {
+        mapView.key = key;
+        mapView.period = '1d';
+        for (const other of nav.children) other.setAttribute('aria-current', String(other === b));
+        applyMapView();
+      });
     } else {
       b.addEventListener('click', () => {
         mapView.key = key;
@@ -970,6 +999,17 @@ async function loadHeatmap() {
   }
   /* Fetch the file only once meta says the pipeline has published it — a
      404 would log a console error (fails test S1) even when handled. */
+  const mapsPublished = DESK.meta && DESK.meta.domains && DESK.meta.domains.maps
+    && DESK.meta.domains.maps.asOf;
+  if (DESK.mode !== 'demo' && mapsPublished && !heatExtra) {
+    try {
+      heatExtra = await fetchPublic('data/maps-extra.json');
+      for (const b of document.querySelectorAll('.map-filter-btn[data-extra]')) {
+        b.disabled = false;
+        b.removeAttribute('title');
+      }
+    } catch { /* extra cuts stay disabled */ }
+  }
   const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.heatmap
     && DESK.meta.domains.heatmap.asOf;
   if (DESK.mode !== 'demo' && published) {
