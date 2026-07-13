@@ -1,11 +1,17 @@
 {
   "asOf": "2026-07-13",
-  "generatedAt": "2026-07-13T04:18:08.310Z",
+  "generatedAt": "2026-07-13T07:13:19.484Z",
   "items": [
     {
-      "t": "03:33",
+      "t": "07:03",
       "src": "CNBC",
-      "h": "SK Hynix shares slide 12% in Seoul after stellar Nasdaq debut",
+      "h": "SK Hynix South Korean shares clock worst day, sinking over 15%, after stellar Nasdaq debut",
+      "chips": []
+    },
+    {
+      "t": "05:49",
+      "src": "CNBC",
+      "h": "TSMC, the world's largest contract chipmaker, reports 68% surge in June revenue",
       "chips": []
     },
     {
@@ -72,12 +78,6 @@
       "t": "14:00",
       "src": "MarketWatch",
       "h": "Earnings estimates have been following an unusual pattern this time around",
-      "chips": []
-    },
-    {
-      "t": "13:30",
-      "src": "CNBC",
-      "h": "Student loan borrowers on new RAP plan can lose key benefits if they pay even one day late",
       "chips": []
     },
     {

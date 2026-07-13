@@ -1,42 +1,48 @@
 {
   "asOf": "2026-07-13",
-  "generatedAt": "2026-07-13T04:19:46.368Z",
+  "generatedAt": "2026-07-13T07:14:59.644Z",
   "domains": {
     "accounts": {
       "status": "not-ready",
       "asOf": "2026-07-10",
       "detail": "Flex SendRequest 1001: Statement could not be generated at this time. Please try again shortly.",
-      "at": "2026-07-13T04:19:39.442Z"
+      "at": "2026-07-13T07:14:51.500Z"
     },
     "brief": {
       "status": "ok",
       "asOf": "2026-07-10",
       "detail": "",
-      "at": "2026-07-13T04:19:46.315Z"
+      "at": "2026-07-13T07:14:59.597Z"
     },
     "market": {
       "status": "ok",
       "asOf": "2026-07-10",
       "detail": "",
-      "at": "2026-07-13T04:17:51.441Z"
+      "at": "2026-07-13T07:12:58.557Z"
     },
     "news": {
       "status": "ok",
       "asOf": "2026-07-13",
       "detail": "",
-      "at": "2026-07-13T04:18:08.312Z"
+      "at": "2026-07-13T07:13:19.485Z"
     },
     "heatmap": {
       "status": "ok",
       "asOf": "2026-07-13",
       "detail": "501 tiles via nasdaq-screener",
-      "at": "2026-07-13T04:17:46.936Z"
+      "at": "2026-07-13T07:11:47.653Z"
     },
     "charts": {
       "status": "ok",
       "asOf": "2026-07-10",
       "detail": "25/25 symbols, 330 bars max",
-      "at": "2026-07-13T04:18:07.139Z"
+      "at": "2026-07-13T07:13:18.105Z"
+    },
+    "maps": {
+      "status": "failed",
+      "asOf": null,
+      "detail": "HTTP 429 Too Many Requests — https://query1.finance.yahoo.com/v1/test/getcrumb",
+      "at": "2026-07-13T07:12:52.979Z"
     }
   }
 }
