@@ -47,7 +47,7 @@ group. `[P]` = parallel-safe within its group.
   (S1/S5–S9/S12/S13 on mobile-chrome) — demo behavior must be unchanged.
 - [x] **A9** `/security-review` on the diff (desk-news service-key surface)
   + `directives-toolkit:qa-pipeline`.
-- [ ] **A10** Draft PR A; deploy the four functions (owner prompts); verify
+- [x] **A10** Draft PR A; deploy the four functions (owner prompts); verify
   each via pg_net (`status_code = 200`, `ok:true`, shape spot-checks);
   merge on green + owner approval; verify all four panels show LIVE lamps
   on production.
