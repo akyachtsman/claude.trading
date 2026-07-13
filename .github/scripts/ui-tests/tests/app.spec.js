@@ -215,7 +215,20 @@ function testValueFor(el) {
 test('S1: page loads without JS errors', async ({ page }) => {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  // Allowlist (spec Clarifications #7, Group C): failed fetches to the live
+  // feed origin log browser console errors we can't suppress from JS
+  // ("Failed to load resource … functions/v1/desk-*"). The app handles those
+  // failures by design (keeps last good render, lamps Stale) — S14 covers
+  // feed health. Everything else still fails S1. Narrow on purpose: origin
+  // substring only, never a blanket console mute.
+  // Network-layer console errors carry the URL in location(), not text().
+  const FEED_ORIGIN = '.supabase.co/functions/v1/';
+  page.on('console', m => {
+    if (m.type() !== 'error') return;
+    const at = (m.location() && m.location().url) || '';
+    if (m.text().includes(FEED_ORIGIN) || at.includes(FEED_ORIGIN)) return;
+    errors.push(`${m.text()} (${at || 'no url'})`);
+  });
   await page.goto('./');
   await page.waitForLoadState('networkidle').catch(() => {});
   const bodyText = await page.evaluate(() => document.body.innerText?.trim());
@@ -690,6 +703,18 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   await expect(page.locator('.lock-error')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#equityLamp')).toHaveText(/locked/i);
   await expect(page.locator('#accountGrid .hero-number')).toHaveCount(0);
+});
+
+// S14 — Live-feed-layer canary (Group C: the committed snapshots are gone,
+// so a dead feed layer would otherwise only show up as quiet STALE lamps).
+// The masthead lamp derives from the freshest desk-market fetch: LIVE means
+// the edge function answered within the last 6 minutes.
+test('S14: masthead lamp reads LIVE off the market feed (live only)', async ({ page }) => {
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  await page.goto('./');
+  const lamp = page.locator('#mastheadState .lamp').first();
+  await expect(lamp, 'live feed unreachable or stale — check desk-market').toHaveText('LIVE', { timeout: 20000 });
+  await expect(page.locator('#mastheadState .stamp')).toContainText('Fetched');
 });
 
 // S12 — Charts workbench: three doctrine panes with candles, stochastics,

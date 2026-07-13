@@ -34,6 +34,7 @@ const DESK = {
   mode: 'demo',        /* 'demo' | 'live' */
   authed: false,
   data: null,          /* {accounts, market, news, labels, brief, asOfDate} */
+  liveStamp: null,     /* freshest market-feed {generatedAt, asOf} — masthead lamp */
   chart: { days: 126, consolidated: false, _state: null },
 };
 
@@ -46,8 +47,11 @@ function renderMasthead() {
     wrap.appendChild(el('span', 'lamp lamp--eod', 'EOD snapshot'));
     wrap.appendChild(el('span', 'stamp', 'As of ' + lastLabel()));
   } else {
-    const meta = DESK.meta || {};
-    const lamp = lampFor(meta.asOf, new Date());
+    /* live-derived: the market feed's stamps stand for the public layer —
+       no committed meta.json anymore (retire-nightly-pipeline Group C) */
+    const lamp = DESK.liveStamp
+      ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf)
+      : { cls: 'lamp--stale', text: 'Stale', stamp: 'Live feed unreachable' };
     wrap.appendChild(el('span', 'lamp ' + lamp.cls, lamp.text));
     wrap.appendChild(el('span', 'stamp', lamp.stamp));
     if (DESK.authed) {
@@ -1028,24 +1032,12 @@ async function loadHeatmap() {
     }
   }
   if (DESK.mode !== 'demo') {
-    /* live feed first (desk-heatmap); committed snapshot as the Group A
-       transition fallback (removed in Group C) */
     try {
       const hm = await deskFeed('desk-heatmap');
       heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf) };
       applyMapView();
       return;
-    } catch { /* fall through to snapshot */ }
-    const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.heatmap
-      && DESK.meta.domains.heatmap.asOf;
-    if (published) {
-      try {
-        const hm = await fetchPublic('data/heatmap.json');
-        heatBase = { hm, lamp: lampFor(hm.asOf, new Date()) };
-        applyMapView();
-        return;
-      } catch { /* fall through to demo-labeled */ }
-    }
+    } catch { /* poller failure below */ }
     if (heatBase) return; /* poller failure: keep the last good map */
   }
   heatBase = { hm: buildDemoHeatmap(), lamp: { cls: 'lamp--demo', text: 'Demo' } };
@@ -1780,8 +1772,6 @@ function wireCharts() {
 
 async function loadCharts() {
   if (DESK.mode !== 'demo') {
-    /* live feed first (desk-charts); committed snapshot as the Group A
-       transition fallback (removed in Group C) */
     try {
       const data = await deskFeed('desk-charts');
       if (wbState) {
@@ -1794,16 +1784,7 @@ async function loadCharts() {
         renderCharts(data, liveLampFor(data.generatedAt, data.asOf));
       }
       return;
-    } catch { /* fall through to snapshot */ }
-    const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.charts
-      && DESK.meta.domains.charts.asOf;
-    if (published) {
-      try {
-        const data = await fetchPublic('data/charts.json');
-        renderCharts(data, lampFor(data.asOf, new Date()));
-        return;
-      } catch { /* fall through to demo-labeled */ }
-    }
+    } catch { /* poller failure below */ }
     if (wbState) return; /* poller failure: keep the last good workbench */
   }
   renderCharts(buildDemoCharts(), { cls: 'lamp--demo', text: 'Demo' });
@@ -1858,25 +1839,21 @@ async function loadPrivate(pin) {
 }
 
 /* ── live public feeds: refreshers + the session-aware poller ────────────
-   Each refresher is live-feed-first (desk-* edge function), committed-
-   snapshot second (Group A transition, dies in Group C), demo-labeled last
-   — and on a POLLER failure it keeps the last good render (FR-R9). */
+   Live feed (desk-* edge function) or the last good render (FR-R9) — the
+   demo generator is the only other data source left. On first-load failure
+   the panel lamps Stale rather than showing demo data as real. */
 let stripLive = false, newsLive = false;
 
 async function refreshMarket() {
   try {
     const market = await deskFeed('desk-market');
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
+    DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf };
     renderStrip(DESK.data.market);
     stripLive = true;
     return;
-  } catch { /* fall through */ }
-  if (stripLive) return; /* keep last good */
-  try {
-    const market = await fetchPublic('data/market.json');
-    DESK.data.market = market.tiles || [];
-    renderStrip(DESK.data.market);
-  } catch { renderStrip(DESK.data.market); }
+  } catch { /* keep last good; masthead lamps Stale via liveStamp age */ }
+  if (!stripLive) renderStrip(DESK.data.market);
 }
 
 async function refreshNews() {
@@ -1886,15 +1863,8 @@ async function refreshNews() {
     renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
     newsLive = true;
     return;
-  } catch { /* fall through */ }
-  if (newsLive) return; /* keep last good */
-  try {
-    const news = await fetchPublic('data/news.json');
-    DESK.data.news = news.items || [];
-    renderNews(DESK.data.news, lampFor(news.asOf, new Date()));
-  } catch {
-    renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
-  }
+  } catch { /* keep last good */ }
+  if (!newsLive) renderNews(DESK.data.news, { cls: 'lamp--stale', text: 'Stale' });
 }
 
 /* 5 min while the US session is open, 60 min closed (Clarification 6);
@@ -1904,6 +1874,7 @@ function startFeedPolling() {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
   const tick = async () => {
     await Promise.all([refreshMarket(), refreshNews(), loadHeatmap(), loadCharts()]);
+    renderMasthead(); /* the masthead lamp tracks the freshest market fetch */
     schedule();
   };
   const schedule = () => {
@@ -1932,12 +1903,6 @@ async function boot() {
   }
   /* live: public domains render immediately; private waits for PIN */
   DESK.data = buildDemoData(); /* placeholder series shapes until auth */
-  try {
-    DESK.meta = await fetchPublic('data/meta.json');
-  } catch { DESK.meta = null; }
-  /* Public domains: live feeds first, committed snapshots as the Group A
-     transition fallback, clearly-labeled DEMO data last (never an empty
-     strip, never demo masquerading as real). */
   await Promise.all([refreshMarket(), refreshNews()]);
   renderMasthead();
   loadHeatmap();
