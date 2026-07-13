@@ -907,8 +907,11 @@ function stochMarks(st) {
   const buys = [], sells = [];
   for (let i = 1; i < st.k.length; i++) {
     if (st.k[i] == null || st.d[i] == null || st.k[i - 1] == null || st.d[i - 1] == null) continue;
-    if (st.k[i - 1] <= st.d[i - 1] && st.k[i] > st.d[i] && st.k[i - 1] <= 20) buys.push(i);
-    if (st.k[i - 1] >= st.d[i - 1] && st.k[i] < st.d[i] && st.k[i - 1] >= 80) sells.push(i);
+    /* buy: %K up through %D with BOTH at/below the oversold band; sell: the
+       top-roll — down through %D AND dropping OUT of the overbought band
+       (an embedded cross that stays pinned above 80 is trend, not a sell). */
+    if (st.k[i - 1] <= st.d[i - 1] && st.k[i] > st.d[i] && st.k[i - 1] <= 20 && st.d[i - 1] <= 20) buys.push(i);
+    if (st.k[i - 1] >= st.d[i - 1] && st.k[i] < st.d[i] && st.d[i - 1] >= 80 && st.k[i] < 80) sells.push(i);
   }
   return { buys, sells };
 }
@@ -982,7 +985,7 @@ function renderCharts(data, lamp) {
   const paneW = (W - GAP) / 2;
   const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, ...attrs }));
   const text = (str, tx, ty, attrs) => { const t = svgEl('text', { x: tx, y: ty, 'font-family': 'var(--font-mono)', 'font-size': 10, fill: WB.label, ...attrs }); t.textContent = str; svg.appendChild(t); };
-  const hideTip = () => { tip.style.display = 'none'; for (const c of svg.querySelectorAll('[data-cross]')) c.setAttribute('visibility', 'hidden'); };
+  const hideTip = () => { tip.style.display = 'none'; while (tip.firstChild) tip.removeChild(tip.firstChild); for (const c of svg.querySelectorAll('[data-cross]')) c.setAttribute('visibility', 'hidden'); };
 
   /* one pane = caption · price (+SMA/pivots) · volume · stochastic strip */
   const drawPane = (x0, w, bars, st, marks, caption, opts) => {
