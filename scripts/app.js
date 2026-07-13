@@ -875,7 +875,28 @@ window.addEventListener('resize', () => {
    bars and weekly bars (owner spec: "daily and weekly (13)"). Candle green/
    red is price-direction semantics (like the heatmap), not decoration. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)' };
-const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126]];  /* Pro 1 window; Pro 2 shows the full weekly history */
+const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
+const WB2_ZOOMS = [['6M', 26], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars */
+
+/* per-pane configuration (their settings menu, in our idiom) — persisted */
+const WB_CFG_KEY = 'wb_cfg_v2';
+const WB_CFG_DEFAULT = () => ({
+  p1: { vol: true, stoch: true, smas: { 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true } },
+  p2: { vol: true, stoch: true, smas: { 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false } },
+});
+function loadWbCfg() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WB_CFG_KEY));
+    if (raw && raw.p1 && raw.p2) return raw;
+  } catch { /* fall through */ }
+  return WB_CFG_DEFAULT();
+}
+function saveWbCfg() {
+  try { localStorage.setItem(WB_CFG_KEY, JSON.stringify(wbState.cfg)); } catch { /* storage unavailable — session-only */ }
+}
+const SMA_COLORS = { 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-series-2)', 200: 'var(--color-text-secondary)' };
+const ytdBars = bars => { const y = bars.t[bars.t.length - 1].slice(0, 4); let n = 0; for (let i = bars.t.length - 1; i >= 0 && bars.t[i].slice(0, 4) === y; i--) n++; return Math.max(n, 5); };
+const paneWindow = (spec, bars) => spec === 'ytd' ? ytdBars(bars) : spec;
 let wbState = null;   /* { data, lamp, sym, days } */
 
 const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.round(v / 1e3) + 'K';
@@ -951,7 +972,7 @@ function renderWbSidebar(data) {
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63 };
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, cfg: loadWbCfg() };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -1004,7 +1025,10 @@ function renderCharts(data, lamp) {
 
     let hi = -Infinity, lo = Infinity;
     for (let i = i0; i < bars.c.length; i++) { hi = Math.max(hi, bars.h[i]); lo = Math.min(lo, bars.l[i]); }
-    const pivots = (opts.pivots || []).filter(([, v]) => v > lo * 0.95 && v < hi * 1.05);
+    const srOn = opts.cfg.sr;
+    const pivots = (opts.pivots || [])
+      .filter(([name]) => name === 'P' ? (srOn[1] || srOn[2] || srOn[3]) : srOn[Number(name.slice(1))])
+      .filter(([, v]) => v > lo * 0.95 && v < hi * 1.05);
     for (const [, v] of pivots) { hi = Math.max(hi, v); lo = Math.min(lo, v); }
     const pad = (hi - lo) * 0.05 || 1;
     hi += pad; lo -= pad;
@@ -1035,7 +1059,7 @@ function renderCharts(data, lamp) {
     }
 
     let vMax = 0;
-    for (let i = i0; i < bars.c.length; i++) vMax = Math.max(vMax, bars.v[i]);
+    if (opts.cfg.vol) for (let i = i0; i < bars.c.length; i++) vMax = Math.max(vMax, bars.v[i]);
     for (let i = i0; i < bars.c.length; i++) {
       const up = bars.c[i] >= bars.o[i];
       const col = up ? WB.up : WB.down;
@@ -1044,10 +1068,11 @@ function renderCharts(data, lamp) {
       svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col }));
       if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: col, 'fill-opacity': 0.55 }));
     }
-    text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
+    if (opts.cfg.vol) text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
 
     /* stochastic strip + doctrine markers */
     const sy = v => sY + sH - v / 100 * sH;
+    if (opts.cfg.stoch) {
     for (const g of [20, 80]) {
       line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.grid, 'stroke-width': 1, 'stroke-dasharray': '3 3' });
       text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
@@ -1068,6 +1093,7 @@ function renderCharts(data, lamp) {
       const bx = x0 + plotW - 104;
       svg.appendChild(svgEl('rect', { x: bx, y: sY - 12, width: 112, height: 12, rx: 2, fill: 'var(--color-accent)', 'fill-opacity': 0.15 }));
       text(pinned + ' — TREND', bx + 4, sY - 3, { 'font-size': 7, fill: 'var(--color-accent)', 'letter-spacing': '.04em' });
+    }
     }
 
     /* month gridlines (labels only where they have ≥48px of room) */
@@ -1115,16 +1141,64 @@ function renderCharts(data, lamp) {
   const weekly = toWeeklyBars(s);
   const dStoch = stochSeries(s);
   const wStoch = stochSeries(weekly);
+  const smaList = cfg => Object.entries(cfg.smas).filter(([, on]) => on).map(([len]) => [Number(len), SMA_COLORS[len]]);
   drawPane(0, paneW, s, dStoch, stochMarks(dStoch), 'PRO 1 · DAILY · SHORT-TERM', {
-    window: wbState.days, tier: 'Pro 1',
-    pivots: monthlyPivots(s), smas: [[20, 'var(--color-series-3)'], [50, 'var(--color-accent-bright)']],
+    window: paneWindow(wbState.days, s), tier: 'Pro 1', cfg: wbState.cfg.p1,
+    pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p1),
     stochCaption: 'STOCH 13-3-3 · DAILY',
   });
   drawPane(paneW + GAP, paneW, weekly, wStoch, stochMarks(wStoch), 'PRO 2 · WEEKLY · LONG-TERM', {
-    window: 9999, tier: 'Pro 2',
+    window: paneWindow(wbState.wdays, weekly), tier: 'Pro 2', cfg: wbState.cfg.p2,
+    pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p2),
     stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
   });
   line(paneW + GAP / 2, 8, paneW + GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
+}
+
+/* the per-pane settings popover (their platform's gear menu, in our idiom):
+   indicator + SMA + S/R checkboxes for each tier, persisted via saveWbCfg */
+function buildWbSettings() {
+  const pop = document.getElementById('wbSettings');
+  while (pop.firstChild) pop.removeChild(pop.firstChild);
+  const cols = el('div', 'wb-set-cols');
+  for (const [key, title] of [['p1', 'PRO 1 · DAILY'], ['p2', 'PRO 2 · WEEKLY']]) {
+    const cfg = wbState.cfg[key];
+    const col = el('div', 'wb-set-col');
+    col.appendChild(el('h3', 'wb-set-title', title));
+    const group = (label, rows) => {
+      col.appendChild(el('p', 'wb-set-group', label));
+      for (const [name, get, set] of rows) {
+        const lab = el('label', 'wb-set-row');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = get();
+        cb.addEventListener('change', () => {
+          set(cb.checked); saveWbCfg();
+          renderCharts(wbState.data, wbState.lamp);
+        });
+        lab.appendChild(cb);
+        lab.appendChild(el('span', '', name));
+        col.appendChild(lab);
+      }
+    };
+    group('Indicators', [
+      ['Volume', () => cfg.vol, v => { cfg.vol = v; }],
+      ['Stochastic', () => cfg.stoch, v => { cfg.stoch = v; }],
+    ]);
+    group('Moving averages', [25, 50, 100, 200].map(n =>
+      ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));
+    group('Support / resistance', [1, 2, 3].map(n =>
+      ['S' + n + ' / R' + n, () => cfg.sr[n], v => { cfg.sr[n] = v; }]));
+    cols.appendChild(col);
+  }
+  pop.appendChild(cols);
+  const reset = document.createElement('button');
+  reset.type = 'button'; reset.className = 'wb-set-reset'; reset.textContent = 'Reset to defaults';
+  reset.addEventListener('click', () => {
+    wbState.cfg = WB_CFG_DEFAULT(); saveWbCfg();
+    buildWbSettings();
+    renderCharts(wbState.data, wbState.lamp);
+  });
+  pop.appendChild(reset);
 }
 
 function wireCharts() {
@@ -1133,19 +1207,38 @@ function wireCharts() {
     wbState.sym = ev.target.value;
     renderCharts(wbState.data, wbState.lamp);
   });
-  const seg = document.getElementById('chartZoom');
-  for (const [label, days] of WB_ZOOMS) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.textContent = label;
-    b.setAttribute('aria-pressed', String(days === 63));
-    b.addEventListener('click', () => {
-      if (!wbState) return;
-      wbState.days = days;
-      for (const btn of seg.children) btn.setAttribute('aria-pressed', String(btn === b));
-      renderCharts(wbState.data, wbState.lamp);
-    });
-    seg.appendChild(b);
-  }
+  const wireZoom = (segId, zooms, initial, apply) => {
+    const seg = document.getElementById(segId);
+    for (const [label, spec] of zooms) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = label;
+      b.setAttribute('aria-pressed', String(spec === initial));
+      b.addEventListener('click', () => {
+        if (!wbState) return;
+        apply(spec);
+        for (const btn of seg.children) btn.setAttribute('aria-pressed', String(btn === b));
+        renderCharts(wbState.data, wbState.lamp);
+      });
+      seg.appendChild(b);
+    }
+  };
+  wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; });
+  wireZoom('chartZoom2', WB2_ZOOMS, 9999, spec => { wbState.wdays = spec; });
+
+  const gear = document.getElementById('wbGear');
+  const pop = document.getElementById('wbSettings');
+  gear.addEventListener('click', () => {
+    if (!wbState) return;
+    const opening = pop.hidden;
+    if (opening) buildWbSettings();
+    pop.hidden = !opening;
+    gear.setAttribute('aria-expanded', String(opening));
+  });
+  document.addEventListener('pointerdown', ev => {
+    if (pop.hidden || pop.contains(ev.target) || gear.contains(ev.target)) return;
+    pop.hidden = true;
+    gear.setAttribute('aria-expanded', 'false');
+  });
 }
 
 async function loadCharts() {
