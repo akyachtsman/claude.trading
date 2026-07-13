@@ -1160,7 +1160,7 @@ function renderCharts(data, lamp) {
       hideTip();
       cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
       cross.setAttribute('visibility', 'visible');
-      tip.appendChild(el('div', 'tip-date', bars.t[i] + ' · ' + wbState.sym + ' · ' + opts.tier));
+      tip.appendChild(el('div', 'tip-date', bars.t[i] + ' · ' + (opts.sym || wbState.sym) + ' · ' + opts.tier));
       const chg = i > 0 ? (bars.c[i] / bars.c[i - 1] - 1) * 100 : 0;
       tip.appendChild(el('div', '', 'O ' + fmtPrice(bars.o[i]) + '  H ' + fmtPrice(bars.h[i]) + '  L ' + fmtPrice(bars.l[i])));
       const cRow = el('div', '', 'C ' + fmtPrice(bars.c[i]) + ' ');
@@ -1185,33 +1185,51 @@ function renderCharts(data, lamp) {
     overlay.addEventListener('pointerleave', hideTip);
   };
 
-  const weekly = toWeeklyBars(s);
-  const dStoch = stochSeries(s);
-  const wStoch = stochSeries(weekly);
   const smaList = cfg => Object.entries(cfg.smas).filter(([, on]) => on).map(([len]) => [Number(len), SMA_COLORS[len]]);
-  const dMarks = stochMarks(dStoch);
   const show = p => wbState.layout === 'split' || wbState.layout === p;
+  /* each pane may pin its own ticker (cfg.sym); empty = follow the desk
+     symbol. Guarded against symbols missing from the loaded roster. */
+  const effSym = cfg => (cfg.sym && data.symbols[cfg.sym] && data.symbols[cfg.sym].c.length >= 30) ? cfg.sym : wbState.sym;
+  const dailyCache = {};
+  const daily = sym => dailyCache[sym] || (dailyCache[sym] = (() => {
+    const bars = data.symbols[sym];
+    return { bars, st: stochSeries(bars), piv: monthlyPivots(bars) };
+  })());
   const panes = [];
-  if (show('p1')) panes.push([s, dStoch, dMarks, 'PRO 1 · DAILY · SHORT-TERM', {
-    window: paneWindow(wbState.days, s), offset: wbState.off, panKey: 'off',
-    tier: 'Pro 1', cfg: wbState.cfg.p1,
-    pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p1),
-    stochCaption: 'STOCH 13-3-3 · DAILY',
-  }]);
-  if (show('p2')) panes.push([weekly, wStoch, stochMarks(wStoch), 'PRO 2 · WEEKLY · LONG-TERM', {
-    window: paneWindow(wbState.wdays, weekly), offset: wbState.woff, panKey: 'woff',
-    tier: 'Pro 2', cfg: wbState.cfg.p2,
-    pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p2),
-    stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
-  }]);
+  if (show('p1')) {
+    const sym = effSym(wbState.cfg.p1);
+    const d = daily(sym);
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · DAILY · ' + sym, {
+      window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off',
+      tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
+      pivots: d.piv, smas: smaList(wbState.cfg.p1),
+      stochCaption: 'STOCH 13-3-3 · DAILY',
+    }]);
+  }
+  if (show('p2')) {
+    const sym = effSym(wbState.cfg.p2);
+    const d = daily(sym);
+    const wk = toWeeklyBars(d.bars);
+    const wst = stochSeries(wk);
+    panes.push([wk, wst, stochMarks(wst), 'PRO 2 · WEEKLY · ' + sym, {
+      window: paneWindow(wbState.wdays, wk), offset: wbState.woff, panKey: 'woff',
+      tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
+      pivots: d.piv, smas: smaList(wbState.cfg.p2),
+      stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
+    }]);
+  }
   /* Pro 3 = the day-trading tier; honest EOD placeholder (tight daily
      window) until the intraday quote-proxy backend is approved */
-  if (show('p3')) panes.push([s, dStoch, dMarks, 'PRO 3 · DAY TRADING · EOD BARS', {
-    window: paneWindow(wbState.days3, s), offset: wbState.off3, panKey: 'off3',
-    tier: 'Pro 3', cfg: wbState.cfg.p3,
-    pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p3),
-    stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
-  }]);
+  if (show('p3')) {
+    const sym = effSym(wbState.cfg.p3);
+    const d = daily(sym);
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
+      window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3',
+      tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
+      pivots: d.piv, smas: smaList(wbState.cfg.p3),
+      stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
+    }]);
+  }
   const pw = (W - GAP * (panes.length - 1)) / panes.length;
   panes.forEach((p, idx) => drawPane(idx * (pw + GAP), pw, ...p));
   for (let idx = 1; idx < panes.length; idx++) {
@@ -1229,6 +1247,24 @@ function buildWbSettings() {
     const cfg = wbState.cfg[key];
     const col = el('div', 'wb-set-col');
     col.appendChild(el('h3', 'wb-set-title', title));
+    col.appendChild(el('p', 'wb-set-group', 'Ticker'));
+    const tsel = document.createElement('select');
+    tsel.className = 'input wb-set-sym';
+    tsel.setAttribute('aria-label', title + ' ticker');
+    const follow = document.createElement('option');
+    follow.value = ''; follow.textContent = 'Desk symbol';
+    tsel.appendChild(follow);
+    for (const sym of Object.keys(wbState.data.symbols)) {
+      const o = document.createElement('option');
+      o.value = sym; o.textContent = sym;
+      tsel.appendChild(o);
+    }
+    tsel.value = cfg.sym && wbState.data.symbols[cfg.sym] ? cfg.sym : '';
+    tsel.addEventListener('change', () => {
+      cfg.sym = tsel.value || null; saveWbCfg();
+      renderCharts(wbState.data, wbState.lamp);
+    });
+    col.appendChild(tsel);
     col.appendChild(el('p', 'wb-set-group', 'Chart style'));
     for (const [name, val] of [['Candles', 'candle'], ['Line', 'line']]) {
       const lab = el('label', 'wb-set-row');
