@@ -706,11 +706,11 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await expect(oneMonth).toHaveAttribute('aria-pressed', 'true');
   expect(await chart.locator('rect').count(), 'zoom must redraw').not.toBe(before);
 
-  // symbol select re-renders and the sidebar tracks aria-current
-  const sel = page.locator('#chartSymSel');
-  const other = await sel.locator('option').nth(1).getAttribute('value');
-  await sel.selectOption(other);
-  await expect(page.locator(`#wbSidebar button[aria-current="true"]`)).toContainText(other);
+  // typeable symbol box: typing a roster ticker re-renders, sidebar tracks aria-current
+  const symBox = page.locator('#wbSymInput');
+  await symBox.fill('QQQ');
+  await symBox.press('Enter');
+  await expect(page.locator(`#wbSidebar button[aria-current="true"]`)).toContainText('QQQ');
 
   // pane layout seg maximizes a single tier and returns to split
   await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();

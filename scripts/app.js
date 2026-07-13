@@ -1000,17 +1000,20 @@ function renderCharts(data, lamp) {
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
   document.getElementById('chartsStamp').textContent = data ? 'As of ' + data.asOf : '—';
 
-  const sel = document.getElementById('chartSymSel');
+  /* the symbol box is a typeable combobox: datalist suggests the roster,
+     free entry goes through the quote-proxy (wireCharts submit handler) */
+  const list = document.getElementById('wbSymList');
   const roster = Object.keys(data.symbols);
-  if (sel.options.length !== roster.length) {
-    while (sel.firstChild) sel.removeChild(sel.firstChild);
+  if (list.children.length !== roster.length) {
+    while (list.firstChild) list.removeChild(list.firstChild);
     for (const sym of roster) {
       const o = document.createElement('option');
-      o.value = sym; o.textContent = sym;
-      sel.appendChild(o);
+      o.value = sym;
+      list.appendChild(o);
     }
   }
-  sel.value = wbState.sym;
+  const symBox = document.getElementById('wbSymInput');
+  if (document.activeElement !== symBox) symBox.value = wbState.sym;
   renderWbSidebar(data);
 
   const svg = document.getElementById('wbChart');
@@ -1316,12 +1319,6 @@ function buildWbSettings() {
 }
 
 function wireCharts() {
-  document.getElementById('chartSymSel').addEventListener('change', ev => {
-    if (!wbState) return;
-    wbState.sym = ev.target.value;
-    wbState.off = wbState.woff = wbState.off3 = 0;
-    renderCharts(wbState.data, wbState.lamp);
-  });
   const wireZoom = (segId, zooms, initial, apply) => {
     const seg = document.getElementById(segId);
     for (const [label, spec] of zooms) {
@@ -1355,11 +1352,22 @@ function wireCharts() {
     layoutSeg.appendChild(b);
   }
 
-  /* Any-ticker box: watchlist symbols switch instantly; unknown tickers go
-     through the PIN-gated quote-proxy in live mode (demo/locked ⇒ note). */
+  /* Symbol combobox: roster picks (typed or datalist) switch instantly;
+     unknown tickers go through the PIN-gated quote-proxy in live mode
+     (demo/locked ⇒ note). */
   const symForm = document.getElementById('wbSymForm');
   const symInput = document.getElementById('wbSymInput');
   const symNote = document.getElementById('wbSymNote');
+  symInput.addEventListener('change', () => {
+    if (!wbState) return;
+    const sym = symInput.value.trim().toUpperCase();
+    if (sym !== wbState.sym && wbState.data.symbols[sym]) {
+      symNote.textContent = '';
+      wbState.sym = sym;
+      wbState.off = wbState.woff = wbState.off3 = 0;
+      renderCharts(wbState.data, wbState.lamp);
+    }
+  });
   symForm.addEventListener('submit', async ev => {
     ev.preventDefault();
     if (!wbState) return;
