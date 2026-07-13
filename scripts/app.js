@@ -897,7 +897,21 @@ function saveWbCfg() {
 const SMA_COLORS = { 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-series-2)', 200: 'var(--color-text-secondary)' };
 const ytdBars = bars => { const y = bars.t[bars.t.length - 1].slice(0, 4); let n = 0; for (let i = bars.t.length - 1; i >= 0 && bars.t[i].slice(0, 4) === y; i--) n++; return Math.max(n, 5); };
 const paneWindow = (spec, bars) => spec === 'ytd' ? ytdBars(bars) : spec;
-let wbState = null;   /* { data, lamp, sym, days } */
+let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg } */
+
+/* drag-to-pan lives at window level so the SVG rebuild mid-drag (each pan
+   frame re-renders) can't drop the pointer stream */
+let wbDrag = null, wbPanRaf = 0;
+window.addEventListener('pointermove', ev => {
+  if (!wbDrag || !wbState) return;
+  const next = Math.min(wbDrag.max, Math.max(0, wbDrag.off0 + Math.round((ev.clientX - wbDrag.x0) / wbDrag.slotPx)));
+  if (next !== wbState[wbDrag.key]) {
+    wbState[wbDrag.key] = next;
+    cancelAnimationFrame(wbPanRaf);
+    wbPanRaf = requestAnimationFrame(() => renderCharts(wbState.data, wbState.lamp));
+  }
+});
+window.addEventListener('pointerup', () => { wbDrag = null; });
 
 const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.round(v / 1e3) + 'K';
 
@@ -962,6 +976,7 @@ function renderWbSidebar(data) {
     b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
     b.addEventListener('click', () => {
       wbState.sym = sym;
+      wbState.off = wbState.woff = 0;
       renderCharts(wbState.data, wbState.lamp);
     });
     nav.appendChild(b);
@@ -972,7 +987,7 @@ function renderWbSidebar(data) {
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, cfg: loadWbCfg() };
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, off: 0, woff: 0, layout: 'split', cfg: loadWbCfg() };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -1013,7 +1028,10 @@ function renderCharts(data, lamp) {
     const padR = 46;
     const plotW = w - padR - 6;
     const n = Math.min(opts.window, bars.c.length);
-    const i0 = bars.c.length - n;
+    /* pan offset = bars hidden off the right edge (0 = latest bar visible) */
+    const off = Math.max(0, Math.min(opts.offset || 0, bars.c.length - n));
+    const end = bars.c.length - off;
+    const i0 = end - n;
     const x = i => x0 + 6 + (i - i0 + 0.5) / n * plotW;
     const slotW = plotW / n;
     const bodyW = Math.max(1, Math.min(9, slotW * 0.66));
@@ -1024,7 +1042,7 @@ function renderCharts(data, lamp) {
     text(caption, x0 + 6, 13, { 'font-size': 9, 'font-weight': 600, 'letter-spacing': '.08em', 'font-family': 'var(--font-sans)' });
 
     let hi = -Infinity, lo = Infinity;
-    for (let i = i0; i < bars.c.length; i++) { hi = Math.max(hi, bars.h[i]); lo = Math.min(lo, bars.l[i]); }
+    for (let i = i0; i < end; i++) { hi = Math.max(hi, bars.h[i]); lo = Math.min(lo, bars.l[i]); }
     const srOn = opts.cfg.sr;
     const pivots = (opts.pivots || [])
       .filter(([name]) => name === 'P' ? (srOn[1] || srOn[2] || srOn[3]) : srOn[Number(name.slice(1))])
@@ -1048,7 +1066,7 @@ function renderCharts(data, lamp) {
     /* SMA stack (doctrine: layered dynamic S/R) */
     for (const [len, color] of opts.smas || []) {
       let d = '';
-      for (let i = Math.max(i0, len - 1); i < bars.c.length; i++) {
+      for (let i = Math.max(i0, len - 1); i < end; i++) {
         let sum = 0;
         for (let j = i - len + 1; j <= i; j++) sum += bars.c[j];
         const v = sum / len;
@@ -1059,8 +1077,8 @@ function renderCharts(data, lamp) {
     }
 
     let vMax = 0;
-    if (opts.cfg.vol) for (let i = i0; i < bars.c.length; i++) vMax = Math.max(vMax, bars.v[i]);
-    for (let i = i0; i < bars.c.length; i++) {
+    if (opts.cfg.vol) for (let i = i0; i < end; i++) vMax = Math.max(vMax, bars.v[i]);
+    for (let i = i0; i < end; i++) {
       const up = bars.c[i] >= bars.o[i];
       const col = up ? WB.up : WB.down;
       const cx = x(i);
@@ -1079,14 +1097,14 @@ function renderCharts(data, lamp) {
     }
     for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
       let d = '';
-      for (let i = i0; i < bars.c.length; i++) {
+      for (let i = i0; i < end; i++) {
         if (st[key][i] == null) continue;
         d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sy(st[key][i]).toFixed(1);
       }
       if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 1.5 }));
     }
-    for (const i of marks.buys) if (i >= i0) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
-    for (const i of marks.sells) if (i >= i0) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
+    for (const i of marks.buys) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
+    for (const i of marks.sells) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
     text(opts.stochCaption, x0 + 6, sY - 4, { 'font-size': 8, 'letter-spacing': '.08em' });
     const pinned = stochPinned(st);
     if (pinned) {
@@ -1098,7 +1116,7 @@ function renderCharts(data, lamp) {
 
     /* month gridlines (labels only where they have ≥48px of room) */
     let lastLabelX = -Infinity;
-    for (let i = i0 + 1; i < bars.c.length; i++) {
+    for (let i = i0 + 1; i < end; i++) {
       if (bars.t[i].slice(0, 7) !== bars.t[i - 1].slice(0, 7)) {
         const gx = x(i) - slotW / 2;
         line(gx, pY, gx, sY + sH, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.5 });
@@ -1112,12 +1130,19 @@ function renderCharts(data, lamp) {
     /* per-pane crosshair + readout */
     const cross = svgEl('line', { y1: pY, y2: sY + sH, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(cross);
-    const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: sY + sH - pY, fill: 'transparent' });
+    const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: sY + sH - pY, fill: 'transparent', style: 'cursor: grab' });
     svg.appendChild(overlay);
+    overlay.addEventListener('pointerdown', ev => {
+      ev.preventDefault();
+      const box = svg.getBoundingClientRect();
+      wbDrag = { key: opts.panKey, x0: ev.clientX, off0: off, slotPx: slotW * (box.width / W), max: bars.c.length - n };
+      hideTip();
+    });
     overlay.addEventListener('pointermove', ev => {
+      if (wbDrag) return;
       const box = svg.getBoundingClientRect();
       const mx = (ev.clientX - box.left) * (W / box.width);
-      const i = Math.min(bars.c.length - 1, Math.max(i0, i0 + Math.floor((mx - x0 - 6) / slotW)));
+      const i = Math.min(end - 1, Math.max(i0, i0 + Math.floor((mx - x0 - 6) / slotW)));
       hideTip();
       cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
       cross.setAttribute('visibility', 'visible');
@@ -1128,6 +1153,14 @@ function renderCharts(data, lamp) {
       cRow.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
       tip.appendChild(cRow);
       tip.appendChild(el('div', '', 'Vol ' + fmtVol(bars.v[i])));
+      const smaParts = [];
+      for (const [len] of opts.smas || []) {
+        if (i < len - 1) continue;
+        let sum = 0;
+        for (let j = i - len + 1; j <= i; j++) sum += bars.c[j];
+        smaParts.push('SMA' + len + ' ' + fmtPrice(sum / len));
+      }
+      if (smaParts.length) tip.appendChild(el('div', '', smaParts.join(' · ')));
       if (st.k[i] != null) tip.appendChild(el('div', '', 'Stoch %K ' + st.k[i].toFixed(0) + ' · %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0))));
       tip.style.display = 'block';
       const wrap = svg.parentElement.getBoundingClientRect();
@@ -1142,17 +1175,26 @@ function renderCharts(data, lamp) {
   const dStoch = stochSeries(s);
   const wStoch = stochSeries(weekly);
   const smaList = cfg => Object.entries(cfg.smas).filter(([, on]) => on).map(([len]) => [Number(len), SMA_COLORS[len]]);
-  drawPane(0, paneW, s, dStoch, stochMarks(dStoch), 'PRO 1 · DAILY · SHORT-TERM', {
-    window: paneWindow(wbState.days, s), tier: 'Pro 1', cfg: wbState.cfg.p1,
+  const panes = [];
+  if (wbState.layout !== 'p2') panes.push([s, dStoch, stochMarks(dStoch), 'PRO 1 · DAILY · SHORT-TERM', {
+    window: paneWindow(wbState.days, s), offset: wbState.off, panKey: 'off',
+    tier: 'Pro 1', cfg: wbState.cfg.p1,
     pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p1),
     stochCaption: 'STOCH 13-3-3 · DAILY',
-  });
-  drawPane(paneW + GAP, paneW, weekly, wStoch, stochMarks(wStoch), 'PRO 2 · WEEKLY · LONG-TERM', {
-    window: paneWindow(wbState.wdays, weekly), tier: 'Pro 2', cfg: wbState.cfg.p2,
+  }]);
+  if (wbState.layout !== 'p1') panes.push([weekly, wStoch, stochMarks(wStoch), 'PRO 2 · WEEKLY · LONG-TERM', {
+    window: paneWindow(wbState.wdays, weekly), offset: wbState.woff, panKey: 'woff',
+    tier: 'Pro 2', cfg: wbState.cfg.p2,
     pivots: monthlyPivots(s), smas: smaList(wbState.cfg.p2),
     stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
-  });
-  line(paneW + GAP / 2, 8, paneW + GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
+  }]);
+  if (panes.length === 2) {
+    drawPane(0, paneW, ...panes[0]);
+    drawPane(paneW + GAP, paneW, ...panes[1]);
+    line(paneW + GAP / 2, 8, paneW + GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
+  } else {
+    drawPane(0, W, ...panes[0]);
+  }
 }
 
 /* the per-pane settings popover (their platform's gear menu, in our idiom):
@@ -1205,6 +1247,7 @@ function wireCharts() {
   document.getElementById('chartSymSel').addEventListener('change', ev => {
     if (!wbState) return;
     wbState.sym = ev.target.value;
+    wbState.off = wbState.woff = 0;
     renderCharts(wbState.data, wbState.lamp);
   });
   const wireZoom = (segId, zooms, initial, apply) => {
@@ -1222,8 +1265,22 @@ function wireCharts() {
       seg.appendChild(b);
     }
   };
-  wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; });
-  wireZoom('chartZoom2', WB2_ZOOMS, 9999, spec => { wbState.wdays = spec; });
+  wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; wbState.off = 0; });
+  wireZoom('chartZoom2', WB2_ZOOMS, 9999, spec => { wbState.wdays = spec; wbState.woff = 0; });
+
+  const layoutSeg = document.getElementById('chartLayout');
+  for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p1'], ['Pro 2', 'p2']]) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    b.setAttribute('aria-pressed', String(mode === 'split'));
+    b.addEventListener('click', () => {
+      if (!wbState) return;
+      wbState.layout = mode;
+      for (const btn of layoutSeg.children) btn.setAttribute('aria-pressed', String(btn === b));
+      renderCharts(wbState.data, wbState.lamp);
+    });
+    layoutSeg.appendChild(b);
+  }
 
   const gear = document.getElementById('wbGear');
   const pop = document.getElementById('wbSettings');
