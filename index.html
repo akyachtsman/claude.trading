@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260713b">
-<link rel="stylesheet" href="styles/components.css?v=20260713b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260713c">
+<link rel="stylesheet" href="styles/components.css?v=20260713c">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -211,6 +211,10 @@
               <span class="wb-seg-tag">P2</span>
               <div class="seg" role="group" aria-label="Pro 2 weekly timeframe" id="chartZoom2"></div>
             </div>
+            <div class="wb-zoom-pair">
+              <span class="wb-seg-tag">PANE</span>
+              <div class="seg" role="group" aria-label="Pane layout" id="chartLayout"></div>
+            </div>
             <div class="wb-settings-wrap">
               <button type="button" class="btn btn-secondary wb-gear" id="wbGear" aria-expanded="false" aria-controls="wbSettings">Settings</button>
               <div class="wb-settings" id="wbSettings" hidden></div>
@@ -223,7 +227,7 @@
               <div class="chart-tip" id="wbTip"></div>
             </div>
           </div>
-          <p class="stamp">Pro 1 (daily · short-term) and Pro 2 (weekly · long-term) per the stochastic-investing doctrine — ◯ marks bottom-crosses and top-rolls · Pro 3 (intraday) awaits the quote-proxy backend</p>
+          <p class="stamp">Pro 1 (daily · short-term) and Pro 2 (weekly · long-term) per the stochastic-investing doctrine — ◯ marks bottom-crosses and top-rolls · drag a chart to pan · Pro 3 (intraday) awaits the quote-proxy backend</p>
         </div>
       </section>
 
@@ -300,8 +304,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260713b"></script>
-<script src="scripts/data.js?v=20260713b"></script>
-<script src="scripts/app.js?v=20260713b"></script>
+<script src="scripts/config.js?v=20260713c"></script>
+<script src="scripts/data.js?v=20260713c"></script>
+<script src="scripts/app.js?v=20260713c"></script>
 </body>
 </html>
