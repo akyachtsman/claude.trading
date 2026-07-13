@@ -845,7 +845,129 @@ function renderHeatTable(hm) {
   table.appendChild(tbody);
 }
 
+/* ── MAP FILTER side panel (finviz-parity; owner request 2026-07-13) ─────
+   Live cuts derive from data already on hand: index rosters intersect the
+   S&P dataset (config/map-filters.json, owner-editable), the ETF map reads
+   the charts histories (which also unlock multi-period performance).
+   Russell 2000 / World / Crypto / Futures / Themes need new pipeline
+   feeds — shown disabled until the owner asks to wire them. */
+const MAP_CUTS = [
+  ['sp500', 'S&P 500', 'live'],
+  ['dj30', 'Dow Jones 30', 'roster'],
+  ['ndx100', 'Nasdaq 100', 'roster'],
+  ['etf', 'ETFs', 'live'],
+  ['r2k', 'Russell 2000', 'pending'],
+  ['world', 'World', 'pending'],
+  ['crypto', 'Crypto', 'pending'],
+  ['futures', 'Futures', 'pending'],
+  ['themes', 'Themes', 'pending'],
+];
+const MAP_PERIODS = [['1d', '1-Day Performance'], ['1w', '1-Week Performance'], ['1m', '1-Month Performance'], ['ytd', 'YTD Performance']];
+let heatBase = null;                        /* raw dataset + lamp from loadHeatmap */
+let mapView = { key: 'sp500', period: '1d', filters: null };
+
+function buildEtfHeatmap(period) {
+  if (!wbState || !wbState.data) return null;
+  const cats = (mapView.filters && mapView.filters.etfCats) || {};
+  const nBack = { '1d': 1, '1w': 5, '1m': 21 }[period];
+  const groups = new Map();
+  let asOf = '';
+  for (const [sym, s] of Object.entries(wbState.data.symbols)) {
+    const c = s.c;
+    if (!c || c.length < 25) continue;
+    let ref;
+    if (period === 'ytd') {
+      const yr = s.t[s.t.length - 1].slice(0, 4);
+      const idx = s.t.findIndex(t => t.slice(0, 4) === yr);
+      ref = idx > 0 ? c[idx - 1] : c[0];
+    } else {
+      if (c.length <= nBack) continue;
+      ref = c[c.length - 1 - nBack];
+    }
+    /* tile weight = 21-day average dollar volume (ETFs have no market cap) */
+    let dv = 0;
+    const m = Math.min(21, c.length);
+    for (let i = c.length - m; i < c.length; i++) dv += c[i] * (s.v[i] || 0);
+    const cat = cats[sym] || 'ETFs';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push({ sym, name: sym, cap: Math.max(dv / m, 1), pct: Number(((c[c.length - 1] / ref - 1) * 100).toFixed(2)), ind: '', last: c[c.length - 1] });
+    asOf = s.t[s.t.length - 1];
+  }
+  const sectors = [...groups.entries()]
+    .map(([name, tiles]) => ({ name, cap: tiles.reduce((a, t) => a + t.cap, 0), tiles }))
+    .sort((a, b) => b.cap - a.cap);
+  return sectors.length ? { asOf, source: 'charts', sectors } : null;
+}
+
+function applyMapView() {
+  if (!heatBase) return;
+  const label = (MAP_CUTS.find(([k]) => k === mapView.key) || [])[1] || 'S&P 500';
+  let out = heatBase.hm;
+  let lamp = heatBase.lamp;
+  let note = 'Sized by market cap · colored by day % change';
+  if (mapView.key === 'dj30' || mapView.key === 'ndx100') {
+    const set = new Set((mapView.filters || {})[mapView.key] || []);
+    const sectors = out.sectors.map(s => {
+      const tiles = s.tiles.filter(t => set.has(t.sym) || set.has(t.sym.replace('.', '-')));
+      return { name: s.name, cap: tiles.reduce((a, t) => a + t.cap, 0), tiles };
+    }).filter(s => s.tiles.length).sort((a, b) => b.cap - a.cap);
+    out = { ...out, sectors };
+    note = 'Hand-kept roster ∩ dataset (' + sectors.reduce((a, s) => a + s.tiles.length, 0) + ' names) · sized by cap · day %';
+  } else if (mapView.key === 'etf') {
+    const periodLabel = (MAP_PERIODS.find(([k]) => k === mapView.period) || [])[1];
+    out = buildEtfHeatmap(mapView.period);
+    lamp = wbState && wbState.lamp ? wbState.lamp : lamp;
+    note = out ? 'Sized by 21-day avg dollar volume · colored by ' + periodLabel.toLowerCase() : 'ETF map needs the charts panel data — still loading';
+  }
+  document.getElementById('heatTitle').textContent = label + ' — heat';
+  renderHeatmap(out, lamp);
+  document.getElementById('heatSource').textContent = note;
+  /* period choices: multi-period needs per-name history, which only the
+     ETF cut has today; stock cuts stay 1-day until a history feed lands */
+  const sel = document.getElementById('heatPeriod');
+  for (const opt of sel.options) opt.disabled = mapView.key !== 'etf' && opt.value !== '1d';
+  sel.value = mapView.period;
+}
+
+function wireMapFilter() {
+  const nav = document.getElementById('mapFilterNav');
+  for (const [key, label, kind] of MAP_CUTS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'map-filter-btn';
+    b.textContent = label;
+    b.setAttribute('aria-current', String(key === mapView.key));
+    if (kind === 'pending') {
+      b.disabled = true;
+      b.title = 'Needs a new data feed — ask the desk to wire it';
+    } else {
+      b.addEventListener('click', () => {
+        mapView.key = key;
+        if (key !== 'etf') mapView.period = '1d';
+        for (const other of nav.children) other.setAttribute('aria-current', String(other === b));
+        applyMapView();
+      });
+    }
+    nav.appendChild(b);
+  }
+  const sel = document.getElementById('heatPeriod');
+  for (const [val, label] of MAP_PERIODS) {
+    const o = document.createElement('option');
+    o.value = val; o.textContent = label;
+    sel.appendChild(o);
+  }
+  sel.value = mapView.period;
+  sel.addEventListener('change', () => {
+    mapView.period = sel.value;
+    applyMapView();
+  });
+}
+
 async function loadHeatmap() {
+  if (!mapView.filters) {
+    try { mapView.filters = await fetchPublic('config/map-filters.json'); }
+    catch { mapView.filters = {}; }
+  }
   /* Fetch the file only once meta says the pipeline has published it — a
      404 would log a console error (fails test S1) even when handled. */
   const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.heatmap
@@ -853,11 +975,13 @@ async function loadHeatmap() {
   if (DESK.mode !== 'demo' && published) {
     try {
       const hm = await fetchPublic('data/heatmap.json');
-      renderHeatmap(hm, lampFor(hm.asOf, new Date()));
+      heatBase = { hm, lamp: lampFor(hm.asOf, new Date()) };
+      applyMapView();
       return;
     } catch { /* fall through to demo-labeled */ }
   }
-  renderHeatmap(buildDemoHeatmap(), { cls: 'lamp--demo', text: 'Demo' });
+  heatBase = { hm: buildDemoHeatmap(), lamp: { cls: 'lamp--demo', text: 'Demo' } };
+  applyMapView();
 }
 
 /* re-render the treemap at the new container size (debounced) */
@@ -1651,4 +1775,5 @@ async function boot() {
 
 wireChart();
 wireCharts();
+wireMapFilter();
 boot();

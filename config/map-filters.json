@@ -1,0 +1,30 @@
+{
+  "comment": "MAP FILTER rosters for the heatmap side panel. Hand-maintained snapshots (index membership changes a few times a year) — edit freely; unknown symbols are ignored at render time because every cut intersects the fetched dataset. etfCats groups the chart-watchlist ETFs into map bands.",
+  "dj30": [
+    "AAPL", "AMGN", "AMZN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS",
+    "GS", "HD", "HON", "IBM", "JNJ", "JPM", "KO", "MCD", "MMM", "MRK",
+    "MSFT", "NKE", "NVDA", "PG", "SHW", "TRV", "UNH", "V", "VZ", "WMT"
+  ],
+  "ndx100": [
+    "AAPL", "ABNB", "ADBE", "ADI", "ADP", "ADSK", "AEP", "AMAT", "AMD", "AMGN",
+    "AMZN", "ANSS", "APP", "ARM", "ASML", "AVGO", "AXON", "AZN", "BIIB", "BKNG",
+    "BKR", "CCEP", "CDNS", "CDW", "CEG", "CHTR", "CMCSA", "COST", "CPRT", "CRWD",
+    "CSCO", "CSGP", "CSX", "CTAS", "CTSH", "DASH", "DDOG", "DXCM", "EA", "EXC",
+    "FANG", "FAST", "FTNT", "GEHC", "GFS", "GILD", "GOOG", "GOOGL", "HON", "IDXX",
+    "ILMN", "INTC", "INTU", "ISRG", "KDP", "KHC", "KLAC", "LIN", "LRCX", "LULU",
+    "MAR", "MCHP", "MDB", "MDLZ", "MELI", "META", "MNST", "MRVL", "MSFT", "MU",
+    "NFLX", "NVDA", "NXPI", "ODFL", "ON", "ORLY", "PANW", "PAYX", "PCAR", "PDD",
+    "PEP", "PLTR", "PYPL", "QCOM", "REGN", "ROP", "ROST", "SBUX", "SMCI", "SNPS",
+    "TEAM", "TMUS", "TSLA", "TTD", "TTWO", "TXN", "VRSK", "VRTX", "WBD", "WDAY",
+    "XEL", "ZS"
+  ],
+  "etfCats": {
+    "SPY": "Broad market", "QQQ": "Broad market", "DIA": "Broad market", "IWM": "Broad market", "RSP": "Broad market",
+    "VTI": "Broad market", "VOO": "Broad market", "EFA": "International", "EEM": "International", "VEA": "International",
+    "SMH": "Sector", "XLK": "Sector", "XLF": "Sector", "XLE": "Sector", "XLV": "Sector",
+    "XLI": "Sector", "XLP": "Sector", "XLY": "Sector", "XLU": "Sector", "XLB": "Sector", "XLRE": "Sector", "XBI": "Sector",
+    "GLD": "Commodities", "SLV": "Commodities", "USO": "Commodities", "DBC": "Commodities",
+    "TLT": "Bonds & vol", "IEF": "Bonds & vol", "SHY": "Bonds & vol", "LQD": "Bonds & vol", "HYG": "Bonds & vol",
+    "AGG": "Bonds & vol", "BND": "Bonds & vol", "VXX": "Bonds & vol", "UVXY": "Bonds & vol"
+  }
+}

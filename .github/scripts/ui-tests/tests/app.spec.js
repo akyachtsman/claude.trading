@@ -731,3 +731,37 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await expect(page.locator('#wbSettings-p1')).toBeHidden();
   expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(3);
 });
+
+// S13 — Heatmap MAP FILTER rail: index cuts re-render the treemap, the ETF
+// map unlocks multi-period performance, unfetched feeds stay disabled.
+test('S13: heatmap map-filter cuts and period select respond', async ({ page }) => {
+  await page.goto('./?demo=1');
+  const svg = page.locator('#heatmapSvg');
+  await expect(svg.locator('rect').first()).toBeVisible({ timeout: 10000 });
+  const allCount = await svg.locator('rect').count();
+
+  // Dow 30 cut: fewer tiles, aria-current moves, title updates
+  await page.locator('.map-filter-btn', { hasText: 'Dow Jones 30' }).click();
+  await expect(page.locator('#heatTitle')).toContainText('Dow Jones 30');
+  const djCount = await svg.locator('rect').count();
+  expect(djCount, 'Dow 30 cut must shrink the map').toBeLessThan(allCount);
+  await expect(page.locator('.map-filter-btn', { hasText: 'Dow Jones 30' })).toHaveAttribute('aria-current', 'true');
+
+  // period select gated: stock cuts are 1-day only
+  const periodOpts = page.locator('#heatPeriod option');
+  expect(await periodOpts.count()).toBe(4);
+  expect(await periodOpts.nth(2).isDisabled(), '1-Month must be disabled on a stock cut').toBe(true);
+
+  // ETF map: renders from charts data and unlocks the period dropdown
+  await page.locator('.map-filter-btn', { hasText: 'ETFs' }).click();
+  await expect(page.locator('#heatTitle')).toContainText('ETFs');
+  expect(await svg.locator('rect').count()).toBeGreaterThan(5);
+  expect(await periodOpts.nth(2).isDisabled(), '1-Month must be enabled on the ETF cut').toBe(false);
+  await page.locator('#heatPeriod').selectOption('1m');
+  await expect(page.locator('#heatSource')).toContainText(/1-month/i);
+
+  // unfetched feeds visible but disabled
+  for (const label of ['Russell 2000', 'World', 'Crypto', 'Futures', 'Themes']) {
+    await expect(page.locator('.map-filter-btn', { hasText: label })).toBeDisabled();
+  }
+});
