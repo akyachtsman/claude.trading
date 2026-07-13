@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260713j">
-<link rel="stylesheet" href="styles/components.css?v=20260713j">
+<link rel="stylesheet" href="styles/tokens.css?v=20260713k">
+<link rel="stylesheet" href="styles/components.css?v=20260713k">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -95,12 +95,21 @@
   .wb-any-input { width: 118px; min-height: 44px; padding: 4px 10px; font: 600 var(--font-xs)/1.4 var(--font-mono); text-transform: uppercase; }
   .wb-settings-wrap { position: relative; margin-left: auto; }
   .wb-gear { min-height: 44px; padding: 8px 14px; font: 500 var(--font-xs)/1.4 var(--font-sans); }
-  .wb-pane-gear { min-height: 44px; min-width: 44px; padding: 4px 10px; font-size: 15px; line-height: 1; }
+  .wb-pane-gear { min-height: 44px; min-width: 44px; padding: 4px 10px; font-size: 15px; line-height: 1; margin-left: auto; }
+  /* one header bar per visible pane, widths matching the pane split below.
+     Two deliberate rows: tier tag + gear, then the zoom presets. */
+  .wb-pane-bars { display: flex; gap: 16px; margin-bottom: 6px; }
+  .wb-pane-bar { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr auto; align-items: center; row-gap: 4px; column-gap: 6px; position: relative; }
+  .wb-pane-bar[hidden] { display: none; }
+  .wb-pane-bar .seg { grid-column: 1 / -1; justify-self: start; }
+  .wb-pane-bar .seg button { min-height: 36px; padding: 4px 7px; font-size: 11px; }
+  .wb-pane-bar .wb-pane-gear { min-height: 36px; min-width: 36px; padding: 2px 8px; font-size: 13px; margin-left: 0; justify-self: end; }
   .wb-settings {
-    position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; width: 236px;
+    position: absolute; left: 0; top: calc(100% + 4px); z-index: 6; width: 236px;
     background: var(--color-surface); border: 1px solid var(--color-border-hover);
     border-radius: var(--radius-sm); box-shadow: var(--shadow-md); padding: var(--space-3);
   }
+  .wb-pane-bar:last-child .wb-settings { left: auto; right: 0; }
   .wb-set-cols { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
   .wb-set-title { margin: 0 0 2px; font: 600 10px/1.4 var(--font-sans); letter-spacing: .08em; color: var(--color-text-secondary); }
   .wb-set-group { margin: 8px 0 2px; font: 600 var(--font-xs)/1.4 var(--font-sans); }
@@ -211,32 +220,34 @@
               <datalist id="wbSymList"></datalist>
             </form>
             <div class="wb-zoom-pair">
-              <span class="wb-seg-tag">P1</span>
-              <div class="seg" role="group" aria-label="Pro 1 daily timeframe" id="chartZoom"></div>
-              <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p1" aria-expanded="false" aria-controls="wbSettings" aria-label="Pro 1 chart settings">⚙</button>
-            </div>
-            <div class="wb-zoom-pair">
-              <span class="wb-seg-tag">P2</span>
-              <div class="seg" role="group" aria-label="Pro 2 weekly timeframe" id="chartZoom2"></div>
-              <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p2" aria-expanded="false" aria-controls="wbSettings" aria-label="Pro 2 chart settings">⚙</button>
-            </div>
-            <div class="wb-zoom-pair">
-              <span class="wb-seg-tag">P3</span>
-              <div class="seg" role="group" aria-label="Pro 3 day-trading window" id="chartZoom3"></div>
-              <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p3" aria-expanded="false" aria-controls="wbSettings" aria-label="Pro 3 chart settings">⚙</button>
-            </div>
-            <div class="wb-zoom-pair">
               <span class="wb-seg-tag">PANE</span>
               <div class="seg" role="group" aria-label="Pane layout" id="chartLayout"></div>
             </div>
             <span class="stamp" id="wbSymNote"></span>
-            <div class="wb-settings-wrap">
-              <div class="wb-settings" id="wbSettings" hidden></div>
-            </div>
           </div>
           <div class="wb-grid">
             <nav id="wbSidebar" aria-label="Watchlist symbols"></nav>
             <div class="chart-wrap">
+              <div class="wb-pane-bars" id="wbPaneBars">
+                <div class="wb-pane-bar" id="wbBar-p1">
+                  <span class="wb-seg-tag">PRO 1</span>
+                  <div class="seg" role="group" aria-label="Pro 1 daily timeframe" id="chartZoom"></div>
+                  <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p1" aria-expanded="false" aria-controls="wbSettings-p1" aria-label="Pro 1 chart settings">⚙</button>
+                  <div class="wb-settings" id="wbSettings-p1" hidden></div>
+                </div>
+                <div class="wb-pane-bar" id="wbBar-p2">
+                  <span class="wb-seg-tag">PRO 2</span>
+                  <div class="seg" role="group" aria-label="Pro 2 weekly timeframe" id="chartZoom2"></div>
+                  <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p2" aria-expanded="false" aria-controls="wbSettings-p2" aria-label="Pro 2 chart settings">⚙</button>
+                  <div class="wb-settings" id="wbSettings-p2" hidden></div>
+                </div>
+                <div class="wb-pane-bar" id="wbBar-p3">
+                  <span class="wb-seg-tag">PRO 3</span>
+                  <div class="seg" role="group" aria-label="Pro 3 day-trading window" id="chartZoom3"></div>
+                  <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p3" aria-expanded="false" aria-controls="wbSettings-p3" aria-label="Pro 3 chart settings">⚙</button>
+                  <div class="wb-settings" id="wbSettings-p3" hidden></div>
+                </div>
+              </div>
               <svg id="wbChart" viewBox="0 0 900 560" preserveAspectRatio="none" role="img" aria-label="Three-pane workbench: Pro 1 daily, Pro 2 weekly, and Pro 3 day-trading charts with volume and 13-period stochastics, doctrine signal markers circled"></svg>
               <div class="chart-tip" id="wbTip"></div>
             </div>
@@ -318,8 +329,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260713j"></script>
-<script src="scripts/data.js?v=20260713j"></script>
-<script src="scripts/app.js?v=20260713j"></script>
+<script src="scripts/config.js?v=20260713k"></script>
+<script src="scripts/data.js?v=20260713k"></script>
+<script src="scripts/app.js?v=20260713k"></script>
 </body>
 </html>
