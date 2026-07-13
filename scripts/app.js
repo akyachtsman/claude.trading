@@ -864,7 +864,8 @@ const MAP_CUTS = [
 ];
 const MAP_PERIODS = [['1d', '1-Day Performance'], ['1w', '1-Week Performance'], ['1m', '1-Month Performance'], ['ytd', 'YTD Performance']];
 let heatBase = null;                        /* raw dataset + lamp from loadHeatmap */
-let heatExtra = null;                       /* data/maps-extra.json (crypto/futures/world) */
+let heatExtra = null;                       /* desk-maps payload (crypto/futures/world, delayed quotes) */
+let heatExtraAt = 0;                        /* fetch timestamp — refetch on cut click when stale */
 let mapView = { key: 'sp500', period: '1d', filters: null };
 
 function buildEtfHeatmap(period) {
@@ -932,11 +933,12 @@ function applyMapView() {
     note = 'Hand-kept theme baskets over the S&P dataset · sized by cap · day %';
   } else if (mapView.key === 'crypto' || mapView.key === 'futures' || mapView.key === 'world') {
     const cut = heatExtra && heatExtra.cuts && heatExtra.cuts[mapView.key];
-    out = cut ? { asOf: heatExtra.asOf, sectors: cut.sectors } : null;
-    lamp = cut ? lampFor(heatExtra.asOf, new Date()) : lamp;
-    note = !cut ? 'This universe fills in after the next nightly refresh'
-      : mapView.key === 'crypto' ? 'Sized by market cap · colored by day % change'
-      : 'Hand-weighted tiles (config/map-filters.json) · colored by day % change';
+    /* the stamp carries the fetch time — this cut is delayed-live, not EOD */
+    out = cut ? { asOf: heatExtra.generatedAt.slice(0, 16).replace('T', ' ') + ' UTC', sectors: cut.sectors } : null;
+    lamp = cut ? { cls: 'lamp--live', text: 'LIVE' } : lamp;
+    note = cut ? 'Hand-weighted tiles (config/map-filters.json) · delayed quotes · day % change'
+      : heatExtraErr ? 'Delayed quotes unavailable right now — click again in a minute'
+      : 'Loading delayed quotes…';
   }
   document.getElementById('heatTitle').textContent = label + ' — heat';
   renderHeatmap(out, lamp);
@@ -960,14 +962,15 @@ function wireMapFilter() {
       b.disabled = true;
       b.title = 'Needs a new data feed — ask the desk to wire it';
     } else if (kind === 'extra') {
-      b.disabled = true;                       /* enabled once maps-extra.json loads */
-      b.title = 'Fills in after the next nightly refresh';
+      b.disabled = true;                       /* enabled once desk-maps answers (live mode) */
+      b.title = 'Loads delayed quotes when the desk is live';
       b.dataset.extra = '1';
       b.addEventListener('click', () => {
         mapView.key = key;
         mapView.period = '1d';
         for (const other of nav.children) other.setAttribute('aria-current', String(other === b));
         applyMapView();
+        refreshExtraMaps();                    /* re-pull if the 2-min window lapsed */
       });
     } else {
       b.addEventListener('click', () => {
@@ -992,23 +995,37 @@ function wireMapFilter() {
   });
 }
 
+/* Crypto/Futures/World: delayed quotes through the desk-maps edge function
+   (fixed server-side roster, no PIN). Deliberately NEVER fired on page load —
+   an unreachable endpoint would log a resource error and trip the S1
+   console-error gate; the fetch is user-initiated (cut click) only, and
+   re-fires once the function's 2-min cache window has lapsed. Failures keep
+   the last good payload. */
+let heatExtraErr = false;
+async function refreshExtraMaps() {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  if (heatExtra && Date.now() - heatExtraAt < 120000) return;
+  try {
+    const out = await deskMaps();
+    if (!out.ok || !out.cuts) throw new Error(out.error || 'no cuts');
+    heatExtra = out;
+    heatExtraAt = Date.now();
+    heatExtraErr = false;
+  } catch { heatExtraErr = !heatExtra; /* keep last good */ }
+  if (mapView.key === 'crypto' || mapView.key === 'futures' || mapView.key === 'world') applyMapView();
+}
+
 async function loadHeatmap() {
   if (!mapView.filters) {
     try { mapView.filters = await fetchPublic('config/map-filters.json'); }
     catch { mapView.filters = {}; }
   }
-  /* Fetch the file only once meta says the pipeline has published it — a
-     404 would log a console error (fails test S1) even when handled. */
-  const mapsPublished = DESK.meta && DESK.meta.domains && DESK.meta.domains.maps
-    && DESK.meta.domains.maps.asOf;
-  if (DESK.mode !== 'demo' && mapsPublished && !heatExtra) {
-    try {
-      heatExtra = await fetchPublic('data/maps-extra.json');
-      for (const b of document.querySelectorAll('.map-filter-btn[data-extra]')) {
-        b.disabled = false;
-        b.removeAttribute('title');
-      }
-    } catch { /* extra cuts stay disabled */ }
+  /* extra cuts are clickable in live mode; their data loads on first click */
+  if (DESK.mode !== 'demo' && DESK_DB.url) {
+    for (const b of document.querySelectorAll('.map-filter-btn[data-extra]')) {
+      b.disabled = false;
+      b.removeAttribute('title');
+    }
   }
   const published = DESK.meta && DESK.meta.domains && DESK.meta.domains.heatmap
     && DESK.meta.domains.heatmap.asOf;
