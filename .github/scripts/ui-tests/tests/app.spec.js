@@ -719,10 +719,13 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await page.locator('#chartLayout button', { hasText: 'Split' }).click();
   await expect(chart).toContainText('PRO 1 · DAILY');
 
-  // settings popover: full set on Pro 1/2 (bb, vol, stoch, stoch-weekly, 5 SMAs,
-  // 3 S/R, 5 SMA-price = 17 each) + slim day-trading panel on Pro 3 (bb, vol, stoch = 3)
-  await page.locator('#wbGear').click();
+  // per-pane settings gears: Pro 1 opens the full set (bb, vol, stoch,
+  // stoch-weekly, 5 SMAs, 3 S/R, 5 SMA-price = 17 boxes + 2 style radios);
+  // Pro 3 opens the slim day-trading panel (bb, vol, stoch = 3 boxes)
+  await page.locator('#wbGear-p1').click();
   await expect(page.locator('#wbSettings')).toBeVisible();
-  expect(await page.locator('#wbSettings input[type=radio]').count()).toBe(6);
-  expect(await page.locator('#wbSettings input[type=checkbox]').count()).toBe(37);
+  expect(await page.locator('#wbSettings input[type=radio]').count()).toBe(2);
+  expect(await page.locator('#wbSettings input[type=checkbox]').count()).toBe(17);
+  await page.locator('#wbGear-p3').click();
+  expect(await page.locator('#wbSettings input[type=checkbox]').count()).toBe(3);
 });

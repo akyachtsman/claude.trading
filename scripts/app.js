@@ -1330,11 +1330,15 @@ function renderCharts(data, lamp) {
 
 /* the per-pane settings popover (their platform's gear menu, in our idiom):
    indicator + SMA + S/R checkboxes for each tier, persisted via saveWbCfg */
+let wbSetPane = null; /* which pane's settings the popover shows */
 function buildWbSettings() {
   const pop = document.getElementById('wbSettings');
   while (pop.firstChild) pop.removeChild(pop.firstChild);
+  if (!wbState || !wbSetPane) return;
   const cols = el('div', 'wb-set-cols');
-  for (const [key, title] of [['p1', 'PRO 1 · DAILY'], ['p2', 'PRO 2 · WEEKLY'], ['p3', 'PRO 3 · DAY']]) {
+  {
+    const key = wbSetPane;
+    const title = { p1: 'PRO 1 · DAILY', p2: 'PRO 2 · WEEKLY', p3: 'PRO 3 · DAY TRADING' }[key];
     const cfg = wbState.cfg[key];
     const col = el('div', 'wb-set-col');
     col.appendChild(el('h3', 'wb-set-title', title));
@@ -1407,9 +1411,9 @@ function buildWbSettings() {
   }
   pop.appendChild(cols);
   const reset = document.createElement('button');
-  reset.type = 'button'; reset.className = 'wb-set-reset'; reset.textContent = 'Reset to defaults';
+  reset.type = 'button'; reset.className = 'wb-set-reset'; reset.textContent = 'Reset this chart';
   reset.addEventListener('click', () => {
-    wbState.cfg = WB_CFG_DEFAULT(); saveWbCfg();
+    wbState.cfg[wbSetPane] = WB_CFG_DEFAULT()[wbSetPane]; saveWbCfg();
     buildWbSettings();
     renderCharts(wbState.data, wbState.lamp);
   });
@@ -1496,19 +1500,26 @@ function wireCharts() {
     }
   });
 
-  const gear = document.getElementById('wbGear');
+  /* one gear per chart — each opens ONLY that pane's settings (owner ruling) */
   const pop = document.getElementById('wbSettings');
-  gear.addEventListener('click', () => {
-    if (!wbState) return;
-    const opening = pop.hidden;
-    if (opening) buildWbSettings();
-    pop.hidden = !opening;
-    gear.setAttribute('aria-expanded', String(opening));
-  });
+  const gears = ['p1', 'p2', 'p3'].map(k => [k, document.getElementById('wbGear-' + k)]);
+  const closePop = () => {
+    pop.hidden = true; wbSetPane = null;
+    for (const [, b] of gears) b.setAttribute('aria-expanded', 'false');
+  };
+  for (const [k, b] of gears) {
+    b.addEventListener('click', () => {
+      if (!wbState) return;
+      if (!pop.hidden && wbSetPane === k) { closePop(); return; }
+      wbSetPane = k;
+      buildWbSettings();
+      pop.hidden = false;
+      for (const [k2, b2] of gears) b2.setAttribute('aria-expanded', String(k2 === k));
+    });
+  }
   document.addEventListener('pointerdown', ev => {
-    if (pop.hidden || pop.contains(ev.target) || gear.contains(ev.target)) return;
-    pop.hidden = true;
-    gear.setAttribute('aria-expanded', 'false');
+    if (pop.hidden || pop.contains(ev.target) || gears.some(([, b]) => b.contains(ev.target))) return;
+    closePop();
   });
 }
 
