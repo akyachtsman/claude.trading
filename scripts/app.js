@@ -875,7 +875,7 @@ window.addEventListener('resize', () => {
    bars and weekly bars (owner spec: "daily and weekly (13)"). Candle green/
    red is price-direction semantics (like the heatmap), not decoration. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)' };
-const WB_ZOOMS = [['3M', 63], ['6M', 126], ['1Y', 252], ['All', 9999]];
+const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126]];  /* Pro 1 window; Pro 2 shows the full weekly history */
 let wbState = null;   /* { data, lamp, sym, days } */
 
 const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.round(v / 1e3) + 'K';
@@ -899,14 +899,61 @@ function monthlyPivots(s) {
   ];
 }
 
+/* Doctrine signal markers on a stochastic series: a BUY is %K crossing up
+   through %D from at/below the oversold band; a SELL is the top-roll — %K
+   crossing down through %D from at/above the overbought band. (strategies/
+   stochastic-investing.md — the cycle anatomy.) */
+function stochMarks(st) {
+  const buys = [], sells = [];
+  for (let i = 1; i < st.k.length; i++) {
+    if (st.k[i] == null || st.d[i] == null || st.k[i - 1] == null || st.d[i - 1] == null) continue;
+    if (st.k[i - 1] <= st.d[i - 1] && st.k[i] > st.d[i] && st.k[i - 1] <= 20) buys.push(i);
+    if (st.k[i - 1] >= st.d[i - 1] && st.k[i] < st.d[i] && st.k[i - 1] >= 80) sells.push(i);
+  }
+  return { buys, sells };
+}
+
+/* Pinned/embedded read on the last bars of a stochastic (trend strength,
+   not a sell — the doctrine's exception). */
+function stochPinned(st, band = 80, bars = 4) {
+  const k = st.k.filter(v => v != null);
+  if (k.length < bars) return null;
+  const tail = k.slice(-bars);
+  if (tail.every(v => v >= band)) return 'PINNED OVERBOUGHT';
+  if (tail.every(v => v <= 100 - band)) return 'PINNED OVERSOLD';
+  return null;
+}
+
+function renderWbSidebar(data) {
+  const nav = document.getElementById('wbSidebar');
+  while (nav.firstChild) nav.removeChild(nav.firstChild);
+  for (const sym of Object.keys(data.symbols)) {
+    const s = data.symbols[sym];
+    const n = s.c.length;
+    const pct = n > 1 ? (s.c[n - 1] / s.c[n - 2] - 1) * 100 : 0;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'wb-side-btn';
+    b.setAttribute('aria-current', String(sym === wbState.sym));
+    b.appendChild(el('span', '', sym));
+    b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
+    b.addEventListener('click', () => {
+      wbState.sym = sym;
+      renderCharts(wbState.data, wbState.lamp);
+    });
+    nav.appendChild(b);
+  }
+}
+
+/* ── the two-tier workbench: Pro 1 (daily, short-term) · Pro 2 (weekly,
+   long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
+   (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 126 };
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63 };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
   document.getElementById('chartsStamp').textContent = data ? 'As of ' + data.asOf : '—';
 
-  /* symbol select (rebuild only when the roster changed) */
   const sel = document.getElementById('chartSymSel');
   const roster = Object.keys(data.symbols);
   if (sel.options.length !== roster.length) {
@@ -918,6 +965,7 @@ function renderCharts(data, lamp) {
     }
   }
   sel.value = wbState.sym;
+  renderWbSidebar(data);
 
   const svg = document.getElementById('wbChart');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -925,127 +973,155 @@ function renderCharts(data, lamp) {
   const s = data.symbols[wbState.sym];
   if (!s || s.c.length < 30) return;
 
-  const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 900));
-  const H = 620;
+  const W = Math.max(480, Math.round(svg.parentElement.clientWidth || 900));
+  const H = 560;
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
+
+  const GAP = 16;
+  const paneW = (W - GAP) / 2;
+  const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, ...attrs }));
+  const text = (str, tx, ty, attrs) => { const t = svgEl('text', { x: tx, y: ty, 'font-family': 'var(--font-mono)', 'font-size': 10, fill: WB.label, ...attrs }); t.textContent = str; svg.appendChild(t); };
+  const hideTip = () => { tip.style.display = 'none'; for (const c of svg.querySelectorAll('[data-cross]')) c.setAttribute('visibility', 'hidden'); };
+
+  /* one pane = caption · price (+SMA/pivots) · volume · stochastic strip */
+  const drawPane = (x0, w, bars, st, marks, caption, opts) => {
+    const padR = 46;
+    const plotW = w - padR - 6;
+    const n = Math.min(opts.window, bars.c.length);
+    const i0 = bars.c.length - n;
+    const x = i => x0 + 6 + (i - i0 + 0.5) / n * plotW;
+    const slotW = plotW / n;
+    const bodyW = Math.max(1, Math.min(9, slotW * 0.66));
+    const pY = 22, pH = H - 22 - 58 - 96 - 30;   /* caption/price/volume/stoch/labels */
+    const vY = pY + pH + 8, vH = 50;
+    const sY = vY + vH + 14, sH = 88;
+
+    text(caption, x0 + 6, 13, { 'font-size': 9, 'font-weight': 600, 'letter-spacing': '.08em', 'font-family': 'var(--font-sans)' });
+
+    let hi = -Infinity, lo = Infinity;
+    for (let i = i0; i < bars.c.length; i++) { hi = Math.max(hi, bars.h[i]); lo = Math.min(lo, bars.l[i]); }
+    const pivots = (opts.pivots || []).filter(([, v]) => v > lo * 0.95 && v < hi * 1.05);
+    for (const [, v] of pivots) { hi = Math.max(hi, v); lo = Math.min(lo, v); }
+    const pad = (hi - lo) * 0.05 || 1;
+    hi += pad; lo -= pad;
+    const py = v => pY + (hi - v) / (hi - lo) * pH;
+
+    const step = Math.pow(10, Math.floor(Math.log10((hi - lo) / 3)));
+    const tick = (hi - lo) / step > 6 ? step * 2 : step;
+    for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
+      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: WB.grid, 'stroke-width': 1 });
+      text(fmtPrice(v), x0 + 6 + plotW + 4, py(v) + 3, { 'font-size': 9 });
+    }
+    for (const [name, v] of pivots) {
+      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: 'var(--color-accent)', 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
+      text(name + ' ' + fmtPrice(v), x0 + 8, py(v) - 3, { fill: 'var(--color-accent)', 'font-size': 9 });
+    }
+
+    /* SMA stack (doctrine: layered dynamic S/R) */
+    for (const [len, color] of opts.smas || []) {
+      let d = '';
+      for (let i = Math.max(i0, len - 1); i < bars.c.length; i++) {
+        let sum = 0;
+        for (let j = i - len + 1; j <= i; j++) sum += bars.c[j];
+        const v = sum / len;
+        if (v > lo && v < hi) d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + py(v).toFixed(1);
+        else d = d && d + 'M' + x(i).toFixed(1) + ' ' + py(Math.min(hi, Math.max(lo, v))).toFixed(1);
+      }
+      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 1, 'stroke-opacity': 0.8 }));
+    }
+
+    let vMax = 0;
+    for (let i = i0; i < bars.c.length; i++) vMax = Math.max(vMax, bars.v[i]);
+    for (let i = i0; i < bars.c.length; i++) {
+      const up = bars.c[i] >= bars.o[i];
+      const col = up ? WB.up : WB.down;
+      const cx = x(i);
+      line(cx, py(bars.h[i]), cx, py(bars.l[i]), { stroke: col, 'stroke-width': 1 });
+      svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col }));
+      if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: col, 'fill-opacity': 0.55 }));
+    }
+    text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
+
+    /* stochastic strip + doctrine markers */
+    const sy = v => sY + sH - v / 100 * sH;
+    for (const g of [20, 80]) {
+      line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.grid, 'stroke-width': 1, 'stroke-dasharray': '3 3' });
+      text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
+    }
+    for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
+      let d = '';
+      for (let i = i0; i < bars.c.length; i++) {
+        if (st[key][i] == null) continue;
+        d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sy(st[key][i]).toFixed(1);
+      }
+      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 1.5 }));
+    }
+    for (const i of marks.buys) if (i >= i0) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
+    for (const i of marks.sells) if (i >= i0) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
+    text(opts.stochCaption, x0 + 6, sY - 4, { 'font-size': 8, 'letter-spacing': '.08em' });
+    const pinned = stochPinned(st);
+    if (pinned) {
+      const bx = x0 + plotW - 104;
+      svg.appendChild(svgEl('rect', { x: bx, y: sY - 12, width: 112, height: 12, rx: 2, fill: 'var(--color-accent)', 'fill-opacity': 0.15 }));
+      text(pinned + ' — TREND', bx + 4, sY - 3, { 'font-size': 7, fill: 'var(--color-accent)', 'letter-spacing': '.04em' });
+    }
+
+    /* month gridlines (labels only where they have ≥48px of room) */
+    let lastLabelX = -Infinity;
+    for (let i = i0 + 1; i < bars.c.length; i++) {
+      if (bars.t[i].slice(0, 7) !== bars.t[i - 1].slice(0, 7)) {
+        const gx = x(i) - slotW / 2;
+        line(gx, pY, gx, sY + sH, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.5 });
+        if (gx - lastLabelX >= 48) {
+          text(bars.t[i].slice(0, 7), gx + 2, H - 4, { 'font-size': 8 });
+          lastLabelX = gx;
+        }
+      }
+    }
+
+    /* per-pane crosshair + readout */
+    const cross = svgEl('line', { y1: pY, y2: sY + sH, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    svg.appendChild(cross);
+    const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: sY + sH - pY, fill: 'transparent' });
+    svg.appendChild(overlay);
+    overlay.addEventListener('pointermove', ev => {
+      const box = svg.getBoundingClientRect();
+      const mx = (ev.clientX - box.left) * (W / box.width);
+      const i = Math.min(bars.c.length - 1, Math.max(i0, i0 + Math.floor((mx - x0 - 6) / slotW)));
+      hideTip();
+      cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+      cross.setAttribute('visibility', 'visible');
+      tip.appendChild(el('div', 'tip-date', bars.t[i] + ' · ' + wbState.sym + ' · ' + opts.tier));
+      const chg = i > 0 ? (bars.c[i] / bars.c[i - 1] - 1) * 100 : 0;
+      tip.appendChild(el('div', '', 'O ' + fmtPrice(bars.o[i]) + '  H ' + fmtPrice(bars.h[i]) + '  L ' + fmtPrice(bars.l[i])));
+      const cRow = el('div', '', 'C ' + fmtPrice(bars.c[i]) + ' ');
+      cRow.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
+      tip.appendChild(cRow);
+      tip.appendChild(el('div', '', 'Vol ' + fmtVol(bars.v[i])));
+      if (st.k[i] != null) tip.appendChild(el('div', '', 'Stoch %K ' + st.k[i].toFixed(0) + ' · %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0))));
+      tip.style.display = 'block';
+      const wrap = svg.parentElement.getBoundingClientRect();
+      const sx = wrap.width / W;
+      tip.style.left = Math.min(x(i) * sx + 10, wrap.width - 190) + 'px';
+      tip.style.top = '16px';
+    });
+    overlay.addEventListener('pointerleave', hideTip);
+  };
 
   const weekly = toWeeklyBars(s);
   const dStoch = stochSeries(s);
   const wStoch = stochSeries(weekly);
-
-  const n = Math.min(wbState.days, s.c.length);
-  const i0 = s.c.length - n;
-  const padR = 56, padL = 8;
-  const plotW = W - padL - padR;
-  const x = i => padL + (i - i0 + 0.5) / n * plotW;
-  const slotW = plotW / n;
-  const bodyW = Math.max(1, Math.min(11, slotW * 0.66));
-
-  /* pane geometry: price · volume · daily stoch · weekly stoch */
-  const panes = { price: [8, 328], vol: [344, 64], sd: [432, 82], sw: [538, 82] };
-
-  const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, ...attrs }));
-  const text = (str, tx, ty, attrs) => { const t = svgEl('text', { x: tx, y: ty, 'font-family': 'var(--font-mono)', 'font-size': 10, fill: WB.label, ...attrs }); t.textContent = str; svg.appendChild(t); };
-
-  /* price scale over visible bars (pivots included when nearby) */
-  let hi = -Infinity, lo = Infinity;
-  for (let i = i0; i < s.c.length; i++) { hi = Math.max(hi, s.h[i]); lo = Math.min(lo, s.l[i]); }
-  const pivots = monthlyPivots(s).filter(([, v]) => v > lo * 0.92 && v < hi * 1.08);
-  for (const [, v] of pivots) { hi = Math.max(hi, v); lo = Math.min(lo, v); }
-  const pad = (hi - lo) * 0.04 || 1;
-  hi += pad; lo -= pad;
-  const [pY, pH] = panes.price;
-  const py = v => pY + (hi - v) / (hi - lo) * pH;
-
-  /* price gridlines + right-side tick labels */
-  const step = Math.pow(10, Math.floor(Math.log10((hi - lo) / 4)));
-  const tick = (hi - lo) / step > 8 ? step * 2 : step;
-  for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
-    line(padL, py(v), W - padR, py(v), { stroke: WB.grid, 'stroke-width': 1 });
-    text(fmtPrice(v), W - padR + 6, py(v) + 3, {});
-  }
-
-  /* pivots: dashed amber lines with left labels */
-  for (const [name, v] of pivots) {
-    line(padL, py(v), W - padR, py(v), { stroke: 'var(--color-accent)', 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
-    text(name + ' ' + fmtPrice(v), padL + 2, py(v) - 3, { fill: 'var(--color-accent)' });
-  }
-
-  /* candles + volume */
-  const [vY, vH] = panes.vol;
-  let vMax = 0;
-  for (let i = i0; i < s.c.length; i++) vMax = Math.max(vMax, s.v[i]);
-  for (let i = i0; i < s.c.length; i++) {
-    const up = s.c[i] >= s.o[i];
-    const col = up ? WB.up : WB.down;
-    const cx = x(i);
-    line(cx, py(s.h[i]), cx, py(s.l[i]), { stroke: col, 'stroke-width': 1 });
-    const yTop = py(Math.max(s.o[i], s.c[i]));
-    svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: yTop, width: bodyW, height: Math.max(1, Math.abs(py(s.o[i]) - py(s.c[i]))), fill: col }));
-    if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (s.v[i] / vMax) * vH, width: bodyW, height: (s.v[i] / vMax) * vH, fill: col, 'fill-opacity': 0.55 }));
-  }
-  text('VOLUME', padL + 2, vY + 10, { 'font-size': 8, 'letter-spacing': '.08em' });
-
-  /* stochastic strips: daily on daily bars, weekly(13) mapped to daily slots */
-  const wkIdxFor = t => { let j = weekly.t.length - 1; while (j > 0 && weekly.t[j] > t) j--; return j; };
-  const strip = ([sY, sH], series, idxOf, caption) => {
-    for (const g of [20, 80]) {
-      line(padL, sY + sH - g / 100 * sH, W - padR, sY + sH - g / 100 * sH, { stroke: WB.grid, 'stroke-width': 1, 'stroke-dasharray': '3 3' });
-      text(String(g), W - padR + 6, sY + sH - g / 100 * sH + 3, {});
-    }
-    for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
-      let dPath = '';
-      for (let i = i0; i < s.c.length; i++) {
-        const val = series[key][idxOf(i)];
-        if (val == null) continue;
-        dPath += (dPath ? 'L' : 'M') + x(i).toFixed(1) + ' ' + (sY + sH - val / 100 * sH).toFixed(1);
-      }
-      if (dPath) svg.appendChild(svgEl('path', { d: dPath, fill: 'none', stroke: col, 'stroke-width': 1.6 }));
-    }
-    text(caption, padL + 2, sY + 10, { 'font-size': 8, 'letter-spacing': '.08em' });
-  };
-  strip(panes.sd, dStoch, i => i, 'STOCH 13-3-3 · DAILY');
-  strip(panes.sw, wStoch, i => wkIdxFor(s.t[i]), 'STOCH 13-3-3 · WEEKLY (13)');
-
-  /* month gridlines + labels along the bottom */
-  for (let i = i0 + 1; i < s.c.length; i++) {
-    if (s.t[i].slice(0, 7) !== s.t[i - 1].slice(0, 7)) {
-      line(x(i) - slotW / 2, pY, x(i) - slotW / 2, H - 14, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.6 });
-      if (n <= 260 || s.t[i].slice(5, 7) === '01') text(s.t[i].slice(0, 7), x(i) - slotW / 2 + 3, H - 4, {});
-    }
-  }
-
-  /* crosshair + readout */
-  const cross = svgEl('line', { y1: pY, y2: H - 14, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none' });
-  svg.appendChild(cross);
-  const overlay = svgEl('rect', { x: padL, y: 0, width: plotW, height: H, fill: 'transparent' });
-  svg.appendChild(overlay);
-  overlay.addEventListener('pointermove', ev => {
-    const box = svg.getBoundingClientRect();
-    const i = Math.min(s.c.length - 1, Math.max(i0, i0 + Math.floor((ev.clientX - box.left) * (W / box.width) / slotW - padL / slotW)));
-    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
-    cross.setAttribute('visibility', 'visible');
-    while (tip.firstChild) tip.removeChild(tip.firstChild);
-    tip.appendChild(el('div', 'tip-date', s.t[i] + ' · ' + wbState.sym));
-    const chg = i > 0 ? (s.c[i] / s.c[i - 1] - 1) * 100 : 0;
-    tip.appendChild(el('div', '', 'O ' + fmtPrice(s.o[i]) + '  H ' + fmtPrice(s.h[i]) + '  L ' + fmtPrice(s.l[i])));
-    const cRow = el('div', '', 'C ' + fmtPrice(s.c[i]) + ' ');
-    cRow.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
-    tip.appendChild(cRow);
-    tip.appendChild(el('div', '', 'Vol ' + fmtVol(s.v[i])));
-    const dk = dStoch.k[i], dd = dStoch.d[i];
-    const wj = wkIdxFor(s.t[i]);
-    const wk = wStoch.k[wj], wd = wStoch.d[wj];
-    if (dk != null) tip.appendChild(el('div', '', 'Stoch D  %K ' + dk.toFixed(0) + ' · %D ' + (dd == null ? '—' : dd.toFixed(0))));
-    if (wk != null) tip.appendChild(el('div', '', 'Stoch W13 %K ' + wk.toFixed(0) + ' · %D ' + (wd == null ? '—' : wd.toFixed(0))));
-    tip.style.display = 'block';
-    const wrap = svg.parentElement.getBoundingClientRect();
-    const sx = wrap.width / W;
-    tip.style.left = Math.min(x(i) * sx + 10, wrap.width - 190) + 'px';
-    tip.style.top = '12px';
+  drawPane(0, paneW, s, dStoch, stochMarks(dStoch), 'PRO 1 · DAILY · SHORT-TERM', {
+    window: wbState.days, tier: 'Pro 1',
+    pivots: monthlyPivots(s), smas: [[20, 'var(--color-series-3)'], [50, 'var(--color-accent-bright)']],
+    stochCaption: 'STOCH 13-3-3 · DAILY',
   });
-  overlay.addEventListener('pointerleave', () => { tip.style.display = 'none'; cross.setAttribute('visibility', 'hidden'); });
+  drawPane(paneW + GAP, paneW, weekly, wStoch, stochMarks(wStoch), 'PRO 2 · WEEKLY · LONG-TERM', {
+    window: 9999, tier: 'Pro 2',
+    stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
+  });
+  line(paneW + GAP / 2, 8, paneW + GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
 }
 
 function wireCharts() {
@@ -1058,7 +1134,7 @@ function wireCharts() {
   for (const [label, days] of WB_ZOOMS) {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = label;
-    b.setAttribute('aria-pressed', String(days === 126));
+    b.setAttribute('aria-pressed', String(days === 63));
     b.addEventListener('click', () => {
       if (!wbState) return;
       wbState.days = days;
