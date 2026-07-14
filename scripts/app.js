@@ -691,6 +691,10 @@ function renderHeatmap(hm, lamp) {
   /* finviz-style hover card: SECTOR header, the hovered stock in bold with
      last price + full name, then EVERY stock in the sector by cap. */
   const showPeers = (t, sector, px, py) => {
+    /* new sector under the pointer ⇒ scroll the peer list back to the top
+       (moving between tiles of the SAME sector keeps the reading position) */
+    const sectorChanged = tip._sectorShown !== sector.name;
+    tip._sectorShown = sector.name;
     unlightHead();
     const head = sectorHead.get(sector.name);   /* light the whole sector's header strip */
     if (head) {
@@ -729,6 +733,7 @@ function renderHeatmap(hm, lamp) {
       tip.appendChild(row);
     }
     tip.style.display = 'block';
+    if (sectorChanged) tip.scrollTop = 0;
     const wrap = svg.parentElement.getBoundingClientRect();
     const sx = wrap.width / W, sy = wrap.height / H;
     tip.style.left = Math.min(px * sx + 8, wrap.width - 250) + 'px';
@@ -737,6 +742,7 @@ function renderHeatmap(hm, lamp) {
   const hideHover = () => {
     tip.style.display = 'none';
     tip.scrollTop = 0;
+    tip._sectorShown = null;
     unlightHead();
     focusGroup.setAttribute('visibility', 'hidden');
     focusTile.setAttribute('visibility', 'hidden');
