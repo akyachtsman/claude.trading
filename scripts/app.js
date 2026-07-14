@@ -709,9 +709,11 @@ function renderHeatmap(hm, lamp) {
     cur.appendChild(el('span', dir(t.pct), fmtPct(t.pct)));
     tip.appendChild(cur);
     tip.appendChild(el('div', 'tip-name', (t.name && t.name !== t.sym ? t.name + ' · ' : '') + fmtCap(t.cap)));
+    /* EVERY member of the framed group (owner ruling 2026-07-14) — the tip
+       scrolls when the list outgrows its max height */
     const peers = sector.tiles
       .filter(p => (t.ind ? p.ind === t.ind : true))
-      .sort((a, b) => b.cap - a.cap).slice(0, 8);
+      .sort((a, b) => b.cap - a.cap);
     for (const p of peers) {
       const row = el('div', 'tip-row' + (p.sym === t.sym ? ' tip-cur' : ''));
       row.appendChild(el('span', '', p.sym));
@@ -727,10 +729,22 @@ function renderHeatmap(hm, lamp) {
   };
   const hideHover = () => {
     tip.style.display = 'none';
+    tip.scrollTop = 0;
     unlightBand();
     focusGroup.setAttribute('visibility', 'hidden');
     focusTile.setAttribute('visibility', 'hidden');
   };
+  /* leaving a tile schedules the hide instead of firing it, so the pointer
+     can travel INTO the tip and wheel-scroll the full peer list. State
+     lives ON the tip element: the listeners are wired once, but hideHover
+     is a fresh closure every render. */
+  tip._hide = hideHover;
+  const scheduleHide = () => { clearTimeout(tip._hideTimer); tip._hideTimer = setTimeout(hideHover, 140); };
+  if (!tip.dataset.wired) {
+    tip.dataset.wired = '1';
+    tip.addEventListener('pointerenter', () => clearTimeout(tip._hideTimer));
+    tip.addEventListener('pointerleave', () => { if (tip._hide) tip._hide(); });
+  }
 
   const drawTiles = (tiles, x, y, w, h, sector) => {
     for (const t of squarify(tiles.map(t => ({ ...t, value: t.cap })), x, y, w, h)) {
@@ -759,8 +773,8 @@ function renderHeatmap(hm, lamp) {
           svg.appendChild(pctEl);
         }
       }
-      rect.addEventListener('pointerenter', () => showPeers(t, sector, t.x + t.w, t.y));
-      rect.addEventListener('pointerleave', hideHover);
+      rect.addEventListener('pointerenter', () => { clearTimeout(tip._hideTimer); showPeers(t, sector, t.x + t.w, t.y); });
+      rect.addEventListener('pointerleave', scheduleHide);
     }
   };
 
