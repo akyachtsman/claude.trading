@@ -1140,7 +1140,7 @@ window.addEventListener('resize', () => {
    calendar month, and the signature 13-period slow stochastic on BOTH daily
    bars and weekly bars (owner spec: "daily and weekly (13)"). Candle green/
    red is price-direction semantics (like the heatmap), not decoration. */
-const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)' };
+const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
 const WB2_ZOOMS = [['1M', 4], ['3M', 13], ['6M', 26], ['YTD', 'ytd'], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars — same presets as Pro 1 */
 const WB3_ZOOMS = [['5D', 5], ['10D', 10], ['1M', 21]];     /* Pro 3 window, in daily bars */
@@ -1349,6 +1349,7 @@ function renderCharts(data, lamp) {
   const H = 600;   /* +40 over the chart body for the range navigator strip */
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
+  svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
 
   const GAP = 16;
   const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, ...attrs }));
@@ -1418,8 +1419,10 @@ function renderCharts(data, lamp) {
       text(fmtPrice(v), x0 + 6 + plotW + 4, py(v) + 3, { 'font-size': 9 });
     }
     for (const [name, v] of pivots) {
-      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: 'var(--color-accent)', 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
-      text(name + ' ' + fmtPrice(v), x0 + 8, py(v) - 3, { fill: 'var(--color-accent)', 'font-size': 9 });
+      /* R levels orange, S levels green, pivot yellow — the reference scheme */
+      const pcol = name === 'P' ? 'var(--color-accent-bright)' : name[0] === 'R' ? 'var(--color-accent)' : 'var(--color-gain)';
+      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: pcol, 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
+      text(name + ' ' + fmtPrice(v), x0 + 8, py(v) - 3, { fill: pcol, 'font-size': 9 });
     }
 
     /* Bollinger envelope — dashed, neutral, like the reference Pro 3 */
@@ -1489,7 +1492,7 @@ function renderCharts(data, lamp) {
       const yTop = stripTops[si];
       const sy = v => yTop + sH - v / 100 * sH;
       for (const g of [20, 80]) {
-        line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.grid, 'stroke-width': 1, 'stroke-dasharray': '3 3' });
+        line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.band, 'stroke-width': 1, 'stroke-opacity': 0.55 });
         text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
       }
       for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
