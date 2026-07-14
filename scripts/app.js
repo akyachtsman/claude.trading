@@ -849,12 +849,13 @@ function renderHeatTable(hm) {
   table.appendChild(tbody);
 }
 
-/* ── MAP FILTER side panel (finviz-parity; owner request 2026-07-13) ─────
+/* ── MAP FILTER bar (finviz-parity; owner request 2026-07-13) ─────────────
    Live cuts derive from data already on hand: index rosters intersect the
    S&P dataset (config/map-filters.json, owner-editable), the ETF map reads
-   the charts histories (which also unlock multi-period performance).
-   Russell 2000 / World / Crypto / Futures / Themes need new pipeline
-   feeds — shown disabled until the owner asks to wire them. */
+   the charts histories. Russell 2000 is its own desk-heatmap universe
+   (screener small-cap band, top 300 — owner request 2026-07-14). Stock
+   cuts carry pctW/pctM/pctYtd from the feed's daily 1y sweep, so the
+   period dropdown works wherever those fields are present. */
 const MAP_CUTS = [
   ['sp500', 'S&P 500', 'live'],
   ['dj30', 'Dow Jones 30', 'roster'],
@@ -864,13 +865,36 @@ const MAP_CUTS = [
   ['world', 'World', 'extra'],
   ['crypto', 'Crypto', 'extra'],
   ['futures', 'Futures', 'extra'],
-  ['r2k', 'Russell 2000', 'pending'],
+  ['r2k', 'Russell 2000', 'r2k'],
 ];
 const MAP_PERIODS = [['1d', '1-Day Performance'], ['1w', '1-Week Performance'], ['1m', '1-Month Performance'], ['ytd', 'YTD Performance']];
 let heatBase = null;                        /* raw dataset + lamp from loadHeatmap */
 let heatExtra = null;                       /* desk-maps payload (crypto/futures/world, delayed quotes) */
 let heatExtraAt = 0;                        /* fetch timestamp — refetch on cut click when stale */
+let heatR2k = null;                         /* desk-heatmap universe:r2k payload + lamp */
+let heatR2kAt = 0;
+let heatR2kErr = false;
 let mapView = { key: 'sp500', period: '1d', filters: null };
+
+/* period support: '1d' always; longer periods need pctW/pctM/pctYtd on the
+   tiles (feed's daily 1y sweep — absent for a few minutes after a cold
+   function boot, and always absent in demo) */
+const PERIOD_FIELD = { '1w': 'pctW', '1m': 'pctM', 'ytd': 'pctYtd' };
+function datasetHasPeriods(hm) {
+  if (!hm || !hm.sectors) return false;
+  const t = hm.sectors[0] && hm.sectors[0].tiles[0];
+  return Boolean(t && t.pctW !== undefined);
+}
+/* re-color a cut by the selected period; tiles without that period drop out */
+function recolorForPeriod(hm, period) {
+  if (!hm || period === '1d') return hm;
+  const field = PERIOD_FIELD[period];
+  const sectors = hm.sectors.map(s => {
+    const tiles = s.tiles.filter(t => Number.isFinite(t[field])).map(t => ({ ...t, pct: t[field] }));
+    return { name: s.name, cap: tiles.reduce((a, t) => a + t.cap, 0), tiles };
+  }).filter(s => s.tiles.length);
+  return { ...hm, sectors };
+}
 
 function buildEtfHeatmap(period) {
   if (!wbState || !wbState.data) return null;
@@ -908,9 +932,17 @@ function buildEtfHeatmap(period) {
 function applyMapView() {
   if (!heatBase) return;
   const label = (MAP_CUTS.find(([k]) => k === mapView.key) || [])[1] || 'S&P 500';
+  /* gate first: a period the current cut can't express falls back to 1d
+     BEFORE rendering, so a cut switch never paints an empty map */
+  const stockDataset = mapView.key === 'r2k' ? (heatR2k && heatR2k.hm) : heatBase.hm;
+  const multiOk = mapView.key === 'etf'
+    || (['sp500', 'dj30', 'ndx100', 'themes', 'r2k'].includes(mapView.key) && datasetHasPeriods(stockDataset));
+  if (!multiOk && mapView.period !== '1d') mapView.period = '1d';
+  const periodLabel = (MAP_PERIODS.find(([k]) => k === mapView.period) || [])[1] || '';
+  const colored = mapView.period === '1d' ? 'day % change' : periodLabel.toLowerCase();
   let out = heatBase.hm;
   let lamp = heatBase.lamp;
-  let note = 'Sized by market cap · colored by day % change';
+  let note = 'Sized by market cap · colored by ' + colored;
   if (mapView.key === 'dj30' || mapView.key === 'ndx100') {
     const set = new Set((mapView.filters || {})[mapView.key] || []);
     const sectors = out.sectors.map(s => {
@@ -918,9 +950,8 @@ function applyMapView() {
       return { name: s.name, cap: tiles.reduce((a, t) => a + t.cap, 0), tiles };
     }).filter(s => s.tiles.length).sort((a, b) => b.cap - a.cap);
     out = { ...out, sectors };
-    note = 'Hand-kept roster ∩ dataset (' + sectors.reduce((a, s) => a + s.tiles.length, 0) + ' names) · sized by cap · day %';
+    note = 'Hand-kept roster ∩ dataset (' + sectors.reduce((a, s) => a + s.tiles.length, 0) + ' names) · sized by cap · ' + colored;
   } else if (mapView.key === 'etf') {
-    const periodLabel = (MAP_PERIODS.find(([k]) => k === mapView.period) || [])[1];
     out = buildEtfHeatmap(mapView.period);
     lamp = wbState && wbState.lamp ? wbState.lamp : lamp;
     note = out ? 'Sized by 21-day avg dollar volume · colored by ' + periodLabel.toLowerCase() : 'ETF map needs the charts panel data — still loading';
@@ -934,7 +965,13 @@ function applyMapView() {
       return { name, cap: tiles.reduce((a, t) => a + t.cap, 0), tiles };
     }).filter(s => s.tiles.length).sort((a, b) => b.cap - a.cap);
     out = { ...heatBase.hm, sectors };
-    note = 'Hand-kept theme baskets over the S&P dataset · sized by cap · day %';
+    note = 'Hand-kept theme baskets over the S&P dataset · sized by cap · ' + colored;
+  } else if (mapView.key === 'r2k') {
+    out = heatR2k ? heatR2k.hm : null;
+    lamp = heatR2k ? heatR2k.lamp : lamp;
+    note = out ? (heatR2k.hm.note || 'Small-cap band') + ' · screener sectors · sized by cap · ' + colored
+      : heatR2kErr ? 'Small-cap quotes unavailable right now — click again in a minute'
+      : 'Loading small caps…';
   } else if (mapView.key === 'crypto' || mapView.key === 'futures' || mapView.key === 'world') {
     const cut = heatExtra && heatExtra.cuts && heatExtra.cuts[mapView.key];
     /* the stamp carries the fetch time — this cut is delayed-live, not EOD */
@@ -944,13 +981,16 @@ function applyMapView() {
       : heatExtraErr ? 'Delayed quotes unavailable right now — click again in a minute'
       : 'Loading delayed quotes…';
   }
+  /* stock cuts re-color by period from the feed's pctW/pctM/pctYtd fields
+     (the ETF cut computes its own periods from bar history above) */
+  if (mapView.key !== 'etf') out = recolorForPeriod(out, mapView.period);
   document.getElementById('heatTitle').textContent = label + ' — heat';
   renderHeatmap(out, lamp);
   document.getElementById('heatSource').textContent = note;
-  /* period choices: multi-period needs per-name history, which only the
-     ETF cut has today; stock cuts stay 1-day until a history feed lands */
+  /* period choices: ETFs always (own history); stock cuts once the feed's
+     period sweep has landed; extras (delayed spot quotes) stay 1-day */
   const sel = document.getElementById('heatPeriod');
-  for (const opt of sel.options) opt.disabled = mapView.key !== 'etf' && opt.value !== '1d';
+  for (const opt of sel.options) opt.disabled = !multiOk && opt.value !== '1d';
   sel.value = mapView.period;
 }
 
@@ -962,24 +1002,20 @@ function wireMapFilter() {
     b.className = 'map-filter-btn';
     b.textContent = label;
     b.setAttribute('aria-current', String(key === mapView.key));
-    if (kind === 'pending') {
-      b.disabled = true;
-      b.title = 'Needs a new data feed — ask the desk to wire it';
-    } else if (kind === 'extra') {
-      b.disabled = true;                       /* enabled once desk-maps answers (live mode) */
+    if (kind === 'extra' || kind === 'r2k') {
+      b.disabled = true;                       /* enabled in live mode (loadHeatmap) */
       b.title = 'Loads delayed quotes when the desk is live';
       b.dataset.extra = '1';
       b.addEventListener('click', () => {
         mapView.key = key;
-        mapView.period = '1d';
         for (const other of nav.children) other.setAttribute('aria-current', String(other === b));
-        applyMapView();
-        refreshExtraMaps();                    /* re-pull if the 2-min window lapsed */
+        applyMapView();                        /* period auto-falls back if unsupported */
+        if (kind === 'r2k') refreshR2kMap();
+        else refreshExtraMaps();               /* re-pull if the 2-min window lapsed */
       });
     } else {
       b.addEventListener('click', () => {
         mapView.key = key;
-        if (key !== 'etf') mapView.period = '1d';
         for (const other of nav.children) other.setAttribute('aria-current', String(other === b));
         applyMapView();
       });
@@ -1017,6 +1053,21 @@ async function refreshExtraMaps() {
     heatExtraErr = false;
   } catch { heatExtraErr = !heatExtra; /* keep last good */ }
   if (mapView.key === 'crypto' || mapView.key === 'futures' || mapView.key === 'world') applyMapView();
+}
+
+/* Russell 2000 cut — its own desk-heatmap universe (screener small-cap
+   band, top 300). 5-min client window; the function's own session-aware
+   cache does the real rate limiting. */
+async function refreshR2kMap() {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  if (heatR2k && Date.now() - heatR2kAt < 300000) return;
+  try {
+    const out = await deskFeed('desk-heatmap', { universe: 'r2k' });
+    heatR2k = { hm: out, lamp: liveLampFor(out.generatedAt, out.asOf) };
+    heatR2kAt = Date.now();
+    heatR2kErr = false;
+  } catch { heatR2kErr = !heatR2k; /* keep last good */ }
+  if (mapView.key === 'r2k') applyMapView();
 }
 
 async function loadHeatmap() {

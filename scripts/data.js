@@ -339,7 +339,7 @@ async function deskMaps() {
 /* Public live feeds (retire-nightly-pipeline Group A): each desk-* edge
    function replaces one committed data/*.json snapshot with the same shape
    plus {ok, generatedAt}. Anon-callable, fixed upstreams server-side. */
-async function deskFeed(name) {
+async function deskFeed(name, params) {
   const res = await fetch(DESK_DB.url + '/functions/v1/' + name, {
     method: 'POST',
     headers: {
@@ -347,7 +347,7 @@ async function deskFeed(name) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: '{}',
+    body: JSON.stringify(params || {}),
   });
   const out = await res.json().catch(() => null);
   if (!out || !out.ok) throw new Error(name + ' → ' + (out && out.error ? out.error : 'HTTP ' + res.status));
