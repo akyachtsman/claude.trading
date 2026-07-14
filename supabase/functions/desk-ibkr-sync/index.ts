@@ -145,12 +145,39 @@ async function dayPctFor(symbol: string): Promise<number | null> {
   } catch { return null; }
 }
 
-function lastTradingDayIso(): string {
-  const d = new Date();
-  const dow = d.getUTCDay();
-  if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);
-  if (dow === 6) d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+// NYSE full-closure holidays (2026–2027 seeded; refresh annually) — a held
+// day is never the "last closed session".
+const NYSE_HOLIDAYS = new Set([
+  '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03', '2026-05-25',
+  '2026-06-19', '2026-07-03', '2026-09-07', '2026-11-26', '2026-12-25',
+  '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31',
+  '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24',
+]);
+
+// The most recent US session whose 16:00 ET close has ALREADY passed — the
+// latest as-of IBKR can possibly have published. Both cron slots run when
+// this is the SAME day: 22:35 UTC = 18:35 ET (today, already closed) and
+// 09:35 UTC = 05:35 ET (today not open yet → yesterday). Computing this in
+// UTC-calendar terms was the bug: the pre-market morning slot expected the
+// current UTC day, which hasn't closed, so it rejected the valid prior-day
+// statement forever.
+function lastTradingDayIso(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  // start at the ET calendar date; if the 16:00 ET close hasn't passed, the
+  // last completed session is the prior day
+  const cur = new Date(Date.UTC(Number(get('year')), Number(get('month')) - 1, Number(get('day'))));
+  if (Number(get('hour')) < 16) cur.setUTCDate(cur.getUTCDate() - 1);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  for (let i = 0; i < 10; i++) {                 // roll back weekends + holidays
+    const dow = cur.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !NYSE_HOLIDAYS.has(iso(cur))) break;
+    cur.setUTCDate(cur.getUTCDate() - 1);
+  }
+  return iso(cur);
 }
 
 // Supabase REST helpers (service key — this function is cron-secret-gated)
