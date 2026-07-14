@@ -676,30 +676,29 @@ function renderHeatmap(hm, lamp) {
   /* hover chrome (appended last so it paints above the tiles): a yellow
      outline around the hovered stock's whole industry group + a white
      outline on the tile itself — the finviz interaction. */
-  const groupRects = new Map();
-  const bandEls = new Map();   /* sector|ind → {rect, text} for the lit-band hover */
-  let litBand = null;
+  const sectorGeo = new Map();   /* sector name → full rect, for the sector-wide focus frame */
+  const sectorHead = new Map();  /* sector name → {rect, text} header strip, lit on hover */
+  let litHead = null;
   const focusGroup = svgEl('rect', { fill: 'none', stroke: HEAT.focus, 'stroke-width': 2, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
   const focusTile = svgEl('rect', { fill: 'none', stroke: '#FFFFFF', 'stroke-width': 1.5, rx: 2, visibility: 'hidden', 'pointer-events': 'none' });
-  const unlightBand = () => {
-    if (!litBand) return;
-    litBand.rect.setAttribute('fill', HEAT.band);
-    litBand.text.setAttribute('fill', HEAT.label);
-    litBand = null;
+  const unlightHead = () => {
+    if (!litHead) return;
+    litHead.rect.setAttribute('fill', '#1E2129');
+    litHead.text.setAttribute('fill', '#D9DEE8');
+    litHead = null;
   };
 
-  /* finviz-style hover card: SECTOR — INDUSTRY header, the hovered stock in
-     bold with last price + full name, then its industry peers by cap. */
+  /* finviz-style hover card: SECTOR header, the hovered stock in bold with
+     last price + full name, then EVERY stock in the sector by cap. */
   const showPeers = (t, sector, px, py) => {
-    const key = sector.name + '|' + (t.ind || '');
-    unlightBand();
-    const band = bandEls.get(key);   /* light the industry caption, finviz-style */
-    if (band) {
-      band.rect.setAttribute('fill', HEAT.focus);
-      band.text.setAttribute('fill', '#111111');
-      litBand = band;
+    unlightHead();
+    const head = sectorHead.get(sector.name);   /* light the whole sector's header strip */
+    if (head) {
+      head.rect.setAttribute('fill', HEAT.focus);
+      head.text.setAttribute('fill', '#111111');
+      litHead = head;
     }
-    const g = groupRects.get(key);
+    const g = sectorGeo.get(sector.name);        /* frame the WHOLE sector */
     if (g) {
       focusGroup.setAttribute('x', g.x + 1); focusGroup.setAttribute('y', g.y + 1);
       focusGroup.setAttribute('width', Math.max(g.w - 2, 1)); focusGroup.setAttribute('height', Math.max(g.h - 2, 1));
@@ -710,7 +709,7 @@ function renderHeatmap(hm, lamp) {
     focusTile.setAttribute('visibility', 'visible');
 
     while (tip.firstChild) tip.removeChild(tip.firstChild);
-    tip.appendChild(el('div', 'tip-head', (sector.name + (t.ind ? ' — ' + t.ind : '')).toUpperCase()));
+    tip.appendChild(el('div', 'tip-head', sector.name.toUpperCase()));
     const dir = p => p > 0 ? 'up' : p < 0 ? 'down' : '';
     const cur = el('div', 'tip-main');
     cur.appendChild(el('span', 'tip-sym', t.sym));
@@ -718,11 +717,10 @@ function renderHeatmap(hm, lamp) {
     cur.appendChild(el('span', dir(t.pct), fmtPct(t.pct)));
     tip.appendChild(cur);
     tip.appendChild(el('div', 'tip-name', (t.name && t.name !== t.sym ? t.name + ' · ' : '') + fmtCap(t.cap)));
-    /* EVERY member of the framed group (owner ruling 2026-07-14) — the tip
-       scrolls when the list outgrows its max height */
-    const peers = sector.tiles
-      .filter(p => (t.ind ? p.ind === t.ind : true))
-      .sort((a, b) => b.cap - a.cap);
+    /* EVERY member of the hovered SECTOR (owner ruling 2026-07-14, extended
+       to the whole sector) — the tip scrolls when the list outgrows its max
+       height */
+    const peers = sector.tiles.slice().sort((a, b) => b.cap - a.cap);
     for (const p of peers) {
       const row = el('div', 'tip-row' + (p.sym === t.sym ? ' tip-cur' : ''));
       row.appendChild(el('span', '', p.sym));
@@ -739,7 +737,7 @@ function renderHeatmap(hm, lamp) {
   const hideHover = () => {
     tip.style.display = 'none';
     tip.scrollTop = 0;
-    unlightBand();
+    unlightHead();
     focusGroup.setAttribute('visibility', 'hidden');
     focusTile.setAttribute('visibility', 'hidden');
   };
@@ -790,12 +788,15 @@ function renderHeatmap(hm, lamp) {
   const sectorRects = squarify(hm.sectors.map(s => ({ ...s, value: s.cap })), 0, 0, W, H);
   for (const s of sectorRects) {
     if (s.w < 4 || s.h < HEAD + 6) continue;
+    sectorGeo.set(s.name, { x: s.x, y: s.y, w: s.w, h: s.h });
     if (s.w > 64 && s.h > 40) {
       /* solid header strip (finviz) instead of a floating caption */
-      svg.appendChild(svgEl('rect', { x: s.x + 1, y: s.y + 1, width: Math.max(s.w - 2, 1), height: HEAD - 2, fill: '#1E2129' }));
+      const headRect = svgEl('rect', { x: s.x + 1, y: s.y + 1, width: Math.max(s.w - 2, 1), height: HEAD - 2, fill: '#1E2129' });
+      svg.appendChild(headRect);
       const label = svgEl('text', { x: s.x + 5, y: s.y + 12, fill: '#D9DEE8', 'font-size': '10', 'font-weight': '600', 'font-family': 'var(--font-sans)', 'letter-spacing': '.05em' });
       label.textContent = s.name.toUpperCase().slice(0, Math.floor(s.w / 7));
       svg.appendChild(label);
+      sectorHead.set(s.name, { rect: headRect, text: label });
     }
     const body = { x: s.x, y: s.y + HEAD, w: s.w, h: s.h - HEAD };
 
@@ -811,7 +812,6 @@ function renderHeatmap(hm, lamp) {
     }));
     if (groups.length > 1 && groups.every(g => g.ind) && body.h > 76 && body.w > 100) {
       for (const g of squarify(groups.map(g => ({ ...g, value: g.cap })), body.x, body.y, body.w, body.h)) {
-        groupRects.set(s.name + '|' + g.ind, { x: g.x, y: g.y, w: g.w, h: g.h });
         const hasBand = g.w > 58 && g.h > 40;
         if (hasBand) {
           const bandRect = svgEl('rect', { x: g.x + 1, y: g.y + 1, width: Math.max(g.w - 2, 1), height: BAND, fill: HEAT.band });
@@ -819,12 +819,10 @@ function renderHeatmap(hm, lamp) {
           const bl = svgEl('text', { x: g.x + 4, y: g.y + 9, fill: HEAT.label, 'font-size': '7', 'font-weight': '600', 'font-family': 'var(--font-sans)', 'letter-spacing': '.04em' });
           bl.textContent = g.ind.toUpperCase().slice(0, Math.floor(g.w / 5));
           svg.appendChild(bl);
-          bandEls.set(s.name + '|' + g.ind, { rect: bandRect, text: bl });
         }
         drawTiles(g.tiles, g.x, g.y + (hasBand ? BAND + 1 : 0), g.w, g.h - (hasBand ? BAND + 1 : 0), s);
       }
     } else {
-      for (const g of groups) groupRects.set(s.name + '|' + g.ind, { x: body.x, y: body.y, w: body.w, h: body.h });
       drawTiles(s.tiles, body.x, body.y, body.w, body.h, s);
     }
   }
