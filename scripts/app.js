@@ -1179,6 +1179,47 @@ function loadWbCfg() {
 function saveWbCfg() {
   try { localStorage.setItem(WB_CFG_KEY, JSON.stringify(wbState.cfg)); } catch { /* storage unavailable — session-only */ }
 }
+
+/* Sticky manual entries: the ad-hoc tickers a user types (loaded via
+   quote-proxy) plus their last-viewed symbol persist across reloads, so the
+   workbench reopens on the same chart. syms is re-fetched on boot and merged
+   into the watchlist feed; sel restores the selection. */
+const WB_STICKY_KEY = 'wb_sticky_v1';
+const wbFeedRoster = new Set();  /* symbols served by the desk-charts feed; anything else is a manual entry */
+let wbStickyRestored = false;    /* one-shot: restore runs on the first LIVE feed, even after a demo-fallback reload */
+let wbUserPicked = false;        /* the user has chosen a symbol → a slow background restore must not override it */
+function readWbSticky() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WB_STICKY_KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      return {
+        syms: Array.isArray(raw.syms) ? raw.syms.filter((s) => typeof s === 'string' && s).slice(0, 12) : [],
+        sel: typeof raw.sel === 'string' ? raw.sel : '',
+      };
+    }
+  } catch { /* corrupt or absent */ }
+  return { syms: [], sel: '' };
+}
+function writeWbSticky(patch) {
+  const next = { ...readWbSticky(), ...patch };
+  try { localStorage.setItem(WB_STICKY_KEY, JSON.stringify(next)); } catch { /* storage unavailable — session-only */ }
+}
+function addWbStickySym(sym) {
+  const syms = [sym, ...readWbSticky().syms.filter((s) => s !== sym)].slice(0, 12);
+  writeWbSticky({ syms });
+}
+/* single choke point for switching the active symbol: resets pan, remembers
+   the selection so it sticks across reloads, and repaints */
+function wbPick(sym) {
+  wbUserPicked = true;
+  wbState.sym = sym;
+  wbState.off = wbState.woff = wbState.off3 = 0;
+  /* re-pin any non-watchlist pick so an evicted manual ticker is refetched on
+     the next reload (also bumps it to the front of the capped list) */
+  if (wbFeedRoster.size && !wbFeedRoster.has(sym)) addWbStickySym(sym);
+  writeWbSticky({ sel: sym });
+  renderCharts(wbState.data, wbState.lamp);
+}
 const SMA_COLORS = { 1: 'var(--color-text-primary)', 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-series-2)', 200: 'var(--color-text-secondary)' };
 const ytdBars = bars => { const y = bars.t[bars.t.length - 1].slice(0, 4); let n = 0; for (let i = bars.t.length - 1; i >= 0 && bars.t[i].slice(0, 4) === y; i--) n++; return Math.max(n, 5); };
 const paneWindow = (spec, bars) => spec === 'ytd' ? ytdBars(bars) : spec;
@@ -1304,11 +1345,7 @@ function renderWbSidebar(data) {
     b.setAttribute('aria-current', String(sym === wbState.sym));
     b.appendChild(el('span', '', sym));
     b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
-    b.addEventListener('click', () => {
-      wbState.sym = sym;
-      wbState.off = wbState.woff = wbState.off3 = 0;
-      renderCharts(wbState.data, wbState.lamp);
-    });
+    b.addEventListener('click', () => wbPick(sym));
     nav.appendChild(b);
   }
 }
@@ -1879,9 +1916,7 @@ function wireCharts() {
     const sym = symInput.value.trim().toUpperCase();
     if (sym !== wbState.sym && wbState.data.symbols[sym]) {
       symNote.textContent = '';
-      wbState.sym = sym;
-      wbState.off = wbState.woff = wbState.off3 = 0;
-      renderCharts(wbState.data, wbState.lamp);
+      wbPick(sym);
     }
   });
   /* WebKit consumes Enter on a datalist-backed input (no change/implicit
@@ -1896,12 +1931,7 @@ function wireCharts() {
     if (!wbState) return;
     const sym = symInput.value.trim().toUpperCase();
     if (!/^[A-Z0-9.^-]{1,10}$/.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    const pick = () => {
-      wbState.sym = sym;
-      wbState.off = wbState.woff = wbState.off3 = 0;
-      renderCharts(wbState.data, wbState.lamp);
-    };
-    if (wbState.data.symbols[sym]) { symNote.textContent = ''; pick(); return; }
+    if (wbState.data.symbols[sym]) { symNote.textContent = ''; wbPick(sym); return; }
     if (DESK.mode === 'demo' || !DESK_DB.url) {
       symNote.textContent = 'Live ticker lookups are off in demo mode';
       return;
@@ -1914,8 +1944,9 @@ function wireCharts() {
         return;
       }
       wbState.data.symbols[sym] = out.series;
+      addWbStickySym(sym);
       symNote.textContent = sym + ' · live fetch · as of ' + out.asOf;
-      pick();
+      wbPick(sym);
     } catch {
       symNote.textContent = 'Quote service unreachable — try again';
     }
@@ -1950,6 +1981,7 @@ async function loadCharts() {
   if (DESK.mode !== 'demo') {
     try {
       const data = await deskFeed('desk-charts');
+      for (const k of Object.keys(data.symbols)) wbFeedRoster.add(k);
       if (wbState) {
         /* poller path: refresh bars in place so the user's selected symbol,
            zoom, and pan survive — renderCharts keys state on data identity.
@@ -1961,11 +1993,41 @@ async function loadCharts() {
       } else {
         renderCharts(data, liveLampFor(data.generatedAt, data.asOf));
       }
+      /* re-hydrate manual entries once, on the first LIVE feed — keyed on this
+         one-shot rather than wbState creation so a transient first-load outage
+         (which renders the demo fallback) still restores after recovery */
+      if (!wbStickyRestored) { wbStickyRestored = true; restoreStickySymbols(); }
       return;
     } catch { /* poller failure below */ }
     if (wbState) return; /* poller failure: keep the last good workbench */
   }
   renderCharts(buildDemoCharts(), { cls: 'lamp--demo', text: 'Demo' });
+}
+
+/* Re-hydrate the sticky manual entries after the watchlist feed lands: restore
+   the saved selection immediately if it's already in the roster, then re-fetch
+   each persisted ad-hoc ticker via quote-proxy and merge it back in (selecting
+   it once it arrives if it was the saved symbol). Runs once, on first load. */
+async function restoreStickySymbols() {
+  const saved = readWbSticky();
+  if (!wbState) return;
+  /* never override a live user choice: if they've picked a symbol since load,
+     the saved selection is stale and must not snap the chart back */
+  if (saved.sel && wbState.data.symbols[saved.sel] && !wbUserPicked && saved.sel !== wbState.sym) {
+    wbState.sym = saved.sel;
+    renderCharts(wbState.data, wbState.lamp);
+  }
+  for (const sym of saved.syms) {
+    if (wbState.data.symbols[sym]) continue;
+    try {
+      const out = await deskQuote(sym, 'daily');
+      if (out.ok && out.series && out.series.c.length >= 30) {
+        wbState.data.symbols[sym] = out.series;
+        if (saved.sel === sym && !wbUserPicked) wbState.sym = sym;
+        renderCharts(wbState.data, wbState.lamp);
+      }
+    } catch { /* skip a ticker the proxy can't serve */ }
+  }
 }
 
 let wbResizeTimer = 0;
