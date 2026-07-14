@@ -300,10 +300,11 @@ async function deskAsk(pin, question, context) {
   return out; /* {ok:true, answer} | {ok:false, error} */
 }
 
-/* Quote-proxy: PIN-gated OHLC for ANY ticker, fetched server-side through
-   the pipeline's free-source chain (Stooq → Yahoo; Yahoo for intraday).
-   Free-tier quotes by owner ruling — near-real-time US, delayed elsewhere. */
-async function deskQuote(pin, symbol, kind) {
+/* Quote-proxy: OHLC for ANY ticker, fetched server-side through the pipeline's
+   free-source chain (Stooq → Yahoo; Yahoo for intraday). No PIN — the function
+   is origin-guarded instead (owner ruling 2026-07-14); anyone on the site can
+   chart any symbol. Free-tier quotes — near-real-time US, delayed elsewhere. */
+async function deskQuote(symbol, kind) {
   const res = await fetch(DESK_DB.url + '/functions/v1/quote-proxy', {
     method: 'POST',
     headers: {
@@ -311,7 +312,7 @@ async function deskQuote(pin, symbol, kind) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ pin, symbol, kind: kind || 'daily' }),
+    body: JSON.stringify({ symbol, kind: kind || 'daily' }),
   });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('quote-proxy → HTTP ' + res.status);

@@ -1,24 +1,46 @@
-// ── quote-proxy — PIN-gated OHLC fetch for ANY ticker ───────────────────────
-// Deployed as a Supabase Edge Function (Deno). The browser sends {pin,
-// symbol, kind}; the PIN is validated against desk_users with the SAME
-// hex(sha256(salt || pin)) scheme as desk_login, then the bars come from the
-// pipeline's free-source chain fetched server-side (browsers are CORS-blocked
-// by both sources): Stooq EOD CSV first, Yahoo v8 chart as fallback — and
-// Yahoo alone for intraday. Free-tier data by design (owner ruling: no paid
-// market-data subscriptions): near-real-time for US listings, delayed for
-// some exchanges, no SLA. The client keeps its last good series if this
-// function errors — never crash the panel from here.
+// ── quote-proxy — origin-guarded OHLC fetch for ANY ticker ──────────────────
+// Deployed as a Supabase Edge Function (Deno). The browser sends {symbol,
+// kind}; bars come from the pipeline's free-source chain fetched server-side
+// (browsers are CORS-blocked by both sources): Stooq EOD CSV first, Yahoo v8
+// chart as fallback — and Yahoo alone for intraday. Free-tier data by design
+// (owner ruling: no paid market-data subscriptions): near-real-time for US
+// listings, delayed for some exchanges, no SLA. The client keeps its last good
+// series if this function errors — never crash the panel from here.
+//
+// Auth (owner ruling 2026-07-14): NO PIN — the desk runs on a paid Supabase
+// plan and the owner wants any ticker chartable without unlocking. The gate is
+// now an ORIGIN ALLOWLIST: only requests from the dashboard's own origin are
+// served, so the endpoint can't be used as a general open proxy to Yahoo/Stooq
+// through the project's egress IP. A short in-memory cache blunts repeat hits.
+// (Origin is browser-enforced and unspoofable from page JS; a non-browser
+// client can forge it, so this is an abuse speed-bump, not a hard auth wall.)
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*', // PIN is the gate; quotes are public data
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-const reply = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
+const ALLOWED_ORIGINS = new Set([
+  'https://akyachtsman.github.io', // the live GitHub Pages site
+]);
+const ALLOW_HEADERS = 'authorization, x-client-info, apikey, content-type';
+const ALLOW_METHODS = 'POST, OPTIONS';
+
+function corsHeaders(origin: string, allowed: boolean): Record<string, string> {
+  const h: Record<string, string> = {
+    'Access-Control-Allow-Headers': ALLOW_HEADERS,
+    'Access-Control-Allow-Methods': ALLOW_METHODS,
+    Vary: 'Origin',
+  };
+  if (allowed) h['Access-Control-Allow-Origin'] = origin; // echo only allowed origins
+  return h;
+}
+const reply = (status: number, body: unknown, cors: Record<string, string>) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json' } });
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk quote-proxy; +https://akyachtsman.github.io/claude.trading/)' };
 const KEEP_BARS = 330; // matches the nightly pipeline's charts.json window
+
+// Small in-memory response cache (per warm instance) — a soft guardrail that
+// collapses repeat lookups of the same ticker before they reach upstream.
+const CACHE_TTL_MS = { daily: 300_000, intraday: 60_000 }; // 5 min / 1 min
+type Cached = { at: number; status: number; body: unknown };
+const CACHE = new Map<string, Cached>();
 
 type Series = { t: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
 const emptySeries = (): Series => ({ t: [], o: [], h: [], l: [], c: [], v: [] });
@@ -73,33 +95,26 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST only' });
+  const origin = req.headers.get('origin') ?? '';
+  const allowed = ALLOWED_ORIGINS.has(origin);
+  const cors = corsHeaders(origin, allowed);
 
-  let payload: { pin?: unknown; symbol?: unknown; kind?: unknown };
-  try { payload = await req.json(); } catch { return reply(400, { ok: false, error: 'invalid JSON body' }); }
-  const pin = String(payload.pin ?? '');
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  // Origin allowlist is the gate now that the PIN is gone.
+  if (!allowed) return reply(403, { ok: false, error: 'forbidden origin' }, cors);
+  if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST only' }, cors);
+
+  let payload: { symbol?: unknown; kind?: unknown };
+  try { payload = await req.json(); } catch { return reply(400, { ok: false, error: 'invalid JSON body' }, cors); }
   const symbol = String(payload.symbol ?? '').trim().toUpperCase();
   const kind = payload.kind === 'intraday' ? 'intraday' : 'daily';
-  if (!pin || !symbol) return reply(400, { ok: false, error: 'pin and symbol are required' });
-  if (!/^[A-Z0-9.^-]{1,10}$/.test(symbol)) return reply(400, { ok: false, error: 'symbol format not recognized' });
+  if (!symbol) return reply(400, { ok: false, error: 'symbol is required' }, cors);
+  if (!/^[A-Z0-9.^-]{1,10}$/.test(symbol)) return reply(400, { ok: false, error: 'symbol format not recognized' }, cors);
 
-  // PIN check — same salted-hash scheme as the desk_login RPC.
-  const supaUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const usersRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=salt,pin_hash`, {
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}` },
-  });
-  if (!usersRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
-  const users: { salt: string; pin_hash: string }[] = await usersRes.json();
-  const enc = new TextEncoder();
-  let authed = false;
-  for (const u of users) {
-    const digest = await crypto.subtle.digest('SHA-256', enc.encode(u.salt + pin));
-    const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-    if (hex === u.pin_hash) authed = true; // check every row — no early exit
-  }
-  if (!authed) return reply(401, { ok: false, error: 'PIN not recognized.' });
+  // Serve from the warm-instance cache when fresh.
+  const cacheKey = `${symbol}:${kind}`;
+  const hit = CACHE.get(cacheKey);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS[kind]) return reply(hit.status, hit.body, cors);
 
   let series: Series | null = null;
   if (kind === 'intraday') {
@@ -108,13 +123,13 @@ Deno.serve(async (req) => {
     series = await stooqDaily(symbol);
     if (!series) series = await yahooChart(symbol, '2y', '1d', false);
   }
-  if (!series) return reply(404, { ok: false, error: `no ${kind} data found for ${symbol} — check the ticker` });
+  if (!series) {
+    const body = { ok: false, error: `no ${kind} data found for ${symbol} — check the ticker` };
+    CACHE.set(cacheKey, { at: Date.now(), status: 404, body }); // cache the miss too — blunts junk-ticker repeats
+    return reply(404, body, cors);
+  }
 
-  return reply(200, {
-    ok: true,
-    symbol,
-    kind,
-    asOf: series.t[series.t.length - 1],
-    series,
-  });
+  const body = { ok: true, symbol, kind, asOf: series.t[series.t.length - 1], series };
+  CACHE.set(cacheKey, { at: Date.now(), status: 200, body });
+  return reply(200, body, cors);
 });
