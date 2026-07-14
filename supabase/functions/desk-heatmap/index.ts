@@ -7,9 +7,9 @@
 //     shape as the retired data/heatmap.json.
 //   r2k — small-cap proxy for the Russell 2000: every US common stock from
 //     the same screener call, ranked by market cap; skip the top 1000
-//     (≈ Russell 1000 territory), take the next 300. Screener-only (the
-//     roster and quotes come from one bulk call); stale-but-honest cache
-//     when the screener is down.
+//     (≈ Russell 1000 territory), take the next 2000 — the FULL index,
+//     finviz-style. Screener-only (the roster and quotes come from one
+//     bulk call); stale-but-honest cache when the screener is down.
 // Periods: tiles carry pctW / pctM / pctYtd from a once-a-day Yahoo spark
 // 1y sweep per universe (EOD data — intraday refresh would be noise). The
 // sweep advances in small AWAITED steps (~4 spark batches per invocation)
@@ -34,7 +34,9 @@ const UA_BROWSER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, l
 const UA = { 'user-agent': UA_BROWSER };
 const CONSTITUENTS_URL = 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv';
 const R2K_SKIP = 1000;  // ranks 1..1000 ≈ Russell 1000 — not small caps
-const R2K_TAKE = 300;   // legible tile budget; caption says "top 300 of ~2000"
+const R2K_TAKE = 2000;  // the FULL index, finviz-style (owner ruling 2026-07-14:
+                        // never silently shrink an expected scope — small tiles
+                        // render unlabeled, hover carries the detail)
 
 // Session-aware TTL — same rule as desk-market (Mon–Fri 09:30–16:00 ET minus
 // NYSE holidays). HOLIDAY LIST — refresh annually (seeded 2026–2027).
@@ -311,7 +313,7 @@ const periodInflight = new Map<string, Promise<void>>();
 // runtime's background budget. Each request nudges the sweep forward; the
 // client's 5-min poller (or a burst of calls) completes it, and the row is
 // the durable progress ledger. Row payload: { done, total, map }.
-const SWEEP_STEP_BATCHES = 4; // 4 × 20 symbols per nudge — safely inside budget
+const SWEEP_STEP_BATCHES = 8; // 8 × 20 symbols per nudge — still inside budget
 function feedCacheHeaders() {
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   return { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' };
@@ -355,6 +357,7 @@ async function loadPeriods(universe: string): Promise<{ at: number; map: Map<str
 
 async function advanceSweep(universe: string, symbols: string[]): Promise<void> {
   let row = await readSweepRow(universe);
+  if (row && row.total !== symbols.length) row = null; // roster changed → resweep
   if (sweepComplete(row)) return;
   // stale-complete or missing → restart the ledger
   if (!row || (row.total > 0 && row.done >= row.total)) {
@@ -432,15 +435,17 @@ async function refreshSp500(): Promise<unknown> {
 async function refreshR2k(): Promise<unknown> {
   const quotes = await nasdaqScreener(); // roster AND quotes in one call
   const constituents = r2kConstituents(quotes);
-  if (constituents.length < 200) throw new Error(`r2k roster too thin (${constituents.length})`);
-  const periods = await loadPeriods('r2k');
+  if (constituents.length < 1200) throw new Error(`r2k roster too thin (${constituents.length})`);
+  let periods = await loadPeriods('r2k');
+  // periods must cover the roster — a partial map would shrink period views
+  if (periods && periods.map.size < constituents.length * 0.8) periods = null;
   const { sectors, covered } = buildHeatmap(constituents, quotes, new Map(), periods?.map);
-  if (covered < 200) throw new Error(`r2k coverage too thin (${covered})`);
+  if (covered < 1200) throw new Error(`r2k coverage too thin (${covered})`);
   await kickPeriodSweep('r2k', constituents.map((c) => c.sym));
   const body = {
     ok: true, asOf: lastTradingDayIso(), generatedAt: new Date().toISOString(),
     source: 'nasdaq-screener', universe: 'r2k', count: covered,
-    note: `top ${R2K_TAKE} small caps by market cap (ranks ${R2K_SKIP + 1}–${R2K_SKIP + R2K_TAKE})`,
+    note: `full small-cap band, ${covered} names (cap ranks ${R2K_SKIP + 1}–${R2K_SKIP + R2K_TAKE})`,
     periodsAsOf: periods ? new Date(periods.at).toISOString() : null, sectors,
   };
   payloadCache.set('r2k', { at: Date.now(), body });

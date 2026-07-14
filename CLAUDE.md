@@ -152,6 +152,10 @@ run for real against the dedicated project on every PR.
   (what / where it comes from / when it updates / how it reaches the user) —
   followed by at most two takeaway sentences. No jargon in the cells;
   mechanism detail only if asked. (Owner preference, 2026-07-13.)
+- **Never silently shrink an expected scope.** When a feature has an obvious
+  reference (finviz map = ALL ~2000 names), build the full expected thing or
+  surface the trade-off BEFORE shipping and let the owner choose. A caption
+  disclosing the cut is not consent. (Owner ruling, 2026-07-14.)
 
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:
