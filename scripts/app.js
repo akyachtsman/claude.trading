@@ -1353,7 +1353,7 @@ function renderWbSidebar(data) {
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, days3: 10, off: 0, woff: 0, off3: 0, layout: 'split', cfg: loadWbCfg() };
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, days3: 156, off: 0, woff: 0, off3: 0, layout: 'split', cfg: loadWbCfg() };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -1635,8 +1635,8 @@ function renderCharts(data, lamp) {
     /* ── range navigator: a scrollbar over the FULL available history. The lit
        window marks the visible bars; drag a handle to resize (zoom), the body
        to pan. Writes the same window/offset state as the preset buttons and
-       drag-pan, so all three stay in sync. Pro 3 opts out (day×78 intraday
-       math doesn't map to a bar-count window). */
+       drag-pan, so all stay in sync. Every pane carries it — Pro 3 too, since
+       its window is now a plain bar count over the ~5-day intraday feed. */
     if (opts.nav) {
       const len = bars.c.length;
       const navX = x0 + 6, navW = plotW, navTop = H - 30, navH = 13;
@@ -1738,8 +1738,8 @@ function renderCharts(data, lamp) {
       stochWCaption: 'STOCH 13-3-3 · MONTHLY',
     }]);
   }
-  /* Pro 3 = the day-trading tier; honest EOD placeholder (tight daily
-     window) until the intraday quote-proxy backend is approved */
+  /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
+     an EOD daily fallback otherwise. Both carry the range navigator. */
   if (show('p3')) {
     const sym = effSym(wbState.cfg.p3);
     const d = daily(sym);
@@ -1747,8 +1747,9 @@ function renderCharts(data, lamp) {
     if (intra) {
       const ist = stochSeries(intra);
       panes.push([intra, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 5-MIN', {
-        /* P3 zoom presets count DAYS; a 5-min session is ~78 bars */
-        window: paneWindow(Math.min(wbState.days3, 5) * 78, intra), offset: wbState.off3, panKey: 'off3',
+        /* no presets: the range navigator sets the window (in 5-min bars)
+           anywhere within the ~5-day intraday feed */
+        window: paneWindow(wbState.days3, intra), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: wbState.cfg.p3.stochW ? projectStoch(intra, d.bars) : null,
@@ -1758,7 +1759,7 @@ function renderCharts(data, lamp) {
     } else {
       maybeFetchIntraday(sym);
       panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
-        window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3',
+        window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: wbState.cfg.p3.stochW ? weeklyStochOnDaily(d.bars) : null,
@@ -1888,9 +1889,10 @@ function wireCharts() {
   };
   wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; wbState.off = 0; });
   wireZoom('chartZoom2', WB2_ZOOMS, 9999, spec => { wbState.wdays = spec; wbState.woff = 0; });
-  /* Pro 3 has no window presets: its intraday feed only carries ~5 trading days
-     of 5-min bars, so the pane always shows the full session (owner ruling
-     2026-07-14). It renders on a fixed window (wbState.days3). */
+  /* Pro 3 has no window presets: its intraday feed only carries ~5 trading
+     days of 5-min bars, so discrete day-presets all collapsed to one window.
+     Range control is the bottom navigator instead — drag it to zoom anywhere
+     within the session (owner ruling 2026-07-14). */
 
   const layoutSeg = document.getElementById('chartLayout');
   for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p1'], ['Pro 2', 'p2'], ['Pro 3', 'p3']]) {
