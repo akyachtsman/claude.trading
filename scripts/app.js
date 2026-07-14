@@ -1181,8 +1181,24 @@ let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg 
    frame re-renders) can't drop the pointer stream */
 let wbDrag = null, wbPanRaf = 0;
 const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
+const MIN_NAV_WIN = 20;   /* smallest window the navigator can shrink to (bars) */
 window.addEventListener('pointermove', ev => {
   if (!wbDrag || !wbState) return;
+  if (wbDrag.mode) {   /* range-navigator drag (resize handles or pan the window) */
+    const d = wbDrag;
+    const delta = Math.round((ev.clientX - d.x0) / d.pxPerBar);
+    let i0 = d.i0Start, end = d.endStart;
+    if (d.mode === 'navLeft') i0 = Math.max(0, Math.min(d.endStart - MIN_NAV_WIN, d.i0Start + delta));
+    else if (d.mode === 'navRight') end = Math.min(d.len, Math.max(d.i0Start + MIN_NAV_WIN, d.endStart + delta));
+    else { i0 = Math.max(0, Math.min(d.len - d.nStart, d.i0Start + delta)); end = i0 + d.nStart; }
+    const win = end - i0, off = d.len - end;
+    if (wbState[d.daysKey] !== win || wbState[d.navKey] !== off) {
+      wbState[d.daysKey] = win; wbState[d.navKey] = off;
+      cancelAnimationFrame(wbPanRaf);
+      wbPanRaf = requestAnimationFrame(() => renderCharts(wbState.data, wbState.lamp));
+    }
+    return;
+  }
   const next = Math.min(wbDrag.max, Math.max(0, wbDrag.off0 + Math.round((ev.clientX - wbDrag.x0) / wbDrag.slotPx)));
   if (next !== wbState[wbDrag.key]) {
     wbState[wbDrag.key] = next;
@@ -1191,6 +1207,17 @@ window.addEventListener('pointermove', ev => {
   }
 });
 window.addEventListener('pointerup', () => { wbDrag = null; });
+
+/* reflect the live window in the preset segs — a navigator-set custom range
+   matches no preset, so all three clear; a preset value lights its button */
+function syncZoomPressed() {
+  if (!wbState) return;
+  for (const [id, zooms, val] of [['chartZoom', WB_ZOOMS, wbState.days], ['chartZoom2', WB2_ZOOMS, wbState.wdays], ['chartZoom3', WB3_ZOOMS, wbState.days3]]) {
+    const seg = document.getElementById(id);
+    if (!seg || !seg.children.length) continue;
+    [...seg.children].forEach((b, i) => b.setAttribute('aria-pressed', String(zooms[i] && zooms[i][1] === val)));
+  }
+}
 
 const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.round(v / 1e3) + 'K';
 
@@ -1311,7 +1338,7 @@ function renderCharts(data, lamp) {
   if (!s || s.c.length < 30) return;
 
   const W = Math.max(480, Math.round(svg.parentElement.clientWidth || 900));
-  const H = 560;
+  const H = 600;   /* +40 over the chart body for the range navigator strip */
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
 
@@ -1340,7 +1367,9 @@ function renderCharts(data, lamp) {
     const vH = opts.cfg.vol ? 50 : 0;
     const sH = strips.length === 2 ? 68 : 88;
     const pY = 22;
-    const pH = H - pY - 30 - (vH ? vH + 8 : 0) - strips.length * (sH + 14);
+    /* bottom reserve holds the x-axis month labels + the range navigator
+       strip (opts.nav); fixed so chartBot lines up across panes */
+    const pH = H - pY - (opts.nav ? 58 : 30) - (vH ? vH + 8 : 0) - strips.length * (sH + 14);
     const vY = pY + pH + (vH ? 8 : 0);
     let stripCursor = vY + vH;
     const stripTops = strips.map(() => { stripCursor += 14; const y = stripCursor; stripCursor += sH; return y; });
@@ -1488,7 +1517,7 @@ function renderCharts(data, lamp) {
         const gx = x(i) - slotW / 2;
         line(gx, pY, gx, chartBot, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.5 });
         if (gx - lastLabelX >= 48) {
-          text(gridLabel(bars.t[i]), gx + 2, H - 4, { 'font-size': 8 });
+          text(gridLabel(bars.t[i]), gx + 2, opts.nav ? chartBot + 12 : H - 4, { 'font-size': 8 });
           lastLabelX = gx;
         }
       }
@@ -1555,6 +1584,58 @@ function renderCharts(data, lamp) {
       tip.style.top = '16px';
     });
     overlay.addEventListener('pointerleave', hideTip);
+
+    /* ── range navigator: a scrollbar over the FULL available history. The lit
+       window marks the visible bars; drag a handle to resize (zoom), the body
+       to pan. Writes the same window/offset state as the preset buttons and
+       drag-pan, so all three stay in sync. Pro 3 opts out (day×78 intraday
+       math doesn't map to a bar-count window). */
+    if (opts.nav) {
+      const len = bars.c.length;
+      const navX = x0 + 6, navW = plotW, navTop = H - 30, navH = 13;
+      const pxPerBar = navW / len;
+      const winX = navX + i0 * pxPerBar;
+      const winW = Math.max(6, n * pxPerBar);
+
+      svg.appendChild(svgEl('rect', { x: navX, y: navTop, width: navW, height: navH, rx: 3, fill: 'var(--color-surface-2)', stroke: 'var(--color-border)', 'stroke-width': 1 }));
+      /* faint full-range close sparkline for context (downsampled) */
+      let sHi = -Infinity, sLo = Infinity;
+      for (let i = 0; i < len; i++) { sHi = Math.max(sHi, bars.c[i]); sLo = Math.min(sLo, bars.c[i]); }
+      const sRange = sHi - sLo || 1;
+      const stepN = Math.max(1, Math.ceil(len / 240));
+      let spark = '';
+      for (let i = 0; i < len; i += stepN) {
+        const sx = navX + i * pxPerBar;
+        const syv = navTop + 2 + (sHi - bars.c[i]) / sRange * (navH - 4);
+        spark += (spark ? 'L' : 'M') + sx.toFixed(1) + ' ' + syv.toFixed(1);
+      }
+      if (spark) svg.appendChild(svgEl('path', { d: spark, fill: 'none', stroke: 'var(--color-text-secondary)', 'stroke-width': 1, 'stroke-opacity': 0.5 }));
+
+      const winRect = svgEl('rect', { x: winX, y: navTop, width: winW, height: navH, rx: 3, fill: 'var(--color-accent)', 'fill-opacity': 0.22, stroke: 'var(--color-accent)', 'stroke-width': 1, style: 'cursor: grab' });
+      svg.appendChild(winRect);
+      const midX = winX + winW / 2;
+      for (const gx of [-3, 0, 3]) line(midX + gx, navTop + 3, midX + gx, navTop + navH - 3, { stroke: 'var(--color-accent)', 'stroke-width': 1, 'stroke-opacity': 0.7, 'pointer-events': 'none' });
+
+      const startNavDrag = (ev, mode) => {
+        ev.preventDefault();
+        const box = svg.getBoundingClientRect();
+        wbDrag = { mode, daysKey: opts.daysKey, navKey: opts.panKey, x0: ev.clientX, pxPerBar: pxPerBar * (box.width / W), len, i0Start: i0, endStart: end, nStart: n };
+        hideTip();
+      };
+      winRect.addEventListener('pointerdown', ev => startNavDrag(ev, 'navPan'));
+      const hw = 7;
+      for (const [hx, mode] of [[winX, 'navLeft'], [winX + winW, 'navRight']]) {
+        const handle = svgEl('rect', { x: hx - hw / 2, y: navTop - 1, width: hw, height: navH + 2, rx: 2, fill: 'var(--color-accent)', stroke: 'var(--color-bg)', 'stroke-width': 1, style: 'cursor: ew-resize' });
+        svg.appendChild(handle);
+        handle.addEventListener('pointerdown', ev => { ev.stopPropagation(); startNavDrag(ev, mode); });
+      }
+
+      /* window start/end dates under each handle */
+      const dLabel = t => opts.intraday ? t.slice(5) : t;
+      text(dLabel(bars.t[i0]), navX, H - 4, { 'font-size': 8, fill: 'var(--color-text-secondary)' });
+      const endLbl = dLabel(bars.t[end - 1]);
+      text(endLbl, navX + navW, H - 4, { 'font-size': 8, fill: 'var(--color-text-secondary)', 'text-anchor': 'end' });
+    }
   };
 
   const smaList = cfg => Object.entries(cfg.smas).filter(([, on]) => on).map(([len]) => [Number(len), SMA_COLORS[len]]);
@@ -1589,7 +1670,7 @@ function renderCharts(data, lamp) {
     const sym = effSym(wbState.cfg.p1);
     const d = daily(sym);
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · DAILY · ' + sym, {
-      window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off',
+      window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
       pivots: d.piv, smas: smaList(wbState.cfg.p1),
       stW: wbState.cfg.p1.stochW ? weeklyStochOnDaily(d.bars) : null,
@@ -1602,7 +1683,7 @@ function renderCharts(data, lamp) {
     const wk = toWeeklyBars(d.bars);
     const wst = stochSeries(wk);
     panes.push([wk, wst, stochMarks(wst), 'PRO 2 · WEEKLY · ' + sym, {
-      window: paneWindow(wbState.wdays, wk), offset: wbState.woff, panKey: 'woff',
+      window: paneWindow(wbState.wdays, wk), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
       stW: wbState.cfg.p2.stochW ? wst : null,
@@ -1642,6 +1723,7 @@ function renderCharts(data, lamp) {
   for (let idx = 1; idx < panes.length; idx++) {
     line(idx * (pw + GAP) - GAP / 2, 8, idx * (pw + GAP) - GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
   }
+  syncZoomPressed();
 }
 
 /* the per-pane settings popover (their platform's gear menu, in our idiom):

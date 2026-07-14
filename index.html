@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260714h">
-<link rel="stylesheet" href="styles/components.css?v=20260714h">
+<link rel="stylesheet" href="styles/tokens.css?v=20260714i">
+<link rel="stylesheet" href="styles/components.css?v=20260714i">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -89,14 +89,14 @@
 
   /* watchlist charts (two-pane workbench + symbol rail) */
   .wb-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3); }
-  #wbSidebar { display: flex; flex-direction: column; gap: 2px; max-height: 560px; overflow-y: auto; }
+  #wbSidebar { display: flex; flex-direction: column; gap: 2px; max-height: 600px; overflow-y: auto; }
   .wb-side-btn { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; width: 100%; padding: 4px 6px; border: 0; background: none; border-radius: var(--radius-sm); font: 500 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
   .wb-side-btn:hover { background: var(--color-surface-2); }
   .wb-side-btn[aria-current="true"] { background: var(--color-surface-2); font-weight: 700; }
   .wb-side-btn .wb-side-pct { font-size: 10px; }
   .wb-side-btn .up { color: var(--color-gain); }
   .wb-side-btn .down { color: var(--color-loss); }
-  #wbChart { display: block; width: 100%; height: 560px; }
+  #wbChart { display: block; width: 100%; height: 600px; }
   #wbChart text { pointer-events: none; }
   #wbTip { line-height: 1.7; }
   #wbTip .up { color: var(--color-gain); }
@@ -374,8 +374,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260714h"></script>
-<script src="scripts/data.js?v=20260714h"></script>
-<script src="scripts/app.js?v=20260714h"></script>
+<script src="scripts/config.js?v=20260714i"></script>
+<script src="scripts/data.js?v=20260714i"></script>
+<script src="scripts/app.js?v=20260714i"></script>
 </body>
 </html>
