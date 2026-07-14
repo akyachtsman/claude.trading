@@ -153,7 +153,7 @@ function buildDemoHeatmap() {
 }
 
 /* ── charts panel: demo OHLCV, weekly aggregation, stochastics ─────────── */
-const CHART_BARS = 330; /* matches the pipeline's KEEP_BARS: 1y view + warmup */
+const CHART_BARS = 800; /* matches the feeds' KEEP_BARS: ~3y view + warmup */
 const STOCH = { k: 13, kSmooth: 3, d: 3 }; /* 13-period slow — 13 days / 13 weeks */
 
 function tradingISODates(n, endDate) {

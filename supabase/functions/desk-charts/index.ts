@@ -29,7 +29,7 @@ const DEFAULT_WATCHLIST = [
   'XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLB', 'XLU', 'XLY', 'XLP', 'KRE',
   'GLD', 'SLV', 'TLT', 'TLH', 'SHY', 'UUP', 'VXX', 'EEM', 'FXI', 'INDA',
 ];
-const KEEP_BARS = 330;      // ~15 months: 1y of view + weekly-stoch warmup
+const KEEP_BARS = 800;      // ~3 years of view + weekly-stoch warmup (owner ruling 2026-07-14)
 const MIN_COVERAGE = 0.6;   // below this fraction of the roster → ok:false
 const HISTORY_TTL_MS = 1_800_000; // EOD bars don't change intraday
 const BATCH = 8;
@@ -70,7 +70,7 @@ export function parseYahooChartOHLC(json: unknown): Row[] {
   return rows;
 }
 
-async function stooqOHLC(ticker: string, days = 500): Promise<Row[]> {
+async function stooqOHLC(ticker: string, days = 1200): Promise<Row[]> {
   const ymd = (d: Date) => d.toISOString().slice(0, 10).replaceAll('-', '');
   const d2 = new Date();
   const d1 = new Date(d2.getTime() - days * 86400000);
@@ -82,7 +82,7 @@ async function stooqOHLC(ticker: string, days = 500): Promise<Row[]> {
 }
 
 async function yahooOHLC(ticker: string): Promise<Row[]> {
-  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=2y&interval=1d`, { headers: UA });
+  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5y&interval=1d`, { headers: UA });
   const rows = parseYahooChartOHLC(await res.json().catch(() => null));
   if (rows.length < 40) throw new Error(`Yahoo: ${rows.length} usable OHLC rows for ${ticker}`);
   return rows;

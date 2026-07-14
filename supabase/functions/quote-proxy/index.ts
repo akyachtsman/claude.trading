@@ -34,7 +34,7 @@ const reply = (status: number, body: unknown, cors: Record<string, string>) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json' } });
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk quote-proxy; +https://akyachtsman.github.io/claude.trading/)' };
-const KEEP_BARS = 330; // matches the nightly pipeline's charts.json window
+const KEEP_BARS = 800; // ~3 years of daily view + weekly-stoch warmup (owner ruling 2026-07-14)
 
 // Small in-memory response cache (per warm instance) — a soft guardrail that
 // collapses repeat lookups of the same ticker before they reach upstream.
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
     series = await yahooChart(symbol, '5d', '5m', true);
   } else {
     series = await stooqDaily(symbol);
-    if (!series) series = await yahooChart(symbol, '2y', '1d', false);
+    if (!series) series = await yahooChart(symbol, '5y', '1d', false);
   }
   if (!series) {
     const body = { ok: false, error: `no ${kind} data found for ${symbol} — check the ticker` };
