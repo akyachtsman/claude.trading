@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260714e">
-<link rel="stylesheet" href="styles/components.css?v=20260714e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260714f">
+<link rel="stylesheet" href="styles/components.css?v=20260714f">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -36,16 +36,17 @@
   .mkt-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .mkt-spark { width: 76px; height: 24px; flex: none; }
 
-  /* layout: accounts + brief/ask rail across the top band; the heatmap and the
-     stochastic-charts panel span the FULL width below it; equity curves keeps
-     the left-column width with the news reel beside it (owner rulings
-     2026-07-14: "widen the two panels only", then "news beside equity"). */
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px;
+  /* layout: news is a full-height column on the RIGHT. The heatmap and the
+     stochastic-charts panel (plus equity) widen across the main + brief/ask
+     area up to the news reel's LEFT edge — not underneath it (owner ruling
+     2026-07-14: "only go up to the newsreel"). Accounts + brief/ask sit in
+     the top band; heat/charts/equity span that full left width below. */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px 300px;
     grid-template-areas:
-      "accounts rail"
-      "heat     heat"
-      "charts   charts"
-      "equity   news";
+      "accounts rail   news"
+      "heat     heat   news"
+      "charts   charts news"
+      "equity   equity news";
     gap: var(--space-4); align-items: start; }
   .area-accounts { grid-area: accounts; min-width: 0; }
   .heat-panel    { grid-area: heat; min-width: 0; }
@@ -180,6 +181,17 @@
   .site-footer { margin-top: var(--space-8); border-top: 1px solid var(--color-border); padding-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
   .site-footer p { margin: 0; font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); }
 
+  @media (max-width: 1400px) {
+    /* mid widths: 2 columns — news stays full-height on the right, the
+       brief/ask rail drops into the left stack above the heatmap */
+    .layout { grid-template-columns: minmax(0, 1fr) 300px;
+      grid-template-areas:
+        "accounts news"
+        "rail     news"
+        "heat     news"
+        "charts   news"
+        "equity   news"; }
+  }
   @media (max-width: 1160px) {
     .market-strip { grid-template-columns: repeat(3, 1fr); }
     .account-grid { grid-template-columns: 1fr; }
@@ -362,8 +374,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260714e"></script>
-<script src="scripts/data.js?v=20260714e"></script>
-<script src="scripts/app.js?v=20260714e"></script>
+<script src="scripts/config.js?v=20260714f"></script>
+<script src="scripts/data.js?v=20260714f"></script>
+<script src="scripts/app.js?v=20260714f"></script>
 </body>
 </html>
