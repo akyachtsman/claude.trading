@@ -650,9 +650,9 @@ function renderHeatmap(hm, lamp) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
   }
-  /* Render at the container's true pixel size (the panel now lives in the
-     main column, not full-width): 1 viewBox unit = 1 rendered px, so label
-     px thresholds are honest and text isn't stretched by aspect mismatch. */
+  /* Render at the container's true pixel size (the panel now spans the full
+     width): 1 viewBox unit = 1 rendered px, so label px thresholds are honest
+     and text isn't stretched by aspect mismatch. */
   const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 1200));
   const H = Math.round(Math.min(Math.max(W * 0.62, 420), 640));
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
@@ -1011,7 +1011,7 @@ function applyMapView() {
      (the ETF cut computes its own periods from bar history above) */
   if (mapView.key !== 'etf') out = recolorForPeriod(out, mapView.period);
   if (out) out.scaleCap = HEAT_CAP_FOR(mapView.key); /* small caps get the wider ±5% ramp */
-  document.getElementById('heatTitle').textContent = label + ' — heat';
+  document.getElementById('heatTitle').textContent = 'Heatmap — ' + label;
   renderHeatmap(out, lamp);
   document.getElementById('heatSource').textContent = note;
   /* period choices: ETFs always (own history); stock cuts once the feed's
