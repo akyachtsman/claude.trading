@@ -1143,7 +1143,6 @@ window.addEventListener('resize', () => {
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
 const WB2_ZOOMS = [['1M', 4], ['3M', 13], ['6M', 26], ['YTD', 'ytd'], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars — same presets as Pro 1 */
-const WB3_ZOOMS = [['5D', 5], ['10D', 10], ['1M', 21]];     /* Pro 3 window, in daily bars */
 
 /* per-pane configuration (their settings menu, in our idiom) — persisted */
 const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default (owner ruling 2026-07-14) */
@@ -1260,7 +1259,7 @@ window.addEventListener('pointerup', () => { wbDrag = null; });
    matches no preset, so all three clear; a preset value lights its button */
 function syncZoomPressed() {
   if (!wbState) return;
-  for (const [id, zooms, val] of [['chartZoom', WB_ZOOMS, wbState.days], ['chartZoom2', WB2_ZOOMS, wbState.wdays], ['chartZoom3', WB3_ZOOMS, wbState.days3]]) {
+  for (const [id, zooms, val] of [['chartZoom', WB_ZOOMS, wbState.days], ['chartZoom2', WB2_ZOOMS, wbState.wdays]]) {
     const seg = document.getElementById(id);
     if (!seg || !seg.children.length) continue;
     [...seg.children].forEach((b, i) => b.setAttribute('aria-pressed', String(zooms[i] && zooms[i][1] === val)));
@@ -1889,7 +1888,9 @@ function wireCharts() {
   };
   wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; wbState.off = 0; });
   wireZoom('chartZoom2', WB2_ZOOMS, 9999, spec => { wbState.wdays = spec; wbState.woff = 0; });
-  wireZoom('chartZoom3', WB3_ZOOMS, 10, spec => { wbState.days3 = spec; wbState.off3 = 0; });
+  /* Pro 3 has no window presets: its intraday feed only carries ~5 trading days
+     of 5-min bars, so the pane always shows the full session (owner ruling
+     2026-07-14). It renders on a fixed window (wbState.days3). */
 
   const layoutSeg = document.getElementById('chartLayout');
   for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p1'], ['Pro 2', 'p2'], ['Pro 3', 'p3']]) {
