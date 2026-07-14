@@ -1854,8 +1854,10 @@ async function loadCharts() {
       const data = await deskFeed('desk-charts');
       if (wbState) {
         /* poller path: refresh bars in place so the user's selected symbol,
-           zoom, and pan survive — renderCharts keys state on data identity */
-        wbState.data.symbols = data.symbols;
+           zoom, and pan survive — renderCharts keys state on data identity.
+           MERGE (not replace) so ad-hoc tickers the user loaded via
+           quote-proxy aren't dropped when the watchlist feed refreshes. */
+        wbState.data.symbols = { ...wbState.data.symbols, ...data.symbols };
         wbState.data.asOf = data.asOf;
         renderCharts(wbState.data, liveLampFor(data.generatedAt, data.asOf));
       } else {
