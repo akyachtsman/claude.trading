@@ -48,8 +48,10 @@ This project's look is its own — established at kickoff via `/design-intake`
   `desk-market` (Stooq→Yahoo tiles + FRED 10Y), `desk-heatmap` (Nasdaq
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
-  session-aware cached + single-flight. PIN-gated: `desk-ask` (Claude Q&A),
-  `quote-proxy` (OHLC for any ticker). Cron-secret-gated: `desk-ibkr-sync`
+  session-aware cached + single-flight. PIN-gated: `desk-ask` (Claude Q&A).
+  Origin-guarded anon: `quote-proxy` (OHLC for any ticker — no PIN, restricted
+  to the site origin + in-memory cache; owner ruling 2026-07-14, paid plan).
+  Cron-secret-gated: `desk-ibkr-sync`
   (Flex → tables), `desk-brief` (Opus brief with the FR-AI4 grounding
   guard). Scheduled by pg_cron (`desk_005` migration): sync 22:35/09:35,
   brief 23:05/10:05 UTC — dual-slot because IBKR statements roll overnight.
@@ -79,7 +81,13 @@ This project's look is its own — established at kickoff via `/design-intake`
   public feed functions are anon-callable by design (public market data,
   rosters fixed server-side / in committed config — not open proxies);
   unauthenticated invocations can burn free-tier quota, bounded by
-  session-aware caches + single-flight. `desk-news` holds the service key to
+  session-aware caches + single-flight. `quote-proxy` (owner ruling
+  2026-07-14) takes an **arbitrary** ticker, so it is not roster-bounded like
+  the five feeds; its guard is an **Origin allowlist** (site origin only) plus
+  an in-memory cache — browser-enforced and unspoofable from page JS, but a
+  non-browser client can forge the Origin header, so this is an abuse
+  speed-bump on the paid plan's egress IP, not a hard auth wall. `desk-news`
+  holds the service key to
   read held tickers for ranking, but only public headlines and Stooq day-%
   ever leave it — payload byte-shape-identical to the formerly-committed
   public news.json. `desk-heatmap` holds it too, solely for the

@@ -1559,14 +1559,14 @@ function renderCharts(data, lamp) {
 
   const smaList = cfg => Object.entries(cfg.smas).filter(([, on]) => on).map(([len]) => [Number(len), SMA_COLORS[len]]);
   const show = p => wbState.layout === 'split' || wbState.layout === p;
-  /* Pro 3 upgrades itself to real 5-minute bars via the quote-proxy when
-     the desk is unlocked in live mode; EOD stays the quiet fallback. */
+  /* Pro 3 upgrades itself to real 5-minute bars via the quote-proxy in live
+     mode (no unlock needed — the feed is origin-guarded); EOD is the fallback. */
   const maybeFetchIntraday = sym => {
-    if (DESK.mode === 'demo' || !DESK.authed || !DESK_DB.url) return;
+    if (DESK.mode === 'demo' || !DESK_DB.url) return;
     wbState.intraday = wbState.intraday || {};
     if (wbState.intraday[sym] || wbIntradayPending.has(sym)) return;
     wbIntradayPending.add(sym);
-    deskQuote(sessionStorage.getItem('desk_pin'), sym, 'intraday')
+    deskQuote(sym, 'intraday')
       .then(out => {
         if (out.ok && out.series && out.series.c.length >= 30) {
           wbState.intraday[sym] = out.series;
@@ -1771,8 +1771,8 @@ function wireCharts() {
   }
 
   /* Symbol combobox: roster picks (typed or datalist) switch instantly;
-     unknown tickers go through the PIN-gated quote-proxy in live mode
-     (demo/locked ⇒ note). */
+     unknown tickers go through the origin-guarded quote-proxy in live mode —
+     no unlock needed (demo has no backend ⇒ note). */
   const symForm = document.getElementById('wbSymForm');
   const symInput = document.getElementById('wbSymInput');
   const symNote = document.getElementById('wbSymNote');
@@ -1804,13 +1804,13 @@ function wireCharts() {
       renderCharts(wbState.data, wbState.lamp);
     };
     if (wbState.data.symbols[sym]) { symNote.textContent = ''; pick(); return; }
-    if (DESK.mode === 'demo' || !DESK.authed) {
-      symNote.textContent = 'Unlock the desk to load tickers beyond the watchlist';
+    if (DESK.mode === 'demo' || !DESK_DB.url) {
+      symNote.textContent = 'Live ticker lookups are off in demo mode';
       return;
     }
     symNote.textContent = 'Loading ' + sym + '…';
     try {
-      const out = await deskQuote(sessionStorage.getItem('desk_pin'), sym, 'daily');
+      const out = await deskQuote(sym, 'daily');
       if (!out.ok || !out.series || out.series.c.length < 30) {
         symNote.textContent = out.error || 'No data found for ' + sym;
         return;
