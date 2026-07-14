@@ -1185,6 +1185,9 @@ function saveWbCfg() {
    workbench reopens on the same chart. syms is re-fetched on boot and merged
    into the watchlist feed; sel restores the selection. */
 const WB_STICKY_KEY = 'wb_sticky_v1';
+const wbFeedRoster = new Set();  /* symbols served by the desk-charts feed; anything else is a manual entry */
+let wbStickyRestored = false;    /* one-shot: restore runs on the first LIVE feed, even after a demo-fallback reload */
+let wbUserPicked = false;        /* the user has chosen a symbol → a slow background restore must not override it */
 function readWbSticky() {
   try {
     const raw = JSON.parse(localStorage.getItem(WB_STICKY_KEY) || 'null');
@@ -1208,8 +1211,12 @@ function addWbStickySym(sym) {
 /* single choke point for switching the active symbol: resets pan, remembers
    the selection so it sticks across reloads, and repaints */
 function wbPick(sym) {
+  wbUserPicked = true;
   wbState.sym = sym;
   wbState.off = wbState.woff = wbState.off3 = 0;
+  /* re-pin any non-watchlist pick so an evicted manual ticker is refetched on
+     the next reload (also bumps it to the front of the capped list) */
+  if (wbFeedRoster.size && !wbFeedRoster.has(sym)) addWbStickySym(sym);
   writeWbSticky({ sel: sym });
   renderCharts(wbState.data, wbState.lamp);
 }
@@ -1974,6 +1981,7 @@ async function loadCharts() {
   if (DESK.mode !== 'demo') {
     try {
       const data = await deskFeed('desk-charts');
+      for (const k of Object.keys(data.symbols)) wbFeedRoster.add(k);
       if (wbState) {
         /* poller path: refresh bars in place so the user's selected symbol,
            zoom, and pan survive — renderCharts keys state on data identity.
@@ -1984,8 +1992,11 @@ async function loadCharts() {
         renderCharts(wbState.data, liveLampFor(data.generatedAt, data.asOf));
       } else {
         renderCharts(data, liveLampFor(data.generatedAt, data.asOf));
-        restoreStickySymbols(); /* first load only: re-hydrate manual entries */
       }
+      /* re-hydrate manual entries once, on the first LIVE feed — keyed on this
+         one-shot rather than wbState creation so a transient first-load outage
+         (which renders the demo fallback) still restores after recovery */
+      if (!wbStickyRestored) { wbStickyRestored = true; restoreStickySymbols(); }
       return;
     } catch { /* poller failure below */ }
     if (wbState) return; /* poller failure: keep the last good workbench */
@@ -2000,7 +2011,9 @@ async function loadCharts() {
 async function restoreStickySymbols() {
   const saved = readWbSticky();
   if (!wbState) return;
-  if (saved.sel && wbState.data.symbols[saved.sel] && saved.sel !== wbState.sym) {
+  /* never override a live user choice: if they've picked a symbol since load,
+     the saved selection is stale and must not snap the chart back */
+  if (saved.sel && wbState.data.symbols[saved.sel] && !wbUserPicked && saved.sel !== wbState.sym) {
     wbState.sym = saved.sel;
     renderCharts(wbState.data, wbState.lamp);
   }
@@ -2010,7 +2023,7 @@ async function restoreStickySymbols() {
       const out = await deskQuote(sym, 'daily');
       if (out.ok && out.series && out.series.c.length >= 30) {
         wbState.data.symbols[sym] = out.series;
-        if (saved.sel === sym) wbState.sym = sym;
+        if (saved.sel === sym && !wbUserPicked) wbState.sym = sym;
         renderCharts(wbState.data, wbState.lamp);
       }
     } catch { /* skip a ticker the proxy can't serve */ }
