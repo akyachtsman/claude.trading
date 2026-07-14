@@ -555,7 +555,7 @@ const HEAT = {
     [2, [47, 158, 79]],    /* #2F9E4F */
     [3, [48, 204, 90]],    /* #30CC5A */
   ],
-  cap: 3,
+  cap: 3,                    /* the stop DOMAIN (±3) — legend/tiles scale to activeCap below */
   canvas: '#262931',         /* mosaic backdrop */
   label: '#CBD2DE',          /* sector/band captions on the dark canvas */
   band: '#31353F',           /* sub-industry band fill */
@@ -564,9 +564,16 @@ const HEAT = {
   halo: '#23262D',           /* solid stroke behind every glyph; white-vs-halo is the AA pair */
 };
 
+/* Color scale cap is PER-UNIVERSE (owner ruling 2026-07-14): large caps use
+   the finviz-standard ±3%; small caps (Russell 2000) move far harder — a ±3%
+   cap saturates ~26% of tiles, so they use ±5% (median mover still tinted,
+   only the ~11% tail clips). The 7 stops always span [−activeCap, +activeCap];
+   a pct is normalized into the stops' ±3 domain before interpolation. */
+let activeCap = HEAT.cap;
 function heatRGB(pct) {
   const s = HEAT.stops;
-  const p = Math.max(s[0][0], Math.min(s[s.length - 1][0], pct));
+  const norm = pct * HEAT.cap / activeCap;        /* map ±activeCap → the ±3 stop domain */
+  const p = Math.max(s[0][0], Math.min(s[s.length - 1][0], norm));
   let i = 0;
   while (i < s.length - 2 && p > s[i + 1][0]) i++;
   const [p0, c0] = s[i], [p1, c1] = s[i + 1];
@@ -574,6 +581,7 @@ function heatRGB(pct) {
   return c0.map((c, k) => Math.round(c + (c1[k] - c) * t));
 }
 const heatColor = pct => 'rgb(' + heatRGB(pct).join(',') + ')';
+const HEAT_CAP_FOR = key => (key === 'r2k' ? 5 : HEAT.cap);
 /* Tile labels are consistently WHITE (owner directive 2026-07-12 — the earlier
    per-tile black flip on bright poles read inconsistent next to finviz). AA is
    carried by a solid dark halo painted under every glyph (paint-order:stroke),
@@ -632,6 +640,7 @@ let heatState = null;   /* last-rendered data, so a resize can re-render */
 
 function renderHeatmap(hm, lamp) {
   heatState = { hm, lamp };
+  activeCap = (hm && hm.scaleCap) || HEAT.cap;   /* per-universe color scale */
   const svg = document.getElementById('heatmapSvg');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const lampEl = document.getElementById('heatLamp');
@@ -828,13 +837,16 @@ function renderHeatmap(hm, lamp) {
 function renderHeatLegend() {
   const lg = document.getElementById('heatLegend');
   while (lg.firstChild) lg.removeChild(lg.firstChild);
-  lg.appendChild(el('span', '', '−' + HEAT.cap + '%'));
-  for (let p = -HEAT.cap; p <= HEAT.cap; p += 1) {
+  /* 13 swatches evenly across the active cap so the ramp reads the same
+     width whether the cap is 3 or 5 (only the end labels change) */
+  const STEPS = 12;
+  lg.appendChild(el('span', '', '−' + activeCap + '%'));
+  for (let k = 0; k <= STEPS; k++) {
     const sw = el('span', 'swatch');
-    sw.style.background = heatColor(p);
+    sw.style.background = heatColor(-activeCap + (2 * activeCap) * k / STEPS);
     lg.appendChild(sw);
   }
-  lg.appendChild(el('span', '', '+' + HEAT.cap + '%'));
+  lg.appendChild(el('span', '', '+' + activeCap + '%'));
   lg.appendChild(el('span', '', '· tile size = market cap'));
 }
 
@@ -998,6 +1010,7 @@ function applyMapView() {
   /* stock cuts re-color by period from the feed's pctW/pctM/pctYtd fields
      (the ETF cut computes its own periods from bar history above) */
   if (mapView.key !== 'etf') out = recolorForPeriod(out, mapView.period);
+  if (out) out.scaleCap = HEAT_CAP_FOR(mapView.key); /* small caps get the wider ±5% ramp */
   document.getElementById('heatTitle').textContent = label + ' — heat';
   renderHeatmap(out, lamp);
   document.getElementById('heatSource').textContent = note;
