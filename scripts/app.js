@@ -1142,7 +1142,7 @@ window.addEventListener('resize', () => {
    red is price-direction semantics (like the heatmap), not decoration. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)' };
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
-const WB2_ZOOMS = [['6M', 26], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars */
+const WB2_ZOOMS = [['1M', 4], ['3M', 13], ['6M', 26], ['YTD', 'ytd'], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars — same presets as Pro 1 */
 const WB3_ZOOMS = [['5D', 5], ['10D', 10], ['1M', 21]];     /* Pro 3 window, in daily bars */
 
 /* per-pane configuration (their settings menu, in our idiom) — persisted */
