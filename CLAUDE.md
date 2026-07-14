@@ -82,7 +82,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   session-aware caches + single-flight. `desk-news` holds the service key to
   read held tickers for ranking, but only public headlines and Stooq day-%
   ever leave it — payload byte-shape-identical to the formerly-committed
-  public news.json.
+  public news.json. `desk-heatmap` holds it too, solely for the
+  `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
+  multi-period sweep — public market percentages only.
 - Server-side keys (`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, IBKR
   token/query-id, `CRON_SECRET`) live only in edge-function secrets;
   `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —
@@ -141,7 +143,7 @@ run for real against the dedicated project on every PR.
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts/chart/brief | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 daily / Pro 2 weekly / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
-| S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER rail cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps` delayed quotes, live mode only) and Russell 2000 render disabled in demo | Cut doesn't re-render, period gating wrong, or pending rows clickable |
+| S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
 | S14 | Live-feed canary (live only) | Masthead lamp reads LIVE with a "Fetched" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 allowlists console errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design; S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or S1 allowlist widened beyond the feed origin |
 
 ## Owner Communication Preferences
