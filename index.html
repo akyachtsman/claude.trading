@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260714m">
-<link rel="stylesheet" href="styles/components.css?v=20260714m">
+<link rel="stylesheet" href="styles/tokens.css?v=20260714n">
+<link rel="stylesheet" href="styles/components.css?v=20260714n">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -86,6 +86,29 @@
   .chart-data summary:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
 
   .ml-auto { margin-left: auto; }
+
+  /* Stochastic charts — dark trading-terminal sub-theme (owner ruling
+     2026-07-14: match the reference platform, easier to read). A scoped token
+     override flips ONLY this panel — SVG, toolbar, sidebar, tooltip, popovers
+     all inherit it; the rest of the desk stays daylight. Reference palette:
+     green/red candles, red %K + yellow %D stochastics, purple/yellow/white
+     SMAs, orange-R/green-S pivots, on near-black navy. */
+  .area-charts {
+    --color-bg: #08111c;
+    --color-surface: #0c1a29;
+    --color-surface-2: #14263c;
+    --color-text-primary: #e8ecf2;
+    --color-text-secondary: #90a2b5;
+    --color-border: #223243;
+    --color-border-hover: #37506a;
+    --color-gain: #26b24d;   /* up candle / S pivots */
+    --color-loss: #e5423f;   /* down candle / stoch bands */
+    --color-series-1: #ff4d4d;   /* stoch %K — red */
+    --color-series-2: #f5c518;   /* stoch %D — yellow */
+    --color-series-3: #b06cf0;   /* SMA fast — purple */
+    --color-accent: #f5a623;         /* R pivots · navigator — orange */
+    --color-accent-bright: #f5c518;  /* SMA mid — yellow */
+  }
 
   /* watchlist charts (two-pane workbench + symbol rail) */
   .wb-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3); }
@@ -374,8 +397,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260714m"></script>
-<script src="scripts/data.js?v=20260714m"></script>
-<script src="scripts/app.js?v=20260714m"></script>
+<script src="scripts/config.js?v=20260714n"></script>
+<script src="scripts/data.js?v=20260714n"></script>
+<script src="scripts/app.js?v=20260714n"></script>
 </body>
 </html>
