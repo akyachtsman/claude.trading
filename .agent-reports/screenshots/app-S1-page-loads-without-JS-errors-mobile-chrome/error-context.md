@@ -194,87 +194,87 @@ Received array:  ["Failed to load resource: net::ERR_CONNECTION_RESET (https://f
               - generic: PLD
           - generic [ref=e167]:
             - generic [ref=e168]: −3%
-            - generic [ref=e176]: +3%
-            - generic [ref=e177]: · tile size = market cap
-          - group [ref=e178]:
-            - generic "View movers table" [ref=e179] [cursor=pointer]
-          - paragraph [ref=e180]: Sized by market cap · colored by day % change
-      - region "Watchlist charts" [ref=e181]:
-        - generic [ref=e182]:
-          - heading "Watchlist charts" [level=2] [ref=e183]
-          - generic [ref=e184]: Demo
-          - generic [ref=e185]: As of 2026-07-14
-        - generic [ref=e186]:
-          - generic [ref=e187]:
-            - generic [ref=e188]:
-              - combobox "Chart symbol — type any ticker" [ref=e189]: SPY
-              - button "Load" [ref=e190] [cursor=pointer]
-            - generic [ref=e191]:
-              - generic [ref=e192]: PANE
-              - group "Pane layout" [ref=e193]:
-                - button "Split" [pressed] [ref=e194] [cursor=pointer]
-                - button "Pro 1" [ref=e195] [cursor=pointer]
-                - button "Pro 2" [ref=e196] [cursor=pointer]
-                - button "Pro 3" [ref=e197] [cursor=pointer]
-          - generic [ref=e198]:
-            - navigation "Watchlist symbols" [ref=e199]:
-              - button "SPY −0.39%" [ref=e200] [cursor=pointer]:
-                - generic [ref=e201]: SPY
-                - generic [ref=e202]: −0.39%
-              - button "QQQ −0.86%" [ref=e203] [cursor=pointer]:
-                - generic [ref=e204]: QQQ
-                - generic [ref=e205]: −0.86%
-              - button "DIA +0.75%" [ref=e206] [cursor=pointer]:
-                - generic [ref=e207]: DIA
-                - generic [ref=e208]: +0.75%
-              - button "IWM +0.97%" [ref=e209] [cursor=pointer]:
-                - generic [ref=e210]: IWM
-                - generic [ref=e211]: +0.97%
-              - button "SMH +0.51%" [ref=e212] [cursor=pointer]:
-                - generic [ref=e213]: SMH
-                - generic [ref=e214]: +0.51%
-              - button "XLF +0.02%" [ref=e215] [cursor=pointer]:
-                - generic [ref=e216]: XLF
-                - generic [ref=e217]: +0.02%
-              - button "XLE −0.57%" [ref=e218] [cursor=pointer]:
-                - generic [ref=e219]: XLE
-                - generic [ref=e220]: −0.57%
-              - button "GLD +0.76%" [ref=e221] [cursor=pointer]:
-                - generic [ref=e222]: GLD
-                - generic [ref=e223]: +0.76%
-              - button "TLT +0.46%" [ref=e224] [cursor=pointer]:
-                - generic [ref=e225]: TLT
-                - generic [ref=e226]: +0.46%
-              - button "VXX −0.06%" [ref=e227] [cursor=pointer]:
-                - generic [ref=e228]: VXX
-                - generic [ref=e229]: −0.06%
-            - generic [ref=e230]:
-              - generic [ref=e231]:
-                - generic [ref=e232]:
-                  - generic [ref=e233]: PRO 1
-                  - group "Pro 1 daily timeframe" [ref=e234]:
-                    - button "1M" [ref=e235] [cursor=pointer]
-                    - button "3M" [pressed] [ref=e236] [cursor=pointer]
-                    - button "6M" [ref=e237] [cursor=pointer]
-                    - button "YTD" [ref=e238] [cursor=pointer]
-                    - button "1Y" [ref=e239] [cursor=pointer]
-                    - button "All" [ref=e240] [cursor=pointer]
-                  - button "Pro 1 chart settings" [ref=e241] [cursor=pointer]: ⚙
-                - generic [ref=e242]:
-                  - generic [ref=e243]: PRO 2
-                  - group "Pro 2 weekly timeframe" [ref=e244]:
-                    - button "6M" [ref=e245] [cursor=pointer]
-                    - button "1Y" [ref=e246] [cursor=pointer]
-                    - button "All" [pressed] [ref=e247] [cursor=pointer]
-                  - button "Pro 2 chart settings" [ref=e248] [cursor=pointer]: ⚙
-                - generic [ref=e249]:
-                  - generic [ref=e250]: PRO 3
-                  - group "Pro 3 day-trading window" [ref=e251]:
-                    - button "5D" [ref=e252] [cursor=pointer]
-                    - button "10D" [pressed] [ref=e253] [cursor=pointer]
-                    - button "1M" [ref=e254] [cursor=pointer]
-                  - button "Pro 3 chart settings" [ref=e255] [cursor=pointer]: ⚙
-              - 'img "Three-pane workbench: Pro 1 daily, Pro 2 weekly, and Pro 3 day-trading charts with volume and 13-period stochastics, doctrine signal markers circled" [ref=e256]':
+            - generic [ref=e182]: +3%
+            - generic [ref=e183]: · tile size = market cap
+          - group [ref=e184]:
+            - generic "View movers table" [ref=e185] [cursor=pointer]
+          - paragraph [ref=e186]: Sized by market cap · colored by day % change
+      - region "Watchlist charts" [ref=e187]:
+        - generic [ref=e188]:
+          - heading "Watchlist charts" [level=2] [ref=e189]
+          - generic [ref=e190]: Demo
+          - generic [ref=e191]: As of 2026-07-14
+        - generic [ref=e192]:
+          - generic [ref=e193]:
+            - generic [ref=e194]:
+              - combobox "Chart symbol — type any ticker" [ref=e195]: SPY
+              - button "Load" [ref=e196] [cursor=pointer]
+            - generic [ref=e197]:
+              - generic [ref=e198]: PANE
+              - group "Pane layout" [ref=e199]:
+                - button "Split" [pressed] [ref=e200] [cursor=pointer]
+                - button "Pro 1" [ref=e201] [cursor=pointer]
+                - button "Pro 2" [ref=e202] [cursor=pointer]
+                - button "Pro 3" [ref=e203] [cursor=pointer]
+          - generic [ref=e204]:
+            - navigation "Watchlist symbols" [ref=e205]:
+              - button "SPY −0.39%" [ref=e206] [cursor=pointer]:
+                - generic [ref=e207]: SPY
+                - generic [ref=e208]: −0.39%
+              - button "QQQ −0.86%" [ref=e209] [cursor=pointer]:
+                - generic [ref=e210]: QQQ
+                - generic [ref=e211]: −0.86%
+              - button "DIA +0.75%" [ref=e212] [cursor=pointer]:
+                - generic [ref=e213]: DIA
+                - generic [ref=e214]: +0.75%
+              - button "IWM +0.97%" [ref=e215] [cursor=pointer]:
+                - generic [ref=e216]: IWM
+                - generic [ref=e217]: +0.97%
+              - button "SMH +0.51%" [ref=e218] [cursor=pointer]:
+                - generic [ref=e219]: SMH
+                - generic [ref=e220]: +0.51%
+              - button "XLF +0.02%" [ref=e221] [cursor=pointer]:
+                - generic [ref=e222]: XLF
+                - generic [ref=e223]: +0.02%
+              - button "XLE −0.57%" [ref=e224] [cursor=pointer]:
+                - generic [ref=e225]: XLE
+                - generic [ref=e226]: −0.57%
+              - button "GLD +0.76%" [ref=e227] [cursor=pointer]:
+                - generic [ref=e228]: GLD
+                - generic [ref=e229]: +0.76%
+              - button "TLT +0.46%" [ref=e230] [cursor=pointer]:
+                - generic [ref=e231]: TLT
+                - generic [ref=e232]: +0.46%
+              - button "VXX −0.06%" [ref=e233] [cursor=pointer]:
+                - generic [ref=e234]: VXX
+                - generic [ref=e235]: −0.06%
+            - generic [ref=e236]:
+              - generic [ref=e237]:
+                - generic [ref=e238]:
+                  - generic [ref=e239]: PRO 1
+                  - group "Pro 1 daily timeframe" [ref=e240]:
+                    - button "1M" [ref=e241] [cursor=pointer]
+                    - button "3M" [pressed] [ref=e242] [cursor=pointer]
+                    - button "6M" [ref=e243] [cursor=pointer]
+                    - button "YTD" [ref=e244] [cursor=pointer]
+                    - button "1Y" [ref=e245] [cursor=pointer]
+                    - button "All" [ref=e246] [cursor=pointer]
+                  - button "Pro 1 chart settings" [ref=e247] [cursor=pointer]: ⚙
+                - generic [ref=e248]:
+                  - generic [ref=e249]: PRO 2
+                  - group "Pro 2 weekly timeframe" [ref=e250]:
+                    - button "6M" [ref=e251] [cursor=pointer]
+                    - button "1Y" [ref=e252] [cursor=pointer]
+                    - button "All" [pressed] [ref=e253] [cursor=pointer]
+                  - button "Pro 2 chart settings" [ref=e254] [cursor=pointer]: ⚙
+                - generic [ref=e255]:
+                  - generic [ref=e256]: PRO 3
+                  - group "Pro 3 day-trading window" [ref=e257]:
+                    - button "5D" [ref=e258] [cursor=pointer]
+                    - button "10D" [pressed] [ref=e259] [cursor=pointer]
+                    - button "1M" [ref=e260] [cursor=pointer]
+                  - button "Pro 3 chart settings" [ref=e261] [cursor=pointer]: ⚙
+              - 'img "Three-pane workbench: Pro 1 daily, Pro 2 weekly, and Pro 3 day-trading charts with volume and 13-period stochastics, doctrine signal markers circled" [ref=e262]':
                 - generic: PRO 1 · DAILY · SPY
                 - generic: "580.00"
                 - generic: "600.00"
@@ -313,110 +313,110 @@ Received array:  ["Failed to load resource: net::ERR_CONNECTION_RESET (https://f
                 - generic: "80"
                 - generic: STOCH 13-3-3 · DAILY (INTRADAY PENDING)
                 - generic: 2026-07
-          - paragraph [ref=e560]: Pro 1 (daily · short-term), Pro 2 (weekly · long-term), and Pro 3 (day trading — real 5-minute bars when the desk is unlocked live; EOD otherwise) per the stochastic-investing doctrine — ◯ marks bottom-crosses and top-rolls · drag a chart to pan
-      - region "Equity curves" [ref=e561]:
-        - generic [ref=e562]:
-          - heading "Equity curves" [level=2] [ref=e563]
-          - generic [ref=e564]: Locked
-          - group "Timeframe" [ref=e566]:
-            - button "1M" [ref=e567] [cursor=pointer]
-            - button "3M" [ref=e568] [cursor=pointer]
-            - button "6M" [pressed] [ref=e569] [cursor=pointer]
-            - button "1Y" [ref=e570] [cursor=pointer]
-        - paragraph [ref=e572]: Unlocks with the desk PIN.
-    - complementary "Desk tools" [ref=e573]:
-      - region "AI daily brief" [ref=e574]:
-        - generic [ref=e575]:
-          - heading "AI daily brief" [level=2] [ref=e576]
-          - generic [ref=e577]: Locked
-          - generic [ref=e578]: —
-        - paragraph [ref=e580]: Unlocks with the desk PIN.
-      - region "Ask the desk" [ref=e581]:
-        - generic [ref=e582]:
-          - heading "Ask the desk" [level=2] [ref=e583]
-          - generic [ref=e584]: Locked
+          - paragraph [ref=e566]: Pro 1 (daily · short-term), Pro 2 (weekly · long-term), and Pro 3 (day trading — real 5-minute bars when the desk is unlocked live; EOD otherwise) per the stochastic-investing doctrine — ◯ marks bottom-crosses and top-rolls · drag a chart to pan
+      - region "Equity curves" [ref=e567]:
+        - generic [ref=e568]:
+          - heading "Equity curves" [level=2] [ref=e569]
+          - generic [ref=e570]: Locked
+          - group "Timeframe" [ref=e572]:
+            - button "1M" [ref=e573] [cursor=pointer]
+            - button "3M" [ref=e574] [cursor=pointer]
+            - button "6M" [pressed] [ref=e575] [cursor=pointer]
+            - button "1Y" [ref=e576] [cursor=pointer]
+        - paragraph [ref=e578]: Unlocks with the desk PIN.
+    - complementary "Desk tools" [ref=e579]:
+      - region "AI daily brief" [ref=e580]:
+        - generic [ref=e581]:
+          - heading "AI daily brief" [level=2] [ref=e582]
+          - generic [ref=e583]: Locked
+          - generic [ref=e584]: —
         - paragraph [ref=e586]: Unlocks with the desk PIN.
-    - complementary "Market news" [ref=e587]:
-      - region "News — holdings first" [ref=e588]:
-        - generic [ref=e589]:
-          - heading "News — holdings first" [level=2] [ref=e590]
-          - generic [ref=e591]: Stale
-        - generic [ref=e592]:
-          - generic [ref=e593]:
-            - generic [ref=e594]: 15:58
-            - generic [ref=e595]:
-              - paragraph [ref=e596]: S&P 500 ends higher as megacap tech extends rally
-              - generic [ref=e597]:
-                - generic [ref=e598]: Reuters
-                - generic [ref=e599]:
-                  - generic [ref=e600]: SPY
-                  - generic [ref=e601]: +0.54%
-          - generic [ref=e602]:
-            - generic [ref=e603]: 15:41
-            - generic [ref=e604]:
-              - paragraph [ref=e605]: Nvidia supplier checks point to firm data-center demand
-              - generic [ref=e606]:
-                - generic [ref=e607]: Bloomberg
-                - generic [ref=e608]:
-                  - generic [ref=e609]: NVDA
-                  - generic [ref=e610]: +1.84%
-          - generic [ref=e611]:
-            - generic [ref=e612]: 14:55
-            - generic [ref=e613]:
-              - paragraph [ref=e614]: Microsoft to detail AI capex plans at next earnings call
-              - generic [ref=e615]:
-                - generic [ref=e616]: CNBC
-                - generic [ref=e617]:
-                  - generic [ref=e618]: MSFT
-                  - generic [ref=e619]: +0.92%
-          - generic [ref=e620]:
-            - generic [ref=e621]: 14:02
-            - generic [ref=e622]:
-              - paragraph [ref=e623]: Treasury yields edge up ahead of CPI report
-              - generic [ref=e624]:
-                - generic [ref=e625]: Reuters
-                - generic [ref=e626]:
-                  - generic [ref=e627]: TLT
-                  - generic [ref=e628]: −0.65%
-          - generic [ref=e629]:
-            - generic [ref=e630]: 13:20
-            - generic [ref=e631]:
-              - paragraph [ref=e632]: Apple services growth seen slowing this quarter, analysts say
-              - generic [ref=e633]:
-                - generic [ref=e634]: Bloomberg
-                - generic [ref=e635]:
-                  - generic [ref=e636]: AAPL
-                  - generic [ref=e637]: −0.34%
-          - generic [ref=e638]:
-            - generic [ref=e639]: 11:47
-            - generic [ref=e640]:
-              - paragraph [ref=e641]: Small caps lag as rate-cut bets get pushed out
-              - generic [ref=e642]:
-                - generic [ref=e643]: Reuters
-                - generic [ref=e644]:
-                  - generic [ref=e645]: IWM
-                  - generic [ref=e646]: −0.41%
-          - generic [ref=e647]:
-            - generic [ref=e648]: 10:15
-            - generic [ref=e649]:
-              - paragraph [ref=e650]: Amazon Prime Day sales tracking ahead of last year
-              - generic [ref=e651]:
-                - generic [ref=e652]: CNBC
-                - generic [ref=e653]:
-                  - generic [ref=e654]: AMZN
-                  - generic [ref=e655]: +1.12%
-          - generic [ref=e656]:
-            - generic [ref=e657]: 09:36
-            - generic [ref=e658]:
-              - paragraph [ref=e659]: Volatility drifts lower; VIX under 15 for third session
-              - generic [ref=e660]:
-                - generic [ref=e661]: Bloomberg
-                - generic [ref=e662]:
-                  - generic [ref=e663]: VIX
-                  - generic [ref=e664]: −4.20%
-  - contentinfo [ref=e665]:
-    - paragraph [ref=e666]: "Data: IBKR Flex reports (accounts) · market and news snapshots committed by scheduled jobs. Every panel shows its own as-of stamp — this dashboard renders snapshots, not live quotes."
-    - paragraph [ref=e667]: Nothing here is investment, tax, or legal advice. Past performance is not a guarantee of future results.
+      - region "Ask the desk" [ref=e587]:
+        - generic [ref=e588]:
+          - heading "Ask the desk" [level=2] [ref=e589]
+          - generic [ref=e590]: Locked
+        - paragraph [ref=e592]: Unlocks with the desk PIN.
+    - complementary "Market news" [ref=e593]:
+      - region "News — holdings first" [ref=e594]:
+        - generic [ref=e595]:
+          - heading "News — holdings first" [level=2] [ref=e596]
+          - generic [ref=e597]: Stale
+        - generic [ref=e598]:
+          - generic [ref=e599]:
+            - generic [ref=e600]: 15:58
+            - generic [ref=e601]:
+              - paragraph [ref=e602]: S&P 500 ends higher as megacap tech extends rally
+              - generic [ref=e603]:
+                - generic [ref=e604]: Reuters
+                - generic [ref=e605]:
+                  - generic [ref=e606]: SPY
+                  - generic [ref=e607]: +0.54%
+          - generic [ref=e608]:
+            - generic [ref=e609]: 15:41
+            - generic [ref=e610]:
+              - paragraph [ref=e611]: Nvidia supplier checks point to firm data-center demand
+              - generic [ref=e612]:
+                - generic [ref=e613]: Bloomberg
+                - generic [ref=e614]:
+                  - generic [ref=e615]: NVDA
+                  - generic [ref=e616]: +1.84%
+          - generic [ref=e617]:
+            - generic [ref=e618]: 14:55
+            - generic [ref=e619]:
+              - paragraph [ref=e620]: Microsoft to detail AI capex plans at next earnings call
+              - generic [ref=e621]:
+                - generic [ref=e622]: CNBC
+                - generic [ref=e623]:
+                  - generic [ref=e624]: MSFT
+                  - generic [ref=e625]: +0.92%
+          - generic [ref=e626]:
+            - generic [ref=e627]: 14:02
+            - generic [ref=e628]:
+              - paragraph [ref=e629]: Treasury yields edge up ahead of CPI report
+              - generic [ref=e630]:
+                - generic [ref=e631]: Reuters
+                - generic [ref=e632]:
+                  - generic [ref=e633]: TLT
+                  - generic [ref=e634]: −0.65%
+          - generic [ref=e635]:
+            - generic [ref=e636]: 13:20
+            - generic [ref=e637]:
+              - paragraph [ref=e638]: Apple services growth seen slowing this quarter, analysts say
+              - generic [ref=e639]:
+                - generic [ref=e640]: Bloomberg
+                - generic [ref=e641]:
+                  - generic [ref=e642]: AAPL
+                  - generic [ref=e643]: −0.34%
+          - generic [ref=e644]:
+            - generic [ref=e645]: 11:47
+            - generic [ref=e646]:
+              - paragraph [ref=e647]: Small caps lag as rate-cut bets get pushed out
+              - generic [ref=e648]:
+                - generic [ref=e649]: Reuters
+                - generic [ref=e650]:
+                  - generic [ref=e651]: IWM
+                  - generic [ref=e652]: −0.41%
+          - generic [ref=e653]:
+            - generic [ref=e654]: 10:15
+            - generic [ref=e655]:
+              - paragraph [ref=e656]: Amazon Prime Day sales tracking ahead of last year
+              - generic [ref=e657]:
+                - generic [ref=e658]: CNBC
+                - generic [ref=e659]:
+                  - generic [ref=e660]: AMZN
+                  - generic [ref=e661]: +1.12%
+          - generic [ref=e662]:
+            - generic [ref=e663]: 09:36
+            - generic [ref=e664]:
+              - paragraph [ref=e665]: Volatility drifts lower; VIX under 15 for third session
+              - generic [ref=e666]:
+                - generic [ref=e667]: Bloomberg
+                - generic [ref=e668]:
+                  - generic [ref=e669]: VIX
+                  - generic [ref=e670]: −4.20%
+  - contentinfo [ref=e671]:
+    - paragraph [ref=e672]: "Data: IBKR Flex reports (accounts) · market and news snapshots committed by scheduled jobs. Every panel shows its own as-of stamp — this dashboard renders snapshots, not live quotes."
+    - paragraph [ref=e673]: Nothing here is investment, tax, or legal advice. Past performance is not a guarantee of future results.
 ```
 
 # Test source

@@ -555,7 +555,7 @@ const HEAT = {
     [2, [47, 158, 79]],    /* #2F9E4F */
     [3, [48, 204, 90]],    /* #30CC5A */
   ],
-  cap: 3,
+  cap: 3,                    /* the stop DOMAIN (±3) — legend/tiles scale to activeCap below */
   canvas: '#262931',         /* mosaic backdrop */
   label: '#CBD2DE',          /* sector/band captions on the dark canvas */
   band: '#31353F',           /* sub-industry band fill */
@@ -564,9 +564,16 @@ const HEAT = {
   halo: '#23262D',           /* solid stroke behind every glyph; white-vs-halo is the AA pair */
 };
 
+/* Color scale cap is PER-UNIVERSE (owner ruling 2026-07-14): large caps use
+   the finviz-standard ±3%; small caps (Russell 2000) move far harder — a ±3%
+   cap saturates ~26% of tiles, so they use ±5% (median mover still tinted,
+   only the ~11% tail clips). The 7 stops always span [−activeCap, +activeCap];
+   a pct is normalized into the stops' ±3 domain before interpolation. */
+let activeCap = HEAT.cap;
 function heatRGB(pct) {
   const s = HEAT.stops;
-  const p = Math.max(s[0][0], Math.min(s[s.length - 1][0], pct));
+  const norm = pct * HEAT.cap / activeCap;        /* map ±activeCap → the ±3 stop domain */
+  const p = Math.max(s[0][0], Math.min(s[s.length - 1][0], norm));
   let i = 0;
   while (i < s.length - 2 && p > s[i + 1][0]) i++;
   const [p0, c0] = s[i], [p1, c1] = s[i + 1];
@@ -574,6 +581,7 @@ function heatRGB(pct) {
   return c0.map((c, k) => Math.round(c + (c1[k] - c) * t));
 }
 const heatColor = pct => 'rgb(' + heatRGB(pct).join(',') + ')';
+const HEAT_CAP_FOR = key => (key === 'r2k' ? 5 : HEAT.cap);
 /* Tile labels are consistently WHITE (owner directive 2026-07-12 — the earlier
    per-tile black flip on bright poles read inconsistent next to finviz). AA is
    carried by a solid dark halo painted under every glyph (paint-order:stroke),
@@ -632,6 +640,7 @@ let heatState = null;   /* last-rendered data, so a resize can re-render */
 
 function renderHeatmap(hm, lamp) {
   heatState = { hm, lamp };
+  activeCap = (hm && hm.scaleCap) || HEAT.cap;   /* per-universe color scale */
   const svg = document.getElementById('heatmapSvg');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const lampEl = document.getElementById('heatLamp');
@@ -709,9 +718,11 @@ function renderHeatmap(hm, lamp) {
     cur.appendChild(el('span', dir(t.pct), fmtPct(t.pct)));
     tip.appendChild(cur);
     tip.appendChild(el('div', 'tip-name', (t.name && t.name !== t.sym ? t.name + ' · ' : '') + fmtCap(t.cap)));
+    /* EVERY member of the framed group (owner ruling 2026-07-14) — the tip
+       scrolls when the list outgrows its max height */
     const peers = sector.tiles
       .filter(p => (t.ind ? p.ind === t.ind : true))
-      .sort((a, b) => b.cap - a.cap).slice(0, 8);
+      .sort((a, b) => b.cap - a.cap);
     for (const p of peers) {
       const row = el('div', 'tip-row' + (p.sym === t.sym ? ' tip-cur' : ''));
       row.appendChild(el('span', '', p.sym));
@@ -727,10 +738,22 @@ function renderHeatmap(hm, lamp) {
   };
   const hideHover = () => {
     tip.style.display = 'none';
+    tip.scrollTop = 0;
     unlightBand();
     focusGroup.setAttribute('visibility', 'hidden');
     focusTile.setAttribute('visibility', 'hidden');
   };
+  /* leaving a tile schedules the hide instead of firing it, so the pointer
+     can travel INTO the tip and wheel-scroll the full peer list. State
+     lives ON the tip element: the listeners are wired once, but hideHover
+     is a fresh closure every render. */
+  tip._hide = hideHover;
+  const scheduleHide = () => { clearTimeout(tip._hideTimer); tip._hideTimer = setTimeout(hideHover, 140); };
+  if (!tip.dataset.wired) {
+    tip.dataset.wired = '1';
+    tip.addEventListener('pointerenter', () => clearTimeout(tip._hideTimer));
+    tip.addEventListener('pointerleave', () => { if (tip._hide) tip._hide(); });
+  }
 
   const drawTiles = (tiles, x, y, w, h, sector) => {
     for (const t of squarify(tiles.map(t => ({ ...t, value: t.cap })), x, y, w, h)) {
@@ -759,8 +782,8 @@ function renderHeatmap(hm, lamp) {
           svg.appendChild(pctEl);
         }
       }
-      rect.addEventListener('pointerenter', () => showPeers(t, sector, t.x + t.w, t.y));
-      rect.addEventListener('pointerleave', hideHover);
+      rect.addEventListener('pointerenter', () => { clearTimeout(tip._hideTimer); showPeers(t, sector, t.x + t.w, t.y); });
+      rect.addEventListener('pointerleave', scheduleHide);
     }
   };
 
@@ -814,13 +837,16 @@ function renderHeatmap(hm, lamp) {
 function renderHeatLegend() {
   const lg = document.getElementById('heatLegend');
   while (lg.firstChild) lg.removeChild(lg.firstChild);
-  lg.appendChild(el('span', '', '−' + HEAT.cap + '%'));
-  for (let p = -HEAT.cap; p <= HEAT.cap; p += 1) {
+  /* 13 swatches evenly across the active cap so the ramp reads the same
+     width whether the cap is 3 or 5 (only the end labels change) */
+  const STEPS = 12;
+  lg.appendChild(el('span', '', '−' + activeCap + '%'));
+  for (let k = 0; k <= STEPS; k++) {
     const sw = el('span', 'swatch');
-    sw.style.background = heatColor(p);
+    sw.style.background = heatColor(-activeCap + (2 * activeCap) * k / STEPS);
     lg.appendChild(sw);
   }
-  lg.appendChild(el('span', '', '+' + HEAT.cap + '%'));
+  lg.appendChild(el('span', '', '+' + activeCap + '%'));
   lg.appendChild(el('span', '', '· tile size = market cap'));
 }
 
@@ -984,6 +1010,7 @@ function applyMapView() {
   /* stock cuts re-color by period from the feed's pctW/pctM/pctYtd fields
      (the ETF cut computes its own periods from bar history above) */
   if (mapView.key !== 'etf') out = recolorForPeriod(out, mapView.period);
+  if (out) out.scaleCap = HEAT_CAP_FOR(mapView.key); /* small caps get the wider ±5% ramp */
   document.getElementById('heatTitle').textContent = label + ' — heat';
   renderHeatmap(out, lamp);
   document.getElementById('heatSource').textContent = note;

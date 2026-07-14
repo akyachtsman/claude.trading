@@ -61,7 +61,7 @@ function marketSessionOpen(now = new Date()): boolean {
 }
 const ttlMs = () => (marketSessionOpen() ? 300_000 : 3_600_000);
 
-type Quote = { pct: number; cap: number | null; last: number | null; sector?: string; name?: string };
+type Quote = { pct: number; cap: number | null; last: number | null; sector?: string; name?: string; industry?: string };
 type Constituent = { sym: string; name: string; sector: string; ind: string };
 type Periods = { w: number | null; m: number | null; ytd: number | null };
 
@@ -121,6 +121,7 @@ export function parseScreener(json: unknown): Map<string, Quote> {
       last: Number.isFinite(last) && last > 0 ? last : null,
       sector: String(r.sector || '').trim() || undefined,
       name: String(r.name || '').trim() || undefined,
+      industry: String(r.industry || '').trim() || undefined,
     };
     out.set(sym, q);
     out.set(sym.replace(/\./g, '-'), q);
@@ -274,21 +275,22 @@ export function buildHeatmap(
 }
 
 // r2k roster: all cap-bearing screener rows ranked by cap, skip the large/mid
-// band, take the next R2K_TAKE. Sector/name come from the screener itself.
+// band, take the next R2K_TAKE. Sector/name/industry come from the screener
+// itself — industry gives finviz-style sub-bands and full-group popups.
 export function r2kConstituents(quotes: Map<string, Quote>): Constituent[] {
   const seen = new Set<string>();
-  const rows: { sym: string; cap: number; sector: string; name: string }[] = [];
+  const rows: { sym: string; cap: number; sector: string; name: string; industry: string }[] = [];
   for (const [sym, q] of quotes) {
     if (sym.includes('-') && seen.has(sym.replace(/-/g, '.'))) continue; // alias rows
     if (seen.has(sym)) continue;
     seen.add(sym);
     if (!q.cap || !q.sector) continue;
     if (/\^|\.W$|\.U$|\.R$/.test(sym)) continue; // warrants/units/rights
-    rows.push({ sym, cap: q.cap, sector: q.sector, name: q.name || sym });
+    rows.push({ sym, cap: q.cap, sector: q.sector, name: q.name || sym, industry: q.industry || '' });
   }
   rows.sort((a, b) => b.cap - a.cap);
   return rows.slice(R2K_SKIP, R2K_SKIP + R2K_TAKE)
-    .map((r) => ({ sym: r.sym, name: r.name, sector: r.sector, ind: '' }));
+    .map((r) => ({ sym: r.sym, name: r.name, sector: r.sector, ind: r.industry }));
 }
 
 function lastTradingDayIso(): string {
