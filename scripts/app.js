@@ -1142,16 +1142,19 @@ window.addEventListener('resize', () => {
    red is price-direction semantics (like the heatmap), not decoration. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)' };
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
-const WB2_ZOOMS = [['6M', 26], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars */
+const WB2_ZOOMS = [['1M', 4], ['3M', 13], ['6M', 26], ['YTD', 'ytd'], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars — same presets as Pro 1 */
 const WB3_ZOOMS = [['5D', 5], ['10D', 10], ['1M', 21]];     /* Pro 3 window, in daily bars */
 
 /* per-pane configuration (their settings menu, in our idiom) — persisted */
-const WB_CFG_KEY = 'wb_cfg_v2';
+const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default (owner ruling 2026-07-14) */
+/* stochW = the next-higher-timeframe stochastic overlay (the governing tide):
+   weekly on Pro 1, monthly on Pro 2, daily on Pro 3 — the doctrine's
+   nested-waves rule, on by default on every tier. */
 const WB_CFG_DEFAULT = () => ({
-  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: false, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
-  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
   /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling) */
-  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
 });
 function loadWbCfg() {
   try {
@@ -1248,21 +1251,22 @@ function monthlyPivots(s) {
    through %D from at/below the oversold band; a SELL is the top-roll — %K
    crossing down through %D from at/above the overbought band. (strategies/
    stochastic-investing.md — the cycle anatomy.) */
-/* Weekly stochastic projected onto daily bars (step lines): each daily bar
-   carries the last COMPLETED week's %K/%D — matches how the reference
-   platform overlays its weekly stochastic on the daily tier. */
-function weeklyStochOnDaily(daily) {
-  const wk = toWeeklyBars(daily);
-  const wst = stochSeries(wk);
-  const k = new Array(daily.c.length).fill(null);
-  const d = new Array(daily.c.length).fill(null);
-  let wi = -1;
-  for (let i = 0; i < daily.c.length; i++) {
-    while (wi + 1 < wk.t.length && wk.t[wi + 1] <= daily.t[i]) wi++;
-    if (wi >= 0) { k[i] = wst.k[wi]; d[i] = wst.d[wi]; }
+/* Higher-timeframe stochastic projected onto a lower-timeframe bar series
+   (step lines): each lower bar carries the current higher-TF %K/%D, aligned by
+   timestamp — the doctrine's dual-timeframe "nested waves" overlay (weekly on
+   daily, monthly on weekly, daily on intraday). */
+function projectStoch(lower, higher) {
+  const hst = stochSeries(higher);
+  const k = new Array(lower.c.length).fill(null);
+  const d = new Array(lower.c.length).fill(null);
+  let hi = -1;
+  for (let i = 0; i < lower.c.length; i++) {
+    while (hi + 1 < higher.t.length && higher.t[hi + 1] <= lower.t[i]) hi++;
+    if (hi >= 0) { k[i] = hst.k[hi]; d[i] = hst.d[hi]; }
   }
   return { k, d };
 }
+const weeklyStochOnDaily = daily => projectStoch(daily, toWeeklyBars(daily));
 
 function stochMarks(st) {
   const buys = [], sells = [];
@@ -1690,8 +1694,9 @@ function renderCharts(data, lamp) {
       window: paneWindow(wbState.wdays, wk), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
-      stW: wbState.cfg.p2.stochW ? wst : null,
+      stW: wbState.cfg.p2.stochW ? projectStoch(wk, toMonthlyBars(d.bars)) : null,
       stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
+      stochWCaption: 'STOCH 13-3-3 · MONTHLY',
     }]);
   }
   /* Pro 3 = the day-trading tier; honest EOD placeholder (tight daily
@@ -1707,8 +1712,9 @@ function renderCharts(data, lamp) {
         window: paneWindow(Math.min(wbState.days3, 5) * 78, intra), offset: wbState.off3, panKey: 'off3',
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
-        stW: null,
+        stW: wbState.cfg.p3.stochW ? projectStoch(intra, d.bars) : null,
         stochCaption: 'STOCH 13-3-3 · 5-MIN',
+        stochWCaption: 'STOCH 13-3-3 · DAILY',
       }]);
     } else {
       maybeFetchIntraday(sym);
@@ -1791,15 +1797,18 @@ function buildWbSettings() {
         col.appendChild(lab);
       }
     };
-    /* Pro 3 (day trading) keeps a slim panel by owner ruling: Bollinger
-       Bands / Volume / Stochastic only. Pro 1/2 carry the full set. */
+    /* Pro 3 (day trading) keeps a slim panel by owner ruling: Bollinger Bands
+       / Volume / Stochastic (+ its higher-timeframe overlay) only — no MAs or
+       S/R. Pro 1/2 carry the full set. The overlay is the next tide up:
+       weekly on Pro 1, monthly on Pro 2, daily on Pro 3. */
     const full = key !== 'p3';
+    const overlayLabel = { p1: 'Stochastic (weekly)', p2: 'Stochastic (monthly)', p3: 'Stochastic (daily)' }[key];
     const ind = [
       ['Bollinger Bands', () => cfg.bb, v => { cfg.bb = v; }],
       ['Volume', () => cfg.vol, v => { cfg.vol = v; }],
       ['Stochastic', () => cfg.stoch, v => { cfg.stoch = v; }],
+      [overlayLabel, () => cfg.stochW, v => { cfg.stochW = v; }],
     ];
-    if (full) ind.push(['Stochastic weekly', () => cfg.stochW, v => { cfg.stochW = v; }]);
     group('Indicators', ind);
     if (full) {
       group('Moving averages', [25, 50, 100, 200, 1].map(n =>

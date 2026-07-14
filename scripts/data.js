@@ -215,6 +215,26 @@ function toWeeklyBars(s) {
   return w;
 }
 
+/* Monthly bars from daily (calendar month buckets) — the governing tide above
+   the weekly, for Pro 2's dual-timeframe stochastic overlay. */
+function toMonthlyBars(s) {
+  const m = { t: [], o: [], h: [], l: [], c: [], v: [] };
+  let key = null;
+  for (let i = 0; i < s.t.length; i++) {
+    const k = s.t[i].slice(0, 7);
+    if (k !== key) {
+      key = k;
+      m.t.push(s.t[i]); m.o.push(s.o[i]); m.h.push(s.h[i]); m.l.push(s.l[i]); m.c.push(s.c[i]); m.v.push(s.v[i]);
+    } else {
+      const j = m.t.length - 1;
+      m.t[j] = s.t[i];
+      m.h[j] = Math.max(m.h[j], s.h[i]); m.l[j] = Math.min(m.l[j], s.l[i]);
+      m.c[j] = s.c[i]; m.v[j] += s.v[i];
+    }
+  }
+  return m;
+}
+
 /* Slow stochastic on packed bars: raw %K over `k` bars → SMA(kSmooth) → %D =
    SMA(d). Warmup slots are null. Flat ranges read 50 (no signal, not a spike). */
 function stochSeries(s, { k, kSmooth, d } = STOCH) {
