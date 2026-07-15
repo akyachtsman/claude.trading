@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260715b">
-<link rel="stylesheet" href="styles/components.css?v=20260715b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260715d">
+<link rel="stylesheet" href="styles/components.css?v=20260715d">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -134,6 +134,13 @@
   #wbTip .up { color: var(--color-gain); }
   #wbTip .down { color: var(--color-loss); }
   .wb-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  /* per-symbol fundamentals strip (earnings + key stats), live mode */
+  .wb-info { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: -4px 0 var(--space-3); font: 500 var(--font-xs)/1.5 var(--font-mono); font-variant-numeric: tabular-nums; min-height: 20px; }
+  .wb-info:empty { display: none; }
+  .wb-info-item { color: var(--color-text-primary); white-space: nowrap; }
+  .wb-info-item b { color: var(--color-text-secondary); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 10px; margin-right: 4px; }
+  .wb-info-muted { color: var(--color-text-secondary); opacity: .8; }
+  .wb-info-warn { color: var(--color-accent); }
   .wb-zoom-pair { display: inline-flex; align-items: center; gap: 6px; }
   .wb-seg-tag { font: 600 10px/1.4 var(--font-mono); letter-spacing: .08em; color: var(--color-text-secondary); }
   .wb-seg-note { font: 400 10px/1.4 var(--font-mono); letter-spacing: .03em; color: var(--color-text-secondary); opacity: .75; }
@@ -306,6 +313,7 @@
             </div>
             <span class="stamp" id="wbSymNote"></span>
           </div>
+          <div class="wb-info" id="wbInfo" aria-live="polite"></div>
           <div class="wb-grid">
             <nav id="wbSidebar" aria-label="Watchlist symbols"></nav>
             <div class="chart-wrap">
@@ -420,8 +428,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260715b"></script>
-<script src="scripts/data.js?v=20260715b"></script>
-<script src="scripts/app.js?v=20260715b"></script>
+<script src="scripts/config.js?v=20260715d"></script>
+<script src="scripts/data.js?v=20260715d"></script>
+<script src="scripts/app.js?v=20260715d"></script>
 </body>
 </html>
