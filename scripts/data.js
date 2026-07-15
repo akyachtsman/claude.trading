@@ -279,6 +279,27 @@ function lampFor(asOfIso, now) {
     : { cls: 'lamp--stale', text: 'STALE', stamp: 'As of ' + asOfIso + ' — refresh overdue' };
 }
 
+/* Accounts/equity are IBKR END-OF-DAY statements: a session's statement only
+   finalizes after that session closes and rolls overnight, so "yesterday's
+   close during today's session" is the freshest data that EXISTS — not stale
+   (owner ruling 2026-07-15). Fresh if the statement is within the normal
+   one-trading-day roll lag; STALE only if it falls further behind (the sync
+   genuinely stopped). The stamp shows the REAL sync time (created_at, local
+   zone) and which session the figures run through — the account snapshot has no
+   intraday clock, so this replaces the misleading bare "STALE". */
+function accountsLampFor(asOfIso, syncedAtIso, now) {
+  if (!asOfIso) return { cls: 'lamp--stale', text: 'NO DATA', stamp: '—' };
+  const n = now || new Date();
+  const ltd = lastTradingDay(n);
+  const prevTd = lastTradingDay(new Date(ltd.getFullYear(), ltd.getMonth(), ltd.getDate() - 1));
+  const fresh = asOfIso >= isoDate(prevTd);   /* allow the overnight-roll lag */
+  const updated = syncedAtIso ? 'Updated ' + fmtStampDateTime(syncedAtIso) : 'As of ' + asOfIso;
+  const through = ' · through ' + asOfIso + ' close';
+  return fresh
+    ? { cls: 'lamp--eod', text: 'EOD', stamp: updated + through }
+    : { cls: 'lamp--stale', text: 'STALE', stamp: updated + through + ' — sync overdue' };
+}
+
 /* Auth: PIN-validated Supabase RPCs (SECURITY DEFINER, anon-only EXECUTE).
    Two plain fetch calls — no client library needed for /rest/v1/rpc. */
 async function deskRpc(fn, pin) {
@@ -448,6 +469,7 @@ function mapDashboardPayload(payload) {
     positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: Number(p.mkt), dayPct: Number(p.dayPct), unrl: Number(p.unrl) })),
     equity: dates.map(d => byDate.get(d)[a.account_key]),
     asOf: a.as_of,
+    syncedAt: a.created_at || null,   /* when the sync wrote this snapshot (desk_007) */
   }));
   let brief = null;
   if (payload.brief && payload.brief.content) {
@@ -458,5 +480,9 @@ function mapDashboardPayload(payload) {
       asOf: payload.brief.as_of,
     };
   }
-  return { accounts, labels, brief, asOf: accounts.length ? accounts[0].asOf : null };
+  return {
+    accounts, labels, brief,
+    asOf: accounts.length ? accounts[0].asOf : null,
+    syncedAt: accounts.length ? accounts[0].syncedAt : null,
+  };
 }

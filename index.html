@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260715n">
-<link rel="stylesheet" href="styles/components.css?v=20260715n">
+<link rel="stylesheet" href="styles/tokens.css?v=20260715o">
+<link rel="stylesheet" href="styles/components.css?v=20260715o">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -63,6 +63,8 @@
   .accounts-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
   .accounts-head h2 { margin: 0; font: 600 var(--font-lg)/1.2 var(--font-sans); }
   .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-3); }
+  #accountsStamp { margin: 4px 0 0; }
+  #accountsStamp:empty { display: none; }
   .account .panel-header { gap: var(--space-2); }
   .acct-code { font: 400 var(--font-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
   .acct-nav { padding: var(--space-3) var(--space-4) 0; }
@@ -277,6 +279,7 @@
           <h2 id="accountsTitle">Accounts</h2>
           <button type="button" class="btn-secondary btn" id="consolidateBtn" aria-pressed="false">Consolidate accounts</button>
         </div>
+        <p class="stamp" id="accountsStamp"></p>
         <div class="account-grid" id="accountGrid"></div>
       </section>
 
@@ -440,8 +443,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260715n"></script>
-<script src="scripts/data.js?v=20260715n"></script>
-<script src="scripts/app.js?v=20260715n"></script>
+<script src="scripts/config.js?v=20260715o"></script>
+<script src="scripts/data.js?v=20260715o"></script>
+<script src="scripts/app.js?v=20260715o"></script>
 </body>
 </html>
