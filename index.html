@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260715d">
-<link rel="stylesheet" href="styles/components.css?v=20260715d">
+<link rel="stylesheet" href="styles/tokens.css?v=20260715e">
+<link rel="stylesheet" href="styles/components.css?v=20260715e">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -81,6 +81,10 @@
     font: 400 var(--font-xs)/1.6 var(--font-mono); white-space: nowrap;
   }
   .chart-tip .tip-date { color: var(--color-text-secondary); }
+  /* charts-workbench crosshair readout: compact, pinned top-left over the box */
+  #wbTip { font-size: 9.5px; line-height: 1.45; padding: 3px 7px; border-radius: var(--radius-sm); opacity: .95; }
+  #wbTip .tip-date { font-weight: 600; letter-spacing: .02em; }
+  #wbTip .tip-row { white-space: nowrap; }
   /* own scroll container: closed <details> content still participates in layout
      (content-visibility), so a wide movers table must never widen the body */
   .chart-data { overflow-x: auto; }
@@ -428,8 +432,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260715d"></script>
-<script src="scripts/data.js?v=20260715d"></script>
-<script src="scripts/app.js?v=20260715d"></script>
+<script src="scripts/config.js?v=20260715e"></script>
+<script src="scripts/data.js?v=20260715e"></script>
+<script src="scripts/app.js?v=20260715e"></script>
 </body>
 </html>
