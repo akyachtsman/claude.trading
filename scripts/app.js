@@ -646,12 +646,11 @@ function renderHeatmap(hm, lamp) {
   const lampEl = document.getElementById('heatLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
   /* as-of stamp = the data's trading day (asOf) plus the feed's fetch time
-     (generatedAt) when it's a real timestamp, so "last updated" is visible.
-     Demo (generatedAt 'Demo') and the delayed cuts (asOf already carries the
-     time) fall through to the date/asOf as-is — no doubled time. */
-  const genTime = hm && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(hm.generatedAt))
-    ? ' · ' + String(hm.generatedAt).slice(11, 16) + ' UTC' : '';
-  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf + genTime : '—';
+     (generatedAt) in the viewer's LOCAL zone, so "last updated" is visible.
+     Demo / undefined generatedAt and the delayed cuts (whose asOf already
+     carries a localized time) add no clock here. */
+  const genTime = hm ? fmtClock(hm.generatedAt) : '';
+  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf + (genTime ? ' · ' + genTime : '') : '—';
   if (!hm || !hm.sectors || !hm.sectors.length) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
@@ -1010,8 +1009,8 @@ function applyMapView() {
       : 'Loading small caps…';
   } else if (mapView.key === 'crypto' || mapView.key === 'futures' || mapView.key === 'world') {
     const cut = heatExtra && heatExtra.cuts && heatExtra.cuts[mapView.key];
-    /* the stamp carries the fetch time — this cut is delayed-live, not EOD */
-    out = cut ? { asOf: heatExtra.generatedAt.slice(0, 16).replace('T', ' ') + ' UTC', sectors: cut.sectors } : null;
+    /* the stamp carries the fetch time (local zone) — this cut is delayed-live, not EOD */
+    out = cut ? { asOf: fmtStampDateTime(heatExtra.generatedAt), sectors: cut.sectors } : null;
     lamp = cut ? { cls: 'lamp--live', text: 'LIVE' } : lamp;
     note = cut ? 'Hand-weighted tiles (config/map-filters.json) · delayed quotes · day % change'
       : heatExtraErr ? 'Delayed quotes unavailable right now — click again in a minute'
