@@ -2230,7 +2230,7 @@ const WIDGET_PATHS = {
   'screener': 'screener',
 };
 const WIDGET_DEFAULTS = [
-  { type: 'ticker-tape', title: 'Ticker tape', height: 78, config: {
+  { type: 'ticker-tape', title: 'Ticker tape', slot: 'strip', height: 78, config: {
     symbols: [
       { proName: 'FOREXCOM:SPXUSD', title: 'S&P 500' },
       { proName: 'FOREXCOM:NSXUSD', title: 'Nasdaq 100' },
@@ -2281,33 +2281,71 @@ function buildWidgetCell(spec) {
 }
 
 async function loadWidgets() {
-  const grid = document.getElementById('widgetGrid');
-  if (!grid) return;
+  const grid  = document.getElementById('widgetGrid');
+  const strip = document.getElementById('widgetStrip');
+  if (!grid && !strip) return;
   let specs = WIDGET_DEFAULTS;
   try {
     const cfg = await fetchPublic('config/widgets.json');
     if (Array.isArray(cfg) && cfg.length) specs = cfg;
   } catch { /* committed config missing/unreachable → built-in defaults */ }
-  while (grid.firstChild) grid.removeChild(grid.firstChild);
-  const frames = [];
-  for (const spec of specs.slice(0, 8)) {
-    const { cell, frame } = buildWidgetCell(spec);
-    grid.appendChild(cell);
-    if (frame) frames.push(frame);
+  /* slot:'strip' widgets (the ticker tape) render in the full-width top strip;
+     everything else fills the panel grid below. */
+  const isStrip = s => s && s.slot === 'strip';
+  const gridSpecs  = specs.filter(s => !isStrip(s)).slice(0, 8);
+  const stripSpecs = specs.filter(isStrip).slice(0, 2);
+
+  const hydrate = f => { if (f._src) { f.src = f._src; f._src = null; } };
+  const gridFrames = [];
+  if (grid) {
+    while (grid.firstChild) grid.removeChild(grid.firstChild);
+    for (const spec of gridSpecs) {
+      const { cell, frame } = buildWidgetCell(spec);
+      grid.appendChild(cell);
+      if (frame) gridFrames.push(frame);
+    }
+  }
+  const stripFrames = [];
+  if (strip) {
+    while (strip.firstChild) strip.removeChild(strip.firstChild);
+    for (const spec of stripSpecs) {
+      const { frame } = buildWidgetCell(spec); /* bare frame, no caption */
+      if (frame) { strip.appendChild(frame); stripFrames.push(frame); }
+    }
   }
   const lamp = document.getElementById('widgetsLamp');
   if (lamp) { lamp.className = 'lamp lamp--live'; lamp.textContent = 'Live'; }
   const stamp = document.getElementById('widgetsStamp');
   if (stamp) stamp.textContent = 'TradingView · live';
-  /* defer the third-party load until the panel nears the viewport */
-  const hydrate = f => { if (f._src) { f.src = f._src; f._src = null; } };
+
+  /* Panel widgets sit below the fold: hydrate when the panel nears the viewport,
+     so nothing third-party runs on initial paint (keeps the S1 console gate
+     clean — CLAUDE.md: the lazy-load IS the containment). */
   if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver((entries, obs) => {
       for (const e of entries) if (e.isIntersecting) { hydrate(e.target); obs.unobserve(e.target); }
     }, { rootMargin: '250px' });
-    frames.forEach(f => io.observe(f));
+    gridFrames.forEach(f => io.observe(f));
   } else {
-    frames.forEach(hydrate);
+    gridFrames.forEach(hydrate);
+  }
+
+  /* The ticker strip is ABOVE the fold, so an IntersectionObserver would fire on
+     paint and run vendor JS immediately — tripping the same S1 gate the panel
+     lazy-load protects. Defer it to the first genuine user interaction (which
+     the load-time S1 check never performs); a real visitor triggers it within a
+     moment of arriving, and it hydrates once. */
+  if (stripFrames.length) {
+    const EVTS = ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart', 'scroll'];
+    const OPTS = { passive: true };
+    let done = false;
+    const fire = () => {
+      if (done) return;
+      done = true;
+      stripFrames.forEach(hydrate);
+      EVTS.forEach(ev => window.removeEventListener(ev, fire, OPTS));
+    };
+    EVTS.forEach(ev => window.addEventListener(ev, fire, OPTS));
   }
 }
 
