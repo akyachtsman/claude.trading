@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260715i">
-<link rel="stylesheet" href="styles/components.css?v=20260715i">
+<link rel="stylesheet" href="styles/tokens.css?v=20260715j">
+<link rel="stylesheet" href="styles/components.css?v=20260715j">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -95,8 +95,8 @@
 
   .ml-auto { margin-left: auto; }
 
-  /* market widgets: embedded third-party (TradingView) widgets, each isolated
-     in its own sandboxed iframe so their code never touches the desk. */
+  /* market widgets: embedded third-party (TradingView + FRED) widgets, each
+     isolated in its own sandboxed iframe so their code never touches the desk. */
   .widget-strip { min-width: 0; }
   .widget-strip:empty { display: none; }
   .widget-strip .widget-frame { height: 78px; }
@@ -395,7 +395,7 @@
         </div>
         <div class="panel-body">
           <div class="widget-grid" id="widgetGrid"></div>
-          <p class="stamp" id="widgetsSource">Embedded TradingView widgets · live external data · sandboxed from the desk (editable in config/widgets.json)</p>
+          <p class="stamp" id="widgetsSource">Embedded TradingView + FRED widgets · live external data · sandboxed from the desk (editable in config/widgets.json)</p>
         </div>
       </section>
 
@@ -440,8 +440,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260715i"></script>
-<script src="scripts/data.js?v=20260715i"></script>
-<script src="scripts/app.js?v=20260715i"></script>
+<script src="scripts/config.js?v=20260715j"></script>
+<script src="scripts/data.js?v=20260715j"></script>
+<script src="scripts/app.js?v=20260715j"></script>
 </body>
 </html>

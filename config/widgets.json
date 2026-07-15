@@ -34,5 +34,10 @@
       "importanceFilter": "0,1",
       "countryFilter": "us,eu,gb,jp,cn"
     }
+  },
+  {
+    "type": "fred-glance",
+    "title": "Economy at a glance — FRED",
+    "height": 530
   }
 ]

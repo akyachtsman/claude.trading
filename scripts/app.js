@@ -2244,6 +2244,7 @@ const WIDGET_DEFAULTS = [
     colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
     importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',
   } },
+  { type: 'fred-glance', title: 'Economy at a glance — FRED', height: 530 },
 ];
 
 function widgetSrc(path, config) {
@@ -2251,6 +2252,23 @@ function widgetSrc(path, config) {
      config as a URL-encoded JSON fragment */
   return 'https://www.tradingview-widget.com/embed-widget/' + path + '/?locale=en#'
     + encodeURIComponent(JSON.stringify(config || {}));
+}
+
+/* FRED's "Economy at a glance" widget — a self-contained cross-origin iframe on
+   research.stlouisfed.org (a SECOND embed provider beside TradingView). Same
+   isolation as the TradingView frames: a real cross-origin src, so the browser
+   same-origin policy walls the frame off from the desk; it's a standalone iframe
+   with no parent-page vendor script, and no desk data ever crosses. */
+const FRED_GLANCE_SRC = 'https://research.stlouisfed.org/fred-glance-widget.php';
+
+/* Resolve a widget spec to its iframe src. TradingView widgets build a
+   tradingview-widget.com URL from the widget name + config; a FRED widget uses
+   the provider's own URL (spec.src lets the owner paste a configure-generated
+   one to pick a custom set of series). Returns null for an unknown type. */
+function widgetFrameSrc(spec) {
+  if (spec.type === 'fred-glance') return spec.src || FRED_GLANCE_SRC;
+  const path = WIDGET_PATHS[spec.type];
+  return path ? widgetSrc(path, spec.config) : null;
 }
 
 /* Build a widget cell. The iframe's src is stashed on _src, NOT set yet:
@@ -2264,18 +2282,19 @@ function buildWidgetCell(spec) {
   cap.className = 'widget-cap';
   cap.textContent = spec.title || spec.type || 'Widget';
   cell.appendChild(cap);
-  const path = WIDGET_PATHS[spec.type];
-  if (!path) { cap.textContent = cap.textContent + ' — unknown widget type'; return { cell, frame: null }; }
+  const src = widgetFrameSrc(spec);
+  if (!src) { cap.textContent = cap.textContent + ' — unknown widget type'; return { cell, frame: null }; }
   const frame = document.createElement('iframe');
   frame.className = 'widget-frame';
   frame.title = spec.title || spec.type;
   frame.setAttribute('referrerpolicy', 'no-referrer');
   /* cross-origin src (below) already isolates via same-origin policy; the
      sandbox is defence-in-depth. allow-same-origin here refers to the frame's
-     TradingView origin (so its widget storage works), NOT the desk's. */
+     OWN vendor origin (TradingView or FRED, so its widget storage works), NOT
+     the desk's. */
   frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
   frame.style.height = (Number(spec.height) || 400) + 'px';
-  frame._src = widgetSrc(path, spec.config);
+  frame._src = src;
   cell.appendChild(frame);
   return { cell, frame };
 }
