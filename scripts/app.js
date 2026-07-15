@@ -2132,19 +2132,23 @@ function startFeedPolling() {
   schedule();
 }
 
-/* ── market widgets: embedded third-party (TradingView) widgets, each in its
-   own sandboxed iframe. The opaque srcdoc origin walls the vendor code off
-   from the desk — it can't reach our DOM, the PIN, or any account data. The
-   roster is owner-editable (config/widgets.json); these are the fallback. Not
-   tied to desk mode: the widgets are live external data in demo and live. */
-const WIDGET_SCRIPTS = {
-  'ticker-tape': 'embed-widget-ticker-tape',
-  'events': 'embed-widget-events',
-  'market-overview': 'embed-widget-market-overview',
-  'mini-symbol-overview': 'embed-widget-mini-symbol-overview',
-  'advanced-chart': 'embed-widget-advanced-chart',
-  'timeline': 'embed-widget-timeline',
-  'screener': 'embed-widget-screener',
+/* ── market widgets: embedded third-party (TradingView) widgets. Each loads as
+   a DIRECT cross-origin iframe on tradingview-widget.com — NOT a srcdoc doc.
+   That matters for isolation: a srcdoc frame inherits the PARENT's origin, so
+   `allow-same-origin` there would make the vendor script same-origin with the
+   desk (able to read sessionStorage/the PIN). A real cross-origin src gives the
+   frame TradingView's own origin, so the browser's same-origin policy walls it
+   off from the desk entirely — it can't reach our DOM, the PIN, or account
+   data. Roster is owner-editable (config/widgets.json); these are the fallback.
+   Mode-independent: live external data in demo and live. */
+const WIDGET_PATHS = {
+  'ticker-tape': 'ticker-tape',
+  'events': 'events',
+  'market-overview': 'market-overview',
+  'mini-symbol-overview': 'mini-symbol-overview',
+  'advanced-chart': 'advanced-chart',
+  'timeline': 'timeline',
+  'screener': 'screener',
 };
 const WIDGET_DEFAULTS = [
   { type: 'ticker-tape', title: 'Ticker tape', height: 78, config: {
@@ -2163,19 +2167,15 @@ const WIDGET_DEFAULTS = [
   } },
 ];
 
-function widgetDoc(script, config) {
-  const src = 'https://s3.tradingview.com/external-embedding/' + script + '.js';
-  const cfg = JSON.stringify(config || {});
-  return '<!DOCTYPE html><html><head><meta charset="utf-8">'
-    + '<style>html,body{margin:0;height:100%;background:transparent;}'
-    + '.tradingview-widget-container,.tradingview-widget-container__widget{height:100%;width:100%;}</style></head><body>'
-    + '<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div>'
-    + '<script type="text/javascript" src="' + src + '" async>' + cfg + '<\/script>'
-    + '</div></body></html>';
+function widgetSrc(path, config) {
+  /* the URL TradingView's own loader builds: widget name in the path, the
+     config as a URL-encoded JSON fragment */
+  return 'https://www.tradingview-widget.com/embed-widget/' + path + '/?locale=en#'
+    + encodeURIComponent(JSON.stringify(config || {}));
 }
 
-/* Build a widget cell. The iframe's srcdoc is stashed on _doc, NOT set yet:
-   loadWidgets defers it to first scroll-into-view so the vendor code never
+/* Build a widget cell. The iframe's src is stashed on _src, NOT set yet:
+   loadWidgets defers it to first scroll-into-view so the vendor frame never
    loads on initial paint (perf + privacy, and keeps the S1 console gate clean
    — this below-the-fold panel stays inert until the user reaches it). */
 function buildWidgetCell(spec) {
@@ -2185,16 +2185,18 @@ function buildWidgetCell(spec) {
   cap.className = 'widget-cap';
   cap.textContent = spec.title || spec.type || 'Widget';
   cell.appendChild(cap);
-  const script = WIDGET_SCRIPTS[spec.type];
-  if (!script) { cap.textContent = cap.textContent + ' — unknown widget type'; return { cell, frame: null }; }
+  const path = WIDGET_PATHS[spec.type];
+  if (!path) { cap.textContent = cap.textContent + ' — unknown widget type'; return { cell, frame: null }; }
   const frame = document.createElement('iframe');
   frame.className = 'widget-frame';
   frame.title = spec.title || spec.type;
-  /* opaque-origin srcdoc + sandbox: the vendor script runs isolated. allow-
-     same-origin here refers to the frame's OWN opaque origin, not the desk. */
+  frame.setAttribute('referrerpolicy', 'no-referrer');
+  /* cross-origin src (below) already isolates via same-origin policy; the
+     sandbox is defence-in-depth. allow-same-origin here refers to the frame's
+     TradingView origin (so its widget storage works), NOT the desk's. */
   frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
   frame.style.height = (Number(spec.height) || 400) + 'px';
-  frame._doc = widgetDoc(script, spec.config);
+  frame._src = widgetSrc(path, spec.config);
   cell.appendChild(frame);
   return { cell, frame };
 }
@@ -2219,7 +2221,7 @@ async function loadWidgets() {
   const stamp = document.getElementById('widgetsStamp');
   if (stamp) stamp.textContent = 'TradingView · live';
   /* defer the third-party load until the panel nears the viewport */
-  const hydrate = f => { if (f._doc) { f.srcdoc = f._doc; f._doc = null; } };
+  const hydrate = f => { if (f._src) { f.src = f._src; f._src = null; } };
   if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver((entries, obs) => {
       for (const e of entries) if (e.isIntersecting) { hydrate(e.target); obs.unobserve(e.target); }

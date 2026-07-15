@@ -100,16 +100,21 @@ This project's look is its own — established at kickoff via `/design-intake`
   multi-period sweep — public market percentages only.
 - **Third-party widget embeds (Market widgets panel, owner request
   2026-07-15):** the panel loads TradingView widgets — the one place the desk
-  runs vendor JS. Each widget lives in its OWN sandboxed **opaque-origin**
-  `srcdoc` iframe (`sandbox="allow-scripts allow-same-origin allow-popups
-  ..."`; `allow-same-origin` scopes to the frame's own opaque origin, NOT the
-  desk), so the vendor code cannot reach the page DOM, the PIN, or any account
-  data. Loads are **deferred to scroll** (IntersectionObserver) so nothing
-  third-party runs on initial paint — this also keeps the S1 console gate
-  clean (do NOT widen the S1 allowlist for widget origins; the lazy-load is
-  the containment). Residual: TradingView sees the viewer's IP/UA and can set
-  its own cookies inside the sandboxed frame; no desk data crosses the
-  boundary. Roster is owner-controlled (`config/widgets.json`).
+  runs vendor JS. Each widget is a **direct cross-origin iframe** on
+  `tradingview-widget.com` (NOT a `srcdoc` doc — a srcdoc frame inherits the
+  PARENT origin, so `allow-same-origin` there would put the vendor script
+  same-origin with the desk and expose `sessionStorage`/the PIN; this was
+  caught in PR #72 review and fixed). A real cross-origin `src` gives the frame
+  TradingView's own origin, so the browser same-origin policy walls it off from
+  the desk — it cannot read the page DOM, the PIN, or account data. The
+  `sandbox` (`allow-scripts allow-same-origin allow-popups ...`) is
+  defence-in-depth; `allow-same-origin` there refers to TradingView's origin,
+  not the desk's. Loads are **deferred to scroll** (IntersectionObserver) so
+  nothing third-party runs on initial paint — this also keeps the S1 console
+  gate clean (do NOT widen the S1 allowlist for widget origins; the lazy-load
+  is the containment). Residual: TradingView sees the viewer's IP/UA and sets
+  its own cookies in its own frame; no desk data crosses the boundary. Roster
+  is owner-controlled (`config/widgets.json`).
 - Server-side keys (`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, IBKR
   token/query-id, `CRON_SECRET`) live only in edge-function secrets;
   `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —
