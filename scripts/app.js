@@ -1228,6 +1228,8 @@ let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg 
    frame re-renders) can't drop the pointer stream */
 let wbDrag = null, wbPanRaf = 0;
 const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
+const wbInfoCache = {};                /* symbol → fundamentals object, or null for a known miss */
+const wbInfoPending = new Set();       /* per-symbol info fetches in flight */
 const MIN_NAV_WIN = 20;   /* smallest window the navigator can shrink to (bars) */
 window.addEventListener('pointermove', ev => {
   if (!wbDrag || !wbState) return;
@@ -1332,6 +1334,66 @@ function stochPinned(st, band = 80, bars = 4) {
   return null;
 }
 
+/* ── per-symbol fundamentals strip (earnings date + key stats) ─────────────
+   Live-only: fetched on demand through quote-proxy (kind:'info' → Yahoo
+   v7/quote). Cached per symbol for the tab session; demo shows a placeholder. */
+const wbFmtCap = n => {
+  const a = Math.abs(n);
+  if (a >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+  if (a >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
+  if (a >= 1e6) return '$' + (n / 1e6).toFixed(0) + 'M';
+  return '$' + Math.round(n).toLocaleString();
+};
+const startOfDay = ms => { const x = new Date(ms); x.setHours(0, 0, 0, 0); return x.getTime(); };
+function fmtEarnings(ts, estimate) {
+  if (!ts) return null;
+  const d = new Date(ts * 1000);
+  const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const days = Math.round((startOfDay(d.getTime()) - startOfDay(Date.now())) / 86400000);
+  let rel, warn = false;
+  if (days > 1) { rel = 'in ' + days + 'd'; warn = days <= 7; }
+  else if (days === 1) { rel = 'tomorrow'; warn = true; }
+  else if (days === 0) { rel = 'today'; warn = true; }
+  else { rel = 'reported'; }
+  return { text: label + ' · ' + rel + (estimate ? ' · est.' : ''), warn };
+}
+function maybeFetchWbInfo(sym) {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;      /* live only */
+  if (sym in wbInfoCache || wbInfoPending.has(sym)) return;
+  wbInfoPending.add(sym);
+  deskQuote(sym, 'info')
+    .then(out => {
+      wbInfoCache[sym] = (out && out.ok && out.info) ? out.info : null;
+      if (wbState && wbState.sym === sym) renderWbInfo();
+    })
+    .catch(() => { wbInfoCache[sym] = null; })
+    .finally(() => wbInfoPending.delete(sym));
+}
+function renderWbInfo() {
+  const box = document.getElementById('wbInfo');
+  if (!box || !wbState) return;
+  while (box.firstChild) box.removeChild(box.firstChild);
+  const muted = text => { const s = el('span', 'wb-info-muted', text); box.appendChild(s); };
+  if (DESK.mode === 'demo' || !DESK_DB.url) { muted('Earnings & key stats show in live mode'); return; }
+  const sym = wbState.sym;
+  const info = wbInfoCache[sym];
+  if (info === undefined) { muted('Loading fundamentals…'); return; }
+  if (info === null) { muted('Fundamentals unavailable for ' + sym); return; }
+  const item = (label, value, cls) => {
+    const span = el('span', 'wb-info-item' + (cls ? ' ' + cls : ''));
+    span.appendChild(el('b', '', label));
+    span.appendChild(document.createTextNode(value));
+    box.appendChild(span);
+  };
+  const e = fmtEarnings(info.earningsTs, info.earningsEstimate);
+  if (e) item('Earnings', e.text, e.warn ? 'wb-info-warn' : '');
+  if (info.marketCap != null) item('Mkt cap', wbFmtCap(info.marketCap));
+  if (info.pe != null) item('P/E', info.pe.toFixed(1));
+  if (info.wkLow != null && info.wkHigh != null) item('52w', '$' + info.wkLow.toFixed(2) + '–$' + info.wkHigh.toFixed(2));
+  if (info.divYield != null && info.divYield > 0) item('Yield', info.divYield.toFixed(2) + '%');
+  if (!box.childNodes.length) muted('Fundamentals unavailable for ' + sym);
+}
+
 function renderWbSidebar(data) {
   const nav = document.getElementById('wbSidebar');
   while (nav.firstChild) nav.removeChild(nav.firstChild);
@@ -1374,6 +1436,8 @@ function renderCharts(data, lamp) {
   const symBox = document.getElementById('wbSymInput');
   if (document.activeElement !== symBox) symBox.value = wbState.sym;
   renderWbSidebar(data);
+  renderWbInfo();
+  maybeFetchWbInfo(wbState.sym);
 
   const svg = document.getElementById('wbChart');
   while (svg.firstChild) svg.removeChild(svg.firstChild);

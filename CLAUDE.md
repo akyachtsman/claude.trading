@@ -56,6 +56,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   session-aware cached + single-flight. PIN-gated: `desk-ask` (Claude Q&A).
   Origin-guarded anon: `quote-proxy` (OHLC for any ticker — no PIN, restricted
   to the site origin + in-memory cache; owner ruling 2026-07-14, paid plan).
+  `kind:'info'` also returns per-symbol fundamentals (next earnings date +
+  market cap / P/E / 52-week range / dividend yield) from Yahoo v7/quote via a
+  cached cookie+crumb handshake — powers the charts panel's fundamentals strip.
   Cron-secret-gated: `desk-ibkr-sync`
   (Flex → tables), `desk-brief` (Opus brief with the FR-AI4 grounding
   guard). Scheduled by pg_cron (`desk_005` migration): sync 22:35/09:35,
