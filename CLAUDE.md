@@ -43,6 +43,11 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
+- `config/widgets.json` — owner-editable roster for the **Market widgets**
+  panel: embedded third-party (TradingView) widgets, each rendered by
+  `loadWidgets()` in its own sandboxed opaque-origin `srcdoc` iframe and
+  lazy-loaded on scroll. Read CLIENT-side (`fetchPublic`), not by an edge
+  function. Mode-independent (live external data in demo + live).
 - `supabase/functions/` — versioned sources of the edge-function data layer
   (deployed only to the dedicated project). Anon-callable public feeds:
   `desk-market` (Stooq→Yahoo tiles + FRED 10Y), `desk-heatmap` (Nasdaq
@@ -93,6 +98,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   public news.json. `desk-heatmap` holds it too, solely for the
   `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
   multi-period sweep — public market percentages only.
+- **Third-party widget embeds (Market widgets panel, owner request
+  2026-07-15):** the panel loads TradingView widgets — the one place the desk
+  runs vendor JS. Each widget lives in its OWN sandboxed **opaque-origin**
+  `srcdoc` iframe (`sandbox="allow-scripts allow-same-origin allow-popups
+  ..."`; `allow-same-origin` scopes to the frame's own opaque origin, NOT the
+  desk), so the vendor code cannot reach the page DOM, the PIN, or any account
+  data. Loads are **deferred to scroll** (IntersectionObserver) so nothing
+  third-party runs on initial paint — this also keeps the S1 console gate
+  clean (do NOT widen the S1 allowlist for widget origins; the lazy-load is
+  the containment). Residual: TradingView sees the viewer's IP/UA and can set
+  its own cookies inside the sandboxed frame; no desk data crosses the
+  boundary. Roster is owner-controlled (`config/widgets.json`).
 - Server-side keys (`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, IBKR
   token/query-id, `CRON_SECRET`) live only in edge-function secrets;
   `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —

@@ -1,0 +1,37 @@
+[
+  {
+    "type": "ticker-tape",
+    "title": "Ticker tape",
+    "height": 78,
+    "config": {
+      "symbols": [
+        { "proName": "FOREXCOM:SPXUSD", "title": "S&P 500" },
+        { "proName": "FOREXCOM:NSXUSD", "title": "Nasdaq 100" },
+        { "proName": "FOREXCOM:DJI", "title": "Dow 30" },
+        { "proName": "TVC:US10Y", "title": "US 10Y" },
+        { "proName": "TVC:DXY", "title": "US Dollar" },
+        { "proName": "TVC:GOLD", "title": "Gold" },
+        { "proName": "BITSTAMP:BTCUSD", "title": "Bitcoin" }
+      ],
+      "showSymbolLogo": true,
+      "isTransparent": true,
+      "displayMode": "adaptive",
+      "colorTheme": "light",
+      "locale": "en"
+    }
+  },
+  {
+    "type": "events",
+    "title": "Economic calendar",
+    "height": 460,
+    "config": {
+      "colorTheme": "light",
+      "isTransparent": true,
+      "width": "100%",
+      "height": "100%",
+      "locale": "en",
+      "importanceFilter": "0,1",
+      "countryFilter": "us,eu,gb,jp,cn"
+    }
+  }
+]

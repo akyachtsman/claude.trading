@@ -2132,6 +2132,104 @@ function startFeedPolling() {
   schedule();
 }
 
+/* ── market widgets: embedded third-party (TradingView) widgets, each in its
+   own sandboxed iframe. The opaque srcdoc origin walls the vendor code off
+   from the desk — it can't reach our DOM, the PIN, or any account data. The
+   roster is owner-editable (config/widgets.json); these are the fallback. Not
+   tied to desk mode: the widgets are live external data in demo and live. */
+const WIDGET_SCRIPTS = {
+  'ticker-tape': 'embed-widget-ticker-tape',
+  'events': 'embed-widget-events',
+  'market-overview': 'embed-widget-market-overview',
+  'mini-symbol-overview': 'embed-widget-mini-symbol-overview',
+  'advanced-chart': 'embed-widget-advanced-chart',
+  'timeline': 'embed-widget-timeline',
+  'screener': 'embed-widget-screener',
+};
+const WIDGET_DEFAULTS = [
+  { type: 'ticker-tape', title: 'Ticker tape', height: 78, config: {
+    symbols: [
+      { proName: 'FOREXCOM:SPXUSD', title: 'S&P 500' },
+      { proName: 'FOREXCOM:NSXUSD', title: 'Nasdaq 100' },
+      { proName: 'TVC:US10Y', title: 'US 10Y' },
+      { proName: 'TVC:GOLD', title: 'Gold' },
+      { proName: 'BITSTAMP:BTCUSD', title: 'Bitcoin' },
+    ],
+    showSymbolLogo: true, isTransparent: true, displayMode: 'adaptive', colorTheme: 'light', locale: 'en',
+  } },
+  { type: 'events', title: 'Economic calendar', height: 460, config: {
+    colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
+    importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',
+  } },
+];
+
+function widgetDoc(script, config) {
+  const src = 'https://s3.tradingview.com/external-embedding/' + script + '.js';
+  const cfg = JSON.stringify(config || {});
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">'
+    + '<style>html,body{margin:0;height:100%;background:transparent;}'
+    + '.tradingview-widget-container,.tradingview-widget-container__widget{height:100%;width:100%;}</style></head><body>'
+    + '<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div>'
+    + '<script type="text/javascript" src="' + src + '" async>' + cfg + '<\/script>'
+    + '</div></body></html>';
+}
+
+/* Build a widget cell. The iframe's srcdoc is stashed on _doc, NOT set yet:
+   loadWidgets defers it to first scroll-into-view so the vendor code never
+   loads on initial paint (perf + privacy, and keeps the S1 console gate clean
+   — this below-the-fold panel stays inert until the user reaches it). */
+function buildWidgetCell(spec) {
+  const cell = document.createElement('div');
+  cell.className = 'widget-cell';
+  const cap = document.createElement('p');
+  cap.className = 'widget-cap';
+  cap.textContent = spec.title || spec.type || 'Widget';
+  cell.appendChild(cap);
+  const script = WIDGET_SCRIPTS[spec.type];
+  if (!script) { cap.textContent = cap.textContent + ' — unknown widget type'; return { cell, frame: null }; }
+  const frame = document.createElement('iframe');
+  frame.className = 'widget-frame';
+  frame.title = spec.title || spec.type;
+  /* opaque-origin srcdoc + sandbox: the vendor script runs isolated. allow-
+     same-origin here refers to the frame's OWN opaque origin, not the desk. */
+  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+  frame.style.height = (Number(spec.height) || 400) + 'px';
+  frame._doc = widgetDoc(script, spec.config);
+  cell.appendChild(frame);
+  return { cell, frame };
+}
+
+async function loadWidgets() {
+  const grid = document.getElementById('widgetGrid');
+  if (!grid) return;
+  let specs = WIDGET_DEFAULTS;
+  try {
+    const cfg = await fetchPublic('config/widgets.json');
+    if (Array.isArray(cfg) && cfg.length) specs = cfg;
+  } catch { /* committed config missing/unreachable → built-in defaults */ }
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+  const frames = [];
+  for (const spec of specs.slice(0, 8)) {
+    const { cell, frame } = buildWidgetCell(spec);
+    grid.appendChild(cell);
+    if (frame) frames.push(frame);
+  }
+  const lamp = document.getElementById('widgetsLamp');
+  if (lamp) { lamp.className = 'lamp lamp--live'; lamp.textContent = 'Live'; }
+  const stamp = document.getElementById('widgetsStamp');
+  if (stamp) stamp.textContent = 'TradingView · live';
+  /* defer the third-party load until the panel nears the viewport */
+  const hydrate = f => { if (f._doc) { f.srcdoc = f._doc; f._doc = null; } };
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries, obs) => {
+      for (const e of entries) if (e.isIntersecting) { hydrate(e.target); obs.unobserve(e.target); }
+    }, { rootMargin: '250px' });
+    frames.forEach(f => io.observe(f));
+  } else {
+    frames.forEach(hydrate);
+  }
+}
+
 async function boot() {
   DESK.mode = resolveMode();
   if (DESK.mode === 'demo') {
@@ -2142,6 +2240,7 @@ async function boot() {
     renderPrivate();
     loadHeatmap();
     loadCharts();
+    loadWidgets();
     return;
   }
   /* live: public domains render immediately; private waits for PIN */
@@ -2150,6 +2249,7 @@ async function boot() {
   renderMasthead();
   loadHeatmap();
   loadCharts();
+  loadWidgets();
   startFeedPolling();
   const pin = sessionStorage.getItem('desk_pin');
   if (pin) {
