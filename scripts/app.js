@@ -2293,6 +2293,13 @@ function buildWidgetCell(spec) {
      OWN vendor origin (TradingView or FRED, so its widget storage works), NOT
      the desk's. */
   frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+  /* Permissions-Policy grant for the vendor frame: TradingView's widgets probe
+     the motion sensors, so without this Chromium logs "accelerometer is not
+     allowed" on hydrate (harmless to the widget, but it trips the S3 console
+     gate). Grant ONLY the motion sensors — deliberately NOT camera/microphone/
+     geolocation/clipboard/payment, which the widgets never need and which would
+     be a real surface. Scoped to this frame's own vendor origin. */
+  frame.setAttribute('allow', 'accelerometer; gyroscope; magnetometer');
   frame.style.height = (Number(spec.height) || 400) + 'px';
   frame._src = src;
   cell.appendChild(frame);
