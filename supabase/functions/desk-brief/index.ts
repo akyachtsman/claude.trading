@@ -152,12 +152,37 @@ Deno.serve(async (req) => {
     const asOf = snapshots.map((s: any) => s.as_of).sort().at(-1);
     const [market, news] = await Promise.all([liveFeed('desk-market'), liveFeed('desk-news')]);
 
-    const brief = await callAnthropic(buildPrompt(snapshots, market, news, asOf));
-    if (typeof brief.state !== 'string' || !Array.isArray(brief.levels) || !Array.isArray(brief.scenarios)) {
-      throw new Error('brief JSON failed shape validation');
+    // Generate with a bounded retry. The brief runs on only two slots a day, so
+    // a single transient miss — an Anthropic hiccup/overload, or a
+    // non-deterministic grounding-guard rejection where the model happened to
+    // phrase an ungrounded figure — otherwise strands the desk as STALE until
+    // the next 12h slot. Regenerate up to 3 times; the FR-AI4 invariant is
+    // UNCHANGED — only a brief that passes the guard is ever stored, and if all
+    // attempts fail we store nothing (same as before, just after retrying).
+    const prompt  = buildPrompt(snapshots, market, news, asOf);
+    const allowed = groundingNumbers(snapshots, market);
+    const ATTEMPTS = 3;
+    // deno-lint-ignore no-explicit-any
+    let brief: any = null;
+    let lastErr = 'no attempt made';
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+      try {
+        const cand = await callAnthropic(prompt);
+        if (typeof cand.state !== 'string' || !Array.isArray(cand.levels) || !Array.isArray(cand.scenarios)) {
+          throw new Error('brief JSON failed shape validation');
+        }
+        const check = validateGrounding(cand, allowed);
+        if (!check.ok) throw new Error('brief cited ungrounded dollar figures: ' + check.bad.join(', ') + ' — not stored (FR-AI4)');
+        brief = cand;
+        break;
+      } catch (e) {
+        // deno-lint-ignore no-explicit-any
+        lastErr = String((e as any)?.message || e);
+        console.error(`desk-brief attempt ${attempt}/${ATTEMPTS} failed:`, lastErr);
+        if (attempt < ATTEMPTS) await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
     }
-    const check = validateGrounding(brief, groundingNumbers(snapshots, market));
-    if (!check.ok) throw new Error('brief cited ungrounded dollar figures: ' + check.bad.join(', ') + ' — not stored (FR-AI4)');
+    if (!brief) throw new Error(`brief failed after ${ATTEMPTS} attempts — ${lastErr}`);
 
     const up = await fetch(`${url}/rest/v1/desk_ai_briefs?on_conflict=user_id,as_of`, {
       method: 'POST',
