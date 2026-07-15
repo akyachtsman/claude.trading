@@ -121,11 +121,17 @@ This project's look is its own — established at kickoff via `/design-intake`
   `sandbox` (`allow-scripts allow-same-origin allow-popups ...`) is
   defence-in-depth; `allow-same-origin` there refers to TradingView's origin,
   not the desk's. The frame also carries a tight Permissions-Policy
-  `allow="accelerometer; gyroscope; magnetometer"` — motion sensors ONLY, so
-  TradingView's sensor probe doesn't log a Chromium permissions-policy violation
-  on hydrate (which tripped S3); deliberately NOT camera/microphone/geolocation/
-  clipboard/payment, and scoped to the frame's own vendor origin. **FRED
-  (`fred-glance`, owner request 2026-07-15) is a SECOND
+  `allow="accelerometer; gyroscope; magnetometer"` — motion sensors ONLY (the
+  set TradingView's own official embed grants), deliberately NOT camera/
+  microphone/geolocation/clipboard/payment, and scoped to the frame's own vendor
+  origin. Note this grant reaches only the DIRECT vendor frame: the ticker-tape's
+  accelerometer probe actually fires inside a TradingView **nested sub-frame**
+  the outer `allow` can't propagate into, so on hydrate Chromium still logs one
+  benign `accelerometer is not allowed` permissions-policy violation (PR #78
+  proved the outer grant can't suppress it). That single warning is handled by a
+  tightly-scoped allowlist in the **S3** UI test (matches only the exact
+  accelerometer string; every other console error still fails) — NOT by widening
+  S1. **FRED (`fred-glance`, owner request 2026-07-15) is a SECOND
   embed provider on the same footing** — a direct cross-origin iframe on
   `research.stlouisfed.org` (self-contained, no parent-page vendor script),
   sandboxed identically; `allow-same-origin` there refers to FRED's origin. Panel
