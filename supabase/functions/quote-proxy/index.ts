@@ -102,7 +102,7 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
 // project egress IP before shipping.
 type Info = {
   symbol: string; name: string | null; price: number | null;
-  marketCap: number | null; pe: number | null;
+  marketCap: number | null; pe: number | null; peFwd: boolean;
   wkLow: number | null; wkHigh: number | null; divYield: number | null;
   earningsTs: number | null; earningsEstimate: boolean;
 };
@@ -154,12 +154,18 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
     .map(num).filter((x): x is number => x != null);
   const future = cands.filter((t) => t >= nowSec).sort((a, b) => a - b);
   const earningsTs = future.length ? future[0] : (cands.length ? Math.max(...cands) : null);
+  // P/E: forward is the desk convention (owner ruling). Fall back to trailing
+  // when a ticker has no analyst estimate (ETFs, uncovered names); peFwd tells
+  // the client which basis it is so a trailing fallback is never mislabeled.
+  const fwdPe = num(q.forwardPE);
+  const ttmPe = num(q.trailingPE);
   return {
     symbol: String(q.symbol ?? symbol).toUpperCase(),
     name: q.shortName ?? q.longName ?? null,
     price: num(q.regularMarketPrice),
     marketCap: num(q.marketCap),
-    pe: num(q.trailingPE),
+    pe: fwdPe ?? ttmPe,
+    peFwd: fwdPe != null,
     wkLow: num(q.fiftyTwoWeekLow),
     wkHigh: num(q.fiftyTwoWeekHigh),
     divYield: divPct,
