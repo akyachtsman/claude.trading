@@ -398,12 +398,26 @@ function marketSessionOpen(now) {
   return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
 
+/* Display clocks in the VIEWER'S local timezone (owner ruling 2026-07-15):
+   server timestamps are UTC ISO strings — parse and render them in the
+   browser's own zone. Absolute trading-day dates (asOf) and the market-session
+   logic above stay UTC/ET; only these wall-clock display stamps localize. */
+function fmtClock(iso) {         /* local "HH:mm TZ" (e.g. "12:45 EDT"); '' if unparseable */
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? ''
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
+}
+function fmtStampDateTime(iso) { /* local "YYYY-MM-DD HH:mm TZ"; '' if unparseable */
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA') + ' ' + fmtClock(iso);
+}
+
 /* Two-tier lamp for live feeds (FR-R7): the lamp class answers "how fresh
    is the FETCH" (LIVE ≤ 6 min), the stamp always carries the payload's own
    data as-of so a LIVE lamp can never overstate quote freshness. */
 function liveLampFor(generatedAt, dataAsOf) {
   const ageMs = Date.now() - new Date(generatedAt).getTime();
-  const t = String(generatedAt).slice(11, 16) + ' UTC';
+  const t = fmtClock(generatedAt);
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
   return fresh
     ? { cls: 'lamp--live', text: 'LIVE', stamp: 'Fetched ' + t + (dataAsOf ? ' · data as of ' + dataAsOf : '') }
@@ -439,7 +453,7 @@ function mapDashboardPayload(payload) {
   if (payload.brief && payload.brief.content) {
     const c = payload.brief.content;
     brief = {
-      generatedAt: (payload.brief.generated_at || '').slice(0, 16).replace('T', ' ') + ' UTC',
+      generatedAt: fmtStampDateTime(payload.brief.generated_at),
       state: c.state || '', levels: c.levels || [], scenarios: c.scenarios || [],
       asOf: payload.brief.as_of,
     };
