@@ -44,10 +44,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
 - `config/widgets.json` — owner-editable roster for the **Market widgets**
-  panel: embedded third-party (TradingView) widgets, each rendered by
-  `loadWidgets()` in its own sandboxed opaque-origin `srcdoc` iframe and
-  lazy-loaded on scroll. Read CLIENT-side (`fetchPublic`), not by an edge
-  function. Mode-independent (live external data in demo + live).
+  panel: embedded third-party widgets from TWO providers — **TradingView**
+  (ticker tape, economic calendar, …) and **FRED** (`fred-glance` = the
+  St. Louis Fed "Economy at a glance" 8-indicator widget). Each is rendered by
+  `loadWidgets()` in its own sandboxed **cross-origin** iframe (`widgetFrameSrc`
+  builds a `tradingview-widget.com` URL for TV widgets, or the provider URL for
+  `fred-glance` — `spec.src` overrides for a configure-generated FRED set). A
+  widget tagged `slot:'strip'` (the ticker tape) renders in the full-width
+  top-of-grid strip and hydrates on **first user interaction** (it's above the
+  fold, so a scroll-observer would run vendor JS on paint and trip the S1 gate);
+  all other widgets render in the panel below Accounts and lazy-load on scroll.
+  Read CLIENT-side (`fetchPublic`), not by an edge function. Mode-independent
+  (live external data in demo + live).
 - `supabase/functions/` — versioned sources of the edge-function data layer
   (deployed only to the dedicated project). Anon-callable public feeds:
   `desk-market` (Stooq→Yahoo tiles + FRED 10Y), `desk-heatmap` (Nasdaq
@@ -112,12 +120,19 @@ This project's look is its own — established at kickoff via `/design-intake`
   the desk — it cannot read the page DOM, the PIN, or account data. The
   `sandbox` (`allow-scripts allow-same-origin allow-popups ...`) is
   defence-in-depth; `allow-same-origin` there refers to TradingView's origin,
-  not the desk's. Loads are **deferred to scroll** (IntersectionObserver) so
-  nothing third-party runs on initial paint — this also keeps the S1 console
-  gate clean (do NOT widen the S1 allowlist for widget origins; the lazy-load
-  is the containment). Residual: TradingView sees the viewer's IP/UA and sets
-  its own cookies in its own frame; no desk data crosses the boundary. Roster
-  is owner-controlled (`config/widgets.json`).
+  not the desk's. **FRED (`fred-glance`, owner request 2026-07-15) is a SECOND
+  embed provider on the same footing** — a direct cross-origin iframe on
+  `research.stlouisfed.org` (self-contained, no parent-page vendor script),
+  sandboxed identically; `allow-same-origin` there refers to FRED's origin. Panel
+  widgets' loads are **deferred to scroll** (IntersectionObserver) so nothing
+  third-party runs on initial paint — this keeps the S1 console gate clean (do
+  NOT widen the S1 allowlist for widget origins; the lazy-load is the
+  containment). The **ticker strip is above the fold**, so it instead defers to
+  the **first user interaction** (pointer/scroll/key/touch) — S1's load-time
+  check never interacts, so the strip stays inert there too (PR #76). Residual:
+  each vendor sees the viewer's IP/UA and sets its own cookies in its own frame;
+  no desk data crosses the boundary. Roster is owner-controlled
+  (`config/widgets.json`).
 - Server-side keys (`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, IBKR
   token/query-id, `CRON_SECRET`) live only in edge-function secrets;
   `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —
