@@ -1986,7 +1986,9 @@ function wireCharts() {
      no unlock needed (demo has no backend ⇒ note). */
   const symForm = document.getElementById('wbSymForm');
   const symInput = document.getElementById('wbSymInput');
-  const symNote = document.getElementById('wbSymNote');
+  /* transient load status shares the fundamentals strip's slot; once the chart
+     loads, renderWbInfo() repaints it with the stats (owner request 2026-07-15) */
+  const symNote = document.getElementById('wbInfo');
   symInput.addEventListener('change', () => {
     if (!wbState) return;
     const sym = symInput.value.trim().toUpperCase();
@@ -2022,8 +2024,7 @@ function wireCharts() {
       wbState.data.symbols[sym] = out.series;
       wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
       addWbStickySym(sym);
-      symNote.textContent = sym + ' · live fetch · as of ' + out.asOf;
-      wbPick(sym);
+      wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
     } catch {
       symNote.textContent = 'Quote service unreachable — try again';
     }
