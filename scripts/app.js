@@ -1394,7 +1394,10 @@ function renderWbInfo() {
   const e = fmtEarnings(info.earningsTs, info.earningsEstimate);
   if (e) item('Earnings', e.text, e.warn ? 'wb-info-warn' : '');
   if (info.marketCap != null) item('Mkt cap', wbFmtCap(info.marketCap));
-  if (info.pe != null) item('P/E', info.pe.toFixed(1));
+  /* Forward P/E is the desk convention; the edge function falls back to
+     trailing only when a ticker has no forward estimate, flagged via peFwd so
+     the fallback is marked 'ttm' rather than mislabeled as forward. */
+  if (info.pe != null) item(info.peFwd ? 'Fwd P/E' : 'P/E', info.pe.toFixed(1) + (info.peFwd ? '' : ' ttm'));
   if (info.wkLow != null && info.wkHigh != null) item('52w', '$' + info.wkLow.toFixed(2) + '–$' + info.wkHigh.toFixed(2));
   if (info.divYield != null && info.divYield > 0) item('Yield', info.divYield.toFixed(2) + '%');
   if (!box.childNodes.length) muted('Fundamentals unavailable for ' + sym);
