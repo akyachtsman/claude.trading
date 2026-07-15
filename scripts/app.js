@@ -1230,6 +1230,9 @@ let wbDrag = null, wbPanRaf = 0;
 const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
 const wbInfoCache = {};                /* symbol → fundamentals object, or null for a known miss */
 const wbInfoPending = new Set();       /* per-symbol info fetches in flight */
+const wbRealSyms = new Set();          /* symbols backed by REAL data (live desk-charts feed or an
+                                          ad-hoc quote-proxy load) — fundamentals show only for these,
+                                          never for the synthetic demo-fallback watchlist */
 const MIN_NAV_WIN = 20;   /* smallest window the navigator can shrink to (bars) */
 window.addEventListener('pointermove', ev => {
   if (!wbDrag || !wbState) return;
@@ -1357,13 +1360,14 @@ function fmtEarnings(ts, estimate) {
   else { rel = 'reported'; }
   return { text: label + ' · ' + rel + (estimate ? ' · est.' : ''), warn };
 }
-/* Live fundamentals are off in demo AND when the charts panel is showing the
-   demo fallback (live feed down → synthetic bars under a Demo lamp): never mix
-   real stats with fake price data. */
-const wbLiveInfoOff = () => DESK.mode === 'demo' || !DESK_DB.url
-  || !wbState || !wbState.lamp || wbState.lamp.cls === 'lamp--demo' || wbState.lamp.text === 'Demo';
+/* Fundamentals show only for a symbol whose CHART DATA is real — the live
+   desk-charts feed or an ad-hoc quote-proxy load. This gates per symbol, not
+   on the panel lamp: during a desk-charts outage the watchlist falls back to
+   synthetic demo bars (Demo lamp), but a ticker the user loads by hand is still
+   real and must show its stats (never mix real stats over synthetic bars). */
+const wbSymLive = sym => DESK.mode !== 'demo' && !!DESK_DB.url && wbRealSyms.has(sym);
 function maybeFetchWbInfo(sym) {
-  if (wbLiveInfoOff()) return;
+  if (!wbSymLive(sym)) return;
   if (sym in wbInfoCache || wbInfoPending.has(sym)) return;
   wbInfoPending.add(sym);
   deskQuote(sym, 'info')
@@ -1376,7 +1380,7 @@ function renderWbInfo() {
   if (!box || !wbState) return;
   while (box.firstChild) box.removeChild(box.firstChild);
   const muted = text => { const s = el('span', 'wb-info-muted', text); box.appendChild(s); };
-  if (wbLiveInfoOff()) { muted('Earnings & key stats show in live mode'); return; }
+  if (!wbSymLive(wbState.sym)) { muted('Earnings & key stats show in live mode'); return; }
   const sym = wbState.sym;
   const info = wbInfoCache[sym];
   if (info === undefined) { muted('Loading fundamentals…'); return; }
@@ -1982,7 +1986,9 @@ function wireCharts() {
      no unlock needed (demo has no backend ⇒ note). */
   const symForm = document.getElementById('wbSymForm');
   const symInput = document.getElementById('wbSymInput');
-  const symNote = document.getElementById('wbSymNote');
+  /* transient load status shares the fundamentals strip's slot; once the chart
+     loads, renderWbInfo() repaints it with the stats (owner request 2026-07-15) */
+  const symNote = document.getElementById('wbInfo');
   symInput.addEventListener('change', () => {
     if (!wbState) return;
     const sym = symInput.value.trim().toUpperCase();
@@ -2016,9 +2022,9 @@ function wireCharts() {
         return;
       }
       wbState.data.symbols[sym] = out.series;
+      wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
       addWbStickySym(sym);
-      symNote.textContent = sym + ' · live fetch · as of ' + out.asOf;
-      wbPick(sym);
+      wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
     } catch {
       symNote.textContent = 'Quote service unreachable — try again';
     }
@@ -2053,7 +2059,7 @@ async function loadCharts() {
   if (DESK.mode !== 'demo') {
     try {
       const data = await deskFeed('desk-charts');
-      for (const k of Object.keys(data.symbols)) wbFeedRoster.add(k);
+      for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); }
       if (wbState) {
         /* poller path: refresh bars in place so the user's selected symbol,
            zoom, and pan survive — renderCharts keys state on data identity.
@@ -2090,11 +2096,15 @@ async function restoreStickySymbols() {
     renderCharts(wbState.data, wbState.lamp);
   }
   for (const sym of saved.syms) {
-    if (wbState.data.symbols[sym]) continue;
+    /* skip only if it's already REAL — a demo-fallback may hold SYNTHETIC bars
+       for a sticky ticker that collides with the demo roster (e.g. GLD); those
+       must still be re-fetched so real bars + fundamentals replace the fakes */
+    if (wbRealSyms.has(sym)) continue;
     try {
       const out = await deskQuote(sym, 'daily');
       if (out.ok && out.series && out.series.c.length >= 30) {
         wbState.data.symbols[sym] = out.series;
+        wbRealSyms.add(sym);        /* re-hydrated ad-hoc ticker is real → eligible for fundamentals */
         if (saved.sel === sym && !wbUserPicked) wbState.sym = sym;
         renderCharts(wbState.data, wbState.lamp);
       }
