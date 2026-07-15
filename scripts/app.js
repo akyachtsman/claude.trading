@@ -2132,6 +2132,106 @@ function startFeedPolling() {
   schedule();
 }
 
+/* ── market widgets: embedded third-party (TradingView) widgets. Each loads as
+   a DIRECT cross-origin iframe on tradingview-widget.com — NOT a srcdoc doc.
+   That matters for isolation: a srcdoc frame inherits the PARENT's origin, so
+   `allow-same-origin` there would make the vendor script same-origin with the
+   desk (able to read sessionStorage/the PIN). A real cross-origin src gives the
+   frame TradingView's own origin, so the browser's same-origin policy walls it
+   off from the desk entirely — it can't reach our DOM, the PIN, or account
+   data. Roster is owner-editable (config/widgets.json); these are the fallback.
+   Mode-independent: live external data in demo and live. */
+const WIDGET_PATHS = {
+  'ticker-tape': 'ticker-tape',
+  'events': 'events',
+  'market-overview': 'market-overview',
+  'mini-symbol-overview': 'mini-symbol-overview',
+  'advanced-chart': 'advanced-chart',
+  'timeline': 'timeline',
+  'screener': 'screener',
+};
+const WIDGET_DEFAULTS = [
+  { type: 'ticker-tape', title: 'Ticker tape', height: 78, config: {
+    symbols: [
+      { proName: 'FOREXCOM:SPXUSD', title: 'S&P 500' },
+      { proName: 'FOREXCOM:NSXUSD', title: 'Nasdaq 100' },
+      { proName: 'TVC:US10Y', title: 'US 10Y' },
+      { proName: 'TVC:GOLD', title: 'Gold' },
+      { proName: 'BITSTAMP:BTCUSD', title: 'Bitcoin' },
+    ],
+    showSymbolLogo: true, isTransparent: true, displayMode: 'adaptive', colorTheme: 'light', locale: 'en',
+  } },
+  { type: 'events', title: 'Economic calendar', height: 460, config: {
+    colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
+    importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',
+  } },
+];
+
+function widgetSrc(path, config) {
+  /* the URL TradingView's own loader builds: widget name in the path, the
+     config as a URL-encoded JSON fragment */
+  return 'https://www.tradingview-widget.com/embed-widget/' + path + '/?locale=en#'
+    + encodeURIComponent(JSON.stringify(config || {}));
+}
+
+/* Build a widget cell. The iframe's src is stashed on _src, NOT set yet:
+   loadWidgets defers it to first scroll-into-view so the vendor frame never
+   loads on initial paint (perf + privacy, and keeps the S1 console gate clean
+   — this below-the-fold panel stays inert until the user reaches it). */
+function buildWidgetCell(spec) {
+  const cell = document.createElement('div');
+  cell.className = 'widget-cell';
+  const cap = document.createElement('p');
+  cap.className = 'widget-cap';
+  cap.textContent = spec.title || spec.type || 'Widget';
+  cell.appendChild(cap);
+  const path = WIDGET_PATHS[spec.type];
+  if (!path) { cap.textContent = cap.textContent + ' — unknown widget type'; return { cell, frame: null }; }
+  const frame = document.createElement('iframe');
+  frame.className = 'widget-frame';
+  frame.title = spec.title || spec.type;
+  frame.setAttribute('referrerpolicy', 'no-referrer');
+  /* cross-origin src (below) already isolates via same-origin policy; the
+     sandbox is defence-in-depth. allow-same-origin here refers to the frame's
+     TradingView origin (so its widget storage works), NOT the desk's. */
+  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+  frame.style.height = (Number(spec.height) || 400) + 'px';
+  frame._src = widgetSrc(path, spec.config);
+  cell.appendChild(frame);
+  return { cell, frame };
+}
+
+async function loadWidgets() {
+  const grid = document.getElementById('widgetGrid');
+  if (!grid) return;
+  let specs = WIDGET_DEFAULTS;
+  try {
+    const cfg = await fetchPublic('config/widgets.json');
+    if (Array.isArray(cfg) && cfg.length) specs = cfg;
+  } catch { /* committed config missing/unreachable → built-in defaults */ }
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+  const frames = [];
+  for (const spec of specs.slice(0, 8)) {
+    const { cell, frame } = buildWidgetCell(spec);
+    grid.appendChild(cell);
+    if (frame) frames.push(frame);
+  }
+  const lamp = document.getElementById('widgetsLamp');
+  if (lamp) { lamp.className = 'lamp lamp--live'; lamp.textContent = 'Live'; }
+  const stamp = document.getElementById('widgetsStamp');
+  if (stamp) stamp.textContent = 'TradingView · live';
+  /* defer the third-party load until the panel nears the viewport */
+  const hydrate = f => { if (f._src) { f.src = f._src; f._src = null; } };
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries, obs) => {
+      for (const e of entries) if (e.isIntersecting) { hydrate(e.target); obs.unobserve(e.target); }
+    }, { rootMargin: '250px' });
+    frames.forEach(f => io.observe(f));
+  } else {
+    frames.forEach(hydrate);
+  }
+}
+
 async function boot() {
   DESK.mode = resolveMode();
   if (DESK.mode === 'demo') {
@@ -2142,6 +2242,7 @@ async function boot() {
     renderPrivate();
     loadHeatmap();
     loadCharts();
+    loadWidgets();
     return;
   }
   /* live: public domains render immediately; private waits for PIN */
@@ -2150,6 +2251,7 @@ async function boot() {
   renderMasthead();
   loadHeatmap();
   loadCharts();
+  loadWidgets();
   startFeedPolling();
   const pin = sessionStorage.getItem('desk_pin');
   if (pin) {
