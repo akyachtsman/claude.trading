@@ -102,11 +102,22 @@
   .widget-strip { min-width: 0; }
   .widget-strip:empty { display: none; }
   .widget-strip .widget-frame { height: 78px; }
-  /* Panel widgets stack one on top of the other, full-width. */
-  .widget-grid { display: flex; flex-direction: column; gap: var(--space-3); }
-  .widget-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .widget-cap { margin: 0; font: 600 var(--font-xs)/1.3 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--color-text-secondary); }
+  /* Panel widgets: two separate side-by-side cards, each mirroring an account
+     card's chrome + height (border/surface/radius/shadow + header bar). */
+  .widget-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+  .widget-cell {
+    display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+  }
+  .widget-cap {
+    margin: 0; font: 600 var(--font-xs)/1.3 var(--font-mono);
+    letter-spacing: .06em; text-transform: uppercase; color: var(--color-text-secondary);
+    padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border);
+  }
   .widget-frame { width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); display: block; }
+  /* inside a card, the card provides the chrome — drop the frame's own border */
+  .widget-cell .widget-frame { border: 0; border-radius: 0; box-shadow: none; }
 
   /* Stochastic charts — dark trading-terminal sub-theme (owner ruling
      2026-07-14: match the reference platform, easier to read). A scoped token
@@ -250,6 +261,7 @@
   @media (max-width: 1160px) {
     .market-strip { grid-template-columns: repeat(3, 1fr); }
     .account-grid { grid-template-columns: 1fr; }
+    .widget-grid { grid-template-columns: 1fr; }
     .layout { grid-template-columns: 1fr;
       grid-template-areas: "strip" "accounts" "widgets" "heat" "charts" "equity" "rail" "news"; }
   }
