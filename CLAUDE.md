@@ -120,7 +120,12 @@ This project's look is its own — established at kickoff via `/design-intake`
   the desk — it cannot read the page DOM, the PIN, or account data. The
   `sandbox` (`allow-scripts allow-same-origin allow-popups ...`) is
   defence-in-depth; `allow-same-origin` there refers to TradingView's origin,
-  not the desk's. **FRED (`fred-glance`, owner request 2026-07-15) is a SECOND
+  not the desk's. The frame also carries a tight Permissions-Policy
+  `allow="accelerometer; gyroscope; magnetometer"` — motion sensors ONLY, so
+  TradingView's sensor probe doesn't log a Chromium permissions-policy violation
+  on hydrate (which tripped S3); deliberately NOT camera/microphone/geolocation/
+  clipboard/payment, and scoped to the frame's own vendor origin. **FRED
+  (`fred-glance`, owner request 2026-07-15) is a SECOND
   embed provider on the same footing** — a direct cross-origin iframe on
   `research.stlouisfed.org` (self-contained, no parent-page vendor script),
   sandboxed identically; `allow-same-origin` there refers to FRED's origin. Panel
