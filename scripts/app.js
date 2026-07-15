@@ -645,7 +645,13 @@ function renderHeatmap(hm, lamp) {
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const lampEl = document.getElementById('heatLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
-  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf : '—';
+  /* as-of stamp = the data's trading day (asOf) plus the feed's fetch time
+     (generatedAt) when it's a real timestamp, so "last updated" is visible.
+     Demo (generatedAt 'Demo') and the delayed cuts (asOf already carries the
+     time) fall through to the date/asOf as-is — no doubled time. */
+  const genTime = hm && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(hm.generatedAt))
+    ? ' · ' + String(hm.generatedAt).slice(11, 16) + ' UTC' : '';
+  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf + genTime : '—';
   if (!hm || !hm.sectors || !hm.sectors.length) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
