@@ -1357,24 +1357,26 @@ function fmtEarnings(ts, estimate) {
   else { rel = 'reported'; }
   return { text: label + ' · ' + rel + (estimate ? ' · est.' : ''), warn };
 }
+/* Live fundamentals are off in demo AND when the charts panel is showing the
+   demo fallback (live feed down → synthetic bars under a Demo lamp): never mix
+   real stats with fake price data. */
+const wbLiveInfoOff = () => DESK.mode === 'demo' || !DESK_DB.url
+  || !wbState || !wbState.lamp || wbState.lamp.cls === 'lamp--demo' || wbState.lamp.text === 'Demo';
 function maybeFetchWbInfo(sym) {
-  if (DESK.mode === 'demo' || !DESK_DB.url) return;      /* live only */
+  if (wbLiveInfoOff()) return;
   if (sym in wbInfoCache || wbInfoPending.has(sym)) return;
   wbInfoPending.add(sym);
   deskQuote(sym, 'info')
-    .then(out => {
-      wbInfoCache[sym] = (out && out.ok && out.info) ? out.info : null;
-      if (wbState && wbState.sym === sym) renderWbInfo();
-    })
+    .then(out => { wbInfoCache[sym] = (out && out.ok && out.info) ? out.info : null; })
     .catch(() => { wbInfoCache[sym] = null; })
-    .finally(() => wbInfoPending.delete(sym));
+    .finally(() => { wbInfoPending.delete(sym); if (wbState && wbState.sym === sym) renderWbInfo(); });
 }
 function renderWbInfo() {
   const box = document.getElementById('wbInfo');
   if (!box || !wbState) return;
   while (box.firstChild) box.removeChild(box.firstChild);
   const muted = text => { const s = el('span', 'wb-info-muted', text); box.appendChild(s); };
-  if (DESK.mode === 'demo' || !DESK_DB.url) { muted('Earnings & key stats show in live mode'); return; }
+  if (wbLiveInfoOff()) { muted('Earnings & key stats show in live mode'); return; }
   const sym = wbState.sym;
   const info = wbInfoCache[sym];
   if (info === undefined) { muted('Loading fundamentals…'); return; }

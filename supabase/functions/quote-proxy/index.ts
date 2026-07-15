@@ -127,8 +127,10 @@ async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string
 
 async function yahooInfo(symbol: string): Promise<Info | null> {
   const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  // Yahoo hyphenates share-class dots (BRK.B → BRK-B); keep ^ for indices.
+  const ysym = symbol.replace(/\./g, '-');
   const quoteUrl = (crumb: string) =>
-    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&crumb=${encodeURIComponent(crumb)}`;
+    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}&crumb=${encodeURIComponent(crumb)}`;
   let auth = await yahooAuth();
   if (!auth) return null;
   let res = await fetch(quoteUrl(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
@@ -144,6 +146,14 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
   if (!q) return null;
   const divPct = num(q.dividendYield) ??
     (num(q.trailingAnnualDividendYield) != null ? (q.trailingAnnualDividendYield as number) * 100 : null);
+  // Prefer the nearest UPCOMING earnings date over a stale reported one: Yahoo
+  // can return a past exact `earningsTimestamp` alongside a future estimated
+  // window. Pick the soonest future candidate; else the most recent past.
+  const nowSec = Date.now() / 1000;
+  const cands = [q.earningsTimestamp, q.earningsTimestampStart, q.earningsTimestampEnd]
+    .map(num).filter((x): x is number => x != null);
+  const future = cands.filter((t) => t >= nowSec).sort((a, b) => a - b);
+  const earningsTs = future.length ? future[0] : (cands.length ? Math.max(...cands) : null);
   return {
     symbol: String(q.symbol ?? symbol).toUpperCase(),
     name: q.shortName ?? q.longName ?? null,
@@ -153,7 +163,7 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
     wkLow: num(q.fiftyTwoWeekLow),
     wkHigh: num(q.fiftyTwoWeekHigh),
     divYield: divPct,
-    earningsTs: num(q.earningsTimestamp) ?? num(q.earningsTimestampStart),
+    earningsTs,
     earningsEstimate: q.isEarningsDateEstimate === true,
   };
 }
