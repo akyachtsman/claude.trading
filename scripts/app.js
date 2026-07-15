@@ -1673,13 +1673,16 @@ function renderCharts(data, lamp) {
         crossTag.textContent = fmtPrice(hi - (my - pY) / pH * (hi - lo));
         crossTag.setAttribute('visibility', 'visible');
       }
-      tip.appendChild(el('div', 'tip-date', bars.t[i] + ' · ' + (opts.sym || wbState.sym) + ' · ' + opts.tier));
+      /* compact readout, pinned top-left of the chart box (out of the candles) */
       const chg = i > 0 ? (bars.c[i] / bars.c[i - 1] - 1) * 100 : 0;
-      tip.appendChild(el('div', '', 'O ' + fmtPrice(bars.o[i]) + '  H ' + fmtPrice(bars.h[i]) + '  L ' + fmtPrice(bars.l[i])));
-      const cRow = el('div', '', 'C ' + fmtPrice(bars.c[i]) + ' ');
-      cRow.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
-      tip.appendChild(cRow);
-      tip.appendChild(el('div', '', 'Vol ' + fmtVol(bars.v[i])));
+      tip.appendChild(el('div', 'tip-date', (opts.sym || wbState.sym) + ' · ' + bars.t[i]));
+      const ohlc = el('div', 'tip-row', 'O ' + fmtPrice(bars.o[i]) + ' H ' + fmtPrice(bars.h[i]) + ' L ' + fmtPrice(bars.l[i]) + ' C ' + fmtPrice(bars.c[i]) + ' ');
+      ohlc.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
+      tip.appendChild(ohlc);
+      const bits = ['Vol ' + fmtVol(bars.v[i])];
+      if (st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
+      if (opts.cfg.stochW && opts.stW && opts.stW.k[i] != null) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
+      tip.appendChild(el('div', 'tip-row', bits.join(' · ')));
       const smaParts = [];
       for (const [len] of opts.smas || []) {
         if (i < len - 1) continue;
@@ -1687,14 +1690,14 @@ function renderCharts(data, lamp) {
         for (let j = i - len + 1; j <= i; j++) sum += bars.c[j];
         smaParts.push('SMA' + len + ' ' + fmtPrice(sum / len));
       }
-      if (smaParts.length) tip.appendChild(el('div', '', smaParts.join(' · ')));
-      if (st.k[i] != null) tip.appendChild(el('div', '', 'Stoch %K ' + st.k[i].toFixed(0) + ' · %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0))));
-      if (opts.cfg.stochW && opts.stW && opts.stW.k[i] != null) tip.appendChild(el('div', '', 'Weekly %K ' + opts.stW.k[i].toFixed(0) + ' · %D ' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0))));
+      if (smaParts.length) tip.appendChild(el('div', 'tip-row', smaParts.join(' · ')));
       tip.style.display = 'block';
+      /* pin to the top-left of the HOVERED pane (its own column in split view),
+         clamped so it never runs off the right edge of the chart box */
       const wrap = svg.parentElement.getBoundingClientRect();
       const sx = wrap.width / W;
-      tip.style.left = Math.min(x(i) * sx + 10, wrap.width - 190) + 'px';
-      tip.style.top = '16px';
+      tip.style.left = Math.max(4, Math.min((x0 + 6) * sx, wrap.width - 262)) + 'px';
+      tip.style.top = '6px';
     });
     overlay.addEventListener('pointerleave', hideTip);
 
