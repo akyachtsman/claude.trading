@@ -2,6 +2,7 @@
   {
     "type": "ticker-tape",
     "title": "Ticker tape",
+    "slot": "strip",
     "height": 78,
     "config": {
       "symbols": [
