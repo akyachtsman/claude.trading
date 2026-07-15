@@ -2132,10 +2132,12 @@ function renderPrivate() {
   if (DESK.mode === 'demo' || DESK.authed) {
     const lamp = DESK.mode === 'demo'
       ? { cls: 'lamp--demo', text: 'Demo' }
-      : lampFor(DESK.privateAsOf, new Date());
+      : accountsLampFor(DESK.privateAsOf, DESK.privateSyncedAt, new Date());
     lockChartPanel(false);
     const lampEl = document.getElementById('equityLamp');
     lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
+    const acctStamp = document.getElementById('accountsStamp');
+    if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? 'Demo data' : '');
     renderAccounts(DESK.data.accounts, lamp);
     /* FR-AI4: the brief carries its own freshness — generation can fail
        while snapshots keep flowing, so its lamp derives from brief.asOf,
@@ -2165,6 +2167,7 @@ async function loadPrivate(pin) {
   const mapped = mapDashboardPayload(payload);
   DESK.data = { ...DESK.data, accounts: mapped.accounts, labels: mapped.labels, brief: mapped.brief };
   DESK.privateAsOf = mapped.asOf;
+  DESK.privateSyncedAt = mapped.syncedAt;
   renderPrivate();
 }
 
