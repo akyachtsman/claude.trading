@@ -2095,7 +2095,10 @@ async function restoreStickySymbols() {
     renderCharts(wbState.data, wbState.lamp);
   }
   for (const sym of saved.syms) {
-    if (wbState.data.symbols[sym]) continue;
+    /* skip only if it's already REAL — a demo-fallback may hold SYNTHETIC bars
+       for a sticky ticker that collides with the demo roster (e.g. GLD); those
+       must still be re-fetched so real bars + fundamentals replace the fakes */
+    if (wbRealSyms.has(sym)) continue;
     try {
       const out = await deskQuote(sym, 'daily');
       if (out.ok && out.series && out.series.c.length >= 30) {
