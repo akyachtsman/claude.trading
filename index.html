@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260716j">
-<link rel="stylesheet" href="styles/components.css?v=20260716j">
+<link rel="stylesheet" href="styles/tokens.css?v=20260716k">
+<link rel="stylesheet" href="styles/components.css?v=20260716k">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -133,7 +133,7 @@
      override flips ONLY this panel — SVG, toolbar, sidebar, tooltip, popovers
      all inherit it; the rest of the desk stays daylight. Reference palette:
      green/red candles, red %K + yellow %D stochastics, purple/yellow/white
-     SMAs, orange-R/green-S pivots, on near-black navy. */
+     SMAs, deep-yellow-R/green-S pivots, on near-black navy. */
   .area-charts {
     --color-bg: #05080e;     /* near-black terminal canvas (was #08111c) — a
                                 blacker, less-blue ground lifts candle/grid
@@ -146,13 +146,15 @@
     --color-border-hover: #37506a;
     --color-gain: #2ecb57;   /* up candle / S pivots — brighter green to match
                                 the reference terminal's neon candles */
-    --color-loss: #ff3333;   /* down candle / stoch bands / quote change — a
-                                much sharper, more saturated red (owner request
-                                2026-07-16), was #ef4444 */
-    --color-series-1: #ff4d4d;   /* stoch %K — red */
+    --color-loss: #e11d1d;   /* down candle / stoch bands / quote change — a
+                                deeper, richer red (owner request 2026-07-16;
+                                was #ff3333, #ef4444 before that) */
+    --color-series-1: #eb3434;   /* stoch %K — red, deepened to match candles */
     --color-series-2: #f5c518;   /* stoch %D — yellow */
     --color-series-3: #b06cf0;   /* SMA fast — purple */
-    --color-accent: #f5a623;         /* R pivots · navigator — orange */
+    --color-accent: #eab308;         /* R pivots · navigator — deep yellow
+                                        (owner request 2026-07-16: no orange;
+                                        was #f5a623) */
     --color-accent-bright: #f5c518;  /* SMA mid — yellow */
     /* Re-declare the inherited text color inside the dark scope: token
        overrides alone don't re-resolve `color` inherited from body, so any
@@ -431,8 +433,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260716j"></script>
-<script src="scripts/data.js?v=20260716j"></script>
-<script src="scripts/app.js?v=20260716j"></script>
+<script src="scripts/config.js?v=20260716k"></script>
+<script src="scripts/data.js?v=20260716k"></script>
+<script src="scripts/app.js?v=20260716k"></script>
 </body>
 </html>
