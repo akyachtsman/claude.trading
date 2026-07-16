@@ -177,7 +177,10 @@ This project's look is its own — established at kickoff via `/design-intake`
 4. Run Required Commands above — all must pass
 5. Prefer `qa-pipeline`; run steps individually only if it fails:
    `test-verifier` → `pr-review-toolkit:code-reviewer` → `/security-review` (if security-relevant) → `pr-readiness-reviewer`
-6. Open PR to `main`
+6. Open PR to `main` and **always enable auto-merge (squash)** — mark the PR
+   ready for review and turn on auto-merge so it lands as soon as checks pass
+   (owner directive, 2026-07-16). If GitHub rejects the auto-merge call, say
+   so and fall back to asking the owner to merge.
 
 ## UI Test Configuration
 Read by `ui-tester` and the Playwright kit at runtime — fill in before invoking agents:
