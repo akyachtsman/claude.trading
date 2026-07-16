@@ -132,6 +132,17 @@ async function yahooDaily(stooqSym: string): Promise<Row[]> {
 
 const dailyCloses = (symbol: string) => stooqDaily(symbol).catch(() => yahooDaily(symbol));
 
+// Latency guard for the best-effort extras: resolve null on rejection OR on a
+// hung/slow upstream, so a stalled optional quote can never hold the core
+// payload past the edge timeout (Codex #109). clearTimeout avoids a dangling
+// isolate timer on the happy path.
+function bestEffort(p: Promise<Row[]>, ms: number): Promise<Row[] | null> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(null); });
+  });
+}
+
 // ── tile shaping (verbatim ports of fetch-market.js) ────────────────────────
 const fmtLast = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -180,20 +191,23 @@ async function refresh(): Promise<unknown> {
   const [idxRows, fredCsv, extraRows] = await Promise.all([
     Promise.all(MARKET_SYMBOLS.map((m) => dailyCloses(m.sym))),
     fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }).then((r) => r.text()),
-    // best-effort: a rejected extra becomes null and is skipped, not thrown
-    Promise.all(EXTRA_SYMBOLS.map((m) => dailyCloses(m.sym).catch(() => null))),
+    // best-effort with a latency cap (see bestEffort): a slow/rejected extra → null
+    Promise.all(EXTRA_SYMBOLS.map((m) => bestEffort(dailyCloses(m.sym), 4000))),
   ]);
   const tiles = MARKET_SYMBOLS.map((m, i) => tileFrom(m.name, idxRows[i]));
   const fredRows = parseFred(fredCsv);
   if (fredRows.length < 2) throw new Error(`FRED DGS10: ${fredRows.length} usable rows`);
   tiles.push(tenYearTile(fredRows));
+  // Aggregate as-of is computed from the CORE tiles ONLY (Codex #109): the
+  // extras include 24/7 crypto, so their date would otherwise push the
+  // masthead "as of" past the equities' real trading day, overstating core
+  // freshness. Extras still carry their own per-tile asOf.
+  const asOf = tiles.map((t) => t.asOf).sort().at(-1);
   // append whichever extras resolved (need ≥2 closes for a day change)
   EXTRA_SYMBOLS.forEach((m, i) => {
     const rows = extraRows[i];
     if (rows && rows.length >= 2) tiles.push(tileFrom(m.name, rows));
   });
-
-  const asOf = tiles.map((t) => t.asOf).sort().at(-1);
   const body = { ok: true, asOf, generatedAt: new Date().toISOString(), tiles };
   cache = { at: Date.now(), body };
   return body;

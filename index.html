@@ -36,10 +36,8 @@
   .mkt-name { font: 500 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mkt-last { font: 600 var(--font-sm)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
   /* price + % on ONE line so the tile is genuinely half-height */
-  .mkt-vals { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .mkt-vals { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
   .mkt-vals .pill { font-size: 10px; padding: 1px 5px; }
-  .mkt-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-  .mkt-spark { width: 58px; height: 18px; flex: none; }
 
   /* layout: news is a full-height column on the RIGHT. The heatmap and the
      stochastic-charts panel widen across the main + brief/ask area up to the
