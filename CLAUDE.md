@@ -55,8 +55,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   top-of-grid strip; every other widget renders — panel-less, captionless — in
   the compact left-packed **`#acctWidgets` row inside the Accounts section**,
   directly under the account cards, sized by per-spec `width`/`height`
-  (calendar 260×220, FRED 150×220; the two former widget panels were removed
-  per owner mock 2026-07-16). Everything third-party is above the fold now, so
+  (both 245×305 — matched to the half-width account cards they stack under,
+  owner ruling 2026-07-16; the two former widget panels were removed the same
+  day). Everything third-party is above the fold now, so
   ALL frames hydrate on **first user interaction** (a scroll-observer would
   run vendor JS on paint and trip the S1 gate). One shared static stamp under
   the row ("TradingView + FRED · live · sandboxed from the desk") replaces the
@@ -224,12 +225,13 @@ run for real against the dedicated project on every PR.
   reference (finviz map = ALL ~2000 names), build the full expected thing or
   surface the trade-off BEFORE shipping and let the owner choose. A caption
   disclosing the cut is not consent. (Owner ruling, 2026-07-14.)
-- **Aesthetic/sizing changes: mock first, then one decisive change.** Show a
-  mock of the proposed look BEFORE shipping, and make one decisive larger
-  adjustment rather than pixel-nudging increments across many rounds.
-  Corollary: vendor widget iframes render blank in the sandbox, so measure
-  sizes from the owner's screenshots, not a local render. (Owner preference,
-  2026-07-15, after ~10 rounds of widget resizing.)
+- **Aesthetic/sizing changes: one decisive change; mock ONLY on request.**
+  Make one decisive larger adjustment rather than pixel-nudging increments
+  across many rounds, and ship it — do NOT produce a mock first unless the
+  owner explicitly asks for one (owner update 2026-07-16, superseding the
+  2026-07-15 mock-first rule). Corollary: vendor widget iframes render blank
+  in the sandbox, so measure sizes from the owner's screenshots, not a local
+  render.
 
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:

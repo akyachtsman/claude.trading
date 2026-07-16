@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260716a">
-<link rel="stylesheet" href="styles/components.css?v=20260716a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260716b">
+<link rel="stylesheet" href="styles/components.css?v=20260716b">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -60,7 +60,12 @@
   /* accounts */
   .accounts-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
   .accounts-head h2 { margin: 0; font: 600 var(--font-lg)/1.2 var(--font-sans); }
-  .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-3); }
+  /* Half-width account cards in a tight 2×2 stack with the widgets below
+     (owner ruling 2026-07-16): fixed 245px columns hug the top-left; freed
+     width stays empty up to the rail. Interior compacts to match. */
+  .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 245px)); gap: var(--space-4); margin-top: var(--space-3); }
+  .account .hero-number { font-size: var(--font-2xl); }
+  .account .acct-spark { height: 40px; }
   #accountsStamp { margin: 4px 0 0; }
   #accountsStamp:empty { display: none; }
   .account .panel-header { gap: var(--space-2); }
@@ -438,8 +443,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260716a"></script>
-<script src="scripts/data.js?v=20260716a"></script>
-<script src="scripts/app.js?v=20260716a"></script>
+<script src="scripts/config.js?v=20260716b"></script>
+<script src="scripts/data.js?v=20260716b"></script>
+<script src="scripts/app.js?v=20260716b"></script>
 </body>
 </html>

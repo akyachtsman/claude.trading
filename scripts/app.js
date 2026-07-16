@@ -2251,11 +2251,11 @@ const WIDGET_DEFAULTS = [
     ],
     showSymbolLogo: true, isTransparent: true, displayMode: 'adaptive', colorTheme: 'light', locale: 'en',
   } },
-  { type: 'events', title: 'Economic calendar', width: 260, height: 220, config: {
+  { type: 'events', title: 'Economic calendar', width: 245, height: 305, config: {
     colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
     importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',
   } },
-  { type: 'fred-glance', title: 'Economy at a glance — FRED', width: 150, height: 220 },
+  { type: 'fred-glance', title: 'Economy at a glance — FRED', width: 245, height: 305 },
 ];
 
 function widgetSrc(path, config) {

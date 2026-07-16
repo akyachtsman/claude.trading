@@ -24,8 +24,8 @@
   {
     "type": "events",
     "title": "Economic calendar",
-    "width": 260,
-    "height": 220,
+    "width": 245,
+    "height": 305,
     "config": {
       "colorTheme": "light",
       "isTransparent": true,
@@ -39,7 +39,7 @@
   {
     "type": "fred-glance",
     "title": "Economy at a glance — FRED",
-    "width": 150,
-    "height": 220
+    "width": 245,
+    "height": 305
   }
 ]
