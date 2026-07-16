@@ -83,6 +83,11 @@ function buildDemoData() {
     { name: 'IWM (R2K proxy)', last: '228.12', chg: -0.33, seed: 41 },
     { name: 'VIX',          last: '14.82',     chg: -4.20, seed: 53 },
     { name: 'US 10Y',       last: '4.31%',     chg: 0.05,  seed: 67 },
+    /* extras folded in from the old ticker tape (owner request 2026-07-16) —
+       best-effort tiles live; deterministic here */
+    { name: 'Bitcoin',      last: '64,216.00', chg: -0.77, seed: 71 },
+    { name: 'Gold',         last: '2,634.50',  chg: 0.31,  seed: 83 },
+    { name: 'US Dollar',    last: '104.28',    chg: -0.12, seed: 89 },
   ].map(m => ({ ...m, spark: walk(m.seed, 100, m.chg >= 0 ? 0.001 : -0.001, 0.02, 30, m.chg >= 0 ? 102 : 98) }));
   const news = [
     { t: '15:58', src: 'Reuters',   h: 'S&P 500 ends higher as megacap tech extends rally', chips: [['SPY', 0.54]] },

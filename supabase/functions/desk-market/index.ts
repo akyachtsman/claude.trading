@@ -4,8 +4,11 @@
 // Stooq daily CSV → Yahoo v8 chart fallback for the five index tiles, FRED
 // DGS10 for the 10Y (T-1 by upstream construction — stamped with the SERIES
 // date, never the fetch time; see the plan's lamp carve-out).
-// All six tiles must succeed or the response is ok:false — the client keeps
-// its last good payload (FR-R9); a partial strip is a lie, not a degradation.
+// The core six tiles (5 indices + FRED 10Y) must ALL succeed or the response is
+// ok:false — the client keeps its last good payload (FR-R9); a partial CORE
+// strip is a lie, not a degradation. The three extras (Bitcoin/Gold/US Dollar,
+// owner request 2026-07-16) are additive best-effort: each is fetched with its
+// own catch, so a flaky one drops only its tile and never gates the core.
 //
 // Anon-callable: public market data, no caller input reaches the upstream
 // URLs. Module cache TTL is session-aware (5 min while the US equities
@@ -28,7 +31,19 @@ const MARKET_SYMBOLS: { sym: string; name: string }[] = [
   { sym: 'iwm.us', name: 'IWM (R2K proxy)' },
   { sym: '^vix', name: 'VIX' },
 ];
-const YAHOO_MAP: Record<string, string> = { '^spx': '^GSPC', '^ndx': '^NDX', '^dji': '^DJI', '^vix': '^VIX' };
+// Extras (owner request 2026-07-16 — folded in from the old ticker tape).
+// These are BEST-EFFORT: fetched with a per-symbol catch so a flaky
+// crypto/commodity/FX quote drops only its own tile, never gating the core
+// six (which the S14 canary + FR-R9 all-or-nothing contract depend on).
+const EXTRA_SYMBOLS: { sym: string; name: string }[] = [
+  { sym: 'btcusd', name: 'Bitcoin' },
+  { sym: 'xauusd', name: 'Gold' },
+  { sym: 'dx.f', name: 'US Dollar' },
+];
+const YAHOO_MAP: Record<string, string> = {
+  '^spx': '^GSPC', '^ndx': '^NDX', '^dji': '^DJI', '^vix': '^VIX',
+  'btcusd': 'BTC-USD', 'xauusd': 'GC=F', 'dx.f': 'DX-Y.NYB',
+};
 
 // ── session-aware cache TTL (spec Clarification 6) ──────────────────────────
 // US equities regular session: Mon–Fri 09:30–16:00 America/New_York
@@ -162,14 +177,21 @@ async function refresh(): Promise<unknown> {
   // Parallel: Supabase egress has no runner-IP rate-limit history; the
   // pipeline's sequential 600ms spacing was an Actions-IP mitigation.
   const cosd = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-  const [idxRows, fredCsv] = await Promise.all([
+  const [idxRows, fredCsv, extraRows] = await Promise.all([
     Promise.all(MARKET_SYMBOLS.map((m) => dailyCloses(m.sym))),
     fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }).then((r) => r.text()),
+    // best-effort: a rejected extra becomes null and is skipped, not thrown
+    Promise.all(EXTRA_SYMBOLS.map((m) => dailyCloses(m.sym).catch(() => null))),
   ]);
   const tiles = MARKET_SYMBOLS.map((m, i) => tileFrom(m.name, idxRows[i]));
   const fredRows = parseFred(fredCsv);
   if (fredRows.length < 2) throw new Error(`FRED DGS10: ${fredRows.length} usable rows`);
   tiles.push(tenYearTile(fredRows));
+  // append whichever extras resolved (need ≥2 closes for a day change)
+  EXTRA_SYMBOLS.forEach((m, i) => {
+    const rows = extraRows[i];
+    if (rows && rows.length >= 2) tiles.push(tileFrom(m.name, rows));
+  });
 
   const asOf = tiles.map((t) => t.asOf).sort().at(-1);
   const body = { ok: true, asOf, generatedAt: new Date().toISOString(), tiles };
