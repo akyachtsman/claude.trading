@@ -2319,29 +2319,37 @@ function buildWidgetCell(spec) {
 
 async function loadWidgets() {
   const grid  = document.getElementById('widgetGrid');
+  const fredGrid = document.getElementById('fredGrid');
   const strip = document.getElementById('widgetStrip');
-  if (!grid && !strip) return;
+  if (!grid && !strip && !fredGrid) return;
   let specs = WIDGET_DEFAULTS;
   try {
     const cfg = await fetchPublic('config/widgets.json');
     if (Array.isArray(cfg) && cfg.length) specs = cfg;
   } catch { /* committed config missing/unreachable → built-in defaults */ }
   /* slot:'strip' widgets (the ticker tape) render in the full-width top strip;
-     everything else fills the panel grid below. */
+     FRED lives in its OWN panel (not the TradingView-branded one — owner
+     request); every other panel widget fills the TradingView grid. */
   const isStrip = s => s && s.slot === 'strip';
-  const gridSpecs  = specs.filter(s => !isStrip(s)).slice(0, 8);
+  const isFred  = s => s && s.type === 'fred-glance';
+  const gridSpecs  = specs.filter(s => !isStrip(s) && !isFred(s)).slice(0, 8);
+  const fredSpecs  = specs.filter(s => !isStrip(s) && isFred(s)).slice(0, 4);
   const stripSpecs = specs.filter(isStrip).slice(0, 2);
 
   const hydrate = f => { if (f._src) { f.src = f._src; f._src = null; } };
-  const gridFrames = [];
-  if (grid) {
-    while (grid.firstChild) grid.removeChild(grid.firstChild);
-    for (const spec of gridSpecs) {
+  const renderGrid = (container, specList, frameSink) => {
+    if (!container) return;
+    while (container.firstChild) container.removeChild(container.firstChild);
+    for (const spec of specList) {
       const { cell, frame } = buildWidgetCell(spec);
-      grid.appendChild(cell);
-      if (frame) gridFrames.push(frame);
+      container.appendChild(cell);
+      if (frame) frameSink.push(frame);
     }
-  }
+  };
+  const gridFrames = [], fredFrames = [];
+  renderGrid(grid, gridSpecs, gridFrames);
+  renderGrid(fredGrid, fredSpecs, fredFrames);
+
   const stripFrames = [];
   if (strip) {
     while (strip.firstChild) strip.removeChild(strip.firstChild);
@@ -2350,10 +2358,16 @@ async function loadWidgets() {
       if (frame) { strip.appendChild(frame); stripFrames.push(frame); }
     }
   }
-  const lamp = document.getElementById('widgetsLamp');
-  if (lamp) { lamp.className = 'lamp lamp--live'; lamp.textContent = 'Live'; }
-  const stamp = document.getElementById('widgetsStamp');
-  if (stamp) stamp.textContent = 'TradingView · live';
+  /* widgets are mode-independent (live external data in demo + live), so both
+     panels lamp Live and carry their true source — TradingView vs FRED. */
+  const setPanel = (lampId, stampId, text) => {
+    const lampEl = document.getElementById(lampId);
+    if (lampEl) { lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live'; }
+    const stampEl = document.getElementById(stampId);
+    if (stampEl) stampEl.textContent = text;
+  };
+  setPanel('widgetsLamp', 'widgetsStamp', 'TradingView · live');
+  setPanel('fredLamp', 'fredStamp', 'FRED · live');
 
   /* Panel widgets sit below the fold: hydrate when the panel nears the viewport,
      so nothing third-party runs on initial paint (keeps the S1 console gate
@@ -2362,9 +2376,9 @@ async function loadWidgets() {
     const io = new IntersectionObserver((entries, obs) => {
       for (const e of entries) if (e.isIntersecting) { hydrate(e.target); obs.unobserve(e.target); }
     }, { rootMargin: '250px' });
-    gridFrames.forEach(f => io.observe(f));
+    [...gridFrames, ...fredFrames].forEach(f => io.observe(f));
   } else {
-    gridFrames.forEach(hydrate);
+    [...gridFrames, ...fredFrames].forEach(hydrate);
   }
 
   /* The ticker strip is ABOVE the fold, so an IntersectionObserver would fire on
