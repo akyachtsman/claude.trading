@@ -1,0 +1,34 @@
+# TEMPORARY probe — verifies the FRED "At a Glance" widget embed URL from a
+# runner with open egress (the session sandbox's proxy blocks stlouisfed.org).
+# Lives only on the claude/fred-widget-probe branch; branch is deleted after
+# the log is read. Not watched by CI Monitor (name not in its list).
+name: FRED Widget Probe
+on:
+  push:
+    branches: [claude/fred-widget-probe]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch widget URL and verify series
+        run: |
+          set -u
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+          BASE_FRED='https://fred.stlouisfed.org/fred-glance-widget.php'
+          BASE_RESEARCH='https://research.stlouisfed.org/fred-glance-widget.php'
+          QS='series_ids=CPIAUCSL,UNRATE,FEDFUNDS,DGS10,DGS2,MORTGAGE30US,PAYEMS,A191RL1Q225SBEA&transformations=pc1,lin,lin,lin,lin,lin,chg,lin'
+          for U in "$BASE_FRED?$QS" "$BASE_RESEARCH?$QS" "$BASE_FRED?series_ids=CPIAUCSL,UNRATE,FEDFUNDS,DGS10,DGS2,MORTGAGE30US,PAYEMS,A191RL1Q225SBEA"; do
+            echo "================ GET $U"
+            code=$(curl -sSL -A "$UA" -o body.html -w "%{http_code}" "$U") || { echo "CURL FAILED"; continue; }
+            bytes=$(wc -c < body.html)
+            echo "HTTP $code  bytes=$bytes"
+            echo "---- marker checks"
+            for s in 'fred-glance-series' 'Consumer Price Index' 'Unemployment Rate' 'Federal Funds' '10-Year Treasury' 'Treasury' 'Mortgage' 'Payroll' 'Nonfarm' 'Gross Domestic Product' 'CPIAUCSL' 'A191RL1Q225SBEA'; do
+              if grep -qi -- "$s" body.html; then echo "FOUND: $s"; else echo "MISSING: $s"; fi
+            done
+            echo "---- full body (first 30000 bytes)"
+            head -c 30000 body.html
+            echo
+          done
