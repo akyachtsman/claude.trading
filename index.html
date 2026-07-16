@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260716i">
-<link rel="stylesheet" href="styles/components.css?v=20260716i">
+<link rel="stylesheet" href="styles/tokens.css?v=20260716l">
+<link rel="stylesheet" href="styles/components.css?v=20260716l">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -133,7 +133,7 @@
      override flips ONLY this panel — SVG, toolbar, sidebar, tooltip, popovers
      all inherit it; the rest of the desk stays daylight. Reference palette:
      green/red candles, red %K + yellow %D stochastics, purple/yellow/white
-     SMAs, orange-R/green-S pivots, on near-black navy. */
+     SMAs, deep-yellow-R/green-S pivots, on near-black navy. */
   .area-charts {
     --color-bg: #05080e;     /* near-black terminal canvas (was #08111c) — a
                                 blacker, less-blue ground lifts candle/grid
@@ -146,11 +146,15 @@
     --color-border-hover: #37506a;
     --color-gain: #2ecb57;   /* up candle / S pivots — brighter green to match
                                 the reference terminal's neon candles */
-    --color-loss: #ef4444;   /* down candle / stoch bands — brighter red */
-    --color-series-1: #ff4d4d;   /* stoch %K — red */
+    --color-loss: #e11d1d;   /* down candle / stoch bands / quote change — a
+                                deeper, richer red (owner request 2026-07-16;
+                                was #ff3333, #ef4444 before that) */
+    --color-series-1: #eb3434;   /* stoch %K — red, deepened to match candles */
     --color-series-2: #f5c518;   /* stoch %D — yellow */
     --color-series-3: #b06cf0;   /* SMA fast — purple */
-    --color-accent: #f5a623;         /* R pivots · navigator — orange */
+    --color-accent: #ffd21a;         /* R pivots · navigator — bright yellow
+                                        (owner request 2026-07-16: no orange,
+                                        "more yellow"; was #f5a623 → #eab308) */
     --color-accent-bright: #f5c518;  /* SMA mid — yellow */
     /* Re-declare the inherited text color inside the dark scope: token
        overrides alone don't re-resolve `color` inherited from body, so any
@@ -181,6 +185,11 @@
   .wb-info-item b { color: var(--color-text-secondary); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 10px; margin-right: 4px; }
   .wb-info-muted { color: var(--color-text-secondary); opacity: .8; }
   .wb-info-warn { color: var(--color-accent); }
+  /* quote readout — last price bold, day change coloured (owner request 2026-07-16) */
+  .wb-quote-last { font-weight: 700; font-size: var(--font-sm); }
+  .wb-quote-chg { font-weight: 600; }
+  .wb-info .up { color: var(--color-gain); }
+  .wb-info .down { color: var(--color-loss); }
   .wb-zoom-pair { display: inline-flex; align-items: center; gap: 6px; }
   .wb-seg-tag { font: 600 10px/1.4 var(--font-mono); letter-spacing: .08em; color: var(--color-text-secondary); }
   .wb-seg-note { font: 400 10px/1.4 var(--font-mono); letter-spacing: .03em; color: var(--color-text-secondary); opacity: .75; }
@@ -424,8 +433,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260716i"></script>
-<script src="scripts/data.js?v=20260716i"></script>
-<script src="scripts/app.js?v=20260716i"></script>
+<script src="scripts/config.js?v=20260716l"></script>
+<script src="scripts/data.js?v=20260716l"></script>
+<script src="scripts/app.js?v=20260716l"></script>
 </body>
 </html>
