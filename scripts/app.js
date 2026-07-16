@@ -72,16 +72,12 @@ function renderStrip(market) {
   for (const m of market) {
     const tile = el('div', 'mkt-tile');
     tile.appendChild(el('span', 'mkt-name', m.name));
-    const row = el('div', 'mkt-row');
-    const left = el('div');
-    left.appendChild(el('div', 'mkt-last', m.last));
-    left.appendChild(el('span', m.chg >= 0 ? 'pill pill--gain' : 'pill pill--loss', fmtPct(m.chg)));
-    row.appendChild(left);
-    if (m.spark && m.spark.length > 1) {
-      const sp = sparkline(m.spark, 76, 24, m.chg >= 0 ? 'var(--color-gain)' : 'var(--color-loss)');
-      sp.classList.add('mkt-spark');
-      row.appendChild(sp);
-    }
+    /* compact half-size tiles: name + price + %-change only. No per-tile
+       sparkline — at 9-in-a-row it left no room for the price and clipped it
+       (Codex #109); the number + change is the readable box the owner wanted. */
+    const row = el('div', 'mkt-vals');
+    row.appendChild(el('span', 'mkt-last', m.last));
+    row.appendChild(el('span', m.chg >= 0 ? 'pill pill--gain' : 'pill pill--loss', fmtPct(m.chg)));
     tile.appendChild(row);
     strip.appendChild(tile);
   }
@@ -2074,16 +2070,6 @@ const WIDGET_PATHS = {
   'screener': 'screener',
 };
 const WIDGET_DEFAULTS = [
-  { type: 'ticker-tape', title: 'Ticker tape', slot: 'strip', height: 78, config: {
-    symbols: [
-      { proName: 'FOREXCOM:SPXUSD', title: 'S&P 500' },
-      { proName: 'FOREXCOM:NSXUSD', title: 'Nasdaq 100' },
-      { proName: 'TVC:US10Y', title: 'US 10Y' },
-      { proName: 'TVC:GOLD', title: 'Gold' },
-      { proName: 'BITSTAMP:BTCUSD', title: 'Bitcoin' },
-    ],
-    showSymbolLogo: true, isTransparent: true, displayMode: 'adaptive', colorTheme: 'light', locale: 'en',
-  } },
   { type: 'events', title: 'Economic calendar', width: 245, height: 305, config: {
     colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
     importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',

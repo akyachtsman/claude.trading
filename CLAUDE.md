@@ -46,14 +46,14 @@ This project's look is its own — established at kickoff via `/design-intake`
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
 - `config/widgets.json` — owner-editable roster of embedded third-party
-  widgets from TWO providers — **TradingView** (ticker tape, economic
-  calendar, …) and **FRED** (`fred-glance` = the St. Louis Fed "Economy at a
-  glance" 8-indicator widget). Each is rendered by `loadWidgets()` as a bare
-  sandboxed **cross-origin** iframe (`widgetFrameSrc` builds a
-  `tradingview-widget.com` URL for TV widgets, or the provider URL for
-  `fred-glance` — `spec.src` overrides for a configure-generated FRED set). A
-  widget tagged `slot:'strip'` (the ticker tape) renders in the full-width
-  top-of-grid strip; every other widget renders — panel-less, captionless — in
+  widgets from TWO providers — **TradingView** (economic calendar) and **FRED**
+  (`fred-glance` = the St. Louis Fed "Economy at a glance" widget). Each is
+  rendered by `loadWidgets()` as a bare sandboxed **cross-origin** iframe
+  (`widgetFrameSrc` builds a `tradingview-widget.com` URL for TV widgets, or the
+  provider URL for `fred-glance` — `spec.src` overrides for a configure-generated
+  FRED set). (The TradingView **ticker tape** — the former `slot:'strip'` widget
+  — was removed 2026-07-16; its symbols became half-size market-strip tiles fed
+  by `desk-market`, owner ruling.) Widgets render — panel-less, captionless — in
   the compact left-packed **`#acctWidgets` row inside the Accounts section**,
   directly under the account cards, sized by per-spec `width`/`height`
   (both 245×305 — matched to the half-width account cards they stack under,
@@ -67,7 +67,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   external data in demo + live).
 - `supabase/functions/` — versioned sources of the edge-function data layer
   (deployed only to the dedicated project). Anon-callable public feeds:
-  `desk-market` (Stooq→Yahoo tiles + FRED 10Y), `desk-heatmap` (Nasdaq
+  `desk-market` (Stooq→Yahoo tiles + FRED 10Y for the core 6, plus
+  Bitcoin/Gold/US Dollar as **best-effort** extras — a flaky extra drops only
+  its tile, never gating the core; owner request 2026-07-16), `desk-heatmap` (Nasdaq
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
   session-aware cached + single-flight. PIN-gated: `desk-ask` (Claude Q&A).
@@ -133,18 +135,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   `allow="accelerometer; gyroscope; magnetometer"` — motion sensors ONLY (the
   set TradingView's own official embed grants), deliberately NOT camera/
   microphone/geolocation/clipboard/payment, and scoped to the frame's own vendor
-  origin. Note this grant reaches only the DIRECT vendor frame: the ticker-tape's
-  accelerometer probe actually fires inside a TradingView **nested sub-frame**
-  the outer `allow` can't propagate into, so on hydrate Chromium still logs one
-  benign `accelerometer is not allowed` permissions-policy violation (PR #78
-  proved the outer grant can't suppress it). That single warning is handled by a
-  tightly-scoped allowlist in the **S3** UI test (matches only the exact
-  accelerometer string; every other console error still fails) — NOT by widening
-  S1. **FRED (`fred-glance`, owner request 2026-07-15) is a SECOND
+  origin. Historical note: the grant reaches only the DIRECT vendor frame — the
+  now-removed **ticker tape**'s accelerometer probe fired inside a TradingView
+  **nested sub-frame** the outer `allow` couldn't propagate into, so hydrate
+  logged one benign `accelerometer is not allowed` violation (PR #78). With the
+  ticker gone (2026-07-16) that warning no longer fires; the tightly-scoped
+  **S3** accelerometer allowlist (exact-string match only; every other console
+  error still fails) is now dormant but retained in case a future TV widget
+  probes the same sensor — NOT to be widened, and never widen S1. **FRED (`fred-glance`, owner request 2026-07-15) is a SECOND
   embed provider on the same footing** — a direct cross-origin iframe on
   `research.stlouisfed.org` (self-contained, no parent-page vendor script),
   sandboxed identically; `allow-same-origin` there refers to FRED's origin.
-  Every widget frame (the ticker strip AND the accounts-row calendar/FRED) sits
+  Every widget frame (the accounts-row calendar/FRED) sits
   **above the fold**, so all loads defer to the **first user interaction**
   (pointer/scroll/key/touch, PR #76 pattern) — S1's load-time check never
   interacts, so nothing third-party runs on initial paint and the S1 console
