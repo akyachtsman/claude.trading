@@ -9,7 +9,7 @@ const fmtSigned = v => (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toLocaleString
 const fmtPct = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%';
 
 /* ── deterministic demo series ─────────────────────────────────────────── */
-const DEMO_DAYS = 260; /* > 252 so every timeframe is exercisable in demo */
+const DEMO_DAYS = 260; /* > 252 so the account cards' 1-year sparkline fills in demo */
 function lcg(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 function walk(seed, start, drift, vol, n, end) {
   const rnd = lcg(seed), out = [start]; let v = start;

@@ -155,7 +155,9 @@ function renderAccounts(accounts, lamp) {
     panel.appendChild(stats);
 
     if (a.equity && a.equity.length > 1) {
-      const spark = sparkline(a.equity.slice(-126), 360, 56, seriesColor(a.key));
+      /* one-year trend window (252 trading days; fewer early on → renders
+         what's accumulated). Owner ruling 2026-07-16. */
+      const spark = sparkline(a.equity.slice(-252), 360, 56, seriesColor(a.key));
       spark.setAttribute('preserveAspectRatio', 'none');
       spark.classList.add('acct-spark');
       spark.setAttribute('role', 'img');
