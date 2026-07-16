@@ -121,6 +121,9 @@
   .widget-frame { width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); display: block; }
   /* inside a card, the card provides the chrome — drop the frame's own border */
   .widget-cell .widget-frame { border: 0; border-radius: 0; box-shadow: none; }
+  /* FRED stands alone in its own panel — half the calendar card's width, and
+     deliberately NOT lined up with it (owner request). */
+  #fredGrid .widget-cell { flex-basis: 150px; max-width: 150px; }
 
   /* Stochastic charts — dark trading-terminal sub-theme (owner ruling
      2026-07-14: match the reference platform, easier to read). A scoped token
