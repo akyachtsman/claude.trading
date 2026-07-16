@@ -102,10 +102,11 @@
   .widget-strip { min-width: 0; }
   .widget-strip:empty { display: none; }
   .widget-strip .widget-frame { height: 78px; }
-  /* Panel widgets: two separate side-by-side cards, each mirroring an account
-     card's chrome + height (border/surface/radius/shadow + header bar). */
-  .widget-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+  /* Panel widgets: two narrow separated cards packed to the left with a normal
+     gap between them; each capped narrow (whitespace falls on the right). */
+  .widget-grid { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: var(--space-4); }
   .widget-cell {
+    flex: 0 1 300px; max-width: 300px;
     display: flex; flex-direction: column; min-width: 0; overflow: hidden;
     background: var(--color-surface); border: 1px solid var(--color-border);
     border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
@@ -261,7 +262,8 @@
   @media (max-width: 1160px) {
     .market-strip { grid-template-columns: repeat(3, 1fr); }
     .account-grid { grid-template-columns: 1fr; }
-    .widget-grid { grid-template-columns: 1fr; }
+    .widget-grid { flex-direction: column; }
+    .widget-cell { flex-basis: auto; max-width: none; }
     .layout { grid-template-columns: 1fr;
       grid-template-areas: "strip" "accounts" "widgets" "heat" "charts" "equity" "rail" "news"; }
   }
