@@ -639,7 +639,7 @@ test('CTRL: no duplicated primary action control', async ({ page }) => {
 test('S5: demo mode shows DEMO lamps on every panel', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('#mastheadState')).toContainText(/demo data/i);
-  for (const id of ['#equityLamp', '#briefLamp', '#newsLamp', '#askLamp']) {
+  for (const id of ['#briefLamp', '#newsLamp', '#askLamp']) {
     await expect(page.locator(id), `${id} must read Demo in demo mode`).toHaveText(/demo/i);
   }
 });
@@ -658,33 +658,6 @@ test('S6: positions table sorts on header click', async ({ page }) => {
   const v2 = Number(await firstCell());
   expect([dir1, dir2].sort()).toEqual(['ascending', 'descending']);
   expect(v1, 'row order must flip between ascending and descending').not.toBe(v2);
-});
-
-// S7 — Consolidate toggle: 2 series ⇄ 1 "All accounts" series.
-test('S7: consolidate toggle collapses and restores the chart series', async ({ page }) => {
-  await page.goto('./?demo=1');
-  const legendItems = page.locator('#equityLegend > span');
-  await expect(legendItems).toHaveCount(2);
-  const btn = page.locator('#consolidateBtn');
-  await btn.click();
-  await expect(btn).toHaveAttribute('aria-pressed', 'true');
-  await expect(legendItems).toHaveCount(1);
-  await expect(page.locator('#equityLegend')).toContainText('All accounts');
-  await btn.click();
-  await expect(legendItems).toHaveCount(2);
-});
-
-// S8 — Timeframe guard: full demo history enables every window; click redraws.
-test('S8: all timeframes enabled in demo and selection moves', async ({ page }) => {
-  await page.goto('./?demo=1');
-  for (const b of await page.locator('#timeframeSeg button').all()) {
-    await expect(b).toBeEnabled();
-  }
-  const oneMonth = page.locator('#timeframeSeg button', { hasText: '1M' });
-  await oneMonth.click();
-  await expect(oneMonth).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('#timeframeSeg button', { hasText: '6M' })).toHaveAttribute('aria-pressed', 'false');
-  expect(await page.locator('#equityChart path').count()).toBeGreaterThan(0);
 });
 
 // S9 — Brief structure: sections + disclaimer + stamp always present.
@@ -709,17 +682,17 @@ async function liveBackendConfigured(page) {
 }
 
 // S10 — Locked → login → render (needs backend + TEST_AUTH_CREDENTIAL).
-test('S10: valid PIN unlocks accounts, chart and brief (live only)', async ({ page }) => {
+test('S10: valid PIN unlocks accounts and brief (live only)', async ({ page }) => {
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
   await page.goto('./');
   const pinInput = page.locator('.lock-form input.input');
   await expect(pinInput).toBeVisible();
-  await expect(page.locator('#equityLamp')).toHaveText(/locked/i);
+  await expect(page.locator('#briefLamp')).toHaveText(/locked/i);
   await pinInput.fill(AUTH_CREDENTIAL);
   await page.locator('.lock-form button').click();
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#equityLamp')).not.toHaveText(/locked/i);
+  await expect(page.locator('#briefLamp')).not.toHaveText(/locked/i);
 });
 
 // S11 — Wrong PIN: plain error, still locked, nothing rendered.
@@ -731,7 +704,7 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   await pinInput.fill('000000');
   await page.locator('.lock-form button').click();
   await expect(page.locator('.lock-error')).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#equityLamp')).toHaveText(/locked/i);
+  await expect(page.locator('#briefLamp')).toHaveText(/locked/i);
   await expect(page.locator('#accountGrid .hero-number')).toHaveCount(0);
 });
 
