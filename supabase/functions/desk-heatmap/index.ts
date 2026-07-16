@@ -294,7 +294,12 @@ export function r2kConstituents(quotes: Map<string, Quote>): Constituent[] {
 }
 
 function lastTradingDayIso(): string {
-  const d = new Date();
+  // Anchor to the US market's calendar day (Eastern time), NOT UTC. After
+  // ~20:00 ET the UTC date has already rolled to "tomorrow", so a UTC-based
+  // stamp read a day ahead for evening US viewers (e.g. 6pm PT showed the next
+  // date). Weekends roll back to Friday. (desk-news uses the same ET anchor.)
+  const etIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD in ET
+  const d = new Date(etIso + 'T12:00:00Z'); // noon-UTC anchor keeps DOW math on the ET date
   const dow = d.getUTCDay();
   if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);
   if (dow === 6) d.setUTCDate(d.getUTCDate() - 1);
