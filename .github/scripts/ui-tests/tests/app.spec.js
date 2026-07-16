@@ -333,8 +333,20 @@ test('S3: interactive elements discovered and exercised without errors', async (
   // other console error — ours or third-party — still fails S3. Narrow on
   // purpose, never a blanket console mute.
   const BENIGN_CONSOLE = /Permissions policy violation: accelerometer is not allowed/i;
+  /* Feed-origin failures are the app's to absorb (panels lamp STALE by
+     design; S14 is where feed health fails loudly) — the same carve-out S1
+     makes for load-time console errors, extended to the sweep after a
+     transient desk-heatmap 546 failed qa-live run 117. ONLY resource-load
+     errors sourced from the feed origin are dropped; every other console
+     error still counts. */
+  const FEED_ORIGIN = /\.supabase\.co\/functions\/v1\//;
   page.on('console', m => {
-    if (m.type() === 'error' && !BENIGN_CONSOLE.test(m.text())) consoleErrors.push(m.text());
+    if (m.type() !== 'error') return;
+    const text = m.text();
+    if (BENIGN_CONSOLE.test(text)) return;
+    const src = (m.location() && m.location().url) || '';
+    if (FEED_ORIGIN.test(src) && /Failed to load resource/i.test(text)) return;
+    consoleErrors.push(text);
   });
 
   const getApiCalls = await captureApiCalls(page);
@@ -449,7 +461,11 @@ test('S3: interactive elements discovered and exercised without errors', async (
     contentType: 'application/json',
   });
 
-  const blocking = findings.filter(f => f.apiErrors.some(c => c.status >= 500) || f.consoleErrors.length > 0);
+  /* feed-origin 5xx excluded — see the FEED_ORIGIN note on the console
+     listener above; a persistent feed outage still fails loudly via S14 */
+  const blocking = findings.filter(f =>
+    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN.test(c.url || '')) ||
+    f.consoleErrors.length > 0);
   expect(blocking, `Blocking anomalies found:\n${JSON.stringify(blocking, null, 2)}`).toHaveLength(0);
 });
 
