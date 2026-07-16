@@ -2,6 +2,7 @@
 
 ## Imported Directives
 https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/global.md
+https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/git.md
 https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/design.md
 https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/test.md
 https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/data.md
@@ -178,8 +179,8 @@ This project's look is its own — established at kickoff via `/design-intake`
 5. Prefer `qa-pipeline`; run steps individually only if it fails:
    `test-verifier` → `pr-review-toolkit:code-reviewer` → `/security-review` (if security-relevant) → `pr-readiness-reviewer`
 6. Open PR to `main`; merging follows the inherited rules in
-   `directives/global.md` (*Conditional Auto-Merge on Green* + *Auto-merge on
-   approval*) — do not restate them here.
+   `directives/git.md` (*PR Lifecycle*, *Conditional Auto-Merge on Green*,
+   *Repo-settings preflight*) — do not restate them here.
 
 ## UI Test Configuration
 Read by `ui-tester` and the Playwright kit at runtime — fill in before invoking agents:
