@@ -583,7 +583,22 @@ function renderHeatmap(hm, lamp) {
     if (sectorChanged) tip.scrollTop = 0;
     const wrap = svg.parentElement.getBoundingClientRect();
     const sx = wrap.width / W, sy = wrap.height / H;
-    tip.style.left = Math.min(px * sx + 8, wrap.width - 250) + 'px';
+    /* The card lists the WHOLE sector and frames the whole sector group, so it
+       must sit OUTSIDE that sector's box — otherwise it buries the very tiles
+       the reader is trying to pick (right-edge sectors like Energy). Anchor to
+       the sector's right edge; flip to the left of its left edge when the card
+       would overrun the container. Measured width beats the old fixed clamp,
+       which pinned the card back over right-hand sectors. */
+    const gap = 8;
+    const tipW = tip.offsetWidth;
+    const secRight = (g ? g.x + g.w : t.x + t.w) * sx;
+    const secLeft = (g ? g.x : t.x) * sx;
+    let left = secRight + gap;
+    if (left + tipW > wrap.width) {
+      const flipped = secLeft - gap - tipW;
+      left = flipped >= 0 ? flipped : Math.max(0, wrap.width - tipW);
+    }
+    tip.style.left = left + 'px';
     tip.style.top = Math.min(Math.max(py * sy - 8, 0), wrap.height - 40) + 'px';
   };
   const hideHover = () => {
