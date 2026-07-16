@@ -1314,7 +1314,11 @@ function renderCharts(data, lamp) {
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
 
   const GAP = 16;
-  const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, ...attrs }));
+  /* crispEdges snaps every axis-aligned mark to the device-pixel grid, killing
+     the soft grey anti-alias fuzz on 1px wicks/gridlines that read blurry next
+     to a real terminal. Diagonal curves (stoch/SMA/BB paths) stay on the
+     default smooth renderer so they don't stair-step. */
+  const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, 'shape-rendering': 'crispEdges', ...attrs }));
   const text = (str, tx, ty, attrs) => { const t = svgEl('text', { x: tx, y: ty, 'font-family': 'var(--font-mono)', 'font-size': 10, fill: WB.label, ...attrs }); t.textContent = str; svg.appendChild(t); };
   const hideTip = () => { tip.style.display = 'none'; while (tip.firstChild) tip.removeChild(tip.firstChild); for (const c of svg.querySelectorAll('[data-cross]')) c.setAttribute('visibility', 'hidden'); };
 
@@ -1441,9 +1445,9 @@ function renderCharts(data, lamp) {
         closeD += (closeD ? 'L' : 'M') + cx.toFixed(1) + ' ' + py(bars.c[i]).toFixed(1);
       } else {
         line(cx, py(bars.h[i]), cx, py(bars.l[i]), { stroke: col, 'stroke-width': 1 });
-        svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col }));
+        svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col, 'shape-rendering': 'crispEdges' }));
       }
-      if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: col, 'fill-opacity': 0.55 }));
+      if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: col, 'fill-opacity': 0.55, 'shape-rendering': 'crispEdges' }));
     }
     /* line style draws closes in gain-green, like the reference platform */
     if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
