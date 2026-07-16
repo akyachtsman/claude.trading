@@ -120,3 +120,32 @@ flow against the dedicated backend).
    reported at import time (shown as-of that date), or omitted for C?
 5. **Account code display** — masked identifier format for the E*TRADE account
    (A/B use `U***NNNN`).
+
+## Clarifications (2026-07-16) — FEATURE ON HOLD at clarify
+Partial clarify pass before the owner paused the feature.
+
+**Resolved**
+- **FR-C3 / Day P&L** — position columns and P&L are "same as IBKR": match the
+  A/B card exactly (symbol, market value, day %, unrealized P&L per row; account
+  day P&L + total unrealized), as-of the import date.
+- **FR-C6 staleness threshold** — owner had no preference; default to **7 days**
+  when resumed (fits a slow-moving Roth), revisit if it nags.
+
+**Reopened — the crux, and why the feature is paused**
+- The brief chose **manual import** because E*TRADE's official API tokens
+  **expire at midnight ET daily and cannot be renewed unattended** (verified
+  2026-07-16: once expired, the full interactive OAuth login must be re-run — no
+  IBKR-Flex equivalent, whose token lasts ~1 year). When asked, the owner said
+  they want E*TRADE "just like IBKR" (unattended automation). That parity is
+  **not achievable through E*TRADE's own API** — only a third-party aggregator
+  (SnapTrade/Plaid) holding the E*TRADE login gives true hands-off sync, which
+  the owner had rejected on privacy.
+- Presented the three honest paths — (a) manual import, (b) E*TRADE API with a
+  **daily** re-auth tap, (c) aggregator (only true automation, third party sees
+  the account). **Owner chose: put the feature on hold.** No path selected;
+  FR-C4's "manual import" is therefore **provisional, not final**.
+
+**Status:** paused at `clarify`. `brief.md` + `spec.md` stand as the captured
+WHAT. To resume: owner picks a data path (a/b/c above), then `/sdd-loop clarify`
+closes the remaining items → `plan`. Do NOT proceed to `plan` until the data
+path is chosen.
