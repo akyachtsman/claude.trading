@@ -40,6 +40,7 @@
     "type": "fred-glance",
     "title": "Economy at a glance — FRED",
     "width": 245,
-    "height": 305
+    "height": 305,
+    "src": "https://fred.stlouisfed.org/fred-glance-widget.php?series_ids=PPIACO,CPIAUCSL,FEDFUNDS,DGS10,DGS20,UNRATE,MORTGAGE30US,T10Y2Y,PCEPI,GDPC1&transformations=pc1,pc1,lin,lin,lin,lin,lin,lin,pc1,pca"
   }
 ]
