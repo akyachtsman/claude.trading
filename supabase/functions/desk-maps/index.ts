@@ -92,10 +92,13 @@ async function sparkBatch(symbols: string[], batchSize = 20): Promise<Map<string
   return out;
 }
 
-// EOD date stamp for the payload (UTC, weekends roll back to Friday) —
-// informational; the client lamps this feed as LIVE off generatedAt.
+// EOD date stamp for the payload — anchored to the US market's calendar day
+// (Eastern time), NOT UTC: after ~20:00 ET the UTC date rolls to "tomorrow", so
+// a UTC stamp read a day ahead for evening US viewers. Weekends roll back to
+// Friday. Informational; the client lamps this feed as LIVE off generatedAt.
 function lastTradingDayIso(): string {
-  const d = new Date();
+  const etIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD in ET
+  const d = new Date(etIso + 'T12:00:00Z'); // noon-UTC anchor keeps DOW math on the ET date
   const dow = d.getUTCDay();
   if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);
   if (dow === 6) d.setUTCDate(d.getUTCDate() - 1);
