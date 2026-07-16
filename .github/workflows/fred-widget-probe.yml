@@ -12,18 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Fetch widget URL and verify series
+      - name: Fetch widget URL and verify series (HTTP/1.1)
         run: |
           set -u
           UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-          BASE_FRED='https://fred.stlouisfed.org/fred-glance-widget.php'
-          BASE_RESEARCH='https://research.stlouisfed.org/fred-glance-widget.php'
           QS='series_ids=CPIAUCSL,UNRATE,FEDFUNDS,DGS10,DGS2,MORTGAGE30US,PAYEMS,A191RL1Q225SBEA&transformations=pc1,lin,lin,lin,lin,lin,chg,lin'
-          for U in "$BASE_FRED?$QS" "$BASE_RESEARCH?$QS" "$BASE_FRED?series_ids=CPIAUCSL,UNRATE,FEDFUNDS,DGS10,DGS2,MORTGAGE30US,PAYEMS,A191RL1Q225SBEA"; do
-            echo "================ GET $U"
-            code=$(curl -sSL -A "$UA" -o body.html -w "%{http_code}" "$U") || { echo "CURL FAILED"; continue; }
-            bytes=$(wc -c < body.html)
-            echo "HTTP $code  bytes=$bytes"
+          for U in "https://fred.stlouisfed.org/fred-glance-widget.php?$QS" "https://research.stlouisfed.org/fred-glance-widget.php?$QS"; do
+            echo "================ GET (http1.1) $U"
+            code=$(curl --http1.1 -sSL -A "$UA" -o body.html -w "%{http_code}" "$U") || { echo "CURL FAILED"; continue; }
+            echo "HTTP $code  bytes=$(wc -c < body.html)"
             echo "---- marker checks"
             for s in 'fred-glance-series' 'Consumer Price Index' 'Unemployment Rate' 'Federal Funds' '10-Year Treasury' 'Treasury' 'Mortgage' 'Payroll' 'Nonfarm' 'Gross Domestic Product' 'CPIAUCSL' 'A191RL1Q225SBEA'; do
               if grep -qi -- "$s" body.html; then echo "FOUND: $s"; else echo "MISSING: $s"; fi
@@ -32,3 +29,25 @@ jobs:
             head -c 30000 body.html
             echo
           done
+      - name: Python urllib fallback
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import urllib.request
+          url = ("https://fred.stlouisfed.org/fred-glance-widget.php?"
+                 "series_ids=CPIAUCSL,UNRATE,FEDFUNDS,DGS10,DGS2,MORTGAGE30US,PAYEMS,A191RL1Q225SBEA"
+                 "&transformations=pc1,lin,lin,lin,lin,lin,chg,lin")
+          req = urllib.request.Request(url, headers={"User-Agent": "python-urllib-probe"})
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  body = r.read().decode("utf-8", "replace")
+                  print("PY HTTP", r.status, "bytes", len(body))
+                  for s in ["fred-glance-series", "Consumer Price Index", "Unemployment Rate",
+                            "Federal Funds", "10-Year Treasury", "Treasury", "Mortgage",
+                            "Payroll", "Nonfarm", "Gross Domestic Product"]:
+                      print(("FOUND: " if s.lower() in body.lower() else "MISSING: ") + s)
+                  print("---- body head ----")
+                  print(body[:30000])
+          except Exception as e:
+              print("PY FAILED:", e)
+          EOF
