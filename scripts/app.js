@@ -1435,18 +1435,9 @@ function renderCharts(data, lamp) {
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
   document.getElementById('chartsStamp').textContent = data ? 'As of ' + data.asOf : '—';
 
-  /* the symbol box is a typeable combobox: datalist suggests the roster,
-     free entry goes through the quote-proxy (wireCharts submit handler) */
-  const list = document.getElementById('wbSymList');
-  const roster = Object.keys(data.symbols);
-  if (list.children.length !== roster.length) {
-    while (list.firstChild) list.removeChild(list.firstChild);
-    for (const sym of roster) {
-      const o = document.createElement('option');
-      o.value = sym;
-      list.appendChild(o);
-    }
-  }
+  /* the symbol box is free-entry: type any ticker → the quote-proxy (wireCharts
+     submit handler); the roster is picked from the sidebar list. No datalist —
+     it duplicated the current symbol in a native popup (owner ruling 2026-07-16). */
   const symBox = document.getElementById('wbSymInput');
   if (document.activeElement !== symBox) symBox.value = wbState.sym;
   renderWbSidebar(data);
@@ -1989,9 +1980,9 @@ function wireCharts() {
     layoutSeg.appendChild(b);
   }
 
-  /* Symbol combobox: roster picks (typed or datalist) switch instantly;
-     unknown tickers go through the origin-guarded quote-proxy in live mode —
-     no unlock needed (demo has no backend ⇒ note). */
+  /* Symbol box: a typed roster symbol switches instantly; unknown tickers go
+     through the origin-guarded quote-proxy in live mode — no unlock needed
+     (demo has no backend ⇒ note). */
   const symForm = document.getElementById('wbSymForm');
   const symInput = document.getElementById('wbSymInput');
   /* transient load status shares the fundamentals strip's slot; once the chart
@@ -2005,8 +1996,8 @@ function wireCharts() {
       wbPick(sym);
     }
   });
-  /* WebKit consumes Enter on a datalist-backed input (no change/implicit
-     submit fires) — route the key to the form's submit path explicitly */
+  /* route Enter explicitly to the form's submit path — a lone text input can
+     otherwise submit inconsistently across engines; keep it deterministic */
   symInput.addEventListener('keydown', ev => {
     if (ev.key !== 'Enter') return;
     ev.preventDefault();
