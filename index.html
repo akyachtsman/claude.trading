@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260716b">
-<link rel="stylesheet" href="styles/components.css?v=20260716b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260716c">
+<link rel="stylesheet" href="styles/components.css?v=20260716c">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -136,6 +136,10 @@
     --color-series-3: #b06cf0;   /* SMA fast — purple */
     --color-accent: #f5a623;         /* R pivots · navigator — orange */
     --color-accent-bright: #f5c518;  /* SMA mid — yellow */
+    /* Re-declare the inherited text color inside the dark scope: token
+       overrides alone don't re-resolve `color` inherited from body, so any
+       unstyled text (settings-popover labels) rendered near-black on navy. */
+    color: var(--color-text-primary);
   }
 
   /* watchlist charts (two-pane workbench + symbol rail) */
@@ -443,8 +447,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260716b"></script>
-<script src="scripts/data.js?v=20260716b"></script>
-<script src="scripts/app.js?v=20260716b"></script>
+<script src="scripts/config.js?v=20260716c"></script>
+<script src="scripts/data.js?v=20260716c"></script>
+<script src="scripts/app.js?v=20260716c"></script>
 </body>
 </html>
