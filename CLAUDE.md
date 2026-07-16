@@ -53,9 +53,14 @@ This project's look is its own — established at kickoff via `/design-intake`
   widget tagged `slot:'strip'` (the ticker tape) renders in the full-width
   top-of-grid strip and hydrates on **first user interaction** (it's above the
   fold, so a scroll-observer would run vendor JS on paint and trip the S1 gate);
-  all other widgets render in the panel below Accounts and lazy-load on scroll.
-  Read CLIENT-side (`fetchPublic`), not by an edge function. Mode-independent
-  (live external data in demo + live).
+  `type:'fred-glance'` renders in its own standalone **"Economy at a glance"
+  panel** (`#fredGrid`, layout grid-area `fred`, cards capped 150px — split out
+  of the TradingView panel in PR #94); every other widget fills the TradingView
+  **Market widgets** panel below Accounts (`#widgetGrid`). Both panels
+  lazy-load on scroll and each carries its own lamp + source stamp
+  ("TradingView · live" / "FRED · live"). Read CLIENT-side (`fetchPublic`),
+  not by an edge function. Mode-independent (live external data in demo +
+  live).
 - `supabase/functions/` — versioned sources of the edge-function data layer
   (deployed only to the dedicated project). Anon-callable public feeds:
   `desk-market` (Stooq→Yahoo tiles + FRED 10Y), `desk-heatmap` (Nasdaq
@@ -172,7 +177,11 @@ This project's look is its own — established at kickoff via `/design-intake`
 4. Run Required Commands above — all must pass
 5. Prefer `qa-pipeline`; run steps individually only if it fails:
    `test-verifier` → `pr-review-toolkit:code-reviewer` → `/security-review` (if security-relevant) → `pr-readiness-reviewer`
-6. Open PR to `main`
+6. Open PR to `main` and **always merge it automatically** (owner directive,
+   2026-07-16): mark the PR ready for review and enable GitHub auto-merge
+   (squash). If the repo's "Allow auto-merge" setting is off and the call is
+   rejected, watch CI and squash-merge the PR yourself as soon as checks are
+   green — do not leave PRs waiting on the owner.
 
 ## UI Test Configuration
 Read by `ui-tester` and the Playwright kit at runtime — fill in before invoking agents:
@@ -215,6 +224,12 @@ run for real against the dedicated project on every PR.
   reference (finviz map = ALL ~2000 names), build the full expected thing or
   surface the trade-off BEFORE shipping and let the owner choose. A caption
   disclosing the cut is not consent. (Owner ruling, 2026-07-14.)
+- **Aesthetic/sizing changes: mock first, then one decisive change.** Show a
+  mock of the proposed look BEFORE shipping, and make one decisive larger
+  adjustment rather than pixel-nudging increments across many rounds.
+  Corollary: vendor widget iframes render blank in the sandbox, so measure
+  sizes from the owner's screenshots, not a local render. (Owner preference,
+  2026-07-15, after ~10 rounds of widget resizing.)
 
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:
