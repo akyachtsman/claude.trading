@@ -44,24 +44,25 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
-- `config/widgets.json` — owner-editable roster for the **Market widgets**
-  panel: embedded third-party widgets from TWO providers — **TradingView**
-  (ticker tape, economic calendar, …) and **FRED** (`fred-glance` = the
-  St. Louis Fed "Economy at a glance" 8-indicator widget). Each is rendered by
-  `loadWidgets()` in its own sandboxed **cross-origin** iframe (`widgetFrameSrc`
-  builds a `tradingview-widget.com` URL for TV widgets, or the provider URL for
+- `config/widgets.json` — owner-editable roster of embedded third-party
+  widgets from TWO providers — **TradingView** (ticker tape, economic
+  calendar, …) and **FRED** (`fred-glance` = the St. Louis Fed "Economy at a
+  glance" 8-indicator widget). Each is rendered by `loadWidgets()` as a bare
+  sandboxed **cross-origin** iframe (`widgetFrameSrc` builds a
+  `tradingview-widget.com` URL for TV widgets, or the provider URL for
   `fred-glance` — `spec.src` overrides for a configure-generated FRED set). A
   widget tagged `slot:'strip'` (the ticker tape) renders in the full-width
-  top-of-grid strip and hydrates on **first user interaction** (it's above the
-  fold, so a scroll-observer would run vendor JS on paint and trip the S1 gate);
-  `type:'fred-glance'` renders in its own standalone **"Economy at a glance"
-  panel** (`#fredGrid`, layout grid-area `fred`, cards capped 150px — split out
-  of the TradingView panel in PR #94); every other widget fills the TradingView
-  **Market widgets** panel below Accounts (`#widgetGrid`). Both panels
-  lazy-load on scroll and each carries its own lamp + source stamp
-  ("TradingView · live" / "FRED · live"). Read CLIENT-side (`fetchPublic`),
-  not by an edge function. Mode-independent (live external data in demo +
-  live).
+  top-of-grid strip; every other widget renders — panel-less, captionless — in
+  the compact left-packed **`#acctWidgets` row inside the Accounts section**,
+  directly under the account cards, sized by per-spec `width`/`height`
+  (calendar 260×220, FRED 150×220; the two former widget panels were removed
+  per owner mock 2026-07-16). Everything third-party is above the fold now, so
+  ALL frames hydrate on **first user interaction** (a scroll-observer would
+  run vendor JS on paint and trip the S1 gate). One shared static stamp under
+  the row ("TradingView + FRED · live · sandboxed from the desk") replaces the
+  former per-panel lamps; CSS hides row + stamp when nothing renders. Read
+  CLIENT-side (`fetchPublic`), not by an edge function. Mode-independent (live
+  external data in demo + live).
 - `supabase/functions/` — versioned sources of the edge-function data layer
   (deployed only to the dedicated project). Anon-callable public feeds:
   `desk-market` (Stooq→Yahoo tiles + FRED 10Y), `desk-heatmap` (Nasdaq
@@ -115,9 +116,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   public news.json. `desk-heatmap` holds it too, solely for the
   `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
   multi-period sweep — public market percentages only.
-- **Third-party widget embeds (Market widgets panel, owner request
-  2026-07-15):** the panel loads TradingView widgets — the one place the desk
-  runs vendor JS. Each widget is a **direct cross-origin iframe** on
+- **Third-party widget embeds (owner request 2026-07-15; panels removed in
+  favour of the accounts-row layout 2026-07-16):** the desk embeds TradingView
+  widgets — the one place it runs vendor JS. Each widget is a **direct cross-origin iframe** on
   `tradingview-widget.com` (NOT a `srcdoc` doc — a srcdoc frame inherits the
   PARENT origin, so `allow-same-origin` there would put the vendor script
   same-origin with the desk and expose `sessionStorage`/the PIN; this was
@@ -140,13 +141,13 @@ This project's look is its own — established at kickoff via `/design-intake`
   S1. **FRED (`fred-glance`, owner request 2026-07-15) is a SECOND
   embed provider on the same footing** — a direct cross-origin iframe on
   `research.stlouisfed.org` (self-contained, no parent-page vendor script),
-  sandboxed identically; `allow-same-origin` there refers to FRED's origin. Panel
-  widgets' loads are **deferred to scroll** (IntersectionObserver) so nothing
-  third-party runs on initial paint — this keeps the S1 console gate clean (do
-  NOT widen the S1 allowlist for widget origins; the lazy-load is the
-  containment). The **ticker strip is above the fold**, so it instead defers to
-  the **first user interaction** (pointer/scroll/key/touch) — S1's load-time
-  check never interacts, so the strip stays inert there too (PR #76). Residual:
+  sandboxed identically; `allow-same-origin` there refers to FRED's origin.
+  Every widget frame (the ticker strip AND the accounts-row calendar/FRED) sits
+  **above the fold**, so all loads defer to the **first user interaction**
+  (pointer/scroll/key/touch, PR #76 pattern) — S1's load-time check never
+  interacts, so nothing third-party runs on initial paint and the S1 console
+  gate stays clean (do NOT widen the S1 allowlist for widget origins; the
+  deferred hydration is the containment). Residual:
   each vendor sees the viewer's IP/UA and sets its own cookies in its own frame;
   no desk data crosses the boundary. Roster is owner-controlled
   (`config/widgets.json`).
