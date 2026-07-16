@@ -230,7 +230,7 @@ test('S1: page loads without JS errors', async ({ page }) => {
     errors.push(`${m.text()} (${at || 'no url'})`);
   });
   await page.goto('./');
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   const bodyText = await page.evaluate(() => document.body.innerText?.trim());
   expect(bodyText?.length, 'Page body is empty').toBeGreaterThan(0);
   expect(errors, `JS errors on load: ${errors.join('; ')}`).toHaveLength(0);
@@ -247,7 +247,7 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
 
   const getApiCalls = await captureApiCalls(page);
   await page.goto('./');
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
 
   const beforeSnap = await domSnapshot(page);
   // Gate the auth attempt on detectAuthGate() — same as S4 and gotoAndAuth. Unguarded,
@@ -339,14 +339,14 @@ test('S3: interactive elements discovered and exercised without errors', async (
 
   const getApiCalls = await captureApiCalls(page);
   await page.goto('./');
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   // Authenticate if we have a credential; if there's a real auth gate but no credential,
   // skip — sweeping the login screen would fire spurious PIN/password attempts and 401/403s
   // don't block, so the job could "pass" without reaching app content. A public app with
   // no gate falls through and is swept normally.
   if (AUTH_CREDENTIAL) {
     await detectAndAuth(page, AUTH_CREDENTIAL);
-    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   } else if (await detectAuthGate(page)) {
     test.skip(true, 'Auth gate present but no credential — skipping sweep (would only exercise the login screen)');
   }
@@ -459,14 +459,14 @@ test('S3: interactive elements discovered and exercised without errors', async (
 test('S4: no horizontal overflow at 390px mobile viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('./');
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   // Authenticate only when a real auth gate (PIN/password) is detected, so overflow is
   // measured against the real app rather than the login screen. Gate on detectAuthGate()
   // — NOT just "a credential exists" — so a public-first app with a stray text input
   // (search/filter) isn't mutated by detectAndAuth's text-input fallback before measuring.
   if (AUTH_CREDENTIAL && await detectAuthGate(page)) {
     await detectAndAuth(page, AUTH_CREDENTIAL);
-    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   }
   const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
   const viewWidth = await page.evaluate(() => window.innerWidth);
@@ -480,13 +480,13 @@ test('S4: no horizontal overflow at 390px mobile viewport', async ({ page }) => 
 // ─────────────────────────────────────────────────────────────────────────────
 async function gotoAndAuth(page) {
   await page.goto('./');
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   // Detect once and branch — each detectAuthGate() call burns a 5s waitFor timeout when
   // no gate is present, so calling it in both branches wasted ~10s of the test timeout.
   const gated = await detectAuthGate(page);
   if (AUTH_CREDENTIAL && gated) {
     await detectAndAuth(page, AUTH_CREDENTIAL);
-    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   } else if (gated) {
     test.skip(true, 'Auth gate present but no credential — skipping navigation/control invariants');
   }
@@ -546,7 +546,7 @@ test('NAV: back navigation strictly unwinds (no loop)', async ({ page }) => {
         if (!await loc.isVisible().catch(() => false)) continue;
         await loc.click({ timeout: 3000 });
         await page.waitForTimeout(800);
-        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
       } catch { continue; }
       const after = await viewSignature(page);
       const hasBack = await backControl(page).isVisible().catch(() => false);
@@ -573,7 +573,7 @@ test('NAV: back navigation strictly unwinds (no loop)', async ({ page }) => {
     if (!await back.isVisible().catch(() => false)) break;
     await back.click({ timeout: 3000 });
     await page.waitForTimeout(800);
-    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
     const now = await viewSignature(page);
     trail.push({ stepFromDeepest: forward.length - i, expected, left, got: now });
     test.info().attach('back-flow-trail', { body: JSON.stringify(trail, null, 2), contentType: 'application/json' });
