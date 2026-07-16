@@ -35,7 +35,6 @@ const DESK = {
   authed: false,
   data: null,          /* {accounts, market, news, labels, brief, asOfDate} */
   liveStamp: null,     /* freshest market-feed {generatedAt, asOf} — masthead lamp */
-  chart: { days: 126, consolidated: false, _state: null },
 };
 
 /* ── masthead ──────────────────────────────────────────────────────────── */
@@ -374,165 +373,10 @@ function renderLockedPanels() {
     }
   });
 
-  /* equity + brief + ask panels show locked shells */
-  lockChartPanel(true);
+  /* brief + ask panels show locked shells */
   renderBrief(null, { cls: 'lamp--locked', text: 'Locked' });
   document.getElementById('briefBody').replaceChildren(el('p', 'stamp', 'Unlocks with the desk PIN.'));
   renderAsk();
-}
-function lockChartPanel(locked) {
-  const wrap = document.getElementById('equityPanelBody');
-  wrap.hidden = locked;
-  const lockedMsg = document.getElementById('equityLocked');
-  lockedMsg.hidden = !locked;
-  const lampEl = document.getElementById('equityLamp');
-  if (locked) { lampEl.className = 'lamp lamp--locked'; lampEl.textContent = 'Locked'; }
-  /* dead controls disappear with the data they act on */
-  document.querySelector('.chart-head-tools').hidden = locked;
-  document.getElementById('consolidateBtn').hidden = locked;
-}
-
-/* ── combined equity chart ─────────────────────────────────────────────── */
-const chartGeom = { W: 840, H: 300, padL: 64, padR: 96, padT: 16, padB: 30 };
-
-function activeSeries() {
-  const accounts = DESK.data.accounts;
-  if (DESK.chart.consolidated) {
-    const sum = accounts[0].equity.map((_, i) => accounts.reduce((s, a) => s + a.equity[i], 0));
-    return [{ name: 'All accounts', color: 'var(--color-accent-bright)', values: sum }];
-  }
-  return accounts.map(a => ({ name: a.label, color: seriesColor(a.key), values: a.equity }));
-}
-
-function drawChart() {
-  const svg = document.getElementById('equityChart');
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
-  if (!DESK.data.accounts.length) return; /* authed, zero history yet */
-  const histLen = DESK.data.accounts[0].equity.length;
-  const days = Math.min(DESK.chart.days, histLen);
-  const series = activeSeries().map(s => ({ ...s, values: s.values.slice(-days) }));
-  const labels = DESK.data.labels.slice(-days);
-  const n = series[0].values.length;
-  if (n < 2) return;
-  const all = series.flatMap(s => s.values);
-  const min = Math.min(...all), max = Math.max(...all);
-  const span = (max - min) || 1;
-  const g = chartGeom;
-  const x = i => g.padL + i / (n - 1) * (g.W - g.padL - g.padR);
-  const y = v => g.padT + (1 - (v - min) / span) * (g.H - g.padT - g.padB);
-
-  for (let k = 0; k <= 4; k++) {
-    const v = min + span * k / 4, gy = y(v);
-    svg.appendChild(svgEl('line', { x1: g.padL, x2: g.W - g.padR, y1: gy, y2: gy, stroke: 'var(--color-border)', 'stroke-width': '1' }));
-    const t = svgEl('text', { x: g.padL - 8, y: gy + 4, 'text-anchor': 'end', fill: 'var(--color-text-secondary)', 'font-size': '11', 'font-family': 'var(--font-mono)' });
-    t.textContent = '$' + Math.round(v / 1000) + 'K';
-    svg.appendChild(t);
-  }
-  for (let k = 0; k <= 3; k++) {
-    const i = Math.round((n - 1) * k / 3);
-    const t = svgEl('text', { x: x(i), y: g.H - 8, 'text-anchor': k === 0 ? 'start' : k === 3 ? 'end' : 'middle', fill: 'var(--color-text-secondary)', 'font-size': '11', 'font-family': 'var(--font-mono)' });
-    t.textContent = labels[i];
-    svg.appendChild(t);
-  }
-  for (const s of series) {
-    const pts = s.values.map((v, i) => [x(i), y(v)]);
-    svg.appendChild(svgEl('path', { d: pathFrom(pts), fill: 'none', stroke: s.color, 'stroke-width': '2', 'stroke-linejoin': 'round' }));
-    const last = pts[pts.length - 1];
-    const label = svgEl('text', { x: last[0] + 8, y: last[1] + 4, fill: s.color, 'font-size': '11', 'font-weight': '600', 'font-family': 'var(--font-sans)' });
-    label.textContent = s.name;
-    svg.appendChild(label);
-  }
-  svg.appendChild(svgEl('line', { id: 'crosshair', x1: 0, x2: 0, y1: g.padT, y2: g.H - g.padB, stroke: 'var(--color-border-hover)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' }));
-
-  DESK.chart._state = { series, labels, n, x };
-  renderLegend(series);
-  renderDataTable(series, labels);
-  updateTimeframeGuard(histLen);
-}
-
-function renderLegend(series) {
-  const lg = document.getElementById('equityLegend');
-  while (lg.firstChild) lg.removeChild(lg.firstChild);
-  for (const s of series) {
-    const item = el('span');
-    const dot = el('span', 'key-dot'); dot.style.background = s.color;
-    item.appendChild(dot);
-    item.appendChild(el('span', '', s.name));
-    lg.appendChild(item);
-  }
-}
-
-function renderDataTable(series, labels) {
-  const table = document.getElementById('equityDataTable');
-  while (table.firstChild) table.removeChild(table.firstChild);
-  const thead = document.createElement('thead');
-  const hr = document.createElement('tr');
-  for (const name of ['Date', ...series.map(s => s.name)]) {
-    const th = document.createElement('th');
-    th.textContent = name; th.setAttribute('scope', 'col');
-    hr.appendChild(th);
-  }
-  thead.appendChild(hr); table.appendChild(thead);
-  const tbody = document.createElement('tbody');
-  const step = Math.max(1, Math.floor(labels.length / 8));
-  for (let i = labels.length - 1; i >= 0; i -= step) {
-    const tr = document.createElement('tr');
-    const dt = document.createElement('td'); dt.textContent = labels[i]; tr.appendChild(dt);
-    for (const s of series) { const td = document.createElement('td'); td.textContent = fmtUsd0(s.values[i]); tr.appendChild(td); }
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-}
-
-function updateTimeframeGuard(histLen) {
-  for (const b of document.querySelectorAll('#timeframeSeg button')) {
-    const need = Number(b.dataset.days);
-    const ok = histLen >= Math.min(need, 9999) || need <= histLen;
-    b.disabled = !ok && need > histLen;
-    if (b.disabled) b.title = 'Needs ' + need + ' days of history — ' + histLen + ' available so far';
-    else b.removeAttribute('title');
-  }
-}
-
-function wireChart() {
-  const svg = document.getElementById('equityChart');
-  const tip = document.getElementById('chartTip');
-  svg.addEventListener('pointermove', e => {
-    const st = DESK.chart._state; if (!st) return;
-    const rect = svg.getBoundingClientRect();
-    const g = chartGeom;
-    const sx = (e.clientX - rect.left) / rect.width * g.W;
-    const frac = (sx - g.padL) / (g.W - g.padL - g.padR);
-    const i = Math.max(0, Math.min(st.n - 1, Math.round(frac * (st.n - 1))));
-    const cx = st.x(i);
-    const cross = svg.querySelector('#crosshair');
-    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
-    cross.setAttribute('visibility', 'visible');
-    while (tip.firstChild) tip.removeChild(tip.firstChild);
-    tip.appendChild(el('div', 'tip-date', st.labels[i]));
-    for (const s of st.series) tip.appendChild(el('div', '', s.name + '  ' + fmtUsd0(s.values[i])));
-    tip.style.display = 'block';
-    const px = cx / g.W * rect.width;
-    tip.style.left = Math.min(px + 12, rect.width - 170) + 'px';
-    tip.style.top = '12px';
-  });
-  svg.addEventListener('pointerleave', () => {
-    tip.style.display = 'none';
-    const cross = svg.querySelector('#crosshair');
-    if (cross) cross.setAttribute('visibility', 'hidden');
-  });
-  document.getElementById('timeframeSeg').addEventListener('click', e => {
-    const btn = e.target.closest('button'); if (!btn || btn.disabled) return;
-    for (const b of document.querySelectorAll('#timeframeSeg button')) b.setAttribute('aria-pressed', String(b === btn));
-    DESK.chart.days = Number(btn.dataset.days);
-    drawChart();
-  });
-  document.getElementById('consolidateBtn').addEventListener('click', function () {
-    DESK.chart.consolidated = !DESK.chart.consolidated;
-    this.setAttribute('aria-pressed', String(DESK.chart.consolidated));
-    this.textContent = DESK.chart.consolidated ? 'Show accounts separately' : 'Consolidate accounts';
-    drawChart();
-  });
 }
 
 /* ── S&P 500 heatmap (squarified treemap) ──────────────────────────────────
@@ -2124,9 +1968,6 @@ function renderPrivate() {
     const lamp = DESK.mode === 'demo'
       ? { cls: 'lamp--demo', text: 'Demo' }
       : accountsLampFor(DESK.privateAsOf, DESK.privateSyncedAt, new Date());
-    lockChartPanel(false);
-    const lampEl = document.getElementById('equityLamp');
-    lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
     const acctStamp = document.getElementById('accountsStamp');
     if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? 'Demo data' : '');
     renderAccounts(DESK.data.accounts, lamp);
@@ -2145,7 +1986,6 @@ function renderPrivate() {
       }
     }
     renderBrief(brief, briefLamp, staleNote);
-    drawChart();
     renderAsk();
   } else {
     renderLockedPanels(); /* renders the ask panel's locked shell too */
@@ -2385,7 +2225,6 @@ async function boot() {
   renderLockedPanels();
 }
 
-wireChart();
 wireCharts();
 wireMapFilter();
 boot();

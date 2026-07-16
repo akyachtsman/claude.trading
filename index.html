@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260716d">
-<link rel="stylesheet" href="styles/components.css?v=20260716d">
+<link rel="stylesheet" href="styles/tokens.css?v=20260716e">
+<link rel="stylesheet" href="styles/components.css?v=20260716e">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -37,23 +37,22 @@
   .mkt-spark { width: 76px; height: 24px; flex: none; }
 
   /* layout: news is a full-height column on the RIGHT. The heatmap and the
-     stochastic-charts panel (plus equity) widen across the main + brief/ask
-     area up to the news reel's LEFT edge — not underneath it (owner ruling
-     2026-07-14: "only go up to the newsreel"). Accounts + brief/ask sit in
-     the top band; heat/charts/equity span that full left width below. */
+     stochastic-charts panel widen across the main + brief/ask area up to the
+     news reel's LEFT edge — not underneath it (owner ruling 2026-07-14: "only
+     go up to the newsreel"). Accounts + brief/ask sit in the top band;
+     heat/charts span that full left width below. (Equity-curves panel removed
+     2026-07-16 — the per-account card sparklines cover the trend.) */
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px 300px;
     grid-template-areas:
       "strip    strip   strip"
       "accounts rail    news"
       "heat     heat    news"
-      "charts   charts  news"
-      "equity   equity  news";
+      "charts   charts  news";
     gap: var(--space-4); align-items: start; }
   .widget-strip  { grid-area: strip; min-width: 0; }
   .area-accounts { grid-area: accounts; min-width: 0; }
   .heat-panel    { grid-area: heat; min-width: 0; }
   .area-charts   { grid-area: charts; min-width: 0; }
-  .area-equity   { grid-area: equity; min-width: 0; }
   .col-rail { grid-area: rail; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
   .col-news { grid-area: news; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
 
@@ -75,12 +74,10 @@
   .acct-spark { display: block; width: 100%; height: 56px; }
   .acct-positions { padding: 0 var(--space-4) var(--space-3); overflow-x: auto; }
 
-  /* combined chart */
-  .chart-head-tools { margin-left: auto; display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-  .legend { display: flex; gap: var(--space-3); flex-wrap: wrap; font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  /* shared chart chrome — crosshair tip + wrap, used by the heatmap and the
+     stochastic-charts workbench (the equity-curves panel that also used these
+     was removed 2026-07-16) */
   .chart-wrap { position: relative; }
-  #equityChart { display: block; width: 100%; height: auto; }
   .chart-tip {
     position: absolute; pointer-events: none; display: none; z-index: 2;
     background: var(--color-surface-2); border: 1px solid var(--color-border-hover);
@@ -254,8 +251,7 @@
         "accounts news"
         "rail     news"
         "heat     news"
-        "charts   news"
-        "equity   news"; }
+        "charts   news"; }
   }
   @media (max-width: 1160px) {
     .market-strip { grid-template-columns: repeat(3, 1fr); }
@@ -263,7 +259,7 @@
     /* single column: widgets stretch to the stacked account-card width */
     .acct-widgets .widget-frame { width: 100%; }
     .layout { grid-template-columns: 1fr;
-      grid-template-areas: "strip" "accounts" "heat" "charts" "equity" "rail" "news"; }
+      grid-template-areas: "strip" "accounts" "heat" "charts" "rail" "news"; }
   }
   @media (max-width: 620px) {
     .market-strip { grid-template-columns: repeat(2, 1fr); }
@@ -373,38 +369,6 @@
         </div>
       </section>
 
-      <section class="panel area-equity" aria-labelledby="equityTitle">
-        <div class="panel-header">
-          <h2 class="panel-title" id="equityTitle">Equity curves</h2>
-          <span class="lamp lamp--demo" id="equityLamp">Demo</span>
-          <div class="chart-head-tools">
-            <div class="legend" id="equityLegend"></div>
-            <button type="button" class="btn-secondary btn" id="consolidateBtn" aria-pressed="false">Consolidate accounts</button>
-            <div class="seg" role="group" aria-label="Timeframe" id="timeframeSeg">
-              <button type="button" data-days="21" aria-pressed="false">1M</button>
-              <button type="button" data-days="63" aria-pressed="false">3M</button>
-              <button type="button" data-days="126" aria-pressed="true">6M</button>
-              <button type="button" data-days="252" aria-pressed="false">1Y</button>
-            </div>
-          </div>
-        </div>
-        <div class="panel-body" id="equityPanelBody">
-          <div class="chart-wrap">
-            <svg id="equityChart" viewBox="0 0 840 300" role="img" aria-label="Equity curves per account over the selected timeframe"></svg>
-            <div class="chart-tip" id="chartTip"></div>
-          </div>
-          <details class="chart-data">
-            <summary>View data table</summary>
-            <table class="data-table" id="equityDataTable"></table>
-          </details>
-          <p class="stamp">Source: IBKR Flex report · Values at market close</p>
-        </div>
-        <div class="panel-body" id="equityLocked" hidden>
-          <p class="lock-explain">Unlocks with the desk PIN.</p>
-        </div>
-      </section>
-
-
     <aside class="col-rail" aria-label="Desk tools">
 
       <section class="panel" aria-labelledby="briefTitle">
@@ -446,8 +410,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260716d"></script>
-<script src="scripts/data.js?v=20260716d"></script>
-<script src="scripts/app.js?v=20260716d"></script>
+<script src="scripts/config.js?v=20260716e"></script>
+<script src="scripts/data.js?v=20260716e"></script>
+<script src="scripts/app.js?v=20260716e"></script>
 </body>
 </html>

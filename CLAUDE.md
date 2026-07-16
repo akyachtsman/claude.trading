@@ -37,8 +37,9 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
   mode resolution, `deskFeed()` live-feed wrapper, `marketSessionOpen()`,
   two-tier `liveLampFor` staleness lamps, Supabase RPC fetch wrappers.
-- `scripts/app.js` — all rendering + interactions (accounts, chart, brief with
-  FR-AI4 staleness, news, ask-the-desk panel, PIN lock/unlock flow) + the
+- `scripts/app.js` — all rendering + interactions (accounts with per-card
+  equity sparklines, brief with FR-AI4 staleness, news, ask-the-desk panel,
+  stochastic charts workbench, PIN lock/unlock flow) + the
   session-aware feed poller (5 min market-open / 60 min closed, paused
   while the tab is hidden).
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
@@ -191,11 +192,11 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | App URL | `https://akyachtsman.github.io/claude.trading/` (demo state: append `?demo=1` for deterministic data) |
 | Valid test credential | repo secret `TEST_AUTH_CREDENTIAL` (name only — never commit the value; set — S10 exercises the live unlock path in CI) |
 | Invalid test credential | `000000` |
-| Primary nav button | `Consolidate accounts` |
+| Primary nav button | `Load` (charts-workbench symbol loader) |
 | Primary content selector | `.account .hero-number` |
-| Nav cards | n/a — single-page dashboard (panels: Accounts, Equity curves, AI daily brief, Ask the desk, News) |
+| Nav cards | n/a — single-page dashboard (panels: Accounts, Heatmap, Stochastic charts, AI daily brief, Ask the desk, News) |
 | Playwright test directory | `.github/scripts/ui-tests` |
-| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.lock-error` · lamps: `#equityLamp #briefLamp #newsLamp #askLamp` · chart: `#equityChart` · news rows: `.news-row` |
+| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.lock-error` · lamps: `#briefLamp #newsLamp #askLamp` · chart: `#wbChart` · news rows: `.news-row` |
 
 ## Project-Specific Test Scenarios
 Authoritative list of coverage beyond the generic S1–S4 suite — one
@@ -204,12 +205,10 @@ cleanly while `DESK_DB` is empty; with the desk LIVE (current state) S10/S11
 run for real against the dedicated project on every PR.
 | # | Feature | What to verify | Failure indicator |
 |---|---|---|---|
-| S5 | Demo lamps | With `?demo=1`, masthead shows "Demo data" and every panel lamp (equity, brief, news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
+| S5 | Demo lamps | With `?demo=1`, masthead shows "Demo data" and every panel lamp (brief, news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
 | S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; first-row value order changes accordingly | Order/aria-sort unchanged after click |
-| S7 | Consolidate toggle | Button collapses the chart to one "All accounts" series (legend 2→1) and back; `aria-pressed` tracks | Legend count wrong or toggle text stuck |
-| S8 | Timeframe guard | All four seg buttons enabled on 260-day demo history; clicking 1M moves `aria-pressed` and redraws | Disabled buttons in demo, or pressed state stuck |
 | S9 | Brief structure | Demo brief renders Portfolio state / Key levels / Scenarios sections + disclaimer + stamp | Missing section or missing disclaimer |
-| S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts/chart/brief | Skips while demo-only; fails if unlock doesn't render |
+| S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts + brief | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 daily / Pro 2 weekly / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
