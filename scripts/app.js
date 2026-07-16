@@ -2251,11 +2251,11 @@ const WIDGET_DEFAULTS = [
     ],
     showSymbolLogo: true, isTransparent: true, displayMode: 'adaptive', colorTheme: 'light', locale: 'en',
   } },
-  { type: 'events', title: 'Economic calendar', height: 460, config: {
+  { type: 'events', title: 'Economic calendar', width: 260, height: 220, config: {
     colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
     importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',
   } },
-  { type: 'fred-glance', title: 'Economy at a glance — FRED', height: 530 },
+  { type: 'fred-glance', title: 'Economy at a glance — FRED', width: 150, height: 220 },
 ];
 
 function widgetSrc(path, config) {
@@ -2282,19 +2282,13 @@ function widgetFrameSrc(spec) {
   return path ? widgetSrc(path, spec.config) : null;
 }
 
-/* Build a widget cell. The iframe's src is stashed on _src, NOT set yet:
-   loadWidgets defers it to first scroll-into-view so the vendor frame never
-   loads on initial paint (perf + privacy, and keeps the S1 console gate clean
-   — this below-the-fold panel stays inert until the user reaches it). */
-function buildWidgetCell(spec) {
-  const cell = document.createElement('div');
-  cell.className = 'widget-cell';
-  const cap = document.createElement('p');
-  cap.className = 'widget-cap';
-  cap.textContent = spec.title || spec.type || 'Widget';
-  cell.appendChild(cap);
+/* Build a widget's bare iframe — no card, no caption (owner mock, 2026-07-16).
+   The src is stashed on _src, NOT set yet: loadWidgets defers it to the first
+   user interaction so no vendor frame ever loads on initial paint (perf +
+   privacy, and keeps the S1 console gate clean). */
+function buildWidgetFrame(spec) {
   const src = widgetFrameSrc(spec);
-  if (!src) { cap.textContent = cap.textContent + ' — unknown widget type'; return { cell, frame: null }; }
+  if (!src) return null;
   const frame = document.createElement('iframe');
   frame.className = 'widget-frame';
   frame.title = spec.title || spec.type;
@@ -2312,88 +2306,58 @@ function buildWidgetCell(spec) {
      be a real surface. Scoped to this frame's own vendor origin. */
   frame.setAttribute('allow', 'accelerometer; gyroscope; magnetometer');
   frame.style.height = (Number(spec.height) || 400) + 'px';
+  /* per-widget width for the accounts row, read by the --widget-w CSS hook
+     (strip frames ignore it — their CSS width stays 100%) */
+  if (spec.width) frame.style.setProperty('--widget-w', Number(spec.width) + 'px');
   frame._src = src;
-  cell.appendChild(frame);
-  return { cell, frame };
+  return frame;
 }
 
 async function loadWidgets() {
-  const grid  = document.getElementById('widgetGrid');
-  const fredGrid = document.getElementById('fredGrid');
+  const row   = document.getElementById('acctWidgets');
   const strip = document.getElementById('widgetStrip');
-  if (!grid && !strip && !fredGrid) return;
+  if (!row && !strip) return;
   let specs = WIDGET_DEFAULTS;
   try {
     const cfg = await fetchPublic('config/widgets.json');
     if (Array.isArray(cfg) && cfg.length) specs = cfg;
   } catch { /* committed config missing/unreachable → built-in defaults */ }
   /* slot:'strip' widgets (the ticker tape) render in the full-width top strip;
-     FRED lives in its OWN panel (not the TradingView-branded one — owner
-     request); every other panel widget fills the TradingView grid. */
+     everything else renders as a bare compact frame in the row under the
+     account cards (owner mock 2026-07-16 — the two widget panels are gone;
+     the row's static stamp in the markup names both sources, and CSS hides
+     row + stamp when nothing renders). */
   const isStrip = s => s && s.slot === 'strip';
-  const isFred  = s => s && s.type === 'fred-glance';
-  const gridSpecs  = specs.filter(s => !isStrip(s) && !isFred(s)).slice(0, 8);
-  const fredSpecs  = specs.filter(s => !isStrip(s) && isFred(s)).slice(0, 4);
+  const rowSpecs   = specs.filter(s => s && !isStrip(s)).slice(0, 6);
   const stripSpecs = specs.filter(isStrip).slice(0, 2);
 
   const hydrate = f => { if (f._src) { f.src = f._src; f._src = null; } };
-  const renderGrid = (container, specList, frameSink) => {
-    if (!container) return;
+  const renderInto = (container, specList) => {
+    const frames = [];
+    if (!container) return frames;
     while (container.firstChild) container.removeChild(container.firstChild);
     for (const spec of specList) {
-      const { cell, frame } = buildWidgetCell(spec);
-      container.appendChild(cell);
-      if (frame) frameSink.push(frame);
+      const frame = buildWidgetFrame(spec);
+      if (frame) { container.appendChild(frame); frames.push(frame); }
     }
+    return frames;
   };
-  const gridFrames = [], fredFrames = [];
-  renderGrid(grid, gridSpecs, gridFrames);
-  renderGrid(fredGrid, fredSpecs, fredFrames);
+  const frames = [...renderInto(row, rowSpecs), ...renderInto(strip, stripSpecs)];
 
-  const stripFrames = [];
-  if (strip) {
-    while (strip.firstChild) strip.removeChild(strip.firstChild);
-    for (const spec of stripSpecs) {
-      const { frame } = buildWidgetCell(spec); /* bare frame, no caption */
-      if (frame) { strip.appendChild(frame); stripFrames.push(frame); }
-    }
-  }
-  /* widgets are mode-independent (live external data in demo + live), so both
-     panels lamp Live and carry their true source — TradingView vs FRED. */
-  const setPanel = (lampId, stampId, text) => {
-    const lampEl = document.getElementById(lampId);
-    if (lampEl) { lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live'; }
-    const stampEl = document.getElementById(stampId);
-    if (stampEl) stampEl.textContent = text;
-  };
-  setPanel('widgetsLamp', 'widgetsStamp', 'TradingView · live');
-  setPanel('fredLamp', 'fredStamp', 'FRED · live');
-
-  /* Panel widgets sit below the fold: hydrate when the panel nears the viewport,
-     so nothing third-party runs on initial paint (keeps the S1 console gate
-     clean — CLAUDE.md: the lazy-load IS the containment). */
-  if ('IntersectionObserver' in window) {
-    const io = new IntersectionObserver((entries, obs) => {
-      for (const e of entries) if (e.isIntersecting) { hydrate(e.target); obs.unobserve(e.target); }
-    }, { rootMargin: '250px' });
-    [...gridFrames, ...fredFrames].forEach(f => io.observe(f));
-  } else {
-    [...gridFrames, ...fredFrames].forEach(hydrate);
-  }
-
-  /* The ticker strip is ABOVE the fold, so an IntersectionObserver would fire on
-     paint and run vendor JS immediately — tripping the same S1 gate the panel
-     lazy-load protects. Defer it to the first genuine user interaction (which
-     the load-time S1 check never performs); a real visitor triggers it within a
-     moment of arriving, and it hydrates once. */
-  if (stripFrames.length) {
+  /* Strip AND row both sit ABOVE the fold now (the row is directly under the
+     account cards), so an IntersectionObserver would fire on paint and run
+     vendor JS immediately — tripping the S1 console gate. Defer every frame to
+     the first genuine user interaction (which the load-time S1 check never
+     performs); a real visitor triggers it within a moment of arriving, and it
+     hydrates once. */
+  if (frames.length) {
     const EVTS = ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart', 'scroll'];
     const OPTS = { passive: true };
     let done = false;
     const fire = () => {
       if (done) return;
       done = true;
-      stripFrames.forEach(hydrate);
+      frames.forEach(hydrate);
       EVTS.forEach(ev => window.removeEventListener(ev, fire, OPTS));
     };
     EVTS.forEach(ev => window.addEventListener(ev, fire, OPTS));
