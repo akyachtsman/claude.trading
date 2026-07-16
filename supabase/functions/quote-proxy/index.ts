@@ -102,6 +102,10 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
 // project egress IP before shipping.
 type Info = {
   symbol: string; name: string | null; price: number | null;
+  // live quote line (owner request 2026-07-16): day change + top-of-book.
+  // bid/ask are market-hours-only on free Yahoo data (0 when closed).
+  change: number | null; changePct: number | null;
+  bid: number | null; ask: number | null;
   marketCap: number | null; pe: number | null; peFwd: boolean;
   wkLow: number | null; wkHigh: number | null; divYield: number | null;
   earningsTs: number | null; earningsEstimate: boolean;
@@ -163,6 +167,10 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
     symbol: String(q.symbol ?? symbol).toUpperCase(),
     name: q.shortName ?? q.longName ?? null,
     price: num(q.regularMarketPrice),
+    change: num(q.regularMarketChange),
+    changePct: num(q.regularMarketChangePercent),
+    bid: num(q.bid),
+    ask: num(q.ask),
     marketCap: num(q.marketCap),
     pe: fwdPe ?? ttmPe,
     peFwd: fwdPe != null,

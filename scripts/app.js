@@ -1242,17 +1242,48 @@ function renderWbInfo() {
   if (!box || !wbState) return;
   while (box.firstChild) box.removeChild(box.firstChild);
   const muted = text => { const s = el('span', 'wb-info-muted', text); box.appendChild(s); };
-  if (!wbSymLive(wbState.sym)) { muted('Earnings & key stats show in live mode'); return; }
-  const sym = wbState.sym;
-  const info = wbInfoCache[sym];
-  if (info === undefined) { muted('Loading fundamentals…'); return; }
-  if (info === null) { muted('Fundamentals unavailable for ' + sym); return; }
   const item = (label, value, cls) => {
     const span = el('span', 'wb-info-item' + (cls ? ' ' + cls : ''));
     span.appendChild(el('b', '', label));
     span.appendChild(document.createTextNode(value));
     box.appendChild(span);
   };
+  const sym = wbState.sym;
+  const live = wbSymLive(sym);
+  const info = live ? wbInfoCache[sym] : undefined;
+
+  /* Quote readout — the terminal top line (owner request 2026-07-16): last ·
+     change (change%) · Bid · Ask · Diff, before the earnings/stats. Last +
+     change come from the live quote when we have it, else the chart's own last
+     two bars so demo (and the pre-fetch instant) still shows a price. Bid/Ask/
+     Diff are live- AND market-hours-only — Yahoo returns 0 when closed, so they
+     appear only when real. */
+  const bars = wbState.data.symbols[sym];
+  let last = null, chg = null, chgPct = null, bid = null, ask = null;
+  if (info && info.price != null) {
+    last = info.price; chg = info.change; chgPct = info.changePct; bid = info.bid; ask = info.ask;
+  } else if (bars && bars.c.length > 1) {
+    const n = bars.c.length;
+    last = bars.c[n - 1];
+    chg = bars.c[n - 1] - bars.c[n - 2];
+    chgPct = (bars.c[n - 1] / bars.c[n - 2] - 1) * 100;
+  }
+  if (last != null) {
+    const dir = chg > 0 ? 'up' : chg < 0 ? 'down' : '';
+    box.appendChild(el('span', 'wb-info-item wb-quote-last', fmtPrice(last)));
+    if (chg != null) {
+      const sign = chg > 0 ? '+' : '';
+      box.appendChild(el('span', 'wb-info-item wb-quote-chg ' + dir,
+        sign + fmtPrice(chg) + ' (' + sign + (chgPct == null ? '0.00' : chgPct.toFixed(2)) + '%)'));
+    }
+    if (bid != null && bid > 0) item('Bid', fmtPrice(bid));
+    if (ask != null && ask > 0) item('Ask', fmtPrice(ask));
+    if (bid != null && bid > 0 && ask != null && ask > 0) item('Diff', fmtPrice(ask - bid));
+  }
+
+  if (!live) { muted('Earnings & key stats show in live mode'); return; }
+  if (info === undefined) { muted('Loading fundamentals…'); return; }
+  if (info === null) { muted('Fundamentals unavailable for ' + sym); return; }
   const e = fmtEarnings(info.earningsTs, info.earningsEstimate);
   if (e) item('Earnings', e.text, e.warn ? 'wb-info-warn' : '');
   if (info.marketCap != null) item('Mkt cap', wbFmtCap(info.marketCap));
