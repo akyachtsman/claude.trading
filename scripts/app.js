@@ -1155,6 +1155,7 @@ let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg 
    frame re-renders) can't drop the pointer stream */
 let wbDrag = null, wbPanRaf = 0;
 const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
+const INTRADAY_TTL_MS = 60_000;        /* max age of a cached 5-min snapshot before the forming-candle graft refetches it */
 const wbInfoCache = {};                /* symbol → fundamentals object, or null for a known miss */
 const wbInfoPending = new Set();       /* per-symbol info fetches in flight */
 const wbRealSyms = new Set();          /* symbols backed by REAL data (live desk-charts feed or an
@@ -1819,14 +1820,23 @@ function renderCharts(data, lamp) {
   /* Pro 3 upgrades itself to real 5-minute bars via the quote-proxy in live
      mode (no unlock needed — the feed is origin-guarded); EOD is the fallback. */
   const maybeFetchIntraday = sym => {
-    if (DESK.mode === 'demo' || !DESK_DB.url) return;
+    /* only real, live symbols — never fetch/graft for a demo-fallback series
+       (desk-charts outage renders demo while DESK.mode stays live; Codex #120) */
+    if (!wbSymLive(sym)) return;
     wbState.intraday = wbState.intraday || {};
-    if (wbState.intraday[sym] || wbIntradayPending.has(sym)) return;
+    wbState.intradayAt = wbState.intradayAt || {};
+    /* refetch at most once a minute (matches quote-proxy's intraday cache) so
+       the forming candle keeps updating through the session instead of freezing
+       on the first snapshot when the 5-min poller refreshes bars in place
+       (Codex #120). The stale snapshot stays visible until the refetch lands. */
+    const fresh = wbState.intradayAt[sym] && Date.now() - wbState.intradayAt[sym] < INTRADAY_TTL_MS;
+    if (wbIntradayPending.has(sym) || (wbState.intraday[sym] && fresh)) return;
     wbIntradayPending.add(sym);
     deskQuote(sym, 'intraday')
       .then(out => {
         if (out.ok && out.series && out.series.c.length >= 30) {
           wbState.intraday[sym] = out.series;
+          wbState.intradayAt[sym] = Date.now();
           renderCharts(wbState.data, wbState.lamp);
         }
       })
@@ -1839,8 +1849,10 @@ function renderCharts(data, lamp) {
   const dailyCache = {};
   const daily = sym => dailyCache[sym] || (dailyCache[sym] = (() => {
     /* graft today's forming candle from the intraday feed so the daily +
-       weekly stochastics move through the session (owner request 2026-07-17) */
-    const intra = wbState.intraday && wbState.intraday[sym];
+       weekly stochastics move through the session (owner request 2026-07-17).
+       Gated on wbSymLive so a demo-fallback series (a live desk-charts outage)
+       never mixes real intraday onto synthetic daily bars (Codex #120). */
+    const intra = wbSymLive(sym) && wbState.intraday ? wbState.intraday[sym] : null;
     const g = intra ? graftTodayBar(data.symbols[sym], intra) : null;
     const bars = g ? g.bars : data.symbols[sym];
     return { bars, st: stochSeries(bars), piv: monthlyPivots(bars), live: g ? g.at : null };
