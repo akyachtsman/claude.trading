@@ -39,6 +39,25 @@ const EXTRA_SYMBOLS: { sym: string; name: string }[] = [
   { sym: 'btcusd', name: 'Bitcoin' },
   { sym: 'xauusd', name: 'Gold' },
   { sym: 'dx.f', name: 'US Dollar' },
+  // Owner request 2026-07-16: the watchlist ETFs + all 11 SPDR sector funds as
+  // strip tiles. BEST-EFFORT like the extras above (own per-symbol catch +
+  // latency cap) — a flaky one drops only its own tile, never the core six.
+  // Stooq US tickers (lowercase + .us); Yahoo v8 chart is the per-symbol
+  // fallback (yahooSymbol strips .us → uppercase). The index equivalents
+  // SPY/QQQ/DIA/IWM/VXX are intentionally NOT here — the core tiles already
+  // show them (owner ruling: skip the dupes).
+  { sym: 'xlk.us', name: 'XLK' }, { sym: 'xlf.us', name: 'XLF' },
+  { sym: 'xle.us', name: 'XLE' }, { sym: 'xli.us', name: 'XLI' },
+  { sym: 'xlb.us', name: 'XLB' }, { sym: 'xlv.us', name: 'XLV' },
+  { sym: 'xly.us', name: 'XLY' }, { sym: 'xlp.us', name: 'XLP' },
+  { sym: 'xlu.us', name: 'XLU' }, { sym: 'xlre.us', name: 'XLRE' },
+  { sym: 'xlc.us', name: 'XLC' }, { sym: 'smh.us', name: 'SMH' },
+  { sym: 'kre.us', name: 'KRE' }, { sym: 'gld.us', name: 'GLD' },
+  { sym: 'slv.us', name: 'SLV' }, { sym: 'tlt.us', name: 'TLT' },
+  { sym: 'tlh.us', name: 'TLH' }, { sym: 'shy.us', name: 'SHY' },
+  { sym: 'uup.us', name: 'UUP' }, { sym: 'eem.us', name: 'EEM' },
+  { sym: 'fxi.us', name: 'FXI' }, { sym: 'inda.us', name: 'INDA' },
+  { sym: 'jpxn.us', name: 'JPXN' }, { sym: 'spyd.us', name: 'SPYD' },
 ];
 const YAHOO_MAP: Record<string, string> = {
   '^spx': '^GSPC', '^ndx': '^NDX', '^dji': '^DJI', '^vix': '^VIX',
