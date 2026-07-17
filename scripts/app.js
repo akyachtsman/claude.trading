@@ -74,11 +74,13 @@ function lastLabel() {
    "Other" frame, so a newly added symbol is never silently dropped. */
 const MKT_BANDS = [
   { label: 'Indices',           names: ['S&P 500', 'Nasdaq 100', 'Dow Jones', 'IWM (R2K proxy)'] },
+  /* Global & income sits right after Indices (owner ruling 2026-07-17) so it
+     packs up next to it rather than wrapping to a lower row. */
+  { label: 'Global & income',   names: ['EEM', 'FXI', 'INDA', 'JPXN', 'SPYD'] },
   { label: 'Macro',             names: ['VIX', 'US 10Y', 'US Dollar', 'UUP', 'Bitcoin', 'Gold'] },
   { label: 'US sectors',        names: ['XLK', 'XLF', 'XLC', 'XLY', 'XLV', 'XLI', 'XLP', 'XLE', 'XLU', 'XLB', 'XLRE'] },
   { label: 'Industry & metals', names: ['SMH', 'KRE', 'GLD', 'SLV'] },
   { label: 'Treasuries',        names: ['SHY', 'TLH', 'TLT'] },
-  { label: 'Global & income',   names: ['EEM', 'FXI', 'INDA', 'JPXN', 'SPYD'] },
 ];
 /* compact half-size tile: name + price + %-change on one line. No per-tile
    sparkline — at this density it clipped the price (Codex #109). */
