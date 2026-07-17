@@ -1132,7 +1132,13 @@ window.addEventListener('pointermove', ev => {
     wbPanRaf = requestAnimationFrame(() => renderCharts(wbState.data, wbState.lamp));
   }
 });
-window.addEventListener('pointerup', () => { if (wbDrag && wbDrag.resize) saveWbCfg(); wbDrag = null; });
+/* pointercancel (e.g. a touch drag the browser reclaims for scroll) must end the
+   drag exactly like pointerup, or the workbench sticks in resize mode and the new
+   height is never persisted (Codex #114). touch-action:none on the hit rects keeps
+   a vertical drag from being stolen in the first place. */
+const endWbDrag = () => { if (wbDrag && wbDrag.resize) saveWbCfg(); wbDrag = null; };
+window.addEventListener('pointerup', endWbDrag);
+window.addEventListener('pointercancel', endWbDrag);
 
 /* reflect the live window in the preset segs — a navigator-set custom range
    matches no preset, so all three clear; a preset value lights its button */
@@ -1389,12 +1395,28 @@ function renderCharts(data, lamp) {
     /* Volume + stochastic pane heights are user-draggable (the resize bars
        below) and persisted per pane; the PRICE pane absorbs the change
        (owner request 2026-07-16). Defaults match the prior fixed sizes. */
-    const vH = opts.cfg.vol ? (opts.cfg.volH ?? 50) : 0;
-    const sH = opts.cfg.stochH ?? (strips.length === 2 ? 68 : 88);
+    let vH = opts.cfg.vol ? (opts.cfg.volH ?? 50) : 0;
+    let sH = opts.cfg.stochH ?? (strips.length === 2 ? 68 : 88);
     const pY = 22;
     /* bottom reserve holds the x-axis month labels + the range navigator
        strip (opts.nav); fixed so chartBot lines up across panes */
-    const pH = H - pY - (opts.nav ? 58 : 30) - (vH ? vH + 8 : 0) - strips.length * (sH + 14);
+    const navReserve = opts.nav ? 58 : 30;
+    /* Re-clamp restored/toggled heights so the price pane can never be squeezed
+       below MIN_PH: a persisted volH/stochH plus a later indicator toggle (e.g.
+       turning the weekly stochastic back on → the stoch block doubles) could
+       otherwise overflow and push panes off-canvas. The pointerdown clamp only
+       bounds future drags, not stored/invalidated values (Codex #114). Scale
+       volume + stochastic down together to fit. */
+    const MIN_PH = 140;
+    const gaps = (vH ? 8 : 0) + strips.length * 14;
+    const hBudget = H - pY - navReserve - MIN_PH - gaps;
+    const hNeed = vH + strips.length * sH;
+    if (hNeed > hBudget && hNeed > 0) {
+      const scale = Math.max(0, hBudget) / hNeed;
+      vH = vH ? Math.max(16, Math.round(vH * scale)) : 0;
+      sH = Math.max(24, Math.round(sH * scale));
+    }
+    const pH = H - pY - navReserve - (vH ? vH + 8 : 0) - strips.length * (sH + 14);
     const vY = pY + pH + (vH ? 8 : 0);
     let stripCursor = vY + vH;
     const stripTops = strips.map(() => { stripCursor += 14; const y = stripCursor; stripCursor += sH; return y; });
@@ -1572,7 +1594,7 @@ function renderCharts(data, lamp) {
       svg.appendChild(svgEl('line', { x1: x0 + 6, y1: barY, x2: x0 + 6 + plotW, y2: barY, stroke: WB.label, 'stroke-width': 1, 'stroke-opacity': 0.4, 'shape-rendering': 'crispEdges', 'pointer-events': 'none' }));
       const gw = 34;
       svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2, width: gw, height: 4, rx: 2, fill: 'var(--color-text-primary)', 'fill-opacity': 0.85, 'pointer-events': 'none' }));
-      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize' });
+      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize; touch-action: none' });
       svg.appendChild(hit);
       hit.addEventListener('pointerdown', ev => {
         ev.preventDefault(); ev.stopPropagation();
