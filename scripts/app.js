@@ -1339,7 +1339,11 @@ function renderCharts(data, lamp) {
   if (!s || s.c.length < 30) return;
 
   const W = Math.max(480, Math.round(svg.parentElement.clientWidth || 900));
-  const H = 600;   /* +40 over the chart body for the range navigator strip */
+  /* Taller chart so the PRICE pane dominates like the reference terminal
+     (owner 2026-07-16): with volume + two stochastic strips beneath it, a 600px
+     box left the candles only ~half the height and they read coarse. At 840 the
+     price pane takes ~64%, giving each candle far more vertical resolution. */
+  const H = 840;
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
