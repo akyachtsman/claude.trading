@@ -103,6 +103,10 @@ function renderStrip(market) {
     group.setAttribute('aria-label', label);
     group.appendChild(el('span', 'mkt-group-label', label));
     const box = el('div', 'mkt-group-tiles');
+    /* compact block per box: 2 tile columns, 3 for a big box (the 11 sectors)
+       so it doesn't tower over its neighbours. Boxes then sit side by side. */
+    const cols = tiles.length > 8 ? 3 : 2;
+    box.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 120px))';
     for (const m of tiles) box.appendChild(mktTile(m));
     group.appendChild(box);
     strip.appendChild(group);

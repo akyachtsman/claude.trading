@@ -38,10 +38,11 @@
      the 33 tiles are sorted into labelled asset-class frames (owner request
      2026-07-17): each .mkt-group is an outer panel that grows to share its row,
      tiles auto-fill inside and wrap on narrow widths */
-  .market-strip { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-4); }
-  .mkt-group { min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+  .market-strip { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .mkt-group { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
   .mkt-group-label { font: 600 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
-  .mkt-group-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: var(--space-2); }
+  /* column count per box is set in app.js (2 cols, 3 for the big sectors box) */
+  .mkt-group-tiles { display: grid; gap: var(--space-2); }
   .mkt-tile { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .mkt-name { font: 500 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mkt-last { font: 600 var(--font-sm)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
