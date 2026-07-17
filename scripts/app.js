@@ -66,21 +66,56 @@ function lastLabel() {
 }
 
 /* ── market strip ──────────────────────────────────────────────────────── */
+/* Tiles are sorted into labelled asset-class frames (owner request 2026-07-17):
+   broad → macro → sectors → industry/metals → rates → global. Matched by the
+   feed's display `name` (identical in demo + live). The Gold/Dollar doubles are
+   kept intentionally — spot GOLD/DXY as macro barometers, GLD/SLV as the metals
+   pair, UUP beside US Dollar. Any feed tile not listed still renders in an
+   "Other" frame, so a newly added symbol is never silently dropped. */
+const MKT_BANDS = [
+  { label: 'Indices',           names: ['S&P 500', 'Nasdaq 100', 'Dow Jones', 'IWM (R2K proxy)'] },
+  { label: 'Macro',             names: ['VIX', 'US 10Y', 'US Dollar', 'UUP', 'Bitcoin', 'Gold'] },
+  { label: 'US sectors',        names: ['XLK', 'XLF', 'XLC', 'XLY', 'XLV', 'XLI', 'XLP', 'XLE', 'XLU', 'XLB', 'XLRE'] },
+  { label: 'Industry & metals', names: ['SMH', 'KRE', 'GLD', 'SLV'] },
+  { label: 'Treasuries',        names: ['SHY', 'TLH', 'TLT'] },
+  { label: 'Global & income',   names: ['EEM', 'FXI', 'INDA', 'JPXN', 'SPYD'] },
+];
+/* compact half-size tile: name + price + %-change on one line. No per-tile
+   sparkline — at this density it clipped the price (Codex #109). */
+function mktTile(m) {
+  const tile = el('div', 'mkt-tile');
+  tile.appendChild(el('span', 'mkt-name', m.name));
+  const row = el('div', 'mkt-vals');
+  row.appendChild(el('span', 'mkt-last', m.last));
+  row.appendChild(el('span', m.chg >= 0 ? 'pill pill--gain' : 'pill pill--loss', fmtPct(m.chg)));
+  tile.appendChild(row);
+  return tile;
+}
 function renderStrip(market) {
   const strip = document.getElementById('marketStrip');
   while (strip.firstChild) strip.removeChild(strip.firstChild);
-  for (const m of market) {
-    const tile = el('div', 'mkt-tile');
-    tile.appendChild(el('span', 'mkt-name', m.name));
-    /* compact half-size tiles: name + price + %-change only. No per-tile
-       sparkline — at 9-in-a-row it left no room for the price and clipped it
-       (Codex #109); the number + change is the readable box the owner wanted. */
-    const row = el('div', 'mkt-vals');
-    row.appendChild(el('span', 'mkt-last', m.last));
-    row.appendChild(el('span', m.chg >= 0 ? 'pill pill--gain' : 'pill pill--loss', fmtPct(m.chg)));
-    tile.appendChild(row);
-    strip.appendChild(tile);
+  const byName = new Map(market.map(m => [m.name, m]));
+  const placed = new Set();
+  const addGroup = (label, tiles) => {
+    if (!tiles.length) return;
+    const group = el('div', 'mkt-group');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', label);
+    group.appendChild(el('span', 'mkt-group-label', label));
+    const box = el('div', 'mkt-group-tiles');
+    for (const m of tiles) box.appendChild(mktTile(m));
+    group.appendChild(box);
+    strip.appendChild(group);
+  };
+  for (const band of MKT_BANDS) {
+    const tiles = [];
+    for (const name of band.names) {
+      const m = byName.get(name);
+      if (m) { tiles.push(m); placed.add(name); }
+    }
+    addGroup(band.label, tiles);
   }
+  addGroup('Other', market.filter(m => !placed.has(m.name)));
 }
 
 /* ── sortable tables (design.md standard) ──────────────────────────────── */
