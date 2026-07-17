@@ -1081,6 +1081,28 @@ function wbPick(sym) {
   writeWbSticky({ sel: sym });
   renderCharts(wbState.data, wbState.lamp);
 }
+/* Typeahead roster (owner request 2026-07-16): a curated set of popular
+   tickers + names the symbol box suggests as you type, merged at match time
+   with the live watchlist. Ticker OR name substring both match ("apple" → AAPL,
+   "XL" → the sectors). Any ticker is still loadable by typing it in full. */
+const WB_TICKERS = [
+  ['AAPL', 'Apple'], ['MSFT', 'Microsoft'], ['NVDA', 'Nvidia'], ['GOOGL', 'Alphabet'],
+  ['AMZN', 'Amazon'], ['META', 'Meta Platforms'], ['TSLA', 'Tesla'], ['AVGO', 'Broadcom'],
+  ['BRK.B', 'Berkshire Hathaway'], ['JPM', 'JPMorgan Chase'], ['V', 'Visa'], ['MA', 'Mastercard'],
+  ['UNH', 'UnitedHealth'], ['XOM', 'Exxon Mobil'], ['JNJ', 'Johnson & Johnson'], ['WMT', 'Walmart'],
+  ['LLY', 'Eli Lilly'], ['HD', 'Home Depot'], ['PG', 'Procter & Gamble'], ['COST', 'Costco'],
+  ['NFLX', 'Netflix'], ['AMD', 'AMD'], ['INTC', 'Intel'], ['CRM', 'Salesforce'],
+  ['BAC', 'Bank of America'], ['KO', 'Coca-Cola'], ['PEP', 'PepsiCo'], ['DIS', 'Disney'],
+  ['MCD', "McDonald's"], ['CVX', 'Chevron'], ['ORCL', 'Oracle'], ['ADBE', 'Adobe'],
+  ['QCOM', 'Qualcomm'], ['TXN', 'Texas Instruments'], ['BA', 'Boeing'], ['GS', 'Goldman Sachs'],
+  ['PFE', 'Pfizer'], ['NKE', 'Nike'], ['C', 'Citigroup'], ['F', 'Ford'],
+  ['SPY', 'S&P 500 ETF'], ['QQQ', 'Nasdaq 100 ETF'], ['DIA', 'Dow Jones ETF'], ['IWM', 'Russell 2000 ETF'],
+  ['VOO', 'Vanguard S&P 500'], ['VTI', 'Total Market'], ['SMH', 'Semiconductors'], ['GLD', 'Gold'],
+  ['SLV', 'Silver'], ['TLT', '20+ Yr Treasury'], ['HYG', 'High-Yield Bonds'],
+  ['XLK', 'Technology'], ['XLF', 'Financials'], ['XLE', 'Energy'], ['XLI', 'Industrials'],
+  ['XLB', 'Materials'], ['XLV', 'Health Care'], ['XLY', 'Consumer Disc.'], ['XLP', 'Consumer Staples'],
+  ['XLU', 'Utilities'], ['XLRE', 'Real Estate'], ['XLC', 'Communication'],
+];
 const SMA_COLORS = { 1: 'var(--color-text-primary)', 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-series-2)', 200: 'var(--color-text-secondary)' };
 const ytdBars = bars => { const y = bars.t[bars.t.length - 1].slice(0, 4); let n = 0; for (let i = bars.t.length - 1; i >= 0 && bars.t[i].slice(0, 4) === y; i--) n++; return Math.max(n, 5); };
 const paneWindow = (spec, bars) => spec === 'ytd' ? ytdBars(bars) : spec;
@@ -1954,12 +1976,62 @@ function wireCharts() {
       wbPick(sym);
     }
   });
-  /* route Enter explicitly to the form's submit path — a lone text input can
-     otherwise submit inconsistently across engines; keep it deterministic */
+  /* ── ticker typeahead (owner request 2026-07-16): a custom listbox suggesting
+     matching symbols from the curated WB_TICKERS set + the live roster as you
+     type. The native <datalist> was rejected (it duplicated the current symbol);
+     this is keyboard-navigable and inherits the dark charts scope. */
+  const sug = document.getElementById('wbSuggest');
+  let sugItems = [], sugAt = -1;
+  const closeSug = () => { sug.hidden = true; sugAt = -1; symInput.setAttribute('aria-expanded', 'false'); };
+  const matchSug = raw => {
+    const q = raw.trim().toUpperCase();
+    if (!q) return [];
+    const seen = new Set(), pref = [], sub = [];
+    const consider = (symU, name) => {
+      if (seen.has(symU)) return;
+      if (symU.startsWith(q)) { seen.add(symU); pref.push([symU, name]); }
+      else if (symU.includes(q) || (name || '').toUpperCase().includes(q)) { seen.add(symU); sub.push([symU, name]); }
+    };
+    for (const [s, n] of WB_TICKERS) consider(s.toUpperCase(), n);
+    if (wbState) for (const s of Object.keys(wbState.data.symbols)) consider(s.toUpperCase(), '');
+    return [...pref, ...sub].slice(0, 8);
+  };
+  const paintSug = () => {
+    while (sug.firstChild) sug.removeChild(sug.firstChild);
+    sugItems.forEach(([symU, name], i) => {
+      const li = el('li'); li.setAttribute('role', 'option'); li.setAttribute('aria-selected', String(i === sugAt));
+      li.appendChild(el('span', 'wb-suggest-sym', symU));
+      if (name) li.appendChild(el('span', 'wb-suggest-name', name));
+      li.addEventListener('mousedown', ev => { ev.preventDefault(); symInput.value = symU; closeSug(); symForm.requestSubmit(); });
+      sug.appendChild(li);
+    });
+    sug.hidden = !sugItems.length;
+    symInput.setAttribute('aria-expanded', String(!!sugItems.length));
+  };
+  const moveSug = d => {
+    if (!sugItems.length) return;
+    sugAt = (sugAt + d + sugItems.length) % sugItems.length;
+    [...sug.children].forEach((li, i) => li.setAttribute('aria-selected', String(i === sugAt)));
+    sug.children[sugAt]?.scrollIntoView({ block: 'nearest' });
+  };
+  /* select the pre-filled symbol on focus so typing REPLACES it (the box shows
+     the current ticker) instead of appending to it */
+  symInput.addEventListener('focus', () => symInput.select());
+  symInput.addEventListener('input', () => { sugItems = matchSug(symInput.value); sugAt = -1; paintSug(); });
+  symInput.addEventListener('blur', () => setTimeout(closeSug, 120)); /* let a click land first */
+  /* keyboard: arrows move the highlight; Enter takes the highlighted suggestion
+     else submits the typed value; Escape closes. Enter routing is kept explicit
+     here (a lone input submits inconsistently across engines). */
   symInput.addEventListener('keydown', ev => {
-    if (ev.key !== 'Enter') return;
-    ev.preventDefault();
-    symForm.requestSubmit();
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); if (sug.hidden) { sugItems = matchSug(symInput.value); paintSug(); } moveSug(1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); moveSug(-1); }
+    else if (ev.key === 'Escape') { closeSug(); }
+    else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      if (sugAt >= 0 && sugItems[sugAt]) symInput.value = sugItems[sugAt][0];
+      closeSug();
+      symForm.requestSubmit();
+    }
   });
   symForm.addEventListener('submit', async ev => {
     ev.preventDefault();
