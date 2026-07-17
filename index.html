@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260716l">
-<link rel="stylesheet" href="styles/components.css?v=20260716l">
+<link rel="stylesheet" href="styles/tokens.css?v=20260716m">
+<link rel="stylesheet" href="styles/components.css?v=20260716m">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -135,11 +135,12 @@
      green/red candles, red %K + yellow %D stochastics, purple/yellow/white
      SMAs, deep-yellow-R/green-S pivots, on near-black navy. */
   .area-charts {
-    --color-bg: #05080e;     /* near-black terminal canvas (was #08111c) — a
-                                blacker, less-blue ground lifts candle/grid
-                                contrast so the chart reads crisp, not muted */
-    --color-surface: #0a0f18;
-    --color-surface-2: #131d2b;
+    --color-bg: #020305;     /* near-pure-black terminal canvas — blacker so the
+                                candles, pivots, and yellow lines pop off the
+                                ground (owner request 2026-07-16: "make the
+                                background more black"; was #05080e ← #08111c) */
+    --color-surface: #06090f;
+    --color-surface-2: #0d141d;
     --color-text-primary: #eef2f7;
     --color-text-secondary: #93a6ba;
     --color-border: #1e2c3b;
@@ -433,8 +434,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260716l"></script>
-<script src="scripts/data.js?v=20260716l"></script>
-<script src="scripts/app.js?v=20260716l"></script>
+<script src="scripts/config.js?v=20260716m"></script>
+<script src="scripts/data.js?v=20260716m"></script>
+<script src="scripts/app.js?v=20260716m"></script>
 </body>
 </html>
