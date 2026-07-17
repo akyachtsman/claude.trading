@@ -6,9 +6,10 @@
 // date, never the fetch time; see the plan's lamp carve-out).
 // The core six tiles (5 indices + FRED 10Y) must ALL succeed or the response is
 // ok:false — the client keeps its last good payload (FR-R9); a partial CORE
-// strip is a lie, not a degradation. The three extras (Bitcoin/Gold/US Dollar,
-// owner request 2026-07-16) are additive best-effort: each is fetched with its
-// own catch, so a flaky one drops only its tile and never gates the core.
+// strip is a lie, not a degradation. The extras (Bitcoin/Gold/US Dollar plus
+// the watchlist ETFs + 11 SPDR sectors, owner request 2026-07-16) are additive
+// best-effort: each is fetched with its own catch + latency cap, so a flaky OR
+// slow one drops only its tile and never gates the core.
 //
 // Anon-callable: public market data, no caller input reaches the upstream
 // URLs. Module cache TTL is session-aware (5 min while the US equities
@@ -31,14 +32,34 @@ const MARKET_SYMBOLS: { sym: string; name: string }[] = [
   { sym: 'iwm.us', name: 'IWM (R2K proxy)' },
   { sym: '^vix', name: 'VIX' },
 ];
-// Extras (owner request 2026-07-16 — folded in from the old ticker tape).
-// These are BEST-EFFORT: fetched with a per-symbol catch so a flaky
-// crypto/commodity/FX quote drops only its own tile, never gating the core
-// six (which the S14 canary + FR-R9 all-or-nothing contract depend on).
+// Extras (owner request 2026-07-16 — folded in from the old ticker tape, then
+// expanded with the watchlist ETFs + SPDR sectors). These are BEST-EFFORT:
+// fetched with a per-symbol catch + latency cap so a flaky/slow quote drops
+// only its own tile, never gating the core six (which the S14 canary + FR-R9
+// all-or-nothing contract depend on).
 const EXTRA_SYMBOLS: { sym: string; name: string }[] = [
   { sym: 'btcusd', name: 'Bitcoin' },
   { sym: 'xauusd', name: 'Gold' },
   { sym: 'dx.f', name: 'US Dollar' },
+  // Owner request 2026-07-16: the watchlist ETFs + all 11 SPDR sector funds as
+  // strip tiles. BEST-EFFORT like the extras above (own per-symbol catch +
+  // latency cap) — a flaky one drops only its own tile, never the core six.
+  // Stooq US tickers (lowercase + .us); Yahoo v8 chart is the per-symbol
+  // fallback (yahooSymbol strips .us → uppercase). The index equivalents
+  // SPY/QQQ/DIA/IWM/VXX are intentionally NOT here — the core tiles already
+  // show them (owner ruling: skip the dupes).
+  { sym: 'xlk.us', name: 'XLK' }, { sym: 'xlf.us', name: 'XLF' },
+  { sym: 'xle.us', name: 'XLE' }, { sym: 'xli.us', name: 'XLI' },
+  { sym: 'xlb.us', name: 'XLB' }, { sym: 'xlv.us', name: 'XLV' },
+  { sym: 'xly.us', name: 'XLY' }, { sym: 'xlp.us', name: 'XLP' },
+  { sym: 'xlu.us', name: 'XLU' }, { sym: 'xlre.us', name: 'XLRE' },
+  { sym: 'xlc.us', name: 'XLC' }, { sym: 'smh.us', name: 'SMH' },
+  { sym: 'kre.us', name: 'KRE' }, { sym: 'gld.us', name: 'GLD' },
+  { sym: 'slv.us', name: 'SLV' }, { sym: 'tlt.us', name: 'TLT' },
+  { sym: 'tlh.us', name: 'TLH' }, { sym: 'shy.us', name: 'SHY' },
+  { sym: 'uup.us', name: 'UUP' }, { sym: 'eem.us', name: 'EEM' },
+  { sym: 'fxi.us', name: 'FXI' }, { sym: 'inda.us', name: 'INDA' },
+  { sym: 'jpxn.us', name: 'JPXN' }, { sym: 'spyd.us', name: 'SPYD' },
 ];
 const YAHOO_MAP: Record<string, string> = {
   '^spx': '^GSPC', '^ndx': '^NDX', '^dji': '^DJI', '^vix': '^VIX',

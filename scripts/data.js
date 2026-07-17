@@ -88,6 +88,19 @@ function buildDemoData() {
     { name: 'Bitcoin',      last: '64,216.00', chg: -0.77, seed: 71 },
     { name: 'Gold',         last: '2,634.50',  chg: 0.31,  seed: 83 },
     { name: 'US Dollar',    last: '104.28',    chg: -0.12, seed: 89 },
+    /* Owner request 2026-07-16: watchlist ETFs + all 11 SPDR sectors as strip
+       tiles (SPY/QQQ/DIA/IWM/VXX skipped — already shown as indices above).
+       Live tiles come from desk-market; this is the deterministic demo mirror. */
+    ...[
+      ['XLK', 258.40, 0.72], ['XLF', 52.18, 0.31], ['XLE', 91.40, -0.44],
+      ['XLI', 148.90, 0.28], ['XLB', 92.10, -0.12], ['XLV', 146.30, 0.19],
+      ['XLY', 224.60, 0.83], ['XLP', 82.40, -0.06], ['XLU', 81.20, 0.41],
+      ['XLRE', 41.30, 0.24], ['XLC', 108.70, 0.55], ['SMH', 284.90, -0.97],
+      ['KRE', 62.80, 0.66], ['GLD', 311.20, 0.30], ['SLV', 30.15, 0.88],
+      ['TLT', 86.40, -0.21], ['TLH', 108.90, -0.15], ['SHY', 82.60, 0.02],
+      ['UUP', 27.85, -0.12], ['EEM', 46.20, 0.35], ['FXI', 33.10, 1.02],
+      ['INDA', 54.70, 0.26], ['JPXN', 72.40, 0.44], ['SPYD', 43.90, 0.21],
+    ].map(([name, price, chg], i) => ({ name, last: price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), chg, seed: 101 + i * 6 })),
   ].map(m => ({ ...m, spark: walk(m.seed, 100, m.chg >= 0 ? 0.001 : -0.001, 0.02, 30, m.chg >= 0 ? 102 : 98) }));
   const news = [
     { t: '15:58', src: 'Reuters',   h: 'S&P 500 ends higher as megacap tech extends rally', chips: [['SPY', 0.54]] },
