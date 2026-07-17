@@ -1155,6 +1155,7 @@ let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg 
    frame re-renders) can't drop the pointer stream */
 let wbDrag = null, wbPanRaf = 0;
 const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
+const INTRADAY_TTL_MS = 60_000;        /* max age of a cached 5-min snapshot before the forming-candle graft refetches it */
 const wbInfoCache = {};                /* symbol → fundamentals object, or null for a known miss */
 const wbInfoPending = new Set();       /* per-symbol info fetches in flight */
 const wbRealSyms = new Set();          /* symbols backed by REAL data (live desk-charts feed or an
@@ -1394,6 +1395,40 @@ function renderWbSidebar(data) {
     b.addEventListener('click', () => wbPick(sym));
     nav.appendChild(b);
   }
+}
+
+/* Graft TODAY's still-forming daily candle onto the EOD daily series so Pro 1
+   (daily stoch) and Pro 2 (weekly overlay) show today's action live during the
+   session (owner request 2026-07-17). The daily feed (Stooq/Yahoo) only carries
+   COMPLETED sessions, so the newest daily bar is the prior close; here we roll
+   today's 5-minute intraday bars (already fetched for Pro 3) into one provisional
+   OHLC bar and append it. Only appends when the intraday session date is AHEAD of
+   the last completed daily bar — once the official EOD close lands we trust it and
+   stop overwriting. Returns {bars, at} (at = latest 5-min bar time, UTC to the
+   minute) or null when there is nothing current to add. The bar repaints until the
+   close and inherits the intraday feed's ~15-min delay. */
+function graftTodayBar(bars, intra) {
+  const n = intra && intra.t ? intra.t.length : 0;
+  if (!n || !bars.t.length) return null;
+  const day = intra.t[n - 1].slice(0, 10);
+  if (day <= bars.t[bars.t.length - 1]) return null;   /* today's EOD bar already present, or intraday not ahead */
+  let o = null, h = -Infinity, l = Infinity, c = null, v = 0;
+  for (let i = 0; i < n; i++) {
+    if (intra.t[i].slice(0, 10) !== day) continue;
+    if (o === null) o = intra.o[i];
+    if (intra.h[i] > h) h = intra.h[i];
+    if (intra.l[i] < l) l = intra.l[i];
+    c = intra.c[i]; v += intra.v[i] || 0;
+  }
+  if (o === null) return null;
+  const vol = bars.v ? bars.v.slice() : bars.c.map(() => 0);
+  return {
+    bars: {
+      t: [...bars.t, day], o: [...bars.o, o], h: [...bars.h, h],
+      l: [...bars.l, l], c: [...bars.c, c], v: [...vol, v],
+    },
+    at: intra.t[n - 1],
+  };
 }
 
 /* ── the two-tier workbench: Pro 1 (daily, short-term) · Pro 2 (weekly,
@@ -1785,14 +1820,23 @@ function renderCharts(data, lamp) {
   /* Pro 3 upgrades itself to real 5-minute bars via the quote-proxy in live
      mode (no unlock needed — the feed is origin-guarded); EOD is the fallback. */
   const maybeFetchIntraday = sym => {
-    if (DESK.mode === 'demo' || !DESK_DB.url) return;
+    /* only real, live symbols — never fetch/graft for a demo-fallback series
+       (desk-charts outage renders demo while DESK.mode stays live; Codex #120) */
+    if (!wbSymLive(sym)) return;
     wbState.intraday = wbState.intraday || {};
-    if (wbState.intraday[sym] || wbIntradayPending.has(sym)) return;
+    wbState.intradayAt = wbState.intradayAt || {};
+    /* refetch at most once a minute (matches quote-proxy's intraday cache) so
+       the forming candle keeps updating through the session instead of freezing
+       on the first snapshot when the 5-min poller refreshes bars in place
+       (Codex #120). The stale snapshot stays visible until the refetch lands. */
+    const fresh = wbState.intradayAt[sym] && Date.now() - wbState.intradayAt[sym] < INTRADAY_TTL_MS;
+    if (wbIntradayPending.has(sym) || (wbState.intraday[sym] && fresh)) return;
     wbIntradayPending.add(sym);
     deskQuote(sym, 'intraday')
       .then(out => {
         if (out.ok && out.series && out.series.c.length >= 30) {
           wbState.intraday[sym] = out.series;
+          wbState.intradayAt[sym] = Date.now();
           renderCharts(wbState.data, wbState.lamp);
         }
       })
@@ -1804,9 +1848,19 @@ function renderCharts(data, lamp) {
   const effSym = cfg => (cfg.sym && data.symbols[cfg.sym] && data.symbols[cfg.sym].c.length >= 30) ? cfg.sym : wbState.sym;
   const dailyCache = {};
   const daily = sym => dailyCache[sym] || (dailyCache[sym] = (() => {
-    const bars = data.symbols[sym];
-    return { bars, st: stochSeries(bars), piv: monthlyPivots(bars) };
+    /* graft today's forming candle from the intraday feed so the daily +
+       weekly stochastics move through the session (owner request 2026-07-17).
+       Gated on wbSymLive so a demo-fallback series (a live desk-charts outage)
+       never mixes real intraday onto synthetic daily bars (Codex #120). */
+    const intra = wbSymLive(sym) && wbState.intraday ? wbState.intraday[sym] : null;
+    const g = intra ? graftTodayBar(data.symbols[sym], intra) : null;
+    const bars = g ? g.bars : data.symbols[sym];
+    return { bars, st: stochSeries(bars), piv: monthlyPivots(bars), live: g ? g.at : null };
   })());
+  /* the daily panes need today's intraday bars too (not just Pro 3), so pull
+     intraday for every visible pane's symbol — the graft above then lands on
+     the next render once each fetch resolves */
+  for (const p of ['p1', 'p2', 'p3']) if (show(p)) maybeFetchIntraday(effSym(wbState.cfg[p]));
   const panes = [];
   if (show('p1')) {
     const sym = effSym(wbState.cfg.p1);
@@ -1868,6 +1922,15 @@ function renderCharts(data, lamp) {
   panes.forEach((p, idx) => drawPane(idx * (pw + GAP), pw, ...p));
   for (let idx = 1; idx < panes.length; idx++) {
     line(idx * (pw + GAP) - GAP / 2, 8, idx * (pw + GAP) - GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
+  }
+  /* when a pane grafted today's forming candle, the stamp reads today + the
+     latest intraday bar time (local) instead of the EOD "As of" date, with the
+     ~15-min-delay caveat so the live bar is never mistaken for real-time */
+  let liveAt = null;
+  for (const k in dailyCache) { const L = dailyCache[k].live; if (L && (!liveAt || L > liveAt)) liveAt = L; }
+  if (liveAt) {
+    document.getElementById('chartsStamp').textContent =
+      'Today forming · ' + fmtStampDateTime(liveAt.replace(' ', 'T') + ':00Z') + ' · ~15-min delayed';
   }
   syncZoomPressed();
 }
