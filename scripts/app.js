@@ -1788,10 +1788,10 @@ function renderCharts(data, lamp) {
       }
       if (spark) svg.appendChild(svgEl('path', { d: spark, fill: 'none', stroke: 'var(--color-text-secondary)', 'stroke-width': 1, 'stroke-opacity': 0.5 }));
 
-      const winRect = svgEl('rect', { x: winX, y: navTop, width: winW, height: navH, rx: 3, fill: 'var(--color-accent)', 'fill-opacity': 0.22, stroke: 'var(--color-accent)', 'stroke-width': 1, style: 'cursor: grab' });
+      const winRect = svgEl('rect', { x: winX, y: navTop, width: winW, height: navH, rx: 3, fill: '#FFFFFF', 'fill-opacity': 0.22, stroke: '#FFFFFF', 'stroke-width': 1, style: 'cursor: grab' });
       svg.appendChild(winRect);
       const midX = winX + winW / 2;
-      for (const gx of [-3, 0, 3]) line(midX + gx, navTop + 3, midX + gx, navTop + navH - 3, { stroke: 'var(--color-accent)', 'stroke-width': 1, 'stroke-opacity': 0.7, 'pointer-events': 'none' });
+      for (const gx of [-3, 0, 3]) line(midX + gx, navTop + 3, midX + gx, navTop + navH - 3, { stroke: '#FFFFFF', 'stroke-width': 1, 'stroke-opacity': 0.7, 'pointer-events': 'none' });
 
       const startNavDrag = (ev, mode) => {
         ev.preventDefault();
@@ -1802,7 +1802,7 @@ function renderCharts(data, lamp) {
       winRect.addEventListener('pointerdown', ev => startNavDrag(ev, 'navPan'));
       const hw = 7;
       for (const [hx, mode] of [[winX, 'navLeft'], [winX + winW, 'navRight']]) {
-        const handle = svgEl('rect', { x: hx - hw / 2, y: navTop - 1, width: hw, height: navH + 2, rx: 2, fill: 'var(--color-accent)', stroke: 'var(--color-bg)', 'stroke-width': 1, style: 'cursor: ew-resize' });
+        const handle = svgEl('rect', { x: hx - hw / 2, y: navTop - 1, width: hw, height: navH + 2, rx: 2, fill: '#FFFFFF', stroke: 'var(--color-bg)', 'stroke-width': 1, style: 'cursor: ew-resize' });
         svg.appendChild(handle);
         handle.addEventListener('pointerdown', ev => { ev.stopPropagation(); startNavDrag(ev, mode); });
       }
