@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260716s">
-<link rel="stylesheet" href="styles/components.css?v=20260716s">
+<link rel="stylesheet" href="styles/tokens.css?v=20260717a">
+<link rel="stylesheet" href="styles/components.css?v=20260717a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -35,9 +35,14 @@
   .masthead-state { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
 
   /* market strip — compact half-size tiles (owner ruling 2026-07-16), auto-fit
-     so the 9 tiles (6 indices + Bitcoin/Gold/US Dollar, folded in from the
-     retired ticker tape) pack one row on desktop and wrap on narrow widths */
-  .market-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: var(--space-2); margin-bottom: var(--space-4); }
+     the 33 tiles are sorted into labelled asset-class frames (owner request
+     2026-07-17): each .mkt-group is an outer panel that grows to share its row,
+     tiles auto-fill inside and wrap on narrow widths */
+  .market-strip { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .mkt-group { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+  .mkt-group-label { font: 600 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
+  /* column count per box is set in app.js (2 cols, 3 for the big sectors box) */
+  .mkt-group-tiles { display: grid; gap: var(--space-2); }
   .mkt-tile { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .mkt-name { font: 500 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mkt-last { font: 600 var(--font-sm)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -445,8 +450,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260716s"></script>
-<script src="scripts/data.js?v=20260716s"></script>
-<script src="scripts/app.js?v=20260716s"></script>
+<script src="scripts/config.js?v=20260717a"></script>
+<script src="scripts/data.js?v=20260717a"></script>
+<script src="scripts/app.js?v=20260717a"></script>
 </body>
 </html>
