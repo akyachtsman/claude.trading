@@ -1206,6 +1206,30 @@ const endWbDrag = () => { if (wbDrag && wbDrag.resize) saveWbCfg(); wbDrag = nul
 window.addEventListener('pointerup', endWbDrag);
 window.addEventListener('pointercancel', endWbDrag);
 
+/* mouse-wheel zoom: scroll over a pane to expand/contract its range-navigator
+   window (owner request 2026-07-17). Wheel up = zoom IN (contract the window),
+   wheel down = zoom OUT (expand), anchored on the right (latest) edge. Reads the
+   per-pane geometry renderCharts stashes on wbState.paneGeom. */
+window.addEventListener('wheel', ev => {
+  if (wbDrag || !wbState || !wbState.paneGeom) return;
+  const svg = document.getElementById('wbChart');
+  if (!svg || !svg.contains(ev.target)) return;
+  const box = svg.getBoundingClientRect();
+  if (!box.width) return;
+  const vx = (ev.clientX - box.left) * (wbState.viewW / box.width);
+  const g = wbState.paneGeom.find(p => vx >= p.x0 && vx <= p.x1);
+  if (!g || !g.bars || !g.bars.c) return;
+  ev.preventDefault();
+  const len = g.bars.c.length;
+  const curN = Math.min(paneWindow(wbState[g.daysKey], g.bars), len);
+  const nw = Math.max(MIN_NAV_WIN, Math.min(len, Math.round(curN * (ev.deltaY < 0 ? 0.82 : 1.22))));
+  if (nw !== curN) {
+    wbState[g.daysKey] = nw;
+    cancelAnimationFrame(wbPanRaf);
+    wbPanRaf = requestAnimationFrame(() => renderCharts(wbState.data, wbState.lamp));
+  }
+}, { passive: false });
+
 /* reflect the live window in the preset segs — a navigator-set custom range
    matches no preset, so all three clear; a preset value lights its button */
 function syncZoomPressed() {
@@ -1920,6 +1944,10 @@ function renderCharts(data, lamp) {
   for (const k of ['p1', 'p2', 'p3']) document.getElementById('wbBar-' + k).hidden = !show(k);
   const pw = (W - GAP * (panes.length - 1)) / panes.length;
   panes.forEach((p, idx) => drawPane(idx * (pw + GAP), pw, ...p));
+  /* geometry for wheel-zoom hit-testing: which pane the cursor is over + its
+     window key and bar series (see the window 'wheel' handler) */
+  wbState.viewW = W;
+  wbState.paneGeom = panes.map((p, idx) => ({ x0: idx * (pw + GAP), x1: idx * (pw + GAP) + pw, daysKey: p[4].daysKey, bars: p[0] }));
   for (let idx = 1; idx < panes.length; idx++) {
     line(idx * (pw + GAP) - GAP / 2, 8, idx * (pw + GAP) - GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
   }
