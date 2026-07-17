@@ -1,0 +1,50 @@
+# ci-notify.yml — CI-success wake signal for web sessions.
+# Copy to .github/workflows/ci-notify.yml in your project.
+#
+# Bridges the webhook gap: GitHub delivers CI FAILURES to a subscribed Claude
+# session natively, but never CI SUCCESS — so sessions had to poll for green
+# via the scheduling tools, which permission-prompt on every call in web
+# sessions. This workflow turns success into a deliverable event: when a
+# watched QA workflow completes green, it comments on the open PR for that
+# head SHA, and the comment webhook wakes the watching session — no polling,
+# no prompts. Failures are deliberately NOT commented (delivered natively;
+# ci-monitor tracks them repo-side).
+#
+# Drop-in: watched names match the QA workflows shipped in this template set;
+# entries for workflows you didn't copy are inert. Uses only GITHUB_TOKEN.
+on:
+  workflow_run:
+    workflows:
+      - 'QA — Static + UI Tests'
+      - 'QA — UI Tests (live)'
+      - 'QA — Event-Driven Response'
+    types: [completed]
+
+name: CI Notify
+
+permissions:
+  pull-requests: write
+
+jobs:
+  notify:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Comment CI success on the open PR for this SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WR_NAME: ${{ github.event.workflow_run.name }}
+          WR_SHA: ${{ github.event.workflow_run.head_sha }}
+          WR_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+          num=$(gh pr list --repo "$REPO" --state open --json number,headRefOid \
+            --jq ".[] | select(.headRefOid == \"$WR_SHA\") | .number" | head -1)
+          if [ -z "$num" ]; then
+            echo "No open PR with head $WR_SHA — nothing to notify."
+            exit 0
+          fi
+          gh pr comment "$num" --repo "$REPO" \
+            --body "$(printf '✅ %s green @ %s — [run](%s)\n\n_Automated wake signal for the watching session (ci-notify.yml); no action needed._' "$WR_NAME" "${WR_SHA:0:7}" "$WR_URL")"
