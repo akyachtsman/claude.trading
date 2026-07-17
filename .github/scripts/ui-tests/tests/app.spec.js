@@ -729,7 +729,7 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await expect(chart.locator('rect').first()).toBeVisible({ timeout: 10000 });
 
   // default split: all three pane captions, candles, and stoch paths (k+d ×3)
-  for (const cap of ['PRO 1 · DAILY', 'PRO 2 · WEEKLY', 'PRO 3 · DAY TRADING']) {
+  for (const cap of ['PRO 1 · DAILY', 'PRO 2 · DAILY', 'PRO 3 · DAY TRADING']) {
     await expect(chart, `missing pane caption ${cap}`).toContainText(cap);
   }
   expect(await chart.locator('rect').count(), 'candle/volume rects must render').toBeGreaterThan(30);
@@ -751,21 +751,22 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   // pane layout seg maximizes a single tier and returns to split
   await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();
   await expect(chart).not.toContainText('PRO 1 · DAILY');
-  await expect(chart).toContainText('PRO 2 · WEEKLY');
+  await expect(chart).toContainText('PRO 2 · DAILY');
   await page.locator('#chartLayout button', { hasText: 'Split' }).click();
   await expect(chart).toContainText('PRO 1 · DAILY');
 
   // per-pane header bars: each gear opens its own popover above its pane.
-  // Pro 1 = full set (bb, vol, stoch, stoch-overlay, 5 SMAs, 3 S/R,
-  // 5 SMA-price = 17 boxes + 2 style radios); Pro 3 = slim day-trading panel
-  // with the dual-timeframe overlay (bb, vol, stoch, stoch-daily = 4 boxes)
+  // The weekly-stoch overlay toggle now lives on Pro 2 ALONE (owner ruling
+  // 2026-07-17); Pro 1/Pro 3 show only their native stochastic.
+  // Pro 1 = full set (bb, vol, stoch, 5 SMAs, 3 S/R, 5 SMA-price = 16 boxes
+  // + 2 style radios); Pro 3 = slim day-trading panel (bb, vol, stoch = 3 boxes)
   await page.locator('#wbGear-p1').click();
   await expect(page.locator('#wbSettings-p1')).toBeVisible();
   expect(await page.locator('#wbSettings-p1 input[type=radio]').count()).toBe(2);
-  expect(await page.locator('#wbSettings-p1 input[type=checkbox]').count()).toBe(17);
+  expect(await page.locator('#wbSettings-p1 input[type=checkbox]').count()).toBe(16);
   await page.locator('#wbGear-p3').click();
   await expect(page.locator('#wbSettings-p1')).toBeHidden();
-  expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(4);
+  expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(3);
 });
 
 // S13 — Heatmap MAP FILTER rail: index cuts re-render the treemap, the ETF

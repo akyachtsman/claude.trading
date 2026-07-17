@@ -1004,13 +1004,15 @@ window.addEventListener('resize', () => {
    red is price-direction semantics (like the heatmap), not decoration. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
-const WB2_ZOOMS = [['1M', 4], ['3M', 13], ['6M', 26], ['YTD', 'ytd'], ['1Y', 52], ['All', 9999]];  /* Pro 2 window, in weekly bars — same presets as Pro 1 */
+const WB2_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];  /* Pro 2 window, in daily bars — Pro 2 now plots daily candles (daily+weekly stoch), not weekly */
 
 /* per-pane configuration (their settings menu, in our idiom) — persisted */
 const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default (owner ruling 2026-07-14) */
-/* stochW = the next-higher-timeframe stochastic overlay (the governing tide):
-   weekly on Pro 1, monthly on Pro 2, daily on Pro 3 — the doctrine's
-   nested-waves rule, on by default on every tier. */
+/* stochW = the higher-timeframe stochastic overlay. Owner ruling 2026-07-17
+   dropped multi-year cycles to mirror the reference terminal exactly:
+   Pro 1 = daily stoch ONLY, Pro 2 = daily candles with daily+WEEKLY stoch,
+   Pro 3 = intraday stoch ONLY. The overlay now lives on Pro 2 alone (weekly);
+   Pro 1/Pro 3 render no overlay regardless of this flag. */
 const WB_CFG_DEFAULT = () => ({
   p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
   p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
@@ -1357,7 +1359,7 @@ function renderWbSidebar(data) {
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 9999, days3: 156, off: 0, woff: 0, off3: 0, layout: 'split', cfg: loadWbCfg() };
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: 156, off: 0, woff: 0, off3: 0, layout: 'split', cfg: loadWbCfg() };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -1383,7 +1385,7 @@ function renderCharts(data, lamp) {
      (owner 2026-07-16): with volume + two stochastic strips beneath it, a 600px
      box left the candles only ~half the height and they read coarse. At 840 the
      price pane takes ~64%, giving each candle far more vertical resolution. */
-  const H = 840;
+  const H = 756;
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
@@ -1772,22 +1774,24 @@ function renderCharts(data, lamp) {
       window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
       pivots: d.piv, smas: smaList(wbState.cfg.p1),
-      stW: wbState.cfg.p1.stochW ? weeklyStochOnDaily(d.bars) : null,
+      stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
       stochCaption: 'STOCH 13-3-3 · DAILY',
     }]);
   }
   if (show('p2')) {
+    /* Pro 2 = daily candles carrying the daily stoch (native) + the WEEKLY
+       stoch overlay (owner ruling 2026-07-17). A daily stoch drawn on weekly
+       candles would only step once a week, so Pro 2 shares Pro 1's daily bars
+       and layers the weekly tide on top — matching the reference terminal. */
     const sym = effSym(wbState.cfg.p2);
     const d = daily(sym);
-    const wk = toWeeklyBars(d.bars);
-    const wst = stochSeries(wk);
-    panes.push([wk, wst, stochMarks(wst), 'PRO 2 · WEEKLY · ' + sym, {
-      window: paneWindow(wbState.wdays, wk), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · DAILY · ' + sym, {
+      window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
-      stW: wbState.cfg.p2.stochW ? projectStoch(wk, toMonthlyBars(d.bars)) : null,
-      stochCaption: 'STOCH 13-3-3 · WEEKLY (13)',
-      stochWCaption: 'STOCH 13-3-3 · MONTHLY',
+      stW: wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null,
+      stochCaption: 'STOCH 13-3-3 · DAILY',
+      stochWCaption: 'STOCH 13-3-3 · WEEKLY (13)',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
@@ -1804,9 +1808,8 @@ function renderCharts(data, lamp) {
         window: paneWindow(wbState.days3, intra), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
-        stW: wbState.cfg.p3.stochW ? projectStoch(intra, d.bars) : null,
+        stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCaption: 'STOCH 13-3-3 · 5-MIN',
-        stochWCaption: 'STOCH 13-3-3 · DAILY',
       }]);
     } else {
       maybeFetchIntraday(sym);
@@ -1814,7 +1817,7 @@ function renderCharts(data, lamp) {
         window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
-        stW: wbState.cfg.p3.stochW ? weeklyStochOnDaily(d.bars) : null,
+        stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
       }]);
     }
@@ -1838,7 +1841,7 @@ function buildWbSettings() {
   const cols = el('div', 'wb-set-cols');
   {
     const key = wbSetPane;
-    const title = { p1: 'PRO 1 · DAILY', p2: 'PRO 2 · WEEKLY', p3: 'PRO 3 · DAY TRADING' }[key];
+    const title = { p1: 'PRO 1 · DAILY', p2: 'PRO 2 · DAILY', p3: 'PRO 3 · DAY TRADING' }[key];
     const cfg = wbState.cfg[key];
     const col = el('div', 'wb-set-col');
     col.appendChild(el('h3', 'wb-set-title', title));
@@ -1890,16 +1893,16 @@ function buildWbSettings() {
       }
     };
     /* Pro 3 (day trading) keeps a slim panel by owner ruling: Bollinger Bands
-       / Volume / Stochastic (+ its higher-timeframe overlay) only — no MAs or
-       S/R. Pro 1/2 carry the full set. The overlay is the next tide up:
-       weekly on Pro 1, monthly on Pro 2, daily on Pro 3. */
+       / Volume / Stochastic only — no MAs or S/R. Pro 1/2 carry the full set.
+       The weekly-stoch overlay now lives on Pro 2 ALONE (owner ruling
+       2026-07-17); Pro 1/Pro 3 render their native stoch only, so no overlay
+       toggle is offered there. */
     const full = key !== 'p3';
-    const overlayLabel = { p1: 'Stochastic (weekly)', p2: 'Stochastic (monthly)', p3: 'Stochastic (daily)' }[key];
     const ind = [
       ['Bollinger Bands', () => cfg.bb, v => { cfg.bb = v; }],
       ['Volume', () => cfg.vol, v => { cfg.vol = v; }],
       ['Stochastic', () => cfg.stoch, v => { cfg.stoch = v; }],
-      [overlayLabel, () => cfg.stochW, v => { cfg.stochW = v; }],
+      ...(key === 'p2' ? [['Stochastic (weekly)', () => cfg.stochW, v => { cfg.stochW = v; }]] : []),
     ];
     group('Indicators', ind);
     if (full) {
@@ -1940,7 +1943,7 @@ function wireCharts() {
     }
   };
   wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; wbState.off = 0; });
-  wireZoom('chartZoom2', WB2_ZOOMS, 9999, spec => { wbState.wdays = spec; wbState.woff = 0; });
+  wireZoom('chartZoom2', WB2_ZOOMS, 126, spec => { wbState.wdays = spec; wbState.woff = 0; });
   /* Pro 3 has no window presets: its intraday feed only carries ~5 trading
      days of 5-min bars, so discrete day-presets all collapsed to one window.
      Range control is the bottom navigator instead — drag it to zoom anywhere
