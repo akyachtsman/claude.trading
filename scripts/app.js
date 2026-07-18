@@ -519,6 +519,32 @@ function squarify(items, x, y, w, h) {
 
 let heatState = null;   /* last-rendered data, so a resize can re-render */
 
+/* Canvas height that lets a panel sit within the viewport with a half-inch gap
+   all around (owner request 2026-07-18: "shorten the chart to fit my screen
+   minus 1/2 inch all around, resize the heatmap to the same measurements").
+   We MEASURE the panel's non-canvas chrome (everything above + below the SVG:
+   header, toolbar, per-pane bars, caption, padding) rather than guess it, then
+   size the canvas to fill the rest of `viewport − 1in`. Because each panel's
+   total = canvas + its own chrome = (vh − 1in − chrome) + chrome = vh − 1in,
+   the stochastic-charts panel and the heatmap panel end up the exact same outer
+   height — and both full-width with the same 0.5in inset, so identical boxes.
+   The chrome offsets are independent of the SVG's current height, so measuring
+   the live (even placeholder-sized) SVG is safe. Both renderers re-run on
+   resize, so this re-fits live; clamped for tiny laptops / tall monitors. */
+const DESK_VMARGIN = 96;   /* 0.5in top + 0.5in bottom */
+function deskChartHeight(svg) {
+  const vh = window.innerHeight || 800;
+  let chrome = 320;   /* fallback if the panel isn't laid out yet */
+  const panel = svg && svg.closest('.area-charts, .heat-panel');
+  if (panel) {
+    const pr = panel.getBoundingClientRect(), sr = svg.getBoundingClientRect();
+    const above = sr.top - pr.top;        /* header + toolbar + pane bars */
+    const below = pr.bottom - sr.bottom;  /* caption + panel padding */
+    if (above >= 0 && below >= 0) chrome = above + below;
+  }
+  return Math.max(380, Math.min(vh - DESK_VMARGIN - chrome, 900));
+}
+
 function renderHeatmap(hm, lamp) {
   heatState = { hm, lamp };
   activeCap = (hm && hm.scaleCap) || HEAT.cap;   /* per-universe color scale */
@@ -540,7 +566,7 @@ function renderHeatmap(hm, lamp) {
      width): 1 viewBox unit = 1 rendered px, so label px thresholds are honest
      and text isn't stretched by aspect mismatch. */
   const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 1200));
-  const H = Math.round(Math.min(Math.max(W * 0.62, 420), 700));
+  const H = deskChartHeight(svg);   /* fit viewport; same box as the chart */
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   const HEAD = 16, BAND = 11;
@@ -1479,11 +1505,11 @@ function renderCharts(data, lamp) {
   if (!s || s.c.length < 30) return;
 
   const W = Math.max(480, Math.round(svg.parentElement.clientWidth || 900));
-  /* Taller chart so the PRICE pane dominates like the reference terminal
-     (owner 2026-07-16): with volume + two stochastic strips beneath it, a 600px
-     box left the candles only ~half the height and they read coarse. At 840 the
-     price pane takes ~64%, giving each candle far more vertical resolution. */
-  const H = 756;
+  /* Height fits the panel within the viewport minus a half-inch all around
+     (owner request 2026-07-18); shared with the heatmap so both are identical.
+     The price pane still dominates (~64%) above volume + the two stochastic
+     strips — the ratios are proportional to H, so shrinking keeps the layout. */
+  const H = deskChartHeight(svg);
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
