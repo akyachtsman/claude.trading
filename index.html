@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260718c">
-<link rel="stylesheet" href="styles/components.css?v=20260718c">
+<link rel="stylesheet" href="styles/tokens.css?v=20260718d">
+<link rel="stylesheet" href="styles/components.css?v=20260718d">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -43,14 +43,28 @@
      a left-packed row that wraps only if the band runs out of width. gap:0 + a
      -1px top margin collapses the shared horizontal borders into one hairline;
      square corners so the stack reads as one continuous strip. */
-  .market-strip { display: flex; flex-direction: column; gap: 0; margin-bottom: var(--space-4); }
+  /* Top band (owner request 2026-07-18): strip on the LEFT (its tile rows capped
+     at 5), the accounts / AI brief / news boxes side by side on the RIGHT. */
+  .top-band { display: flex; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-4); }
+  .top-boxes { flex: 1 1 auto; min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; }
+  .top-boxes > .area-accounts { flex: 2 1 0; min-width: 0; }
+  .top-boxes > .top-brief { flex: 1 1 0; min-width: 0; }
+  .top-boxes > .col-news { flex: 1 1 0; min-width: 0; }
+  .top-boxes .account-grid { grid-template-columns: 1fr 1fr; }
+  .top-boxes .account .hero-number { font-size: var(--font-xl); }
+  /* narrow account cards: stack the stat pairs so the P&L figures don't collide */
+  .top-boxes .acct-stats { grid-template-columns: 1fr; }
+  .top-boxes .panel-body { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+  .market-strip { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0; }
   /* each group is one tight horizontal band (owner request 2026-07-18): the
      label sits in FRONT (left) of its tiles, which abut each other with collapsed
      borders; bands stack and share a hairline. Dropping the stacked label row
      tightens each band to a single tile-height. */
   .mkt-group { min-width: 0; margin-top: -1px; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 0; }
   .mkt-group-label { flex: 0 0 140px; white-space: nowrap; font: 600 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
-  .mkt-group-tiles { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 0; }
+  /* max 5 tiles per row (owner request 2026-07-18): 5×120 − 4×1 border-collapse
+     = 596px; a 6th tile wraps to the next line within the band. */
+  .mkt-group-tiles { flex: 0 1 auto; min-width: 0; max-width: 596px; display: flex; flex-wrap: wrap; gap: 0; }
   .mkt-tile { flex: 0 0 120px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 0; padding: var(--space-2); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .mkt-tile + .mkt-tile { margin-left: -1px; }
   /* narrow screens: the fixed label gutter + a 120px tile can't fit a phone
@@ -71,17 +85,17 @@
      go up to the newsreel"). Accounts + brief/ask sit in the top band;
      heat/charts span that full left width below. (Equity-curves panel removed
      2026-07-16 — the per-account card sparklines cover the trend.) */
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px 300px;
+  /* Lower band: heatmap (left) + Ask-the-desk (right); the owner-editable widget
+     row spans beneath (accounts + news moved up to .top-boxes 2026-07-18). */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px;
     grid-template-areas:
-      "strip    strip   strip"
-      "accounts rail    news"
-      "heat     heat    news";
+      "widgets widgets"
+      "heat    rail";
     gap: var(--space-4); align-items: start; }
-  .widget-strip  { grid-area: strip; min-width: 0; }
-  .area-accounts { grid-area: accounts; min-width: 0; }
+  .widget-strip  { display: none; }
+  .acct-widgets-wrap { grid-area: widgets; min-width: 0; }
   .heat-panel    { grid-area: heat; min-width: 0; }
   .col-rail { grid-area: rail; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
-  .col-news { grid-area: news; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
   /* News is halved to a fixed reel with its own scrollbar (owner ruling
      2026-07-16): the holdings-first list scrolls in place instead of running
      the full page height. */
@@ -303,22 +317,29 @@
   .site-footer { margin-top: var(--space-8); border-top: 1px solid var(--color-border); padding-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
   .site-footer p { margin: 0; font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); }
 
+  @media (max-width: 1280px) {
+    /* below wide desktop the four top-right boxes are too cramped beside the
+       strip, so stack the top band (strip full-width above, boxes wrap below)
+       — also fixes phone-width horizontal overflow (Codex #128 P1) */
+    .top-band { flex-direction: column; align-items: stretch; }
+    .top-boxes { flex-wrap: wrap; }
+    .top-boxes > .area-accounts { flex: 2 1 320px; }
+    .top-boxes > .top-brief,
+    .top-boxes > .col-news { flex: 1 1 240px; }
+  }
   @media (max-width: 1400px) {
-    /* mid widths: 2 columns — news stays full-height on the right, the
-       brief/ask rail drops into the left stack above the heatmap */
+    /* mid widths: heatmap + ask rail narrower; widgets still span the top */
     .layout { grid-template-columns: minmax(0, 1fr) 300px;
       grid-template-areas:
-        "strip    strip"
-        "accounts news"
-        "rail     news"
-        "heat     news"; }
+        "widgets widgets"
+        "heat    rail"; }
   }
   @media (max-width: 1160px) {
     .account-grid { grid-template-columns: 1fr; }
-    /* single column: widgets stretch to the stacked account-card width */
+    /* single column: widgets stretch to the stacked width */
     .acct-widgets .widget-frame { width: 100%; }
     .layout { grid-template-columns: 1fr;
-      grid-template-areas: "strip" "accounts" "heat" "rail" "news"; }
+      grid-template-areas: "widgets" "heat" "rail"; }
   }
 </style>
 </head>
@@ -333,21 +354,50 @@
     <div class="masthead-state" id="mastheadState"></div>
   </header>
 
-  <section class="market-strip" id="marketStrip" aria-label="Market summary"></section>
+  <!-- Top band (owner request 2026-07-18): the market strip (capped at 5 tiles
+       per row) sits on the LEFT; the accounts, AI brief, and news boxes move up
+       to sit side by side on the RIGHT in the space the narrowed strip frees. -->
+  <div class="top-band">
+    <section class="market-strip" id="marketStrip" aria-label="Market summary"></section>
 
-  <div class="layout">
-
-      <div class="widget-strip" id="widgetStrip"></div>
-
+    <div class="top-boxes">
       <section class="area-accounts" aria-labelledby="accountsTitle">
         <div class="accounts-head">
           <h2 id="accountsTitle">Accounts</h2>
         </div>
         <p class="stamp" id="accountsStamp"></p>
         <div class="account-grid" id="accountGrid"></div>
+      </section>
+
+      <section class="panel top-brief" aria-labelledby="briefTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="briefTitle">AI daily brief</h2>
+          <span class="lamp lamp--demo" id="briefLamp">Demo</span>
+          <span class="stamp ml-auto" id="briefStamp">—</span>
+        </div>
+        <div class="panel-body" id="briefBody"></div>
+      </section>
+
+      <aside class="col-news" aria-label="Market news">
+        <section class="panel" aria-labelledby="newsTitle">
+          <div class="panel-header">
+            <h2 class="panel-title" id="newsTitle">News — holdings first</h2>
+            <span class="lamp lamp--demo" id="newsLamp">Demo</span>
+          </div>
+          <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <div class="layout">
+
+      <div class="widget-strip" id="widgetStrip"></div>
+
+      <div class="acct-widgets-wrap">
         <div class="acct-widgets" id="acctWidgets"></div>
         <p class="stamp" id="acctWidgetsSource">TradingView + FRED · live · sandboxed from the desk</p>
-      </section>
+      </div>
 
       <section class="panel heat-panel" aria-labelledby="heatTitle">
         <div class="panel-header">
@@ -378,33 +428,12 @@
 
     <aside class="col-rail" aria-label="Desk tools">
 
-      <section class="panel" aria-labelledby="briefTitle">
-        <div class="panel-header">
-          <h2 class="panel-title" id="briefTitle">AI daily brief</h2>
-          <span class="lamp lamp--demo" id="briefLamp">Demo</span>
-          <span class="stamp ml-auto" id="briefStamp">—</span>
-        </div>
-        <div class="panel-body" id="briefBody"></div>
-      </section>
-
       <section class="panel" aria-labelledby="askTitle">
         <div class="panel-header">
           <h2 class="panel-title" id="askTitle">Ask the desk</h2>
           <span class="lamp lamp--demo" id="askLamp">Demo</span>
         </div>
         <div class="panel-body" id="askBody"></div>
-      </section>
-
-    </aside>
-
-    <aside class="col-news" aria-label="Market news">
-
-      <section class="panel" aria-labelledby="newsTitle">
-        <div class="panel-header">
-          <h2 class="panel-title" id="newsTitle">News — holdings first</h2>
-          <span class="lamp lamp--demo" id="newsLamp">Demo</span>
-        </div>
-        <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
       </section>
 
     </aside>
@@ -468,8 +497,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260718c"></script>
-<script src="scripts/data.js?v=20260718c"></script>
-<script src="scripts/app.js?v=20260718c"></script>
+<script src="scripts/config.js?v=20260718d"></script>
+<script src="scripts/data.js?v=20260718d"></script>
+<script src="scripts/app.js?v=20260718d"></script>
 </body>
 </html>
