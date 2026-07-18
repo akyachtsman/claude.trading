@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260718f">
-<link rel="stylesheet" href="styles/components.css?v=20260718f">
+<link rel="stylesheet" href="styles/tokens.css?v=20260718g">
+<link rel="stylesheet" href="styles/components.css?v=20260718g">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -295,7 +295,10 @@
 
   /* heatmap (in the main column; height set by JS to match render size) */
   .heat-wrap { position: relative; }
-  #heatmapSvg { display: block; width: 100%; height: 700px; }
+  /* Placeholder floor only — renderHeatmap() sets an inline style.height that
+     matches the width-derived viewBox H (420–700px), so 1 viewBox unit = 1px
+     and preserveAspectRatio="none" never stretches the tiles (Codex #130 P2). */
+  #heatmapSvg { display: block; width: 100%; min-height: 460px; }
   #heatmapSvg text { pointer-events: none; }
   .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
   /* the peer list shows EVERY member of the framed group (owner ruling
@@ -332,7 +335,11 @@
   }
   @media (max-width: 1160px) {
     .account-grid { grid-template-columns: 1fr; }
-    /* single column: widgets stretch, Ask drops below them (.layout is flex-wrap) */
+    /* single column: widgets stretch, Ask drops below them (.layout is flex-wrap).
+       The wrapper needs a full basis too, else it keeps its content-sized width
+       and the stretched frames stay narrower than the full-width Ask rail below
+       (Codex #130 P2). */
+    .acct-widgets-wrap { flex-basis: 100%; }
     .acct-widgets .widget-frame { width: 100%; }
     .col-rail { flex-basis: 100%; }
   }
@@ -494,8 +501,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260718f"></script>
-<script src="scripts/data.js?v=20260718f"></script>
-<script src="scripts/app.js?v=20260718f"></script>
+<script src="scripts/config.js?v=20260718g"></script>
+<script src="scripts/data.js?v=20260718g"></script>
+<script src="scripts/app.js?v=20260718g"></script>
 </body>
 </html>
