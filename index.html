@@ -93,8 +93,7 @@
       "heat    rail";
     gap: var(--space-4); align-items: start; }
   .widget-strip  { display: none; }
-  .acct-widgets  { grid-area: widgets; min-width: 0; }
-  #acctWidgetsSource { grid-area: widgets; align-self: end; }
+  .acct-widgets-wrap { grid-area: widgets; min-width: 0; }
   .heat-panel    { grid-area: heat; min-width: 0; }
   .col-rail { grid-area: rail; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
   /* News is halved to a fixed reel with its own scrollbar (owner ruling
@@ -318,22 +317,29 @@
   .site-footer { margin-top: var(--space-8); border-top: 1px solid var(--color-border); padding-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
   .site-footer p { margin: 0; font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); }
 
+  @media (max-width: 1280px) {
+    /* below wide desktop the four top-right boxes are too cramped beside the
+       strip, so stack the top band (strip full-width above, boxes wrap below)
+       — also fixes phone-width horizontal overflow (Codex #128 P1) */
+    .top-band { flex-direction: column; align-items: stretch; }
+    .top-boxes { flex-wrap: wrap; }
+    .top-boxes > .area-accounts { flex: 2 1 320px; }
+    .top-boxes > .top-brief,
+    .top-boxes > .col-news { flex: 1 1 240px; }
+  }
   @media (max-width: 1400px) {
-    /* mid widths: 2 columns — news stays full-height on the right, the
-       brief/ask rail drops into the left stack above the heatmap */
+    /* mid widths: heatmap + ask rail narrower; widgets still span the top */
     .layout { grid-template-columns: minmax(0, 1fr) 300px;
       grid-template-areas:
-        "strip    strip"
-        "accounts news"
-        "rail     news"
-        "heat     news"; }
+        "widgets widgets"
+        "heat    rail"; }
   }
   @media (max-width: 1160px) {
     .account-grid { grid-template-columns: 1fr; }
-    /* single column: widgets stretch to the stacked account-card width */
+    /* single column: widgets stretch to the stacked width */
     .acct-widgets .widget-frame { width: 100%; }
     .layout { grid-template-columns: 1fr;
-      grid-template-areas: "strip" "accounts" "heat" "rail" "news"; }
+      grid-template-areas: "widgets" "heat" "rail"; }
   }
 </style>
 </head>
@@ -388,8 +394,10 @@
 
       <div class="widget-strip" id="widgetStrip"></div>
 
-      <div class="acct-widgets" id="acctWidgets"></div>
-      <p class="stamp" id="acctWidgetsSource">TradingView + FRED · live · sandboxed from the desk</p>
+      <div class="acct-widgets-wrap">
+        <div class="acct-widgets" id="acctWidgets"></div>
+        <p class="stamp" id="acctWidgetsSource">TradingView + FRED · live · sandboxed from the desk</p>
+      </div>
 
       <section class="panel heat-panel" aria-labelledby="heatTitle">
         <div class="panel-header">
