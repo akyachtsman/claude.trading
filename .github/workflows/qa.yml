@@ -34,6 +34,12 @@ on:
 permissions:
   contents: read
 
+# Cancel a superseded run when a newer commit lands on the same PR/branch, so a
+# stale in-flight run can't post a green wake signal for an old SHA (Codex #125).
+concurrency:
+  group: qa-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   # Path to the directory containing playwright.config.js and package.json
   UI_TESTS_DIR: .github/scripts/ui-tests
@@ -181,7 +187,7 @@ jobs:
   notify:
     name: Notify PR on green
     needs: [static-checks, ui-changes, ui-tests]
-    if: ${{ always() && github.event_name == 'pull_request' && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') }}
+    if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -195,5 +201,14 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # Skip a stale wake if a newer commit landed while this run executed —
+          # the comment is consumed as an auto-merge signal, so it must match the
+          # current head (Codex #125). concurrency cancels most such runs; this is
+          # the airtight backstop.
+          CUR=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq .headRefOid)
+          if [ "$CUR" != "$SHA" ]; then
+            echo "PR #$PR head moved ($CUR != $SHA) — skipping stale wake comment."
+            exit 0
+          fi
           gh pr comment "$PR" --repo "$REPO" \
             --body "$(printf '✅ QA green @ %s — [run](%s)\n\n_Automated wake signal (qa.yml notify job); no action needed._' "${SHA:0:7}" "$RUN_URL")" || true
