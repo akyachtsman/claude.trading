@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260717g">
-<link rel="stylesheet" href="styles/components.css?v=20260717g">
+<link rel="stylesheet" href="styles/tokens.css?v=20260718a">
+<link rel="stylesheet" href="styles/components.css?v=20260718a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -38,15 +38,15 @@
      the 33 tiles are sorted into labelled asset-class frames (owner request
      2026-07-17): each .mkt-group is an outer panel that grows to share its row,
      tiles auto-fill inside and wrap on narrow widths */
-  /* Groups line up horizontally and abut with no gap (owner request 2026-07-17):
-     each box sits flush to the right of the previous one, wrapping to the next
-     row when the line fills. gap:0 + a -1px margin collapses the shared borders
-     into a single hairline; square corners so the row reads as one straight strip. */
-  .market-strip { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0; margin-bottom: var(--space-4); }
-  .mkt-group { flex: 0 1 auto; min-width: 0; margin: -1px 0 0 -1px; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 0; }
+  /* Groups stack vertically — a single column, each group a full-width band
+     below the previous one (owner request 2026-07-18), its tiles flattened into
+     a left-packed row that wraps only if the band runs out of width. gap:0 + a
+     -1px top margin collapses the shared horizontal borders into one hairline;
+     square corners so the stack reads as one continuous strip. */
+  .market-strip { display: flex; flex-direction: column; gap: 0; margin-bottom: var(--space-4); }
+  .mkt-group { min-width: 0; margin-top: -1px; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 0; }
   .mkt-group-label { font: 600 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
-  /* column count per box is set in app.js (2 cols, 3 for the big sectors box) */
-  .mkt-group-tiles { display: grid; gap: var(--space-2); }
+  .mkt-group-tiles { display: grid; grid-template-columns: repeat(auto-fill, 120px); gap: var(--space-2); }
   .mkt-tile { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .mkt-name { font: 500 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mkt-last { font: 600 var(--font-sm)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -457,8 +457,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260717g"></script>
-<script src="scripts/data.js?v=20260717g"></script>
-<script src="scripts/app.js?v=20260717g"></script>
+<script src="scripts/config.js?v=20260718a"></script>
+<script src="scripts/data.js?v=20260718a"></script>
+<script src="scripts/app.js?v=20260718a"></script>
 </body>
 </html>
