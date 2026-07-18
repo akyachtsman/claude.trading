@@ -540,7 +540,7 @@ function renderHeatmap(hm, lamp) {
      width): 1 viewBox unit = 1 rendered px, so label px thresholds are honest
      and text isn't stretched by aspect mismatch. */
   const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 1200));
-  const H = Math.round(Math.min(Math.max(W * 0.62, 420), 640));
+  const H = Math.round(Math.min(Math.max(W * 0.62, 420), 700));
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   const HEAD = 16, BAND = 11;
