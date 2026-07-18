@@ -519,6 +519,38 @@ function squarify(items, x, y, w, h) {
 
 let heatState = null;   /* last-rendered data, so a resize can re-render */
 
+/* Canvas height that lets a panel sit within the viewport with a half-inch gap
+   all around (owner request 2026-07-18: "shorten the chart to fit my screen
+   minus 1/2 inch all around, resize the heatmap to the same measurements").
+   We MEASURE the panel's non-canvas chrome (everything above + below the SVG:
+   header, toolbar, per-pane bars, caption, padding) rather than guess it, then
+   size the canvas to fill the rest of `viewport − 1in`. Because each panel's
+   total = canvas + its own chrome = (vh − 1in − chrome) + chrome = vh − 1in,
+   the stochastic-charts panel and the heatmap panel end up the exact same outer
+   height — and both full-width with the same 0.5in inset, so identical boxes.
+   The chrome offsets are independent of the SVG's current height, so measuring
+   the live (even placeholder-sized) SVG is safe. Both renderers re-run on
+   resize, so this re-fits live; clamped for tiny laptops / tall monitors. */
+const DESK_VMARGIN = 96;   /* 0.5in top + 0.5in bottom */
+function deskChartHeight(svg) {
+  const vh = window.innerHeight || 800;
+  let chrome = 320;   /* fallback if the panel isn't laid out yet */
+  const panel = svg && svg.closest('.area-charts, .heat-panel');
+  if (panel) {
+    const pr = panel.getBoundingClientRect(), sr = svg.getBoundingClientRect();
+    const above = sr.top - pr.top;        /* header + toolbar + pane bars */
+    const below = pr.bottom - sr.bottom;  /* caption + panel padding */
+    if (above >= 0 && below >= 0) chrome = above + below;
+  }
+  /* Clamp the OUTER panel height — a viewport-only target both panels share — so
+     the two boxes stay identical even at the clamp bounds (a per-canvas clamp
+     would leave panels with different chrome at different outer heights). Each
+     panel then subtracts its own chrome; the canvas floor only guards a
+     pathologically short window. */
+  const outer = Math.max(560, Math.min(vh - DESK_VMARGIN, 1000));
+  return Math.max(260, outer - chrome);
+}
+
 function renderHeatmap(hm, lamp) {
   heatState = { hm, lamp };
   activeCap = (hm && hm.scaleCap) || HEAT.cap;   /* per-universe color scale */
@@ -539,8 +571,12 @@ function renderHeatmap(hm, lamp) {
   /* Render at the container's true pixel size (the panel now spans the full
      width): 1 viewBox unit = 1 rendered px, so label px thresholds are honest
      and text isn't stretched by aspect mismatch. */
+  /* Populate the legend BEFORE measuring the chrome — it sits below the canvas,
+     and an empty legend row would under-measure the panel on the first render,
+     leaving the heatmap a touch too tall to match the chart (Codex #131). */
+  renderHeatLegend();
   const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 1200));
-  const H = Math.round(Math.min(Math.max(W * 0.62, 420), 700));
+  const H = deskChartHeight(svg);   /* fit viewport; same box as the chart */
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   const HEAD = 16, BAND = 11;
@@ -735,8 +771,7 @@ function renderHeatmap(hm, lamp) {
   }
   svg.appendChild(focusGroup);
   svg.appendChild(focusTile);
-  renderHeatLegend();
-  renderHeatTable(hm);
+  renderHeatTable(hm);   /* legend was rendered up-front, before the measure */
 }
 
 function renderHeatLegend() {
@@ -1341,7 +1376,14 @@ function maybeFetchWbInfo(sym) {
   deskQuote(sym, 'info')
     .then(out => { wbInfoCache[sym] = (out && out.ok && out.info) ? out.info : null; })
     .catch(() => { wbInfoCache[sym] = null; })
-    .finally(() => { wbInfoPending.delete(sym); if (wbState && wbState.sym === sym) renderWbInfo(); });
+    .finally(() => {
+      wbInfoPending.delete(sym);
+      /* Re-render (not just renderWbInfo) so the chart height re-fits: the
+         fundamentals strip can wrap onto extra rows on a narrow viewport,
+         changing the toolbar chrome after the canvas was sized (Codex #131).
+         Recursion-safe — sym is now cached, so maybeFetchWbInfo early-returns. */
+      if (wbState && wbState.sym === sym) renderCharts(wbState.data, wbState.lamp);
+    });
 }
 function renderWbInfo() {
   const box = document.getElementById('wbInfo');
@@ -1478,12 +1520,18 @@ function renderCharts(data, lamp) {
   const s = data.symbols[wbState.sym];
   if (!s || s.c.length < 30) return;
 
+  /* Apply pane-bar visibility BEFORE measuring the chrome — switching to/from
+     the Pro-3-only layout changes the pane-bar row height, and measuring the
+     stale layout would size the canvas off by a header row (Codex #131). */
+  const paneVisible = p => wbState.layout === 'split' || wbState.layout === p;
+  for (const k of ['p1', 'p2', 'p3']) document.getElementById('wbBar-' + k).hidden = !paneVisible(k);
+
   const W = Math.max(480, Math.round(svg.parentElement.clientWidth || 900));
-  /* Taller chart so the PRICE pane dominates like the reference terminal
-     (owner 2026-07-16): with volume + two stochastic strips beneath it, a 600px
-     box left the candles only ~half the height and they read coarse. At 840 the
-     price pane takes ~64%, giving each candle far more vertical resolution. */
-  const H = 756;
+  /* Height fits the panel within the viewport minus a half-inch all around
+     (owner request 2026-07-18); shared with the heatmap so both are identical.
+     The price pane still dominates (~64%) above volume + the two stochastic
+     strips — the ratios are proportional to H, so shrinking keeps the layout. */
+  const H = deskChartHeight(svg);
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
@@ -1939,7 +1987,7 @@ function renderCharts(data, lamp) {
       }]);
     }
   }
-  for (const k of ['p1', 'p2', 'p3']) document.getElementById('wbBar-' + k).hidden = !show(k);
+  /* pane-bar visibility already applied up-front, before the height measure */
   const pw = (W - GAP * (panes.length - 1)) / panes.length;
   panes.forEach((p, idx) => drawPane(idx * (pw + GAP), pw, ...p));
   /* geometry for wheel-zoom hit-testing: which pane the cursor is over + its
