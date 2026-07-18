@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260717e">
-<link rel="stylesheet" href="styles/components.css?v=20260717e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260717f">
+<link rel="stylesheet" href="styles/components.css?v=20260717f">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -75,7 +75,10 @@
 
   /* Charts break out of the centered column to the full viewport width — a
      sibling of .layout inside the full-bleed shell (owner ruling 2026-07-16). */
-  .area-charts { min-width: 0; margin-top: var(--space-4); }
+  /* Quarter-inch breathing margin on each side so the charts panel no longer
+     runs edge-to-edge (owner request 2026-07-17); still wider than the capped
+     blocks above, just inset a touch. */
+  .area-charts { min-width: 0; margin-top: var(--space-4); margin-inline: 0.25in; }
 
   /* accounts */
   .accounts-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
@@ -450,8 +453,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260717e"></script>
-<script src="scripts/data.js?v=20260717e"></script>
-<script src="scripts/app.js?v=20260717e"></script>
+<script src="scripts/config.js?v=20260717f"></script>
+<script src="scripts/data.js?v=20260717f"></script>
+<script src="scripts/app.js?v=20260717f"></script>
 </body>
 </html>
