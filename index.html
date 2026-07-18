@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260718h">
-<link rel="stylesheet" href="styles/components.css?v=20260718h">
+<link rel="stylesheet" href="styles/tokens.css?v=20260718i">
+<link rel="stylesheet" href="styles/components.css?v=20260718i">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -305,7 +305,14 @@
   /* Placeholder floor only — renderHeatmap() sets an inline style.height that
      matches the width-derived viewBox H (420–700px), so 1 viewBox unit = 1px
      and preserveAspectRatio="none" never stretches the tiles (Codex #130 P2). */
-  #heatmapSvg { display: block; width: 100%; min-height: 460px; }
+  /* Placeholder floor only, and kept at/below deskChartHeight()'s canvas floor
+     so it can never exceed the JS-set inline height on a short viewport (that
+     would clamp the SVG taller than its viewBox and stretch the map — Codex
+     #131). renderHeatmap sets the real height inline. */
+  #heatmapSvg { display: block; width: 100%; min-height: 240px; }
+  /* Reserve the legend row's height even before it's populated, so the panel's
+     below-canvas chrome is measured correctly on the very first render. */
+  .heat-legend { min-height: 20px; }
   #heatmapSvg text { pointer-events: none; }
   .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
   /* the peer list shows EVERY member of the framed group (owner ruling
@@ -508,8 +515,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260718h"></script>
-<script src="scripts/data.js?v=20260718h"></script>
-<script src="scripts/app.js?v=20260718h"></script>
+<script src="scripts/config.js?v=20260718i"></script>
+<script src="scripts/data.js?v=20260718i"></script>
+<script src="scripts/app.js?v=20260718i"></script>
 </body>
 </html>
