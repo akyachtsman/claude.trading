@@ -169,3 +169,31 @@ jobs:
             .agent-reports/screenshots/
             .agent-reports/playwright-results.json
           retention-days: 7
+
+  # ── Green wake signal ────────────────────────────────────────────────────
+  # Comments on the PR when this run is green so a watching Claude session is
+  # woken via the PR-comment webhook and can auto-merge — the reliable path that
+  # ci-notify.yml's workflow_run trigger did not cover (it only fired on the
+  # post-merge main run, where no open PR exists). Runs only on pull_request,
+  # gated on the blocking static-checks job (ui-tests is non-blocking by design);
+  # the comment never fails the run (|| true). PR-context is read directly from
+  # the event, so no cross-workflow lookup is needed.
+  notify:
+    name: Notify PR on green
+    needs: [static-checks, ui-changes, ui-tests]
+    if: ${{ always() && github.event_name == 'pull_request' && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment green on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" \
+            --body "$(printf '✅ QA green @ %s — [run](%s)\n\n_Automated wake signal (qa.yml notify job); no action needed._' "${SHA:0:7}" "$RUN_URL")" || true
