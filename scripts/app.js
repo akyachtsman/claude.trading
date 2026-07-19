@@ -1304,22 +1304,46 @@ function monthlyPivots(s) {
    through %D from at/below the oversold band; a SELL is the top-roll — %K
    crossing down through %D from at/above the overbought band. (strategies/
    stochastic-investing.md — the cycle anatomy.) */
-/* Higher-timeframe stochastic projected onto a lower-timeframe bar series
-   (step lines): each lower bar carries the current higher-TF %K/%D, aligned by
-   timestamp — the doctrine's dual-timeframe "nested waves" overlay (weekly on
-   daily, monthly on weekly, daily on intraday). */
-function projectStoch(lower, higher) {
-  const hst = stochSeries(higher);
-  const k = new Array(lower.c.length).fill(null);
-  const d = new Array(lower.c.length).fill(null);
-  let hi = -1;
-  for (let i = 0; i < lower.c.length; i++) {
-    while (hi + 1 < higher.t.length && higher.t[hi + 1] <= lower.t[i]) hi++;
-    if (hi >= 0) { k[i] = hst.k[hi]; d[i] = hst.d[hi]; }
+/* Weekly-timeframe stochastic that UPDATES DAILY without losing its weekly
+   semantics (owner request 2026-07-19: catch the %K/%D crossover mid-week, not
+   only at Friday's close — the crossover IS the signal, so it must stay the
+   genuine weekly reading). The old path resampled to weekly bars and step-held
+   each week's value across its five days — a staircase whose cross only moved at
+   week's end. We keep TRUE weekly bars, but for every daily point the current
+   (forming) week is aggregated week-to-date and the 13-3-3 slow stochastic is
+   taken AS-OF that day: the value moves each day as the week builds, yet at each
+   Friday close it exactly equals the classic completed-week reading (a naive
+   period-scaling would average daily raw %K and drift from the real weekly
+   signal — Codex #134). */
+function weeklyStochOnDaily(daily) {
+  const n = daily.c.length;
+  const k = new Array(n).fill(null);
+  const d = new Array(n).fill(null);
+  const wh = [], wl = [], wc = [];   /* completed weekly H/L/C, accrued at each week boundary */
+  let key = null, fh = -Infinity, fl = Infinity, fc = null;   /* forming week, week-to-date */
+  const NEED = STOCH.k + STOCH.kSmooth + STOCH.d;   /* weekly bars the latest %D depends on */
+  const isoWeek = t => {
+    const dt = new Date(t + 'T12:00:00Z');
+    return new Date(dt.getTime() - (((dt.getUTCDay() + 6) % 7) * 86400000)).toISOString().slice(0, 10);
+  };
+  for (let i = 0; i < n; i++) {
+    const wk = isoWeek(daily.t[i]);
+    if (wk !== key) {
+      if (key !== null) { wh.push(fh); wl.push(fl); wc.push(fc); }   /* prior week is now complete */
+      key = wk; fh = daily.h[i]; fl = daily.l[i]; fc = daily.c[i];
+    } else {
+      if (daily.h[i] > fh) fh = daily.h[i];
+      if (daily.l[i] < fl) fl = daily.l[i];
+      fc = daily.c[i];
+    }
+    if (wh.length + 1 < STOCH.k) continue;   /* not enough weekly history for raw %K yet */
+    const from = Math.max(0, wh.length - (NEED - 1));   /* completed tail + the forming week */
+    const st = stochSeries({ h: wh.slice(from).concat(fh), l: wl.slice(from).concat(fl), c: wc.slice(from).concat(fc) });
+    k[i] = st.k[st.k.length - 1];
+    d[i] = st.d[st.d.length - 1];
   }
   return { k, d };
 }
-const weeklyStochOnDaily = daily => projectStoch(daily, toWeeklyBars(daily));
 
 function stochMarks(st) {
   const buys = [], sells = [];
