@@ -1526,6 +1526,15 @@ function renderCharts(data, lamp) {
   const paneVisible = p => wbState.layout === 'split' || wbState.layout === p;
   for (const k of ['p1', 'p2', 'p3']) document.getElementById('wbBar-' + k).hidden = !paneVisible(k);
 
+  /* Collapse the symbol rail BEFORE measuring the chrome — otherwise a long
+     watchlist stretches the grid row taller than the chart, that extra height is
+     counted as `below` chrome, and H comes out too short (leaving the panes
+     shy of the frame bottom until a second render — Codex #132). It's restored
+     to the chart column's height right after H is known. */
+  const paneBars = document.getElementById('wbPaneBars');
+  const rail = document.getElementById('wbSidebar');
+  if (rail) rail.style.maxHeight = '0px';
+
   const W = Math.max(480, Math.round(svg.parentElement.clientWidth || 900));
   /* Height fits the panel within the viewport minus a half-inch all around
      (owner request 2026-07-18); shared with the heatmap so both are identical.
@@ -1535,6 +1544,10 @@ function renderCharts(data, lamp) {
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
+  /* Now cap the rail to the chart column (pane-bars + canvas) so a long
+     watchlist scrolls internally and the chart — not the rail — defines the grid
+     row, so the panes fill to the frame bottom (owner 2026-07-19). */
+  if (rail) rail.style.maxHeight = ((paneBars ? paneBars.offsetHeight : 0) + H) + 'px';
 
   const GAP = 16;
   /* crispEdges snaps every axis-aligned mark to the device-pixel grid, killing
