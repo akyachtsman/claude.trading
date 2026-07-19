@@ -1535,6 +1535,14 @@ function renderCharts(data, lamp) {
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
+  /* Cap the symbol rail to the chart column's height so a long watchlist scrolls
+     internally instead of stretching the grid row taller than the chart — which
+     left dead space below the (now viewport-fit) panes (owner 2026-07-19:
+     "extend the panes back to the bottom of the frame"). The rail sits beside
+     the pane-bars + canvas, so its ceiling is that column's full height. */
+  const paneBars = document.getElementById('wbPaneBars');
+  const rail = document.getElementById('wbSidebar');
+  if (rail) rail.style.maxHeight = ((paneBars ? paneBars.offsetHeight : 0) + H) + 'px';
 
   const GAP = 16;
   /* crispEdges snaps every axis-aligned mark to the device-pixel grid, killing
