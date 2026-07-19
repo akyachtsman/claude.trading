@@ -532,6 +532,11 @@ let heatState = null;   /* last-rendered data, so a resize can re-render */
    the live (even placeholder-sized) SVG is safe. Both renderers re-run on
    resize, so this re-fits live; clamped for tiny laptops / tall monitors. */
 const DESK_VMARGIN = 96;   /* 0.5in top + 0.5in bottom */
+/* Owner 2026-07-19: run the panels TALLER than the viewport-fit base — the
+   stochastic chart by 2in, the heatmap by 1in (96px = 1in). They no longer
+   match; both now extend past one screen and scroll. */
+const DESK_CHART_BOOST = 192;   /* +2in on the stochastic chart */
+const DESK_HEAT_BOOST = 96;     /* +1in on the heatmap */
 function deskChartHeight(svg) {
   const vh = window.innerHeight || 800;
   let chrome = 320;   /* fallback if the panel isn't laid out yet */
@@ -576,7 +581,7 @@ function renderHeatmap(hm, lamp) {
      leaving the heatmap a touch too tall to match the chart (Codex #131). */
   renderHeatLegend();
   const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 1200));
-  const H = deskChartHeight(svg);   /* fit viewport; same box as the chart */
+  const H = deskChartHeight(svg) + DESK_HEAT_BOOST;   /* viewport-fit + 1in (owner 2026-07-19) */
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   const HEAD = 16, BAND = 11;
@@ -1536,11 +1541,11 @@ function renderCharts(data, lamp) {
   if (rail) rail.style.maxHeight = '0px';
 
   const W = Math.max(480, Math.round(svg.parentElement.clientWidth || 900));
-  /* Height fits the panel within the viewport minus a half-inch all around
-     (owner request 2026-07-18); shared with the heatmap so both are identical.
-     The price pane still dominates (~64%) above volume + the two stochastic
-     strips — the ratios are proportional to H, so shrinking keeps the layout. */
-  const H = deskChartHeight(svg);
+  /* Viewport-fit base + 2in (owner 2026-07-19: run the chart taller than one
+     screen). The price pane still dominates (~64%) above volume + the two
+     stochastic strips — the ratios are proportional to H, so growing keeps the
+     layout. The rail cap below uses this taller H, so it scrolls to match. */
+  const H = deskChartHeight(svg) + DESK_CHART_BOOST;
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
