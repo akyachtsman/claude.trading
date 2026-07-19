@@ -212,46 +212,9 @@ function buildDemoCharts() {
   return { asOf: t[t.length - 1], source: 'demo', count: DEMO_CHART_SYMBOLS.length, symbols };
 }
 
-/* Daily packed series → weekly bars (t = last trading day of each ISO week). */
-function toWeeklyBars(s) {
-  const w = { t: [], o: [], h: [], l: [], c: [], v: [] };
-  let key = null;
-  for (let i = 0; i < s.t.length; i++) {
-    const d = new Date(s.t[i] + 'T12:00:00Z');
-    const monday = new Date(d.getTime() - (((d.getUTCDay() + 6) % 7) * 86400000));
-    const k = monday.toISOString().slice(0, 10);
-    if (k !== key) {
-      key = k;
-      w.t.push(s.t[i]); w.o.push(s.o[i]); w.h.push(s.h[i]); w.l.push(s.l[i]); w.c.push(s.c[i]); w.v.push(s.v[i]);
-    } else {
-      const j = w.t.length - 1;
-      w.t[j] = s.t[i];
-      w.h[j] = Math.max(w.h[j], s.h[i]); w.l[j] = Math.min(w.l[j], s.l[i]);
-      w.c[j] = s.c[i]; w.v[j] += s.v[i];
-    }
-  }
-  return w;
-}
-
-/* Monthly bars from daily (calendar month buckets) — the governing tide above
-   the weekly, for Pro 2's dual-timeframe stochastic overlay. */
-function toMonthlyBars(s) {
-  const m = { t: [], o: [], h: [], l: [], c: [], v: [] };
-  let key = null;
-  for (let i = 0; i < s.t.length; i++) {
-    const k = s.t[i].slice(0, 7);
-    if (k !== key) {
-      key = k;
-      m.t.push(s.t[i]); m.o.push(s.o[i]); m.h.push(s.h[i]); m.l.push(s.l[i]); m.c.push(s.c[i]); m.v.push(s.v[i]);
-    } else {
-      const j = m.t.length - 1;
-      m.t[j] = s.t[i];
-      m.h[j] = Math.max(m.h[j], s.h[i]); m.l[j] = Math.min(m.l[j], s.l[i]);
-      m.c[j] = s.c[i]; m.v[j] += s.v[i];
-    }
-  }
-  return m;
-}
+/* (Weekly/monthly bar resamplers were removed 2026-07-19: the weekly stochastic
+   now runs directly on daily bars with 5×-scaled periods so it updates daily —
+   see weeklyStochOnDaily in app.js — and nothing else consumed them.) */
 
 /* Slow stochastic on packed bars: raw %K over `k` bars → SMA(kSmooth) → %D =
    SMA(d). Warmup slots are null. Flat ranges read 50 (no signal, not a spike). */
