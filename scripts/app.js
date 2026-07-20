@@ -1749,7 +1749,10 @@ function renderCharts(data, lamp) {
     strips.forEach(([which, series, capText, withMarks], si) => {
       const yTop = stripTops[si];
       const sy = v => yTop + sH - v / 100 * sH;
-      for (const g of [20, 80]) {
+      /* Oversold/overbought bands: the WEEKLY strip uses 30/80 to match the
+         reference terminal (owner request 2026-07-20); daily/intraday keep the
+         classic 20/80 the doctrine ◯ markers key off. */
+      for (const g of (which === 'weekly' ? [30, 80] : [20, 80])) {
         line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.band, 'stroke-width': 1, 'stroke-opacity': 0.55 });
         text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
       }
