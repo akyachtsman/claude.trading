@@ -1304,43 +1304,51 @@ function monthlyPivots(s) {
    through %D from at/below the oversold band; a SELL is the top-roll — %K
    crossing down through %D from at/above the overbought band. (strategies/
    stochastic-investing.md — the cycle anatomy.) */
-/* Weekly-timeframe stochastic that UPDATES DAILY without losing its weekly
-   semantics (owner request 2026-07-19: catch the %K/%D crossover mid-week, not
-   only at Friday's close — the crossover IS the signal, so it must stay the
-   genuine weekly reading). The old path resampled to weekly bars and step-held
-   each week's value across its five days — a staircase whose cross only moved at
-   week's end. We keep TRUE weekly bars, but for every daily point the current
-   (forming) week is aggregated week-to-date and the 13-3-3 slow stochastic is
-   taken AS-OF that day: the value moves each day as the week builds, yet at each
-   Friday close it exactly equals the classic completed-week reading (a naive
-   period-scaling would average daily raw %K and drift from the real weekly
-   signal — Codex #134). */
+/* Weekly-timeframe stochastic drawn SMOOTH on the daily chart while staying the
+   genuine weekly signal (owner request 2026-07-19: smooth, not the daily-texture
+   sawtooth; and the crossover IS the signal). We compute the classic 13-3-3 slow
+   stochastic on TRUE weekly bars, then draw a straight line between each week's
+   close across the intervening days — a clean curve whose crossovers are the real
+   weekly crossovers. The last "week" is the current one aggregated week-to-date,
+   so its control point sits on the latest bar and the right edge still updates
+   daily as the week builds; at each Friday close the value equals the classic
+   completed-week reading exactly. (A period-scaled daily stochastic would drift
+   from the real weekly signal — Codex #134; step-holding drew a staircase.) */
 function weeklyStochOnDaily(daily) {
   const n = daily.c.length;
   const k = new Array(n).fill(null);
   const d = new Array(n).fill(null);
-  const wh = [], wl = [], wc = [];   /* completed weekly H/L/C, accrued at each week boundary */
-  let key = null, fh = -Infinity, fl = Infinity, fc = null;   /* forming week, week-to-date */
-  const NEED = STOCH.k + STOCH.kSmooth + STOCH.d;   /* weekly bars the latest %D depends on */
   const isoWeek = t => {
     const dt = new Date(t + 'T12:00:00Z');
     return new Date(dt.getTime() - (((dt.getUTCDay() + 6) % 7) * 86400000)).toISOString().slice(0, 10);
   };
+  /* true weekly bars (last week = forming, week-to-date) + each week's last daily index */
+  const wh = [], wl = [], wc = [], wEnd = [];
+  let key = null;
   for (let i = 0; i < n; i++) {
     const wk = isoWeek(daily.t[i]);
-    if (wk !== key) {
-      if (key !== null) { wh.push(fh); wl.push(fl); wc.push(fc); }   /* prior week is now complete */
-      key = wk; fh = daily.h[i]; fl = daily.l[i]; fc = daily.c[i];
-    } else {
-      if (daily.h[i] > fh) fh = daily.h[i];
-      if (daily.l[i] < fl) fl = daily.l[i];
-      fc = daily.c[i];
+    if (wk !== key) { key = wk; wh.push(daily.h[i]); wl.push(daily.l[i]); wc.push(daily.c[i]); wEnd.push(i); }
+    else {
+      const j = wh.length - 1;
+      if (daily.h[i] > wh[j]) wh[j] = daily.h[i];
+      if (daily.l[i] < wl[j]) wl[j] = daily.l[i];
+      wc[j] = daily.c[i]; wEnd[j] = i;
     }
-    if (wh.length + 1 < STOCH.k) continue;   /* not enough weekly history for raw %K yet */
-    const from = Math.max(0, wh.length - (NEED - 1));   /* completed tail + the forming week */
-    const st = stochSeries({ h: wh.slice(from).concat(fh), l: wl.slice(from).concat(fl), c: wc.slice(from).concat(fc) });
-    k[i] = st.k[st.k.length - 1];
-    d[i] = st.d[st.d.length - 1];
+  }
+  const wst = stochSeries({ h: wh, l: wl, c: wc });
+  /* control points at each week's close (the last sits on the latest daily bar,
+     carrying the live week-to-date value) */
+  const pts = [];
+  for (let j = 0; j < wh.length; j++) if (wst.k[j] != null) pts.push([wEnd[j], wst.k[j], wst.d[j]]);
+  /* linearly interpolate %K/%D between consecutive weekly closes across the days */
+  for (let p = 0; p + 1 < pts.length; p++) {
+    const [ai, ak, ad] = pts[p], [bi, bk, bd] = pts[p + 1];
+    const span = (bi - ai) || 1;
+    for (let i = ai; i <= bi; i++) {
+      const t = (i - ai) / span;
+      k[i] = ak + (bk - ak) * t;
+      d[i] = ad + (bd - ad) * t;
+    }
   }
   return { k, d };
 }
