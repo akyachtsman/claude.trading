@@ -1670,8 +1670,16 @@ function renderCharts(data, lamp) {
     hi += pad; lo -= pad;
     const py = v => pY + (hi - v) / (hi - lo) * pH;
 
-    const step = Math.pow(10, Math.floor(Math.log10((hi - lo) / 3)));
-    const tick = (hi - lo) / step > 6 ? step * 2 : step;
+    /* Dense, evenly-spaced price ladder like the reference terminal (owner
+       request 2026-07-20): ~12-15 nice-numbered gridlines across the pane
+       instead of the former ~6. rawStep is snapped to the NEAREST 1/2/2.5/5/10
+       × 10ⁿ "nice" value so the labels stay round without over-coarsening. */
+    const rawStep = (hi - lo) / 13;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const norm = rawStep / mag;
+    let nice = 1;
+    for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
+    const tick = nice * mag;
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
       line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: WB.grid, 'stroke-width': 1 });
       text(fmtPrice(v), x0 + 6 + plotW + 4, py(v) + 3, { 'font-size': 9 });
