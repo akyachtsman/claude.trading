@@ -1753,6 +1753,12 @@ function renderCharts(data, lamp) {
         line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.band, 'stroke-width': 1, 'stroke-opacity': 0.55 });
         text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
       }
+      /* white dash-dot trigger line at 65 on the WEEKLY strip only — duplicates
+         the reference terminal's weekly level (owner request 2026-07-20). */
+      if (which === 'weekly') {
+        line(x0 + 6, sy(65), x0 + 6 + plotW, sy(65), { stroke: '#eef2f7', 'stroke-width': 1, 'stroke-opacity': 0.75, 'stroke-dasharray': '5 3 1 3', 'stroke-linecap': 'round' });
+        text('65', x0 + 6 + plotW + 4, sy(65) + 3, { 'font-size': 9, fill: '#eef2f7' });
+      }
       for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
         let d = '';
         for (let i = i0; i < end; i++) {
