@@ -149,7 +149,9 @@ function renderMarkets(market, lamp) {
   if (!lampEl) return;   /* panel not in the DOM */
   lampEl.className = 'lamp ' + mktState.lamp.cls; lampEl.textContent = mktState.lamp.text;
   const stampEl = document.getElementById('mktStamp');
-  if (stampEl) stampEl.textContent = (DESK.mode !== 'demo' && DESK.liveStamp) ? 'As of ' + (DESK.liveStamp.asOf || '—') : 'Demo data';
+  /* live: the feed lamp's stamp carries fetch time + minutes-since-fetch +
+     data as-of (not just the date); demo has no real fetch to date-stamp */
+  if (stampEl) stampEl.textContent = (DESK.mode !== 'demo' && mktState.lamp && mktState.lamp.stamp) ? mktState.lamp.stamp : 'Demo data';
 
   /* region tabs — U.S. is live; the others are placeholders until sourced */
   const reg = document.getElementById('mktRegions');
@@ -737,7 +739,8 @@ function renderHeatmap(hm, lamp) {
      Demo / undefined generatedAt and the delayed cuts (whose asOf already
      carries a localized time) add no clock here. */
   const genTime = hm ? fmtClock(hm.generatedAt) : '';
-  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf + (genTime ? ' · ' + genTime : '') : '—';
+  const genAgo = hm ? fmtAgo(hm.generatedAt) : '';
+  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf + (genTime ? ' · ' + genTime : '') + (genAgo ? ' · ' + genAgo : '') : '—';
   if (!hm || !hm.sectors || !hm.sectors.length) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
@@ -1709,7 +1712,10 @@ function renderCharts(data, lamp) {
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
-  document.getElementById('chartsStamp').textContent = data ? 'As of ' + data.asOf : '—';
+  /* live: show the feed's fetch time + minutes-since-fetch (lamp stamp);
+     demo: the as-of trading day (no real fetch to time-stamp) */
+  document.getElementById('chartsStamp').textContent =
+    (DESK.mode !== 'demo' && lamp && lamp.stamp) ? lamp.stamp : (data ? 'As of ' + data.asOf : '—');
 
   /* the symbol box is free-entry: type any ticker → the quote-proxy (wireCharts
      submit handler); the roster is picked from the sidebar list. No datalist —
