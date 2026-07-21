@@ -122,6 +122,174 @@ function renderStrip(market) {
   addGroup('Other', market.filter(m => !placed.has(m.name)));
 }
 
+/* ── Markets window (owner request 2026-07-20) ─────────────────────────────
+   A compact markets tab: region tabs, three index tiles, a normalized
+   multi-index %-change chart with timeframe toggles, and a sector grid. Tiles
+   and sector cells read from the shared market feed; the chart series are
+   demo-generated or fetched live (SPY/QQQ/IWM via deskQuote). */
+const MKT_INDEX = [
+  { key: 'sp', label: 'S&P 500', tile: 'S&P 500', proxy: 'SPY', color: '#2f6df0' },
+  { key: 'nq', label: 'NASDAQ', tile: 'Nasdaq 100', proxy: 'QQQ', color: '#7c3aed' },
+  { key: 'ru', label: 'Russell 2000', tile: 'IWM (R2K proxy)', proxy: 'IWM', color: '#ea6a1e' },
+];
+const MKT_SECTORS = [
+  ['Technology', 'XLK'], ['Financials', 'XLF'], ['Health Care', 'XLV'], ['Cons. Disc.', 'XLY'],
+  ['Communication', 'XLC'], ['Cons. Staples', 'XLP'], ['Energy', 'XLE'], ['Industrials', 'XLI'],
+  ['Materials', 'XLB'], ['Utilities', 'XLU'], ['Real Estate', 'XLRE'],
+];
+const MKT_TFS = [['today', 'Today'], ['5d', '5D'], ['1m', '1M'], ['1y', '1Y'], ['2y', '2Y']];
+const MKT_REGIONS = [['us', 'U.S.', true], ['eu', 'Europe', false], ['as', 'Asia', false], ['fx', 'FX', false]];
+let mktState = { tf: 'today', region: 'us', series: null, lamp: { cls: 'lamp--demo', text: 'Demo' } };
+const mktTileByName = (market, name) => (market || []).find(m => m.name === name) || null;
+
+function renderMarkets(market, lamp) {
+  if (lamp) mktState.lamp = lamp;
+  const lampEl = document.getElementById('mktLamp');
+  if (!lampEl) return;   /* panel not in the DOM */
+  lampEl.className = 'lamp ' + mktState.lamp.cls; lampEl.textContent = mktState.lamp.text;
+  const stampEl = document.getElementById('mktStamp');
+  if (stampEl) stampEl.textContent = (DESK.mode !== 'demo' && DESK.liveStamp) ? 'As of ' + (DESK.liveStamp.asOf || '—') : 'Demo data';
+
+  /* region tabs — U.S. is live; the others are placeholders until sourced */
+  const reg = document.getElementById('mktRegions');
+  if (reg && !reg.childElementCount) {
+    for (const [key, label, on] of MKT_REGIONS) {
+      const b = el('button', 'mk-region', label);
+      b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(key === mktState.region));
+      if (!on) b.disabled = true;
+      else b.addEventListener('click', () => { mktState.region = key; renderMarkets(DESK.data.market); });
+      reg.appendChild(b);
+    }
+  }
+
+  /* index tiles */
+  const tilesBox = document.getElementById('mktTiles');
+  while (tilesBox.firstChild) tilesBox.removeChild(tilesBox.firstChild);
+  for (const ix of MKT_INDEX) {
+    const t = mktTileByName(market, ix.tile), pct = t ? t.chg : null;
+    const cell = el('div', 'mk-tile');
+    cell.style.setProperty('--mk-c', ix.color);
+    cell.appendChild(el('div', 'mk-name', ix.label));
+    cell.appendChild(el('div', 'mk-pct ' + (pct == null ? '' : pct >= 0 ? 'up' : 'down'), pct == null ? '—' : fmtPct(pct)));
+    cell.appendChild(el('div', 'mk-last', t ? t.last : '—'));
+    tilesBox.appendChild(cell);
+  }
+
+  /* timeframe seg */
+  const tfBox = document.getElementById('mktTf');
+  if (!tfBox.childElementCount) {
+    for (const [key, label] of MKT_TFS) {
+      const b = el('button', '', label);
+      b.type = 'button'; b.setAttribute('aria-pressed', String(key === mktState.tf));
+      b.addEventListener('click', () => { mktState.tf = key; renderMarkets(DESK.data.market); });
+      tfBox.appendChild(b);
+    }
+  } else {
+    [...tfBox.children].forEach((b, i) => b.setAttribute('aria-pressed', String(MKT_TFS[i][0] === mktState.tf)));
+  }
+
+  drawMktChart();
+
+  /* sector grid — colored by day-% like a mini heatmap */
+  const secBox = document.getElementById('mktSectors');
+  while (secBox.firstChild) secBox.removeChild(secBox.firstChild);
+  for (const [name, sym] of MKT_SECTORS) {
+    const t = mktTileByName(market, sym), pct = t ? t.chg : null;
+    const cell = el('div', 'mk-sec');
+    cell.style.cssText = mktSecTint(pct);
+    cell.appendChild(el('div', 'mk-sec-name', name));
+    cell.appendChild(el('div', 'mk-sec-pct', pct == null ? '—' : fmtPct(pct)));
+    secBox.appendChild(cell);
+  }
+}
+
+/* light green/red tint by day-% for the sector cells (daylight panel) */
+function mktSecTint(pct) {
+  if (pct == null) return 'background: var(--color-surface-2);';
+  const p = Math.max(-2, Math.min(2, pct)) / 2;   /* clamp ±2% → −1..1 */
+  const rgb = p >= 0 ? '46,180,90' : '224,60,60';
+  return 'background: rgba(' + rgb + ',' + (0.1 + Math.abs(p) * 0.5).toFixed(2) + ');';
+}
+
+function drawMktChart() {
+  const svg = document.getElementById('mktChart');
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 600)), H = 150;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  const set = mktState.series && mktState.series[mktState.tf];
+  const lines = set ? MKT_INDEX.map(ix => ({ color: ix.color, vals: set[ix.key] })).filter(l => l.vals && l.vals.length) : [];
+  const padR = 46, plotW = W - padR - 6, plotH = H - 14;
+  if (!lines.length) {
+    const tx = svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', 'font-family': 'var(--font-sans)', 'font-size': 11, fill: 'var(--color-text-secondary)' });
+    tx.textContent = 'Loading index series…';
+    svg.appendChild(tx); return;
+  }
+  const all = lines.flatMap(l => l.vals);
+  let lo = Math.min(0, ...all), hi = Math.max(0, ...all);
+  const span = (hi - lo) || 1; lo -= span * 0.08; hi += span * 0.08;
+  const sy = v => 6 + (hi - v) / (hi - lo) * plotH;
+  const sx = (i, n) => 4 + (n > 1 ? i / (n - 1) : 0.5) * plotW;
+  /* nice %-labelled gridlines, zero line emphasised */
+  const rawStep = (hi - lo) / 4, mag = Math.pow(10, Math.floor(Math.log10(rawStep))), norm = rawStep / mag;
+  let nice = 1; for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
+  const step = nice * mag;
+  for (let v = Math.ceil(lo / step) * step; v < hi; v += step) {
+    const y = sy(v), zero = Math.abs(v) < 1e-9;
+    svg.appendChild(svgEl('line', { x1: 4, y1: y, x2: 4 + plotW, y2: y, stroke: zero ? 'var(--color-border-hover)' : 'var(--color-border)', 'stroke-width': 1, 'stroke-dasharray': zero ? '' : '3 3', 'shape-rendering': 'crispEdges' }));
+    const tx = svgEl('text', { x: 4 + plotW + 4, y: y + 3, 'font-family': 'var(--font-mono)', 'font-size': 9, fill: 'var(--color-text-secondary)' });
+    tx.textContent = (v >= 0 ? '' : '−') + Math.abs(v).toFixed(2) + '%';
+    svg.appendChild(tx);
+  }
+  for (const l of lines) {
+    const n = l.vals.length;
+    const d = l.vals.map((v, i) => (i ? 'L' : 'M') + sx(i, n).toFixed(1) + ' ' + sy(v).toFixed(1)).join('');
+    svg.appendChild(svgEl('path', { d, fill: 'none', stroke: l.color, 'stroke-width': 1.6 }));
+  }
+}
+
+/* Live chart series: fetch each index proxy's daily (covers 1M/1Y/2Y) and
+   intraday (covers Today/5D) once, normalise each window to %-change from its
+   first bar. Runs after the first live market render; tiles + sectors already
+   show, so a failure just leaves the chart in its loading state. */
+let mktSeriesPending = false, mktSeriesDone = false;
+function normPct(closes, start) {
+  const base = closes[start];
+  if (!base) return [];
+  return closes.slice(start).map(c => Number(((c / base - 1) * 100).toFixed(3)));
+}
+function buildMktSeries(per) {
+  const out = { today: {}, '5d': {}, '1m': {}, '1y': {}, '2y': {} };
+  for (const p of per) {
+    const d = (p.daily && p.daily.c) || [], i = (p.intra && p.intra.c) || [];
+    out.today[p.key] = i.length ? normPct(i, Math.max(0, i.length - 78)) : [];   /* ~1 session of 5-min bars */
+    out['5d'][p.key] = i.length ? normPct(i, 0) : [];
+    out['1m'][p.key] = d.length ? normPct(d, Math.max(0, d.length - 22)) : [];
+    out['1y'][p.key] = d.length ? normPct(d, Math.max(0, d.length - 252)) : [];
+    out['2y'][p.key] = d.length ? normPct(d, Math.max(0, d.length - 504)) : [];
+  }
+  return out;
+}
+async function fetchMktSeries() {
+  if (mktSeriesPending || mktSeriesDone || DESK.mode === 'demo' || !DESK_DB.url) return;
+  mktSeriesPending = true;
+  try {
+    const per = await Promise.all(MKT_INDEX.map(async ix => {
+      const [daily, intra] = await Promise.all([
+        deskQuote(ix.proxy, 'daily').catch(() => null),
+        deskQuote(ix.proxy, 'intraday').catch(() => null),
+      ]);
+      return { key: ix.key, daily: daily && daily.ok ? daily.series : null, intra: intra && intra.ok ? intra.series : null };
+    }));
+    if (per.some(p => p.daily || p.intra)) { mktState.series = buildMktSeries(per); mktSeriesDone = true; renderMarkets(DESK.data.market); }
+  } catch { /* keep the loading state; tiles + sectors are unaffected */ }
+  finally { mktSeriesPending = false; }
+}
+
+/* redraw the markets chart on resize (viewBox width tracks the panel) */
+let mktResizeTimer = 0;
+window.addEventListener('resize', () => { clearTimeout(mktResizeTimer); mktResizeTimer = setTimeout(drawMktChart, 150); });
+
 /* ── sortable tables (design.md standard) ──────────────────────────────── */
 function makeSortable(table) {
   const heads = [...table.tHead.rows[0].cells], body = table.tBodies[0];
@@ -2456,10 +2624,12 @@ async function refreshMarket() {
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
     DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf };
     renderStrip(DESK.data.market);
+    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf));
+    fetchMktSeries();   /* one-shot: hydrate the index chart series (self-guarded) */
     stripLive = true;
     return;
   } catch { /* keep last good; masthead lamps Stale via liveStamp age */ }
-  if (!stripLive) renderStrip(DESK.data.market);
+  if (!stripLive) { renderStrip(DESK.data.market); renderMarkets(DESK.data.market, { cls: 'lamp--stale', text: 'Stale' }); }
 }
 
 async function refreshNews() {
@@ -2633,6 +2803,8 @@ async function boot() {
     DESK.data = buildDemoData();
     renderMasthead();
     renderStrip(DESK.data.market);
+    mktState.series = DESK.data.markets ? DESK.data.markets.series : null;
+    renderMarkets(DESK.data.market, { cls: 'lamp--demo', text: 'Demo' });
     renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
     renderPrivate();
     loadHeatmap();
