@@ -708,6 +708,7 @@ const DESK_VMARGIN = 96;   /* 0.5in top + 0.5in bottom */
    match; both now extend past one screen and scroll. */
 const DESK_CHART_BOOST = 192;   /* +2in on the stochastic chart */
 const DESK_HEAT_BOOST = 96;     /* +1in on the heatmap */
+const DESK_HEAT_LENGTHEN = 1.1; /* +10% heatmap length (owner request 2026-07-21) */
 function deskChartHeight(svg) {
   const vh = window.innerHeight || 800;
   let chrome = 320;   /* fallback if the panel isn't laid out yet */
@@ -753,7 +754,7 @@ function renderHeatmap(hm, lamp) {
      leaving the heatmap a touch too tall to match the chart (Codex #131). */
   renderHeatLegend();
   const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 1200));
-  const H = deskChartHeight(svg) + DESK_HEAT_BOOST;   /* viewport-fit + 1in (owner 2026-07-19) */
+  const H = Math.round((deskChartHeight(svg) + DESK_HEAT_BOOST) * DESK_HEAT_LENGTHEN);   /* viewport-fit + 1in, +10% length (owner 2026-07-21) */
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.style.height = H + 'px';
   const HEAD = 16, BAND = 11;
