@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260720g">
-<link rel="stylesheet" href="styles/components.css?v=20260720g">
+<link rel="stylesheet" href="styles/tokens.css?v=20260720i">
+<link rel="stylesheet" href="styles/components.css?v=20260720i">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -46,7 +46,16 @@
   /* Top band (owner request 2026-07-18): strip on the LEFT (its tile rows capped
      at 5), the accounts / AI brief / news boxes side by side on the RIGHT. */
   .top-band { display: flex; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-4); }
-  .top-boxes { flex: 1 1 auto; min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; }
+  /* new top row (owner request 2026-07-21): indices | Markets | Ask-the-desk.
+     Indices + Markets render at 90% — a genuine 10% shrink via `zoom`, which
+     reflows the box (unlike transform:scale, which would leave a gap); Ask
+     fills the rightmost remaining space. Reset to full size when the row
+     stacks on narrow screens (media query below). */
+  .top-band > .market-strip { zoom: .9; }
+  .top-band > .col-markets { flex: 0 0 420px; zoom: .9; }
+  .top-band > .col-rail { flex: 1 1 auto; }
+  /* accounts / brief / news shifted DOWN into their own band under the top row */
+  .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
   .top-boxes > .area-accounts { flex: 2 1 0; min-width: 0; }
   .top-boxes > .top-brief { flex: 1 1 0; min-width: 0; }
   .top-boxes > .col-news { flex: 1 1 0; min-width: 0; }
@@ -373,6 +382,9 @@
        strip, so stack the top band (strip full-width above, boxes wrap below)
        — also fixes phone-width horizontal overflow (Codex #128 P1) */
     .top-band { flex-direction: column; align-items: stretch; }
+    /* stacked: drop the 10% shrink and let Markets/Ask span the full width */
+    .top-band > .market-strip, .top-band > .col-markets { zoom: 1; }
+    .top-band > .col-markets, .top-band > .col-rail { flex-basis: auto; }
     .top-boxes { flex-wrap: wrap; }
     .top-boxes > .area-accounts { flex: 2 1 320px; }
     .top-boxes > .top-brief,
@@ -401,62 +413,11 @@
     <div class="masthead-state" id="mastheadState"></div>
   </header>
 
-  <!-- Top band (owner request 2026-07-18): the market strip (capped at 5 tiles
-       per row) sits on the LEFT; the accounts, AI brief, and news boxes move up
-       to sit side by side on the RIGHT in the space the narrowed strip frees. -->
+  <!-- Top row (owner request 2026-07-21): the indices strip (LEFT) + the Markets
+       panel (middle) — both shrunk 10% — sit beside Ask-the-desk (rightmost).
+       Accounts / AI brief / news shift DOWN into their own band below. -->
   <div class="top-band">
     <section class="market-strip" id="marketStrip" aria-label="Market summary"></section>
-
-    <div class="top-boxes">
-      <section class="area-accounts" aria-labelledby="accountsTitle">
-        <div class="accounts-head">
-          <h2 id="accountsTitle">Accounts</h2>
-        </div>
-        <p class="stamp" id="accountsStamp"></p>
-        <div class="account-grid" id="accountGrid"></div>
-      </section>
-
-      <section class="panel top-brief" aria-labelledby="briefTitle">
-        <div class="panel-header">
-          <h2 class="panel-title" id="briefTitle">AI daily brief</h2>
-          <span class="lamp lamp--demo" id="briefLamp">Demo</span>
-          <span class="stamp ml-auto" id="briefStamp">—</span>
-        </div>
-        <div class="panel-body" id="briefBody"></div>
-      </section>
-
-      <aside class="col-news" aria-label="Market news">
-        <section class="panel" aria-labelledby="newsTitle">
-          <div class="panel-header">
-            <h2 class="panel-title" id="newsTitle">News — holdings first</h2>
-            <span class="lamp lamp--demo" id="newsLamp">Demo</span>
-          </div>
-          <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
-        </section>
-      </aside>
-    </div>
-  </div>
-
-  <div class="layout">
-
-      <div class="widget-strip" id="widgetStrip"></div>
-
-      <div class="acct-widgets-wrap">
-        <div class="acct-widgets" id="acctWidgets"></div>
-        <p class="stamp" id="acctWidgetsSource">TradingView + FRED · live · sandboxed from the desk</p>
-      </div>
-
-    <aside class="col-rail" aria-label="Desk tools">
-
-      <section class="panel" aria-labelledby="askTitle">
-        <div class="panel-header">
-          <h2 class="panel-title" id="askTitle">Ask the desk</h2>
-          <span class="lamp lamp--demo" id="askLamp">Demo</span>
-        </div>
-        <div class="panel-body" id="askBody"></div>
-      </section>
-
-    </aside>
 
     <aside class="col-markets" aria-label="Markets">
       <section class="panel markets-panel" aria-labelledby="mktTitle">
@@ -477,6 +438,56 @@
         </div>
       </section>
     </aside>
+
+    <aside class="col-rail" aria-label="Desk tools">
+      <section class="panel" aria-labelledby="askTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="askTitle">Ask the desk</h2>
+          <span class="lamp lamp--demo" id="askLamp">Demo</span>
+        </div>
+        <div class="panel-body" id="askBody"></div>
+      </section>
+    </aside>
+  </div>
+
+  <div class="top-boxes">
+    <section class="area-accounts" aria-labelledby="accountsTitle">
+      <div class="accounts-head">
+        <h2 id="accountsTitle">Accounts</h2>
+      </div>
+      <p class="stamp" id="accountsStamp"></p>
+      <div class="account-grid" id="accountGrid"></div>
+    </section>
+
+    <section class="panel top-brief" aria-labelledby="briefTitle">
+      <div class="panel-header">
+        <h2 class="panel-title" id="briefTitle">AI daily brief</h2>
+        <span class="lamp lamp--demo" id="briefLamp">Demo</span>
+        <span class="stamp ml-auto" id="briefStamp">—</span>
+      </div>
+      <div class="panel-body" id="briefBody"></div>
+    </section>
+
+    <aside class="col-news" aria-label="Market news">
+      <section class="panel" aria-labelledby="newsTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="newsTitle">News — holdings first</h2>
+          <span class="lamp lamp--demo" id="newsLamp">Demo</span>
+        </div>
+        <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
+      </section>
+    </aside>
+  </div>
+
+  <div class="layout">
+
+      <div class="widget-strip" id="widgetStrip"></div>
+
+      <div class="acct-widgets-wrap">
+        <div class="acct-widgets" id="acctWidgets"></div>
+        <p class="stamp" id="acctWidgetsSource">TradingView + FRED · live · sandboxed from the desk</p>
+      </div>
+
   </div>
 
   <section class="panel area-charts" aria-labelledby="chartsTitle">
@@ -566,8 +577,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260720g"></script>
-<script src="scripts/data.js?v=20260720g"></script>
-<script src="scripts/app.js?v=20260720g"></script>
+<script src="scripts/config.js?v=20260720i"></script>
+<script src="scripts/data.js?v=20260720i"></script>
+<script src="scripts/app.js?v=20260720i"></script>
 </body>
 </html>
