@@ -185,17 +185,18 @@ function pctWalk(seed, n, endPct, vol) {
 const MKT_TF_META = [
   ['today', 78, 0.16], ['5d', 130, 0.30], ['1m', 22, 0.55], ['1y', 120, 1.6], ['2y', 120, 2.6],
 ];
-const MKT_DEMO_ENDS = {   /* today-% matches the demo index tiles (S&P/Nasdaq/IWM chg) */
+const MKT_DEMO_ENDS = {   /* today-% matches the demo index tiles (S&P/Nasdaq/Dow/IWM chg) */
   sp: { today: 0.54, '5d': 1.1, '1m': 2.3, '1y': 14.2, '2y': 31.0 },
   nq: { today: 0.81, '5d': 1.6, '1m': 3.1, '1y': 19.5, '2y': 42.0 },
   ru: { today: -0.33, '5d': 0.4, '1m': -1.2, '1y': 6.8, '2y': 11.0 },
+  dj: { today: 0.12, '5d': 0.6, '1m': 1.4, '1y': 9.5, '2y': 18.0 },
 };
 function buildDemoMarkets() {
   const series = {};
   let seed = 311;
   for (const [tf, n, vol] of MKT_TF_META) {
     series[tf] = {};
-    for (const key of ['sp', 'nq', 'ru']) series[tf][key] = pctWalk(seed += 7, n, MKT_DEMO_ENDS[key][tf], vol);
+    for (const key of ['sp', 'nq', 'ru', 'dj']) series[tf][key] = pctWalk(seed += 7, n, MKT_DEMO_ENDS[key][tf], vol);
   }
   return { asOf: isoDate(lastTradingDay(new Date())), source: 'demo', series };
 }

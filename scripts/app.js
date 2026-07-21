@@ -131,6 +131,7 @@ const MKT_INDEX = [
   { key: 'sp', label: 'S&P 500', tile: 'S&P 500', proxy: 'SPY', color: '#2f6df0' },
   { key: 'nq', label: 'NASDAQ', tile: 'Nasdaq 100', proxy: 'QQQ', color: '#7c3aed' },
   { key: 'ru', label: 'Russell 2000', tile: 'IWM (R2K proxy)', proxy: 'IWM', color: '#ea6a1e' },
+  { key: 'dj', label: 'Dow Jones', tile: 'Dow Jones', proxy: 'DIA', color: '#0d9488' },
 ];
 const MKT_SECTORS = [
   ['Technology', 'XLK'], ['Financials', 'XLF'], ['Health Care', 'XLV'], ['Cons. Disc.', 'XLY'],
