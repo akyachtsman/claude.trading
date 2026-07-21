@@ -185,3 +185,49 @@ All `[NEEDS CLARIFICATION]` markers above, consolidated:
    longer; is there a per-turn budget or tool-call cap the owner wants?
 8. Provenance UX — inline citations, a sources footer, per-claim tags? (a
    design/plan concern, but the owner's preference shapes the spec's SC5.)
+
+## Clarifications
+Resolved in the `clarify` phase. The owner chose to fast-track, so these are
+**sensible defaults the owner can override** — each is reversible and recorded
+here so nothing was decided silently.
+
+1. **Memory replay window (FR-MEM2).** Replay the **last 20 exchanges**, further
+   bounded to the last **30 days** and a **~8k-token** history budget (whichever
+   is smallest). Keeps continuity useful while bounding cost and context. Older
+   history is retained in storage but not replayed.
+2. **Clear-history control (FR-MEM4).** **In scope for v1.** A PIN-gated "Clear
+   conversation" control wipes **all** stored history for the desk (one owner,
+   one history). No partial-range delete in v1.
+3. **Transcript display (FR-MEM5).** **Render the prior transcript** in the panel
+   on load — a scrollable exchange list — so continuity is visible, not just
+   silently fed as context. New answers append to it.
+4. **Web-query privacy (FR-WEB4).** **Scrub private data from outbound web
+   queries.** The assistant may name tickers (watchlist is already public) but
+   must **never** send real position sizes, dollar balances, or account
+   identifiers to external search/fetch. Private figures stay in the model
+   context for reasoning; only scrubbed queries leave the backend. (Upholds
+   FR-SEC2.)
+5. **Tool scope (FR-DATA4).** **v1 = live quote + fundamentals only**, via the
+   desk's existing `quote-proxy` (`kind:'info'`) path. Heatmap / news / index
+   feeds as assistant tools are a **follow-up**, not v1.
+6. **Demo advice behavior (FR-ADV4).** **Demo mode stays analysis-only** — the
+   public `?demo=1` visitor never sees directional buy/sell language. Directional
+   calls are the owner's PIN-gated desk only. (Also keeps demo deterministic and
+   the public face conservative.)
+7. **Cost / latency cap.** Bound each turn: cap **web_search to ≤5 uses**, cap the
+   agentic tool loop (**≤~6 tool calls/turn**), and set a per-turn **task budget**
+   so one question can't run away on cost or time. Model stays `claude-opus-4-8`.
+   A turn that hits the cap answers with what it has, labeled (ties to FR-TR3).
+8. **Provenance UX (SC5 / FR-TR2).** A compact **sources footer** under each
+   answer (web links/titles) **plus inline freshness tags** — "live HH:MM" for
+   on-demand fetches, "snapshot" for page-snapshot facts — all rendered via
+   `textContent`, consistent with the panel's existing lamp + as-of stamp. Exact
+   layout is a `plan.md` / design concern; the requirement is that provenance is
+   visible and not blended away.
+
+**Net effect on scope:** v1 is memory (20-turn/30-day/8k-token replay) +
+clear-history + visible transcript + web research (scrubbed queries, sources
+footer) + quote/fundamentals tools + directional calls (live desk only, cited,
+disclaimer retained) + provenance tags + bounded per-turn cost. Demo stays
+offline and analysis-only. Everything obeys the dedicated-Supabase / RLS / PIN /
+no-new-client-secret constitution.
