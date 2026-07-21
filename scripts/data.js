@@ -445,16 +445,32 @@ function fmtStampDateTime(iso) { /* local "YYYY-MM-DD HH:mm TZ"; '' if unparseab
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA') + ' ' + fmtClock(iso);
 }
 
+/* Freshness delta — how long ago a payload was generated, from its ISO
+   timestamp (generatedAt is the edge function's cache-generation time, so this
+   reads as the delay baked into the data the viewer sees). Coarsens past an
+   hour; '' if unparseable (demo / missing). */
+function fmtAgo(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return min + ' min ago';
+  const h = Math.floor(min / 60);
+  return h + (h === 1 ? ' hr ago' : ' hrs ago');
+}
+
 /* Two-tier lamp for live feeds (FR-R7): the lamp class answers "how fresh
    is the FETCH" (LIVE ≤ 6 min), the stamp always carries the payload's own
-   data as-of so a LIVE lamp can never overstate quote freshness. */
+   data as-of so a LIVE lamp can never overstate quote freshness — plus the
+   fetch clock time and the minutes-since-fetch delay. */
 function liveLampFor(generatedAt, dataAsOf) {
   const ageMs = Date.now() - new Date(generatedAt).getTime();
-  const t = fmtClock(generatedAt);
+  const t = fmtClock(generatedAt), ago = fmtAgo(generatedAt);
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
+  const delay = ago ? ' · ' + ago : '';
   return fresh
-    ? { cls: 'lamp--live', text: 'LIVE', stamp: 'Fetched ' + t + (dataAsOf ? ' · data as of ' + dataAsOf : '') }
-    : { cls: 'lamp--stale', text: 'STALE', stamp: 'Last fetch ' + t + ' — refresh overdue' };
+    ? { cls: 'lamp--live', text: 'LIVE', stamp: 'Fetched ' + t + delay + (dataAsOf ? ' · data as of ' + dataAsOf : '') }
+    : { cls: 'lamp--stale', text: 'STALE', stamp: 'Last fetch ' + t + delay + ' — refresh overdue' };
 }
 
 /* Map the RPC payload into the render model app.js uses (same shape demo

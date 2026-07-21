@@ -36,12 +36,25 @@ This project's look is its own — established at kickoff via `/design-intake`
   Demo remains reachable via `?demo=1`.
 - `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
   mode resolution, `deskFeed()` live-feed wrapper, `marketSessionOpen()`,
-  two-tier `liveLampFor` staleness lamps, Supabase RPC fetch wrappers.
+  two-tier `liveLampFor` staleness lamps (every live stamp carries fetch clock
+  time + `fmtAgo` minutes-since-fetch + data as-of), Supabase RPC fetch wrappers.
+  `buildDemoMarkets()` seeds the Markets window's normalized %-change series —
+  a detrended random walk per index (S&P/Nasdaq/Russell/Dow) per timeframe,
+  pinned to 0 at the start and the index's end-% at the right edge.
 - `scripts/app.js` — all rendering + interactions (accounts with per-card
   equity sparklines, brief with FR-AI4 staleness, news, ask-the-desk panel,
-  stochastic charts workbench, PIN lock/unlock flow) + the
+  the Markets window, stochastic charts workbench, PIN lock/unlock flow) + the
   session-aware feed poller (5 min market-open / 60 min closed, paused
-  while the tab is hidden).
+  while the tab is hidden). The **Markets window** (`renderMarkets()` +
+  `drawMktChart()` + `mktSecTint()`, owner request 2026-07-20) is a compact
+  trading-app-style panel beside Ask-the-desk: region tabs (U.S. live; Europe/
+  Asia/FX disabled placeholders), four index tiles (S&P 500 / Nasdaq 100 /
+  Russell 2000 / Dow Jones — day-% + last, read from the shared `desk-market`
+  feed by tile name), a normalized multi-index %-change SVG chart with
+  Today/5D/1M/1Y/2Y timeframe toggles (series demo-generated or live via the
+  index ETF proxies SPY/QQQ/IWM/DIA), and an 11-cell **Performance by Sector**
+  grid (SPDR sector ETFs XLK…XLRE, heatmap-tinted by day-%). Carries its own
+  `#mktLamp` data-state lamp + `#mktStamp` as-of stamp like every panel.
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
@@ -198,9 +211,9 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | Invalid test credential | `000000` |
 | Primary nav button | `Load` (charts-workbench symbol loader) |
 | Primary content selector | `.account .hero-number` |
-| Nav cards | n/a — single-page dashboard (panels: Accounts, Heatmap, Stochastic charts, AI daily brief, Ask the desk, News) |
+| Nav cards | n/a — single-page dashboard (panels: Accounts, Markets, Heatmap, Stochastic charts, AI daily brief, Ask the desk, News) |
 | Playwright test directory | `.github/scripts/ui-tests` |
-| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.lock-error` · lamps: `#briefLamp #newsLamp #askLamp` · chart: `#wbChart` · news rows: `.news-row` |
+| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.lock-error` · lamps: `#briefLamp #newsLamp #askLamp #mktLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
 
 ## Project-Specific Test Scenarios
 Authoritative list of coverage beyond the generic S1–S4 suite — one
