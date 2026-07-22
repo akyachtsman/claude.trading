@@ -1432,7 +1432,7 @@ function addWbStickySym(sym) {
 function wbPick(sym) {
   wbUserPicked = true;
   wbState.sym = sym;
-  wbState.off = wbState.woff = wbState.off3 = 0;
+  wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
   /* re-pin any non-watchlist pick so an evicted manual ticker is refetched on
      the next reload (also bumps it to the front of the capped list) */
   if (wbFeedRoster.size && !wbFeedRoster.has(sym)) addWbStickySym(sym);
@@ -1816,9 +1816,12 @@ function graftTodayBar(bars, intra) {
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  /* days3 = Pro 3's default window in ITS bars: 52 × 15-min = 2 sessions
-     (was 156 × 5-min before the terminal-fitted 15-min switch, same span) */
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: 52, off: 0, woff: 0, off3: 0, layout: 'split', cfg: loadWbCfg() };
+  /* days3 = Pro 3's INTRADAY window in its own bars: 52 × 15-min = 2 sessions
+     (was 156 × 5-min before the terminal-fitted 15-min switch — same span).
+     days3d = the EOD-fallback branch's window in DAILY bars (Codex #149: the
+     two branches display different bar sizes, so they carry separate
+     window/pan state instead of sharing one number). */
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: 52, days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg: loadWbCfg() };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -2392,7 +2395,7 @@ function renderCharts(data, lamp) {
     } else {
       maybeFetchIntraday(sym);
       panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
-        window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
+        window: paneWindow(wbState.days3d, d.bars), offset: wbState.off3d, panKey: 'off3d', daysKey: 'days3d', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
