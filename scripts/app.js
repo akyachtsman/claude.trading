@@ -1305,7 +1305,16 @@ window.addEventListener('resize', () => {
    calendar month, and the signature 13-period slow stochastic on BOTH daily
    bars and weekly bars (owner spec: "daily and weekly (13)"). Candle green/
    red is price-direction semantics (like the heatmap), not decoration. */
-const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
+/* %K red / %D yellow mirror the reference terminal's stochastic indicator colors
+   (owner request 2026-07-22, "identical to theirs"). These are dedicated
+   indicator-palette hexes, NOT the P&L --color-loss/gain tokens — the red here is
+   a chart-series color, not a P&L signal; red-vs-yellow stays CVD-distinguishable
+   by lightness. */
+const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
+/* Strip caption derived from the live STOCH setting so the label can never
+   disagree with the math (e.g. "STOCH 13-3-3"). STOCH is defined in data.js,
+   which loads first; this runs at render time, so it's always resolved. */
+function stochTag() { return `STOCH ${STOCH.k}-${STOCH.kSmooth}-${STOCH.d}`; }
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
 const WB2_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];  /* Pro 2 window, in daily bars — Pro 2 now plots daily candles (daily+weekly stoch), not weekly */
 
@@ -1837,7 +1846,7 @@ function renderCharts(data, lamp) {
        volume strip and 1–2 stochastic strips (native + weekly) leave over */
     const strips = [];
     if (opts.cfg.stoch) strips.push(['native', st, opts.stochCaption, true]);
-    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || 'STOCH 13-3-3 · WEEKLY (13)', false]);
+    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || (stochTag() + ' · WEEKLY (' + STOCH.k + ')'), false]);
     /* Volume + stochastic pane heights are user-draggable (the resize bars
        below) and persisted per pane; the PRICE pane absorbs the change
        (owner request 2026-07-16). Defaults match the prior fixed sizes. */
@@ -1896,10 +1905,11 @@ function renderCharts(data, lamp) {
     hi += pad; lo -= pad;
     const py = v => pY + (hi - v) / (hi - lo) * pH;
 
-    /* Dense, evenly-spaced price ladder like the reference terminal (owner
-       request 2026-07-20): ~12-15 nice-numbered gridlines across the pane
-       instead of the former ~6. rawStep is snapped to the NEAREST 1/2/2.5/5/10
-       × 10ⁿ "nice" value so the labels stay round without over-coarsening. */
+    /* Dense, evenly-spaced price ladder NUMBERS like the reference terminal
+       (owner request 2026-07-20): ~12-15 nice-numbered levels. The horizontal
+       gridlines were removed 2026-07-22 to match the terminal's clean panels —
+       the axis numbers stay, no lines cross the chart. rawStep is snapped to the
+       NEAREST 1/2/2.5/5/10 × 10ⁿ "nice" value so labels stay round. */
     const rawStep = (hi - lo) / 13;
     const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
     const norm = rawStep / mag;
@@ -1907,8 +1917,7 @@ function renderCharts(data, lamp) {
     for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
     const tick = nice * mag;
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
-      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: WB.grid, 'stroke-width': 1 });
-      text(fmtPrice(v), x0 + 6 + plotW + 4, py(v) + 3, { 'font-size': 9 });
+      text(fmtPrice(v), x0 + 6 + plotW + 4, py(v) + 3, { 'font-size': 9 });   /* number only — no gridline */
     }
     for (const [name, v] of pivots) {
       /* R levels orange, S levels green, pivot yellow — the reference scheme */
@@ -1984,10 +1993,10 @@ function renderCharts(data, lamp) {
       const yTop = stripTops[si];
       const sy = v => yTop + sH - v / 100 * sH;
       /* Full 0-100 axis ladder every 20 (owner request 2026-07-20: show these
-         numbers on the stochastic strips like the reference) — a faint gridline
-         + label at each level. */
+         numbers on the stochastic strips like the reference). The faint gridlines
+         were removed 2026-07-22 to match the terminal's clean panels — number
+         label only at each level, no line across the strip. */
       for (const g of [0, 20, 40, 60, 80]) {
-        line(x0 + 6, sy(g), x0 + 6 + plotW, sy(g), { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.4 });
         text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
       }
       /* Oversold/overbought bands in red on top of the ladder: the WEEKLY strip
@@ -2027,15 +2036,16 @@ function renderCharts(data, lamp) {
       }
     });
 
-    /* time gridlines: month boundaries on daily/weekly panes, session (day)
-       boundaries on intraday ones. Labels only where they have ≥48px. */
+    /* time axis LABELS: month boundaries on daily/weekly panes, session (day)
+       boundaries on intraday ones. Labels only where they have ≥48px. The
+       vertical gridlines were removed 2026-07-22 to match the terminal's clean
+       panels — the date labels stay, no line crosses the chart. */
     const gridKey = opts.intraday ? (t => t.slice(0, 10)) : (t => t.slice(0, 7));
     const gridLabel = opts.intraday ? (t => t.slice(5, 10)) : (t => t.slice(0, 7));
     let lastLabelX = -Infinity;
     for (let i = i0 + 1; i < end; i++) {
       if (gridKey(bars.t[i]) !== gridKey(bars.t[i - 1])) {
         const gx = x(i) - slotW / 2;
-        line(gx, pY, gx, chartBot, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.5 });
         if (gx - lastLabelX >= 48) {
           text(gridLabel(bars.t[i]), gx + 2, opts.nav ? chartBot + 12 : H - 4, { 'font-size': 8 });
           lastLabelX = gx;
@@ -2241,7 +2251,7 @@ function renderCharts(data, lamp) {
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
       pivots: d.piv, smas: smaList(wbState.cfg.p1),
       stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
-      stochCaption: 'STOCH 13-3-3 · DAILY',
+      stochCaption: stochTag() + ' · DAILY',
     }]);
   }
   if (show('p2')) {
@@ -2256,8 +2266,8 @@ function renderCharts(data, lamp) {
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
       stW: wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null,
-      stochCaption: 'STOCH 13-3-3 · DAILY',
-      stochWCaption: 'STOCH 13-3-3 · WEEKLY (13)',
+      stochCaption: stochTag() + ' · DAILY',
+      stochWCaption: stochTag() + ' · WEEKLY (' + STOCH.k + ')',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
@@ -2275,7 +2285,7 @@ function renderCharts(data, lamp) {
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
-        stochCaption: 'STOCH 13-3-3 · 5-MIN',
+        stochCaption: stochTag() + ' · 5-MIN',
       }]);
     } else {
       maybeFetchIntraday(sym);
@@ -2284,7 +2294,7 @@ function renderCharts(data, lamp) {
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
-        stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
+        stochCaption: stochTag() + ' · DAILY (INTRADAY PENDING)',
       }]);
     }
   }
