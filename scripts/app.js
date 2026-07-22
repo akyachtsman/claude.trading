@@ -1595,14 +1595,16 @@ function weeklyStochOnDaily(daily) {
     const ww = weekOf[i];
     const rk = rawK(ww, wtdH[i], wtdL[i], wtdC[i]);
     if (rk == null) continue;
-    let sK = rk, ok = true;
-    for (let m = 1; m < kS; m++) { const r = rawFull[ww - m]; if (r == null) { ok = false; break; } sK += r; }
-    if (!ok) continue;
+    let sK = rk, okK = true;
+    for (let m = 1; m < kS; m++) { const r = rawFull[ww - m]; if (r == null) { okK = false; break; } sK += r; }
+    if (!okK) continue;
     const kw = sK / kS;
-    let sD = kw; ok = true;
-    for (let m = 1; m < dP; m++) { const s = smoothFull[ww - m]; if (s == null) { ok = false; break; } sD += s; }
-    if (!ok) continue;
-    k[i] = kw; d[i] = sD / dP;
+    k[i] = kw;   /* %K is valid as soon as its own SMA(kS) terms exist — do NOT gate
+                    it on %D, which lags by (dP-1) weeks (matches stochSeries: %K
+                    lights up ~2 weeks before %D on the All-history left edge). */
+    let sD = kw, okD = true;
+    for (let m = 1; m < dP; m++) { const s = smoothFull[ww - m]; if (s == null) { okD = false; break; } sD += s; }
+    if (okD) d[i] = sD / dP;
   }
   return { k, d };
 }
