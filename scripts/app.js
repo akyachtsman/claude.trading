@@ -72,10 +72,14 @@ function lastLabel() {
    kept intentionally — spot GOLD/DXY as macro barometers, GLD/SLV as the metals
    pair, UUP beside US Dollar. Any feed tile not listed still renders in an
    "Other" frame, so a newly added symbol is never silently dropped. */
+/* The four headline indices (S&P 500 / Nasdaq 100 / Dow Jones / Russell via IWM)
+   are NOT banded here — they render as the Markets panel's index tiles right
+   beside the strip, so a strip band for them just duplicated that (owner request
+   2026-07-22). They're held in MKT_STRIP_HIDE so the "Other" catch-all below
+   doesn't resurrect them from the feed. */
+const MKT_STRIP_HIDE = new Set(['S&P 500', 'Nasdaq 100', 'Dow Jones', 'IWM (R2K proxy)']);
 const MKT_BANDS = [
-  { label: 'Indices',           names: ['S&P 500', 'Nasdaq 100', 'Dow Jones', 'IWM (R2K proxy)'] },
-  /* Global & income sits right after Indices (owner ruling 2026-07-17) so it
-     packs up next to it rather than wrapping to a lower row. */
+  /* Global & income leads the strip now that the Indices band is gone. */
   { label: 'Global & income',   names: ['EEM', 'FXI', 'INDA', 'JPXN', 'SPYD'] },
   { label: 'Macro',             names: ['VIX', 'US 10Y', 'US Dollar', 'UUP', 'Bitcoin', 'Gold'] },
   { label: 'US sectors',        names: ['XLK', 'XLF', 'XLC', 'XLY', 'XLV', 'XLI', 'XLP', 'XLE', 'XLU', 'XLB', 'XLRE'] },
@@ -97,7 +101,9 @@ function renderStrip(market) {
   const strip = document.getElementById('marketStrip');
   while (strip.firstChild) strip.removeChild(strip.firstChild);
   const byName = new Map(market.map(m => [m.name, m]));
-  const placed = new Set();
+  /* seed with the headline indices so neither the bands nor the "Other" frame
+     re-adds them — they live in the Markets panel beside the strip */
+  const placed = new Set(MKT_STRIP_HIDE);
   const addGroup = (label, tiles) => {
     if (!tiles.length) return;
     const group = el('div', 'mkt-group');
