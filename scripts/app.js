@@ -1353,11 +1353,12 @@ window.addEventListener('resize', () => {
    a chart-series color, not a P&L signal; red-vs-yellow stays CVD-distinguishable
    by lightness. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
-/* Strip captions derived from the live STOCH/WSTOCH settings so the label can
-   never disagree with the math (e.g. "STOCH 14-3-3"). Both are defined in
-   data.js, which loads first; these run at render time, so always resolved. */
-function stochTag() { return `STOCH ${STOCH.k}-${STOCH.kSmooth}-${STOCH.d}`; }
-function stochWTag() { return `STOCH ${WSTOCH.k}-${WSTOCH.kSmooth}-${WSTOCH.d}`; }
+/* Strip captions derived from the live STOCH/WSTOCH/ISTOCH settings so the
+   label can never disagree with the math (e.g. "STOCH 14-3-3"). All are
+   defined in data.js, which loads first; these run at render time. */
+const stochTagOf = c => `STOCH ${c.k}-${c.kSmooth}-${c.d}`;
+function stochTag() { return stochTagOf(STOCH); }
+function stochWTag() { return stochTagOf(WSTOCH); }
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
 const WB2_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];  /* Pro 2 window, in daily bars — Pro 2 now plots daily candles (daily+weekly stoch), not weekly */
 
@@ -1431,7 +1432,7 @@ function addWbStickySym(sym) {
 function wbPick(sym) {
   wbUserPicked = true;
   wbState.sym = sym;
-  wbState.off = wbState.woff = wbState.off3 = 0;
+  wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
   /* re-pin any non-watchlist pick so an evicted manual ticker is refetched on
      the next reload (also bumps it to the front of the capped list) */
   if (wbFeedRoster.size && !wbFeedRoster.has(sym)) addWbStickySym(sym);
@@ -1762,6 +1763,31 @@ function renderWbSidebar(data) {
    stop overwriting. Returns {bars, at} (at = latest 5-min bar time, UTC to the
    minute) or null when there is nothing current to add. The bar repaints until the
    close and inherits the intraday feed's ~15-min delay. */
+/* Aggregate the 5-minute intraday feed into 15-MINUTE bars for Pro 3's
+   display — the terminal's Pro 3 runs 15-min bars (established by matching
+   its hover OHLC against this exact aggregation; see ISTOCH in data.js).
+   The raw 5-min series stays untouched for the daily forming-candle graft. */
+function intraTo15(s) {
+  const out = { t: [], o: [], h: [], l: [], c: [], v: [] };
+  let key = null;
+  for (let i = 0; i < s.c.length; i++) {
+    const [d, hm] = s.t[i].split(' ');
+    const [H, M] = hm.split(':').map(Number);
+    const bucket = d + ' ' + Math.floor((H * 60 + M) / 15);
+    if (bucket !== key) {
+      key = bucket;
+      out.t.push(s.t[i]); out.o.push(s.o[i]); out.h.push(s.h[i]); out.l.push(s.l[i]); out.c.push(s.c[i]); out.v.push(s.v ? s.v[i] || 0 : 0);
+    } else {
+      const j = out.c.length - 1;
+      out.h[j] = Math.max(out.h[j], s.h[i]);
+      out.l[j] = Math.min(out.l[j], s.l[i]);
+      out.c[j] = s.c[i];
+      out.v[j] += s.v ? s.v[i] || 0 : 0;
+    }
+  }
+  return out;
+}
+
 function graftTodayBar(bars, intra) {
   const n = intra && intra.t ? intra.t.length : 0;
   if (!n || !bars.t.length) return null;
@@ -1790,7 +1816,12 @@ function graftTodayBar(bars, intra) {
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
 function renderCharts(data, lamp) {
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: 156, off: 0, woff: 0, off3: 0, layout: 'split', cfg: loadWbCfg() };
+  /* days3 = Pro 3's INTRADAY window in its own bars: 52 × 15-min = 2 sessions
+     (was 156 × 5-min before the terminal-fitted 15-min switch — same span).
+     days3d = the EOD-fallback branch's window in DAILY bars (Codex #149: the
+     two branches display different bar sizes, so they carry separate
+     window/pan state instead of sharing one number). */
+  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: 52, days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg: loadWbCfg() };
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -2066,7 +2097,7 @@ function renderCharts(data, lamp) {
          (needs ~120 bars before %D exists) — say so instead of rendering a
          silently empty strip. Partial case: %K alive, %D still warming. */
       {
-        const cfgS = which === 'weekly' ? WSTOCH : STOCH;
+        const cfgS = which === 'weekly' ? WSTOCH : (opts.stochCfgNative || STOCH);
         const warm = cfgS.k + cfgS.kSmooth + cfgS.d - 2;
         const hasK = series.k.some(v => v != null);
         const hasD = series.d.some(v => v != null);
@@ -2345,26 +2376,26 @@ function renderCharts(data, lamp) {
     const d = daily(sym);
     const intra = wbState.intraday && wbState.intraday[sym];
     if (intra) {
-      /* Intraday runs the SAME 14-3-3 as daily — explicit, not inherited: the
-         terminal fit (data.js) only anchored daily bars, and no terminal Pro 3
-         hover readout exists yet to fit intraday separately. Uniform config is
-         the terminal-faithful default (one indicator config across timeframes);
-         the old 13 had no evidence behind it either. Refit if the owner
-         supplies an intraday readout (strategies/stochastic-investing.md). */
-      const ist = stochSeries(intra, STOCH);
-      panes.push([intra, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 5-MIN', {
-        /* no presets: the range navigator sets the window (in 5-min bars)
+      /* Terminal-fitted intraday (2026-07-22): Pro 3 displays 15-MINUTE bars
+         (the 5-min feed aggregated via intraTo15) with the ISTOCH 10-3-3 slow
+         stochastic — both established from the terminal's own Pro 3 hover
+         readout; see the ISTOCH comment in data.js for the fit evidence. */
+      const intra15 = intraTo15(intra);
+      const ist = stochSeries(intra15, ISTOCH);
+      panes.push([intra15, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 15-MIN', {
+        /* no presets: the range navigator sets the window (in 15-min bars)
            anywhere within the ~5-day intraday feed */
-        window: paneWindow(wbState.days3, intra), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
+        window: paneWindow(wbState.days3, intra15), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
-        stochCaption: stochTag() + ' · 5-MIN',
+        stochCfgNative: ISTOCH,
+        stochCaption: stochTagOf(ISTOCH) + ' · 15-MIN',
       }]);
     } else {
       maybeFetchIntraday(sym);
       panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
-        window: paneWindow(wbState.days3, d.bars), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
+        window: paneWindow(wbState.days3d, d.bars), offset: wbState.off3d, panKey: 'off3d', daysKey: 'days3d', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
