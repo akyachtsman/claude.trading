@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260720i">
-<link rel="stylesheet" href="styles/components.css?v=20260720i">
+<link rel="stylesheet" href="styles/tokens.css?v=20260720m">
+<link rel="stylesheet" href="styles/components.css?v=20260720m">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -53,7 +53,14 @@
      stacks on narrow screens (media query below). */
   .top-band > .market-strip { zoom: .9; }
   .top-band > .col-markets { flex: 0 0 420px; zoom: .9; }
-  .top-band > .col-rail { flex: 1 1 auto; }
+  .top-band > .col-rail { flex: 1 1 auto; align-self: stretch; }
+  /* Ask-the-desk: cap to the Markets tile's height (the row's tallest) and
+     scroll the conversation INSIDE instead of letting the panel grow with the
+     thread (owner request 2026-07-21). The panel fills the stretched rail; the
+     thread is the only flexible/scrolling part — form + disclaimer stay pinned. */
+  .top-band > .col-rail > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .top-band > .col-rail #askBody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   /* accounts / brief / news shifted DOWN into their own band under the top row */
   .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
   .top-boxes > .area-accounts { flex: 2 1 0; min-width: 0; }
@@ -385,6 +392,9 @@
     /* stacked: drop the 10% shrink and let Markets/Ask span the full width */
     .top-band > .market-strip, .top-band > .col-markets { zoom: 1; }
     .top-band > .col-markets, .top-band > .col-rail { flex-basis: auto; }
+    /* stacked: the rail no longer inherits the Markets tile height, so the
+       thread would grow to fit every replayed exchange — cap it so it scrolls */
+    .top-band > .col-rail .ask-thread { max-height: 320px; }
     .top-boxes { flex-wrap: wrap; }
     .top-boxes > .area-accounts { flex: 2 1 320px; }
     .top-boxes > .top-brief,
@@ -577,8 +587,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260720i"></script>
-<script src="scripts/data.js?v=20260720i"></script>
-<script src="scripts/app.js?v=20260720i"></script>
+<script src="scripts/config.js?v=20260720m"></script>
+<script src="scripts/data.js?v=20260720m"></script>
+<script src="scripts/app.js?v=20260720m"></script>
 </body>
 </html>

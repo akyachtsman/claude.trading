@@ -44,7 +44,7 @@ function renderMasthead() {
   if (DESK.mode === 'demo') {
     wrap.appendChild(el('span', 'lamp lamp--demo', 'Demo data'));
     wrap.appendChild(el('span', 'lamp lamp--eod', 'EOD snapshot'));
-    wrap.appendChild(el('span', 'stamp', 'As of ' + lastLabel()));
+    wrap.appendChild(el('span', 'stamp', fmtUpdated(null, lastLabel())));
   } else {
     /* live-derived: the market feed's stamps stand for the public layer —
        no committed meta.json anymore (retire-nightly-pipeline Group C) */
@@ -149,9 +149,8 @@ function renderMarkets(market, lamp) {
   if (!lampEl) return;   /* panel not in the DOM */
   lampEl.className = 'lamp ' + mktState.lamp.cls; lampEl.textContent = mktState.lamp.text;
   const stampEl = document.getElementById('mktStamp');
-  /* live: the feed lamp's stamp carries fetch time + minutes-since-fetch +
-     data as-of (not just the date); demo has no real fetch to date-stamp */
-  if (stampEl) stampEl.textContent = (DESK.mode !== 'demo' && mktState.lamp && mktState.lamp.stamp) ? mktState.lamp.stamp : 'Demo data';
+  /* uniform "Updated {time} · {date}" from the feed lamp; demo shows the date */
+  if (stampEl) stampEl.textContent = (DESK.mode !== 'demo' && mktState.lamp && mktState.lamp.stamp) ? mktState.lamp.stamp : fmtUpdated(null, lastLabel());
 
   /* region tabs — U.S. is live; the others are placeholders until sourced */
   const reg = document.getElementById('mktRegions');
@@ -503,19 +502,68 @@ function renderAsk() {
   }
 
   lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live';
+  const pin = sessionStorage.getItem('desk_pin');
+
+  const toolbar = el('div', 'ask-toolbar');
+  const clearBtn = el('button', 'ask-clear', 'Clear'); clearBtn.type = 'button'; clearBtn.hidden = true;
+  clearBtn.setAttribute('aria-label', 'Clear the saved conversation');
+  toolbar.appendChild(clearBtn);
   const thread = el('div', 'ask-thread');
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
   input.type = 'text'; input.className = 'input'; input.maxLength = 500;
-  input.placeholder = 'Ask about this page…';
-  input.setAttribute('aria-label', 'Ask a question about the dashboard');
+  input.placeholder = 'Ask about your desk…';
+  input.setAttribute('aria-label', 'Ask the desk assistant a question');
   const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
   const err = el('p', 'lock-error', ''); err.hidden = true;
   form.appendChild(input); form.appendChild(btn);
-  body.appendChild(thread); body.appendChild(form); body.appendChild(err);
+  body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
   body.appendChild(el('p', 'ai-disclaimer',
-    'Answers come from the page’s current snapshot only. AI-generated; can make mistakes. Not financial advice.'));
+    'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'));
+
+  /* sources footer (FR-TR2): web citations rendered as safe links (textContent) */
+  const appendSources = sources => {
+    if (!sources || !sources.length) return;
+    const foot = el('div', 'ask-sources');
+    sources.slice(0, 6).forEach(s => {
+      if (!s || !s.url) return;
+      /* only http(s) — never let a javascript:/data: URL from a web result
+         (or tampered memory row) become a clickable href */
+      let href = null;
+      try { const u = new URL(s.url); if (u.protocol === 'https:' || u.protocol === 'http:') href = u.href; } catch { /* not a URL */ }
+      if (!href) return;
+      const link = document.createElement('a');
+      link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.textContent = s.title || s.url;
+      foot.appendChild(link);
+    });
+    if (foot.childElementCount) thread.appendChild(foot);
+  };
+
+  /* replay the stored conversation on load (FR-MEM5). Hold input until the
+     replay settles: a question submitted mid-hydration would append above the
+     replayed history and land the transcript out of chronological order. */
+  input.disabled = true; btn.disabled = true;
+  deskChatHistory(pin).then(rows => {
+    (rows || []).forEach(r => {
+      thread.appendChild(el('p', 'ask-q', r.question));
+      thread.appendChild(el('p', 'ask-a', r.answer));
+      appendSources(r.sources);
+    });
+    clearBtn.hidden = !(rows && rows.length);
+    thread.scrollTop = thread.scrollHeight;
+  }).catch(() => {}).finally(() => {
+    input.disabled = false; btn.disabled = false;
+  });
+
+  clearBtn.addEventListener('click', async () => {
+    if (!confirm('Clear the entire saved conversation? This permanently deletes all stored history.')) return;
+    clearBtn.disabled = true;
+    const out = await deskChatClear(pin).catch(() => ({ ok: false }));
+    clearBtn.disabled = false;
+    if (out && out.ok) { while (thread.firstChild) thread.removeChild(thread.firstChild); clearBtn.hidden = true; }
+  });
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
@@ -525,12 +573,13 @@ function renderAsk() {
     btn.disabled = true; btn.textContent = 'Asking…'; input.disabled = true;
     thread.appendChild(el('p', 'ask-q', q));
     thread.scrollTop = thread.scrollHeight;
-    const pin = sessionStorage.getItem('desk_pin');
     const res = await deskAsk(pin, q, buildAskContext())
       .catch(() => ({ ok: false, error: 'Could not reach the ask service — try again in a moment.' }));
     btn.disabled = false; btn.textContent = 'Ask'; input.disabled = false;
     if (res && res.ok) {
       thread.appendChild(el('p', 'ask-a', res.answer));
+      appendSources(res.sources);
+      clearBtn.hidden = false;
       input.value = '';
     } else {
       err.textContent = (res && res.error) || 'Something went wrong — try again.';
@@ -735,13 +784,9 @@ function renderHeatmap(hm, lamp) {
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const lampEl = document.getElementById('heatLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
-  /* as-of stamp = the data's trading day (asOf) plus the feed's fetch time
-     (generatedAt) in the viewer's LOCAL zone, so "last updated" is visible.
-     Demo / undefined generatedAt and the delayed cuts (whose asOf already
-     carries a localized time) add no clock here. */
-  const genTime = hm ? fmtClock(hm.generatedAt) : '';
-  const genAgo = hm ? fmtAgo(hm.generatedAt) : '';
-  document.getElementById('heatStamp').textContent = hm ? 'As of ' + hm.asOf + (genTime ? ' · ' + genTime : '') + (genAgo ? ' · ' + genAgo : '') : '—';
+  /* uniform "Updated {fetch time} · {trading day}" (fetch clock omitted for demo
+     and the delayed cuts whose generatedAt is absent) */
+  document.getElementById('heatStamp').textContent = hm ? fmtUpdated(hm.generatedAt, hm.asOf) : '—';
   if (!hm || !hm.sectors || !hm.sectors.length) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
@@ -1713,10 +1758,9 @@ function renderCharts(data, lamp) {
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
-  /* live: show the feed's fetch time + minutes-since-fetch (lamp stamp);
-     demo: the as-of trading day (no real fetch to time-stamp) */
+  /* uniform "Updated {time} · {date}" from the feed lamp; demo shows the date */
   document.getElementById('chartsStamp').textContent =
-    (DESK.mode !== 'demo' && lamp && lamp.stamp) ? lamp.stamp : (data ? 'As of ' + data.asOf : '—');
+    (DESK.mode !== 'demo' && lamp && lamp.stamp) ? lamp.stamp : (data ? fmtUpdated(null, data.asOf) : '—');
 
   /* the symbol box is free-entry: type any ticker → the quote-proxy (wireCharts
      submit handler); the roster is picked from the sidebar list. No datalist —
@@ -2255,7 +2299,7 @@ function renderCharts(data, lamp) {
   for (const k in dailyCache) { const L = dailyCache[k].live; if (L && (!liveAt || L > liveAt)) liveAt = L; }
   if (liveAt) {
     document.getElementById('chartsStamp').textContent =
-      'Today forming · ' + fmtStampDateTime(liveAt.replace(' ', 'T') + ':00Z') + ' · ~15-min delayed';
+      'Updated ' + fmtClock(liveAt.replace(' ', 'T') + ':00Z') + ' · Today · ~15-min delayed';
   }
   syncZoomPressed();
 }
@@ -2587,7 +2631,7 @@ function renderPrivate() {
       ? { cls: 'lamp--demo', text: 'Demo' }
       : accountsLampFor(DESK.privateAsOf, DESK.privateSyncedAt, new Date());
     const acctStamp = document.getElementById('accountsStamp');
-    if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? 'Demo data' : '');
+    if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()) : '');
     renderAccounts(DESK.data.accounts, lamp);
     /* FR-AI4: the brief carries its own freshness — generation can fail
        while snapshots keep flowing, so its lamp derives from brief.asOf,

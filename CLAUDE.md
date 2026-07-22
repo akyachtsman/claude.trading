@@ -36,8 +36,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   Demo remains reachable via `?demo=1`.
 - `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
   mode resolution, `deskFeed()` live-feed wrapper, `marketSessionOpen()`,
-  two-tier `liveLampFor` staleness lamps (every live stamp carries fetch clock
-  time + `fmtAgo` minutes-since-fetch + data as-of), Supabase RPC fetch wrappers.
+  two-tier `liveLampFor` staleness lamps; every panel stamp renders one uniform
+  terse format via `fmtUpdated` — `Updated {time} · {Mon D}` (clock dropped when
+  only a trading-day as-of exists), Supabase RPC fetch wrappers.
   `buildDemoMarkets()` seeds the Markets window's normalized %-change series —
   a detrended random walk per index (S&P/Nasdaq/Russell/Dow) per timeframe,
   pinned to 0 at the start and the index's end-% at the right edge.
@@ -85,7 +86,17 @@ This project's look is its own — established at kickoff via `/design-intake`
   its tile, never gating the core; owner request 2026-07-16), `desk-heatmap` (Nasdaq
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
-  session-aware cached + single-flight. PIN-gated: `desk-ask` (Claude Q&A).
+  session-aware cached + single-flight. PIN-gated: `desk-ask` — an **agentic**
+  desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`
+  (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤6 calls,
+  ≤3 pause resumes) with `web_search`/`web_fetch` + a `get_quote` tool that calls
+  `quote-proxy kind:'info'` server-side, gives **directional** views on the
+  owner's positions (owner opt-in 2026-07-21; the "not financial advice" label
+  stays), attributes provenance, and appends each exchange back to memory. The
+  conversation table `desk_chat_memory` (`desk_008`, RLS deny-all) is reachable
+  only via the service-key `desk-ask` path or the PIN RPCs `desk_chat_history` /
+  `desk_chat_clear`. **Residual:** web-query privacy (never sending real position
+  sizes to search) is system-prompt-enforced, not hard-filtered.
   Origin-guarded anon: `quote-proxy` (OHLC for any ticker — no PIN, restricted
   to the site origin + in-memory cache; owner ruling 2026-07-14, paid plan).
   `kind:'info'` also returns a per-symbol live-quote line (last / day change /
@@ -229,7 +240,16 @@ run for real against the dedicated project on every PR.
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 daily / Pro 2 daily / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
-| S14 | Live-feed canary (live only) | Masthead lamp reads LIVE with a "Fetched" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
+| S14 | Live-feed canary (live only) | Masthead lamp reads LIVE with an "Updated" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
+| S15 | Assistant memory (opt-in, live) | With `RUN_ASSISTANT_TESTS=1` + live backend: ask, reload, prior exchange replays from `desk_chat_memory` (transcript contains the earlier text) | Transcript empty after reload despite a stored exchange |
+| S16 | Assistant research (opt-in, live) | A snapshot-absent question renders an answer (web tools available) | No answer bubble renders |
+| S17 | Assistant live data (opt-in, live) | An off-page ticker returns an answer (the `get_quote` path) | No answer bubble renders |
+| S18 | Assistant advice posture (opt-in, live) | A buy/sell/hold question returns an answer, NOT `.lock-error`; the "not financial advice" disclaimer stays | A refusal error, or the disclaimer missing |
+| S19 | Assistant clear (opt-in, live) | The Clear control (confirmed) empties `.ask-thread` | Thread still shows exchanges after clear |
+
+**S15–S19 are OPT-IN** (gated on `RUN_ASSISTANT_TESTS` on top of the live+auth
+gates) — each makes a real `desk-ask` Claude tool-loop call (slow, nondeterministic,
+costs quota), so they never run in normal CI; run them on demand.
 
 ## Owner Communication Preferences
 - **Explanations of how things work (data flows, architecture, processes):
