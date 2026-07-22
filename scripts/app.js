@@ -1306,6 +1306,10 @@ window.addEventListener('resize', () => {
    bars and weekly bars (owner spec: "daily and weekly (13)"). Candle green/
    red is price-direction semantics (like the heatmap), not decoration. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: 'var(--color-series-1)', dLine: 'var(--color-series-2)', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
+/* Strip caption derived from the live STOCH setting so the label can never
+   disagree with the math (e.g. "STOCH 13-3-3"). STOCH is defined in data.js,
+   which loads first; this runs at render time, so it's always resolved. */
+function stochTag() { return `STOCH ${STOCH.k}-${STOCH.kSmooth}-${STOCH.d}`; }
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
 const WB2_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];  /* Pro 2 window, in daily bars — Pro 2 now plots daily candles (daily+weekly stoch), not weekly */
 
@@ -1837,7 +1841,7 @@ function renderCharts(data, lamp) {
        volume strip and 1–2 stochastic strips (native + weekly) leave over */
     const strips = [];
     if (opts.cfg.stoch) strips.push(['native', st, opts.stochCaption, true]);
-    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || 'STOCH 13-3-3 · WEEKLY (13)', false]);
+    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || (stochTag() + ' · WEEKLY (' + STOCH.k + ')'), false]);
     /* Volume + stochastic pane heights are user-draggable (the resize bars
        below) and persisted per pane; the PRICE pane absorbs the change
        (owner request 2026-07-16). Defaults match the prior fixed sizes. */
@@ -2241,7 +2245,7 @@ function renderCharts(data, lamp) {
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
       pivots: d.piv, smas: smaList(wbState.cfg.p1),
       stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
-      stochCaption: 'STOCH 13-3-3 · DAILY',
+      stochCaption: stochTag() + ' · DAILY',
     }]);
   }
   if (show('p2')) {
@@ -2256,8 +2260,8 @@ function renderCharts(data, lamp) {
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
       stW: wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null,
-      stochCaption: 'STOCH 13-3-3 · DAILY',
-      stochWCaption: 'STOCH 13-3-3 · WEEKLY (13)',
+      stochCaption: stochTag() + ' · DAILY',
+      stochWCaption: stochTag() + ' · WEEKLY (' + STOCH.k + ')',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
@@ -2275,7 +2279,7 @@ function renderCharts(data, lamp) {
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
-        stochCaption: 'STOCH 13-3-3 · 5-MIN',
+        stochCaption: stochTag() + ' · 5-MIN',
       }]);
     } else {
       maybeFetchIntraday(sym);
@@ -2284,7 +2288,7 @@ function renderCharts(data, lamp) {
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
         pivots: d.piv, smas: smaList(wbState.cfg.p3),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
-        stochCaption: 'STOCH 13-3-3 · DAILY (INTRADAY PENDING)',
+        stochCaption: stochTag() + ' · DAILY (INTRADAY PENDING)',
       }]);
     }
   }

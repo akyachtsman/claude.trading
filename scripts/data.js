@@ -203,10 +203,11 @@ function buildDemoMarkets() {
 
 /* ── charts panel: demo OHLCV, weekly aggregation, stochastics ─────────── */
 const CHART_BARS = 800; /* matches the feeds' KEEP_BARS: ~3y view + warmup */
-const STOCH = { k: 14, kSmooth: 3, d: 3 }; /* platform-standard 14,3,3 slow stochastic
-  (owner request 2026-07-22, was 13 — 13 read a different high/low window than the
-  14 that TradingView/StockCharts default to, offsetting %K/%D). Applied to daily
-  bars and, via weeklyStochOnDaily's weekly resample, to weekly bars. */
+const STOCH = { k: 13, kSmooth: 3, d: 3 }; /* 13-3-3 slow stochastic — deliberately
+  matches the owner's reference terminal, NOT the textbook 14 (owner ruling
+  2026-07-22, after a brief 14 trial that diverged from the terminal; the terminal,
+  not a generic default, is the source of truth). Applied to daily bars and, via
+  weeklyStochOnDaily's weekly resample, to weekly bars. */
 
 function tradingISODates(n, endDate) {
   const out = []; const d = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
