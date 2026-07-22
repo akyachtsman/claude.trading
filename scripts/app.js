@@ -1890,7 +1890,9 @@ function renderCharts(data, lamp) {
      default smooth renderer so they don't stair-step. */
   const line = (x1, y1, x2, y2, attrs) => svg.appendChild(svgEl('line', { x1, y1, x2, y2, 'shape-rendering': 'crispEdges', ...attrs }));
   const text = (str, tx, ty, attrs) => { const t = svgEl('text', { x: tx, y: ty, 'font-family': 'var(--font-mono)', 'font-size': 10, fill: WB.label, ...attrs }); t.textContent = str; svg.appendChild(t); };
-  const hideTip = () => { tip.style.display = 'none'; while (tip.firstChild) tip.removeChild(tip.firstChild); for (const c of svg.querySelectorAll('[data-cross]')) c.setAttribute('visibility', 'hidden'); };
+  /* visibility (not display): the dock below the chart keeps its reserved
+     height when empty, so hover on/off never shifts the layout */
+  const hideTip = () => { tip.style.visibility = 'hidden'; while (tip.firstChild) tip.removeChild(tip.firstChild); for (const c of svg.querySelectorAll('[data-cross]')) c.setAttribute('visibility', 'hidden'); };
 
   /* one pane = caption · price (+SMA/pivots) · volume · stochastic strip */
   const drawPane = (x0, w, bars, st, marks, caption, opts) => {
@@ -2217,16 +2219,18 @@ function renderCharts(data, lamp) {
         crossTag.textContent = fmtPrice(hi - (my - pY) / pH * (hi - lo));
         crossTag.setAttribute('visibility', 'visible');
       }
-      /* compact readout, pinned top-left of the chart box (out of the candles) */
+      /* ONE-line readout docked in a fixed box BELOW the chart (owner request
+         2026-07-22): tier · sym · bar time · OHLC ±% · Vol · stoch (· SMAs).
+         Constant position — it never covers the canvas; visibility (not
+         display) toggling keeps the dock's height reserved, so no jumps. */
       const chg = i > 0 ? (bars.c[i] / bars.c[i - 1] - 1) * 100 : 0;
-      tip.appendChild(el('div', 'tip-date', (opts.sym || wbState.sym) + ' · ' + bars.t[i]));
-      const ohlc = el('div', 'tip-row', 'O ' + fmtPrice(bars.o[i]) + ' H ' + fmtPrice(bars.h[i]) + ' L ' + fmtPrice(bars.l[i]) + ' C ' + fmtPrice(bars.c[i]) + ' ');
-      ohlc.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
-      tip.appendChild(ohlc);
+      const row = el('div', 'tip-row');
+      row.appendChild(el('span', 'tip-date', (opts.tier ? opts.tier.toUpperCase() + ' · ' : '') + (opts.sym || wbState.sym) + ' · ' + bars.t[i] + ' · '));
+      row.appendChild(document.createTextNode('O ' + fmtPrice(bars.o[i]) + ' H ' + fmtPrice(bars.h[i]) + ' L ' + fmtPrice(bars.l[i]) + ' C ' + fmtPrice(bars.c[i]) + ' '));
+      row.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
       const bits = ['Vol ' + fmtVol(bars.v[i])];
       if (st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
       if (opts.cfg.stochW && opts.stW && opts.stW.k[i] != null) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
-      tip.appendChild(el('div', 'tip-row', bits.join(' · ')));
       const smaParts = [];
       for (const [len] of opts.smas || []) {
         if (i < len - 1) continue;
@@ -2234,14 +2238,9 @@ function renderCharts(data, lamp) {
         for (let j = i - len + 1; j <= i; j++) sum += bars.c[j];
         smaParts.push('SMA' + len + ' ' + fmtPrice(sum / len));
       }
-      if (smaParts.length) tip.appendChild(el('div', 'tip-row', smaParts.join(' · ')));
-      tip.style.display = 'block';
-      /* pin to the top-left of the HOVERED pane (its own column in split view),
-         clamped so it never runs off the right edge of the chart box */
-      const wrap = svg.parentElement.getBoundingClientRect();
-      const sx = wrap.width / W;
-      tip.style.left = Math.max(4, Math.min((x0 + 6) * sx, wrap.width - 262)) + 'px';
-      tip.style.top = '6px';
+      row.appendChild(document.createTextNode(' · ' + bits.concat(smaParts).join(' · ')));
+      tip.appendChild(row);
+      tip.style.visibility = 'visible';
     });
     overlay.addEventListener('pointerleave', hideTip);
 
