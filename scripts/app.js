@@ -156,7 +156,11 @@ function renderMarkets(market, lamp) {
   lampEl.className = 'lamp ' + mktState.lamp.cls; lampEl.textContent = mktState.lamp.text;
   const stampEl = document.getElementById('mktStamp');
   /* uniform "Updated {time} · {date}" from the feed lamp; demo shows the date */
-  if (stampEl) stampEl.textContent = (DESK.mode !== 'demo' && mktState.lamp && mktState.lamp.stamp) ? mktState.lamp.stamp : fmtUpdated(null, lastLabel());
+  /* live: the real feed stamp or an honest '—' (never a demo-derived date —
+     lastLabel() reads the demo label calendar; Codex #150). Demo keeps it. */
+  if (stampEl) stampEl.textContent = DESK.mode !== 'demo'
+    ? ((mktState.lamp && mktState.lamp.stamp) || '—')
+    : fmtUpdated(null, lastLabel());
 
   /* region tabs — U.S. is live; the others are placeholders until sourced */
   const reg = document.getElementById('mktRegions');
@@ -1083,7 +1087,25 @@ const MAP_CUTS = [
 ];
 const MAP_PERIODS = [['1d', '1-Day Performance'], ['1w', '1-Week Performance'], ['1m', '1-Month Performance'], ['ytd', 'YTD Performance']];
 let heatBase = null;                        /* raw dataset + lamp from loadHeatmap */
-let heatRetryTimer = 0, heatRetryWait = 0;  /* live first-load fast-retry backoff */
+
+/* Shared live first-load fast retry (owner ruling 2026-07-22: real data or
+   nothing — so an empty panel must refetch promptly, not sit blank until the
+   5/60-min poller). Visibility-aware backoff 15s → 30s → 60s cap: a hidden tab
+   defers the refetch to the next visibilitychange (Codex #148/#150). One state
+   object per feed; `landed()` reports whether real data arrived meanwhile. */
+function armLiveRetry(st, retryFn, landed) {
+  st.wait = Math.min(60000, (st.wait || 7500) * 2);
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => {
+    if (!document.hidden) { if (!landed()) retryFn(); return; }
+    const once = () => {
+      document.removeEventListener('visibilitychange', once);
+      if (!document.hidden && !landed()) retryFn();
+    };
+    document.addEventListener('visibilitychange', once);
+  }, st.wait);
+}
+const heatRetry = {}, chartsRetry = {}, marketRetry = {}, newsRetry = {};
 let heatExtra = null;                       /* desk-maps payload (crypto/futures/world, delayed quotes) */
 let heatExtraAt = 0;                        /* fetch timestamp — refetch on cut click when stale */
 let heatR2k = null;                         /* desk-heatmap universe:r2k payload + lamp */
@@ -1301,7 +1323,7 @@ async function loadHeatmap() {
   if (DESK.mode !== 'demo') {
     try {
       const hm = await deskFeed('desk-heatmap');
-      clearTimeout(heatRetryTimer); heatRetryWait = 0;
+      clearTimeout(heatRetry.timer); heatRetry.wait = 0;
       heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf) };
       applyMapView();
       return;
@@ -1313,19 +1335,7 @@ async function loadHeatmap() {
        60s cap), instead of sitting on fake tiles until the 5/60-min poller. */
     renderHeatmap(null, { cls: 'lamp--stale', text: 'STALE' });
     document.getElementById('heatSource').textContent = 'Heatmap feed unreachable — nothing shown until real data arrives. Retrying…';
-    heatRetryWait = Math.min(60000, (heatRetryWait || 7500) * 2);
-    clearTimeout(heatRetryTimer);
-    /* visibility-aware like startFeedPolling (Codex #148): a hidden tab must
-       not burn feed quota — if hidden when the retry fires, defer it to the
-       next visibilitychange instead of fetching in the background. */
-    heatRetryTimer = setTimeout(() => {
-      if (!document.hidden) { loadHeatmap(); return; }
-      const once = () => {
-        document.removeEventListener('visibilitychange', once);
-        if (!document.hidden && !heatBase) loadHeatmap();
-      };
-      document.addEventListener('visibilitychange', once);
-    }, heatRetryWait);
+    armLiveRetry(heatRetry, loadHeatmap, () => Boolean(heatBase));
     return;
   }
   heatBase = { hm: buildDemoHeatmap(), lamp: { cls: 'lamp--demo', text: 'Demo' } };
@@ -2681,7 +2691,6 @@ function wireCharts() {
   });
 }
 
-let chartsRetryTimer = 0, chartsRetryWait = 0;  /* live first-load fast-retry backoff */
 /* blank workbench + STALE lamp — live mode's honest empty state (owner ruling
    2026-07-22: live is REAL DATA OR NOTHING, across every panel) */
 function renderChartsUnavailable() {
@@ -2696,7 +2705,7 @@ async function loadCharts() {
   if (DESK.mode !== 'demo') {
     try {
       const data = await deskFeed('desk-charts');
-      clearTimeout(chartsRetryTimer); chartsRetryWait = 0;
+      clearTimeout(chartsRetry.timer); chartsRetry.wait = 0;
       for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); }
       if (wbState) {
         /* poller path: refresh bars in place so the user's selected symbol,
@@ -2716,19 +2725,10 @@ async function loadCharts() {
       return;
     } catch { /* failure paths below */ }
     if (wbState) return; /* poller failure: keep the last good workbench */
-    /* LIVE first-load failure: blank + STALE + fast retry (visibility-aware,
-       mirrors loadHeatmap) — never the demo generator on a live desk. */
+    /* LIVE first-load failure: blank + STALE + fast retry — never the demo
+       generator on a live desk. */
     renderChartsUnavailable();
-    chartsRetryWait = Math.min(60000, (chartsRetryWait || 7500) * 2);
-    clearTimeout(chartsRetryTimer);
-    chartsRetryTimer = setTimeout(() => {
-      if (!document.hidden) { loadCharts(); return; }
-      const once = () => {
-        document.removeEventListener('visibilitychange', once);
-        if (!document.hidden && !wbState) loadCharts();
-      };
-      document.addEventListener('visibilitychange', once);
-    }, chartsRetryWait);
+    armLiveRetry(chartsRetry, loadCharts, () => Boolean(wbState));
     return;
   }
   renderCharts(buildDemoCharts(), { cls: 'lamp--demo', text: 'Demo' });
@@ -2820,6 +2820,7 @@ let stripLive = false, newsLive = false;
 async function refreshMarket() {
   try {
     const market = await deskFeed('desk-market');
+    clearTimeout(marketRetry.timer); marketRetry.wait = 0;
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
     DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf };
     renderStrip(DESK.data.market);
@@ -2828,18 +2829,27 @@ async function refreshMarket() {
     stripLive = true;
     return;
   } catch { /* keep last good; masthead lamps Stale via liveStamp age */ }
-  if (!stripLive) { renderStrip(DESK.data.market); renderMarkets(DESK.data.market, { cls: 'lamp--stale', text: 'Stale' }); }
+  if (!stripLive) {
+    /* first-load failure: empty strip + dash tiles (the live boot blanked the
+       demo placeholder) — and retry fast rather than waiting out the poller */
+    renderStrip(DESK.data.market); renderMarkets(DESK.data.market, { cls: 'lamp--stale', text: 'Stale' });
+    armLiveRetry(marketRetry, refreshMarket, () => stripLive);
+  }
 }
 
 async function refreshNews() {
   try {
     const news = await deskFeed('desk-news');
+    clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     DESK.data.news = news.items || [];
     renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
     newsLive = true;
     return;
   } catch { /* keep last good */ }
-  if (!newsLive) renderNews(DESK.data.news, { cls: 'lamp--stale', text: 'Stale' });
+  if (!newsLive) {
+    renderNews(DESK.data.news, { cls: 'lamp--stale', text: 'Stale' });
+    armLiveRetry(newsRetry, refreshNews, () => newsLive);
+  }
 }
 
 /* 5 min while the US session is open, 60 min closed (Clarification 6);
