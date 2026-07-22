@@ -209,6 +209,24 @@ function renderMarkets(market, lamp) {
     cell.appendChild(el('div', 'mk-sec-pct', pct == null ? '—' : fmtPct(pct)));
     secBox.appendChild(cell);
   }
+  syncAskHeight();
+}
+
+/* Pin the Ask-the-desk panel's BOTTOM to the Markets panel's bottom (owner
+   request 2026-07-22: "the bottom of ask-the-desk should line up with
+   Markets"). Flex alone can't cap one sibling by another sibling's height —
+   with long answers the Ask panel outgrew the row. Measure the rendered
+   Markets column (getBoundingClientRect is post-`zoom`, and the rail is
+   unzoomed so viewport px == its CSS px) and pin the rail panel to exactly
+   that height; the thread scrolls inside. Cleared when the top band stacks
+   (≤1280px), where the thread's own 320px cap rules instead. */
+function syncAskHeight() {
+  const mk = document.querySelector('.top-band > .col-markets');
+  const panel = document.querySelector('.top-band > .col-rail > .panel');
+  if (!mk || !panel) return;
+  if (window.matchMedia('(max-width: 1280px)').matches) { panel.style.height = ''; return; }
+  const h = Math.round(mk.getBoundingClientRect().height);
+  if (h > 120) panel.style.height = h + 'px';
 }
 
 /* light green/red tint by day-% for the sector cells (daylight panel) */
@@ -296,7 +314,7 @@ async function fetchMktSeries() {
 
 /* redraw the markets chart on resize (viewBox width tracks the panel) */
 let mktResizeTimer = 0;
-window.addEventListener('resize', () => { clearTimeout(mktResizeTimer); mktResizeTimer = setTimeout(drawMktChart, 150); });
+window.addEventListener('resize', () => { clearTimeout(mktResizeTimer); mktResizeTimer = setTimeout(() => { drawMktChart(); syncAskHeight(); }, 150); });
 
 /* ── sortable tables (design.md standard) ──────────────────────────────── */
 function makeSortable(table) {
@@ -594,6 +612,7 @@ function renderAsk() {
     thread.scrollTop = thread.scrollHeight;
     input.focus();
   });
+  syncAskHeight();
 }
 
 /* ── locked state (live mode, pre-auth) ────────────────────────────────── */
@@ -1296,7 +1315,17 @@ async function loadHeatmap() {
     document.getElementById('heatSource').textContent = 'Heatmap feed unreachable — nothing shown until real data arrives. Retrying…';
     heatRetryWait = Math.min(60000, (heatRetryWait || 7500) * 2);
     clearTimeout(heatRetryTimer);
-    heatRetryTimer = setTimeout(loadHeatmap, heatRetryWait);
+    /* visibility-aware like startFeedPolling (Codex #148): a hidden tab must
+       not burn feed quota — if hidden when the retry fires, defer it to the
+       next visibilitychange instead of fetching in the background. */
+    heatRetryTimer = setTimeout(() => {
+      if (!document.hidden) { loadHeatmap(); return; }
+      const once = () => {
+        document.removeEventListener('visibilitychange', once);
+        if (!document.hidden && !heatBase) loadHeatmap();
+      };
+      document.addEventListener('visibilitychange', once);
+    }, heatRetryWait);
     return;
   }
   heatBase = { hm: buildDemoHeatmap(), lamp: { cls: 'lamp--demo', text: 'Demo' } };
