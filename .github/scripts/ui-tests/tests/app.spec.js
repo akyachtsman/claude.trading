@@ -710,9 +710,10 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
 
 // S14 — Live-feed-layer canary (Group C: the committed snapshots are gone,
 // so a dead feed layer would otherwise only show up as quiet STALE lamps).
-// The masthead lamp derives from the freshest desk-market fetch: LIVE means
+// The desk lamp (in the Accounts header since 2026-07-22) derives from the
+// freshest desk-market fetch: LIVE means
 // the edge function answered within the last 6 minutes.
-test('S14: masthead lamp reads LIVE off the market feed (live only)', async ({ page }) => {
+test('S14: desk lamp reads LIVE off the market feed (live only)', async ({ page }) => {
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
   const lamp = page.locator('#mastheadState .lamp').first();
