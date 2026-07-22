@@ -1537,17 +1537,20 @@ function monthlyPivots(s) {
    through %D from at/below the oversold band; a SELL is the top-roll — %K
    crossing down through %D from at/above the overbought band. (strategies/
    stochastic-investing.md — the cycle anatomy.) */
-/* Weekly-timeframe stochastic drawn SMOOTH on the daily chart while staying the
-   genuine weekly signal (owner request 2026-07-19: smooth, not the daily-texture
-   sawtooth; and the crossover IS the signal). We compute the classic 13-3-3 slow
-   stochastic on TRUE weekly bars, then draw a straight line between each week's
-   close across the intervening days — a clean curve whose crossovers are the real
-   weekly crossovers. The last "week" is the current one aggregated week-to-date,
-   so its control point sits on the latest bar and the right edge still updates
-   daily as the week builds; at each Friday close the value equals the classic
-   completed-week reading exactly. (A period-scaled daily stochastic would drift
-   from the real weekly signal — Codex #134; step-holding drew a staircase.) */
+/* Weekly-timeframe stochastic drawn on the daily chart, computed WEEK-TO-DATE so
+   it matches the reference terminal exactly (owner comparison 2026-07-22: the
+   former between-weeks interpolation read ~4 pts high mid-week — it slid toward
+   the NEXT Friday's close, which hadn't happened yet). For each day we take the
+   completed prior weeks (full H/L/C) plus the CURRENT week formed only through
+   that day, run the classic 13-3-3 slow stochastic on that weekly series, and
+   read off the last value. So the line updates every day as the week builds and
+   lands on the completed-week reading exactly at each week's close — no
+   interpolation, no staircase. STOCH supplies the 13/3/3 periods; verified
+   equal to the completed-week series at week closes to machine precision.
+   (A period-scaled daily stochastic would drift from the real weekly signal —
+   Codex #134; step-holding drew a staircase; interpolation ran hot — this turn.) */
 function weeklyStochOnDaily(daily) {
+  const { k: kP, kSmooth: kS, d: dP } = STOCH;
   const n = daily.c.length;
   const k = new Array(n).fill(null);
   const d = new Array(n).fill(null);
@@ -1555,33 +1558,53 @@ function weeklyStochOnDaily(daily) {
     const dt = new Date(t + 'T12:00:00Z');
     return new Date(dt.getTime() - (((dt.getUTCDay() + 6) % 7) * 86400000)).toISOString().slice(0, 10);
   };
-  /* true weekly bars (last week = forming, week-to-date) + each week's last daily index */
-  const wh = [], wl = [], wc = [], wEnd = [];
-  let key = null;
+  /* Per-day week index + week-to-date H/L/C (the current week through that day).
+     The last write per week leaves fullH/L/C holding the completed-week bar. */
+  const weekOf = new Array(n);
+  const wtdH = new Array(n), wtdL = new Array(n), wtdC = new Array(n);
+  const fullH = [], fullL = [], fullC = [];
+  let key = null, w = -1;
   for (let i = 0; i < n; i++) {
     const wk = isoWeek(daily.t[i]);
-    if (wk !== key) { key = wk; wh.push(daily.h[i]); wl.push(daily.l[i]); wc.push(daily.c[i]); wEnd.push(i); }
-    else {
-      const j = wh.length - 1;
-      if (daily.h[i] > wh[j]) wh[j] = daily.h[i];
-      if (daily.l[i] < wl[j]) wl[j] = daily.l[i];
-      wc[j] = daily.c[i]; wEnd[j] = i;
-    }
+    if (wk !== key) { key = wk; w++; wtdH[i] = daily.h[i]; wtdL[i] = daily.l[i]; }
+    else { wtdH[i] = Math.max(wtdH[i - 1], daily.h[i]); wtdL[i] = Math.min(wtdL[i - 1], daily.l[i]); }
+    wtdC[i] = daily.c[i]; weekOf[i] = w;
+    fullH[w] = wtdH[i]; fullL[w] = wtdL[i]; fullC[w] = wtdC[i];
   }
-  const wst = stochSeries({ h: wh, l: wl, c: wc });
-  /* control points at each week's close (the last sits on the latest daily bar,
-     carrying the live week-to-date value) */
-  const pts = [];
-  for (let j = 0; j < wh.length; j++) if (wst.k[j] != null) pts.push([wEnd[j], wst.k[j], wst.d[j]]);
-  /* linearly interpolate %K/%D between consecutive weekly closes across the days */
-  for (let p = 0; p + 1 < pts.length; p++) {
-    const [ai, ak, ad] = pts[p], [bi, bk, bd] = pts[p + 1];
-    const span = (bi - ai) || 1;
-    for (let i = ai; i <= bi; i++) {
-      const t = (i - ai) / span;
-      k[i] = ak + (bk - ak) * t;
-      d[i] = ad + (bd - ad) * t;
-    }
+  const nW = w + 1;
+  /* raw %K over kP weekly bars; the LAST bar is overridden by (curH/curL/curC)
+     so the current week can be supplied week-to-date. Null before kP weeks. */
+  const rawK = (wEnd, curH, curL, curC) => {
+    if (wEnd < kP - 1) return null;
+    let hi = curH, lo = curL;
+    for (let j = wEnd - kP + 1; j < wEnd; j++) { if (fullH[j] > hi) hi = fullH[j]; if (fullL[j] < lo) lo = fullL[j]; }
+    return hi === lo ? 50 : (curC - lo) / (hi - lo) * 100;
+  };
+  /* completed-week raw %K and its SMA(kS) — the fixed terms prior weeks feed in */
+  const rawFull = new Array(nW).fill(null);
+  for (let ww = 0; ww < nW; ww++) rawFull[ww] = rawK(ww, fullH[ww], fullL[ww], fullC[ww]);
+  const smoothFull = new Array(nW).fill(null);
+  for (let ww = kS - 1; ww < nW; ww++) {
+    let s = 0, ok = true;
+    for (let j = ww - kS + 1; j <= ww; j++) { if (rawFull[j] == null) { ok = false; break; } s += rawFull[j]; }
+    if (ok) smoothFull[ww] = s / kS;
+  }
+  /* Per day: the current week's WTD raw %K blended with the prior completed
+     weeks — %K = SMA(kS) of raw %K, %D = SMA(dP) of that %K. */
+  for (let i = 0; i < n; i++) {
+    const ww = weekOf[i];
+    const rk = rawK(ww, wtdH[i], wtdL[i], wtdC[i]);
+    if (rk == null) continue;
+    let sK = rk, okK = true;
+    for (let m = 1; m < kS; m++) { const r = rawFull[ww - m]; if (r == null) { okK = false; break; } sK += r; }
+    if (!okK) continue;
+    const kw = sK / kS;
+    k[i] = kw;   /* %K is valid as soon as its own SMA(kS) terms exist — do NOT gate
+                    it on %D, which lags by (dP-1) weeks (matches stochSeries: %K
+                    lights up ~2 weeks before %D on the All-history left edge). */
+    let sD = kw, okD = true;
+    for (let m = 1; m < dP; m++) { const s = smoothFull[ww - m]; if (s == null) { okD = false; break; } sD += s; }
+    if (okD) d[i] = sD / dP;
   }
   return { k, d };
 }
