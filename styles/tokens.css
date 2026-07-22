@@ -37,7 +37,7 @@
   /* type — IBM Plex: instrument-panel heritage; mono carries all numerics */
   --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --font-xs: 12px; --font-sm: 13px; --font-base: 15px; --font-lg: 17px;
+  --font-2xs: 11px; --font-xs: 12px; --font-sm: 13px; --font-base: 15px; --font-lg: 17px;
   --font-xl: 20px; --font-2xl: 26px; --font-3xl: 34px;
 
   /* space */

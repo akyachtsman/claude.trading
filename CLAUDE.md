@@ -36,8 +36,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   Demo remains reachable via `?demo=1`.
 - `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
   mode resolution, `deskFeed()` live-feed wrapper, `marketSessionOpen()`,
-  two-tier `liveLampFor` staleness lamps (every live stamp carries fetch clock
-  time + `fmtAgo` minutes-since-fetch + data as-of), Supabase RPC fetch wrappers.
+  two-tier `liveLampFor` staleness lamps; every panel stamp renders one uniform
+  terse format via `fmtUpdated` — `Updated {time} · {Mon D}` (clock dropped when
+  only a trading-day as-of exists), Supabase RPC fetch wrappers.
   `buildDemoMarkets()` seeds the Markets window's normalized %-change series —
   a detrended random walk per index (S&P/Nasdaq/Russell/Dow) per timeframe,
   pinned to 0 at the start and the index's end-% at the right edge.
@@ -229,7 +230,7 @@ run for real against the dedicated project on every PR.
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 daily / Pro 2 daily / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
-| S14 | Live-feed canary (live only) | Masthead lamp reads LIVE with a "Fetched" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
+| S14 | Live-feed canary (live only) | Masthead lamp reads LIVE with an "Updated" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
 
 ## Owner Communication Preferences
 - **Explanations of how things work (data flows, architecture, processes):

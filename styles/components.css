@@ -78,7 +78,7 @@
 .lamp--demo::before  { background: var(--color-series-3); box-shadow: 0 0 6px var(--color-series-3); }
 .lamp--locked::before { background: var(--color-text-secondary); }
 .lamp--stale::before  { background: var(--color-border-hover); }
-.stamp { font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+.stamp { font: 400 var(--font-2xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
 
 /* P&L pill — text carries meaning, color reinforces */
 .pill {

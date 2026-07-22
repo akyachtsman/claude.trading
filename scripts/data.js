@@ -126,7 +126,7 @@ function buildDemoBrief(accounts) {
   const mover = allPos.reduce((x, p) => (Math.abs(p.unrl) > Math.abs(x.unrl) ? p : x), allPos[0]);
   const cashPct = accounts.reduce((s, a) => s + a.cash, 0) / totalNav * 100;
   return {
-    generatedAt: 'Demo',
+    generatedAt: fmtUpdated(null, isoDate(lastTradingDay(new Date()))),
     state: 'Net liquidation across ' + accounts.length + ' accounts is ' + fmtUsd0(totalNav)
       + ', ' + (totalDay >= 0 ? 'up ' : 'down ') + fmtPct(Math.abs(dayPct)).slice(1)
       + ' on the day. ' + best.label + ' led with ' + fmtSigned(best.day) + '.',
@@ -287,8 +287,8 @@ function lampFor(asOfIso, now) {
   if (!asOfIso) return { cls: 'lamp--stale', text: 'NO DATA', stamp: '—' };
   const fresh = asOfIso >= ltd;
   return fresh
-    ? { cls: 'lamp--eod', text: 'EOD', stamp: 'As of ' + asOfIso }
-    : { cls: 'lamp--stale', text: 'STALE', stamp: 'As of ' + asOfIso + ' — refresh overdue' };
+    ? { cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(null, asOfIso) }
+    : { cls: 'lamp--stale', text: 'STALE', stamp: fmtUpdated(null, asOfIso) + ' — refresh overdue' };
 }
 
 /* Accounts/equity are IBKR END-OF-DAY statements: a session's statement only
@@ -305,11 +305,10 @@ function accountsLampFor(asOfIso, syncedAtIso, now) {
   const ltd = lastTradingDay(n);
   const prevTd = lastTradingDay(new Date(ltd.getFullYear(), ltd.getMonth(), ltd.getDate() - 1));
   const fresh = asOfIso >= isoDate(prevTd);   /* allow the overnight-roll lag */
-  const updated = syncedAtIso ? 'Updated ' + fmtStampDateTime(syncedAtIso) : 'As of ' + asOfIso;
-  const through = ' · through ' + asOfIso + ' close';
+  const stamp = fmtUpdated(syncedAtIso, asOfIso);   /* sync clock · statement day */
   return fresh
-    ? { cls: 'lamp--eod', text: 'EOD', stamp: updated + through }
-    : { cls: 'lamp--stale', text: 'STALE', stamp: updated + through + ' — sync overdue' };
+    ? { cls: 'lamp--eod', text: 'EOD', stamp }
+    : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — sync overdue' };
 }
 
 /* Auth: PIN-validated Supabase RPCs (SECURITY DEFINER, anon-only EXECUTE).
@@ -445,32 +444,31 @@ function fmtStampDateTime(iso) { /* local "YYYY-MM-DD HH:mm TZ"; '' if unparseab
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA') + ' ' + fmtClock(iso);
 }
 
-/* Freshness delta — how long ago a payload was generated, from its ISO
-   timestamp (generatedAt is the edge function's cache-generation time, so this
-   reads as the delay baked into the data the viewer sees). Coarsens past an
-   hour; '' if unparseable (demo / missing). */
-function fmtAgo(iso) {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '';
-  const min = Math.floor(ms / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return min + ' min ago';
-  const h = Math.floor(min / 60);
-  return h + (h === 1 ? ' hr ago' : ' hrs ago');
+/* "Mon D" short date from an ISO date/datetime; passes a value already in that
+   form through (demo labels). '' if empty. */
+function fmtShortDate(d) {
+  if (!d) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d));
+  return m ? MONTHS[+m[2] - 1] + ' ' + (+m[3]) : String(d);
+}
+/* Uniform terse freshness stamp used on EVERY panel (owner request 2026-07-21):
+   "Updated 17:14 PDT · Jul 21", dropping to "Updated Jul 21" when only a
+   trading-day as-of exists (no live fetch clock). '' if empty. */
+function fmtUpdated(fetchIso, asOfDate) {
+  const parts = [fetchIso ? fmtClock(fetchIso) : '', fmtShortDate(asOfDate)].filter(Boolean);
+  return parts.length ? 'Updated ' + parts.join(' · ') : '';
 }
 
-/* Two-tier lamp for live feeds (FR-R7): the lamp class answers "how fresh
-   is the FETCH" (LIVE ≤ 6 min), the stamp always carries the payload's own
-   data as-of so a LIVE lamp can never overstate quote freshness — plus the
-   fetch clock time and the minutes-since-fetch delay. */
+/* Two-tier lamp for live feeds (FR-R7): the lamp class answers "how fresh is
+   the FETCH" (LIVE ≤ 6 min); the stamp is the uniform "Updated {time} · {date}"
+   so a LIVE lamp can never overstate quote freshness. */
 function liveLampFor(generatedAt, dataAsOf) {
   const ageMs = Date.now() - new Date(generatedAt).getTime();
-  const t = fmtClock(generatedAt), ago = fmtAgo(generatedAt);
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
-  const delay = ago ? ' · ' + ago : '';
+  const stamp = fmtUpdated(generatedAt, dataAsOf);
   return fresh
-    ? { cls: 'lamp--live', text: 'LIVE', stamp: 'Fetched ' + t + delay + (dataAsOf ? ' · data as of ' + dataAsOf : '') }
-    : { cls: 'lamp--stale', text: 'STALE', stamp: 'Last fetch ' + t + delay + ' — refresh overdue' };
+    ? { cls: 'lamp--live', text: 'LIVE', stamp }
+    : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue' };
 }
 
 /* Map the RPC payload into the render model app.js uses (same shape demo
@@ -503,7 +501,7 @@ function mapDashboardPayload(payload) {
   if (payload.brief && payload.brief.content) {
     const c = payload.brief.content;
     brief = {
-      generatedAt: fmtStampDateTime(payload.brief.generated_at),
+      generatedAt: fmtUpdated(payload.brief.generated_at, payload.brief.as_of),
       state: c.state || '', levels: c.levels || [], scenarios: c.scenarios || [],
       asOf: payload.brief.as_of,
     };
