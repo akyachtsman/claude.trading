@@ -37,9 +37,16 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `scripts/data.js` — formatters, seeded demo generator, trading-day calendar,
   mode resolution, `deskFeed()` live-feed wrapper, `marketSessionOpen()`,
   two-tier `liveLampFor` staleness lamps; every panel stamp renders one uniform
-  terse format via `fmtUpdated` — `Updated {time} · {Mon D}` (clock dropped when
-  only a trading-day as-of exists), Supabase RPC fetch wrappers. **Every clock
-  on the desk is pinned to Pacific** (`DESK_TZ`, owner ruling 2026-07-22):
+  terse format via `fmtUpdated` — `Last updated {time} · {Mon D}` (clock dropped
+  when only a trading-day as-of exists). The clock is when the DATA last changed,
+  NOT the fetch (owner ruling 2026-07-22): for price feeds (`liveLampFor(...,
+  priceBound=true)` — market/heatmap/charts/masthead) once the market is closed
+  the stamp reads the session close (`marketCloseInstant` = 16:00 ET / 1:00pm PT
+  on the as-of day) instead of the hourly re-poll clock; intraday and non-price
+  feeds (news) keep the fetch clock (≈ now). The lamp class still keys off the
+  fetch, so a LIVE lamp never overstates the feed being alive. Supabase RPC fetch
+  wrappers. **Every clock on the desk is pinned to Pacific** (`DESK_TZ`, owner
+  ruling 2026-07-22):
   stamps via `fmtClock`, intraday bar times via `fmtBarT`, news row times via
   `utcHmToPt` — never the viewer's locale, never raw UTC.
   `buildDemoMarkets()` seeds the Markets window's normalized %-change series —
