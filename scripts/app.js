@@ -2225,7 +2225,7 @@ function renderCharts(data, lamp) {
          display) toggling keeps the dock's height reserved, so no jumps. */
       const chg = i > 0 ? (bars.c[i] / bars.c[i - 1] - 1) * 100 : 0;
       const row = el('div', 'tip-row');
-      row.appendChild(el('span', 'tip-date', (opts.tier ? opts.tier.toUpperCase() + ' · ' : '') + (opts.sym || wbState.sym) + ' · ' + bars.t[i] + ' · '));
+      row.appendChild(el('span', 'tip-date', (opts.tier ? opts.tier.toUpperCase() + ' · ' : '') + (opts.sym || wbState.sym) + ' · ' + fmtBarT(bars.t[i]) + ' · '));
       row.appendChild(document.createTextNode('O ' + fmtPrice(bars.o[i]) + ' H ' + fmtPrice(bars.h[i]) + ' L ' + fmtPrice(bars.l[i]) + ' C ' + fmtPrice(bars.c[i]) + ' '));
       row.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
       const bits = ['Vol ' + fmtVol(bars.v[i])];
@@ -2840,7 +2840,8 @@ async function refreshNews() {
   try {
     const news = await deskFeed('desk-news');
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
-    DESK.data.news = news.items || [];
+    /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
+    DESK.data.news = (news.items || []).map(it => ({ ...it, t: utcHmToPt(it.t) }));
     renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
     newsLive = true;
     return;
