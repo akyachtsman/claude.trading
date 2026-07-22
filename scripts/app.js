@@ -1064,6 +1064,7 @@ const MAP_CUTS = [
 ];
 const MAP_PERIODS = [['1d', '1-Day Performance'], ['1w', '1-Week Performance'], ['1m', '1-Month Performance'], ['ytd', 'YTD Performance']];
 let heatBase = null;                        /* raw dataset + lamp from loadHeatmap */
+let heatRetryTimer = 0, heatRetryWait = 0;  /* live first-load fast-retry backoff */
 let heatExtra = null;                       /* desk-maps payload (crypto/futures/world, delayed quotes) */
 let heatExtraAt = 0;                        /* fetch timestamp — refetch on cut click when stale */
 let heatR2k = null;                         /* desk-heatmap universe:r2k payload + lamp */
@@ -1281,11 +1282,22 @@ async function loadHeatmap() {
   if (DESK.mode !== 'demo') {
     try {
       const hm = await deskFeed('desk-heatmap');
+      clearTimeout(heatRetryTimer); heatRetryWait = 0;
       heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf) };
       applyMapView();
       return;
-    } catch { /* poller failure below */ }
+    } catch { /* failure paths below */ }
     if (heatBase) return; /* poller failure: keep the last good map */
+    /* LIVE first-load failure: real data or NOTHING (owner ruling 2026-07-22
+       — the old silent buildDemoHeatmap() fallback put FABRICATED prices on a
+       live desk). Blank canvas + STALE lamp + a fast retry chain (15s → 30s →
+       60s cap), instead of sitting on fake tiles until the 5/60-min poller. */
+    renderHeatmap(null, { cls: 'lamp--stale', text: 'STALE' });
+    document.getElementById('heatSource').textContent = 'Heatmap feed unreachable — nothing shown until real data arrives. Retrying…';
+    heatRetryWait = Math.min(60000, (heatRetryWait || 7500) * 2);
+    clearTimeout(heatRetryTimer);
+    heatRetryTimer = setTimeout(loadHeatmap, heatRetryWait);
+    return;
   }
   heatBase = { hm: buildDemoHeatmap(), lamp: { cls: 'lamp--demo', text: 'Demo' } };
   applyMapView();
