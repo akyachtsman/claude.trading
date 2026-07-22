@@ -53,9 +53,13 @@ support/resistance lines; risk is managed with stops and hard hygiene rules
 - Historical note: the source course charts ran 10-3 and the owner's spoken
   convention was "13 weeks"; the workbench rendered 13-3-3 until the terminal
   fit showed the terminal itself computes 14-3-3 / 92-15-15.
-- Pro 3's 5-minute stochastic shares the daily 14-3-3 explicitly (uniform
-  config, terminal-faithful default) — no intraday terminal readout has been
-  fitted yet; refit if the owner captures one.
+- **Pro 3 intraday — fitted 2026-07-22** from the owner's terminal Pro 3 hover
+  (INTC, bar Jul 21 10:00 ET): the terminal runs **15-minute bars** (its hover
+  OHLC matched our 5-min feed aggregated to 15-min exactly) with a **10-3-3
+  slow** stochastic (`ISTOCH`) — which is precisely the course deck's original
+  "slow smooth K-10 D-3". The desk's Pro 3 now displays 15-min bars with
+  10-3-3. Single-anchor fit corroborated by the course prior; a second hover
+  readout would harden it further.
 - Readings: high band = overbought, low band = oversold (the workbench draws
   guides at 80/20). The daily oscillates fast; the weekly turns slowly — a
   weekly turn is trend information, not noise.
@@ -380,8 +384,9 @@ hammer auto-marking.
 - [x] ~~Owner ruling: stochastic lookback **10 vs 13**~~ — superseded 2026-07-22:
       the reference terminal was measured directly (daily **14-3-3**, weekly
       **92-15-15** on daily bars); the terminal is the source of truth
-- [ ] Fit Pro 3's intraday stochastic if the owner captures a terminal
-      5-minute hover readout (currently shares the daily 14-3-3 explicitly)
+- [x] ~~Fit Pro 3's intraday stochastic~~ — done 2026-07-22: terminal Pro 3 =
+      **15-min bars, 10-3-3 slow** (single anchor + course-deck corroboration);
+      a second terminal hover readout would confirm it beyond doubt
 - [ ] Confirm which timeframe pairs matter beyond daily/weekly (their pro
   tool shows an intraday pane — needs the quote-proxy backend, separate approval)
 - [ ] Define the S/R formula the owner actually wants (classic pivots vs

@@ -213,6 +213,15 @@ const CHART_BARS = 800; /* matches the feeds' KEEP_BARS: ~3y view + warmup */
      also why its weekly line is smooth and still updates daily. */
 const STOCH = { k: 14, kSmooth: 3, d: 3 };
 const WSTOCH = { k: 92, kSmooth: 15, d: 15 };
+/* Intraday (Pro 3) — fitted 2026-07-22 from the terminal's Pro 3 hover readout
+   (INTC, bar Jul 21 10:00 ET): the terminal's Pro 3 runs 15-MINUTE bars (its
+   hover OHLC matched our 5-min feed aggregated to 15-min exactly, ±0.02), and
+   the readout %K 79.21/%D 59.86 fits 10-3-3 slow (err 0.078). Single-anchor
+   fit — %K alone was lookback-degenerate, %D picked 10 — but corroborated
+   independently: the source course deck documents "slow smooth K-10 D-3"
+   (strategies/stochastic-investing.md). So the terminal's tiers are
+   10-3-3 intraday / 14-3-3 daily / 92-15-15 weekly-scale. */
+const ISTOCH = { k: 10, kSmooth: 3, d: 3 };
 
 function tradingISODates(n, endDate) {
   const out = []; const d = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
