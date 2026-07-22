@@ -248,7 +248,17 @@ function drawMktChart() {
   const W = Math.max(320, Math.round(svg.parentElement.clientWidth || 600)), H = 150;
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   const set = mktState.series && mktState.series[mktState.tf];
-  const lines = set ? MKT_INDEX.map(ix => ({ color: ix.color, vals: set[ix.key] })).filter(l => l.vals && l.vals.length) : [];
+  const isToday = mktState.tf === 'today';
+  const lines = set ? MKT_INDEX.map(ix => {
+    let vals = set[ix.key];
+    /* Today: land the line exactly on the tile's live day-% (owner ruling
+       2026-07-22). Re-pinned here (not baked in) so it tracks the ticking tile. */
+    if (isToday && vals && vals.length) {
+      const t = mktTileByName(DESK.data.market, ix.tile);
+      if (t) vals = pinEnd(vals, t.chg);
+    }
+    return { color: ix.color, vals };
+  }).filter(l => l.vals && l.vals.length) : [];
   const padR = 46, plotW = W - padR - 6, plotH = H - 14;
   if (!lines.length) {
     const tx = svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', 'font-family': 'var(--font-sans)', 'font-size': 11, fill: 'var(--color-text-secondary)' });
@@ -279,26 +289,55 @@ function drawMktChart() {
 }
 
 /* Live chart series: fetch each index proxy's daily (covers 1M/1Y/2Y) and
-   intraday (covers Today/5D) once, normalise each window to %-change from its
-   first bar. Runs after the first live market render; tiles + sectors already
-   show, so a failure just leaves the chart in its loading state. */
+   intraday (covers Today/5D) once. Multi-day windows normalise to %-change from
+   the window's first bar (0 at the left edge). "Today" is special (owner ruling
+   2026-07-22): the line must open at 0% on the prior close, trace the real
+   intraday %-change bar by bar, and finish EXACTLY on the headline day-% the
+   tile shows (e.g. −0.64%). buildMktSeries stores the raw prior-close path;
+   drawMktChart re-pins its right edge to the live tile each render (below), so
+   the line always agrees with the tile even as the tile ticks through the day.
+   Runs after the first live market render; tiles + sectors already show, so a
+   failure just leaves the chart in its loading state. */
 let mktSeriesPending = false, mktSeriesDone = false;
 function normPct(closes, start) {
   const base = closes[start];
   if (!base) return [];
   return closes.slice(start).map(c => Number(((c / base - 1) * 100).toFixed(3)));
 }
+/* Today's raw path: 0% at the prior session close, then real %-change per bar.
+   Isolates TODAY's bars (by date) so early-session windows don't bleed into the
+   prior day, and anchors to the prior session's last close so the opening gap
+   shows honestly. Endpoint pinning to the exact tile day-% happens at draw. */
+function todayLine(intra) {
+  const c = (intra && intra.c) || [], t = (intra && intra.t) || [];
+  if (c.length < 2 || t.length !== c.length) return [];
+  const day = (t[t.length - 1] || '').slice(0, 10);            /* latest bar's date */
+  let first = 0; while (first < t.length && t[first].slice(0, 10) !== day) first++;
+  const base = first > 0 ? c[first - 1] : c[0];                /* prior session close */
+  const todays = c.slice(first);
+  if (!base || todays.length < 1) return [];
+  return [0, ...todays.map(x => Number(((x / base - 1) * 100).toFixed(3)))];   /* lead 0 = prior close */
+}
 function buildMktSeries(per) {
   const out = { today: {}, '5d': {}, '1m': {}, '1y': {}, '2y': {} };
   for (const p of per) {
     const d = (p.daily && p.daily.c) || [], i = (p.intra && p.intra.c) || [];
-    out.today[p.key] = i.length ? normPct(i, Math.max(0, i.length - 78)) : [];   /* ~1 session of 5-min bars */
+    out.today[p.key] = todayLine(p.intra);
     out['5d'][p.key] = i.length ? normPct(i, 0) : [];
     out['1m'][p.key] = d.length ? normPct(d, Math.max(0, d.length - 22)) : [];
     out['1y'][p.key] = d.length ? normPct(d, Math.max(0, d.length - 252)) : [];
     out['2y'][p.key] = d.length ? normPct(d, Math.max(0, d.length - 504)) : [];
   }
   return out;
+}
+/* Pin a raw %-change path's right edge to `target` while keeping its shape: a
+   hairline linear tilt so the line still opens at 0 and now closes exactly on
+   the index tile's day-%. Reconciles the ETF proxy's close with the index's. */
+function pinEnd(raw, target) {
+  const m = raw.length - 1;
+  if (m < 1 || typeof target !== 'number' || !Number.isFinite(target)) return raw;
+  const drift = target - raw[m];
+  return raw.map((v, i) => Number((v + drift * (i / m)).toFixed(3)));
 }
 async function fetchMktSeries() {
   if (mktSeriesPending || mktSeriesDone || DESK.mode === 'demo' || !DESK_DB.url) return;
