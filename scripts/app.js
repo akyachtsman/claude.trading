@@ -1299,22 +1299,24 @@ window.addEventListener('resize', () => {
   heatResizeTimer = setTimeout(() => renderHeatmap(heatState.hm, heatState.lamp), 150);
 });
 
-/* ── watchlist charts (candles + volume + daily/weekly-13 stochastics) ─────
+/* ── watchlist charts (candles + volume + daily/weekly-scale stochastics) ──
    The desk's chart workbench, in the dashboard's own idiom: EOD candlesticks
    for a fixed public watchlist, classic floor-trader pivots from the prior
-   calendar month, and the signature 13-period slow stochastic on BOTH daily
-   bars and weekly bars (owner spec: "daily and weekly (13)"). Candle green/
-   red is price-direction semantics (like the heatmap), not decoration. */
+   calendar month, and the reference terminal's slow stochastics — STOCH
+   (14-3-3 daily) and WSTOCH (92-15-15 weekly-scale, both on daily bars; see
+   data.js for how they were fitted). Candle green/red is price-direction
+   semantics (like the heatmap), not decoration. */
 /* %K red / %D yellow mirror the reference terminal's stochastic indicator colors
    (owner request 2026-07-22, "identical to theirs"). These are dedicated
    indicator-palette hexes, NOT the P&L --color-loss/gain tokens — the red here is
    a chart-series color, not a P&L signal; red-vs-yellow stays CVD-distinguishable
    by lightness. */
 const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
-/* Strip caption derived from the live STOCH setting so the label can never
-   disagree with the math (e.g. "STOCH 13-3-3"). STOCH is defined in data.js,
-   which loads first; this runs at render time, so it's always resolved. */
+/* Strip captions derived from the live STOCH/WSTOCH settings so the label can
+   never disagree with the math (e.g. "STOCH 14-3-3"). Both are defined in
+   data.js, which loads first; these run at render time, so always resolved. */
 function stochTag() { return `STOCH ${STOCH.k}-${STOCH.kSmooth}-${STOCH.d}`; }
+function stochWTag() { return `STOCH ${WSTOCH.k}-${WSTOCH.kSmooth}-${WSTOCH.d}`; }
 const WB_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];
 const WB2_ZOOMS = [['1M', 21], ['3M', 63], ['6M', 126], ['YTD', 'ytd'], ['1Y', 252], ['All', 9999]];  /* Pro 2 window, in daily bars — Pro 2 now plots daily candles (daily+weekly stoch), not weekly */
 
@@ -1537,77 +1539,17 @@ function monthlyPivots(s) {
    through %D from at/below the oversold band; a SELL is the top-roll — %K
    crossing down through %D from at/above the overbought band. (strategies/
    stochastic-investing.md — the cycle anatomy.) */
-/* Weekly-timeframe stochastic drawn on the daily chart, computed WEEK-TO-DATE so
-   it matches the reference terminal exactly (owner comparison 2026-07-22: the
-   former between-weeks interpolation read ~4 pts high mid-week — it slid toward
-   the NEXT Friday's close, which hadn't happened yet). For each day we take the
-   completed prior weeks (full H/L/C) plus the CURRENT week formed only through
-   that day, run the classic 13-3-3 slow stochastic on that weekly series, and
-   read off the last value. So the line updates every day as the week builds and
-   lands on the completed-week reading exactly at each week's close — no
-   interpolation, no staircase. STOCH supplies the 13/3/3 periods; verified
-   equal to the completed-week series at week closes to machine precision.
-   (A period-scaled daily stochastic would drift from the real weekly signal —
-   Codex #134; step-holding drew a staircase; interpolation ran hot — this turn.) */
-function weeklyStochOnDaily(daily) {
-  const { k: kP, kSmooth: kS, d: dP } = STOCH;
-  const n = daily.c.length;
-  const k = new Array(n).fill(null);
-  const d = new Array(n).fill(null);
-  const isoWeek = t => {
-    const dt = new Date(t + 'T12:00:00Z');
-    return new Date(dt.getTime() - (((dt.getUTCDay() + 6) % 7) * 86400000)).toISOString().slice(0, 10);
-  };
-  /* Per-day week index + week-to-date H/L/C (the current week through that day).
-     The last write per week leaves fullH/L/C holding the completed-week bar. */
-  const weekOf = new Array(n);
-  const wtdH = new Array(n), wtdL = new Array(n), wtdC = new Array(n);
-  const fullH = [], fullL = [], fullC = [];
-  let key = null, w = -1;
-  for (let i = 0; i < n; i++) {
-    const wk = isoWeek(daily.t[i]);
-    if (wk !== key) { key = wk; w++; wtdH[i] = daily.h[i]; wtdL[i] = daily.l[i]; }
-    else { wtdH[i] = Math.max(wtdH[i - 1], daily.h[i]); wtdL[i] = Math.min(wtdL[i - 1], daily.l[i]); }
-    wtdC[i] = daily.c[i]; weekOf[i] = w;
-    fullH[w] = wtdH[i]; fullL[w] = wtdL[i]; fullC[w] = wtdC[i];
-  }
-  const nW = w + 1;
-  /* raw %K over kP weekly bars; the LAST bar is overridden by (curH/curL/curC)
-     so the current week can be supplied week-to-date. Null before kP weeks. */
-  const rawK = (wEnd, curH, curL, curC) => {
-    if (wEnd < kP - 1) return null;
-    let hi = curH, lo = curL;
-    for (let j = wEnd - kP + 1; j < wEnd; j++) { if (fullH[j] > hi) hi = fullH[j]; if (fullL[j] < lo) lo = fullL[j]; }
-    return hi === lo ? 50 : (curC - lo) / (hi - lo) * 100;
-  };
-  /* completed-week raw %K and its SMA(kS) — the fixed terms prior weeks feed in */
-  const rawFull = new Array(nW).fill(null);
-  for (let ww = 0; ww < nW; ww++) rawFull[ww] = rawK(ww, fullH[ww], fullL[ww], fullC[ww]);
-  const smoothFull = new Array(nW).fill(null);
-  for (let ww = kS - 1; ww < nW; ww++) {
-    let s = 0, ok = true;
-    for (let j = ww - kS + 1; j <= ww; j++) { if (rawFull[j] == null) { ok = false; break; } s += rawFull[j]; }
-    if (ok) smoothFull[ww] = s / kS;
-  }
-  /* Per day: the current week's WTD raw %K blended with the prior completed
-     weeks — %K = SMA(kS) of raw %K, %D = SMA(dP) of that %K. */
-  for (let i = 0; i < n; i++) {
-    const ww = weekOf[i];
-    const rk = rawK(ww, wtdH[i], wtdL[i], wtdC[i]);
-    if (rk == null) continue;
-    let sK = rk, okK = true;
-    for (let m = 1; m < kS; m++) { const r = rawFull[ww - m]; if (r == null) { okK = false; break; } sK += r; }
-    if (!okK) continue;
-    const kw = sK / kS;
-    k[i] = kw;   /* %K is valid as soon as its own SMA(kS) terms exist — do NOT gate
-                    it on %D, which lags by (dP-1) weeks (matches stochSeries: %K
-                    lights up ~2 weeks before %D on the All-history left edge). */
-    let sD = kw, okD = true;
-    for (let m = 1; m < dP; m++) { const s = smoothFull[ww - m]; if (s == null) { okD = false; break; } sD += s; }
-    if (okD) d[i] = sD / dP;
-  }
-  return { k, d };
-}
+/* Weekly-timeframe stochastic — the reference terminal's "weekly" is a
+   SCALED-PERIOD DAILY stochastic (92-15-15 slow on daily bars, WSTOCH in
+   data.js), NOT one computed on weekly bars. Established 2026-07-22 by fitting
+   the terminal's hover readouts on live INTC data: three independent anchors
+   (Jan 12, Jan 28, Apr 15 2026), all 12 daily+weekly values reproduced to
+   ±0.02 — and neighboring parameter sets show clear error gradients, so the
+   fit is not coincidental. This supersedes the weekly-bar attempts (Codex #134
+   period-scaling worry, step-holding, interpolation, week-to-date): the
+   terminal IS the definition here, and the big windows also give the smooth
+   daily-updating texture its weekly band shows. */
+const weeklyStochOnDaily = daily => stochSeries(daily, WSTOCH);
 
 function stochMarks(st) {
   const buys = [], sells = [];
@@ -1869,7 +1811,7 @@ function renderCharts(data, lamp) {
        volume strip and 1–2 stochastic strips (native + weekly) leave over */
     const strips = [];
     if (opts.cfg.stoch) strips.push(['native', st, opts.stochCaption, true]);
-    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || (stochTag() + ' · WEEKLY (' + STOCH.k + ')'), false]);
+    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || (stochWTag() + ' · WEEKLY SCALE'), false]);
     /* Volume + stochastic pane heights are user-draggable (the resize bars
        below) and persisted per pane; the PRICE pane absorbs the change
        (owner request 2026-07-16). Defaults match the prior fixed sizes. */
@@ -2290,7 +2232,7 @@ function renderCharts(data, lamp) {
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
       stW: wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null,
       stochCaption: stochTag() + ' · DAILY',
-      stochWCaption: stochTag() + ' · WEEKLY (' + STOCH.k + ')',
+      stochWCaption: stochWTag() + ' · WEEKLY SCALE',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
@@ -2300,7 +2242,13 @@ function renderCharts(data, lamp) {
     const d = daily(sym);
     const intra = wbState.intraday && wbState.intraday[sym];
     if (intra) {
-      const ist = stochSeries(intra);
+      /* Intraday runs the SAME 14-3-3 as daily — explicit, not inherited: the
+         terminal fit (data.js) only anchored daily bars, and no terminal Pro 3
+         hover readout exists yet to fit intraday separately. Uniform config is
+         the terminal-faithful default (one indicator config across timeframes);
+         the old 13 had no evidence behind it either. Refit if the owner
+         supplies an intraday readout (strategies/stochastic-investing.md). */
+      const ist = stochSeries(intra, STOCH);
       panes.push([intra, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 5-MIN', {
         /* no presets: the range navigator sets the window (in 5-min bars)
            anywhere within the ~5-day intraday feed */
