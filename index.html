@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260721c">
-<link rel="stylesheet" href="styles/components.css?v=20260721c">
+<link rel="stylesheet" href="styles/tokens.css?v=20260721e">
+<link rel="stylesheet" href="styles/components.css?v=20260721e">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -165,10 +165,16 @@
     font: 400 var(--font-xs)/1.6 var(--font-mono); white-space: nowrap;
   }
   .chart-tip .tip-date { color: var(--color-text-secondary); }
-  /* charts-workbench crosshair readout: compact, pinned top-left over the box */
-  #wbTip { font-size: 9.5px; line-height: 1.45; padding: 3px 7px; border-radius: var(--radius-sm); opacity: .95; }
+  /* charts-workbench crosshair readout: ONE line docked in a fixed box BELOW
+     the chart (owner request 2026-07-22) — a constant spot that never covers
+     the canvas. It stays in the flow with visibility toggling, so the dock's
+     height is reserved and hover on/off never shifts the layout. */
+  /* min-height = the POPULATED box (15px line + 6px padding + 2px borders,
+     border-box), so emptying it on pointerleave can't shrink the dock; the
+     ellipsis lives on .tip-row — the block that actually overflows (#152) */
+  #wbTip { position: static; display: block; visibility: hidden; width: max-content; max-width: 100%; margin: 6px 0 0 6px; font-size: 10px; line-height: 1.5; min-height: 23px; padding: 3px 8px; border-radius: var(--radius-sm); opacity: .95; }
   #wbTip .tip-date { font-weight: 600; letter-spacing: .02em; }
-  #wbTip .tip-row { white-space: nowrap; }
+  #wbTip .tip-row { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   /* own scroll container: closed <details> content still participates in layout
      (content-visibility), so a wide movers table must never widen the body */
   .chart-data { overflow-x: auto; }
@@ -269,7 +275,6 @@
   .wb-side-btn .down { color: var(--color-loss); }
   #wbChart { display: block; width: 100%; height: 600px; }
   #wbChart text { pointer-events: none; }
-  #wbTip { line-height: 1.7; }
   #wbTip .up { color: var(--color-gain); }
   #wbTip .down { color: var(--color-loss); }
   .wb-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
@@ -591,8 +596,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260721c"></script>
-<script src="scripts/data.js?v=20260721c"></script>
-<script src="scripts/app.js?v=20260721c"></script>
+<script src="scripts/config.js?v=20260721e"></script>
+<script src="scripts/data.js?v=20260721e"></script>
+<script src="scripts/app.js?v=20260721e"></script>
 </body>
 </html>

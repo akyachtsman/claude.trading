@@ -38,7 +38,10 @@ This project's look is its own — established at kickoff via `/design-intake`
   mode resolution, `deskFeed()` live-feed wrapper, `marketSessionOpen()`,
   two-tier `liveLampFor` staleness lamps; every panel stamp renders one uniform
   terse format via `fmtUpdated` — `Updated {time} · {Mon D}` (clock dropped when
-  only a trading-day as-of exists), Supabase RPC fetch wrappers.
+  only a trading-day as-of exists), Supabase RPC fetch wrappers. **Every clock
+  on the desk is pinned to Pacific** (`DESK_TZ`, owner ruling 2026-07-22):
+  stamps via `fmtClock`, intraday bar times via `fmtBarT`, news row times via
+  `utcHmToPt` — never the viewer's locale, never raw UTC.
   `buildDemoMarkets()` seeds the Markets window's normalized %-change series —
   a detrended random walk per index (S&P/Nasdaq/Russell/Dow) per timeframe,
   pinned to 0 at the start and the index's end-% at the right edge.

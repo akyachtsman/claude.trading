@@ -466,14 +466,35 @@ function marketSessionOpen(now) {
    server timestamps are UTC ISO strings — parse and render them in the
    browser's own zone. Absolute trading-day dates (asOf) and the market-session
    logic above stay UTC/ET; only these wall-clock display stamps localize. */
-function fmtClock(iso) {         /* local "HH:mm TZ" (e.g. "12:45 EDT"); '' if unparseable */
+/* Every clock on the desk reads PACIFIC (owner ruling 2026-07-22) — pinned to
+   America/Los_Angeles rather than the viewer's locale, so stamps, bar times,
+   and news times agree with the owner's clock everywhere. */
+const DESK_TZ = 'America/Los_Angeles';
+function fmtClock(iso) {         /* "HH:mm PDT/PST"; '' if unparseable */
   const d = new Date(iso);
   return isNaN(d.getTime()) ? ''
-    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
+    : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short', timeZone: DESK_TZ });
 }
-function fmtStampDateTime(iso) { /* local "YYYY-MM-DD HH:mm TZ"; '' if unparseable */
+/* intraday bar stamp: feed times are UTC 'YYYY-MM-DD HH:mm' → Pacific display;
+   date-only daily bars pass through untouched */
+function fmtBarT(t) {
+  if (!t || t.length <= 10) return t;
+  const d = new Date(t.replace(' ', 'T') + ':00Z');
+  if (isNaN(d.getTime())) return t;
+  return d.toLocaleDateString('en-CA', { timeZone: DESK_TZ }) + ' ' +
+    d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ }) + ' PT';
+}
+/* news row clock: the feed sends UTC 'HH:mm' (headlines are all recent, so
+   today's date is a safe DST context) → Pacific 'HH:mm' */
+function utcHmToPt(hm) {
+  if (!/^\d\d:\d\d$/.test(hm || '')) return hm;
+  const d = new Date(new Date().toISOString().slice(0, 10) + 'T' + hm + ':00Z');
+  return isNaN(d.getTime()) ? hm
+    : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ });
+}
+function fmtStampDateTime(iso) { /* Pacific "YYYY-MM-DD HH:mm TZ"; '' if unparseable */
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA') + ' ' + fmtClock(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA', { timeZone: DESK_TZ }) + ' ' + fmtClock(iso);
 }
 
 /* "Mon D" short date from an ISO date/datetime; passes a value already in that
