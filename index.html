@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260721e">
-<link rel="stylesheet" href="styles/components.css?v=20260721e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260721f">
+<link rel="stylesheet" href="styles/components.css?v=20260721f">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -20,12 +20,15 @@
     font: 400 var(--font-base)/1.5 var(--font-sans);
   }
   /* The shell is full-bleed (no cap) so the charts panel can widen to the full
-     viewport; every OTHER top-level block (masthead, market strip, layout,
-     footer) keeps the readable 1560px column via the cap below — only
-     .area-charts opts out (owner ruling 2026-07-16: "lengthen the charts
-     window to full screen"). */
+     viewport; content blocks (market strip, layout, footer) keep the readable
+     1560px column via the cap below — .area-charts and .heat-panel opt out
+     (owner ruling 2026-07-16: "lengthen the charts window to full screen"),
+     and so does the MASTHEAD (owner request 2026-07-22): on wide monitors the
+     capped, centered header left the LIVE/Lock cluster floating mid-page —
+     the header now spans the full width so it pins to the true upper-right,
+     flush with the full-bleed panels' edge. */
   .shell { margin: 0 auto; padding: var(--space-4) var(--space-4) var(--space-8); }
-  .shell > *:not(.area-charts):not(.heat-panel) { max-width: 1560px; margin-inline: auto; }
+  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead) { max-width: 1560px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -596,8 +599,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260721e"></script>
-<script src="scripts/data.js?v=20260721e"></script>
-<script src="scripts/app.js?v=20260721e"></script>
+<script src="scripts/config.js?v=20260721f"></script>
+<script src="scripts/data.js?v=20260721f"></script>
+<script src="scripts/app.js?v=20260721f"></script>
 </body>
 </html>
