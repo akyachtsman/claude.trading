@@ -203,7 +203,10 @@ function buildDemoMarkets() {
 
 /* ── charts panel: demo OHLCV, weekly aggregation, stochastics ─────────── */
 const CHART_BARS = 800; /* matches the feeds' KEEP_BARS: ~3y view + warmup */
-const STOCH = { k: 13, kSmooth: 3, d: 3 }; /* 13-period slow — 13 days / 13 weeks */
+const STOCH = { k: 14, kSmooth: 3, d: 3 }; /* platform-standard 14,3,3 slow stochastic
+  (owner request 2026-07-22, was 13 — 13 read a different high/low window than the
+  14 that TradingView/StockCharts default to, offsetting %K/%D). Applied to daily
+  bars and, via weeklyStochOnDaily's weekly resample, to weekly bars. */
 
 function tradingISODates(n, endDate) {
   const out = []; const d = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
@@ -243,9 +246,10 @@ function buildDemoCharts() {
   return { asOf: t[t.length - 1], source: 'demo', count: DEMO_CHART_SYMBOLS.length, symbols };
 }
 
-/* (Weekly/monthly bar resamplers were removed 2026-07-19: the weekly stochastic
-   now runs directly on daily bars with 5×-scaled periods so it updates daily —
-   see weeklyStochOnDaily in app.js — and nothing else consumed them.) */
+/* (The standalone weekly/monthly bar resamplers were removed 2026-07-19: the
+   weekly stochastic now resamples daily bars into ISO-week bars inline and runs
+   the same STOCH periods on them, interpolating across days so it updates daily —
+   see weeklyStochOnDaily in app.js — and nothing else consumed the old ones.) */
 
 /* Slow stochastic on packed bars: raw %K over `k` bars → SMA(kSmooth) → %D =
    SMA(d). Warmup slots are null. Flat ranges read 50 (no signal, not a spike). */
