@@ -2681,10 +2681,22 @@ function wireCharts() {
   });
 }
 
+let chartsRetryTimer = 0, chartsRetryWait = 0;  /* live first-load fast-retry backoff */
+/* blank workbench + STALE lamp — live mode's honest empty state (owner ruling
+   2026-07-22: live is REAL DATA OR NOTHING, across every panel) */
+function renderChartsUnavailable() {
+  const lampEl = document.getElementById('chartsLamp');
+  lampEl.className = 'lamp lamp--stale'; lampEl.textContent = 'STALE';
+  document.getElementById('chartsStamp').textContent = 'Charts feed unreachable — nothing shown until real data arrives. Retrying…';
+  const svg = document.getElementById('wbChart');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+}
+
 async function loadCharts() {
   if (DESK.mode !== 'demo') {
     try {
       const data = await deskFeed('desk-charts');
+      clearTimeout(chartsRetryTimer); chartsRetryWait = 0;
       for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); }
       if (wbState) {
         /* poller path: refresh bars in place so the user's selected symbol,
@@ -2702,8 +2714,22 @@ async function loadCharts() {
          (which renders the demo fallback) still restores after recovery */
       if (!wbStickyRestored) { wbStickyRestored = true; restoreStickySymbols(); }
       return;
-    } catch { /* poller failure below */ }
+    } catch { /* failure paths below */ }
     if (wbState) return; /* poller failure: keep the last good workbench */
+    /* LIVE first-load failure: blank + STALE + fast retry (visibility-aware,
+       mirrors loadHeatmap) — never the demo generator on a live desk. */
+    renderChartsUnavailable();
+    chartsRetryWait = Math.min(60000, (chartsRetryWait || 7500) * 2);
+    clearTimeout(chartsRetryTimer);
+    chartsRetryTimer = setTimeout(() => {
+      if (!document.hidden) { loadCharts(); return; }
+      const once = () => {
+        document.removeEventListener('visibilitychange', once);
+        if (!document.hidden && !wbState) loadCharts();
+      };
+      document.addEventListener('visibilitychange', once);
+    }, chartsRetryWait);
+    return;
   }
   renderCharts(buildDemoCharts(), { cls: 'lamp--demo', text: 'Demo' });
 }
@@ -2987,6 +3013,12 @@ async function boot() {
   }
   /* live: public domains render immediately; private waits for PIN */
   DESK.data = buildDemoData(); /* placeholder series shapes until auth */
+  /* Owner ruling 2026-07-22: live is REAL DATA OR NOTHING. Blank the demo
+     market tiles + headlines so a failed first fetch renders an empty strip/
+     Markets/news (Stale lamp) instead of fabricated prices labeled Stale —
+     and so the demo tiles can never leak into the ask context either. */
+  DESK.data.market = [];
+  DESK.data.news = [];
   await Promise.all([refreshMarket(), refreshNews()]);
   renderMasthead();
   loadHeatmap();

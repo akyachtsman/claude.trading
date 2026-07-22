@@ -193,6 +193,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   (renew in Client Portal → update the `IBKR_FLEX_TOKEN` function secret).
 
 ## Project-Specific Coding Standards
+- **Live mode is REAL DATA OR NOTHING (owner ruling 2026-07-22):** no panel
+  may ever render demo/fabricated data while `DESK.mode !== 'demo'` — a feed
+  failure shows a blank/empty state with a STALE lamp and a fast retry
+  (visibility-aware), or keeps the last good LIVE render. The demo generator
+  is exclusively for `?demo=1`.
 - Price-change percentages use **2 decimals** (finance convention) — a
   deliberate exception to the editorial whole-number rule; allocation-style
   percentages stay whole.
