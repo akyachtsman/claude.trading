@@ -58,8 +58,13 @@ support/resistance lines; risk is managed with stops and hard hygiene rules
   OHLC matched our 5-min feed aggregated to 15-min exactly) with a **10-3-3
   slow** stochastic (`ISTOCH`) — which is precisely the course deck's original
   "slow smooth K-10 D-3". The desk's Pro 3 now displays 15-min bars with
-  10-3-3. Single-anchor fit corroborated by the course prior; a second hover
-  readout would harden it further.
+  10-3-3. **Confirmed on a second independent anchor** (Jul 21 12:15 ET:
+  terminal %K 82.62/%D 82.44 — ours computes 82.62/82.44 exactly, same-bar
+  OHLC identical to the cent). Known benign residual: per-bar VOLUME differs
+  from the terminal (~+57% on the checked bar) because our feed reports the
+  consolidated tape while the terminal's vendor counts roughly the primary
+  exchange only — prices match to the cent, so it's a tape convention, not a
+  data or math error.
 - Readings: high band = overbought, low band = oversold (the workbench draws
   guides at 80/20). The daily oscillates fast; the weekly turns slowly — a
   weekly turn is trend information, not noise.
@@ -385,8 +390,8 @@ hammer auto-marking.
       the reference terminal was measured directly (daily **14-3-3**, weekly
       **92-15-15** on daily bars); the terminal is the source of truth
 - [x] ~~Fit Pro 3's intraday stochastic~~ — done 2026-07-22: terminal Pro 3 =
-      **15-min bars, 10-3-3 slow** (single anchor + course-deck corroboration);
-      a second terminal hover readout would confirm it beyond doubt
+      **15-min bars, 10-3-3 slow** — CONFIRMED on a second independent anchor
+      the same day (12:15 ET bar: 82.62/82.44 exact, OHLC to the cent)
 - [ ] Confirm which timeframe pairs matter beyond daily/weekly (their pro
   tool shows an intraday pane — needs the quote-proxy backend, separate approval)
 - [ ] Define the S/R formula the owner actually wants (classic pivots vs
