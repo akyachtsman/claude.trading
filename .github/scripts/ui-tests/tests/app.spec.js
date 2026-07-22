@@ -728,8 +728,9 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   const chart = page.locator('#wbChart');
   await expect(chart.locator('rect').first()).toBeVisible({ timeout: 10000 });
 
-  // default split: all three pane captions, candles, and stoch paths (k+d ×3)
-  for (const cap of ['PRO 1 · DAILY', 'PRO 2 · DAILY', 'PRO 3 · DAY TRADING']) {
+  // default split: all three pane captions (tier names per owner ruling
+  // 2026-07-22: Pro 1 = swing, Pro 2 = long-term), candles, stoch paths (k+d ×3)
+  for (const cap of ['PRO 1 · SWING', 'PRO 2 · LONG-TERM', 'PRO 3 · DAY TRADING']) {
     await expect(chart, `missing pane caption ${cap}`).toContainText(cap);
   }
   expect(await chart.locator('rect').count(), 'candle/volume rects must render').toBeGreaterThan(30);
@@ -750,10 +751,10 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
 
   // pane layout seg maximizes a single tier and returns to split
   await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();
-  await expect(chart).not.toContainText('PRO 1 · DAILY');
-  await expect(chart).toContainText('PRO 2 · DAILY');
+  await expect(chart).not.toContainText('PRO 1 · SWING');
+  await expect(chart).toContainText('PRO 2 · LONG-TERM');
   await page.locator('#chartLayout button', { hasText: 'Split' }).click();
-  await expect(chart).toContainText('PRO 1 · DAILY');
+  await expect(chart).toContainText('PRO 1 · SWING');
 
   // per-pane header bars: each gear opens its own popover above its pane.
   // The weekly-stoch overlay toggle now lives on Pro 2 ALONE (owner ruling

@@ -1437,10 +1437,23 @@ const wbRealSyms = new Set();          /* symbols backed by REAL data (live desk
 const MIN_NAV_WIN = 20;   /* smallest window the navigator can shrink to (bars) */
 window.addEventListener('pointermove', ev => {
   if (!wbDrag || !wbState) return;
-  if (wbDrag.resize) {   /* vertical drag: resize the volume / stochastic pane */
+  if (wbDrag.resize === 'stochSplit') {
+    /* the divider BETWEEN the daily and weekly strips: dragging down grows the
+       daily strip and shrinks the weekly by the same amount (total constant,
+       price pane untouched), clamped so neither strip drops below min. */
     const dy = (ev.clientY - wbDrag.startY) * wbDrag.scaleY;
-    const nv = Math.round(Math.max(wbDrag.min, Math.min(wbDrag.max,
-      wbDrag.startH - (wbDrag.resize === 'stoch' ? dy / wbDrag.strips : dy))));
+    const d = Math.round(Math.max(-(wbDrag.startH - wbDrag.min), Math.min(wbDrag.startWH - wbDrag.min, dy)));
+    if (wbDrag.cfg.stochH !== wbDrag.startH + d || wbDrag.cfg.stochWH !== wbDrag.startWH - d) {
+      wbDrag.cfg.stochH = wbDrag.startH + d;
+      wbDrag.cfg.stochWH = wbDrag.startWH - d;
+      cancelAnimationFrame(wbPanRaf);
+      wbPanRaf = requestAnimationFrame(() => renderCharts(wbState.data, wbState.lamp));
+    }
+    return;
+  }
+  if (wbDrag.resize) {   /* vertical drag: resize the volume / daily-stoch pane */
+    const dy = (ev.clientY - wbDrag.startY) * wbDrag.scaleY;
+    const nv = Math.round(Math.max(wbDrag.min, Math.min(wbDrag.max, wbDrag.startH - dy)));
     const key = wbDrag.resize === 'vol' ? 'volH' : 'stochH';
     if (wbDrag.cfg[key] !== nv) {
       wbDrag.cfg[key] = nv;
@@ -1551,15 +1564,17 @@ function monthlyPivots(s) {
    daily-updating texture its weekly band shows. */
 const weeklyStochOnDaily = daily => stochSeries(daily, WSTOCH);
 
-function stochMarks(st) {
+function stochMarks(st, os = 20, ob = 80) {
   const buys = [], sells = [];
   for (let i = 1; i < st.k.length; i++) {
     if (st.k[i] == null || st.d[i] == null || st.k[i - 1] == null || st.d[i - 1] == null) continue;
     /* buy: %K up through %D with BOTH at/below the oversold band; sell: the
        top-roll — down through %D AND dropping OUT of the overbought band
-       (an embedded cross that stays pinned above 80 is trend, not a sell). */
-    if (st.k[i - 1] <= st.d[i - 1] && st.k[i] > st.d[i] && st.k[i - 1] <= 20 && st.d[i - 1] <= 20) buys.push(i);
-    if (st.k[i - 1] >= st.d[i - 1] && st.k[i] < st.d[i] && st.d[i - 1] >= 80 && st.k[i] < 80) sells.push(i);
+       (an embedded cross that stays pinned above the band is trend, not a
+       sell). Bands parameterized: daily/intraday use 20/80, the weekly-scale
+       strip 30/80 (its drawn oversold band). */
+    if (st.k[i - 1] <= st.d[i - 1] && st.k[i] > st.d[i] && st.k[i - 1] <= os && st.d[i - 1] <= os) buys.push(i);
+    if (st.k[i - 1] >= st.d[i - 1] && st.k[i] < st.d[i] && st.d[i - 1] >= ob && st.k[i] < ob) sells.push(i);
   }
   return { buys, sells };
 }
@@ -1809,14 +1824,20 @@ function renderCharts(data, lamp) {
     const bodyW = Math.max(1, Math.min(9, slotW * 0.66));
     /* vertical layout flexes with the toggles: price takes whatever the
        volume strip and 1–2 stochastic strips (native + weekly) leave over */
+    /* Each strip carries ITS OWN doctrine marks (owner ruling 2026-07-22:
+       Pro 1 = swing → circles on the DAILY strip; Pro 2 = long-term → circles
+       on the WEEKLY strip): 4th tuple slot = the marks object to draw, or null. */
     const strips = [];
-    if (opts.cfg.stoch) strips.push(['native', st, opts.stochCaption, true]);
-    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || (stochWTag() + ' · WEEKLY SCALE'), false]);
+    if (opts.cfg.stoch) strips.push(['native', st, opts.stochCaption, opts.hideNativeMarks ? null : marks]);
+    if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || (stochWTag() + ' · WEEKLY SCALE'), opts.marksW || null]);
     /* Volume + stochastic pane heights are user-draggable (the resize bars
        below) and persisted per pane; the PRICE pane absorbs the change
-       (owner request 2026-07-16). Defaults match the prior fixed sizes. */
+       (owner request 2026-07-16). The weekly strip has its OWN height
+       (stochWH) so the divider between daily and weekly is movable too
+       (owner request 2026-07-22). Defaults match the prior fixed sizes. */
     let vH = opts.cfg.vol ? (opts.cfg.volH ?? 50) : 0;
     let sH = opts.cfg.stochH ?? (strips.length === 2 ? 68 : 88);
+    let sWH = strips.length === 2 ? (opts.cfg.stochWH ?? sH) : 0;
     const pY = 22;
     /* bottom reserve holds the x-axis month labels + the range navigator
        strip (opts.nav); fixed so chartBot lines up across panes */
@@ -1830,16 +1851,18 @@ function renderCharts(data, lamp) {
     const MIN_PH = 140;
     const gaps = (vH ? 8 : 0) + strips.length * 14;
     const hBudget = H - pY - navReserve - MIN_PH - gaps;
-    const hNeed = vH + strips.length * sH;
+    const hNeed = vH + sH * Math.min(1, strips.length) + sWH;
     if (hNeed > hBudget && hNeed > 0) {
       const scale = Math.max(0, hBudget) / hNeed;
       vH = vH ? Math.max(16, Math.round(vH * scale)) : 0;
       sH = Math.max(24, Math.round(sH * scale));
+      sWH = sWH ? Math.max(24, Math.round(sWH * scale)) : 0;
     }
-    const pH = H - pY - navReserve - (vH ? vH + 8 : 0) - strips.length * (sH + 14);
+    const stripHs = strips.map((_, i) => (i === 0 ? sH : sWH));
+    const pH = H - pY - navReserve - (vH ? vH + 8 : 0) - strips.length * 14 - stripHs.reduce((a, b) => a + b, 0);
     const vY = pY + pH + (vH ? 8 : 0);
     let stripCursor = vY + vH;
-    const stripTops = strips.map(() => { stripCursor += 14; const y = stripCursor; stripCursor += sH; return y; });
+    const stripTops = strips.map((_, i) => { stripCursor += 14; const y = stripCursor; stripCursor += stripHs[i]; return y; });
     const chartBot = strips.length ? stripCursor : vY + vH;
 
     text(caption, x0 + 6, 13, { 'font-size': 9, 'font-weight': 600, 'letter-spacing': '.08em', 'font-family': 'var(--font-sans)' });
@@ -1954,9 +1977,10 @@ function renderCharts(data, lamp) {
     if (opts.cfg.vol) text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
 
     /* stochastic strips (native + optional weekly) + doctrine markers */
-    strips.forEach(([which, series, capText, withMarks], si) => {
+    strips.forEach(([which, series, capText, strMarks], si) => {
       const yTop = stripTops[si];
-      const sy = v => yTop + sH - v / 100 * sH;
+      const hS = stripHs[si];
+      const sy = v => yTop + hS - v / 100 * hS;
       /* Full 0-100 axis ladder every 20 (owner request 2026-07-20: show these
          numbers on the stochastic strips like the reference). The faint gridlines
          were removed 2026-07-22 to match the terminal's clean panels — number
@@ -1986,9 +2010,9 @@ function renderCharts(data, lamp) {
         }
         if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 1.5 }));
       }
-      if (withMarks) {
-        for (const i of marks.buys) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
-        for (const i of marks.sells) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(st.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
+      if (strMarks) {
+        for (const i of strMarks.buys) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(series.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
+        for (const i of strMarks.sells) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(series.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
       }
       text(capText, x0 + 6, yTop - 4, { 'font-size': 8, 'letter-spacing': '.08em' });
       if (which === 'native') {
@@ -2033,10 +2057,13 @@ function renderCharts(data, lamp) {
     svg.appendChild(overlay);
 
     /* Draggable resize bars — one above the VOLUME pane, one above the
-       STOCHASTIC strips (owner request 2026-07-16). Drag up to grow that pane,
-       down to shrink it; the price pane absorbs it and the size persists per
-       pane. Painted AFTER the overlay so they grab the pointer first. */
-    const resizeBar = (barY, kind, startH) => {
+       STOCHASTIC strips (owner request 2026-07-16), and — when the weekly
+       strip is on — one BETWEEN the daily and weekly strips (owner request
+       2026-07-22): that middle bar trades height between the two strips
+       (total constant, price pane untouched); the other two resize their
+       pane with the price pane absorbing. All persist per pane. Painted
+       AFTER the overlay so they grab the pointer first. */
+    const resizeBar = (barY, kind, startH, startH2) => {
       svg.appendChild(svgEl('line', { x1: x0 + 6, y1: barY, x2: x0 + 6 + plotW, y2: barY, stroke: WB.label, 'stroke-width': 1, 'stroke-opacity': 0.4, 'shape-rendering': 'crispEdges', 'pointer-events': 'none' }));
       const gw = 34;
       svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2, width: gw, height: 4, rx: 2, fill: 'var(--color-text-primary)', 'fill-opacity': 0.85, 'pointer-events': 'none' }));
@@ -2045,16 +2072,23 @@ function renderCharts(data, lamp) {
       hit.addEventListener('pointerdown', ev => {
         ev.preventDefault(); ev.stopPropagation();
         const box = svg.getBoundingClientRect();
+        if (kind === 'stochSplit') {
+          /* boundary drag: down grows the daily strip, shrinks the weekly */
+          wbDrag = { resize: kind, cfg: opts.cfg, startH, startWH: startH2, startY: ev.clientY, scaleY: H / box.height, min: 30 };
+          hideTip();
+          return;
+        }
         const navR = opts.nav ? 58 : 30;
         const budget = H - pY - navR - ((vH ? 8 : 0) + strips.length * 14) - 140; /* keep price ≥ 140px */
         const minH = kind === 'vol' ? 24 : 40;
-        const rawMax = kind === 'vol' ? budget - strips.length * sH : (budget - vH) / strips.length;
-        wbDrag = { resize: kind, cfg: opts.cfg, startH, startY: ev.clientY, scaleY: H / box.height, strips: strips.length, min: minH, max: Math.max(minH, rawMax) };
+        const rawMax = kind === 'vol' ? budget - (strips.length ? sH : 0) - sWH : budget - vH - sWH;
+        wbDrag = { resize: kind, cfg: opts.cfg, startH, startY: ev.clientY, scaleY: H / box.height, min: minH, max: Math.max(minH, rawMax) };
         hideTip();
       });
     };
     if (vH) resizeBar(vY - 4, 'vol', vH);
     if (strips.length) resizeBar(stripTops[0] - 7, 'stoch', sH);
+    if (strips.length === 2) resizeBar(stripTops[1] - 7, 'stochSplit', sH, sWH);
 
     overlay.addEventListener('pointerdown', ev => {
       ev.preventDefault();
@@ -2211,7 +2245,9 @@ function renderCharts(data, lamp) {
   if (show('p1')) {
     const sym = effSym(wbState.cfg.p1);
     const d = daily(sym);
-    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · DAILY · ' + sym, {
+    /* Pro 1 = the SWING tier (owner naming 2026-07-22): daily bars, and the
+       doctrine circles live on ITS daily strip — that's the swing signal. */
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · SWING · ' + sym, {
       window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
       pivots: d.piv, smas: smaList(wbState.cfg.p1),
@@ -2220,17 +2256,22 @@ function renderCharts(data, lamp) {
     }]);
   }
   if (show('p2')) {
-    /* Pro 2 = daily candles carrying the daily stoch (native) + the WEEKLY
-       stoch overlay (owner ruling 2026-07-17). A daily stoch drawn on weekly
-       candles would only step once a week, so Pro 2 shares Pro 1's daily bars
-       and layers the weekly tide on top — matching the reference terminal. */
+    /* Pro 2 = the LONG-TERM tier (owner naming 2026-07-22): daily candles
+       carrying the daily stoch (native) + the WEEKLY stoch overlay (owner
+       ruling 2026-07-17, weekly-scale per the terminal fit). The doctrine
+       circles here live on the WEEKLY strip — the long-term signal — keyed to
+       its own 30/80 bands; the daily strip stays clean (owner ruling
+       2026-07-22: daily circles are Pro 1's swing signal). */
     const sym = effSym(wbState.cfg.p2);
     const d = daily(sym);
-    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · DAILY · ' + sym, {
+    const stW2 = wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null;
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · LONG-TERM · ' + sym, {
       window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2),
-      stW: wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null,
+      stW: stW2,
+      hideNativeMarks: true,
+      marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
       stochCaption: stochTag() + ' · DAILY',
       stochWCaption: stochWTag() + ' · WEEKLY SCALE',
     }]);
@@ -2301,7 +2342,7 @@ function buildWbSettings() {
   const cols = el('div', 'wb-set-cols');
   {
     const key = wbSetPane;
-    const title = { p1: 'PRO 1 · DAILY', p2: 'PRO 2 · DAILY', p3: 'PRO 3 · DAY TRADING' }[key];
+    const title = { p1: 'PRO 1 · SWING', p2: 'PRO 2 · LONG-TERM', p3: 'PRO 3 · DAY TRADING' }[key];
     const cfg = wbState.cfg[key];
     const col = el('div', 'wb-set-col');
     col.appendChild(el('h3', 'wb-set-title', title));
