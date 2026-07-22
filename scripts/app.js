@@ -541,7 +541,10 @@ function renderAsk() {
     if (foot.childElementCount) thread.appendChild(foot);
   };
 
-  /* replay the stored conversation on load (FR-MEM5) */
+  /* replay the stored conversation on load (FR-MEM5). Hold input until the
+     replay settles: a question submitted mid-hydration would append above the
+     replayed history and land the transcript out of chronological order. */
+  input.disabled = true; btn.disabled = true;
   deskChatHistory(pin).then(rows => {
     (rows || []).forEach(r => {
       thread.appendChild(el('p', 'ask-q', r.question));
@@ -550,7 +553,9 @@ function renderAsk() {
     });
     clearBtn.hidden = !(rows && rows.length);
     thread.scrollTop = thread.scrollHeight;
-  }).catch(() => {});
+  }).catch(() => {}).finally(() => {
+    input.disabled = false; btn.disabled = false;
+  });
 
   clearBtn.addEventListener('click', async () => {
     if (!confirm('Clear the entire saved conversation? This permanently deletes all stored history.')) return;

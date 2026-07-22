@@ -817,10 +817,20 @@ test('S13: heatmap map-filter cuts and period select respond', async ({ page }) 
 // ─────────────────────────────────────────────────────────────────────────────
 async function unlockDesk(page) {
   await page.goto('./');
-  const pin = page.locator('.lock-form input.input').first();
-  await expect(pin).toBeVisible();
-  await pin.fill(AUTH_CREDENTIAL);
-  await page.locator('.lock-form button').first().click();
+  // Enter the PIN ONLY when the login gate is actually showing. After a reload
+  // the PIN persists in sessionStorage and the desk auto-authenticates — the page
+  // then renders the Ask form, which is ALSO .lock-form. Filling the global
+  // .lock-form selector there would type the PIN into the assistant box and submit
+  // it (leaking the real PIN to Anthropic + desk_chat_memory). The login gate is
+  // uniquely identifiable: its input is type=password inside #accountGrid.
+  const gate = page.locator('#accountGrid .lock-form input.input[type="password"]');
+  // wait until the desk has rendered EITHER state (locked gate or authed accounts)
+  await page.locator('#accountGrid .lock-form input.input[type="password"], #accountGrid .hero-number')
+    .first().waitFor({ timeout: 15000 });
+  if (await gate.count()) {
+    await gate.first().fill(AUTH_CREDENTIAL);
+    await page.locator('#accountGrid .lock-form button').first().click();
+  }
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#askBody form input.input')).toBeVisible({ timeout: 10000 });
 }

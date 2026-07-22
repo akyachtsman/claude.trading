@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260720l">
-<link rel="stylesheet" href="styles/components.css?v=20260720l">
+<link rel="stylesheet" href="styles/tokens.css?v=20260720m">
+<link rel="stylesheet" href="styles/components.css?v=20260720m">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -392,6 +392,9 @@
     /* stacked: drop the 10% shrink and let Markets/Ask span the full width */
     .top-band > .market-strip, .top-band > .col-markets { zoom: 1; }
     .top-band > .col-markets, .top-band > .col-rail { flex-basis: auto; }
+    /* stacked: the rail no longer inherits the Markets tile height, so the
+       thread would grow to fit every replayed exchange — cap it so it scrolls */
+    .top-band > .col-rail .ask-thread { max-height: 320px; }
     .top-boxes { flex-wrap: wrap; }
     .top-boxes > .area-accounts { flex: 2 1 320px; }
     .top-boxes > .top-brief,
@@ -584,8 +587,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260720l"></script>
-<script src="scripts/data.js?v=20260720l"></script>
-<script src="scripts/app.js?v=20260720l"></script>
+<script src="scripts/config.js?v=20260720m"></script>
+<script src="scripts/data.js?v=20260720m"></script>
+<script src="scripts/app.js?v=20260720m"></script>
 </body>
 </html>
