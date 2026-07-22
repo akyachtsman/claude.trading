@@ -43,6 +43,7 @@ const TOOLS = [
 
 const MAX_TOOL_CALLS = 6;      // client get_quote executions per turn
 const MAX_RESUMES = 3;         // pause_turn resumptions
+const MAX_ITERS = 12;         // overall loop safety net (tool calls + resumes + wrap-up)
 const REPLAY_ROWS = 20;        // prior exchanges considered
 const REPLAY_DAYS = 30;
 const REPLAY_CHAR_BUDGET = 32000;  // ~8k tokens of history
@@ -128,9 +129,10 @@ Deno.serve(async (req) => {
   const seenUrls = new Set<string>();
   // deno-lint-ignore no-explicit-any
   let finalMsg: any = null;
-  let toolCalls = 0, resumes = 0;
+  let toolCalls = 0, resumes = 0, iters = 0;
 
   for (;;) {
+    if (iters++ >= MAX_ITERS) break;   // hard stop; finalMsg holds the last response
     const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -138,6 +140,7 @@ Deno.serve(async (req) => {
     });
     if (!apiRes.ok) return reply(502, { ok: false, error: `model call failed (HTTP ${apiRes.status})` });
     const msg = await apiRes.json();
+    finalMsg = msg;   // always track the latest response for text extraction
     if (msg.stop_reason === 'refusal') return reply(200, { ok: false, error: 'The model declined this question.' });
 
     // collect web sources from any search-result blocks
@@ -153,7 +156,7 @@ Deno.serve(async (req) => {
     }
 
     if (msg.stop_reason === 'pause_turn') {
-      if (++resumes > MAX_RESUMES) { finalMsg = msg; break; }
+      if (++resumes > MAX_RESUMES) break;
       messages.push({ role: 'assistant', content: msg.content });
       continue;
     }
@@ -161,12 +164,18 @@ Deno.serve(async (req) => {
     if (msg.stop_reason === 'tool_use') {
       // deno-lint-ignore no-explicit-any
       const quoteUses = (msg.content ?? []).filter((b: any) => b.type === 'tool_use' && b.name === 'get_quote');
-      if (!quoteUses.length || toolCalls >= MAX_TOOL_CALLS) { finalMsg = msg; break; }
+      if (!quoteUses.length) break;   // no client tool to satisfy — extract text
+      // ALWAYS emit one tool_result per tool_use (the API requires matched counts);
+      // over-budget quotes get an error result instead of a live fetch.
       const results: unknown[] = [];
       for (const tu of quoteUses) {
-        if (toolCalls >= MAX_TOOL_CALLS) break;
-        toolCalls++;
-        const out = await getQuote(String(tu.input?.symbol ?? ''));
+        let out: Record<string, unknown>;
+        if (toolCalls >= MAX_TOOL_CALLS) {
+          out = { ok: false, error: 'tool-call budget reached for this turn — answer with what you have and note it' };
+        } else {
+          toolCalls++;
+          out = await getQuote(String(tu.input?.symbol ?? ''));
+        }
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out), is_error: out.ok === false });
       }
       messages.push({ role: 'assistant', content: msg.content });
@@ -174,8 +183,7 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    finalMsg = msg; // end_turn or other terminal reason
-    break;
+    break; // end_turn or other terminal reason
   }
 
   const answer = (finalMsg?.content ?? [])
