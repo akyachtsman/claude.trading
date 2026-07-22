@@ -2242,7 +2242,13 @@ function renderCharts(data, lamp) {
     const d = daily(sym);
     const intra = wbState.intraday && wbState.intraday[sym];
     if (intra) {
-      const ist = stochSeries(intra);
+      /* Intraday runs the SAME 14-3-3 as daily — explicit, not inherited: the
+         terminal fit (data.js) only anchored daily bars, and no terminal Pro 3
+         hover readout exists yet to fit intraday separately. Uniform config is
+         the terminal-faithful default (one indicator config across timeframes);
+         the old 13 had no evidence behind it either. Refit if the owner
+         supplies an intraday readout (strategies/stochastic-investing.md). */
+      const ist = stochSeries(intra, STOCH);
       panes.push([intra, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 5-MIN', {
         /* no presets: the range navigator sets the window (in 5-min bars)
            anywhere within the ~5-day intraday feed */

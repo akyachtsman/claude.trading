@@ -43,13 +43,19 @@ support/resistance lines; risk is managed with stops and hard hygiene rules
 - **Slow stochastic**, two lines: `%K` (the reading) and `%D` (a short moving
   average of `%K` that acts as the signal line). Bounded 0–100 regardless of
   how far price actually travels.
-- **Source parameters: %K = 10, %D = 3** ("slow smooth K-10 D-3"), applied
-  identically to daily bars and weekly bars.
-- **Owner's spoken convention: "13 weeks"** for the weekly lookback.
-- ⚠️ **OPEN QUESTION (owner ruling needed):** the course charts run 10-3; the
-  owner specified 13. The workbench currently renders **13-3-3** on both
-  timeframes (`STOCH` constant in `scripts/data.js`). Flip to 10-3 by editing
-  that one constant once ruled.
+- **Parameters — measured from the owner's reference terminal (2026-07-22),
+  superseding the old 10-vs-13 question:** the terminal's hover readouts were
+  fitted against live INTC data (three anchor dates, twelve %K/%D values, all
+  reproduced to ±0.02). Results: **daily = 14-3-3 slow** (`STOCH` in
+  `scripts/data.js`); **"weekly" = 92-15-15 slow computed on DAILY bars**
+  (`WSTOCH`) — the terminal's weekly band is a scaled-period daily stochastic,
+  not one computed on weekly bars, which is why it is smooth yet updates daily.
+- Historical note: the source course charts ran 10-3 and the owner's spoken
+  convention was "13 weeks"; the workbench rendered 13-3-3 until the terminal
+  fit showed the terminal itself computes 14-3-3 / 92-15-15.
+- Pro 3's 5-minute stochastic shares the daily 14-3-3 explicitly (uniform
+  config, terminal-faithful default) — no intraday terminal readout has been
+  fitted yet; refit if the owner captures one.
 - Readings: high band = overbought, low band = oversold (the workbench draws
   guides at 80/20). The daily oscillates fast; the weekly turns slowly — a
   weekly turn is trend information, not noise.
@@ -358,7 +364,7 @@ in isolation.
 
 | Method element | Panel feature (as of PR #32) |
 |---|---|
-| Daily + weekly stochastic, side by side | Two strips: `STOCH 13-3-3 · DAILY` and `· WEEKLY (13)` with 80/20 guides |
+| Daily + weekly stochastic, side by side | Two strips: `STOCH 14-3-3 · DAILY` and `STOCH 92-15-15 · WEEKLY SCALE` with 80/20 guides (weekly band 30/80 + 65 trigger) |
 | Level ladder | Monthly pivots R3…S3, dashed + labeled |
 | OHLC per bar | Candles + crosshair readout (O/H/L/C, day %, volume) |
 | Volume floor check | Volume sub-pane per bar |
@@ -371,7 +377,11 @@ hammer auto-marking.
 
 ## Open items
 
-- [ ] Owner ruling: stochastic lookback **10 vs 13** (source deck vs spoken spec)
+- [x] ~~Owner ruling: stochastic lookback **10 vs 13**~~ — superseded 2026-07-22:
+      the reference terminal was measured directly (daily **14-3-3**, weekly
+      **92-15-15** on daily bars); the terminal is the source of truth
+- [ ] Fit Pro 3's intraday stochastic if the owner captures a terminal
+      5-minute hover readout (currently shares the daily 14-3-3 explicitly)
 - [ ] Confirm which timeframe pairs matter beyond daily/weekly (their pro
   tool shows an intraday pane — needs the quote-proxy backend, separate approval)
 - [ ] Define the S/R formula the owner actually wants (classic pivots vs
