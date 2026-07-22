@@ -335,8 +335,21 @@ async function deskGetDashboard(pin) {
   return out && out.ok ? out : null;
 }
 
-/* Ask-the-desk: PIN-gated Claude Q&A over the visible dashboard content.
-   The Anthropic key lives only in the edge function's secrets (FR-D1). */
+/* Ask-the-desk conversation memory (desk_008): PIN-gated SECURITY DEFINER RPCs.
+   History returns a jsonb array of prior exchanges (oldest→newest); clear wipes
+   all stored history for the desk. Both fail soft — memory is best-effort. */
+async function deskChatHistory(pin) {
+  try { const out = await deskRpc('desk_chat_history', pin); return Array.isArray(out) ? out : []; }
+  catch { return []; }
+}
+async function deskChatClear(pin) {
+  try { return await deskRpc('desk_chat_clear', pin); }
+  catch { return { ok: false }; }
+}
+
+/* Ask-the-desk: PIN-gated agentic Claude assistant (memory replay + web research
+   + live get_quote). The Anthropic key lives only in the edge function's
+   secrets (FR-D1); the answer carries a sources[] array of web citations. */
 async function deskAsk(pin, question, context) {
   const res = await fetch(DESK_DB.url + '/functions/v1/desk-ask', {
     method: 'POST',
@@ -349,7 +362,7 @@ async function deskAsk(pin, question, context) {
   });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-ask → HTTP ' + res.status);
-  return out; /* {ok:true, answer} | {ok:false, error} */
+  return out; /* {ok:true, answer, sources} | {ok:false, error} */
 }
 
 /* Quote-proxy: OHLC for ANY ticker, fetched server-side through the pipeline's

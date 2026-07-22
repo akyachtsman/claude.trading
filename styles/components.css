@@ -182,7 +182,9 @@
 .lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-loss); margin: var(--space-2) 0 0; }
 
 /* ask-the-desk (PIN-gated Claude Q&A) */
-.ask-thread { display: flex; flex-direction: column; gap: var(--space-2); max-height: 280px; overflow-y: auto; margin: 0 0 var(--space-3); }
+/* height is capped by the panel (col-rail stretches to the Markets tile); the
+   thread flex-fills and scrolls inside — no hard max-height here */
+.ask-thread { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; margin: 0 0 var(--space-3); }
 .ask-thread:empty { display: none; }
 .ask-q {
   font: 500 var(--font-sm)/1.5 var(--font-sans); color: var(--color-text-primary); margin: 0;
@@ -193,5 +195,13 @@
   font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0;
   padding: var(--space-2) var(--space-3); border-left: 2px solid var(--color-accent-bright); max-width: 92%;
 }
+
+.ask-toolbar { display: flex; justify-content: flex-end; margin: 0 0 var(--space-2); }
+.ask-toolbar:has(.ask-clear[hidden]) { display: none; }
+.ask-clear { appearance: none; border: 0; background: none; font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; padding: 4px 6px; border-radius: var(--radius-sm); }
+.ask-clear:hover, .ask-clear:focus-visible { color: var(--color-loss); }
+.ask-sources { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 var(--space-2); padding-left: var(--space-3); }
+.ask-sources a { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-accent); text-decoration: none; }
+.ask-sources a:hover, .ask-sources a:focus-visible { text-decoration: underline; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

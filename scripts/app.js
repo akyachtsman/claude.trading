@@ -502,19 +502,58 @@ function renderAsk() {
   }
 
   lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live';
+  const pin = sessionStorage.getItem('desk_pin');
+
+  const toolbar = el('div', 'ask-toolbar');
+  const clearBtn = el('button', 'ask-clear', 'Clear'); clearBtn.type = 'button'; clearBtn.hidden = true;
+  clearBtn.setAttribute('aria-label', 'Clear the saved conversation');
+  toolbar.appendChild(clearBtn);
   const thread = el('div', 'ask-thread');
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
   input.type = 'text'; input.className = 'input'; input.maxLength = 500;
-  input.placeholder = 'Ask about this page…';
-  input.setAttribute('aria-label', 'Ask a question about the dashboard');
+  input.placeholder = 'Ask about your desk…';
+  input.setAttribute('aria-label', 'Ask the desk assistant a question');
   const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
   const err = el('p', 'lock-error', ''); err.hidden = true;
   form.appendChild(input); form.appendChild(btn);
-  body.appendChild(thread); body.appendChild(form); body.appendChild(err);
+  body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
   body.appendChild(el('p', 'ai-disclaimer',
-    'Answers come from the page’s current snapshot only. AI-generated; can make mistakes. Not financial advice.'));
+    'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'));
+
+  /* sources footer (FR-TR2): web citations rendered as safe links (textContent) */
+  const appendSources = sources => {
+    if (!sources || !sources.length) return;
+    const foot = el('div', 'ask-sources');
+    sources.slice(0, 6).forEach(s => {
+      if (!s || !s.url) return;
+      const link = document.createElement('a');
+      link.href = s.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.textContent = s.title || s.url;
+      foot.appendChild(link);
+    });
+    if (foot.childElementCount) thread.appendChild(foot);
+  };
+
+  /* replay the stored conversation on load (FR-MEM5) */
+  deskChatHistory(pin).then(rows => {
+    (rows || []).forEach(r => {
+      thread.appendChild(el('p', 'ask-q', r.question));
+      thread.appendChild(el('p', 'ask-a', r.answer));
+      appendSources(r.sources);
+    });
+    clearBtn.hidden = !(rows && rows.length);
+    thread.scrollTop = thread.scrollHeight;
+  }).catch(() => {});
+
+  clearBtn.addEventListener('click', async () => {
+    if (!confirm('Clear the entire saved conversation? This permanently deletes all stored history.')) return;
+    clearBtn.disabled = true;
+    const out = await deskChatClear(pin).catch(() => ({ ok: false }));
+    clearBtn.disabled = false;
+    if (out && out.ok) { while (thread.firstChild) thread.removeChild(thread.firstChild); clearBtn.hidden = true; }
+  });
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
@@ -524,12 +563,13 @@ function renderAsk() {
     btn.disabled = true; btn.textContent = 'Asking…'; input.disabled = true;
     thread.appendChild(el('p', 'ask-q', q));
     thread.scrollTop = thread.scrollHeight;
-    const pin = sessionStorage.getItem('desk_pin');
     const res = await deskAsk(pin, q, buildAskContext())
       .catch(() => ({ ok: false, error: 'Could not reach the ask service — try again in a moment.' }));
     btn.disabled = false; btn.textContent = 'Ask'; input.disabled = false;
     if (res && res.ok) {
       thread.appendChild(el('p', 'ask-a', res.answer));
+      appendSources(res.sources);
+      clearBtn.hidden = false;
       input.value = '';
     } else {
       err.textContent = (res && res.error) || 'Something went wrong — try again.';
