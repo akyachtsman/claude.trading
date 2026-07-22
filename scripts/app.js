@@ -1451,10 +1451,10 @@ window.addEventListener('pointermove', ev => {
     }
     return;
   }
-  if (wbDrag.resize) {   /* vertical drag: resize the volume / daily-stoch pane */
+  if (wbDrag.resize) {   /* vertical drag: resize the volume / stochastic pane */
     const dy = (ev.clientY - wbDrag.startY) * wbDrag.scaleY;
     const nv = Math.round(Math.max(wbDrag.min, Math.min(wbDrag.max, wbDrag.startH - dy)));
-    const key = wbDrag.resize === 'vol' ? 'volH' : 'stochH';
+    const key = { vol: 'volH', stoch: 'stochH', stochW: 'stochWH' }[wbDrag.resize];
     if (wbDrag.cfg[key] !== nv) {
       wbDrag.cfg[key] = nv;
       cancelAnimationFrame(wbPanRaf);
@@ -1836,8 +1836,13 @@ function renderCharts(data, lamp) {
        (stochWH) so the divider between daily and weekly is movable too
        (owner request 2026-07-22). Defaults match the prior fixed sizes. */
     let vH = opts.cfg.vol ? (opts.cfg.volH ?? 50) : 0;
-    let sH = opts.cfg.stochH ?? (strips.length === 2 ? 68 : 88);
-    let sWH = strips.length === 2 ? (opts.cfg.stochWH ?? sH) : 0;
+    /* heights keyed by strip IDENTITY, not array position (Codex #147): with the
+       native stoch toggled off but weekly on, the lone weekly strip must still
+       read/write ITS height (stochWH), not the hidden daily strip's stochH */
+    const hasN = strips.some(([w]) => w === 'native');
+    const hasW = strips.some(([w]) => w === 'weekly');
+    let sH = hasN ? (opts.cfg.stochH ?? (hasW ? 68 : 88)) : 0;
+    let sWH = hasW ? (opts.cfg.stochWH ?? (hasN ? sH : 88)) : 0;
     const pY = 22;
     /* bottom reserve holds the x-axis month labels + the range navigator
        strip (opts.nav); fixed so chartBot lines up across panes */
@@ -1851,14 +1856,14 @@ function renderCharts(data, lamp) {
     const MIN_PH = 140;
     const gaps = (vH ? 8 : 0) + strips.length * 14;
     const hBudget = H - pY - navReserve - MIN_PH - gaps;
-    const hNeed = vH + sH * Math.min(1, strips.length) + sWH;
+    const hNeed = vH + sH + sWH;
     if (hNeed > hBudget && hNeed > 0) {
       const scale = Math.max(0, hBudget) / hNeed;
       vH = vH ? Math.max(16, Math.round(vH * scale)) : 0;
-      sH = Math.max(24, Math.round(sH * scale));
+      sH = sH ? Math.max(24, Math.round(sH * scale)) : 0;
       sWH = sWH ? Math.max(24, Math.round(sWH * scale)) : 0;
     }
-    const stripHs = strips.map((_, i) => (i === 0 ? sH : sWH));
+    const stripHs = strips.map(([which]) => (which === 'weekly' ? sWH : sH));
     const pH = H - pY - navReserve - (vH ? vH + 8 : 0) - strips.length * 14 - stripHs.reduce((a, b) => a + b, 0);
     const vY = pY + pH + (vH ? 8 : 0);
     let stripCursor = vY + vH;
@@ -2015,6 +2020,18 @@ function renderCharts(data, lamp) {
         for (const i of strMarks.sells) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(series.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
       }
       text(capText, x0 + 6, yTop - 4, { 'font-size': 8, 'letter-spacing': '.08em' });
+      /* Warm-up gate (Codex #147): a short daily series can be long enough for
+         the 14-3-3 daily stoch yet far short of the 92-15-15 weekly scale
+         (needs ~120 bars before %D exists) — say so instead of rendering a
+         silently empty strip. Partial case: %K alive, %D still warming. */
+      {
+        const cfgS = which === 'weekly' ? WSTOCH : STOCH;
+        const warm = cfgS.k + cfgS.kSmooth + cfgS.d - 2;
+        const hasK = series.k.some(v => v != null);
+        const hasD = series.d.some(v => v != null);
+        if (!hasK) text('INSUFFICIENT HISTORY — NEEDS ~' + warm + ' BARS', x0 + 6 + plotW / 2 - 90, yTop + hS / 2 + 3, { 'font-size': 8, 'letter-spacing': '.06em' });
+        else if (!hasD) text('%D WARMING UP — NEEDS ~' + warm + ' BARS', x0 + plotW - 170, yTop - 4, { 'font-size': 7, 'letter-spacing': '.04em' });
+      }
       if (which === 'native') {
         const pinned = stochPinned(st);
         if (pinned) {
@@ -2081,14 +2098,18 @@ function renderCharts(data, lamp) {
         const navR = opts.nav ? 58 : 30;
         const budget = H - pY - navR - ((vH ? 8 : 0) + strips.length * 14) - 140; /* keep price ≥ 140px */
         const minH = kind === 'vol' ? 24 : 40;
-        const rawMax = kind === 'vol' ? budget - (strips.length ? sH : 0) - sWH : budget - vH - sWH;
+        /* max for each bar = the budget minus everything it does NOT resize */
+        const rawMax = kind === 'vol' ? budget - sH - sWH : kind === 'stoch' ? budget - vH - sWH : budget - vH - sH;
         wbDrag = { resize: kind, cfg: opts.cfg, startH, startY: ev.clientY, scaleY: H / box.height, min: minH, max: Math.max(minH, rawMax) };
         hideTip();
       });
     };
     if (vH) resizeBar(vY - 4, 'vol', vH);
-    if (strips.length) resizeBar(stripTops[0] - 7, 'stoch', sH);
-    if (strips.length === 2) resizeBar(stripTops[1] - 7, 'stochSplit', sH, sWH);
+    /* top bar resizes the FIRST strip by its identity — 'stochW' when the
+       weekly strip stands alone (Codex #147: it must write stochWH, not the
+       hidden daily strip's stochH) */
+    if (strips.length) resizeBar(stripTops[0] - 7, strips[0][0] === 'weekly' ? 'stochW' : 'stoch', stripHs[0]);
+    if (hasN && hasW) resizeBar(stripTops[1] - 7, 'stochSplit', sH, sWH);
 
     overlay.addEventListener('pointerdown', ev => {
       ev.preventDefault();
