@@ -203,11 +203,16 @@ function buildDemoMarkets() {
 
 /* ── charts panel: demo OHLCV, weekly aggregation, stochastics ─────────── */
 const CHART_BARS = 800; /* matches the feeds' KEEP_BARS: ~3y view + warmup */
-const STOCH = { k: 13, kSmooth: 3, d: 3 }; /* 13-3-3 slow stochastic — deliberately
-  matches the owner's reference terminal, NOT the textbook 14 (owner ruling
-  2026-07-22, after a brief 14 trial that diverged from the terminal; the terminal,
-  not a generic default, is the source of truth). Applied to daily bars and, via
-  weeklyStochOnDaily's weekly resample, to weekly bars. */
+/* Stochastic settings — REVERSE-ENGINEERED from the owner's reference terminal
+   by fitting its hover readouts on live INTC data (2026-07-22, three independent
+   anchors: Jan 12, Jan 28, Apr 15 2026 — all 12 values reproduced to ±0.02):
+   - Daily  = 14-3-3 slow on daily bars. (Earlier 13-vs-14 confusion: 13 matched
+     one saturated ~96 readout by coincidence; 14 matches all three anchors.)
+   - Weekly = 92-15-15 slow on DAILY bars — the terminal's "weekly" is a
+     scaled-period daily stochastic, not one computed on weekly bars. That's
+     also why its weekly line is smooth and still updates daily. */
+const STOCH = { k: 14, kSmooth: 3, d: 3 };
+const WSTOCH = { k: 92, kSmooth: 15, d: 15 };
 
 function tradingISODates(n, endDate) {
   const out = []; const d = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
