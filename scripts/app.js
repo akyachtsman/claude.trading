@@ -528,8 +528,13 @@ function renderAsk() {
     const foot = el('div', 'ask-sources');
     sources.slice(0, 6).forEach(s => {
       if (!s || !s.url) return;
+      /* only http(s) — never let a javascript:/data: URL from a web result
+         (or tampered memory row) become a clickable href */
+      let href = null;
+      try { const u = new URL(s.url); if (u.protocol === 'https:' || u.protocol === 'http:') href = u.href; } catch { /* not a URL */ }
+      if (!href) return;
       const link = document.createElement('a');
-      link.href = s.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';
       link.textContent = s.title || s.url;
       foot.appendChild(link);
     });

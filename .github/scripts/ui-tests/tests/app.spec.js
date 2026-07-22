@@ -807,3 +807,73 @@ test('S13: heatmap map-filter cuts and period select respond', async ({ page }) 
     await expect(page.locator('.map-filter-btn', { hasText: label })).toBeDisabled();
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S15–S19 — Live desk assistant (memory + research + live data + advice + clear).
+// Each makes a REAL desk-ask Claude tool-loop call (slow, nondeterministic, costs
+// quota), so they are OPT-IN via RUN_ASSISTANT_TESTS in addition to the usual
+// live + auth gates — never run in normal CI to keep it green and cheap.
+// The ask form is also .lock-form, so all selectors are scoped to #askBody.
+// ─────────────────────────────────────────────────────────────────────────────
+async function unlockDesk(page) {
+  await page.goto('./');
+  const pin = page.locator('.lock-form input.input').first();
+  await expect(pin).toBeVisible();
+  await pin.fill(AUTH_CREDENTIAL);
+  await page.locator('.lock-form button').first().click();
+  await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#askBody form input.input')).toBeVisible({ timeout: 10000 });
+}
+async function askDesk(page, q) {
+  await page.locator('#askBody form input.input').fill(q);
+  await page.locator('#askBody form button[type="submit"]').click();
+  await expect(page.locator('#askBody .ask-a').last()).toBeVisible({ timeout: 90000 });
+}
+function assistantGates(page) {
+  test.skip(!process.env.RUN_ASSISTANT_TESTS, 'assistant tests are opt-in (real Claude calls) — set RUN_ASSISTANT_TESTS=1');
+  test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
+}
+
+test('S15: assistant remembers across a reload (opt-in, live only)', async ({ page }) => {
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  assistantGates(page);
+  await unlockDesk(page);
+  await askDesk(page, 'Remember the codeword is HELIX. Reply with just: noted.');
+  await unlockDesk(page); // fresh render → transcript replays from desk_chat_memory
+  await expect(page.locator('#askBody .ask-thread')).toContainText(/HELIX/i, { timeout: 10000 });
+});
+
+test('S16: a research question renders an answer (opt-in, live only)', async ({ page }) => {
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  assistantGates(page);
+  await unlockDesk(page);
+  await askDesk(page, 'What was the most recent US CPI year-over-year figure? One sentence, name the source.');
+  await expect(page.locator('#askBody .ask-a').last()).toBeVisible();
+});
+
+test('S17: an off-page ticker returns an answer via live data (opt-in, live only)', async ({ page }) => {
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  assistantGates(page);
+  await unlockDesk(page);
+  await askDesk(page, 'What is the current price of KO? One line.');
+  await expect(page.locator('#askBody .ask-a').last()).toBeVisible();
+});
+
+test('S18: gives a directional view, not a refusal; disclaimer stays (opt-in, live only)', async ({ page }) => {
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  assistantGates(page);
+  await unlockDesk(page);
+  await askDesk(page, 'One-word lean on SPY right now: buy, sell, or hold?');
+  await expect(page.locator('#askBody .lock-error')).toBeHidden();
+  await expect(page.locator('#askBody .ai-disclaimer')).toContainText(/not financial advice/i);
+});
+
+test('S19: clear empties the conversation (opt-in, live only)', async ({ page }) => {
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  assistantGates(page);
+  await unlockDesk(page);
+  await askDesk(page, 'Reply with just: ok.');
+  page.on('dialog', d => d.accept()); // the clear confirmation
+  await page.locator('#askBody .ask-clear').click();
+  await expect(page.locator('#askBody .ask-a')).toHaveCount(0, { timeout: 10000 });
+});
