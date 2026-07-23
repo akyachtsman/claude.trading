@@ -2114,6 +2114,22 @@ function renderCharts(data, lamp) {
     /* line style draws closes in gain-green, like the reference platform */
     if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
     if (opts.cfg.vol) text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
+    /* volume numbering ruler (owner request 2026-07-23) — 2-3 nice-rounded
+       levels (1.2M/800K-style via fmtVol) with the same tick-mark style as
+       the price axis; scales to the visible window's own max each render. */
+    if (vMax) {
+      const vRaw = vMax / 3;
+      const vMag = Math.pow(10, Math.floor(Math.log10(vRaw)));
+      const vNorm = vRaw / vMag;
+      let vNice = 1;
+      for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - vNorm) < Math.abs(vNice - vNorm)) vNice = c;
+      const vTick = vNice * vMag;
+      for (let v = vTick; v <= vMax; v += vTick) {
+        const yv = vY + vH - (v / vMax) * vH;
+        line(x0 + 6 + plotW, yv, x0 + 6 + plotW + 4, yv, { stroke: 'var(--color-border-hover)', 'stroke-width': 1 });
+        text(fmtVol(v), x0 + 6 + plotW + 7, yv + 3, { 'font-size': 8 });
+      }
+    }
 
     /* stochastic strips (native + optional weekly) + doctrine markers */
     strips.forEach(([which, series, capText, strMarks], si) => {
