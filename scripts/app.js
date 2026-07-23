@@ -1436,10 +1436,10 @@ const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default
    Pro 3 = intraday stoch ONLY. The overlay now lives on Pro 2 alone (weekly);
    Pro 1/Pro 3 render no overlay regardless of this flag. */
 const WB_CFG_DEFAULT = () => ({
-  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
-  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
+  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
   /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling) */
-  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false } },
+  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
 });
 function loadWbCfg() {
   try {
@@ -1613,6 +1613,7 @@ window.addEventListener('wheel', ev => {
   const vx = (ev.clientX - box.left) * (wbState.viewW / box.width);
   const g = wbState.paneGeom.find(p => vx >= p.x0 && vx <= p.x1);
   if (!g || !g.bars || !g.bars.c) return;
+  if (g.cfg && g.cfg.scrollLock) return;   /* locked: let the wheel scroll the page instead */
   ev.preventDefault();
   const len = g.bars.c.length;
   const curN = Math.min(paneWindow(wbState[g.daysKey], g.bars), len);
@@ -1632,6 +1633,20 @@ function syncZoomPressed() {
     const seg = document.getElementById(id);
     if (!seg || !seg.children.length) continue;
     [...seg.children].forEach((b, i) => b.setAttribute('aria-pressed', String(zooms[i] && zooms[i][1] === val)));
+  }
+}
+
+/* scroll-zoom lock button per pane (owner request 2026-07-23): pressed =
+   mouse-wheel over that pane scrolls the page instead of resizing its
+   range-navigator window (see the window 'wheel' handler). */
+function syncLockPressed() {
+  if (!wbState) return;
+  for (const k of ['p1', 'p2', 'p3']) {
+    const b = document.getElementById('wbLock-' + k);
+    if (!b) continue;
+    const locked = !!wbState.cfg[k].scrollLock;
+    b.setAttribute('aria-pressed', String(locked));
+    b.textContent = locked ? '🔒' : '🔓';
   }
 }
 
@@ -2507,7 +2522,7 @@ function renderCharts(data, lamp) {
   /* geometry for wheel-zoom hit-testing: which pane the cursor is over + its
      window key and bar series (see the window 'wheel' handler) */
   wbState.viewW = W;
-  wbState.paneGeom = panes.map((p, idx) => ({ x0: idx * (pw + GAP), x1: idx * (pw + GAP) + pw, daysKey: p[4].daysKey, bars: p[0] }));
+  wbState.paneGeom = panes.map((p, idx) => ({ x0: idx * (pw + GAP), x1: idx * (pw + GAP) + pw, daysKey: p[4].daysKey, bars: p[0], cfg: p[4].cfg }));
   for (let idx = 1; idx < panes.length; idx++) {
     line(idx * (pw + GAP) - GAP / 2, 8, idx * (pw + GAP) - GAP / 2, H - 8, { stroke: WB.grid, 'stroke-width': 1 });
   }
@@ -2521,6 +2536,7 @@ function renderCharts(data, lamp) {
       'Updated ' + fmtClock(liveAt.replace(' ', 'T') + ':00Z') + ' · Today · ~15-min delayed';
   }
   syncZoomPressed();
+  syncLockPressed();
 }
 
 /* the per-pane settings popover (their platform's gear menu, in our idiom):
@@ -2777,6 +2793,18 @@ function wireCharts() {
     if (gears.some(([, b, pop]) => b.contains(ev.target) || pop.contains(ev.target))) return;
     closePop();
   });
+
+  /* scroll-zoom lock toggle — one small button per pane, next to its gear */
+  for (const k of ['p1', 'p2', 'p3']) {
+    const lockBtn = document.getElementById('wbLock-' + k);
+    if (!lockBtn) continue;
+    lockBtn.addEventListener('click', () => {
+      if (!wbState) return;
+      wbState.cfg[k].scrollLock = !wbState.cfg[k].scrollLock;
+      saveWbCfg();
+      syncLockPressed();
+    });
+  }
 }
 
 /* blank workbench + STALE lamp — live mode's honest empty state (owner ruling

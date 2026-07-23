@@ -274,6 +274,27 @@ export function buildHeatmap(
   return { sectors, covered };
 }
 
+// Multi-class companies list one row per share class in the CSV ("Alphabet
+// Inc. (Class A)" / "(Class C)", "Fox Corporation (Class A)" / "(Class B)",
+// "News Corp (Class A)" / "(Class B)"). Confirmed 2026-07-23 by comparing live
+// quotes: for every such pair, cap ÷ price implies the SAME share count on
+// both tickers — Yahoo's marketCap is the whole-company diluted figure under
+// EACH class symbol, not a per-class split — so two tiles double the
+// company's true weight on the map (the bug behind the "two Google boxes"
+// report). The reference terminal shows one tile per company; match that by
+// keeping only the Class A row (GOOGL/FOXA/NWSA) of each pair.
+export function dedupeMultiClass(list: Constituent[]): Constituent[] {
+  const groups = new Map<string, Constituent[]>();
+  for (const c of list) {
+    const base = c.name.replace(/\s*\(Class\s+[A-Z]\)\s*$/i, '').trim() || c.name;
+    if (!groups.has(base)) groups.set(base, []);
+    groups.get(base)!.push(c);
+  }
+  const out: Constituent[] = [];
+  for (const rows of groups.values()) out.push(rows.length === 1 ? rows[0] : (rows.find((r) => /\(Class A\)\s*$/i.test(r.name)) || rows[0]));
+  return out;
+}
+
 // r2k roster: all cap-bearing screener rows ranked by cap, skip the large/mid
 // band, take the next R2K_TAKE. Sector/name/industry come from the screener
 // itself — industry gives finviz-style sub-bands and full-group popups.
@@ -400,7 +421,7 @@ async function refreshSp500(): Promise<unknown> {
     if (!res.ok) throw new Error(`constituents HTTP ${res.status}`);
     const list = parseConstituents(await res.text());
     if (list.length < 400) throw new Error(`only ${list.length} constituents parsed`);
-    constituentsCache = { at: Date.now(), list };
+    constituentsCache = { at: Date.now(), list: dedupeMultiClass(list) };
   }
   const constituents = constituentsCache.list;
   const hits = (q: Map<string, Quote>) => constituents.filter((c) => q.get(yahooTicker(c.sym)) || q.get(c.sym)).length;
