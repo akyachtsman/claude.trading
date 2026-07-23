@@ -18,12 +18,16 @@ const CORS = {
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
 
-const SYSTEM = [
+// DEFAULT_SYSTEM is the fallback if the live desk_system_prompt table (desk_009)
+// is unreadable — the owner's actual, current prompt lives in that table and is
+// self-editable from the dashboard's system-prompt panel (lock icon → edit →
+// Submit), so changing behavior no longer requires a code edit + redeploy here.
+const DEFAULT_SYSTEM = [
   "You are the desk assistant embedded in the owner's private, PIN-gated two-account trading dashboard. You are speaking to the owner about their own real accounts.",
   'You MAY give direct, opinionated, directional views — buy / sell / hold / trim / add — on the owner\'s positions and on any ticker they ask about. Do NOT refuse on the grounds that this is financial advice; the owner has explicitly asked for your view on their own money.',
   'Ground every directional call in data you actually have this turn: the dashboard snapshot, a live quote you fetched with get_quote, or a web result. Never invent numbers — quote them as they appear. If you lack the data for a call, fetch it or say what you would need.',
   'Attribute provenance inline so the owner can weigh each claim: mark snapshot-derived facts, live-fetched figures (with the fetch time), and web facts (name the source).',
-  "The snapshot's `market` array and `marketAsOf` are the LIVE, continuously-refreshing feed — treat that timestamp as the current moment. `brief` is a narrative written by a separate twice-daily scheduled job (its own `generatedAt`/`asOf` fields show when); if that run fell before today's open, its commentary describes the PRIOR session's close, not today's. When asked for anything 'live', 'current', or 'today', answer from `market`/`marketAsOf` (or a fresh get_quote) and only reference `brief` as dated background — never recite it as if it were live.",
+  "The snapshot's `market` array and `marketAsOf` are the LIVE, continuously-refreshing feed — treat that timestamp as the current moment. When asked for anything 'live', 'current', or 'today', answer from `market`/`marketAsOf` (or a fresh get_quote), and say so if it's not fresh enough to answer confidently.",
   'Use get_quote(symbol) for a live price + fundamentals on any ticker, and web_search / web_fetch for anything not on the page (earnings, news, current events). PRIVACY: never put the owner\'s real position sizes, share counts, dollar balances, or account identifiers into a web_search or web_fetch query — search by ticker or topic only.',
   "Keep answers focused and skimmable. The dashboard already shows an 'AI-generated · not financial advice' label; do not repeat disclaimers.",
 ].join(' ');
@@ -81,6 +85,17 @@ Deno.serve(async (req) => {
     return reply(503, { ok: false, error: 'Ask service not configured yet — the owner needs to add the ANTHROPIC_API_KEY function secret.' });
   }
   const model = Deno.env.get('ASK_MODEL') || 'claude-opus-4-8';
+
+  // desk_009: the owner's live-edited system prompt — non-fatal read, falls
+  // back to DEFAULT_SYSTEM on any failure (table unreachable, empty, etc).
+  let SYSTEM = DEFAULT_SYSTEM;
+  try {
+    const spRes = await fetch(`${supaUrl}/rest/v1/desk_system_prompt?select=content&id=eq.true`, { headers: svc });
+    if (spRes.ok) {
+      const rows: { content: string }[] = await spRes.json();
+      if (rows[0]?.content) SYSTEM = rows[0].content;
+    }
+  } catch (_e) { /* keep DEFAULT_SYSTEM */ }
 
   // ── memory replay (FR-MEM2) — non-fatal ────────────────────────────────────
   const messages: Array<{ role: string; content: unknown }> = [];

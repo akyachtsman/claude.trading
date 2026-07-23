@@ -112,34 +112,7 @@ function buildDemoData() {
     { t: '10:15', src: 'CNBC',      h: 'Amazon Prime Day sales tracking ahead of last year', chips: [['AMZN', 1.12]] },
     { t: '09:36', src: 'Bloomberg', h: 'Volatility drifts lower; VIX under 15 for third session', chips: [['VIX', -4.20]] },
   ];
-  return { accounts, market, news, labels, asOfDate, brief: buildDemoBrief(accounts), markets: buildDemoMarkets() };
-}
-
-/* Demo brief derives its numbers from the demo snapshot — same shape the
-   live RPC payload uses, so the renderer is shared with Phase D. */
-function buildDemoBrief(accounts) {
-  const totalNav = accounts.reduce((s, a) => s + a.nav, 0);
-  const totalDay = accounts.reduce((s, a) => s + a.day, 0);
-  const dayPct = totalDay / (totalNav - totalDay) * 100;
-  const best = accounts.reduce((x, a) => (a.day > x.day ? a : x), accounts[0]);
-  const allPos = accounts.flatMap(a => a.positions.map(p => ({ ...p, acct: a.label })));
-  const mover = allPos.reduce((x, p) => (Math.abs(p.unrl) > Math.abs(x.unrl) ? p : x), allPos[0]);
-  const cashPct = accounts.reduce((s, a) => s + a.cash, 0) / totalNav * 100;
-  return {
-    generatedAt: fmtUpdated(null, isoDate(lastTradingDay(new Date()))),
-    state: 'Net liquidation across ' + accounts.length + ' accounts is ' + fmtUsd0(totalNav)
-      + ', ' + (totalDay >= 0 ? 'up ' : 'down ') + fmtPct(Math.abs(dayPct)).slice(1)
-      + ' on the day. ' + best.label + ' led with ' + fmtSigned(best.day) + '.',
-    levels: [
-      mover.sym + ' carries the largest open P&L (' + fmtSigned(mover.unrl) + ') in ' + mover.acct + '.',
-      'Portfolio cash is ' + Math.round(cashPct) + '% of net liquidation.',
-      'SPY closed at 630.4 — 1.1% below its recent high (demo figure).',
-    ],
-    scenarios: [
-      'CPI prints Thursday — a hot print pressures the rate-sensitive sleeve (TLT, SCHD).',
-      'Concentration: the top holding exceeds 10% of one account — a single-name drawdown moves the whole window.',
-    ],
-  };
+  return { accounts, market, news, labels, asOfDate, markets: buildDemoMarkets() };
 }
 
 /* Demo heatmap — deterministic (seeded pct), rough caps; same shape as the
@@ -300,7 +273,7 @@ async function fetchPublic(path) {
 }
 
 /* Panel lamp state from a domain's own embedded as-of date (EOD-class data:
-   private snapshots, brief). Live feeds use liveLampFor instead. */
+   private snapshots). Live feeds use liveLampFor instead. */
 function lampFor(asOfIso, now) {
   const ltd = isoDate(lastTradingDay(now || new Date()));
   if (!asOfIso) return { cls: 'lamp--stale', text: 'NO DATA', stamp: '—' };
@@ -337,8 +310,10 @@ function accountsLampFor(asOfIso, syncedAtIso, now) {
 }
 
 /* Auth: PIN-validated Supabase RPCs (SECURITY DEFINER, anon-only EXECUTE).
-   Two plain fetch calls — no client library needed for /rest/v1/rpc. */
-async function deskRpc(fn, pin) {
+   Two plain fetch calls — no client library needed for /rest/v1/rpc. `extra`
+   merges additional named args into the RPC body (e.g. desk_set_system_prompt's
+   new_content) alongside pin. */
+async function deskRpc(fn, pin, extra) {
   const res = await fetch(DESK_DB.url + '/rest/v1/rpc/' + fn, {
     method: 'POST',
     headers: {
@@ -346,7 +321,7 @@ async function deskRpc(fn, pin) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ pin }),
+    body: JSON.stringify({ pin, ...(extra || {}) }),
   });
   if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
   return res.json();
@@ -369,6 +344,19 @@ async function deskChatHistory(pin) {
 }
 async function deskChatClear(pin) {
   try { return await deskRpc('desk_chat_clear', pin); }
+  catch { return { ok: false }; }
+}
+
+/* Ask-the-desk system prompt (desk_009): PIN-gated read/write of the full
+   text desk-ask sends the model as `system` on every call — the owner's
+   self-service alternative to asking Claude Code to edit and redeploy
+   supabase/functions/desk-ask/index.ts. */
+async function deskGetSystemPrompt(pin) {
+  try { const out = await deskRpc('desk_get_system_prompt', pin); return out && out.ok ? out : { ok: false }; }
+  catch { return { ok: false }; }
+}
+async function deskSetSystemPrompt(pin, content) {
+  try { const out = await deskRpc('desk_set_system_prompt', pin, { new_content: content }); return out && out.ok ? out : { ok: false }; }
   catch { return { ok: false }; }
 }
 
@@ -581,17 +569,8 @@ function mapDashboardPayload(payload) {
     asOf: a.as_of,
     syncedAt: a.created_at || null,   /* when the sync wrote this snapshot (desk_007) */
   }));
-  let brief = null;
-  if (payload.brief && payload.brief.content) {
-    const c = payload.brief.content;
-    brief = {
-      generatedAt: fmtUpdated(payload.brief.generated_at, payload.brief.as_of),
-      state: c.state || '', levels: c.levels || [], scenarios: c.scenarios || [],
-      asOf: payload.brief.as_of,
-    };
-  }
   return {
-    accounts, labels, brief,
+    accounts, labels,
     asOf: accounts.length ? accounts[0].asOf : null,
     syncedAt: accounts.length ? accounts[0].syncedAt : null,
   };

@@ -56,8 +56,8 @@ This project's look is its own — established at kickoff via `/design-intake`
   a detrended random walk per index (S&P/Nasdaq/Russell/Dow) per timeframe,
   pinned to 0 at the start and the index's end-% at the right edge.
 - `scripts/app.js` — all rendering + interactions (accounts with per-card
-  equity sparklines, brief with FR-AI4 staleness, news, ask-the-desk panel,
-  the Markets window, stochastic charts workbench, PIN lock/unlock flow) + the
+  equity sparklines, news, ask-the-desk panel, the Markets window, stochastic
+  charts workbench, PIN lock/unlock flow) + the
   session-aware feed poller (5 min market-open / 60 min closed, paused
   while the tab is hidden). The **Markets window** (`renderMarkets()` +
   `drawMktChart()` + `mktSecTint()`, owner request 2026-07-20) is a compact
@@ -117,10 +117,14 @@ This project's look is its own — established at kickoff via `/design-intake`
   52-week range / dividend yield) from Yahoo v7/quote via a cached cookie+crumb
   handshake — powers the charts panel's quote readout + fundamentals strip
   (bid/ask are market-hours-only; Yahoo returns 0 when closed).
-  Cron-secret-gated: `desk-ibkr-sync`
-  (Flex → tables), `desk-brief` (Opus brief with the FR-AI4 grounding
-  guard). Scheduled by pg_cron (`desk_005` migration): sync 22:35/09:35,
-  brief 23:05/10:05 UTC — dual-slot because IBKR statements roll overnight.
+  Cron-secret-gated: `desk-ibkr-sync` (Flex → tables). Scheduled by pg_cron
+  (`desk_005` migration): sync 22:35/09:35 UTC — dual-slot because IBKR
+  statements roll overnight. (The scheduled twice-daily AI brief — `desk-brief`,
+  its `desk-brief-evening`/`desk-brief-morning` cron jobs, and the dashboard
+  panel that rendered it — was retired 2026-07-23, owner request: Ask-the-desk
+  already covers the same ground on demand. The edge function and
+  `desk_ai_briefs` table are left in place, unscheduled, in case the feature
+  returns.)
 - `.github/workflows/keepalive.yml` — monthly empty commit; **the only
   writer resetting GitHub's 60-day Actions scheduler clock** now that the
   nightly pipeline is retired (PRs #54/#55/#56, 2026-07-13).
@@ -240,9 +244,9 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | Invalid test credential | `000000` |
 | Primary nav button | `Load` (charts-workbench symbol loader) |
 | Primary content selector | `.account .hero-number` |
-| Nav cards | n/a — single-page dashboard (panels: Accounts, Markets, Heatmap, Stochastic charts, AI daily brief, Ask the desk, News) |
+| Nav cards | n/a — single-page dashboard (panels: Accounts, Markets, Heatmap, Stochastic charts, Ask the desk, News) |
 | Playwright test directory | `.github/scripts/ui-tests` |
-| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.lock-error` · lamps: `#briefLamp #newsLamp #askLamp #mktLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
+| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.lock-error` · lamps: `#newsLamp #askLamp #mktLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
 
 ## Project-Specific Test Scenarios
 Authoritative list of coverage beyond the generic S1–S4 suite — one
@@ -251,10 +255,9 @@ cleanly while `DESK_DB` is empty; with the desk LIVE (current state) S10/S11
 run for real against the dedicated project on every PR.
 | # | Feature | What to verify | Failure indicator |
 |---|---|---|---|
-| S5 | Demo lamps | With `?demo=1`, the desk-state cluster (labeled "MARKETS", Accounts header since 2026-07-22) shows "Demo data" and every panel lamp (brief, news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
+| S5 | Demo lamps | With `?demo=1`, the desk-state cluster (labeled "MARKETS", Accounts header since 2026-07-22) shows "Demo data" and every panel lamp (news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
 | S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; first-row value order changes accordingly | Order/aria-sort unchanged after click |
-| S9 | Brief structure | Demo brief renders Portfolio state / Key levels / Scenarios sections + disclaimer + stamp | Missing section or missing disclaimer |
-| S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shells pre-auth, valid PIN renders accounts + brief | Skips while demo-only; fails if unlock doesn't render |
+| S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shell pre-auth, valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |

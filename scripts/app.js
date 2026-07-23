@@ -33,7 +33,7 @@ const seriesColor = key => 'var(--color-series-' + key + ')';
 const DESK = {
   mode: 'demo',        /* 'demo' | 'live' */
   authed: false,
-  data: null,          /* {accounts, market, news, labels, brief, asOfDate} */
+  data: null,          /* {accounts, market, news, labels, asOfDate} */
   liveStamp: null,     /* freshest market-feed {generatedAt, asOf} — masthead lamp */
 };
 
@@ -512,48 +512,9 @@ function renderNews(news, lamp) {
   }
 }
 
-/* ── AI brief ──────────────────────────────────────────────────────────── */
-function renderBrief(brief, lamp, staleNote) {
-  const body = document.getElementById('briefBody');
-  while (body.firstChild) body.removeChild(body.firstChild);
-  const lampEl = document.getElementById('briefLamp');
-  lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
-  document.getElementById('briefStamp').textContent = brief ? brief.generatedAt : '—';
-  if (!brief) {
-    body.appendChild(el('p', 'stamp', 'No brief for the latest snapshot yet — it generates after each data refresh.'));
-    return;
-  }
-  /* FR-AI4: a brief older than the account snapshot says so plainly. */
-  if (staleNote) body.appendChild(el('p', 'lock-error', staleNote));
-  const mk = (title, items) => {
-    const sec = el('div', 'brief-section');
-    sec.appendChild(el('h3', '', title));
-    if (typeof items === 'string') sec.appendChild(el('p', '', items));
-    else {
-      const ul = document.createElement('ul');
-      for (const it of items) ul.appendChild(el('li', '', it));
-      sec.appendChild(ul);
-    }
-    return sec;
-  };
-  body.appendChild(mk('Portfolio state', brief.state));
-  body.appendChild(mk('Key levels', brief.levels));
-  body.appendChild(mk('Scenarios', brief.scenarios));
-  body.appendChild(el('p', 'ai-disclaimer',
-    'Generated from your committed account and market snapshots — not the open internet. AI-generated; can make mistakes. Informational only, not financial advice.'));
-}
-
 /* ── ask the desk (PIN-gated Claude Q&A over the page content) ─────────── */
 function buildAskContext() {
   const d = DESK.data || {};
-  /* Both market and brief carry their OWN as-of stamp (owner report 2026-07-23:
-     "live market brief" answered with yesterday's close mid-session). Without
-     these, the assistant had no way to tell that `market` is the live,
-     currently-refreshing feed while `brief` is a narrative snapshot from the
-     last twice-daily cron run (23:05/10:05 UTC) — which, run before today's
-     open, correctly describes the PRIOR close. Missing timestamps meant it
-     defaulted to reciting the more narrative-rich but stale brief instead of
-     the actually-current market array. */
   return {
     mode: DESK.mode,
     asOf: DESK.mode === 'demo' ? lastLabel() : (DESK.privateAsOf || null),
@@ -564,7 +525,6 @@ function buildAskContext() {
     market: (d.market || []).map(m => ({ name: m.name, last: m.last, dayChgPct: m.chg })),
     marketAsOf: DESK.mode === 'demo' ? lastLabel() : (DESK.liveStamp ? DESK.liveStamp.generatedAt : null),
     headlines: (d.news || []).slice(0, 10).map(n => n.h),
-    brief: d.brief ? { state: d.brief.state, levels: d.brief.levels, scenarios: d.brief.scenarios, generatedAt: d.brief.generatedAt, asOf: d.brief.asOf } : null,
   };
 }
 
@@ -675,6 +635,84 @@ function renderAsk() {
   syncAskHeight();
 }
 
+/* Ask-the-desk system prompt (desk_009, owner request 2026-07-23) — locked
+   (read-only) by default; the lock button unlocks it for editing; Submit
+   saves via desk_set_system_prompt and locks back up. desk-ask reads this
+   table live on every question, so a saved edit takes effect on the very
+   next question — no code change or redeploy needed. */
+function renderSysPrompt() {
+  const panel = document.getElementById('sysPromptPanel');
+  panel.hidden = false;
+  const textEl = document.getElementById('sysPromptText');
+  const lockBtn = document.getElementById('sysPromptLock');
+  const stamp = document.getElementById('sysPromptStamp');
+  const actions = document.getElementById('sysPromptActions');
+  const explain = document.getElementById('sysPromptExplain');
+  const err = document.getElementById('sysPromptErr');
+  const submitBtn = document.getElementById('sysPromptSubmit');
+  err.hidden = true;
+
+  const setLocked = () => {
+    textEl.readOnly = true;
+    actions.hidden = true;
+    lockBtn.setAttribute('aria-pressed', 'false');
+    lockBtn.textContent = '🔒';
+  };
+  setLocked();
+
+  if (DESK.mode === 'demo' || !DESK.authed) {
+    explain.textContent = DESK.mode === 'demo'
+      ? 'Demo has no live assistant to configure — this unlocks with the desk PIN in live mode.'
+      : 'Unlocks with the desk PIN.';
+    textEl.hidden = true;
+    lockBtn.disabled = true;
+    stamp.textContent = '—';
+    return;
+  }
+
+  explain.textContent = 'The exact instructions Ask-the-desk follows on every question. Unlock to edit — Submit saves it live and locks it back up.';
+  textEl.hidden = false;
+  lockBtn.disabled = false;
+
+  const pin = sessionStorage.getItem('desk_pin');
+
+  const load = async () => {
+    const out = await deskGetSystemPrompt(pin);
+    if (!out.ok) { err.textContent = 'Could not load the system prompt — try again.'; err.hidden = false; return; }
+    textEl.value = out.content;
+    if (out.updatedAt) stamp.textContent = 'Saved ' + fmtClock(out.updatedAt);
+  };
+  load(); // shown read-only immediately — the lock only gates EDITING, not viewing
+
+  lockBtn.onclick = async () => {
+    err.hidden = true;
+    if (textEl.readOnly) {
+      textEl.readOnly = false;
+      actions.hidden = false;
+      lockBtn.setAttribute('aria-pressed', 'true');
+      lockBtn.textContent = '🔓';
+      textEl.focus();
+    } else {
+      lockBtn.disabled = true;
+      await load();   // discard any unsaved edits — reload the last-saved content
+      lockBtn.disabled = false;
+      setLocked();
+    }
+  };
+
+  submitBtn.onclick = async () => {
+    const content = textEl.value.trim();
+    if (!content) { err.textContent = 'System prompt can’t be empty.'; err.hidden = false; return; }
+    if (!confirm('This changes how Ask-the-desk behaves for every future question. Save?')) return;
+    submitBtn.disabled = true;
+    const out = await deskSetSystemPrompt(pin, content);
+    submitBtn.disabled = false;
+    if (!out.ok) { err.textContent = 'Could not save — try again.'; err.hidden = false; return; }
+    if (out.updatedAt) stamp.textContent = 'Saved ' + fmtClock(out.updatedAt);
+    setLocked();
+  };
+}
+
 /* ── locked state (live mode, pre-auth) ────────────────────────────────── */
 function renderLockedPanels() {
   const grid = document.getElementById('accountGrid');
@@ -685,7 +723,7 @@ function renderLockedPanels() {
   head.appendChild(el('span', 'lamp ml-auto lamp--locked', 'Locked'));
   lockPanel.appendChild(head);
   const body = el('div', 'panel-body');
-  body.appendChild(el('p', 'lock-explain', 'Account balances, charts, and the AI brief are private — enter the desk PIN to unlock.'));
+  body.appendChild(el('p', 'lock-explain', 'Account balances and charts are private — enter the desk PIN to unlock.'));
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
@@ -715,10 +753,9 @@ function renderLockedPanels() {
     }
   });
 
-  /* brief + ask panels show locked shells */
-  renderBrief(null, { cls: 'lamp--locked', text: 'Locked' });
-  document.getElementById('briefBody').replaceChildren(el('p', 'stamp', 'Unlocks with the desk PIN.'));
+  /* ask panel + system prompt panel show locked shells */
   renderAsk();
+  renderSysPrompt();
 }
 
 /* ── S&P 500 heatmap (squarified treemap) ──────────────────────────────────
@@ -2896,24 +2933,10 @@ function renderPrivate() {
     const acctStamp = document.getElementById('accountsStamp');
     if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()).replace('Last updated', 'Accounts synced') : '');
     renderAccounts(DESK.data.accounts, lamp);
-    /* FR-AI4: the brief carries its own freshness — generation can fail
-       while snapshots keep flowing, so its lamp derives from brief.asOf,
-       not the account lamp. Demo always shows DEMO. */
-    const brief = DESK.data.brief;
-    let briefLamp = lamp, staleNote = null;
-    if (DESK.mode !== 'demo') {
-      if (!brief) {
-        briefLamp = { cls: 'lamp--stale', text: 'No brief' };
-      } else if (brief.asOf && DESK.privateAsOf && brief.asOf < DESK.privateAsOf) {
-        briefLamp = { cls: 'lamp--stale', text: 'Stale' };
-        staleNote = 'Brief is stale — generated for ' + brief.asOf
-          + ', while accounts show ' + DESK.privateAsOf + '. It regenerates on the next successful refresh.';
-      }
-    }
-    renderBrief(brief, briefLamp, staleNote);
     renderAsk();
+    renderSysPrompt();
   } else {
-    renderLockedPanels(); /* renders the ask panel's locked shell too */
+    renderLockedPanels(); /* renders the ask + system-prompt panels' locked shells too */
   }
 }
 
@@ -2921,7 +2944,7 @@ async function loadPrivate(pin) {
   const payload = await deskGetDashboard(pin).catch(() => null);
   if (!payload) { DESK.authed = false; renderLockedPanels(); return; }
   const mapped = mapDashboardPayload(payload);
-  DESK.data = { ...DESK.data, accounts: mapped.accounts, labels: mapped.labels, brief: mapped.brief };
+  DESK.data = { ...DESK.data, accounts: mapped.accounts, labels: mapped.labels };
   DESK.privateAsOf = mapped.asOf;
   DESK.privateSyncedAt = mapped.syncedAt;
   renderPrivate();
