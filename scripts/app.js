@@ -546,6 +546,14 @@ function renderBrief(brief, lamp, staleNote) {
 /* ── ask the desk (PIN-gated Claude Q&A over the page content) ─────────── */
 function buildAskContext() {
   const d = DESK.data || {};
+  /* Both market and brief carry their OWN as-of stamp (owner report 2026-07-23:
+     "live market brief" answered with yesterday's close mid-session). Without
+     these, the assistant had no way to tell that `market` is the live,
+     currently-refreshing feed while `brief` is a narrative snapshot from the
+     last twice-daily cron run (23:05/10:05 UTC) — which, run before today's
+     open, correctly describes the PRIOR close. Missing timestamps meant it
+     defaulted to reciting the more narrative-rich but stale brief instead of
+     the actually-current market array. */
   return {
     mode: DESK.mode,
     asOf: DESK.mode === 'demo' ? lastLabel() : (DESK.privateAsOf || null),
@@ -554,8 +562,9 @@ function buildAskContext() {
       positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: p.dayPct, unrl: p.unrl })),
     })),
     market: (d.market || []).map(m => ({ name: m.name, last: m.last, dayChgPct: m.chg })),
+    marketAsOf: DESK.mode === 'demo' ? lastLabel() : (DESK.liveStamp ? DESK.liveStamp.generatedAt : null),
     headlines: (d.news || []).slice(0, 10).map(n => n.h),
-    brief: d.brief ? { state: d.brief.state, levels: d.brief.levels, scenarios: d.brief.scenarios } : null,
+    brief: d.brief ? { state: d.brief.state, levels: d.brief.levels, scenarios: d.brief.scenarios, generatedAt: d.brief.generatedAt, asOf: d.brief.asOf } : null,
   };
 }
 
