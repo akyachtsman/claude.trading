@@ -644,6 +644,14 @@ function renderAsk() {
    desk_set_system_prompt and closes, ✕/backdrop close without saving.
    desk-ask reads this table live on every question, so a saved edit takes
    effect on the very next question — no code change or redeploy needed. */
+const SYS_PROMPT_MAX = 20000;   // matches desk_set_system_prompt's left(new_content, 20000) cap
+function updateSysPromptCounter() {
+  const textEl = document.getElementById('sysPromptText');
+  const counter = document.getElementById('sysPromptCounter');
+  const left = SYS_PROMPT_MAX - textEl.value.length;
+  counter.textContent = left.toLocaleString() + ' characters left';
+  counter.classList.toggle('sys-prompt-counter--low', left < 1000);
+}
 function closeSysPromptModal() {
   document.getElementById('sysPromptBackdrop').hidden = true;
 }
@@ -660,10 +668,12 @@ async function openSysPromptModal(pin) {
   if (!out.ok) {
     textEl.value = '';
     err.textContent = 'Could not load the system prompt — try again.'; err.hidden = false;
+    updateSysPromptCounter();
     return;
   }
   textEl.value = out.content;
   stamp.textContent = out.updatedAt ? 'Saved ' + fmtClock(out.updatedAt) : '—';
+  updateSysPromptCounter();
   textEl.focus();
 }
 function wireSysPromptModal() {
@@ -673,6 +683,7 @@ function wireSysPromptModal() {
   const err = document.getElementById('sysPromptErr');
   const submitBtn = document.getElementById('sysPromptSubmit');
 
+  textEl.addEventListener('input', updateSysPromptCounter);
   document.getElementById('sysPromptCloseBtn').addEventListener('click', () => closeSysPromptModal());
   backdrop.addEventListener('mousedown', ev => { if (ev.target === backdrop) closeSysPromptModal(); });
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !backdrop.hidden) closeSysPromptModal(); });

@@ -184,6 +184,8 @@
   border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
 }
 .sys-prompt-text:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
+.sys-prompt-counter { font: 400 var(--font-2xs)/1.4 var(--font-mono); color: var(--color-text-secondary); text-align: right; margin: 4px 0 0; }
+.sys-prompt-counter.sys-prompt-counter--low { color: var(--color-loss); }
 .sys-prompt-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
 
 /* locked panel (PIN gate) — .lock-explain also serves the equity/ask shells */

@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260723d">
-<link rel="stylesheet" href="styles/components.css?v=20260723d">
+<link rel="stylesheet" href="styles/tokens.css?v=20260723e">
+<link rel="stylesheet" href="styles/components.css?v=20260723e">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -509,7 +509,8 @@
       </div>
       <div class="panel-body">
         <p class="lock-explain" id="sysPromptExplain">The exact instructions Ask-the-desk follows on every question.</p>
-        <textarea class="sys-prompt-text" id="sysPromptText" rows="12" aria-label="Ask-the-desk system prompt"></textarea>
+        <textarea class="sys-prompt-text" id="sysPromptText" rows="12" maxlength="20000" aria-label="Ask-the-desk system prompt"></textarea>
+        <p class="sys-prompt-counter" id="sysPromptCounter" aria-live="polite"></p>
         <div class="sys-prompt-actions">
           <button type="button" class="btn" id="sysPromptSubmit">Save &amp; exit</button>
         </div>
@@ -646,8 +647,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260723d"></script>
-<script src="scripts/data.js?v=20260723d"></script>
-<script src="scripts/app.js?v=20260723d"></script>
+<script src="scripts/config.js?v=20260723e"></script>
+<script src="scripts/data.js?v=20260723e"></script>
+<script src="scripts/app.js?v=20260723e"></script>
 </body>
 </html>
