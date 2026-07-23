@@ -2216,8 +2216,11 @@ function renderCharts(data, lamp) {
        AFTER the overlay so they grab the pointer first. */
     const resizeBar = (barY, kind, startH, startH2) => {
       svg.appendChild(svgEl('line', { x1: x0 + 6, y1: barY, x2: x0 + 6 + plotW, y2: barY, stroke: WB.label, 'stroke-width': 1, 'stroke-opacity': 0.4, 'shape-rendering': 'crispEdges', 'pointer-events': 'none' }));
-      const gw = 34;
-      svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2, width: gw, height: 4, rx: 2, fill: 'var(--color-text-primary)', 'fill-opacity': 0.85, 'pointer-events': 'none' }));
+      /* grab-handle pill widened + fully opaque (owner report 2026-07-23: too
+         subtle to spot between volume and stochastic) — reads unmistakably as
+         a draggable white bar now, same across every pane. */
+      const gw = 56;
+      svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2.5, width: gw, height: 5, rx: 2.5, fill: '#FFFFFF', 'pointer-events': 'none' }));
       const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize; touch-action: none' });
       svg.appendChild(hit);
       hit.addEventListener('pointerdown', ev => {
