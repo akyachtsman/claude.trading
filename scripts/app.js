@@ -1767,6 +1767,9 @@ function renderWbInfo() {
   }
   if (last != null) {
     const dir = chg > 0 ? 'up' : chg < 0 ? 'down' : '';
+    /* symbol ahead of price (owner request 2026-07-23) — the readout otherwise
+       opened on a bare number with no ticker to anchor it */
+    box.appendChild(el('span', 'wb-info-item wb-quote-sym', sym));
     box.appendChild(el('span', 'wb-info-item wb-quote-last', fmtPrice(last)));
     if (chg != null) {
       const sign = chg > 0 ? '+' : '';
