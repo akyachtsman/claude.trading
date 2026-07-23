@@ -528,20 +528,22 @@ function marketCloseInstant(asOfDate) {
   return new Date(guess - (seen - guess)).toISOString();
 }
 
-/* Two-tier lamp for live feeds (FR-R7): the lamp class answers "how fresh is
-   the FETCH" (LIVE ≤ 6 min); the stamp reports when the DATA last changed.
-   For price feeds (priceBound) the number freezes at the session close, so once
-   the market is shut the stamp reads the 1:00pm PT close — not the hourly
-   re-poll clock (owner ruling 2026-07-22). Intraday, and non-price feeds like
-   news that keep changing after hours, keep the fetch clock (≈ now). The lamp
-   still keys off the fetch, so it can never overstate that the feed is alive. */
+/* Lamp for live feeds. Price feeds (priceBound) only stream real-time WHILE THE
+   MARKET IS OPEN — once it shuts (4:00pm ET / 1:00pm PT) the number is frozen at
+   the close, so the lamp reads EOD (never "LIVE" off-hours, owner ruling
+   2026-07-22) and the stamp names that close. While the session is open the lamp
+   is LIVE when the fetch is fresh (≤ 6 min) and STALE if the poller stalled.
+   Non-price feeds (news — headlines arrive around the clock) keep the LIVE/STALE
+   fetch logic year-round. Future: an extended-hours quote feed would widen the
+   LIVE window through pre/after-market and keep the stamp ticking then. */
 function liveLampFor(generatedAt, dataAsOf, priceBound) {
+  if (priceBound && !marketSessionOpen()) {
+    const stamp = fmtUpdated(marketCloseInstant(dataAsOf) || generatedAt, dataAsOf);
+    return { cls: 'lamp--eod', text: 'EOD', stamp };
+  }
   const ageMs = Date.now() - new Date(generatedAt).getTime();
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
-  const stampIso = (priceBound && !marketSessionOpen())
-    ? (marketCloseInstant(dataAsOf) || generatedAt)
-    : generatedAt;
-  const stamp = fmtUpdated(stampIso, dataAsOf);
+  const stamp = fmtUpdated(generatedAt, dataAsOf);
   return fresh
     ? { cls: 'lamp--live', text: 'LIVE', stamp }
     : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue' };
