@@ -2041,7 +2041,10 @@ function renderCharts(data, lamp) {
     for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
     const tick = nice * mag;
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
-      text(fmtPrice(v), x0 + 6 + plotW + 4, py(v) + 3, { 'font-size': 9 });   /* number only — no gridline */
+      /* short tick mark beside each price label (owner request 2026-07-22) —
+         a ruler notch at the axis edge, NOT a gridline crossing the chart */
+      line(x0 + 6 + plotW, py(v), x0 + 6 + plotW + 4, py(v), { stroke: 'var(--color-border-hover)', 'stroke-width': 1 });
+      text(fmtPrice(v), x0 + 6 + plotW + 7, py(v) + 3, { 'font-size': 9 });
     }
     for (const [name, v] of pivots) {
       /* R levels orange, S levels green, pivot yellow — the reference scheme */
