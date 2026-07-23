@@ -43,8 +43,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   priceBound=true)` — market/heatmap/charts/masthead) once the market is closed
   the stamp reads the session close (`marketCloseInstant` = 16:00 ET / 1:00pm PT
   on the as-of day) instead of the hourly re-poll clock; intraday and non-price
-  feeds (news) keep the fetch clock (≈ now). The lamp class still keys off the
-  fetch, so a LIVE lamp never overstates the feed being alive. Supabase RPC fetch
+  feeds (news) keep the fetch clock (≈ now). The price lamp itself reads **EOD**
+  (not LIVE) once the market is shut — LIVE shows ONLY while the session is open
+  and quotes are streaming (owner ruling 2026-07-22); STALE still flags a genuinely
+  stalled open-hours poller, and non-price feeds keep LIVE/STALE by fetch. (A
+  future extended-hours quote feed would widen the LIVE window.) Supabase RPC fetch
   wrappers. **Every clock on the desk is pinned to Pacific** (`DESK_TZ`, owner
   ruling 2026-07-22):
   stamps via `fmtClock`, intraday bar times via `fmtBarT`, news row times via
@@ -255,7 +258,7 @@ run for real against the dedicated project on every PR.
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
-| S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, in the Accounts header since 2026-07-22) reads LIVE with an "Updated" stamp < 6 min — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
+| S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) with a "Last updated" stamp — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
 | S15 | Assistant memory (opt-in, live) | With `RUN_ASSISTANT_TESTS=1` + live backend: ask, reload, prior exchange replays from `desk_chat_memory` (transcript contains the earlier text) | Transcript empty after reload despite a stored exchange |
 | S16 | Assistant research (opt-in, live) | A snapshot-absent question renders an answer (web tools available) | No answer bubble renders |
 | S17 | Assistant live data (opt-in, live) | An off-page ticker returns an answer (the `get_quote` path) | No answer bubble renders |
