@@ -560,8 +560,11 @@ function renderAsk() {
   input.placeholder = 'Ask about your desk…';
   input.setAttribute('aria-label', 'Ask the desk assistant a question');
   const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
+  const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
+  sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
+  sysBtn.addEventListener('click', () => openSysPromptModal(pin));
   const err = el('p', 'lock-error', ''); err.hidden = true;
-  form.appendChild(input); form.appendChild(btn);
+  form.appendChild(input); form.appendChild(btn); form.appendChild(sysBtn);
   body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
   body.appendChild(el('p', 'ai-disclaimer',
     'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'));
@@ -635,82 +638,57 @@ function renderAsk() {
   syncAskHeight();
 }
 
-/* Ask-the-desk system prompt (desk_009, owner request 2026-07-23) — locked
-   (read-only) by default; the lock button unlocks it for editing; Submit
-   saves via desk_set_system_prompt and locks back up. desk-ask reads this
-   table live on every question, so a saved edit takes effect on the very
-   next question — no code change or redeploy needed. */
-function renderSysPrompt() {
-  const panel = document.getElementById('sysPromptPanel');
-  panel.hidden = false;
+/* Ask-the-desk system prompt (desk_009) — an on-demand modal (owner request
+   2026-07-23) opened via the ⚙ trigger at the far right of the Ask button
+   (see renderAsk()). Editable immediately on open; Save & exit saves via
+   desk_set_system_prompt and closes, ✕/backdrop close without saving.
+   desk-ask reads this table live on every question, so a saved edit takes
+   effect on the very next question — no code change or redeploy needed. */
+function closeSysPromptModal() {
+  document.getElementById('sysPromptBackdrop').hidden = true;
+}
+async function openSysPromptModal(pin) {
+  const backdrop = document.getElementById('sysPromptBackdrop');
   const textEl = document.getElementById('sysPromptText');
-  const lockBtn = document.getElementById('sysPromptLock');
   const stamp = document.getElementById('sysPromptStamp');
-  const actions = document.getElementById('sysPromptActions');
-  const explain = document.getElementById('sysPromptExplain');
   const err = document.getElementById('sysPromptErr');
-  const submitBtn = document.getElementById('sysPromptSubmit');
   err.hidden = true;
-
-  const setLocked = () => {
-    textEl.readOnly = true;
-    actions.hidden = true;
-    lockBtn.setAttribute('aria-pressed', 'false');
-    lockBtn.textContent = '🔒';
-  };
-  setLocked();
-
-  if (DESK.mode === 'demo' || !DESK.authed) {
-    explain.textContent = DESK.mode === 'demo'
-      ? 'Demo has no live assistant to configure — this unlocks with the desk PIN in live mode.'
-      : 'Unlocks with the desk PIN.';
-    textEl.hidden = true;
-    lockBtn.disabled = true;
-    stamp.textContent = '—';
+  backdrop.hidden = false;
+  textEl.value = 'Loading…'; textEl.disabled = true;
+  const out = await deskGetSystemPrompt(pin);
+  textEl.disabled = false;
+  if (!out.ok) {
+    textEl.value = '';
+    err.textContent = 'Could not load the system prompt — try again.'; err.hidden = false;
     return;
   }
+  textEl.value = out.content;
+  stamp.textContent = out.updatedAt ? 'Saved ' + fmtClock(out.updatedAt) : '—';
+  textEl.focus();
+}
+function wireSysPromptModal() {
+  const backdrop = document.getElementById('sysPromptBackdrop');
+  const textEl = document.getElementById('sysPromptText');
+  const stamp = document.getElementById('sysPromptStamp');
+  const err = document.getElementById('sysPromptErr');
+  const submitBtn = document.getElementById('sysPromptSubmit');
 
-  explain.textContent = 'The exact instructions Ask-the-desk follows on every question. Unlock to edit — Submit saves it live and locks it back up.';
-  textEl.hidden = false;
-  lockBtn.disabled = false;
+  document.getElementById('sysPromptCloseBtn').addEventListener('click', () => closeSysPromptModal());
+  backdrop.addEventListener('mousedown', ev => { if (ev.target === backdrop) closeSysPromptModal(); });
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !backdrop.hidden) closeSysPromptModal(); });
 
-  const pin = sessionStorage.getItem('desk_pin');
-
-  const load = async () => {
-    const out = await deskGetSystemPrompt(pin);
-    if (!out.ok) { err.textContent = 'Could not load the system prompt — try again.'; err.hidden = false; return; }
-    textEl.value = out.content;
-    if (out.updatedAt) stamp.textContent = 'Saved ' + fmtClock(out.updatedAt);
-  };
-  load(); // shown read-only immediately — the lock only gates EDITING, not viewing
-
-  lockBtn.onclick = async () => {
-    err.hidden = true;
-    if (textEl.readOnly) {
-      textEl.readOnly = false;
-      actions.hidden = false;
-      lockBtn.setAttribute('aria-pressed', 'true');
-      lockBtn.textContent = '🔓';
-      textEl.focus();
-    } else {
-      lockBtn.disabled = true;
-      await load();   // discard any unsaved edits — reload the last-saved content
-      lockBtn.disabled = false;
-      setLocked();
-    }
-  };
-
-  submitBtn.onclick = async () => {
+  submitBtn.addEventListener('click', async () => {
     const content = textEl.value.trim();
     if (!content) { err.textContent = 'System prompt can’t be empty.'; err.hidden = false; return; }
     if (!confirm('This changes how Ask-the-desk behaves for every future question. Save?')) return;
+    const pin = sessionStorage.getItem('desk_pin');
     submitBtn.disabled = true;
     const out = await deskSetSystemPrompt(pin, content);
     submitBtn.disabled = false;
     if (!out.ok) { err.textContent = 'Could not save — try again.'; err.hidden = false; return; }
     if (out.updatedAt) stamp.textContent = 'Saved ' + fmtClock(out.updatedAt);
-    setLocked();
-  };
+    closeSysPromptModal();
+  });
 }
 
 /* ── locked state (live mode, pre-auth) ────────────────────────────────── */
@@ -753,9 +731,10 @@ function renderLockedPanels() {
     }
   });
 
-  /* ask panel + system prompt panel show locked shells */
+  /* ask panel shows a locked shell; the system-prompt modal only ever opens
+     from an authed Ask-the-desk trigger, so just make sure it's not stuck open */
   renderAsk();
-  renderSysPrompt();
+  closeSysPromptModal();
 }
 
 /* ── S&P 500 heatmap (squarified treemap) ──────────────────────────────────
@@ -2934,9 +2913,9 @@ function renderPrivate() {
     if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()).replace('Last updated', 'Accounts synced') : '');
     renderAccounts(DESK.data.accounts, lamp);
     renderAsk();
-    renderSysPrompt();
+    if (DESK.mode === 'demo') closeSysPromptModal(); /* demo has no live assistant to configure */
   } else {
-    renderLockedPanels(); /* renders the ask + system-prompt panels' locked shells too */
+    renderLockedPanels(); /* renders the ask panel's locked shell too */
   }
 }
 
@@ -3186,4 +3165,5 @@ async function boot() {
 
 wireCharts();
 wireMapFilter();
+wireSysPromptModal();
 boot();
