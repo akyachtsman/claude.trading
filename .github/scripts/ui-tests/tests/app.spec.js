@@ -718,7 +718,7 @@ test('S14: desk lamp reads LIVE off the market feed (live only)', async ({ page 
   await page.goto('./');
   const lamp = page.locator('#mastheadState .lamp').first();
   await expect(lamp, 'live feed unreachable or stale — check desk-market').toHaveText('LIVE', { timeout: 20000 });
-  await expect(page.locator('#mastheadState .stamp')).toContainText('Updated');
+  await expect(page.locator('#mastheadState .stamp')).toContainText('Last updated');
 });
 
 // S12 — Charts workbench: three doctrine panes with candles, stochastics,

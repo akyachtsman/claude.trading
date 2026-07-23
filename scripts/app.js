@@ -49,7 +49,7 @@ function renderMasthead() {
     /* live-derived: the market feed's stamps stand for the public layer —
        no committed meta.json anymore (retire-nightly-pipeline Group C) */
     const lamp = DESK.liveStamp
-      ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf)
+      ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true)
       : { cls: 'lamp--stale', text: 'Stale', stamp: 'Live feed unreachable' };
     wrap.appendChild(el('span', 'lamp ' + lamp.cls, lamp.text));
     wrap.appendChild(el('span', 'stamp', lamp.stamp));
@@ -1340,7 +1340,7 @@ async function refreshR2kMap() {
   if (heatR2k && Date.now() - heatR2kAt < 300000) return;
   try {
     const out = await deskFeed('desk-heatmap', { universe: 'r2k' });
-    heatR2k = { hm: out, lamp: liveLampFor(out.generatedAt, out.asOf) };
+    heatR2k = { hm: out, lamp: liveLampFor(out.generatedAt, out.asOf, true) };
     heatR2kAt = Date.now();
     heatR2kErr = false;
   } catch { heatR2kErr = !heatR2k; /* keep last good */ }
@@ -1363,7 +1363,7 @@ async function loadHeatmap() {
     try {
       const hm = await deskFeed('desk-heatmap');
       clearTimeout(heatRetry.timer); heatRetry.wait = 0;
-      heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf) };
+      heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf, true) };
       applyMapView();
       return;
     } catch { /* failure paths below */ }
@@ -2752,9 +2752,9 @@ async function loadCharts() {
            quote-proxy aren't dropped when the watchlist feed refreshes. */
         wbState.data.symbols = { ...wbState.data.symbols, ...data.symbols };
         wbState.data.asOf = data.asOf;
-        renderCharts(wbState.data, liveLampFor(data.generatedAt, data.asOf));
+        renderCharts(wbState.data, liveLampFor(data.generatedAt, data.asOf, true));
       } else {
-        renderCharts(data, liveLampFor(data.generatedAt, data.asOf));
+        renderCharts(data, liveLampFor(data.generatedAt, data.asOf, true));
       }
       /* re-hydrate manual entries once, on the first LIVE feed — keyed on this
          one-shot rather than wbState creation so a transient first-load outage
@@ -2862,7 +2862,7 @@ async function refreshMarket() {
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
     DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf };
     renderStrip(DESK.data.market);
-    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf));
+    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true));
     fetchMktSeries();   /* one-shot: hydrate the index chart series (self-guarded) */
     stripLive = true;
     return;

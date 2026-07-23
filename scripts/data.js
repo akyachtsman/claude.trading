@@ -505,20 +505,43 @@ function fmtShortDate(d) {
   return m ? MONTHS[+m[2] - 1] + ' ' + (+m[3]) : String(d);
 }
 /* Uniform terse freshness stamp used on EVERY panel (owner request 2026-07-21):
-   "Updated 17:14 PDT · Jul 21", dropping to "Updated Jul 21" when only a
-   trading-day as-of exists (no live fetch clock). '' if empty. */
-function fmtUpdated(fetchIso, asOfDate) {
-  const parts = [fetchIso ? fmtClock(fetchIso) : '', fmtShortDate(asOfDate)].filter(Boolean);
-  return parts.length ? 'Updated ' + parts.join(' · ') : '';
+   "Last updated 17:14 PDT · Jul 21", dropping to "Last updated Jul 21" when only
+   a trading-day as-of exists (no clock). The clock is the time the DATA is
+   as-of — not when we polled (owner ruling 2026-07-22). '' if empty. */
+function fmtUpdated(atIso, asOfDate) {
+  const parts = [atIso ? fmtClock(atIso) : '', fmtShortDate(asOfDate)].filter(Boolean);
+  return parts.length ? 'Last updated ' + parts.join(' · ') : '';
+}
+
+/* UTC instant of the regular-session close (16:00 America/New_York = 1:00pm PT)
+   on a given trading day. Robust across DST via the standard wall-clock→instant
+   correction. Null if the date can't be parsed. */
+function marketCloseInstant(asOfDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(asOfDate || ''));
+  if (!m) return null;
+  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], 16, 0, 0);   /* 16:00 as if UTC */
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(guess)).map(x => [x.type, x.value]));
+  const seen = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return new Date(guess - (seen - guess)).toISOString();
 }
 
 /* Two-tier lamp for live feeds (FR-R7): the lamp class answers "how fresh is
-   the FETCH" (LIVE ≤ 6 min); the stamp is the uniform "Updated {time} · {date}"
-   so a LIVE lamp can never overstate quote freshness. */
-function liveLampFor(generatedAt, dataAsOf) {
+   the FETCH" (LIVE ≤ 6 min); the stamp reports when the DATA last changed.
+   For price feeds (priceBound) the number freezes at the session close, so once
+   the market is shut the stamp reads the 1:00pm PT close — not the hourly
+   re-poll clock (owner ruling 2026-07-22). Intraday, and non-price feeds like
+   news that keep changing after hours, keep the fetch clock (≈ now). The lamp
+   still keys off the fetch, so it can never overstate that the feed is alive. */
+function liveLampFor(generatedAt, dataAsOf, priceBound) {
   const ageMs = Date.now() - new Date(generatedAt).getTime();
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
-  const stamp = fmtUpdated(generatedAt, dataAsOf);
+  const stampIso = (priceBound && !marketSessionOpen())
+    ? (marketCloseInstant(dataAsOf) || generatedAt)
+    : generatedAt;
+  const stamp = fmtUpdated(stampIso, dataAsOf);
   return fresh
     ? { cls: 'lamp--live', text: 'LIVE', stamp }
     : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue' };
