@@ -167,6 +167,18 @@
   border-top: 1px solid var(--color-border); padding-top: var(--space-2); margin-top: var(--space-3);
 }
 
+/* Ask-the-desk system prompt panel (owner request 2026-07-23) — locked by
+   default; the lock button toggles read-only. */
+.sys-prompt-text {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px;
+  font: 400 var(--font-xs)/1.55 var(--font-mono); color: var(--color-text-primary);
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+}
+.sys-prompt-text:read-only { background: var(--color-surface-2); color: var(--color-text-secondary); }
+.sys-prompt-text:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
+.sys-prompt-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+
 /* locked panel (PIN gate) — .lock-explain also serves the equity/ask shells */
 .lock-explain { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0 0 var(--space-3); }
 .lock-form { display: flex; gap: var(--space-2); flex-wrap: wrap; }

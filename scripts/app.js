@@ -635,6 +635,84 @@ function renderAsk() {
   syncAskHeight();
 }
 
+/* Ask-the-desk system prompt (desk_009, owner request 2026-07-23) — locked
+   (read-only) by default; the lock button unlocks it for editing; Submit
+   saves via desk_set_system_prompt and locks back up. desk-ask reads this
+   table live on every question, so a saved edit takes effect on the very
+   next question — no code change or redeploy needed. */
+function renderSysPrompt() {
+  const panel = document.getElementById('sysPromptPanel');
+  panel.hidden = false;
+  const textEl = document.getElementById('sysPromptText');
+  const lockBtn = document.getElementById('sysPromptLock');
+  const stamp = document.getElementById('sysPromptStamp');
+  const actions = document.getElementById('sysPromptActions');
+  const explain = document.getElementById('sysPromptExplain');
+  const err = document.getElementById('sysPromptErr');
+  const submitBtn = document.getElementById('sysPromptSubmit');
+  err.hidden = true;
+
+  const setLocked = () => {
+    textEl.readOnly = true;
+    actions.hidden = true;
+    lockBtn.setAttribute('aria-pressed', 'false');
+    lockBtn.textContent = '🔒';
+  };
+  setLocked();
+
+  if (DESK.mode === 'demo' || !DESK.authed) {
+    explain.textContent = DESK.mode === 'demo'
+      ? 'Demo has no live assistant to configure — this unlocks with the desk PIN in live mode.'
+      : 'Unlocks with the desk PIN.';
+    textEl.hidden = true;
+    lockBtn.disabled = true;
+    stamp.textContent = '—';
+    return;
+  }
+
+  explain.textContent = 'The exact instructions Ask-the-desk follows on every question. Unlock to edit — Submit saves it live and locks it back up.';
+  textEl.hidden = false;
+  lockBtn.disabled = false;
+
+  const pin = sessionStorage.getItem('desk_pin');
+
+  const load = async () => {
+    const out = await deskGetSystemPrompt(pin);
+    if (!out.ok) { err.textContent = 'Could not load the system prompt — try again.'; err.hidden = false; return; }
+    textEl.value = out.content;
+    if (out.updatedAt) stamp.textContent = 'Saved ' + fmtClock(out.updatedAt);
+  };
+  load(); // shown read-only immediately — the lock only gates EDITING, not viewing
+
+  lockBtn.onclick = async () => {
+    err.hidden = true;
+    if (textEl.readOnly) {
+      textEl.readOnly = false;
+      actions.hidden = false;
+      lockBtn.setAttribute('aria-pressed', 'true');
+      lockBtn.textContent = '🔓';
+      textEl.focus();
+    } else {
+      lockBtn.disabled = true;
+      await load();   // discard any unsaved edits — reload the last-saved content
+      lockBtn.disabled = false;
+      setLocked();
+    }
+  };
+
+  submitBtn.onclick = async () => {
+    const content = textEl.value.trim();
+    if (!content) { err.textContent = 'System prompt can’t be empty.'; err.hidden = false; return; }
+    if (!confirm('This changes how Ask-the-desk behaves for every future question. Save?')) return;
+    submitBtn.disabled = true;
+    const out = await deskSetSystemPrompt(pin, content);
+    submitBtn.disabled = false;
+    if (!out.ok) { err.textContent = 'Could not save — try again.'; err.hidden = false; return; }
+    if (out.updatedAt) stamp.textContent = 'Saved ' + fmtClock(out.updatedAt);
+    setLocked();
+  };
+}
+
 /* ── locked state (live mode, pre-auth) ────────────────────────────────── */
 function renderLockedPanels() {
   const grid = document.getElementById('accountGrid');
@@ -675,8 +753,9 @@ function renderLockedPanels() {
     }
   });
 
-  /* ask panel shows a locked shell */
+  /* ask panel + system prompt panel show locked shells */
   renderAsk();
+  renderSysPrompt();
 }
 
 /* ── S&P 500 heatmap (squarified treemap) ──────────────────────────────────
@@ -2855,8 +2934,9 @@ function renderPrivate() {
     if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()).replace('Last updated', 'Accounts synced') : '');
     renderAccounts(DESK.data.accounts, lamp);
     renderAsk();
+    renderSysPrompt();
   } else {
-    renderLockedPanels(); /* renders the ask panel's locked shell too */
+    renderLockedPanels(); /* renders the ask + system-prompt panels' locked shells too */
   }
 }
 

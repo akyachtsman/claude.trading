@@ -310,8 +310,10 @@ function accountsLampFor(asOfIso, syncedAtIso, now) {
 }
 
 /* Auth: PIN-validated Supabase RPCs (SECURITY DEFINER, anon-only EXECUTE).
-   Two plain fetch calls — no client library needed for /rest/v1/rpc. */
-async function deskRpc(fn, pin) {
+   Two plain fetch calls — no client library needed for /rest/v1/rpc. `extra`
+   merges additional named args into the RPC body (e.g. desk_set_system_prompt's
+   new_content) alongside pin. */
+async function deskRpc(fn, pin, extra) {
   const res = await fetch(DESK_DB.url + '/rest/v1/rpc/' + fn, {
     method: 'POST',
     headers: {
@@ -319,7 +321,7 @@ async function deskRpc(fn, pin) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ pin }),
+    body: JSON.stringify({ pin, ...(extra || {}) }),
   });
   if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
   return res.json();
@@ -342,6 +344,19 @@ async function deskChatHistory(pin) {
 }
 async function deskChatClear(pin) {
   try { return await deskRpc('desk_chat_clear', pin); }
+  catch { return { ok: false }; }
+}
+
+/* Ask-the-desk system prompt (desk_009): PIN-gated read/write of the full
+   text desk-ask sends the model as `system` on every call — the owner's
+   self-service alternative to asking Claude Code to edit and redeploy
+   supabase/functions/desk-ask/index.ts. */
+async function deskGetSystemPrompt(pin) {
+  try { const out = await deskRpc('desk_get_system_prompt', pin); return out && out.ok ? out : { ok: false }; }
+  catch { return { ok: false }; }
+}
+async function deskSetSystemPrompt(pin, content) {
+  try { const out = await deskRpc('desk_set_system_prompt', pin, { new_content: content }); return out && out.ok ? out : { ok: false }; }
   catch { return { ok: false }; }
 }
 
