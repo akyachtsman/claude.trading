@@ -41,6 +41,11 @@ const DESK = {
 function renderMasthead() {
   const wrap = document.getElementById('mastheadState');
   while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+  /* "MARKETS" label (owner report 2026-07-22): this cluster is the market-feed
+     lamp, not an Accounts indicator — sitting in the Accounts header without a
+     name reads as ambiguous. Label it, matching the Markets panel's own
+     "Markets ● Live" convention. */
+  wrap.appendChild(el('span', 'masthead-label', 'MARKETS'));
   if (DESK.mode === 'demo') {
     wrap.appendChild(el('span', 'lamp lamp--demo', 'Demo data'));
     wrap.appendChild(el('span', 'lamp lamp--eod', 'EOD snapshot'));
@@ -52,7 +57,10 @@ function renderMasthead() {
       ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true)
       : { cls: 'lamp--stale', text: 'Stale', stamp: 'Live feed unreachable' };
     wrap.appendChild(el('span', 'lamp ' + lamp.cls, lamp.text));
-    wrap.appendChild(el('span', 'stamp', lamp.stamp));
+    /* time only here (owner request 2026-07-22) — the date is redundant this
+       close to the Lock button; fall back to the full stamp when there's no
+       raw instant to reformat (feed-unreachable case). */
+    wrap.appendChild(el('span', 'stamp', lamp.atIso ? 'Last updated ' + fmtClock(lamp.atIso) : lamp.stamp));
     if (DESK.authed) {
       const lock = el('button', 'btn btn-secondary', 'Lock');
       lock.type = 'button';
@@ -2816,7 +2824,7 @@ function renderPrivate() {
       ? { cls: 'lamp--demo', text: 'Demo' }
       : accountsLampFor(DESK.privateAsOf, DESK.privateSyncedAt, new Date());
     const acctStamp = document.getElementById('accountsStamp');
-    if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()) : '');
+    if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()).replace('Last updated', 'Accounts synced') : '');
     renderAccounts(DESK.data.accounts, lamp);
     /* FR-AI4: the brief carries its own freshness — generation can fail
        while snapshots keep flowing, so its lamp derives from brief.asOf,

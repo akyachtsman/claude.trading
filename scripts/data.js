@@ -324,7 +324,13 @@ function accountsLampFor(asOfIso, syncedAtIso, now) {
   const ltd = lastTradingDay(n);
   const prevTd = lastTradingDay(new Date(ltd.getFullYear(), ltd.getMonth(), ltd.getDate() - 1));
   const fresh = asOfIso >= isoDate(prevTd);   /* allow the overnight-roll lag */
-  const stamp = fmtUpdated(syncedAtIso, asOfIso);   /* sync clock · statement day */
+  /* "Accounts synced" (not "Last updated" — owner request 2026-07-22): this
+     stamp sits directly under the MARKETS-labeled masthead cluster, which now
+     ALSO reads "Last updated" — identical wording on two different things
+     reads as one duplicated stamp. Same sync clock · statement-day content,
+     distinct label. */
+  const parts = [syncedAtIso ? fmtClock(syncedAtIso) : '', fmtShortDate(asOfIso)].filter(Boolean);
+  const stamp = parts.length ? 'Accounts synced ' + parts.join(' · ') : '';
   return fresh
     ? { cls: 'lamp--eod', text: 'EOD', stamp }
     : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — sync overdue' };
@@ -538,15 +544,15 @@ function marketCloseInstant(asOfDate) {
    LIVE window through pre/after-market and keep the stamp ticking then. */
 function liveLampFor(generatedAt, dataAsOf, priceBound) {
   if (priceBound && !marketSessionOpen()) {
-    const stamp = fmtUpdated(marketCloseInstant(dataAsOf) || generatedAt, dataAsOf);
-    return { cls: 'lamp--eod', text: 'EOD', stamp };
+    const atIso = marketCloseInstant(dataAsOf) || generatedAt;
+    return { cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(atIso, dataAsOf), atIso };
   }
   const ageMs = Date.now() - new Date(generatedAt).getTime();
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
   const stamp = fmtUpdated(generatedAt, dataAsOf);
   return fresh
-    ? { cls: 'lamp--live', text: 'LIVE', stamp }
-    : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue' };
+    ? { cls: 'lamp--live', text: 'LIVE', stamp, atIso: generatedAt }
+    : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue', atIso: generatedAt };
 }
 
 /* Map the RPC payload into the render model app.js uses (same shape demo
