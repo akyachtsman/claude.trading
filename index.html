@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260721m">
-<link rel="stylesheet" href="styles/components.css?v=20260721m">
+<link rel="stylesheet" href="styles/tokens.css?v=20260721n">
+<link rel="stylesheet" href="styles/components.css?v=20260721n">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -313,15 +313,20 @@
   .wb-gear { min-height: 44px; padding: 8px 14px; font: 500 var(--font-xs)/1.4 var(--font-sans); }
   .wb-pane-gear { min-height: 44px; min-width: 44px; padding: 4px 10px; font-size: 15px; line-height: 1; margin-left: auto; }
   /* one header bar per visible pane, widths matching the pane split below.
-     Two deliberate rows: tier tag + gear, then the zoom presets. */
+     One row (owner request 2026-07-22): tier tag, then a compact zoom-preset
+     strip right beside it — matching the reference terminal's small inline
+     "Zoom" pill row — then the gear pushed to the far end. flex-wrap lets the
+     preset strip drop to its own line when a pane column is too narrow to fit
+     all three on one line (e.g. the 3-way split on a phone width) instead of
+     forcing an overlapping/overflowing row. */
   .wb-pane-bars { display: flex; gap: 16px; margin-bottom: 6px; }
-  .wb-pane-bar { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr auto; align-items: center; row-gap: 4px; column-gap: 6px; position: relative; }
+  .wb-pane-bar { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; position: relative; }
   .wb-pane-bar[hidden] { display: none; }
-  /* max-width + min-width:0 defeat the grid-item auto min-size so a narrow
-     pane can't be widened by its zoom presets; the seg scrolls instead */
-  .wb-pane-bar .seg { grid-column: 1 / -1; justify-self: start; max-width: 100%; min-width: 0; overflow-x: auto; }
-  .wb-pane-bar .seg button { min-height: 36px; padding: 4px 7px; font-size: 11px; }
-  .wb-pane-bar .wb-pane-gear { min-height: 36px; min-width: 36px; padding: 2px 8px; font-size: 13px; margin-left: 0; justify-self: end; }
+  /* max-width + min-width:0 keep a narrow pane from being widened by its zoom
+     presets; the seg scrolls instead */
+  .wb-pane-bar .seg { max-width: 100%; min-width: 0; overflow-x: auto; }
+  .wb-pane-bar .seg button { min-height: 22px; padding: 2px 7px; font-size: 9px; }
+  .wb-pane-bar .wb-pane-gear { min-height: 22px; min-width: 22px; padding: 2px 6px; font-size: 12px; margin-left: auto; }
   .wb-settings {
     position: absolute; left: 0; top: calc(100% + 4px); z-index: 6; width: 236px;
     background: var(--color-surface); border: 1px solid var(--color-border-hover);
@@ -603,8 +608,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260721m"></script>
-<script src="scripts/data.js?v=20260721m"></script>
-<script src="scripts/app.js?v=20260721m"></script>
+<script src="scripts/config.js?v=20260721n"></script>
+<script src="scripts/data.js?v=20260721n"></script>
+<script src="scripts/app.js?v=20260721n"></script>
 </body>
 </html>
