@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260721q">
-<link rel="stylesheet" href="styles/components.css?v=20260721q">
+<link rel="stylesheet" href="styles/tokens.css?v=20260721r">
+<link rel="stylesheet" href="styles/components.css?v=20260721r">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -311,6 +311,16 @@
   .wb-suggest li[aria-selected="true"], .wb-suggest li:hover { background: var(--color-surface-2); }
   .wb-settings-wrap { position: relative; margin-left: auto; }
   .wb-gear { min-height: 44px; padding: 8px 14px; font: 500 var(--font-xs)/1.4 var(--font-sans); }
+  /* symbol box + Load + PANE control moved INTO the panel header (owner
+     request 2026-07-23) — beside the EOD/LIVE lamp, before the as-of stamp
+     (which keeps its ml-auto and stays pinned to the far right). Shrunk to
+     the header's own compact scale so the thin title bar can hold them;
+     flex-wrap lets the row wrap on narrow screens instead of overflowing. */
+  .wb-panel-header { flex-wrap: wrap; row-gap: var(--space-2); }
+  .wb-panel-header .wb-any-input { width: 84px; min-height: 24px; padding: 2px 6px; font-size: 10px; }
+  .wb-panel-header .wb-gear { min-height: 24px; padding: 2px 8px; font-size: 10px; }
+  .wb-panel-header .wb-seg-tag { font-size: 9px; }
+  .wb-panel-header .seg button { min-height: 24px; padding: 2px 7px; font-size: 9px; }
   .wb-pane-gear { min-height: 44px; min-width: 44px; padding: 4px 10px; font-size: 15px; line-height: 1; margin-left: auto; }
   /* one header bar per visible pane, widths matching the pane split below.
      One row (owner request 2026-07-22): tier tag, then a compact zoom-preset
@@ -522,23 +532,23 @@
   </div>
 
   <section class="panel area-charts" aria-labelledby="chartsTitle">
-    <div class="panel-header">
+    <div class="panel-header wb-panel-header">
       <h2 class="panel-title" id="chartsTitle">Stochastic charts</h2>
       <span class="lamp lamp--demo" id="chartsLamp">Demo</span>
+      <form class="wb-any" id="wbSymForm">
+        <input type="text" class="input wb-any-input" id="wbSymInput" placeholder="Ticker…" aria-label="Chart symbol — type any ticker" maxlength="10" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wbSuggest">
+        <!-- [html-validate-disable-next prefer-native-element -- ARIA combobox listbox for a free-text ticker typeahead; a native <select> can't offer suggestions over arbitrary typed input] -->
+        <ul class="wb-suggest" id="wbSuggest" role="listbox" aria-label="Ticker suggestions" hidden></ul>
+        <button type="submit" class="btn btn-secondary wb-gear">Load</button>
+      </form>
+      <div class="wb-zoom-pair">
+        <span class="wb-seg-tag">PANE</span>
+        <div class="seg" role="group" aria-label="Pane layout" id="chartLayout"></div>
+      </div>
       <span class="stamp ml-auto" id="chartsStamp">—</span>
     </div>
     <div class="panel-body">
       <div class="wb-toolbar">
-        <form class="wb-any" id="wbSymForm">
-          <input type="text" class="input wb-any-input" id="wbSymInput" placeholder="Ticker…" aria-label="Chart symbol — type any ticker" maxlength="10" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wbSuggest">
-          <!-- [html-validate-disable-next prefer-native-element -- ARIA combobox listbox for a free-text ticker typeahead; a native <select> can't offer suggestions over arbitrary typed input] -->
-          <ul class="wb-suggest" id="wbSuggest" role="listbox" aria-label="Ticker suggestions" hidden></ul>
-          <button type="submit" class="btn btn-secondary wb-gear">Load</button>
-        </form>
-        <div class="wb-zoom-pair">
-          <span class="wb-seg-tag">PANE</span>
-          <div class="seg" role="group" aria-label="Pane layout" id="chartLayout"></div>
-        </div>
         <div class="wb-info" id="wbInfo" aria-live="polite"></div>
       </div>
       <div class="wb-grid">
@@ -608,8 +618,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260721q"></script>
-<script src="scripts/data.js?v=20260721q"></script>
-<script src="scripts/app.js?v=20260721q"></script>
+<script src="scripts/config.js?v=20260721r"></script>
+<script src="scripts/data.js?v=20260721r"></script>
+<script src="scripts/app.js?v=20260721r"></script>
 </body>
 </html>
