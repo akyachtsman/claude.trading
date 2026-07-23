@@ -639,7 +639,7 @@ test('CTRL: no duplicated primary action control', async ({ page }) => {
 test('S5: demo mode shows DEMO lamps on every panel', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('#mastheadState')).toContainText(/demo data/i);
-  for (const id of ['#briefLamp', '#newsLamp', '#askLamp']) {
+  for (const id of ['#newsLamp', '#askLamp']) {
     await expect(page.locator(id), `${id} must read Demo in demo mode`).toHaveText(/demo/i);
   }
 });
@@ -660,17 +660,6 @@ test('S6: positions table sorts on header click', async ({ page }) => {
   expect(v1, 'row order must flip between ascending and descending').not.toBe(v2);
 });
 
-// S9 — Brief structure: sections + disclaimer + stamp always present.
-test('S9: demo brief renders its three sections and the disclaimer', async ({ page }) => {
-  await page.goto('./?demo=1');
-  const brief = page.locator('#briefBody');
-  for (const title of ['Portfolio state', 'Key levels', 'Scenarios']) {
-    await expect(brief.locator('h3', { hasText: title })).toBeVisible();
-  }
-  await expect(brief.locator('.ai-disclaimer')).toContainText(/not financial advice/i);
-  await expect(page.locator('#briefStamp')).not.toHaveText('—');
-});
-
 // Live-only scenarios (S10/S11) skip cleanly while the site is demo-only
 // (empty DESK_DB in scripts/config.js — no backend to authenticate against).
 async function liveBackendConfigured(page) {
@@ -682,17 +671,15 @@ async function liveBackendConfigured(page) {
 }
 
 // S10 — Locked → login → render (needs backend + TEST_AUTH_CREDENTIAL).
-test('S10: valid PIN unlocks accounts and brief (live only)', async ({ page }) => {
+test('S10: valid PIN unlocks accounts (live only)', async ({ page }) => {
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
   await page.goto('./');
   const pinInput = page.locator('.lock-form input.input');
   await expect(pinInput).toBeVisible();
-  await expect(page.locator('#briefLamp')).toHaveText(/locked/i);
   await pinInput.fill(AUTH_CREDENTIAL);
   await page.locator('.lock-form button').click();
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#briefLamp')).not.toHaveText(/locked/i);
 });
 
 // S11 — Wrong PIN: plain error, still locked, nothing rendered.
@@ -704,7 +691,6 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   await pinInput.fill('000000');
   await page.locator('.lock-form button').click();
   await expect(page.locator('.lock-error')).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#briefLamp')).toHaveText(/locked/i);
   await expect(page.locator('#accountGrid .hero-number')).toHaveCount(0);
 });
 

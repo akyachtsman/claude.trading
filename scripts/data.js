@@ -112,34 +112,7 @@ function buildDemoData() {
     { t: '10:15', src: 'CNBC',      h: 'Amazon Prime Day sales tracking ahead of last year', chips: [['AMZN', 1.12]] },
     { t: '09:36', src: 'Bloomberg', h: 'Volatility drifts lower; VIX under 15 for third session', chips: [['VIX', -4.20]] },
   ];
-  return { accounts, market, news, labels, asOfDate, brief: buildDemoBrief(accounts), markets: buildDemoMarkets() };
-}
-
-/* Demo brief derives its numbers from the demo snapshot — same shape the
-   live RPC payload uses, so the renderer is shared with Phase D. */
-function buildDemoBrief(accounts) {
-  const totalNav = accounts.reduce((s, a) => s + a.nav, 0);
-  const totalDay = accounts.reduce((s, a) => s + a.day, 0);
-  const dayPct = totalDay / (totalNav - totalDay) * 100;
-  const best = accounts.reduce((x, a) => (a.day > x.day ? a : x), accounts[0]);
-  const allPos = accounts.flatMap(a => a.positions.map(p => ({ ...p, acct: a.label })));
-  const mover = allPos.reduce((x, p) => (Math.abs(p.unrl) > Math.abs(x.unrl) ? p : x), allPos[0]);
-  const cashPct = accounts.reduce((s, a) => s + a.cash, 0) / totalNav * 100;
-  return {
-    generatedAt: fmtUpdated(null, isoDate(lastTradingDay(new Date()))),
-    state: 'Net liquidation across ' + accounts.length + ' accounts is ' + fmtUsd0(totalNav)
-      + ', ' + (totalDay >= 0 ? 'up ' : 'down ') + fmtPct(Math.abs(dayPct)).slice(1)
-      + ' on the day. ' + best.label + ' led with ' + fmtSigned(best.day) + '.',
-    levels: [
-      mover.sym + ' carries the largest open P&L (' + fmtSigned(mover.unrl) + ') in ' + mover.acct + '.',
-      'Portfolio cash is ' + Math.round(cashPct) + '% of net liquidation.',
-      'SPY closed at 630.4 — 1.1% below its recent high (demo figure).',
-    ],
-    scenarios: [
-      'CPI prints Thursday — a hot print pressures the rate-sensitive sleeve (TLT, SCHD).',
-      'Concentration: the top holding exceeds 10% of one account — a single-name drawdown moves the whole window.',
-    ],
-  };
+  return { accounts, market, news, labels, asOfDate, markets: buildDemoMarkets() };
 }
 
 /* Demo heatmap — deterministic (seeded pct), rough caps; same shape as the
@@ -300,7 +273,7 @@ async function fetchPublic(path) {
 }
 
 /* Panel lamp state from a domain's own embedded as-of date (EOD-class data:
-   private snapshots, brief). Live feeds use liveLampFor instead. */
+   private snapshots). Live feeds use liveLampFor instead. */
 function lampFor(asOfIso, now) {
   const ltd = isoDate(lastTradingDay(now || new Date()));
   if (!asOfIso) return { cls: 'lamp--stale', text: 'NO DATA', stamp: '—' };
@@ -581,17 +554,8 @@ function mapDashboardPayload(payload) {
     asOf: a.as_of,
     syncedAt: a.created_at || null,   /* when the sync wrote this snapshot (desk_007) */
   }));
-  let brief = null;
-  if (payload.brief && payload.brief.content) {
-    const c = payload.brief.content;
-    brief = {
-      generatedAt: fmtUpdated(payload.brief.generated_at, payload.brief.as_of),
-      state: c.state || '', levels: c.levels || [], scenarios: c.scenarios || [],
-      asOf: payload.brief.as_of,
-    };
-  }
   return {
-    accounts, labels, brief,
+    accounts, labels,
     asOf: accounts.length ? accounts[0].asOf : null,
     syncedAt: accounts.length ? accounts[0].syncedAt : null,
   };
