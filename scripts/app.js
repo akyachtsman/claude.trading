@@ -872,7 +872,7 @@ const DESK_VMARGIN = 96;   /* 0.5in top + 0.5in bottom */
 /* Owner 2026-07-19: run the panels TALLER than the viewport-fit base — the
    stochastic chart by 2in, the heatmap by 1in (96px = 1in). They no longer
    match; both now extend past one screen and scroll. */
-const DESK_CHART_BOOST = 192;   /* +2in on the stochastic chart */
+const DESK_CHART_BOOST = 96;    /* +1in on the stochastic chart (owner request 2026-07-24, was +2in) */
 const DESK_HEAT_BOOST = 96;     /* +1in on the heatmap */
 const DESK_HEAT_LENGTHEN = 1.1; /* +10% heatmap length (owner request 2026-07-21) */
 function deskChartHeight(svg) {
