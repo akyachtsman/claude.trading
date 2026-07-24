@@ -85,12 +85,25 @@ export function mergeFeedConfig(fileCfg: any, defaults = DEFAULT_FEED_CONFIG): F
 }
 
 // ── RSS/Atom parsing (verbatim port of parseFeed) ───────────────────────────
-type Item = { title: string; at: Date | null; src: string; chip?: string; chips?: string[] };
+type Item = { title: string; at: Date | null; src: string; link?: string; chip?: string; chips?: string[] };
 const parser = new XMLParser({ ignoreAttributes: false, textNodeName: '#text', htmlEntities: true });
 // deno-lint-ignore no-explicit-any
 const asArray = (x: any) => (x === undefined || x === null ? [] : Array.isArray(x) ? x : [x]);
 // deno-lint-ignore no-explicit-any
 const textOf = (v: any) => (typeof v === 'object' && v !== null ? v['#text'] || '' : String(v ?? ''));
+// RSS <link> is a plain text node; Atom <link href="..."/> is an attribute-only
+// element (possibly repeated with different rel values) — prefer rel="alternate"
+// or the first entry with an href.
+// deno-lint-ignore no-explicit-any
+function linkOf(raw: any): string {
+  if (raw == null) return '';
+  if (Array.isArray(raw)) {
+    const alt = raw.find((r) => !r?.['@_rel'] || r['@_rel'] === 'alternate') || raw[0];
+    return linkOf(alt);
+  }
+  if (typeof raw === 'object') return String(raw['@_href'] || textOf(raw) || '').trim();
+  return String(raw).trim();
+}
 
 export function parseFeed(xml: string, fallbackSrc: string): Item[] {
   // deno-lint-ignore no-explicit-any
@@ -107,7 +120,7 @@ export function parseFeed(xml: string, fallbackSrc: string): Item[] {
     if (m && fallbackSrc === 'Google News') { title = m[1].trim(); src = m[2].trim(); }
     const when = textOf(it.pubDate || it.published || it.updated).trim();
     const at = when ? new Date(when) : null;
-    out.push({ title, at: at && !isNaN(at.getTime()) ? at : null, src });
+    out.push({ title, at: at && !isNaN(at.getTime()) ? at : null, src, link: linkOf(it.link) });
   }
   return out;
 }
@@ -217,6 +230,7 @@ async function refresh(): Promise<unknown> {
         t: it.at ? it.at.toISOString().slice(11, 16) : '—',
         src: it.src,
         h: it.title,
+        url: it.link || null,
         chips: it.chips!.map((sym) => [sym, pct[sym] ?? null]),
       })),
     };
