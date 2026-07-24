@@ -1719,6 +1719,10 @@ function monthlyPivots(s) {
    daily-updating texture its weekly band shows. */
 const weeklyStochOnDaily = daily => stochSeries(daily, WSTOCH);
 
+/* Doctrine circles OFF for now (owner request 2026-07-24) — flip true to
+   bring them back; stochMarks() below still computes them either way. */
+const SHOW_DOCTRINE_MARKS = false;
+
 function stochMarks(st, os = 20, ob = 80) {
   const buys = [], sells = [];
   for (let i = 1; i < st.k.length; i++) {
@@ -2232,7 +2236,7 @@ function renderCharts(data, lamp) {
         }
         if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 1.5 }));
       }
-      if (strMarks) {
+      if (strMarks && SHOW_DOCTRINE_MARKS) {
         for (const i of strMarks.buys) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(series.k[i]), r: 4, fill: 'none', stroke: WB.up, 'stroke-width': 1.8 }));
         for (const i of strMarks.sells) if (i >= i0 && i < end) svg.appendChild(svgEl('circle', { cx: x(i), cy: sy(series.k[i]), r: 4, fill: 'none', stroke: WB.down, 'stroke-width': 1.8 }));
       }
