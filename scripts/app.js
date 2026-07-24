@@ -489,6 +489,8 @@ function renderNews(news, lamp) {
   while (list.firstChild) list.removeChild(list.firstChild);
   const lampEl = document.getElementById('newsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
+  const stampEl = document.getElementById('newsStamp');
+  if (stampEl) stampEl.textContent = DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()) : (lamp.stamp || '—');
   if (!news || !news.length) {
     list.appendChild(el('p', 'stamp', 'No headlines in the latest snapshot — check back after the next refresh.'));
     return;
@@ -497,7 +499,22 @@ function renderNews(news, lamp) {
     const row = el('div', 'news-row');
     row.appendChild(el('span', 'news-time', n.t));
     const main = el('div', 'news-main');
-    main.appendChild(el('p', 'news-headline', n.h));
+    /* headline links to the source article when the feed carried one; only
+       http(s) — never a javascript:/data: URL from a tampered/odd feed item
+       (same guard as the ask-the-desk sources footer). */
+    let href = null;
+    if (n.url) {
+      try { const u = new URL(n.url); if (u.protocol === 'https:' || u.protocol === 'http:') href = u.href; } catch { /* not a URL */ }
+    }
+    if (href) {
+      const link = document.createElement('a');
+      link.className = 'news-headline'; link.href = href;
+      link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.textContent = n.h;
+      main.appendChild(link);
+    } else {
+      main.appendChild(el('p', 'news-headline', n.h));
+    }
     const meta = el('div', 'news-meta');
     meta.appendChild(el('span', '', n.src));
     for (const [sym, chg] of (n.chips || [])) {
