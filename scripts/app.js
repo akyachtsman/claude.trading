@@ -2283,13 +2283,19 @@ function renderCharts(data, lamp) {
     /* time axis LABELS: month boundaries on daily/weekly panes, session (day)
        boundaries on intraday ones. Labels only where they have ≥48px. The
        vertical gridlines were removed 2026-07-22 to match the terminal's clean
-       panels — the date labels stay, no line crosses the chart. */
+       panels — the date labels stay, no line crosses the chart. Intraday
+       panes (Pro 3) get ONE exception (owner request 2026-07-24): a subtle
+       full-height line at each day boundary, so a multi-day intraday window
+       still shows where each trading day started — drawn at every boundary
+       regardless of label spacing, since it's a sparse marker (one per day),
+       not a dense grid. */
     const gridKey = opts.intraday ? (t => t.slice(0, 10)) : (t => t.slice(0, 7));
     const gridLabel = opts.intraday ? (t => t.slice(5, 10)) : (t => t.slice(0, 7));
     let lastLabelX = -Infinity;
     for (let i = i0 + 1; i < end; i++) {
       if (gridKey(bars.t[i]) !== gridKey(bars.t[i - 1])) {
         const gx = x(i) - slotW / 2;
+        if (opts.intraday) line(gx, pY, gx, chartBot, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.35 });
         if (gx - lastLabelX >= 48) {
           text(gridLabel(bars.t[i]), gx + 2, opts.nav ? chartBot + 12 : H - 4, { 'font-size': 8 });
           lastLabelX = gx;
