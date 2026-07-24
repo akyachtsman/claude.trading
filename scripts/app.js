@@ -2295,7 +2295,7 @@ function renderCharts(data, lamp) {
     for (let i = i0 + 1; i < end; i++) {
       if (gridKey(bars.t[i]) !== gridKey(bars.t[i - 1])) {
         const gx = x(i) - slotW / 2;
-        if (opts.intraday) line(gx, pY, gx, chartBot, { stroke: WB.grid, 'stroke-width': 1, 'stroke-opacity': 0.35 });
+        if (opts.intraday) line(gx, pY, gx, chartBot, { stroke: 'var(--color-border-hover)', 'stroke-width': 1, 'stroke-opacity': 0.6 });
         if (gx - lastLabelX >= 48) {
           text(gridLabel(bars.t[i]), gx + 2, opts.nav ? chartBot + 12 : H - 4, { 'font-size': 8 });
           lastLabelX = gx;
