@@ -49,18 +49,17 @@ function renderMasthead() {
   if (DESK.mode === 'demo') {
     wrap.appendChild(el('span', 'lamp lamp--demo', 'Demo data'));
     wrap.appendChild(el('span', 'lamp lamp--eod', 'EOD snapshot'));
-    wrap.appendChild(el('span', 'stamp', fmtUpdated(null, lastLabel())));
   } else {
-    /* live-derived: the market feed's stamps stand for the public layer —
-       no committed meta.json anymore (retire-nightly-pipeline Group C) */
+    /* live-derived: the market feed's stamp stands for the public layer —
+       no committed meta.json anymore (retire-nightly-pipeline Group C).
+       The "Last updated" text stamp here was removed (owner report
+       2026-07-24: no purpose floating next to Lock) — the lamp text
+       (LIVE/EOD/STALE) is the signal; the Markets panel's own stamp
+       already carries the full as-of time for anyone who wants it. */
     const lamp = DESK.liveStamp
       ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true)
       : { cls: 'lamp--stale', text: 'Stale', stamp: 'Live feed unreachable' };
     wrap.appendChild(el('span', 'lamp ' + lamp.cls, lamp.text));
-    /* time only here (owner request 2026-07-22) — the date is redundant this
-       close to the Lock button; fall back to the full stamp when there's no
-       raw instant to reformat (feed-unreachable case). */
-    wrap.appendChild(el('span', 'stamp', lamp.atIso ? 'Last updated ' + fmtClock(lamp.atIso) : lamp.stamp));
     if (DESK.authed) {
       const lock = el('button', 'btn btn-secondary', 'Lock');
       lock.type = 'button';
