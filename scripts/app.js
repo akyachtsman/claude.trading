@@ -523,7 +523,12 @@ function buildAskContext() {
       positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: p.dayPct, unrl: p.unrl })),
     })),
     market: (d.market || []).map(m => ({ name: m.name, last: m.last, dayChgPct: m.chg })),
-    marketAsOf: DESK.mode === 'demo' ? lastLabel() : (DESK.liveStamp ? DESK.liveStamp.generatedAt : null),
+    /* Pre-converted to Pacific here (fmtStampDateTime) rather than sending the
+       raw UTC ISO string — every other clock on the desk is pinned to Pacific
+       by a formatter before it reaches a screen (owner ruling 2026-07-22); the
+       model shouldn't be doing that timezone math itself either (owner report
+       2026-07-23: it was echoing UTC straight from the feed). */
+    marketAsOf: DESK.mode === 'demo' ? lastLabel() : (DESK.liveStamp ? fmtStampDateTime(DESK.liveStamp.generatedAt) : null),
     headlines: (d.news || []).slice(0, 10).map(n => n.h),
   };
 }
