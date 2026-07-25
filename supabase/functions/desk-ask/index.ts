@@ -62,9 +62,15 @@ const TOOLS = [
 ];
 const CLIENT_TOOL_NAMES = new Set(['get_quote', 'get_technicals']);
 
-const MAX_TOOL_CALLS = 6;      // client tool executions (get_quote + get_technicals) per turn
+const MAX_TOOL_CALLS = 12;     // client tool executions (get_quote + get_technicals) per turn —
+                                // raised from 6 (owner report 2026-07-25): a multi-ticker question
+                                // (quote + technicals per symbol) burned through 6 fast; this is a
+                                // per-turn CALL-COUNT safety cap against a runaway loop, unrelated
+                                // to the Anthropic account's dollar balance.
 const MAX_RESUMES = 3;         // pause_turn resumptions
-const MAX_ITERS = 12;         // overall loop safety net (tool calls + resumes + wrap-up)
+const MAX_ITERS = 18;         // overall loop safety net (tool calls + resumes + wrap-up) — raised
+                                // alongside MAX_TOOL_CALLS so a sequential (non-batched) run through
+                                // the higher call cap isn't cut short by the iteration cap first
 const REPLAY_ROWS = 20;        // prior exchanges considered
 const REPLAY_DAYS = 30;
 const REPLAY_CHAR_BUDGET = 32000;  // ~8k tokens of history
