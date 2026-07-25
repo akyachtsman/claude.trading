@@ -101,15 +101,34 @@ This project's look is its own — established at kickoff via `/design-intake`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
   session-aware cached + single-flight. PIN-gated: `desk-ask` — an **agentic**
   desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`
-  (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤6 calls,
-  ≤3 pause resumes) with `web_search`/`web_fetch` + a `get_quote` tool that calls
-  `quote-proxy kind:'info'` server-side, gives **directional** views on the
-  owner's positions (owner opt-in 2026-07-21; the "not financial advice" label
-  stays), attributes provenance, and appends each exchange back to memory. The
-  conversation table `desk_chat_memory` (`desk_008`, RLS deny-all) is reachable
-  only via the service-key `desk-ask` path or the PIN RPCs `desk_chat_history` /
-  `desk_chat_clear`. **Residual:** web-query privacy (never sending real position
-  sizes to search) is system-prompt-enforced, not hard-filtered.
+  (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤12 calls,
+  ≤3 pause resumes) with `web_search`/`web_fetch` + `get_quote` (calls
+  `quote-proxy kind:'info'` server-side) + `get_technicals` (calls
+  `quote-proxy kind:'daily'` + a best-effort `kind:'intraday'` graft — the
+  server-side port of `app.js`'s `graftTodayBar()`, so a live-session reading
+  matches the charts — and computes RSI(14, Wilder) + the Pro 1 SWING
+  Stochastic 14-3-3 + the Pro 2 LONG-TERM weekly-scale Stochastic 92-15-15, all
+  from one fetch), gives **directional** views on the owner's positions (owner
+  opt-in 2026-07-21; the "not financial advice" label stays), attributes
+  provenance, and appends each exchange back to memory. The system prompt
+  itself is **owner-editable at runtime**: `desk_system_prompt` (`desk_009`,
+  RLS deny-all, singleton row) is read live on every request via the PIN RPCs
+  `desk_get_system_prompt`/`desk_set_system_prompt` (dashboard: the ⚙ button
+  beside Ask-the-desk), falling back to the code's `DEFAULT_SYSTEM` constant
+  only if that read fails. **Residual (Codex review, PR #182):** the
+  `desk_009` migration only seeds the table's ORIGINAL day-one prompt text —
+  every rule the owner has since added or edited live (the itemized rule
+  numbering, the Stochastic Framework, BUY/SELL SIGNALS, brevity, etc.) exists
+  only in that live row, not in any migration or repo file. A from-scratch
+  restore via migration replay alone would silently revert to the original
+  seed text, not the current live prompt; recovering the actual current
+  prompt depends on Supabase's own data backup/PITR, not on the repo. This is
+  accepted as the tradeoff for genuine self-service editing (no code
+  deploy needed to change behavior) rather than patched via a migration
+  update, since an unconditional seed-update would itself risk overwriting
+  the owner's live customizations on a future replay. Web-query privacy
+  (never sending real position sizes to search) is system-prompt-enforced,
+  not hard-filtered.
   Origin-guarded anon: `quote-proxy` (OHLC for any ticker — no PIN, restricted
   to the site origin + in-memory cache; owner ruling 2026-07-14, paid plan).
   `kind:'info'` also returns a per-symbol live-quote line (last / day change /

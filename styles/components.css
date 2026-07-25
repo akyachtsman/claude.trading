@@ -208,6 +208,10 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-a {
   font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0;
   padding: var(--space-2) var(--space-3); border-left: 2px solid var(--color-accent-bright); max-width: 92%;
+  white-space: pre-wrap; /* Codex review, PR #182: this is still textContent (never innerHTML) —
+    pre-wrap only makes newlines the model already puts in its answer actually
+    render as line breaks instead of collapsing to a space; it does not parse
+    markdown or any markup, so no HTML-injection surface changes. */
 }
 
 .ask-toolbar { display: flex; justify-content: flex-end; margin: 0 0 var(--space-2); }
