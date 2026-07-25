@@ -259,6 +259,30 @@ function stochSeries(s, { k, kSmooth, d } = STOCH) {
   return { k: kLine, d: sma(kLine, d) };
 }
 
+/* RSI, Wilder's smoothing (standard formula) — a full series aligned to `bars`,
+   same recurrence as the desk-ask edge function's get_technicals tool (owner
+   request 2026-07-25: show it in the charts workbench crosshair too, per pane,
+   at that pane's own bar timeframe, same as %K/%D already do). */
+function rsiSeries(bars, len = 14) {
+  const c = bars.c, n = c.length;
+  const out = new Array(n).fill(null);
+  if (n <= len) return out;
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= len; i++) {
+    const diff = c[i] - c[i - 1];
+    if (diff >= 0) avgGain += diff; else avgLoss -= diff;
+  }
+  avgGain /= len; avgLoss /= len;
+  out[len] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = len + 1; i < n; i++) {
+    const diff = c[i] - c[i - 1];
+    avgGain = (avgGain * (len - 1) + Math.max(diff, 0)) / len;
+    avgLoss = (avgLoss * (len - 1) + Math.max(-diff, 0)) / len;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+
 /* ── mode resolution + public loaders (live mode) ──────────────────────── */
 function resolveMode() {
   const q = new URLSearchParams(location.search);

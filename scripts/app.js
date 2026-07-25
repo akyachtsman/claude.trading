@@ -2392,6 +2392,7 @@ function renderCharts(data, lamp) {
       row.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
       const bits = ['Vol ' + fmtVol(bars.v[i])];
       if (st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
+      if (opts.rsi && opts.rsi[i] != null) bits.push('RSI ' + opts.rsi[i].toFixed(0));
       if (opts.cfg.stochW && opts.stW && opts.stW.k[i] != null) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
       const smaParts = [];
       for (const [len] of opts.smas || []) {
@@ -2499,7 +2500,7 @@ function renderCharts(data, lamp) {
     const intra = wbSymLive(sym) && wbState.intraday ? wbState.intraday[sym] : null;
     const g = intra ? graftTodayBar(data.symbols[sym], intra) : null;
     const bars = g ? g.bars : data.symbols[sym];
-    return { bars, st: stochSeries(bars), piv: monthlyPivots(bars), live: g ? g.at : null };
+    return { bars, st: stochSeries(bars), rsi: rsiSeries(bars), piv: monthlyPivots(bars), live: g ? g.at : null };
   })());
   /* the daily panes need today's intraday bars too (not just Pro 3), so pull
      intraday for every visible pane's symbol — the graft above then lands on
@@ -2514,7 +2515,7 @@ function renderCharts(data, lamp) {
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · SWING · ' + sym, {
       window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
-      pivots: d.piv, smas: smaList(wbState.cfg.p1),
+      pivots: d.piv, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
       stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
       stochCaption: stochTag() + ' · DAILY',
     }]);
@@ -2532,7 +2533,7 @@ function renderCharts(data, lamp) {
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · LONG-TERM · ' + sym, {
       window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
-      pivots: d.piv, smas: smaList(wbState.cfg.p2),
+      pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
       marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
@@ -2558,7 +2559,7 @@ function renderCharts(data, lamp) {
            anywhere within the ~5-day intraday feed */
         window: paneWindow(wbState.days3, intra15), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
-        pivots: d.piv, smas: smaList(wbState.cfg.p3),
+        pivots: d.piv, smas: smaList(wbState.cfg.p3), rsi: rsiSeries(intra15),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCfgNative: ISTOCH,
         stochCaption: stochTagOf(ISTOCH) + ' · 15-MIN',
@@ -2568,7 +2569,7 @@ function renderCharts(data, lamp) {
       panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
         window: paneWindow(wbState.days3d, d.bars), offset: wbState.off3d, panKey: 'off3d', daysKey: 'days3d', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
-        pivots: d.piv, smas: smaList(wbState.cfg.p3),
+        pivots: d.piv, smas: smaList(wbState.cfg.p3), rsi: d.rsi,
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCaption: stochTag() + ' · DAILY (INTRADAY PENDING)',
       }]);
