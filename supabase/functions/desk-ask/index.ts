@@ -52,7 +52,7 @@ const TOOLS = [
   },
   {
     name: 'get_technicals',
-    description: 'Real computed technical-oscillator reading for one ticker on DAILY bars: RSI(14, Wilder-smoothed), the slow Stochastic %K/%D (14-3-3 — Pro 1 SWING), and the weekly-scale Stochastic %K/%D (92-15-15, same daily bars — Pro 2 LONG-TERM). Covers both the swing and long-term mechanical reads in one call. Use this whenever asked about RSI, stochastic, overbought, or oversold — never estimate or guess these from memory, the dashboard snapshot, or a web search; this computes them directly from live OHLC data.',
+    description: 'Real computed technical-oscillator reading for one ticker: RSI(14, Wilder-smoothed), the slow Stochastic %K/%D (14-3-3 — Pro 1 SWING), and the weekly-scale Stochastic %K/%D (92-15-15, same bars — Pro 2 LONG-TERM). During market hours this folds in the still-forming session, same as the charts (reflectsLiveSession: true when it does; false means the last completed session only — say so if asked for a live/current read while false). Covers both the swing and long-term mechanical reads in one call. Use this whenever asked about RSI, stochastic, overbought, or oversold — never estimate or guess these from memory, the dashboard snapshot, or a web search; this computes them directly from live OHLC data.',
     input_schema: {
       type: 'object',
       properties: { symbol: { type: 'string', description: 'Ticker, e.g. AAPL' } },
@@ -162,9 +162,21 @@ Deno.serve(async (req) => {
   // SWING (Pro 1) and LONG-TERM (Pro 2) mechanical reads (owner report
   // 2026-07-25: the tool only covered Pro 1's daily read; Pro 2's weekly-scale
   // stoch needed no new data, just a second pass over the same bars).
+  //
+  // During market hours the charts don't compute on the completed-session
+  // daily series alone — app.js's graftTodayBar() appends an aggregated
+  // in-progress "today" bar (built from the intraday feed) before running
+  // stochSeries()/rsiSeries(), so the on-screen Pro 1/Pro 2 reads already
+  // move through the live session. Ported the identical graft here (Codex
+  // review on PR #180, 2026-07-25: without it, this tool's numbers could be
+  // one bar stale and visibly disagree with the dashboard on a volatile
+  // day) — a best-effort second fetch of the intraday feed; any failure
+  // there falls back to the plain completed-session daily series rather
+  // than failing the whole call.
   const STOCH_K = 14, STOCH_K_SMOOTH = 3, STOCH_D = 3, RSI_LEN = 14;
   const WSTOCH_K = 92, WSTOCH_K_SMOOTH = 15, WSTOCH_D = 15;
   const STOCH_WARMUP = STOCH_K + STOCH_K_SMOOTH + STOCH_D - 2; // 18
+  type Series = { t: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
   function stochLatest(s: { h: number[]; l: number[]; c: number[] }, n: number, k: number, kSmooth: number, d: number) {
     const raw: (number | null)[] = new Array(n).fill(null);
     for (let i = k - 1; i < n; i++) {
@@ -182,6 +194,28 @@ Deno.serve(async (req) => {
     const dLine = sma(kLine, d);
     return { k: kLine[n - 1], d: dLine[n - 1] };
   }
+  // Direct port of app.js's graftTodayBar(): aggregate the intraday feed's
+  // bars for its latest session into one OHLCV bar and append it, UNLESS
+  // that session is already the daily series' last (completed) entry.
+  function graftToday(daily: Series, intra: Series): Series | null {
+    const n = intra.t.length;
+    if (!n || !daily.t.length) return null;
+    const day = intra.t[n - 1].slice(0, 10);
+    if (day <= daily.t[daily.t.length - 1]) return null;
+    let o: number | null = null, h = -Infinity, l = Infinity, c: number | null = null, v = 0;
+    for (let i = 0; i < n; i++) {
+      if (intra.t[i].slice(0, 10) !== day) continue;
+      if (o === null) o = intra.o[i];
+      if (intra.h[i] > h) h = intra.h[i];
+      if (intra.l[i] < l) l = intra.l[i];
+      c = intra.c[i]; v += intra.v[i] || 0;
+    }
+    if (o === null || c === null) return null;
+    return {
+      t: [...daily.t, day], o: [...daily.o, o], h: [...daily.h, h],
+      l: [...daily.l, l], c: [...daily.c, c], v: [...daily.v, v],
+    };
+  }
   async function getTechnicals(symbol: string): Promise<Record<string, unknown>> {
     try {
       const qr = await fetch(`${supaUrl}/functions/v1/quote-proxy`, {
@@ -191,7 +225,20 @@ Deno.serve(async (req) => {
       });
       const j = await qr.json();
       if (!qr.ok || !j.ok) return { ok: false, error: j.error || `daily bars fetch failed (HTTP ${qr.status})` };
-      const s = j.series as { t: string[]; h: number[]; l: number[]; c: number[] };
+      let s = j.series as Series;
+      let live = false;
+      try {
+        const ir = await fetch(`${supaUrl}/functions/v1/quote-proxy`, {
+          method: 'POST',
+          headers: { ...svc, 'content-type': 'application/json', origin: SITE_ORIGIN },
+          body: JSON.stringify({ symbol, kind: 'intraday' }),
+        });
+        const ij = await ir.json();
+        if (ir.ok && ij.ok && ij.series?.t?.length) {
+          const grafted = graftToday(s, ij.series);
+          if (grafted) { s = grafted; live = true; }
+        }
+      } catch { /* keep the completed-session daily series */ }
       const n = s.c.length;
       if (n < Math.max(STOCH_WARMUP, RSI_LEN + 1)) {
         return { ok: false, error: `not enough price history for ${symbol} to compute a reading` };
@@ -219,11 +266,11 @@ Deno.serve(async (req) => {
 
       const round = (v: number | null) => v != null ? Number(v.toFixed(2)) : null;
       return {
-        ok: true, symbol, asOf: s.t[n - 1],
+        ok: true, symbol, asOf: s.t[n - 1], reflectsLiveSession: live,
         stochK: round(stochK), stochD: round(stochD),
         stochWK: round(stochWK), stochWD: round(stochWD),
         rsi14: Number(rsi14.toFixed(2)),
-        note: 'stochK/stochD: slow Stochastic 14-3-3 on daily bars — the Pro 1 SWING read. stochWK/stochWD: the SAME daily bars run through a 92-15-15 config — the Pro 2 LONG-TERM weekly-scale read (null if the ticker has under ~120 bars of history). rsi14: standard 14-period RSI (Wilder), not otherwise charted on the dashboard. Conventional zones: stochastic <20 oversold / >80 overbought (weekly-scale strip draws its band at 30, not 20); RSI <30 oversold / >70 overbought.',
+        note: 'stochK/stochD: slow Stochastic 14-3-3 on daily bars — the Pro 1 SWING read. stochWK/stochWD: the SAME daily bars run through a 92-15-15 config — the Pro 2 LONG-TERM weekly-scale read (null if the ticker has under ~120 bars of history). rsi14: standard 14-period RSI (Wilder), not otherwise charted on the dashboard. reflectsLiveSession: true if today\'s still-forming session was folded in (matching what the charts show live), false if this is the last completed session only. Conventional zones: stochastic <20 oversold / >80 overbought (weekly-scale strip draws its band at 30, not 20); RSI <30 oversold / >70 overbought.',
       };
     } catch (e) {
       return { ok: false, error: 'technicals fetch error: ' + (e instanceof Error ? e.message : String(e)) };
