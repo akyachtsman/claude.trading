@@ -2391,9 +2391,21 @@ function renderCharts(data, lamp) {
       row.appendChild(document.createTextNode('O ' + fmtPrice(bars.o[i]) + ' H ' + fmtPrice(bars.h[i]) + ' L ' + fmtPrice(bars.l[i]) + ' C ' + fmtPrice(bars.c[i]) + ' '));
       row.appendChild(el('span', chg > 0 ? 'up' : chg < 0 ? 'down' : '', fmtPct(chg)));
       const bits = ['Vol ' + fmtVol(bars.v[i])];
-      if (st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
+      /* Pro 2's weekly-scale overlay IS its read (owner ruling 2026-07-26):
+         when it's on, the crosshair line shows the weekly %K/%D only, not the
+         daily native pair too — Pro 1 stays the daily/SWING read, Pro 2 is the
+         LONG-TERM read. The daily strip still draws on the chart either way;
+         only this text summary changes. Falls back to the daily reading ONLY
+         when the weekly overlay is toggled off — "enabled" and "warmed up for
+         this bar" are different things (Codex review, PR #183): scrolled into
+         the ~120-bar warmup window (e.g. the All range) the weekly series is
+         legitimately still null while the toggle is on, and that must omit
+         the stochastic reading for this bar, not silently show daily. */
+      const weeklyOn = opts.cfg.stochW && !!opts.stW;
+      const weeklyReady = weeklyOn && opts.stW.k[i] != null;
+      if (!weeklyOn && st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
       if (opts.rsi && opts.rsi[i] != null) bits.push('RSI ' + opts.rsi[i].toFixed(0));
-      if (opts.cfg.stochW && opts.stW && opts.stW.k[i] != null) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
+      if (weeklyReady) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
       const smaParts = [];
       for (const [len] of opts.smas || []) {
         if (i < len - 1) continue;
