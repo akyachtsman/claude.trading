@@ -2395,12 +2395,17 @@ function renderCharts(data, lamp) {
          when it's on, the crosshair line shows the weekly %K/%D only, not the
          daily native pair too — Pro 1 stays the daily/SWING read, Pro 2 is the
          LONG-TERM read. The daily strip still draws on the chart either way;
-         only this text summary changes. Falls back to the daily reading if
-         the weekly overlay itself is toggled off (still something to show). */
-      const hasWeekly = opts.cfg.stochW && opts.stW && opts.stW.k[i] != null;
-      if (!hasWeekly && st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
+         only this text summary changes. Falls back to the daily reading ONLY
+         when the weekly overlay is toggled off — "enabled" and "warmed up for
+         this bar" are different things (Codex review, PR #183): scrolled into
+         the ~120-bar warmup window (e.g. the All range) the weekly series is
+         legitimately still null while the toggle is on, and that must omit
+         the stochastic reading for this bar, not silently show daily. */
+      const weeklyOn = opts.cfg.stochW && !!opts.stW;
+      const weeklyReady = weeklyOn && opts.stW.k[i] != null;
+      if (!weeklyOn && st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
       if (opts.rsi && opts.rsi[i] != null) bits.push('RSI ' + opts.rsi[i].toFixed(0));
-      if (hasWeekly) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
+      if (weeklyReady) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
       const smaParts = [];
       for (const [len] of opts.smas || []) {
         if (i < len - 1) continue;
