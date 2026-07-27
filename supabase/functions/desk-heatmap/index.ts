@@ -59,7 +59,24 @@ function marketSessionOpen(now = new Date()): boolean {
   const minutes = Number(get('hour')) * 60 + Number(get('minute'));
   return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
-const ttlMs = () => (marketSessionOpen() ? 300_000 : 3_600_000);
+// Owner report 2026-07-27: same close-transition gap as desk-market — Stooq/
+// Yahoo's final settle print can post a few minutes after the 4pm ET close,
+// but this cache's TTL jumps straight from 5-min to 60-min the instant the
+// session is marked closed. Keep the 5-min TTL for a short grace window right
+// after the close so the real settle print gets picked up quickly.
+const CLOSE_SETTLE_GRACE_MIN = 15;
+function withinCloseSettleGrace(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  const closeMin = 16 * 60;
+  return minutes >= closeMin && minutes < closeMin + CLOSE_SETTLE_GRACE_MIN;
+}
+const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? 300_000 : 3_600_000);
 
 type Quote = { pct: number; cap: number | null; last: number | null; sector?: string; name?: string; industry?: string };
 type Constituent = { sym: string; name: string; sector: string; ind: string };
@@ -485,13 +502,17 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
 
   let universe = 'sp500';
+  let force = false;
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
     if (body?.universe === 'r2k') universe = 'r2k'; // strict enum — anything else is sp500
+    // force (owner request 2026-07-27): the dashboard's manual "Refresh now"
+    // button bypasses this cache so a click guarantees a fresh upstream pull.
+    force = body?.force === true;
   }
 
   const cached = payloadCache.get(universe);
-  if (cached && Date.now() - cached.at < ttlMs()) {
+  if (!force && cached && Date.now() - cached.at < ttlMs()) {
     // cache hits still nudge an incomplete period sweep — otherwise the
     // sweep would only advance on TTL expiry (hours, off-session)
     // deno-lint-ignore no-explicit-any

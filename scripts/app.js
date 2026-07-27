@@ -60,6 +60,15 @@ function renderMasthead() {
       ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true)
       : { cls: 'lamp--stale', text: 'Stale', stamp: 'Live feed unreachable' };
     wrap.appendChild(el('span', 'lamp ' + lamp.cls, lamp.text));
+    /* manual force-refresh (owner request 2026-07-27): market/news/heatmap/
+       charts are public feeds, so this shows regardless of PIN-auth state. */
+    if (DESK_DB.url) {
+      const refreshBtn = el('button', 'btn btn-secondary', 'Refresh now');
+      refreshBtn.type = 'button';
+      refreshBtn.id = 'refreshNowBtn';
+      refreshBtn.addEventListener('click', refreshNowClicked);
+      wrap.appendChild(refreshBtn);
+    }
     if (DESK.authed) {
       const lock = el('button', 'btn btn-secondary', 'Lock');
       lock.type = 'button';
@@ -79,12 +88,12 @@ function lastLabel() {
    kept intentionally — spot GOLD/DXY as macro barometers, GLD/SLV as the metals
    pair, UUP beside US Dollar. Any feed tile not listed still renders in an
    "Other" frame, so a newly added symbol is never silently dropped. */
-/* The four headline indices (S&P 500 / Nasdaq 100 / Dow Jones / Russell via IWM)
+/* The four headline indices (S&P 500 / Nasdaq Composite / Dow Jones / Russell via IWM)
    are NOT banded here — they render as the Markets panel's index tiles right
    beside the strip, so a strip band for them just duplicated that (owner request
    2026-07-22). They're held in MKT_STRIP_HIDE so the "Other" catch-all below
    doesn't resurrect them from the feed. */
-const MKT_STRIP_HIDE = new Set(['S&P 500', 'Nasdaq 100', 'Dow Jones', 'IWM (R2K proxy)']);
+const MKT_STRIP_HIDE = new Set(['S&P 500', 'Nasdaq Composite', 'Dow Jones', 'IWM (R2K proxy)']);
 const MKT_BANDS = [
   /* Global & income leads the strip now that the Indices band is gone. */
   { label: 'Global & income',   names: ['EEM', 'FXI', 'INDA', 'JPXN', 'SPYD'] },
@@ -142,7 +151,7 @@ function renderStrip(market) {
    demo-generated or fetched live (SPY/QQQ/IWM via deskQuote). */
 const MKT_INDEX = [
   { key: 'sp', label: 'S&P 500', tile: 'S&P 500', proxy: 'SPY', color: '#2f6df0' },
-  { key: 'nq', label: 'NASDAQ', tile: 'Nasdaq 100', proxy: 'QQQ', color: '#7c3aed' },
+  { key: 'nq', label: 'NASDAQ', tile: 'Nasdaq Composite', proxy: 'QQQ', color: '#7c3aed' },
   { key: 'ru', label: 'Russell 2000', tile: 'IWM (R2K proxy)', proxy: 'IWM', color: '#ea6a1e' },
   { key: 'dj', label: 'Dow Jones', tile: 'Dow Jones', proxy: 'DIA', color: '#0d9488' },
 ];
@@ -1412,7 +1421,7 @@ async function refreshR2kMap() {
   if (mapView.key === 'r2k') applyMapView();
 }
 
-async function loadHeatmap() {
+async function loadHeatmap(force) {
   if (!mapView.filters) {
     try { mapView.filters = await fetchPublic('config/map-filters.json'); }
     catch { mapView.filters = {}; }
@@ -1426,7 +1435,7 @@ async function loadHeatmap() {
   }
   if (DESK.mode !== 'demo') {
     try {
-      const hm = await deskFeed('desk-heatmap');
+      const hm = await deskFeed('desk-heatmap', force ? { force: true } : undefined);
       clearTimeout(heatRetry.timer); heatRetry.wait = 0;
       heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf, true) };
       applyMapView();
@@ -2888,10 +2897,10 @@ function renderChartsUnavailable() {
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 }
 
-async function loadCharts() {
+async function loadCharts(force) {
   if (DESK.mode !== 'demo') {
     try {
-      const data = await deskFeed('desk-charts');
+      const data = await deskFeed('desk-charts', force ? { force: true } : undefined);
       clearTimeout(chartsRetry.timer); chartsRetry.wait = 0;
       for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); }
       if (wbState) {
@@ -2990,9 +2999,9 @@ async function loadPrivate(pin) {
    the panel lamps Stale rather than showing demo data as real. */
 let stripLive = false, newsLive = false;
 
-async function refreshMarket() {
+async function refreshMarket(force) {
   try {
-    const market = await deskFeed('desk-market');
+    const market = await deskFeed('desk-market', force ? { force: true } : undefined);
     clearTimeout(marketRetry.timer); marketRetry.wait = 0;
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
     DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf };
@@ -3010,9 +3019,9 @@ async function refreshMarket() {
   }
 }
 
-async function refreshNews() {
+async function refreshNews(force) {
   try {
-    const news = await deskFeed('desk-news');
+    const news = await deskFeed('desk-news', force ? { force: true } : undefined);
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
     DESK.data.news = (news.items || []).map(it => ({ ...it, t: utcHmToPt(it.t) }));
@@ -3026,26 +3035,49 @@ async function refreshNews() {
   }
 }
 
-/* 5 min while the US session is open, 60 min closed (Clarification 6);
-   paused while the tab is hidden, refreshed immediately on return. */
+/* 5 min while the US session is open, 60 min closed (Clarification 6) — plus a
+   short post-close settle grace (withinCloseSettleGrace, data.js) that keeps the
+   5-min cadence for CLOSE_SETTLE_GRACE_MIN after 4pm ET so a late-posting final
+   print gets picked up quickly instead of freezing for a full hour. Paused
+   while the tab is hidden, refreshed immediately on return. feedPollTick is
+   also reused by the manual "Refresh now" masthead button (force:true bypasses
+   every server-side cache too — see the desk-* edge functions' `force` param). */
 let feedPollTimer = 0;
+async function feedPollTick(force) {
+  await Promise.all([refreshMarket(force), refreshNews(force), loadHeatmap(force), loadCharts(force)]);
+  renderMasthead(); /* the masthead lamp tracks the freshest market fetch */
+}
+function scheduleFeedPoll() {
+  clearTimeout(feedPollTimer);
+  if (document.hidden) return; /* visibilitychange rearms */
+  const openCadence = marketSessionOpen() || withinCloseSettleGrace();
+  feedPollTimer = setTimeout(async () => { await feedPollTick(false); scheduleFeedPoll(); }, openCadence ? 5 * 60000 : 60 * 60000);
+}
 function startFeedPolling() {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
-  const tick = async () => {
-    await Promise.all([refreshMarket(), refreshNews(), loadHeatmap(), loadCharts()]);
-    renderMasthead(); /* the masthead lamp tracks the freshest market fetch */
-    schedule();
-  };
-  const schedule = () => {
-    clearTimeout(feedPollTimer);
-    if (document.hidden) return; /* visibilitychange rearms */
-    feedPollTimer = setTimeout(tick, marketSessionOpen() ? 5 * 60000 : 60 * 60000);
-  };
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) clearTimeout(feedPollTimer);
-    else tick();
+    else feedPollTick(false).then(scheduleFeedPoll);
   });
-  schedule();
+  scheduleFeedPoll();
+}
+/* Manual force-refresh (owner request 2026-07-27): bypasses BOTH the client
+   poll cooldown and every desk-* edge function's in-memory cache, so a click
+   guarantees a fresh upstream pull for market/news/heatmap/charts at once —
+   the "everything's guaranteed fresh" button. renderMasthead() (inside
+   feedPollTick) rebuilds this very button once fresh data lands, which is what
+   restores its normal enabled label — no separate re-enable needed here.
+   Re-arms the regular poll afterward. */
+let refreshNowPending = false;
+async function refreshNowClicked() {
+  if (refreshNowPending || DESK.mode === 'demo' || !DESK_DB.url) return;
+  refreshNowPending = true;
+  const btn = document.getElementById('refreshNowBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  clearTimeout(feedPollTimer);
+  await feedPollTick(true);
+  refreshNowPending = false;
+  scheduleFeedPoll();
 }
 
 /* ── market widgets: embedded third-party (TradingView) widgets. Each loads as
