@@ -161,7 +161,12 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
   // P/E: forward is the desk convention (owner ruling). Fall back to trailing
   // when a ticker has no analyst estimate (ETFs, uncovered names); peFwd tells
   // the client which basis it is so a trailing fallback is never mislabeled.
-  const fwdPe = num(q.forwardPE);
+  // Uses Yahoo's CURRENT-fiscal-year estimate (priceEpsCurrentYear), not its
+  // own `forwardPE` (next-fiscal-year estimate) — cross-checked against IBKR's
+  // own "Forward P/E" watchlist column across 7 live tickers, current-year
+  // basis matched IBKR far more often (e.g. ORCL 14.28 vs IBKR's 14.25; Yahoo's
+  // `forwardPE` gave 10.56 for the same ticker).
+  const fwdPe = num(q.priceEpsCurrentYear);
   const ttmPe = num(q.trailingPE);
   return {
     symbol: String(q.symbol ?? symbol).toUpperCase(),
