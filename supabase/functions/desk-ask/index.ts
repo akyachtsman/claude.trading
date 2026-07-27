@@ -39,7 +39,12 @@ const DEFAULT_SYSTEM = [
 ].join(' ');
 
 const TOOLS = [
-  { type: 'web_search_20260209', name: 'web_search', max_uses: 5 },
+  // max_uses raised from 5 (owner report 2026-07-27): the system prompt tells
+  // the model to search before every directional/technical call, so a
+  // multi-ticker question was hitting Anthropic's own per-turn search cap
+  // almost immediately — a separate limit from MAX_TOOL_CALLS below, which
+  // only counts get_quote/get_technicals.
+  { type: 'web_search_20260209', name: 'web_search', max_uses: 25 },
   { type: 'web_fetch_20260209', name: 'web_fetch' },
   {
     name: 'get_quote',
