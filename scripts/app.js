@@ -3053,13 +3053,36 @@ function scheduleFeedPoll() {
   const openCadence = marketSessionOpen() || withinCloseSettleGrace();
   feedPollTimer = setTimeout(async () => { await feedPollTick(false); scheduleFeedPoll(); }, openCadence ? 5 * 60000 : 60 * 60000);
 }
+
+/* Prices move far faster than headlines, sector sweeps or watchlist OHLC, so
+   the MARKET feed gets its own 1-minute poll while the session is open —
+   separate from the 5-minute all-feeds tick above (owner report 2026-07-28:
+   the tiles read visibly behind a live IBKR quote). Splitting it matters:
+   desk-market is a cheap call, while desk-heatmap's screener sweep and
+   desk-charts' 25-symbol OHLC pull are the expensive ones, and dragging those
+   to a 1-minute cadence would multiply quota for data that barely changes.
+   Only runs during the open session (plus the post-close settle grace) —
+   once prices are frozen the hourly all-feeds tick already covers it. */
+const MARKET_POLL_MS = 60000;
+let marketPollTimer = 0;
+function scheduleMarketPoll() {
+  clearTimeout(marketPollTimer);
+  if (document.hidden) return; /* visibilitychange rearms */
+  if (!(marketSessionOpen() || withinCloseSettleGrace())) return; /* closed: hourly tick covers it */
+  marketPollTimer = setTimeout(async () => {
+    await refreshMarket(false);
+    renderMasthead();
+    scheduleMarketPoll();
+  }, MARKET_POLL_MS);
+}
 function startFeedPolling() {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) clearTimeout(feedPollTimer);
-    else feedPollTick(false).then(scheduleFeedPoll);
+    if (document.hidden) { clearTimeout(feedPollTimer); clearTimeout(marketPollTimer); }
+    else feedPollTick(false).then(() => { scheduleFeedPoll(); scheduleMarketPoll(); });
   });
   scheduleFeedPoll();
+  scheduleMarketPoll();
 }
 /* Manual force-refresh (owner request 2026-07-27): bypasses BOTH the client
    poll cooldown and every desk-* edge function's in-memory cache, so a click
@@ -3074,10 +3097,10 @@ async function refreshNowClicked() {
   refreshNowPending = true;
   const btn = document.getElementById('refreshNowBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
-  clearTimeout(feedPollTimer);
+  clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
   await feedPollTick(true);
   refreshNowPending = false;
-  scheduleFeedPoll();
+  scheduleFeedPoll(); scheduleMarketPoll();
 }
 
 /* ── market widgets: embedded third-party (TradingView) widgets. Each loads as

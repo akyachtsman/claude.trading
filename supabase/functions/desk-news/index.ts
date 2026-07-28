@@ -172,17 +172,40 @@ export function dedupeRank(items: Item[], held: string[], maxItems = 20): Item[]
   return uniq.slice(0, maxItems);
 }
 
-// ── chip day-% (public Stooq, parallel — no runner etiquette needed) ────────
+// ── chip day-% (public market data, parallel — no runner etiquette needed) ──
+// Yahoo first, Stooq second (owner report 2026-07-28). This helper used to be
+// Stooq-ONLY with a bare `catch { return null }`, so once Stooq started serving
+// its HTML JS-challenge page as HTTP 200 every chip silently lost its day-%
+// with nothing logged and nothing lamped — the chip just renders without a
+// percentage. Yahoo's chart meta carries a real-time last + prior close, which
+// is exactly what the chip wants; Stooq stays as the backstop.
+async function yahooDayPct(symbol: string): Promise<number | null> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
+  const res = await fetch(url, { headers: UA });
+  if (!res.ok) return null;
+  const j = await res.json().catch(() => null);
+  // deno-lint-ignore no-explicit-any
+  const m = (j as any)?.chart?.result?.[0]?.meta;
+  const price = Number(m?.regularMarketPrice);
+  const prev = Number(m?.chartPreviousClose ?? m?.previousClose);
+  if (!Number.isFinite(price) || !Number.isFinite(prev) || prev <= 0) return null;
+  return Number(((price / prev - 1) * 100).toFixed(2));
+}
+async function stooqDayPct(symbol: string): Promise<number | null> {
+  const ymd = (d: Date) => d.toISOString().slice(0, 10).replaceAll('-', '');
+  const d2 = new Date(), d1 = new Date(d2.getTime() - 14 * 86400000);
+  const res = await fetch(`https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA });
+  const closes = (await res.text()).trim().split('\n').slice(1)
+    .map((l) => Number(l.split(',')[4]))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (closes.length < 2) return null;
+  return Number(((closes[closes.length - 1] / closes[closes.length - 2] - 1) * 100).toFixed(2));
+}
 async function dayPctFor(symbol: string): Promise<number | null> {
   try {
-    const ymd = (d: Date) => d.toISOString().slice(0, 10).replaceAll('-', '');
-    const d2 = new Date(), d1 = new Date(d2.getTime() - 14 * 86400000);
-    const res = await fetch(`https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA });
-    const closes = (await res.text()).trim().split('\n').slice(1)
-      .map((l) => Number(l.split(',')[4]))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    if (closes.length < 2) return null;
-    return Number(((closes[closes.length - 1] / closes[closes.length - 2] - 1) * 100).toFixed(2));
+    const via = await yahooDayPct(symbol).catch(() => null);
+    if (via !== null) return via;
+    return await stooqDayPct(symbol).catch(() => null);
   } catch { return null; }
 }
 

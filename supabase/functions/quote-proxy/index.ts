@@ -226,8 +226,12 @@ Deno.serve(async (req) => {
   if (kind === 'intraday') {
     series = await yahooChart(symbol, '5d', '5m', true);
   } else {
-    series = await stooqDaily(symbol);
-    if (!series) series = await yahooChart(symbol, '5y', '1d', false);
+    // Yahoo FIRST, Stooq as the fallback — same reason as desk-market (owner
+    // report 2026-07-28): Stooq answers with an HTML JS-challenge page served
+    // as HTTP 200, so stooqDaily's shape checks reject it and every daily
+    // request paid for that round-trip before reaching Yahoo anyway.
+    series = await yahooChart(symbol, '5y', '1d', false);
+    if (!series) series = await stooqDaily(symbol);
   }
   if (!series) {
     const body = { ok: false, error: `no ${kind} data found for ${symbol} — check the ticker` };
