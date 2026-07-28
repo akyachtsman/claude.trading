@@ -27,7 +27,12 @@ const UA = { 'user-agent': 'Mozilla/5.0 (desk market; +https://akyachtsman.githu
 
 const MARKET_SYMBOLS: { sym: string; name: string }[] = [
   { sym: '^spx', name: 'S&P 500' },
-  { sym: '^ndx', name: 'Nasdaq 100' },
+  // ^ixic (Nasdaq Composite), not ^ndx (Nasdaq-100): owner report 2026-07-27 —
+  // the desk's "NASDAQ" tile was tracking the 100-name mega-cap index while
+  // every other reference the owner trusts (IBKR's own "NASDAQ" quote) means
+  // the ~3,000+ name Composite. Matching that avoids two different indices
+  // hiding behind the same everyday name.
+  { sym: '^ixic', name: 'Nasdaq Composite' },
   { sym: '^dji', name: 'Dow Jones' },
   { sym: 'iwm.us', name: 'IWM (R2K proxy)' },
   { sym: '^vix', name: 'VIX' },
@@ -62,7 +67,7 @@ const EXTRA_SYMBOLS: { sym: string; name: string }[] = [
   { sym: 'jpxn.us', name: 'JPXN' }, { sym: 'spyd.us', name: 'SPYD' },
 ];
 const YAHOO_MAP: Record<string, string> = {
-  '^spx': '^GSPC', '^ndx': '^NDX', '^dji': '^DJI', '^vix': '^VIX',
+  '^spx': '^GSPC', '^ixic': '^IXIC', '^dji': '^DJI', '^vix': '^VIX',
   'btcusd': 'BTC-USD', 'xauusd': 'GC=F', 'dx.f': 'DX-Y.NYB',
 };
 
@@ -90,7 +95,27 @@ export function marketSessionOpen(now = new Date()): boolean {
   const minutes = Number(get('hour')) * 60 + Number(get('minute'));
   return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
-const ttlMs = () => (marketSessionOpen() ? 300_000 : 3_600_000);
+// Owner report 2026-07-27: Stooq/Yahoo's final settle print doesn't always
+// land at the exact 4:00pm ET closing bell — a few minutes' lag is common.
+// Both this cache's TTL and the client poll cadence jump straight from 5-min
+// to 60-min the instant the session is marked closed, so a not-quite-final
+// print could get cached for up to an hour with no staleness flag (the
+// client's EOD lamp skips the freshness check by design once the market
+// shuts). Keep the 5-min TTL for a short grace window right after the close
+// so the real settle print gets picked up quickly.
+const CLOSE_SETTLE_GRACE_MIN = 15;
+function withinCloseSettleGrace(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  const closeMin = 16 * 60;
+  return minutes >= closeMin && minutes < closeMin + CLOSE_SETTLE_GRACE_MIN;
+}
+const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? 300_000 : 3_600_000);
 
 // ── quote chain (verbatim ports of lib/stooq.js + lib/quotes.js) ────────────
 type Row = { date: string; close: number };
@@ -238,7 +263,15 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
 
-  if (cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
+  // force (owner request 2026-07-27): the dashboard's manual "Refresh now"
+  // button bypasses this cache so a click guarantees a fresh upstream pull.
+  let force = false;
+  if (req.method === 'POST') {
+    const body = await req.json().catch(() => ({}));
+    force = body?.force === true;
+  }
+
+  if (!force && cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
 
   try {
     inflight ??= refresh().finally(() => { inflight = null; });

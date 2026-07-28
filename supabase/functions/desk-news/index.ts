@@ -243,7 +243,15 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
 
-  if (cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
+  // force (owner request 2026-07-27): the dashboard's manual "Refresh now"
+  // button bypasses this cache so a click guarantees a fresh upstream pull.
+  let force = false;
+  if (req.method === 'POST') {
+    const body = await req.json().catch(() => ({}));
+    force = body?.force === true;
+  }
+
+  if (!force && cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
 
   try {
     inflight ??= refresh().finally(() => { inflight = null; });

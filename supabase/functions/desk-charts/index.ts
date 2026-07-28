@@ -134,10 +134,19 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
 
+  // force (owner request 2026-07-27): the dashboard's manual "Refresh now"
+  // button treats the whole watchlist as stale so a click guarantees a fresh
+  // upstream pull, same contract as the other desk-* feeds' force bypass.
+  let force = false;
+  if (req.method === 'POST') {
+    const body = await req.json().catch(() => ({}));
+    force = body?.force === true;
+  }
+
   const watchlist = await loadWatchlist();
   const stale = watchlist.filter((t) => {
     const hit = seriesCache.get(t);
-    return !hit || Date.now() - hit.at > HISTORY_TTL_MS;
+    return force || !hit || Date.now() - hit.at > HISTORY_TTL_MS;
   });
 
   if (stale.length) {

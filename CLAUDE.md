@@ -59,12 +59,26 @@ This project's look is its own — established at kickoff via `/design-intake`
   equity sparklines, news, ask-the-desk panel, the Markets window, stochastic
   charts workbench, PIN lock/unlock flow) + the
   session-aware feed poller (5 min market-open / 60 min closed, paused
-  while the tab is hidden). The **Markets window** (`renderMarkets()` +
+  while the tab is hidden; a `CLOSE_SETTLE_GRACE_MIN` window — 15 min,
+  `withinCloseSettleGrace()` in `scripts/data.js` — keeps the 5-min cadence for
+  a short stretch right after the close, since Stooq/Yahoo's final settle
+  print doesn't always land at the exact closing bell; added 2026-07-27, owner
+  report of no confidence in the as-of-close numbers). The masthead's
+  **"Refresh now" button** (`#refreshNowBtn`, next to the MARKETS lamp, live
+  mode only — owner request 2026-07-27) force-bypasses BOTH the poll cooldown
+  and every desk-market/desk-news/desk-heatmap/desk-charts in-memory cache in
+  one click (`force:true` in the POST body; each edge function's cache-read
+  skips its TTL check when set) — the guaranteed-fresh escape hatch for when
+  the owner doesn't trust the current numbers. The **Markets window** (`renderMarkets()` +
   `drawMktChart()` + `mktSecTint()`, owner request 2026-07-20) is a compact
   trading-app-style panel beside Ask-the-desk: region tabs (U.S. live; Europe/
-  Asia/FX disabled placeholders), four index tiles (S&P 500 / Nasdaq 100 /
+  Asia/FX disabled placeholders), four index tiles (S&P 500 / Nasdaq Composite /
   Russell 2000 / Dow Jones — day-% + last, read from the shared `desk-market`
-  feed by tile name), a normalized multi-index %-change SVG chart with
+  feed by tile name; the NASDAQ tile tracks the ~3,000+ name **Composite**
+  (`^IXIC`), not the 100-name Nasdaq-100 — switched 2026-07-27, owner report:
+  the desk's original Nasdaq-100 read didn't match the "NASDAQ" the owner
+  actually watches on IBKR, which is the Composite), a normalized multi-index
+  %-change SVG chart with
   Today/5D/1M/1Y/2Y timeframe toggles (series demo-generated or live via the
   index ETF proxies SPY/QQQ/IWM/DIA), and an 11-cell **Performance by Sector**
   grid (SPDR sector ETFs XLK…XLRE, heatmap-tinted by day-%). Carries its own

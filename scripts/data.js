@@ -78,7 +78,7 @@ function buildDemoData() {
   });
   const market = [
     { name: 'S&P 500',      last: '6,318.42',  chg: 0.54,  seed: 11 },
-    { name: 'Nasdaq 100',   last: '23,104.88', chg: 0.81,  seed: 23 },
+    { name: 'Nasdaq Composite', last: '23,104.88', chg: 0.81, seed: 23 },
     { name: 'Dow Jones',    last: '44,912.30', chg: 0.12,  seed: 37 },
     { name: 'IWM (R2K proxy)', last: '228.12', chg: -0.33, seed: 41 },
     { name: 'VIX',          last: '14.82',     chg: -4.20, seed: 53 },
@@ -478,6 +478,26 @@ function marketSessionOpen(now) {
   if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
   const minutes = Number(get('hour')) * 60 + Number(get('minute'));
   return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+}
+/* Owner report 2026-07-27: both the client poll cadence and every session-aware
+   edge-function cache jump from 5-min to 60-min the INSTANT the session is
+   marked closed. If Stooq/Yahoo's final settle print lands a few minutes after
+   4:00pm ET (common — it's not always posted at the exact closing bell), that
+   near-final number can get locked in as "EOD" for up to an hour with no
+   staleness flag (liveLampFor intentionally skips the freshness check once
+   priceBound && !marketSessionOpen()). Keep the 5-min cadence for a short grace
+   window right after the close so the real settle print gets picked up quickly. */
+const CLOSE_SETTLE_GRACE_MIN = 15;
+function withinCloseSettleGrace(now) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now || new Date());
+  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  const closeMin = 16 * 60;
+  return minutes >= closeMin && minutes < closeMin + CLOSE_SETTLE_GRACE_MIN;
 }
 
 /* Display clocks in the VIEWER'S local timezone (owner ruling 2026-07-15):
