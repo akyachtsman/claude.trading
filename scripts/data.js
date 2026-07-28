@@ -326,8 +326,11 @@ function accountsLampFor(asOfIso, syncedAtIso, now) {
      ALSO reads "Last updated" — identical wording on two different things
      reads as one duplicated stamp. Same sync clock · statement-day content,
      distinct label. */
-  const parts = [syncedAtIso ? fmtClock(syncedAtIso) : '', fmtShortDate(asOfIso)].filter(Boolean);
-  const stamp = parts.length ? 'Accounts synced ' + parts.join(' · ') : '';
+  /* Same comma grammar + bare Pacific clock as the panel stamps (owner format
+     2026-07-28), minus any delay clause: this is a daily IBKR statement, not a
+     ticking price, so "delayed by N minutes" would be meaningless here. */
+  const parts = [syncedAtIso ? fmtClockBare(syncedAtIso) : '', fmtShortDate(asOfIso)].filter(Boolean);
+  const stamp = parts.length ? 'Accounts synced ' + parts.join(', ') : '';
   return fresh
     ? { cls: 'lamp--eod', text: 'EOD', stamp }
     : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — sync overdue' };
@@ -542,13 +545,46 @@ function fmtShortDate(d) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d));
   return m ? MONTHS[+m[2] - 1] + ' ' + (+m[3]) : String(d);
 }
-/* Uniform terse freshness stamp used on EVERY panel (owner request 2026-07-21):
-   "Last updated 17:14 PDT · Jul 21", dropping to "Last updated Jul 21" when only
-   a trading-day as-of exists (no clock). The clock is the time the DATA is
-   as-of — not when we polled (owner ruling 2026-07-22). '' if empty. */
-function fmtUpdated(atIso, asOfDate) {
-  const parts = [atIso ? fmtClock(atIso) : '', fmtShortDate(asOfDate)].filter(Boolean);
-  return parts.length ? 'Last updated ' + parts.join(' · ') : '';
+/* Bare Pacific "HH:mm" — no zone label. The panel stamps use this rather than
+   fmtClock (owner format 2026-07-28 specifies plain hh:mm); everything else on
+   the desk still shows the PDT/PST suffix via fmtClock. Every clock here is
+   still pinned to Pacific (owner ruling 2026-07-22), the label is just dropped
+   to keep the longer stamp line readable. */
+function fmtClockBare(iso) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? ''
+    : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ });
+}
+
+/* How far behind the displayed figure is, in whole minutes. Sub-minute reads
+   say so in words rather than "0 minutes", which would look like a rounding
+   bug on a number the owner is checking precisely because they distrust it. */
+function fmtDelay(atIso) {
+  const t = new Date(atIso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 1) return 'delayed by under a minute';
+  return 'delayed by ' + mins + (mins === 1 ? ' minute' : ' minutes');
+}
+
+/* Uniform terse freshness stamp used on EVERY panel (owner format 2026-07-28):
+   "Last updated 08:11, Jul 28, delayed by 3 minutes" while a price feed is
+   live, and "Last updated 13:00, Jul 28, at close" once the session has shut
+   (owner ruling 2026-07-28 — after the bell the print is FINAL, not lagging, so
+   an ever-growing delay figure would read as a fault when nothing is wrong).
+   Drops to "Last updated Jul 21" when only a trading-day as-of exists (no
+   clock). The clock is the time the DATA is as-of — not when we polled (owner
+   ruling 2026-07-22). '' if empty.
+   `tail`: 'age' → compute the live delay | 'close' → "at close" | falsy → none.
+   NOTE the 'age' tail is time-sensitive: it is recomputed by retickStamps() in
+   app.js on a 30s timer, since a delay figure frozen at fetch time would state
+   the opposite of the truth as it ages. */
+function fmtUpdated(atIso, asOfDate, tail) {
+  const parts = [atIso ? fmtClockBare(atIso) : '', fmtShortDate(asOfDate)].filter(Boolean);
+  if (!parts.length) return '';
+  const suffix = tail === 'close' ? 'at close'
+    : (tail === 'age' && atIso) ? fmtDelay(atIso) : '';
+  return 'Last updated ' + parts.concat(suffix ? [suffix] : []).join(', ');
 }
 
 /* UTC instant of the regular-session close (16:00 America/New_York = 1:00pm PT)
@@ -574,17 +610,26 @@ function marketCloseInstant(asOfDate) {
    Non-price feeds (news — headlines arrive around the clock) keep the LIVE/STALE
    fetch logic year-round. Future: an extended-hours quote feed would widen the
    LIVE window through pre/after-market and keep the stamp ticking then. */
+/* Lamps carry the RAW stamp inputs (atIso/asOf/tail/stampSuffix) alongside the
+   rendered `stamp` string so applyStamp() in app.js can re-render the
+   time-sensitive "delayed by" clause later without another fetch. */
 function liveLampFor(generatedAt, dataAsOf, priceBound) {
   if (priceBound && !marketSessionOpen()) {
     const atIso = marketCloseInstant(dataAsOf) || generatedAt;
-    return { cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(atIso, dataAsOf), atIso };
+    return {
+      cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(atIso, dataAsOf, 'close'),
+      atIso, asOf: dataAsOf, tail: 'close',
+    };
   }
   const ageMs = Date.now() - new Date(generatedAt).getTime();
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
-  const stamp = fmtUpdated(generatedAt, dataAsOf);
+  const stamp = fmtUpdated(generatedAt, dataAsOf, 'age');
   return fresh
-    ? { cls: 'lamp--live', text: 'LIVE', stamp, atIso: generatedAt }
-    : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue', atIso: generatedAt };
+    ? { cls: 'lamp--live', text: 'LIVE', stamp, atIso: generatedAt, asOf: dataAsOf, tail: 'age' }
+    : {
+      cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue',
+      atIso: generatedAt, asOf: dataAsOf, tail: 'age', stampSuffix: ' — refresh overdue',
+    };
 }
 
 /* Map the RPC payload into the render model app.js uses (same shape demo

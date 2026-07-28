@@ -171,12 +171,13 @@ function renderMarkets(market, lamp) {
   if (!lampEl) return;   /* panel not in the DOM */
   lampEl.className = 'lamp ' + mktState.lamp.cls; lampEl.textContent = mktState.lamp.text;
   const stampEl = document.getElementById('mktStamp');
-  /* uniform "Updated {time} · {date}" from the feed lamp; demo shows the date */
+  /* uniform stamp from the feed lamp; demo shows the date only */
   /* live: the real feed stamp or an honest '—' (never a demo-derived date —
      lastLabel() reads the demo label calendar; Codex #150). Demo keeps it. */
-  if (stampEl) stampEl.textContent = DESK.mode !== 'demo'
-    ? ((mktState.lamp && mktState.lamp.stamp) || '—')
-    : fmtUpdated(null, lastLabel());
+  if (stampEl) {
+    if (DESK.mode !== 'demo') applyLampStamp(stampEl, mktState.lamp);
+    else applyStamp(stampEl, '', lastLabel(), '');
+  }
 
   /* region tabs — U.S. is live; the others are placeholders until sourced */
   const reg = document.getElementById('mktRegions');
@@ -498,7 +499,10 @@ function renderNews(news, lamp) {
   const lampEl = document.getElementById('newsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
   const stampEl = document.getElementById('newsStamp');
-  if (stampEl) stampEl.textContent = DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()) : (lamp.stamp || '—');
+  if (stampEl) {
+    if (DESK.mode === 'demo') applyStamp(stampEl, '', lastLabel(), '');
+    else applyLampStamp(stampEl, lamp);
+  }
   if (!news || !news.length) {
     list.appendChild(el('p', 'stamp', 'No headlines in the latest snapshot — check back after the next refresh.'));
     return;
@@ -926,9 +930,14 @@ function renderHeatmap(hm, lamp) {
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const lampEl = document.getElementById('heatLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
-  /* uniform "Updated {fetch time} · {trading day}" (fetch clock omitted for demo
-     and the delayed cuts whose generatedAt is absent) */
-  document.getElementById('heatStamp').textContent = hm ? fmtUpdated(hm.generatedAt, hm.asOf) : '—';
+  /* Heatmap tiles ARE price data, so they get the same price-bound treatment as
+     the Markets panel: a live delay figure while the session is open, "at close"
+     once it shuts (owner ruling 2026-07-28) — otherwise the two panels would
+     disagree about the same closing prices. */
+  applyLampStamp(
+    document.getElementById('heatStamp'),
+    hm ? liveLampFor(hm.generatedAt, hm.asOf, true) : null,
+  );
   if (!hm || !hm.sectors || !hm.sectors.length) {
     document.getElementById('heatSource').textContent = 'No heatmap in the latest snapshot — it fills in after the next refresh.';
     return;
@@ -1979,8 +1988,12 @@ function renderCharts(data, lamp) {
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
   /* uniform "Updated {time} · {date}" from the feed lamp; demo shows the date */
-  document.getElementById('chartsStamp').textContent =
-    (DESK.mode !== 'demo' && lamp && lamp.stamp) ? lamp.stamp : (data ? fmtUpdated(null, data.asOf) : '—');
+  if (DESK.mode !== 'demo' && lamp && (lamp.atIso || lamp.asOf)) {
+    applyLampStamp(document.getElementById('chartsStamp'), lamp);
+  } else {
+    applyStamp(document.getElementById('chartsStamp'), '', data ? data.asOf : '', '');
+    if (!data) document.getElementById('chartsStamp').textContent = '—';
+  }
 
   /* the symbol box is free-entry: type any ticker → the quote-proxy (wireCharts
      submit handler); the roster is picked from the sidebar list. No datalist —
@@ -2612,8 +2625,11 @@ function renderCharts(data, lamp) {
   let liveAt = null;
   for (const k in dailyCache) { const L = dailyCache[k].live; if (L && (!liveAt || L > liveAt)) liveAt = L; }
   if (liveAt) {
-    document.getElementById('chartsStamp').textContent =
-      'Updated ' + fmtClock(liveAt.replace(' ', 'T') + ':00Z') + ' · Today · ~15-min delayed';
+    /* Intraday graft: same stamp grammar as every other panel, with the delay
+       now MEASURED off the latest bar rather than the old hardcoded
+       "~15-min delayed" guess (owner format 2026-07-28). */
+    const liveIso = liveAt.replace(' ', 'T') + ':00Z';
+    applyStamp(document.getElementById('chartsStamp'), liveIso, liveAt.slice(0, 10), 'age');
   }
   syncZoomPressed();
   syncLockPressed();
@@ -3034,6 +3050,36 @@ async function refreshNews(force) {
     armLiveRetry(newsRetry, refreshNews, () => newsLive);
   }
 }
+
+/* ── panel stamps ───────────────────────────────────────────────────────────
+   The "delayed by N minutes" clause (owner format 2026-07-28) ages in real
+   time, so a stamp rendered once at fetch would keep claiming "delayed by 1
+   minute" an hour later — stating the exact opposite of the truth on the one
+   line the owner reads to decide whether to trust the number. Each stamp
+   therefore stores its raw inputs in data-* attributes and a 30s ticker
+   recomputes the text in place; no re-fetch, no network. Only 'age' stamps
+   need re-ticking — 'at close' and date-only stamps are static. */
+const STAMP_TICK_MS = 30000;
+function applyStamp(el, atIso, asOfDate, tail, suffix) {
+  if (!el) return;
+  const set = (k, v) => { if (v) el.dataset[k] = v; else delete el.dataset[k]; };
+  set('stampAt', atIso); set('stampAsof', asOfDate);
+  set('stampTail', tail); set('stampSuffix', suffix);
+  el.textContent = fmtUpdated(atIso, asOfDate, tail) + (suffix || '');
+}
+/* Convenience: render a panel stamp straight from a lamp object. */
+function applyLampStamp(el, lamp, fallback) {
+  if (!el) return;
+  if (!lamp || !(lamp.atIso || lamp.asOf)) { applyStamp(el, '', '', ''); el.textContent = fallback || '—'; return; }
+  applyStamp(el, lamp.atIso, lamp.asOf, lamp.tail, lamp.stampSuffix);
+}
+function retickStamps() {
+  for (const el of document.querySelectorAll('[data-stamp-tail="age"]')) {
+    el.textContent = fmtUpdated(el.dataset.stampAt || '', el.dataset.stampAsof || '', 'age')
+      + (el.dataset.stampSuffix || '');
+  }
+}
+setInterval(retickStamps, STAMP_TICK_MS);
 
 /* 5 min while the US session is open, 60 min closed (Clarification 6) — plus a
    short post-close settle grace (withinCloseSettleGrace, data.js) that keeps the
