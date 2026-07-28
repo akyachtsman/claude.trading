@@ -1,7 +1,7 @@
 // ── desk-market — market summary strip, delayed quotes on demand ─────────────
 // Replaces the nightly fetch-market.js → data/market.json step
 // (retire-nightly-pipeline plan, Group A). Same sources, same tile shape:
-// Stooq daily CSV → Yahoo v8 chart fallback for the five index tiles, FRED
+// Yahoo v8 chart → Stooq daily CSV fallback for the five index tiles, FRED
 // DGS10 for the 10Y (T-1 by upstream construction — stamped with the SERIES
 // date, never the fetch time; see the plan's lamp carve-out).
 // The core six tiles (5 indices + FRED 10Y) must ALL succeed or the response is
@@ -12,8 +12,9 @@
 // slow one drops only its tile and never gates the core.
 //
 // Anon-callable: public market data, no caller input reaches the upstream
-// URLs. Module cache TTL is session-aware (5 min while the US equities
-// session is open, 60 min closed — spec Clarification 6).
+// URLs. Module cache TTL is session-aware (1 min while the US equities
+// session is open — cut from 5 min, owner report 2026-07-28 — 60 min closed;
+// spec Clarification 6).
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -49,10 +50,11 @@ const EXTRA_SYMBOLS: { sym: string; name: string }[] = [
   // Owner request 2026-07-16: the watchlist ETFs + all 11 SPDR sector funds as
   // strip tiles. BEST-EFFORT like the extras above (own per-symbol catch +
   // latency cap) — a flaky one drops only its own tile, never the core six.
-  // Stooq US tickers (lowercase + .us); Yahoo v8 chart is the per-symbol
-  // fallback (yahooSymbol strips .us → uppercase). The index equivalents
-  // SPY/QQQ/DIA/IWM/VXX are intentionally NOT here — the core tiles already
-  // show them (owner ruling: skip the dupes).
+  // Stooq-style tickers (lowercase + .us) are the canonical key here even
+  // though Yahoo is now the primary fetch — yahooSymbol() maps them across
+  // (strips .us → uppercase), and Stooq remains the fallback. The index
+  // equivalents SPY/QQQ/DIA/IWM/VXX are intentionally NOT here — the core
+  // tiles already show them (owner ruling: skip the dupes).
   { sym: 'xlk.us', name: 'XLK' }, { sym: 'xlf.us', name: 'XLF' },
   { sym: 'xle.us', name: 'XLE' }, { sym: 'xli.us', name: 'XLI' },
   { sym: 'xlb.us', name: 'XLB' }, { sym: 'xlv.us', name: 'XLV' },
@@ -115,7 +117,15 @@ function withinCloseSettleGrace(now = new Date()): boolean {
   const closeMin = 16 * 60;
   return minutes >= closeMin && minutes < closeMin + CLOSE_SETTLE_GRACE_MIN;
 }
-const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? 300_000 : 3_600_000);
+// Open-session TTL cut 5 min → 1 min (owner report 2026-07-28: the tiles read
+// visibly behind a live IBKR quote). The upstream Yahoo feed is real-time —
+// measured at ~5-second-old ticks — so the lag the owner saw was entirely this
+// cache plus the client's poll interval stacking, up to ~10 min combined. At
+// 1 min each, worst-case on-screen staleness drops to ~2 min. The closed-market
+// TTL stays at 60 min: prices are frozen, so re-polling buys nothing.
+const OPEN_TTL_MS = 60_000;
+const CLOSED_TTL_MS = 3_600_000;
+const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? OPEN_TTL_MS : CLOSED_TTL_MS);
 
 // ── quote chain (verbatim ports of lib/stooq.js + lib/quotes.js) ────────────
 type Row = { date: string; close: number };
@@ -176,7 +186,18 @@ async function yahooDaily(stooqSym: string): Promise<Row[]> {
   return rows;
 }
 
-const dailyCloses = (symbol: string) => stooqDaily(symbol).catch(() => yahooDaily(symbol));
+// Yahoo FIRST, Stooq as the fallback (owner report 2026-07-28, verified same
+// day). Stooq now answers every request — index and US-equity symbols alike,
+// any user-agent — with an HTML JavaScript proof-of-work challenge served as
+// HTTP 200, so `res.ok` is true and only the row-count check catches it. That
+// made Stooq a guaranteed failure on the happy path: every refresh fired 29
+// doomed Stooq requests (5 core + 24 extras) and waited on each before falling
+// back to Yahoo, roughly doubling latency and wasting egress for nothing.
+// Yahoo also carries a REAL-TIME index quote where Stooq's daily CSV lags, so
+// this ordering is what makes the tiles track IBKR intraday rather than trail
+// it. Stooq stays as the fallback: it costs nothing while Yahoo is healthy
+// (only tried if Yahoo throws) and revives on its own if the challenge lifts.
+const dailyCloses = (symbol: string) => yahooDaily(symbol).catch(() => stooqDaily(symbol));
 
 // Latency guard for the best-effort extras: resolve null on rejection OR on a
 // hung/slow upstream, so a stalled optional quote can never hold the core

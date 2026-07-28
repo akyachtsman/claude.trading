@@ -88,7 +88,12 @@ async function yahooOHLC(ticker: string): Promise<Row[]> {
   return rows;
 }
 
-const dailyOHLC = (ticker: string) => stooqOHLC(ticker).catch(() => yahooOHLC(ticker));
+// Yahoo FIRST, Stooq as the fallback — same reason as desk-market (owner
+// report 2026-07-28): Stooq now serves an HTML JS-challenge page as HTTP 200
+// for every symbol, so the Stooq leg was a guaranteed miss that ran before the
+// Yahoo fetch on all 25 watchlist symbols. Stooq stays wired as the fallback
+// so it resumes automatically if the challenge ever lifts.
+const dailyOHLC = (ticker: string) => yahooOHLC(ticker).catch(() => stooqOHLC(ticker));
 
 export function packSeries(rows: Row[]): Packed {
   const s: Packed = { t: [], o: [], h: [], l: [], c: [], v: [] };
