@@ -1,8 +1,8 @@
 // ── quote-proxy — origin-guarded OHLC fetch for ANY ticker ──────────────────
 // Deployed as a Supabase Edge Function (Deno). The browser sends {symbol,
 // kind}; bars come from the pipeline's free-source chain fetched server-side
-// (browsers are CORS-blocked by both sources): Stooq EOD CSV first, Yahoo v8
-// chart as fallback — and Yahoo alone for intraday. Free-tier data by design
+// (browsers are CORS-blocked by both sources): Yahoo v8 chart first, Stooq EOD
+// CSV as fallback — and Yahoo alone for intraday. Free-tier data by design
 // (owner ruling: no paid market-data subscriptions): near-real-time for US
 // listings, delayed for some exchanges, no SLA. The client keeps its last good
 // series if this function errors — never crash the panel from here.
@@ -71,7 +71,7 @@ async function stooqDaily(symbol: string): Promise<Series | null> {
   return rows.length >= 30 ? pack(rows) : null;
 }
 
-// Yahoo v8 chart: daily fallback and the only intraday source.
+// Yahoo v8 chart: primary daily source and the only intraday source.
 async function yahooChart(symbol: string, range: string, interval: string, intraday: boolean): Promise<Series | null> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
   const res = await fetch(url, { headers: UA });

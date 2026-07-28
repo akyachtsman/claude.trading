@@ -6,7 +6,7 @@
 //
 // Service-key note (plan §desk-news, accepted residual): held tickers come
 // from the PRIVATE snapshots via SUPABASE_SERVICE_ROLE_KEY — the same key
-// quote-proxy already holds — but only PUBLIC headlines and Stooq day-%
+// quote-proxy already holds — but only PUBLIC headlines and public day-%
 // leave this function, byte-shape-identical to the news.json that was
 // previously committed to the public repo. No caller input reaches the
 // upstream URLs or the database query.
