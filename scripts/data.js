@@ -88,9 +88,12 @@ function buildDemoData() {
     { name: 'Bitcoin',      last: '64,216.00', chg: -0.77, seed: 71 },
     { name: 'Gold',         last: '2,634.50',  chg: 0.31,  seed: 83 },
     { name: 'US Dollar',    last: '104.28',    chg: -0.12, seed: 89 },
-    /* Owner request 2026-07-16: watchlist ETFs + all 11 SPDR sectors as strip
-       tiles (SPY/QQQ/DIA/IWM/VXX skipped — already shown as indices above).
-       Live tiles come from desk-market; this is the deterministic demo mirror. */
+    /* Watchlist ETFs + all 11 SPDR sectors (SPY/QQQ/DIA/IWM/VXX skipped — already
+       shown as indices above). Only the sectors are DRAWN now that the market
+       strip is gone (2026-07-29); the rest are kept because this array mirrors
+       the live desk-market payload, which still carries them for the Markets
+       panel and for the assistant's market context. Trimming the mirror would
+       make demo and live diverge in shape for no gain. */
     ...[
       ['XLK', 258.40, 0.72], ['XLF', 52.18, 0.31], ['XLE', 91.40, -0.44],
       ['XLI', 148.90, 0.28], ['XLB', 92.10, -0.12], ['XLV', 146.30, 0.19],
@@ -767,8 +770,25 @@ function marketCloseInstant(asOfDate) {
    rendered `stamp` string so applyStamp() in app.js can re-render the
    time-sensitive "delayed by" clause later without another fetch. */
 function liveLampFor(generatedAt, dataAsOf, priceBound) {
+  const closeIso = marketCloseInstant(dataAsOf);
+  const stale = {
+    cls: 'lamp--stale', text: 'STALE', stamp: fmtUpdated(generatedAt, dataAsOf, 'age') + ' — refresh overdue',
+    atIso: generatedAt, asOf: dataAsOf, tail: 'age', stampSuffix: ' — refresh overdue',
+  };
   if (priceBound && !marketSessionOpen()) {
-    const atIso = marketCloseInstant(dataAsOf) || generatedAt;
+    /* EOD is a CLAIM — "this number is the closing print" — and the stamp then
+       names the 4pm instant rather than the fetch clock. That claim is only
+       true if the snapshot was actually taken at or after the bell. A snapshot
+       from mid-session relabels itself as the close the moment the market shuts
+       (Codex review, PR #193): the tab sits hidden across 4pm, or a poll fails,
+       or desk-market serves a body it cached at 15:59 — and a 15:30 price
+       appears under "at close". Neither lamp fits that state, so it takes the
+       honest one: not LIVE (the session is shut) and not EOD (this is not the
+       close). The settle grace keeps the window short — desk-market drops to a
+       1-minute TTL for 15 minutes after the bell — and "Refresh now" clears it
+       immediately. */
+    if (generatedAt && closeIso && new Date(generatedAt) < new Date(closeIso)) return stale;
+    const atIso = closeIso || generatedAt;
     return {
       cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(atIso, dataAsOf, 'close'),
       atIso, asOf: dataAsOf, tail: 'close',
@@ -776,13 +796,12 @@ function liveLampFor(generatedAt, dataAsOf, priceBound) {
   }
   const ageMs = Date.now() - new Date(generatedAt).getTime();
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
-  const stamp = fmtUpdated(generatedAt, dataAsOf, 'age');
   return fresh
-    ? { cls: 'lamp--live', text: 'LIVE', stamp, atIso: generatedAt, asOf: dataAsOf, tail: 'age' }
-    : {
-      cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — refresh overdue',
-      atIso: generatedAt, asOf: dataAsOf, tail: 'age', stampSuffix: ' — refresh overdue',
-    };
+    ? {
+      cls: 'lamp--live', text: 'LIVE', stamp: fmtUpdated(generatedAt, dataAsOf, 'age'),
+      atIso: generatedAt, asOf: dataAsOf, tail: 'age',
+    }
+    : stale;
 }
 
 /* Map the RPC payload into the render model app.js uses (same shape demo

@@ -84,69 +84,6 @@ function lastLabel() {
   return DESK.data && DESK.data.labels.length ? DESK.data.labels[DESK.data.labels.length - 1] : '—';
 }
 
-/* ── market strip ──────────────────────────────────────────────────────── */
-/* Tiles are sorted into labelled asset-class frames (owner request 2026-07-17):
-   broad → macro → sectors → industry/metals → rates → global. Matched by the
-   feed's display `name` (identical in demo + live). The Gold/Dollar doubles are
-   kept intentionally — spot GOLD/DXY as macro barometers, GLD/SLV as the metals
-   pair, UUP beside US Dollar. Any feed tile not listed still renders in an
-   "Other" frame, so a newly added symbol is never silently dropped. */
-/* The four headline indices (S&P 500 / Nasdaq Composite / Dow Jones / Russell via IWM)
-   are NOT banded here — they render as the Markets panel's index tiles right
-   beside the strip, so a strip band for them just duplicated that (owner request
-   2026-07-22). They're held in MKT_STRIP_HIDE so the "Other" catch-all below
-   doesn't resurrect them from the feed. */
-const MKT_STRIP_HIDE = new Set(['S&P 500', 'Nasdaq Composite', 'Dow Jones', 'IWM (R2K proxy)']);
-const MKT_BANDS = [
-  /* Global & income leads the strip now that the Indices band is gone. */
-  { label: 'Global & income',   names: ['EEM', 'FXI', 'INDA', 'JPXN', 'SPYD'] },
-  { label: 'Macro',             names: ['VIX', 'US 10Y', 'US Dollar', 'UUP', 'Bitcoin', 'Gold'] },
-  { label: 'US sectors',        names: ['XLK', 'XLF', 'XLC', 'XLY', 'XLV', 'XLI', 'XLP', 'XLE', 'XLU', 'XLB', 'XLRE'] },
-  { label: 'Industry & metals', names: ['SMH', 'KRE', 'GLD', 'SLV'] },
-  { label: 'Treasuries',        names: ['SHY', 'TLH', 'TLT'] },
-];
-/* compact half-size tile: name + price + %-change on one line. No per-tile
-   sparkline — at this density it clipped the price (Codex #109). */
-function mktTile(m) {
-  const tile = el('div', 'mkt-tile');
-  tile.appendChild(el('span', 'mkt-name', m.name));
-  const row = el('div', 'mkt-vals');
-  row.appendChild(el('span', 'mkt-last', m.last));
-  row.appendChild(el('span', m.chg >= 0 ? 'pill pill--gain' : 'pill pill--loss', fmtPct(m.chg)));
-  tile.appendChild(row);
-  return tile;
-}
-function renderStrip(market) {
-  const strip = document.getElementById('marketStrip');
-  while (strip.firstChild) strip.removeChild(strip.firstChild);
-  const byName = new Map(market.map(m => [m.name, m]));
-  /* seed with the headline indices so neither the bands nor the "Other" frame
-     re-adds them — they live in the Markets panel beside the strip */
-  const placed = new Set(MKT_STRIP_HIDE);
-  const addGroup = (label, tiles) => {
-    if (!tiles.length) return;
-    const group = el('div', 'mkt-group');
-    group.setAttribute('role', 'group');
-    group.setAttribute('aria-label', label);
-    group.appendChild(el('span', 'mkt-group-label', label));
-    const box = el('div', 'mkt-group-tiles');
-    /* tiles flatten into a left-packed row across the group's full-width band
-       (CSS auto-fill governs the column count; owner request 2026-07-18) */
-    for (const m of tiles) box.appendChild(mktTile(m));
-    group.appendChild(box);
-    strip.appendChild(group);
-  };
-  for (const band of MKT_BANDS) {
-    const tiles = [];
-    for (const name of band.names) {
-      const m = byName.get(name);
-      if (m) { tiles.push(m); placed.add(name); }
-    }
-    addGroup(band.label, tiles);
-  }
-  addGroup('Other', market.filter(m => !placed.has(m.name)));
-}
-
 /* ── Markets window (owner request 2026-07-20) ─────────────────────────────
    A compact markets tab: region tabs, three index tiles, a normalized
    multi-index %-change chart with timeframe toggles, and a sector grid. Tiles
@@ -3487,7 +3424,18 @@ async function loadPrivate(pin) {
    Live feed (desk-* edge function) or the last good render (FR-R9) — the
    demo generator is the only other data source left. On first-load failure
    the panel lamps Stale rather than showing demo data as real. */
-let stripLive = false, newsLive = false;
+let marketLive = false, newsLive = false;
+
+/* Re-evaluate the Markets lamp against the age of the data ALREADY on screen,
+   without fetching. The lamp is only ever computed inside a render, so any
+   stretch where rendering stops — a failing poll, a hidden tab — freezes the
+   lamp along with the prices, and a frozen lamp keeps claiming whatever it last
+   said. Calling this re-reads liveLampFor against Date.now(), so stale data
+   starts admitting it is stale even while nothing new is arriving. */
+function relampMarket() {
+  if (!marketLive || !DESK.liveStamp) return;
+  renderMarkets(DESK.data.market, liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true));
+}
 
 async function refreshMarket(force) {
   try {
@@ -3495,17 +3443,28 @@ async function refreshMarket(force) {
     clearTimeout(marketRetry.timer); marketRetry.wait = 0;
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
     DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf };
-    renderStrip(DESK.data.market);
     renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true));
     fetchMktSeries();   /* one-shot: hydrate the index chart series (self-guarded) */
-    stripLive = true;
+    marketLive = true;
     return;
-  } catch { /* keep last good; masthead lamps Stale via liveStamp age */ }
-  if (!stripLive) {
-    /* first-load failure: empty strip + dash tiles (the live boot blanked the
-       demo placeholder) — and retry fast rather than waiting out the poller */
-    renderStrip(DESK.data.market); renderMarkets(DESK.data.market, { cls: 'lamp--stale', text: 'Stale' });
-    armLiveRetry(marketRetry, refreshMarket, () => stripLive);
+  } catch { /* keep last good — but re-lamp it below, never leave it claiming LIVE */ }
+  if (marketLive) {
+    /* A failed poll used to return silently here. That kept the last good
+       PRICES on screen (correct — FR-R9) but also kept the last good LAMP, so
+       the panel went on asserting LIVE beside a frozen number for as long as
+       the feed stayed down; only the masthead aged, because renderMasthead
+       recomputes from DESK.liveStamp every tick while the panel lamp only
+       changes when renderMarkets runs. Re-lamping from the CURRENT age of the
+       data we are still showing is what makes the lamp mean something: past
+       liveLampFor's 6-minute threshold it flips to STALE on its own.
+       (Owner report 2026-07-29: a NASDAQ tile read −0.95% against IBKR's
+       −0.58% — the same index ~28 minutes apart, under a LIVE lamp.) */
+    relampMarket();
+  } else {
+    /* first-load failure: dash tiles (the live boot blanked the demo
+       placeholder) — and retry fast rather than waiting out the poller */
+    renderMarkets(DESK.data.market, { cls: 'lamp--stale', text: 'Stale' });
+    armLiveRetry(marketRetry, refreshMarket, () => marketLive);
   }
 }
 
@@ -3603,7 +3562,17 @@ function startFeedPolling() {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { clearTimeout(feedPollTimer); clearTimeout(marketPollTimer); }
-    else feedPollTick(false).then(() => { scheduleFeedPoll(); scheduleMarketPoll(); });
+    else {
+      /* Re-lamp BEFORE the refetch, not just after it. Polling is paused while
+         hidden, so a tab that sat in the background for half an hour comes back
+         showing half-hour-old prices under the lamp they were rendered with —
+         LIVE. The refetch fixes that, but only once it lands; until then the
+         first thing the owner sees is a stale number claiming to be current,
+         which is exactly the moment a figure gets compared against a broker
+         screen and lands wrong. */
+      relampMarket();
+      feedPollTick(false).then(() => { scheduleFeedPoll(); scheduleMarketPoll(); });
+    }
   });
   scheduleFeedPoll();
   scheduleMarketPoll();
@@ -3798,7 +3767,6 @@ async function boot() {
   if (DESK.mode === 'demo') {
     DESK.data = buildDemoData();
     renderMasthead();
-    renderStrip(DESK.data.market);
     mktState.series = DESK.data.markets ? DESK.data.markets.series : null;
     renderMarkets(DESK.data.market, { cls: 'lamp--demo', text: 'Demo' });
     renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });

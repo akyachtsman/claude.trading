@@ -115,7 +115,8 @@ This project's look is its own — established at kickoff via `/design-intake`
   provider URL for `fred-glance` — `spec.src` overrides for a configure-generated
   FRED set). (The TradingView **ticker tape** — the former `slot:'strip'` widget
   — was removed 2026-07-16; its symbols became half-size market-strip tiles fed
-  by `desk-market`, owner ruling.) Widgets render — panel-less, captionless — in
+  by `desk-market`, owner ruling. That strip is gone too as of 2026-07-29 — see
+  the Watchlists panel below.) Widgets render — panel-less, captionless — in
   the compact left-packed **`#acctWidgets` row inside the Accounts section**,
   directly under the account cards, sized by per-spec `width`/`height`
   (both 245×305 — matched to the half-width account cards they stack under,
@@ -130,17 +131,26 @@ This project's look is its own — established at kickoff via `/design-intake`
 - **Watchlists panel** (`renderWatchlist()` + `wlTile()` + the editor, owner
   request 2026-07-29) — multiple named lists, unbounded symbols each.
   **Rendered as TILES, not a table** (owner request the same day, after seeing
-  the table): each list is a labelled band in the **market strip's own idiom** —
-  list name in the left gutter, its symbols as `.mkt-tile` boxes packed
-  left-to-right — so the two surfaces read as one visual system. The band/tile
-  chrome is the shared `.mkt-group`/`.mkt-tile` CSS in `index.html`; `.wl-strip`
-  only lifts the strip's 4-tile row cap (it exists because the strip sits in a
-  narrow column) so tiles fill the full-width panel — ~11 per row at 1600px.
+  the table): each list is a labelled band — list name in the left gutter, its
+  symbols as `.mkt-tile` boxes packed left-to-right. The band/tile chrome is the
+  shared `.mkt-group`/`.mkt-tile` CSS in `index.html`; `.wl-strip` widens it for
+  a full-page panel — ~11 tiles per row at 1600px.
   Every list renders at once, so **the bands ARE the navigation** and there are
-  no tabs. A tile shows ticker / last / day-% pill, the same three facts as a
-  strip tile; bid, ask, volume and the long name move to its `title` tooltip
-  rather than being dropped. A long price wraps its pill to a second line
-  exactly as the strip's own BITCOIN/GOLD tiles do.
+  no tabs. A tile shows ticker / last / day-% pill; bid, ask, volume and the long
+  name move to its `title` tooltip rather than being dropped. A long price wraps
+  its pill to a second line.
+  **This panel replaced the market strip** (owner ruling 2026-07-29). The strip
+  was a left-column stack of the same labelled bands — Global & income, Macro,
+  US sectors, Industry & metals, Treasuries — fed by `desk-market`. Once
+  Watchlists carried those same categories with live prices and a per-tile
+  sparkline, the strip was the same information twice, so it was removed
+  (markup, `MKT_BANDS`/`renderStrip`/`mktTile` in `app.js`, and its `.market-strip`
+  layout rules; the shared tile chrome stays because this panel uses it, and the
+  4-tile row cap went with the strip that needed it). `desk-market` itself is
+  untouched — the Markets window's index tiles and sector grid still read from
+  it, as does the assistant's market context. With the strip's column freed,
+  `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
+  the row about evenly instead of leaving Ask stretched across dead space.
   **The roster is NOT in this repo.** It lives in `desk_watchlists`
   (`desk_010`): RLS deny-all, reached by anon only through the SECURITY DEFINER
   PIN RPCs `desk_get_watchlists` / `desk_set_watchlists`, and read server-side
