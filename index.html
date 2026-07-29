@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260729z">
-<link rel="stylesheet" href="styles/components.css?v=20260729z">
+<link rel="stylesheet" href="styles/tokens.css?v=20260730a">
+<link rel="stylesheet" href="styles/components.css?v=20260730a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -591,23 +591,12 @@
       <span class="stamp ml-auto" id="wlStamp">—</span>
     </div>
     <div class="panel-body">
-      <div class="wl-tabs" role="tablist" aria-label="Watchlist" id="wlTabs"></div>
-      <div class="wl-scroll" id="wlScroll" tabindex="0" aria-label="Watchlist quotes — scrollable">
-        <table class="data-table wl-table" id="wlTable">
-          <thead>
-            <tr>
-              <th scope="col" data-type="text">Symbol</th>
-              <th scope="col" data-type="text" class="wl-name-col">Name</th>
-              <th scope="col" data-type="number">Last</th>
-              <th scope="col" data-type="number">Chg %</th>
-              <th scope="col" data-type="number">Bid</th>
-              <th scope="col" data-type="number">Ask</th>
-              <th scope="col" data-type="number">Volume</th>
-            </tr>
-          </thead>
-          <tbody id="wlRows"></tbody>
-        </table>
-      </div>
+      <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
+           labelled band in the market strip's own idiom — list name on the
+           left, its symbols as tiles packed left-to-right across the full
+           panel width. Built by renderWatchlist(); every band and tile reuses
+           .mkt-group / .mkt-tile so the two surfaces stay one visual system. -->
+      <div class="wl-strip" id="wlStrip"></div>
       <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
       <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
            splitting a pasted broker table on whitespace can turn "BRK B" into
@@ -712,8 +701,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260729z"></script>
-<script src="scripts/data.js?v=20260729z"></script>
-<script src="scripts/app.js?v=20260729z"></script>
+<script src="scripts/config.js?v=20260730a"></script>
+<script src="scripts/data.js?v=20260730a"></script>
+<script src="scripts/app.js?v=20260730a"></script>
 </body>
 </html>
