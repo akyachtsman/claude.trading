@@ -501,6 +501,11 @@ function buildDemoWatchlist(lists) {
           ask: index ? null : Number((last + spread).toFixed(2)),
           vol: index ? Math.round(r() * 5_000) : Math.round(r() * 4_000_000),
           at: null,
+          /* today's shape — a seeded walk that opens at the implied prior close
+             and lands exactly on `last`, so the demo line agrees with the demo
+             pill's direction the same way the live one does */
+          spark: walk(symSeed(sym) ^ 0x5f5f, last / (1 + pct / 100), 0, 0.006, 24, last)
+            .map(v => Number(v.toFixed(4))),
         };
       }),
     })),

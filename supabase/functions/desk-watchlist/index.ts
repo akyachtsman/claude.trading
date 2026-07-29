@@ -31,7 +31,12 @@ const reply = (status: number, body: unknown) =>
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk watchlist; +https://akyachtsman.github.io/claude.trading/)' };
 const CONFIG_URL = 'https://akyachtsman.github.io/claude.trading/config/watchlists.json';
-const CHUNK = 50;          // symbols per upstream call
+const CHUNK = 50;          // symbols per upstream call (v7/quote)
+// v7/finance/spark is a SEPARATE, stricter endpoint: 20 symbols works, 30 is a
+// hard 400 (measured). It is the only BATCHED source of an intraday series —
+// v8/chart takes one symbol per call, which would be 41 round trips per panel.
+const SPARK_CHUNK = 20;
+const SPARK_POINTS = 24;   // downsampled from Yahoo's 78 five-minute closes
 const MAX_SYMBOLS = 1000;  // runaway guard on a hand-edited config, not a product cap
 
 // ── session-aware TTL (mirrors desk-market) ─────────────────────────────────
@@ -90,6 +95,37 @@ async function quoteChunk(symbols: string[]): Promise<any[]> {
   return ((json as any)?.quoteResponse?.result ?? []) as any[];
 }
 
+// Today's intraday shape, one downsampled close series per symbol (owner
+// request 2026-07-29: a tile shows the whole day's movement, not just a number).
+// Best-effort by design — a failed spark chunk costs its tiles their sparkline,
+// never the quote itself, so the panel degrades to what it showed before.
+async function sparkChunk(symbols: string[]): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  const q = symbols.map(toYahoo).map(encodeURIComponent).join(',');
+  const res = await fetch(
+    `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${q}&range=1d&interval=5m`,
+    { headers: UA },
+  ).catch(() => null);
+  if (!res || !res.ok) return out;
+  const json = await res.json().catch(() => null);
+  // deno-lint-ignore no-explicit-any
+  const rows = ((json as any)?.spark?.result ?? []) as any[];
+  for (const r of rows) {
+    const sym = String(r?.symbol ?? '').toUpperCase();
+    const closes = (r?.response?.[0]?.indicators?.quote?.[0]?.close ?? [])
+      .filter((c: unknown) => typeof c === 'number' && Number.isFinite(c)) as number[];
+    if (closes.length < 2 || !sym) continue;
+    // Downsample by even stride: 78 points of detail is invisible at ~44px wide
+    // and would multiply the payload across a large roster.
+    const step = Math.max(1, Math.ceil(closes.length / SPARK_POINTS));
+    const thin = closes.filter((_, i) => i % step === 0);
+    // always keep the true last close so the line ends where the price does
+    if (thin[thin.length - 1] !== closes[closes.length - 1]) thin.push(closes[closes.length - 1]);
+    out.set(sym, thin.map((v) => Number(v.toFixed(4))));
+  }
+  return out;
+}
+
 // Resolve the price the owner should see, and the % that belongs beside it.
 //
 // Owner ruling 2026-07-29: Change % measures from the PRIOR CLOSE and includes
@@ -103,7 +139,7 @@ async function quoteChunk(symbols: string[]): Promise<any[]> {
 //   data: SOXL reg −14.522%, post +1.8486% → −12.94%.
 // Pre-market has no regular session yet, so pre% IS already the prior-close move.
 // deno-lint-ignore no-explicit-any
-function priceRow(sym: string, q: any) {
+function priceRow(sym: string, q: any, spark?: number[]) {
   const reg = num(q.regularMarketPrice);
   const regPct = num(q.regularMarketChangePercent);
   const post = num(q.postMarketPrice), postPct = num(q.postMarketChangePercent);
@@ -138,6 +174,7 @@ function priceRow(sym: string, q: any) {
     // it lets the panel say "at close" rather than imply a stalled quote.
     index: sym.startsWith('^') || q.quoteType === 'INDEX',
     at,
+    spark: spark && spark.length >= 2 ? spark : null,  // today's shape, or null
   };
 }
 
@@ -219,7 +256,16 @@ async function refresh(): Promise<unknown> {
   const truncated = all.slice(MAX_SYMBOLS);
   const chunks: string[][] = [];
   for (let i = 0; i < uniq.length; i += CHUNK) chunks.push(uniq.slice(i, i + CHUNK));
-  const results = await Promise.all(chunks.map((c) => quoteChunk(c)));
+  const sparkChunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += SPARK_CHUNK) sparkChunks.push(uniq.slice(i, i + SPARK_CHUNK));
+  // Quotes and sparks fetched together; sparks are best-effort so their failure
+  // never reaches the caller's catch.
+  const [results, sparkMaps] = await Promise.all([
+    Promise.all(chunks.map((c) => quoteChunk(c))),
+    Promise.all(sparkChunks.map((c) => sparkChunk(c).catch(() => new Map<string, number[]>()))),
+  ]);
+  const sparks = new Map<string, number[]>();
+  for (const m of sparkMaps) for (const [k, v] of m) sparks.set(k, v);
 
   // Key upstream rows by Yahoo's form so BRK.B → BRK-B still resolves.
   // deno-lint-ignore no-explicit-any
@@ -230,7 +276,7 @@ async function refresh(): Promise<unknown> {
   const missing: string[] = [...truncated];
   for (const sym of uniq) {
     const q = byYahoo.get(toYahoo(sym));
-    if (q) rows.set(sym, priceRow(sym, q));
+    if (q) rows.set(sym, priceRow(sym, q, sparks.get(toYahoo(sym))));
     else missing.push(sym);
   }
   // NOT an error when the upstream calls succeeded and simply knew none of the

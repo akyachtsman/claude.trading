@@ -520,8 +520,18 @@ const wlPx = v => (v == null || !Number.isFinite(v) ? '—' : v.toLocaleString('
    facts the market strip shows, in the same components, so the two surfaces
    read as one system. Bid/ask/volume no longer have a column, so they move to
    the tile's tooltip rather than being dropped. */
+/* One watchlist row as a tile (owner request 2026-07-29, revised same day):
+     ticker
+     price   ╱╲╱  ← today's movement, where the % pill used to sit
+     +0.46%
+   The sparkline replaced the pill's slot and the pill dropped beneath the
+   price, which costs one text row. A third row cannot fit inside the owner's
+   +10% budget on the 120×48 tile, so the padding and pill were tightened to
+   land at 132×52 — +10% wide, +8% tall. */
+const WL_SPARK_W = 44, WL_SPARK_H = 16;
+
 function wlTile(r) {
-  const tile = el('div', 'mkt-tile');
+  const tile = el('div', 'mkt-tile wl-tile');
   const name = el('span', 'mkt-name', r.sym);
   /* CLOSE means "this session has ended", not "this is an index": during
      regular hours ^VIX carries a live, moving price, and stamping that CLOSE
@@ -530,18 +540,39 @@ function wlTile(r) {
   const mark = r.index ? (marketSessionOpen() ? '' : 'CLOSE') : (r.ext ? 'EXT' : '');
   if (mark) name.appendChild(el('span', 'wl-mark', mark));
   tile.appendChild(name);
-  const row = el('div', 'mkt-vals');
+
+  const row = el('div', 'mkt-vals wl-vals');
   row.appendChild(el('span', 'mkt-last', wlPx(r.last)));
-  if (r.pct != null) {
-    row.appendChild(el('span', r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss', fmtPct(r.pct)));
+  /* The line is coloured by the DAY's direction so it agrees with the pill
+     below it; a green line over a red pill would be two answers to one
+     question. Gain/loss colour on a price path is P&L, not decoration. */
+  if (Array.isArray(r.spark) && r.spark.length >= 2) {
+    const wrap = el('span', 'wl-spark');
+    wrap.appendChild(sparkline(r.spark, WL_SPARK_W, WL_SPARK_H,
+      (r.pct ?? 0) >= 0 ? 'var(--color-gain)' : 'var(--color-loss)'));
+    row.appendChild(wrap);
   }
   tile.appendChild(row);
+
+  if (r.pct != null) {
+    tile.appendChild(el('span', (r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' wl-pct', fmtPct(r.pct)));
+  }
+
+  /* Bid/ask/volume/name lost their columns in the tile layout. They stay
+     reachable rather than dropped: `title` for a mouse, and an aria-label on a
+     focusable tile so keyboard and screen-reader users get the same facts
+     (Codex review, PR #189 — a title on a non-focusable div is mouse-only). */
   const detail = [
     r.name || null,
-    r.bid != null || r.ask != null ? 'Bid ' + wlPx(r.bid) + ' · Ask ' + wlPx(r.ask) : null,
-    r.vol ? 'Vol ' + wlVol(r.vol) : null,
+    r.bid != null || r.ask != null ? 'Bid ' + wlPx(r.bid) + ', ask ' + wlPx(r.ask) : null,
+    r.vol ? 'Volume ' + wlVol(r.vol) : null,
   ].filter(Boolean).join(' — ');
-  if (detail) tile.title = detail;
+  if (detail) {
+    tile.title = detail;
+    tile.tabIndex = 0;
+    tile.setAttribute('aria-label', r.sym + ' ' + wlPx(r.last) +
+      (r.pct != null ? ' ' + fmtPct(r.pct) : '') + ' — ' + detail);
+  }
   return tile;
 }
 

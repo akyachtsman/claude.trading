@@ -233,6 +233,27 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    this panel spans the page, so let tiles pack the whole width */
 .wl-strip .mkt-group-tiles { max-width: none; }
 .wl-strip .mkt-group-label { flex-basis: 104px; }
+/* Under 640px .mkt-group turns into a COLUMN, where flex-basis governs height —
+   so the label would reserve ~104px of empty vertical space. The shared rule
+   resets it to auto, but this two-class selector outranks it, so the reset has
+   to be repeated at equal specificity (Codex review, PR #189). */
+@media (max-width: 640px) {
+  .wl-strip .mkt-group-label { flex-basis: auto; }
+}
+
+/* Tile with today's shape (owner request 2026-07-29): the % pill moved beneath
+   the price and a sparkline took its slot. A third text row cannot fit the
+   owner's +10% budget on a 120×48 tile, so padding and the pill tighten to land
+   at 132×52 — +10% wide, +8% tall. */
+/* Every rule here is scoped under .wl-strip on purpose: the .mkt-tile chrome
+   lives in index.html's inline <style>, which loads AFTER this sheet, so a bare
+   .wl-tile would tie on specificity and lose on source order. */
+.wl-strip .wl-tile { flex: 0 0 132px; padding: 4px 7px; gap: 0; }
+.wl-strip .wl-vals { flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 4px; }
+.wl-strip .wl-spark { display: inline-flex; align-items: center; flex: 0 0 auto; opacity: .9; }
+.wl-strip .wl-spark svg { display: block; width: 44px; height: 14px; }
+.wl-strip .wl-pct { align-self: flex-start; font-size: 9px; line-height: 1.3; padding: 0 4px; }
+.wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
 /* EXT / CLOSE provenance marker — which session the price came from.
    Deliberately not colored: it is a data-provenance note, and gain/loss color
