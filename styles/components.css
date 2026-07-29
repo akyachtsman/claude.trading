@@ -223,42 +223,45 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-sources a:hover, .ask-sources a:focus-visible { text-decoration: underline; }
 
 /* ── watchlists (owner request 2026-07-29) ─────────────────────────────────
-   Multiple named lists, unbounded symbols each. The row area scrolls on its
-   own so a 41-name roster never pushes the charts off the page. */
-.wl-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: var(--space-3); }
-.wl-tab {
-  appearance: none; border: 1px solid var(--color-border); background: none;
-  font: 600 var(--font-2xs)/1 var(--font-sans); letter-spacing: .04em; text-transform: uppercase;
-  color: var(--color-text-secondary); cursor: pointer; padding: 7px 11px;
-  border-radius: var(--radius-md); min-height: 32px; white-space: nowrap;
+   Rendered as TILES, not a table (owner request, same day): each list is a
+   labelled band in the market strip's own idiom, so the two surfaces read as
+   one system. The band/tile chrome itself lives with .mkt-group in index.html;
+   these rules only widen it for a full-width panel. Class-plus-class beats the
+   single-class strip rules on specificity, so source order is irrelevant. */
+.wl-strip { display: flex; flex-direction: column; gap: 0; }
+/* the strip caps its tile rows at 4 because it sits in a narrow left column;
+   this panel spans the page, so let tiles pack the whole width */
+.wl-strip .mkt-group-tiles { max-width: none; }
+.wl-strip .mkt-group-label { flex-basis: 104px; }
+/* Under 640px .mkt-group turns into a COLUMN, where flex-basis governs height —
+   so the label would reserve ~104px of empty vertical space. The shared rule
+   resets it to auto, but this two-class selector outranks it, so the reset has
+   to be repeated at equal specificity (Codex review, PR #189). */
+@media (max-width: 640px) {
+  .wl-strip .mkt-group-label { flex-basis: auto; }
 }
-.wl-tab:hover, .wl-tab:focus-visible { color: var(--color-text-primary); background: var(--color-surface-2); }
-.wl-tab:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
-.wl-tab[aria-selected="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); border-color: transparent; }
-.wl-tab .wl-count { font-weight: 400; opacity: .7; margin-left: 5px; }
 
-/* ~14 rows before scrolling — enough to scan a list without dominating the page */
-.wl-scroll { max-height: 430px; overflow-y: auto; overscroll-behavior: contain; }
-.wl-scroll:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
-.wl-table thead th { position: sticky; top: 0; background: var(--color-surface); z-index: 1; }
-.wl-table td.wl-sym { font-weight: 600; letter-spacing: .02em; }
-/* the Name header must sit over its own left-aligned column, not inherit the
-   numeric right-alignment every other header uses */
-.wl-table th.wl-name-col { text-align: left; }
-.wl-table td.wl-name {
-  text-align: left; font: 400 var(--font-xs)/1.3 var(--font-sans);
-  color: var(--color-text-secondary); max-width: 260px;
-  overflow: hidden; text-overflow: ellipsis;
-}
-.wl-table td.wl-muted { color: var(--color-text-secondary); }
+/* Tile with today's shape (owner request 2026-07-29): the % pill moved beneath
+   the price and a sparkline took its slot. A third text row cannot fit the
+   owner's +10% budget on a 120×48 tile, so padding and the pill tighten to land
+   at 132×52 — +10% wide, +8% tall. */
+/* Every rule here is scoped under .wl-strip on purpose: the .mkt-tile chrome
+   lives in index.html's inline <style>, which loads AFTER this sheet, so a bare
+   .wl-tile would tie on specificity and lose on source order. */
+.wl-strip .wl-tile { flex: 0 0 132px; padding: 4px 7px; gap: 0; }
+.wl-strip .wl-vals { flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 4px; }
+.wl-strip .wl-spark { display: inline-flex; align-items: center; flex: 0 0 auto; opacity: .9; }
+.wl-strip .wl-spark svg { display: block; width: 44px; height: 14px; }
+.wl-strip .wl-pct { align-self: flex-start; font-size: 9px; line-height: 1.3; padding: 0 4px; }
+.wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
-/* EXT / CLOSE provenance marker — which session the Last price came from.
+/* EXT / CLOSE provenance marker — which session the price came from.
    Deliberately not colored: it is a data-provenance note, and gain/loss color
    is reserved for P&L (project standard). */
 .wl-mark {
-  font: 600 9px/1 var(--font-sans); letter-spacing: .06em;
+  font: 600 8px/1 var(--font-sans); letter-spacing: .05em;
   color: var(--color-text-secondary); border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm); padding: 2px 4px; margin-left: 6px; vertical-align: middle;
+  border-radius: var(--radius-sm); padding: 1px 3px; margin-left: 5px; vertical-align: middle;
 }
 .wl-edit {
   appearance: none; border: 0; background: none; cursor: pointer;

@@ -127,8 +127,20 @@ This project's look is its own — established at kickoff via `/design-intake`
   former per-panel lamps; CSS hides row + stamp when nothing renders. Read
   CLIENT-side (`fetchPublic`), not by an edge function. Mode-independent (live
   external data in demo + live).
-- **Watchlists panel** (`renderWatchlist()` + the editor, owner request
-  2026-07-29) — multiple named lists, unbounded symbols each, one tab per list.
+- **Watchlists panel** (`renderWatchlist()` + `wlTile()` + the editor, owner
+  request 2026-07-29) — multiple named lists, unbounded symbols each.
+  **Rendered as TILES, not a table** (owner request the same day, after seeing
+  the table): each list is a labelled band in the **market strip's own idiom** —
+  list name in the left gutter, its symbols as `.mkt-tile` boxes packed
+  left-to-right — so the two surfaces read as one visual system. The band/tile
+  chrome is the shared `.mkt-group`/`.mkt-tile` CSS in `index.html`; `.wl-strip`
+  only lifts the strip's 4-tile row cap (it exists because the strip sits in a
+  narrow column) so tiles fill the full-width panel — ~11 per row at 1600px.
+  Every list renders at once, so **the bands ARE the navigation** and there are
+  no tabs. A tile shows ticker / last / day-% pill, the same three facts as a
+  strip tile; bid, ask, volume and the long name move to its `title` tooltip
+  rather than being dropped. A long price wraps its pill to a second line
+  exactly as the strip's own BITCOIN/GOLD tiles do.
   **The roster is NOT in this repo.** It lives in `desk_watchlists`
   (`desk_010`): RLS deny-all, reached by anon only through the SECURITY DEFINER
   PIN RPCs `desk_get_watchlists` / `desk_set_watchlists`, and read server-side
@@ -142,9 +154,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   → a modal in the system-prompt idiom; symbols are free text because the
   owner's source is a pasted broker table, normalised client-side for the count
   and again server-side where the RPC is the real authority.
-  **Two display rules, both from the 2026-07-29 extended-hours ruling:** the
-  Last column marks its session — `EXT` for a pre/post print, `CLOSE` for an
-  index (no extended session exists) — and Change % always measures from the
+  **Two display rules, both from the 2026-07-29 extended-hours ruling:** each
+  tile marks its price's session — `EXT` for a pre/post print, `CLOSE` for an
+  index whose session has ENDED (indices have no extended session; during
+  regular hours their price is live and carries no marker) — and Change %
+  always measures from the
   PRIOR CLOSE including extended hours, so one number means the same thing all
   day and all evening. Neither marker is colour-coded (gain/loss colour is
   P&L-only). Unresolved tickers render in `#wlMissing` rather than vanishing:

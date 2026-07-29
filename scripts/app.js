@@ -500,7 +500,9 @@ function renderAccounts(accounts, lamp) {
    which session it came from — EXT for a pre/post print, CLOSE for an index,
    which has no extended session at all (owner ruling 2026-07-29). Change % is
    always measured from the prior close, so it keeps one meaning all day. */
-let wlState = { payload: null, active: 0, lamp: null };
+/* no `active` index any more — every list renders as its own band, so there is
+   no selected tab to track */
+let wlState = { payload: null, lamp: null };
 
 /* wl-prefixed: the desk already has a fmtVol for the strip tiles, which assumes
    a positive number and never renders an em dash. A watchlist cell must cope
@@ -514,13 +516,72 @@ const wlVol = v => {
 };
 const wlPx = v => (v == null || !Number.isFinite(v) ? '—' : v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
+/* One watchlist row as a strip tile: ticker, last, day-% pill — the same three
+   facts the market strip shows, in the same components, so the two surfaces
+   read as one system. Bid/ask/volume no longer have a column, so they move to
+   the tile's tooltip rather than being dropped. */
+/* One watchlist row as a tile (owner request 2026-07-29, revised same day):
+     ticker
+     price   ╱╲╱  ← today's movement, where the % pill used to sit
+     +0.46%
+   The sparkline replaced the pill's slot and the pill dropped beneath the
+   price, which costs one text row. A third row cannot fit inside the owner's
+   +10% budget on the 120×48 tile, so the padding and pill were tightened to
+   land at 132×52 — +10% wide, +8% tall. */
+const WL_SPARK_W = 44, WL_SPARK_H = 16;
+
+function wlTile(r) {
+  const tile = el('div', 'mkt-tile wl-tile');
+  const name = el('span', 'mkt-name', r.sym);
+  /* CLOSE means "this session has ended", not "this is an index": during
+     regular hours ^VIX carries a live, moving price, and stamping that CLOSE
+     would misstate an intraday quote as a settled one. Indices have no extended
+     session, so once the bell rings their value genuinely IS the close. */
+  const mark = r.index ? (marketSessionOpen() ? '' : 'CLOSE') : (r.ext ? 'EXT' : '');
+  if (mark) name.appendChild(el('span', 'wl-mark', mark));
+  tile.appendChild(name);
+
+  const row = el('div', 'mkt-vals wl-vals');
+  row.appendChild(el('span', 'mkt-last', wlPx(r.last)));
+  /* The line is coloured by the DAY's direction so it agrees with the pill
+     below it; a green line over a red pill would be two answers to one
+     question. Gain/loss colour on a price path is P&L, not decoration. */
+  if (Array.isArray(r.spark) && r.spark.length >= 2) {
+    const wrap = el('span', 'wl-spark');
+    wrap.appendChild(sparkline(r.spark, WL_SPARK_W, WL_SPARK_H,
+      (r.pct ?? 0) >= 0 ? 'var(--color-gain)' : 'var(--color-loss)'));
+    row.appendChild(wrap);
+  }
+  tile.appendChild(row);
+
+  if (r.pct != null) {
+    tile.appendChild(el('span', (r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' wl-pct', fmtPct(r.pct)));
+  }
+
+  /* Bid/ask/volume/name lost their columns in the tile layout. They stay
+     reachable rather than dropped: `title` for a mouse, and an aria-label on a
+     focusable tile so keyboard and screen-reader users get the same facts
+     (Codex review, PR #189 — a title on a non-focusable div is mouse-only). */
+  const detail = [
+    r.name || null,
+    r.bid != null || r.ask != null ? 'Bid ' + wlPx(r.bid) + ', ask ' + wlPx(r.ask) : null,
+    r.vol ? 'Volume ' + wlVol(r.vol) : null,
+  ].filter(Boolean).join(' — ');
+  if (detail) {
+    tile.title = detail;
+    tile.tabIndex = 0;
+    tile.setAttribute('aria-label', r.sym + ' ' + wlPx(r.last) +
+      (r.pct != null ? ' ' + fmtPct(r.pct) : '') + ' — ' + detail);
+  }
+  return tile;
+}
+
 function renderWatchlist(payload, lamp) {
   const lampEl = document.getElementById('wlLamp');
-  const tabsEl = document.getElementById('wlTabs');
-  const bodyEl = document.getElementById('wlRows');
+  const stripEl = document.getElementById('wlStrip');
   const emptyEl = document.getElementById('wlEmpty');
   const editBtn = document.getElementById('wlEditBtn');
-  if (!lampEl || !tabsEl || !bodyEl) return;
+  if (!lampEl || !stripEl) return;
 
   if (payload) wlState.payload = payload;
   if (lamp) wlState.lamp = lamp;
@@ -537,61 +598,25 @@ function renderWatchlist(payload, lamp) {
   if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
 
   const lists = (data && data.lists) || [];
-  if (wlState.active >= lists.length) wlState.active = 0;
 
-  tabsEl.textContent = '';
-  lists.forEach((l, i) => {
-    const b = el('button', 'wl-tab');
-    b.type = 'button';
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', String(i === wlState.active));
-    b.appendChild(document.createTextNode(l.title));
-    const c = el('span', 'wl-count', String((l.rows || []).length));
-    b.appendChild(c);
-    b.addEventListener('click', () => { wlState.active = i; renderWatchlist(); });
-    tabsEl.appendChild(b);
-  });
-
-  const rows = (lists[wlState.active] && lists[wlState.active].rows) || [];
-  bodyEl.textContent = '';
-  for (const r of rows) {
-    const tr = document.createElement('tr');
-    const td = (cls, text) => { const c = el('td', cls, text); tr.appendChild(c); return c; };
-    td('wl-sym', r.sym);
-    td('wl-name', r.name || '—');
-    /* Last + which session it came from */
-    const lastCell = td('', wlPx(r.last));
-    lastCell.dataset.sort = String(r.last == null ? -Infinity : r.last);
-    /* CLOSE means "this session has ended", not "this is an index" (Codex
-       review, PR #188): during regular hours ^VIX carries a live, moving price,
-       and stamping that CLOSE would misstate an intraday quote as a settled
-       one. Indices have no extended session, so once the bell rings their value
-       genuinely is the close — that is the only time the marker is true. */
-    if (r.index) { if (!marketSessionOpen()) lastCell.appendChild(el('span', 'wl-mark', 'CLOSE')); }
-    else if (r.ext) lastCell.appendChild(el('span', 'wl-mark', 'EXT'));
-    const pctCell = td(r.pct == null ? '' : (r.pct >= 0 ? 'up' : 'down'), r.pct == null ? '—' : fmtPct(r.pct));
-    pctCell.dataset.sort = String(r.pct == null ? -Infinity : r.pct);
-    /* formatted cells carry their raw value so the shared sorter compares
-       numbers, not "1.34M" / "—" strings */
-    const bidCell = td('wl-muted', wlPx(r.bid));
-    bidCell.dataset.sort = String(r.bid == null ? -Infinity : r.bid);
-    const askCell = td('wl-muted', wlPx(r.ask));
-    askCell.dataset.sort = String(r.ask == null ? -Infinity : r.ask);
-    const volCell = td('wl-muted', wlVol(r.vol));
-    volCell.dataset.sort = String(r.vol == null ? -Infinity : r.vol);
-    bodyEl.appendChild(tr);
+  /* One labelled band per list, in the market strip's idiom (owner request
+     2026-07-29). Every list is on screen at once — the bands ARE the
+     navigation, so there are no tabs to click through. */
+  stripEl.textContent = '';
+  let total = 0;
+  for (const l of lists) {
+    const rows = l.rows || [];
+    total += rows.length;
+    const group = el('div', 'mkt-group');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', l.title);
+    group.appendChild(el('span', 'mkt-group-label', l.title));
+    const box = el('div', 'mkt-group-tiles');
+    for (const r of rows) box.appendChild(wlTile(r));
+    group.appendChild(box);
+    stripEl.appendChild(group);
   }
-  if (emptyEl) emptyEl.hidden = rows.length > 0;
-  const tableEl = document.getElementById('wlTable');
-  if (tableEl) tableEl.hidden = rows.length === 0;
-  /* The headers declare sort types and render with a pointer cursor, so they
-     must actually sort (Codex review, PR #188) — an inert control that looks
-     live is worse than no control. Bound once: makeSortable attaches header
-     listeners, and this function re-runs on every tab switch and poll. */
-  if (tableEl && !tableEl.dataset.sortable) {
-    makeSortable(tableEl);
-    tableEl.dataset.sortable = '1';
-  }
+  if (emptyEl) emptyEl.hidden = total > 0;
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn
      "BRK B" into BRK + B — both look like real symbols, so the only honest
