@@ -88,9 +88,12 @@ function buildDemoData() {
     { name: 'Bitcoin',      last: '64,216.00', chg: -0.77, seed: 71 },
     { name: 'Gold',         last: '2,634.50',  chg: 0.31,  seed: 83 },
     { name: 'US Dollar',    last: '104.28',    chg: -0.12, seed: 89 },
-    /* Owner request 2026-07-16: watchlist ETFs + all 11 SPDR sectors as strip
-       tiles (SPY/QQQ/DIA/IWM/VXX skipped — already shown as indices above).
-       Live tiles come from desk-market; this is the deterministic demo mirror. */
+    /* Watchlist ETFs + all 11 SPDR sectors (SPY/QQQ/DIA/IWM/VXX skipped — already
+       shown as indices above). Only the sectors are DRAWN now that the market
+       strip is gone (2026-07-29); the rest are kept because this array mirrors
+       the live desk-market payload, which still carries them for the Markets
+       panel and for the assistant's market context. Trimming the mirror would
+       make demo and live diverge in shape for no gain. */
     ...[
       ['XLK', 258.40, 0.72], ['XLF', 52.18, 0.31], ['XLE', 91.40, -0.44],
       ['XLI', 148.90, 0.28], ['XLB', 92.10, -0.12], ['XLV', 146.30, 0.19],

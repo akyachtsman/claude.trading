@@ -84,8 +84,7 @@ async function stooqDaily(symbol: string): Promise<Series | null> {
 // Regular-session bounds per day, straight from Yahoo's own `tradingPeriods`
 // (a {pre,post,regular} dict, each a list of one-entry per-day lists). Using
 // the feed's own bounds keeps session classification correct across DST and
-// half-days instead of hardcoding 13:30–20:00 UTC. Falls back to the single
-// `currentTradingPeriod` when the per-day table is absent.
+// half-days instead of hardcoding 13:30–20:00 UTC.
 // deno-lint-ignore no-explicit-any
 function regularRanges(meta: any): [number, number][] {
   const out: [number, number][] = [];

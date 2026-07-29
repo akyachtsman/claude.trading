@@ -224,13 +224,12 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 
 /* ── watchlists (owner request 2026-07-29) ─────────────────────────────────
    Rendered as TILES, not a table (owner request, same day): each list is a
-   labelled band in the market strip's own idiom, so the two surfaces read as
-   one system. The band/tile chrome itself lives with .mkt-group in index.html;
-   these rules only widen it for a full-width panel. Class-plus-class beats the
-   single-class strip rules on specificity, so source order is irrelevant. */
+   labelled band. The idiom came from the market strip, which this panel then
+   replaced outright later the same day; the band/tile chrome still lives with
+   .mkt-group in index.html and these rules only widen it for a full-width
+   panel. Class-plus-class beats those single-class rules on specificity, so
+   source order is irrelevant. */
 .wl-strip { display: flex; flex-direction: column; gap: 0; }
-/* the strip caps its tile rows at 4 because it sits in a narrow left column;
-   this panel spans the page, so let tiles pack the whole width */
 /* ONE row per list (owner request 2026-07-29): tiles never wrap, the row scrolls
    sideways instead, and the scrollbar is always visible so it is obvious there
    is more list off-screen. `overflow-x: scroll` (not auto) keeps the track
