@@ -287,6 +287,20 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 }
 .wl-sort .wl-dir { margin-left: 3px; font-size: 10px; }
 
+/* Chart timeframe (owner request 2026-07-30) — same segmented chrome as the
+   sort beside it, so the header reads as two controls of one kind rather than
+   two different widgets. Seven buttons is wider than the four-way sort, so it
+   is the first thing to take its own row when the header wraps. */
+.wl-tf { flex: 0 0 auto; }
+.wl-tf button {
+  min-width: 0; min-height: 28px; padding: 4px 8px;
+  font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .area-watchlist .wl-tf { order: 1; width: 100%; }
+  .area-watchlist .wl-tf button { flex: 1 1 0; }
+}
+
 /* Tile with today's shape (owner request 2026-07-29): the % pill moved beneath
    the price and a sparkline took its slot. A third text row cannot fit the
    owner's +10% budget on a 120×48 tile, so padding and the pill tighten to land
@@ -297,7 +311,11 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip .wl-tile { flex: 0 0 132px; padding: 4px 7px; gap: 0; }
 .wl-strip .wl-vals { flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 4px; }
 .wl-strip .wl-spark { display: inline-flex; align-items: center; flex: 0 0 auto; opacity: .9; }
-.wl-strip .wl-spark svg { display: block; width: 44px; height: 14px; }
+/* 10% up from 44×14 (owner request 2026-07-30, revised from 5% the same day —
+   5% was ~2px and effectively invisible). Keep in step with WL_SPARK_W/H in
+   app.js, which set the viewBox these scale. Still inside the 132px tile, so
+   nothing reflows and the row keeps its ~11 tiles at 1600px. */
+.wl-strip .wl-spark svg { display: block; width: 48px; height: 15px; }
 .wl-strip .wl-pct { align-self: flex-start; font-size: 9px; line-height: 1.3; padding: 0 4px; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 

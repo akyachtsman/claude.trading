@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260730j">
-<link rel="stylesheet" href="styles/components.css?v=20260730j">
+<link rel="stylesheet" href="styles/tokens.css?v=20260730m">
+<link rel="stylesheet" href="styles/components.css?v=20260730m">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -477,6 +477,12 @@
            renderWlSort(); drag-to-reorder is only offered in Manual, where a
            drag isn't fighting a sort key. -->
       <div class="seg wl-sort" id="wlSort" role="group" aria-label="Sort watchlist symbols"></div>
+      <!-- Chart timeframe (owner request 2026-07-30): the window each tile's
+           sparkline draws, 1D through 5Y. Panel-wide, because the bands are one
+           surface and per-list spans would make two tiles incomparable. The
+           Change % pill does NOT follow it — that stays the prior-close move
+           per the 2026-07-29 ruling. Built by renderWlTf(). -->
+      <div class="seg wl-tf" id="wlTf" role="group" aria-label="Chart timeframe"></div>
       <span class="stamp ml-auto" id="wlStamp">—</span>
     </div>
     <div class="panel-body">
@@ -708,8 +714,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260730j"></script>
-<script src="scripts/data.js?v=20260730j"></script>
-<script src="scripts/app.js?v=20260730j"></script>
+<script src="scripts/config.js?v=20260730m"></script>
+<script src="scripts/data.js?v=20260730m"></script>
+<script src="scripts/app.js?v=20260730m"></script>
 </body>
 </html>

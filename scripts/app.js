@@ -446,7 +446,11 @@ function renderAccounts(accounts, lamp) {
    always measured from the prior close, so it keeps one meaning all day. */
 /* no `active` index any more — every list renders as its own band, so there is
    no selected tab to track */
-let wlState = { payload: null, lamp: null };
+/* `range` records which timeframe the RENDERED payload actually covers. It is
+   not the same thing as wlTf, which is what the owner has selected: between a
+   click and its reply those two disagree, and drawing the old series under the
+   new label is precisely the mislabelling to avoid (Codex review, PR #195). */
+let wlState = { payload: null, lamp: null, range: null };
 
 /* wl-prefixed: the desk already has a fmtVol for the strip tiles, which assumes
    a positive number and never renders an em dash. A watchlist cell must cope
@@ -472,7 +476,12 @@ const wlPx = v => (v == null || !Number.isFinite(v) ? '—' : v.toLocaleString('
    price, which costs one text row. A third row cannot fit inside the owner's
    +10% budget on the 120×48 tile, so the padding and pill were tightened to
    land at 132×52 — +10% wide, +8% tall. */
-const WL_SPARK_W = 44, WL_SPARK_H = 16;
+/* 10% larger than the original 44×16 (owner request 2026-07-30, revised from 5%
+   the same day — 5% came to ~2px and read as no change at all). The DISPLAYED
+   size is the CSS rule on .wl-strip .wl-spark svg, which was bumped in step;
+   these drive the viewBox, so the two have to move together or the line
+   stretches. */
+const WL_SPARK_W = 48, WL_SPARK_H = 18;
 
 /* Reordering (owner request 2026-07-29). Only offered when unlocked, because
    the new order is written straight back through the PIN-gated RPC — a drag we
@@ -496,6 +505,55 @@ const WL_SPARK_W = 44, WL_SPARK_H = 16;
    The choice is a per-browser display preference, so it lives in localStorage
    rather than in the roster table: it is how one screen is being read, not
    what the desk's roster IS. */
+/* ── watchlist chart timeframe (owner request 2026-07-30) ──────────────────
+   Picks the window each tile's sparkline draws. Panel-wide rather than
+   per-list: the bands are one surface, and a per-list setting would mean
+   comparing two tiles whose lines silently cover different spans.
+
+   The Change % pill is deliberately NOT retimed with it. That number is the
+   prior-close move by owner ruling (2026-07-29) so it means the same thing all
+   day and all evening; making it follow the chart would give "+0.46%" two
+   different meanings depending on a control elsewhere in the header. The chart
+   answers "what shape", the pill answers "what today did". */
+const WL_TF_KEY = 'wl_tf_v1';
+const WL_TFS = [
+  ['1d', '1D'], ['1mo', '1M'], ['3mo', '3M'], ['6mo', '6M'],
+  ['1y', '1Y'], ['2y', '2Y'], ['5y', '5Y'],
+];
+let wlTf = '1d';
+try {
+  const saved = localStorage.getItem(WL_TF_KEY);
+  if (WL_TFS.some(t => t[0] === saved)) wlTf = saved;
+} catch { /* private mode — default */ }
+const saveWlTf = () => { try { localStorage.setItem(WL_TF_KEY, wlTf); } catch { /* private mode */ } };
+
+function renderWlTf() {
+  const host = document.getElementById('wlTf');
+  if (!host) return;
+  host.textContent = '';
+  for (const [key, label] of WL_TFS) {
+    const b = el('button', '', label);
+    b.type = 'button';
+    b.dataset.tf = key;
+    b.setAttribute('aria-pressed', String(wlTf === key));
+    b.title = 'Tile charts show ' + (key === '1d' ? 'today' : 'the last ' + label.toLowerCase());
+    b.addEventListener('click', () => {
+      if (wlTf === key) return;
+      wlTf = key;
+      saveWlTf();
+      renderWlTf();
+      /* Each range is a separate fetch — the quotes are shared but the series
+         is not — so switching reloads rather than redrawing what's in hand.
+         Lamp goes to the fetching state so a slow 5Y sweep doesn't leave the
+         previous window's line sitting under the new label unexplained. */
+      loadWatchlist(false);
+      const again = document.querySelector('#wlTf button[data-tf="' + key + '"]');
+      if (again) again.focus();
+    });
+    host.appendChild(b);
+  }
+}
+
 const WL_SORT_KEY = 'wl_sort_v1';
 const WL_SORTS = [
   ['manual', 'Saved', 'the order your lists are saved in'],
@@ -558,7 +616,11 @@ function renderWlSort() {
   }
 }
 
-function wlTile(r) {
+/* `pending` = the payload in hand covers a DIFFERENT window than the one now
+   selected (a switch is in flight, or the backend refused the range). Only the
+   sparkline is timeframe-specific — the price and Change % are true at any
+   span — so the line alone is withheld rather than blanking the whole panel. */
+function wlTile(r, pending) {
   const tile = el('div', 'mkt-tile wl-tile');
   const name = el('span', 'mkt-name', r.sym);
   /* CLOSE means "this session has ended", not "this is an index": during
@@ -574,7 +636,7 @@ function wlTile(r) {
   /* The line is coloured by the DAY's direction so it agrees with the pill
      below it; a green line over a red pill would be two answers to one
      question. Gain/loss colour on a price path is P&L, not decoration. */
-  if (Array.isArray(r.spark) && r.spark.length >= 2) {
+  if (!pending && Array.isArray(r.spark) && r.spark.length >= 2) {
     const wrap = el('span', 'wl-spark');
     wrap.appendChild(sparkline(r.spark, WL_SPARK_W, WL_SPARK_H,
       (r.pct ?? 0) >= 0 ? 'var(--color-gain)' : 'var(--color-loss)'));
@@ -615,7 +677,11 @@ function renderWatchlist(payload, lamp) {
   const editBtn = document.getElementById('wlEditBtn');
   if (!lampEl || !stripEl) return;
 
-  if (payload) wlState.payload = payload;
+  if (payload) {
+    wlState.payload = payload;
+    /* Demo builds for whatever is selected; live echoes what it drew. */
+    wlState.range = payload.range || (DESK.mode === 'demo' ? wlTf : null);
+  }
   if (lamp) wlState.lamp = lamp;
   const data = wlState.payload;
   const lp = wlState.lamp || { cls: 'lamp--stale', text: 'Stale' };
@@ -629,8 +695,11 @@ function renderWatchlist(payload, lamp) {
   /* editing writes to a PIN-gated table, so it only makes sense once unlocked */
   if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
   renderWlSort();   /* reflects the active key + direction on every render */
+  renderWlTf();     /* and the active chart timeframe */
 
   const lists = (data && data.lists) || [];
+  /* Withhold the lines whenever what we hold isn't the window now selected. */
+  const pending = !!data && wlState.range !== wlTf;
 
   /* One labelled band per list, in the market strip's idiom (owner request
      2026-07-29). Every list is on screen at once — the bands ARE the
@@ -648,7 +717,7 @@ function renderWatchlist(payload, lamp) {
     /* Sorting only changes the DRAW order. `rows` arrives in the saved order,
        so Manual needs no work and switching back to it is just this loop
        without a comparator. */
-    for (const r of wlSortRows(rows)) box.appendChild(wlTile(r));
+    for (const r of wlSortRows(rows)) box.appendChild(wlTile(r, pending));
     group.appendChild(box);
     stripEl.appendChild(group);
   });
@@ -3740,15 +3809,34 @@ async function loadWatchlist(force) {
   if (DESK.mode === 'demo') {
     try {
       const cfg = await fetchPublic('config/watchlists.json');
-      renderWatchlist(buildDemoWatchlist(cfg.lists || []), { cls: 'lamp--demo', text: 'Demo' });
+      renderWatchlist(buildDemoWatchlist(cfg.lists || [], wlTf), { cls: 'lamp--demo', text: 'Demo' });
     } catch {
       renderWatchlist({ ok: true, lists: [] }, { cls: 'lamp--demo', text: 'Demo' });
     }
     return;
   }
   if (!DESK_DB.url) return;
+  const asked = wlTf;
   try {
-    const out = await deskWatchlist(force);
+    const out = await deskWatchlist(force, asked);
+    /* Two switches in quick succession race: a 5Y sweep is slower than a 1D
+       cache hit, so the older reply can land last and repaint every tile with
+       the wrong window under the right label. The feed echoes what it drew, so
+       drop anything that isn't the range still selected. */
+    if (wlTf !== asked) return;
+    if (out && out.range && out.range !== asked) return;
+    /* Version skew (Codex review, PR #195). Pages publishes automatically but
+       the edge function is deployed by hand, so between a merge and that deploy
+       the PREVIOUS desk-watchlist is live — and it ignores `range` entirely,
+       answering a 5Y request with a perfectly successful 1D payload that has no
+       `range` field. Rendering that would put today's line under a 5Y label,
+       which is exactly the class of quiet mislabelling this panel keeps getting
+       bitten by. A missing `range` on a non-1D ask means the backend predates
+       the control, so refuse it. */
+    if (out && out.ok && !out.range && asked !== '1d') {
+      renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+      return;
+    }
     if (out && out.ok) {
       /* Price-bound lamps read EOD + "at close" the moment the regular session
          ends — correct for every other panel, wrong here: this feed keeps

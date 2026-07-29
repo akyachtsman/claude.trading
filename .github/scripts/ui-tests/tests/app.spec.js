@@ -805,6 +805,34 @@ test('S13: heatmap map-filter cuts and period select respond', async ({ page }) 
   }
 });
 
+// S20 — Watchlist chart timeframe (owner request 2026-07-30). Demo-gated, so it
+// runs on every PR: the demo generator shapes its walk per timeframe precisely
+// so this control is exercisable without a live feed.
+test('S20: watchlist timeframe control redraws the tile sparklines', async ({ page }) => {
+  await page.goto('./?demo=1');
+  const tf = page.locator('#wlTf');
+  await expect(tf.locator('button')).toHaveCount(7);      // 1D 1M 3M 6M 1Y 2Y 5Y
+
+  // 1D is the default and is the pressed one
+  await expect(tf.locator('button', { hasText: '1D' })).toHaveAttribute('aria-pressed', 'true');
+
+  const firstPath = page.locator('.wl-strip .wl-spark svg path').first();
+  await expect(firstPath).toBeVisible({ timeout: 10000 });
+  const dayPath = await firstPath.getAttribute('d');
+
+  // switching redraws: a different window is a different line
+  await tf.locator('button', { hasText: '1Y' }).click();
+  await expect(tf.locator('button', { hasText: '1Y' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(tf.locator('button', { hasText: '1D' })).toHaveAttribute('aria-pressed', 'false');
+  await expect
+    .poll(() => firstPath.getAttribute('d'), { message: '1Y must draw a different path than 1D' })
+    .not.toBe(dayPath);
+
+  // and it survives a reload — the control is persisted, not per-render state
+  await page.reload();
+  await expect(page.locator('#wlTf button', { hasText: '1Y' })).toHaveAttribute('aria-pressed', 'true');
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // S15–S19 — Live desk assistant (memory + research + live data + advice + clear).
 // Each makes a REAL desk-ask Claude tool-loop call (slow, nondeterministic, costs
