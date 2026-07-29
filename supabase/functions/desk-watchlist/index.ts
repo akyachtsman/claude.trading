@@ -145,6 +145,7 @@ function priceRow(sym: string, q: any, spark?: number[]) {
   const post = num(q.postMarketPrice), postPct = num(q.postMarketChangePercent);
   const pre = num(q.preMarketPrice), prePct = num(q.preMarketChangePercent);
   let last = reg, pct = regPct, ext = false;
+  let extKind: 'pre' | 'post' | null = null;
   // `at` must timestamp the price we actually SHOW (Codex review, PR #188):
   // a pre-market row stamped with regularMarketTime would date a current
   // pre-open print to the prior close, and the roster-wide asOf is a max over
@@ -154,11 +155,13 @@ function priceRow(sym: string, q: any, spark?: number[]) {
     last = post;
     pct = postPct != null && regPct != null ? ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100 : regPct;
     ext = true;
+    extKind = 'post';
     at = num(q.postMarketTime) ?? at;
   } else if (pre != null) {
     last = pre;
     pct = prePct;
     ext = true;
+    extKind = 'pre';
     at = num(q.preMarketTime) ?? at;
   }
   return {
@@ -174,21 +177,40 @@ function priceRow(sym: string, q: any, spark?: number[]) {
     // it lets the panel say "at close" rather than imply a stalled quote.
     index: sym.startsWith('^') || q.quoteType === 'INDEX',
     at,
-    // Today's shape. The spark endpoint is regular-session ONLY — it ignores
-    // includePrePost entirely (measured: same 79 points, same last value with
-    // the flag on) — so on an extended print its line would stop at the close
-    // while the tile shows a later price, e.g. SPY ending at 740.86 beside a
-    // displayed 743.62. Appending the extended last makes the line finish where
-    // the price and the pill do, and the resulting steep final segment is not a
-    // distortion: that gap is the after-hours move, which is exactly what the
-    // owner's prior-close Change % already counts.
-    spark: buildSpark(spark, last, ext),
+    // Today's shape — see buildSpark for why pre and post are handled apart.
+    spark: buildSpark(spark, last, reg, extKind),
   };
 }
 
-function buildSpark(series: number[] | undefined, last: number | null, ext: boolean): number[] | null {
+// The spark endpoint is regular-session ONLY and ignores includePrePost
+// entirely (measured: same 79 points, same last value with the flag on), which
+// makes the two extended windows behave very differently:
+//
+//   POST-market — the series IS today's session, it just stops at the close
+//   while the tile shows a later price (SPY ending 740.86 beside a displayed
+//   743.62). Appending the extended last makes the line finish where the price
+//   and the pill do; the steep final segment is the after-hours move, which the
+//   prior-close Change % already counts.
+//
+//   PRE-market — today's regular session HASN'T HAPPENED, so range=1d returns
+//   YESTERDAY's path. Appending today's pre-open print there would draw all of
+//   yesterday's intraday movement plus an overnight gap and label it "today"
+//   (Codex review, PR #190). Instead the line becomes the only true statement
+//   available: prior close → current pre-market price, which is exactly what
+//   the pre-market Change % measures.
+function buildSpark(
+  series: number[] | undefined,
+  last: number | null,
+  regClose: number | null,
+  extKind: 'pre' | 'post' | null,
+): number[] | null {
+  if (last == null) return series && series.length >= 2 ? series : null;
+  if (extKind === 'pre') {
+    // During pre-market Yahoo's regularMarketPrice is still the prior close.
+    return regClose != null && regClose !== last ? [regClose, Number(last.toFixed(4))] : null;
+  }
   if (!series || series.length < 2) return null;
-  if (!ext || last == null || series[series.length - 1] === last) return series;
+  if (extKind !== 'post' || series[series.length - 1] === last) return series;
   return [...series, Number(last.toFixed(4))];
 }
 

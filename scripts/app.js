@@ -72,7 +72,10 @@ function renderMasthead() {
     if (DESK.authed) {
       const lock = el('button', 'btn btn-secondary', 'Lock');
       lock.type = 'button';
-      lock.addEventListener('click', () => { sessionStorage.removeItem('desk_pin'); DESK.authed = false; renderPrivate(); renderMasthead(); });
+      /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
+         leaving them live after a lock would let a drag change the order and
+         then silently revert (Codex review, PR #190) */
+      lock.addEventListener('click', () => { sessionStorage.removeItem('desk_pin'); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
       wrap.appendChild(lock);
     }
   }
@@ -539,30 +542,60 @@ const WL_SPARK_W = 44, WL_SPARK_H = 16;
    unresolved ticker the owner had saved. */
 const wlCanReorder = () => DESK.mode !== 'demo' && DESK.authed;
 
+/* Writes are SERIALIZED, not fired per move (Codex review, PR #190).
+   desk_set_watchlists is replace-all, so two in-flight requests carrying
+   different complete rosters can commit out of order and an older move would
+   overwrite a newer one — the order would silently revert on the next poll.
+   One request at a time; moves made while it is flying collapse into a single
+   follow-up carrying only the latest state. */
+let wlWriting = false, wlWritePending = false;
+
+async function wlFlushOrder() {
+  if (wlWriting) { wlWritePending = true; return; }
+  const pin = sessionStorage.getItem('desk_pin');
+  if (!pin || !wlState.payload) return;
+  wlWriting = true;
+  try {
+    do {
+      wlWritePending = false;
+      const payload = wlState.payload.lists.map(l => ({ title: l.title, symbols: l.symbols || [] }));
+      const out = await deskSetWatchlists(pin, payload);
+      if (!out || !out.ok) { loadWatchlist(true); return; }   /* rejected → resync to the truth */
+    } while (wlWritePending);
+  } catch {
+    loadWatchlist(true);
+  } finally {
+    wlWriting = false;
+  }
+}
+
 async function wlMove(listIdx, from, to) {
+  /* Re-checked here, not just when the tile was built: Lock clears the PIN and
+     flips DESK.authed without re-rendering, so live handlers can outlive auth.
+     Without this the order would visibly change and then silently revert. */
+  if (!wlCanReorder()) return;
   const list = wlState.payload && wlState.payload.lists && wlState.payload.lists[listIdx];
   if (!list || !Array.isArray(list.symbols)) return;
   const syms = list.symbols.slice();
   if (from < 0 || from >= syms.length || to < 0 || to >= syms.length || from === to) return;
-  syms.splice(to, 0, syms.splice(from, 1)[0]);
+  const moved = syms.splice(from, 1)[0];
+  syms.splice(to, 0, moved);
   list.symbols = syms;
   /* rows follow the same order so the render matches without a refetch */
   const byS = new Map((list.rows || []).map(r => [r.sym, r]));
   list.rows = syms.map(s => byS.get(s)).filter(Boolean);
   renderWatchlist();
-  const focus = document.querySelector('#wlStrip .mkt-group:nth-of-type(' + (listIdx + 1) + ') .wl-tile:nth-of-type(' + (to + 1) + ')');
-  if (focus) focus.focus();
+  /* Focus the moved SYMBOL, not a positional index: `to` indexes the complete
+     symbols array while the DOM holds only symbols that quoted, so with an
+     unresolved ticker in the list the two diverge and nth-of-type would focus
+     the wrong tile or none (Codex review, PR #190). */
+  const band = stripBand(listIdx);
+  const back = band && [...band.querySelectorAll('.wl-tile')].find(t => t.dataset.sym === moved);
+  if (back) back.focus();
 
-  const pin = sessionStorage.getItem('desk_pin');
-  if (!pin) return;
-  const payload = wlState.payload.lists.map(l => ({ title: l.title, symbols: l.symbols || [] }));
-  try {
-    const out = await deskSetWatchlists(pin, payload);
-    if (!out || !out.ok) loadWatchlist(true);   /* rejected → resync to the truth */
-  } catch {
-    loadWatchlist(true);
-  }
+  wlFlushOrder();
 }
+const stripBand = i => document.querySelectorAll('#wlStrip .mkt-group')[i] || null;
 
 function wlTile(r, listIdx, pos) {
   const tile = el('div', 'mkt-tile wl-tile');
@@ -607,6 +640,7 @@ function wlTile(r, listIdx, pos) {
       (r.pct != null ? ' ' + fmtPct(r.pct) : '') + ' — ' + detail);
   }
   tile.tabIndex = 0;   /* focusable regardless, so reordering has a keyboard path */
+  tile.dataset.sym = r.sym;   /* focus restore matches on this, not on position */
 
   if (wlCanReorder()) {
     tile.draggable = true;

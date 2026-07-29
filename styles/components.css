@@ -260,6 +260,12 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    to be repeated at equal specificity (Codex review, PR #189). */
 @media (max-width: 640px) {
   .wl-strip .mkt-group-label { flex-basis: auto; }
+  /* .mkt-group turns into a COLUMN here, so `flex: 1 1 0` below would set a
+     ZERO HEIGHT basis on the tile row instead of a width one — and because that
+     row is also an overflow container, its automatic minimum does not rescue
+     the tiles' height, collapsing the band to its padding and clipping every
+     tile (Codex review, PR #190). Height must come from content on mobile. */
+  .wl-strip .mkt-group-tiles { flex: 0 0 auto; }
 }
 
 /* Tile with today's shape (owner request 2026-07-29): the % pill moved beneath
