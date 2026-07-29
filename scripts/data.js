@@ -481,6 +481,9 @@ function buildDemoWatchlist(lists) {
     missing: [],
     lists: (lists || []).map(l => ({
       title: l.title,
+      /* mirrors the live payload: the complete saved order, so the renderer's
+         position maths is the same in demo as it is live */
+      symbols: (l.symbols || []).slice(),
       rows: (l.symbols || []).map(sym => {
         const r = lcg(symSeed(sym));
         const known = DEMO_WL[sym];

@@ -231,7 +231,28 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip { display: flex; flex-direction: column; gap: 0; }
 /* the strip caps its tile rows at 4 because it sits in a narrow left column;
    this panel spans the page, so let tiles pack the whole width */
-.wl-strip .mkt-group-tiles { max-width: none; }
+/* ONE row per list (owner request 2026-07-29): tiles never wrap, the row scrolls
+   sideways instead, and the scrollbar is always visible so it is obvious there
+   is more list off-screen. `overflow-x: scroll` (not auto) keeps the track
+   present even when a short list would fit, so bands do not jump height as
+   symbols are added or removed. */
+/* NOTE: no `scrollbar-width` here, deliberately. From Chrome 121 that property
+   takes precedence and makes the ::-webkit-scrollbar rules below be IGNORED —
+   and those rules are the only way to force a persistent, space-reserving bar
+   instead of the overlay one macOS/Chrome fade out by default. Setting both
+   cancels the always-visible behaviour the owner asked for. Firefox has no
+   equivalent override and keeps its own overlay bar. */
+.wl-strip .mkt-group-tiles {
+  max-width: none; flex-wrap: nowrap; overflow-x: scroll; overflow-y: hidden;
+  overscroll-behavior-x: contain; padding-bottom: 2px;
+}
+.wl-strip .mkt-group-tiles::-webkit-scrollbar { height: 8px; }
+.wl-strip .mkt-group-tiles::-webkit-scrollbar-track { background: var(--color-bg); border-radius: 4px; }
+.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb { background: var(--color-border-hover); border-radius: 4px; }
+.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+/* the band must be free to shrink, or a 41-tile row would stretch it instead */
+.wl-strip .mkt-group { align-items: stretch; }
+.wl-strip .mkt-group-tiles { flex: 1 1 0; min-width: 0; }
 .wl-strip .mkt-group-label { flex-basis: 104px; }
 /* Under 640px .mkt-group turns into a COLUMN, where flex-basis governs height —
    so the label would reserve ~104px of empty vertical space. The shared rule
@@ -239,6 +260,12 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    to be repeated at equal specificity (Codex review, PR #189). */
 @media (max-width: 640px) {
   .wl-strip .mkt-group-label { flex-basis: auto; }
+  /* .mkt-group turns into a COLUMN here, so `flex: 1 1 0` below would set a
+     ZERO HEIGHT basis on the tile row instead of a width one — and because that
+     row is also an overflow container, its automatic minimum does not rescue
+     the tiles' height, collapsing the band to its padding and clipping every
+     tile (Codex review, PR #190). Height must come from content on mobile. */
+  .wl-strip .mkt-group-tiles { flex: 0 0 auto; }
 }
 
 /* Tile with today's shape (owner request 2026-07-29): the % pill moved beneath
@@ -254,6 +281,12 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip .wl-spark svg { display: block; width: 44px; height: 14px; }
 .wl-strip .wl-pct { align-self: flex-start; font-size: 9px; line-height: 1.3; padding: 0 4px; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
+/* reorder affordances — only present once unlocked, since only then can a new
+   order be persisted */
+.wl-strip .wl-draggable { cursor: grab; }
+.wl-strip .wl-draggable:active { cursor: grabbing; }
+.wl-strip .wl-dragging { opacity: .4; }
+.wl-strip .wl-drop-target { box-shadow: inset 2px 0 0 var(--color-accent-bright); }
 
 /* EXT / CLOSE provenance marker — which session the price came from.
    Deliberately not colored: it is a data-provenance note, and gain/loss color
