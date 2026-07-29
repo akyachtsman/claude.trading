@@ -700,6 +700,9 @@ function renderWatchlist(payload, lamp) {
   const lists = (data && data.lists) || [];
   /* Withhold the lines whenever what we hold isn't the window now selected. */
   const pending = !!data && wlState.range !== wlTf;
+  /* Quick add/remove write through the PIN RPCs, so they exist only when there
+     is something to write to — same gate as the ✎. */
+  const canEdit = wlCanEdit();
 
   /* One labelled band per list, in the market strip's idiom (owner request
      2026-07-29). Every list is on screen at once — the bands ARE the
@@ -712,12 +715,29 @@ function renderWatchlist(payload, lamp) {
     const group = el('div', 'mkt-group');
     group.setAttribute('role', 'group');
     group.setAttribute('aria-label', l.title);
-    group.appendChild(el('span', 'mkt-group-label', l.title));
+    /* The list name and its + share the gutter, so they stay together when the
+       band stacks on a narrow screen instead of the button drifting to the
+       tiles' row. */
+    const head = el('div', 'wl-band-head');
+    head.appendChild(el('span', 'mkt-group-label', l.title));
+    if (canEdit) {
+      const add = el('button', 'wl-add', '+');
+      add.type = 'button';
+      add.title = 'Add symbols to ' + l.title;
+      add.setAttribute('aria-label', 'Add symbols to ' + l.title);
+      add.addEventListener('click', () => openWlQuickAdd(l.title));
+      head.appendChild(add);
+    }
+    group.appendChild(head);
     const box = el('div', 'mkt-group-tiles');
     /* Sorting only changes the DRAW order. `rows` arrives in the saved order,
        so Manual needs no work and switching back to it is just this loop
        without a comparator. */
-    for (const r of wlSortRows(rows)) box.appendChild(wlTile(r, pending));
+    for (const r of wlSortRows(rows)) {
+      const tile = wlTile(r, pending);
+      if (canEdit) wlWireHold(tile, r.sym, l.title);
+      box.appendChild(tile);
+    }
     group.appendChild(box);
     stripEl.appendChild(group);
   });
@@ -760,6 +780,214 @@ const WL_SYM_RE = /^[A-Z0-9.^=-]{1,10}$/;
 const wlParseSyms = txt => [...new Set(
   String(txt || '').toUpperCase().split(/[,\s]+/).filter(t => WL_SYM_RE.test(t))
 )];
+
+/* ── per-list add / hold-to-remove (owner request 2026-07-30) ───────────────
+   Quick edits without opening the full editor: a + in each band's gutter adds
+   symbols to THAT list, and a three-second hold on a tile asks before removing
+   it. Both write the same way the editor does, and both are offered only when
+   the desk is live AND unlocked — the roster lives behind the PIN RPCs, so
+   there is nothing to write to otherwise. */
+const wlCanEdit = () => DESK.mode !== 'demo' && DESK.authed;
+
+/* Every quick edit is a READ-MODIFY-WRITE against the authoritative RPC, never
+   a patch of what the panel happens to be showing. Two reasons, both already
+   paid for once in this panel's history:
+     - desk_set_watchlists is a REPLACE-ALL, so writing from a failed or absent
+       read would delete real lists (the PR #188 hazard).
+     - the quote feed is cached up to an hour when the market is shut, so a
+       roster edited on another device would be silently rolled back by an add
+       built from that stale payload.
+   `mutate` returns false to mean "nothing to do", which skips the write. */
+async function wlMutate(mutate) {
+  const pin = sessionStorage.getItem('desk_pin');
+  if (!pin) return { ok: false, err: 'Unlock the desk first.' };
+  let lists;
+  try {
+    const got = await deskGetWatchlists(pin);
+    if (!got || !got.ok) return { ok: false, err: 'Could not load your watchlists — unlock again.' };
+    lists = (got.lists || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+  } catch {
+    return { ok: false, err: 'Could not reach the desk.' };
+  }
+  if (!mutate(lists)) return { ok: false, err: null };   /* no-op, not a failure */
+  try {
+    const out = await deskSetWatchlists(pin, lists.filter(l => String(l.title || '').trim()));
+    if (!out || !out.ok) return { ok: false, err: 'The desk rejected the change.' };
+  } catch {
+    return { ok: false, err: 'Could not reach the desk to save.' };
+  }
+  /* force: past the feed cache AND every timeframe's slot, since the roster
+     just changed for all of them */
+  await loadWatchlist(true);
+  return { ok: true, err: null };
+}
+
+/* ── quick add ─────────────────────────────────────────────────────────── */
+let wlQuickList = null;   /* which list's + was pressed */
+
+function wlQuickErr(msg) {
+  const p = document.getElementById('wlQuickErr');
+  if (!p) return;
+  p.textContent = msg || '';
+  p.hidden = !msg;
+}
+
+function openWlQuickAdd(title) {
+  if (!wlCanEdit()) return;
+  wlQuickList = title;
+  const back = document.getElementById('wlQuickBackdrop');
+  const head = document.getElementById('wlQuickTitle');
+  const input = document.getElementById('wlQuickInput');
+  if (!back || !input) return;
+  if (head) head.textContent = 'Add to ' + title;
+  input.value = '';
+  wlQuickErr('');
+  back.hidden = false;
+  input.focus();
+}
+
+function closeWlQuickAdd() {
+  const back = document.getElementById('wlQuickBackdrop');
+  if (back) back.hidden = true;
+  wlQuickList = null;
+}
+
+async function submitWlQuickAdd() {
+  const input = document.getElementById('wlQuickInput');
+  const btn = document.getElementById('wlQuickSaveBtn');
+  if (!input || wlQuickList == null) return;
+  /* Same parse the editor uses, so "BRK.B, SPY" and a pasted broker column
+     behave identically here (and the RPC re-validates regardless). */
+  const syms = wlParseSyms(input.value);
+  if (!syms.length) { wlQuickErr('No usable ticker in that — letters, digits, . ^ = - only.'); return; }
+  const target = wlQuickList;
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  let already = [];
+  const res = await wlMutate(lists => {
+    const l = lists.find(x => x.title === target);
+    if (!l) return false;
+    const have = new Set(l.symbols);
+    already = syms.filter(s => have.has(s));
+    const fresh = syms.filter(s => !have.has(s));
+    if (!fresh.length) return false;
+    l.symbols.push(...fresh);
+    return true;
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Add'; }
+  if (res.ok) { closeWlQuickAdd(); return; }
+  /* A pure duplicate is not an error worth a scary message, but it must not
+     look like a successful add either. */
+  wlQuickErr(res.err || (already.length
+    ? (already.length === 1 ? already[0] + ' is already in ' : 'Already in ') + target + '.'
+    : 'That list is no longer there — reload and try again.'));
+}
+
+/* ── hold to remove ────────────────────────────────────────────────────── */
+const WL_HOLD_MS = 3000;          /* owner's choice; the fill shows the wait */
+let wlRmTarget = null;            /* {sym, title} awaiting confirmation */
+
+function wlRmErr(msg) {
+  const p = document.getElementById('wlRmErr');
+  if (!p) return;
+  p.textContent = msg || '';
+  p.hidden = !msg;
+}
+
+function openWlRemove(sym, title) {
+  if (!wlCanEdit()) return;
+  wlRmTarget = { sym, title };
+  const back = document.getElementById('wlRmBackdrop');
+  const text = document.getElementById('wlRmText');
+  if (!back) return;
+  if (text) text.textContent = 'Remove ' + sym + ' from “' + title + '”?';
+  wlRmErr('');
+  back.hidden = false;
+  const cancel = document.getElementById('wlRmCancelBtn');
+  if (cancel) cancel.focus();   /* destructive dialog opens on the safe choice */
+}
+
+function closeWlRemove() {
+  const back = document.getElementById('wlRmBackdrop');
+  if (back) back.hidden = true;
+  wlRmTarget = null;
+}
+
+async function confirmWlRemove() {
+  if (!wlRmTarget) return;
+  const { sym, title } = wlRmTarget;
+  const btn = document.getElementById('wlRmConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Removing…'; }
+  const res = await wlMutate(lists => {
+    const l = lists.find(x => x.title === title);
+    if (!l) return false;
+    const i = l.symbols.indexOf(sym);
+    if (i < 0) return false;
+    l.symbols.splice(i, 1);
+    return true;
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Remove'; }
+  if (res.ok) { closeWlRemove(); return; }
+  wlRmErr(res.err || sym + ' was already gone from that list.');
+}
+
+/* Three seconds of pointer-down on a tile opens the confirm dialog. A hold is
+   deliberately hard to trigger by accident, which is the point for a
+   destructive action, so the tile fills as it goes — a silent 3-second wait
+   reads as a dead control.
+
+   A hold is pointer-only, so Delete/Backspace on a focused tile reaches the
+   same dialog: the tiles are already focusable for screen readers, and a
+   remove that only a mouse can reach is not a remove everyone has. */
+function wlWireHold(tile, sym, title) {
+  let timer = null, sx = 0, sy = 0;
+  const stop = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    tile.classList.remove('wl-holding');
+  };
+  tile.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    sx = e.clientX; sy = e.clientY;
+    tile.classList.add('wl-holding');
+    timer = setTimeout(() => { stop(); openWlRemove(sym, title); }, WL_HOLD_MS);
+  });
+  /* A drag or a touch-scroll is not a hold — without this, scrolling the page
+     with a finger resting on a tile would arm a removal. */
+  tile.addEventListener('pointermove', e => {
+    if (timer && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) stop();
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) tile.addEventListener(ev, stop);
+  /* touch platforms raise their own callout on a long press */
+  tile.addEventListener('contextmenu', e => { if (tile.classList.contains('wl-holding')) e.preventDefault(); });
+  tile.addEventListener('keydown', e => {
+    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+    e.preventDefault();
+    openWlRemove(sym, title);
+  });
+}
+
+function wireWatchlistQuickEdits() {
+  const q = document.getElementById('wlQuickBackdrop');
+  const qClose = document.getElementById('wlQuickCloseBtn');
+  const qSave = document.getElementById('wlQuickSaveBtn');
+  const qInput = document.getElementById('wlQuickInput');
+  if (qClose) qClose.addEventListener('click', closeWlQuickAdd);
+  if (qSave) qSave.addEventListener('click', submitWlQuickAdd);
+  if (q) q.addEventListener('click', e => { if (e.target === q) closeWlQuickAdd(); });
+  if (qInput) qInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitWlQuickAdd(); } });
+
+  const r = document.getElementById('wlRmBackdrop');
+  const rCancel = document.getElementById('wlRmCancelBtn');
+  const rOk = document.getElementById('wlRmConfirmBtn');
+  if (rCancel) rCancel.addEventListener('click', closeWlRemove);
+  if (rOk) rOk.addEventListener('click', confirmWlRemove);
+  if (r) r.addEventListener('click', e => { if (e.target === r) closeWlRemove(); });
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (q && !q.hidden) closeWlQuickAdd();
+    if (r && !r.hidden) closeWlRemove();
+  });
+}
 
 function renderWlEditor() {
   const host = document.getElementById('wlEditLists');
@@ -3896,5 +4124,6 @@ async function boot() {
 wireCharts();
 wireMapFilter();
 wireWatchlistEditor();
+wireWatchlistQuickEdits();
 wireSysPromptModal();
 boot();

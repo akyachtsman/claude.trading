@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260730m">
-<link rel="stylesheet" href="styles/components.css?v=20260730m">
+<link rel="stylesheet" href="styles/tokens.css?v=20260730n">
+<link rel="stylesheet" href="styles/components.css?v=20260730n">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -567,6 +567,46 @@
        that isn't a ticker. Save & exit writes the COMPLETE state through
        desk_set_watchlists (one atomic replace-all); ✕ / backdrop close without
        saving. -->
+  <!-- Quick add (owner request 2026-07-30): the + in a band's gutter targets
+       THAT list, so the dialog only needs the symbols. Free text for the same
+       reason the full editor uses it — the owner's source is a pasted broker
+       table — and the RPC re-validates whatever arrives. -->
+  <div class="modal-backdrop" id="wlQuickBackdrop" hidden>
+    <section class="panel modal-panel wl-quick-panel" id="wlQuickPanel" aria-labelledby="wlQuickTitle" role="dialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlQuickTitle">Add symbols</h2>
+        <button type="button" class="btn btn-secondary ml-auto" id="wlQuickCloseBtn" aria-label="Cancel">✕</button>
+      </div>
+      <div class="panel-body">
+        <p class="lock-explain" id="wlQuickHint">Separate symbols with commas, spaces or new lines.</p>
+        <input class="input wl-quick-input" id="wlQuickInput" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="wlQuickHint">
+        <div class="wl-edit-actions">
+          <button type="button" class="btn" id="wlQuickSaveBtn">Add</button>
+        </div>
+        <p class="lock-error" id="wlQuickErr" hidden></p>
+      </div>
+    </section>
+  </div>
+
+  <!-- Hold-to-remove confirmation (owner request 2026-07-30). role=alertdialog
+       because it interrupts to confirm something destructive; focus opens on
+       "Keep it" so the default action of a stray Enter is the safe one. -->
+  <div class="modal-backdrop" id="wlRmBackdrop" hidden>
+    <section class="panel modal-panel wl-rm-panel" id="wlRmPanel" aria-labelledby="wlRmTitle" aria-describedby="wlRmText" role="alertdialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlRmTitle">Remove symbol</h2>
+      </div>
+      <div class="panel-body">
+        <p class="lock-explain" id="wlRmText">—</p>
+        <div class="wl-edit-actions">
+          <button type="button" class="btn btn-secondary" id="wlRmCancelBtn">Keep it</button>
+          <button type="button" class="btn" id="wlRmConfirmBtn">Remove</button>
+        </div>
+        <p class="lock-error" id="wlRmErr" hidden></p>
+      </div>
+    </section>
+  </div>
+
   <div class="modal-backdrop" id="wlEditBackdrop" hidden>
     <section class="panel modal-panel" id="wlEditPanel" aria-labelledby="wlEditTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
@@ -714,8 +754,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260730m"></script>
-<script src="scripts/data.js?v=20260730m"></script>
-<script src="scripts/app.js?v=20260730m"></script>
+<script src="scripts/config.js?v=20260730n"></script>
+<script src="scripts/data.js?v=20260730n"></script>
+<script src="scripts/app.js?v=20260730n"></script>
 </body>
 </html>
