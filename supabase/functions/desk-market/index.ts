@@ -320,12 +320,18 @@ async function refresh(): Promise<unknown> {
     const rows = extraRows[i];
     if (rows && rows.rows.length >= 2) tiles.push(tileFrom(m.name, rows));
   });
-  // Freshest CORE quote instant — the clock the desk should PRINT, so a tile
-  // can be compared like-for-like against a broker screen. Core only, for the
-  // same reason asOf is: 24/7 crypto would otherwise overstate equity freshness.
+  // OLDEST core quote instant — the clock the desk should PRINT, so a tile can
+  // be compared like-for-like against a broker screen. Deliberately the oldest,
+  // not the freshest (Codex PR #194): one panel stamp speaks for several tiles,
+  // so it has to be a floor ("everything here is at least this fresh"). Taking
+  // the max would let a live S&P vouch for a VIX quoted 15 minutes earlier —
+  // exactly the ambiguity this whole change exists to remove. Per-tile `quoteTs`
+  // rides along in the payload for anyone who needs the precise figure.
+  // Core only, for the same reason asOf is: 24/7 crypto would otherwise
+  // overstate equity freshness.
   const coreTs = tiles.slice(0, MARKET_SYMBOLS.length)
     .map((t) => t.quoteTs).filter((t): t is number => typeof t === 'number' && t > 0);
-  const quoteAt = coreTs.length ? new Date(Math.max(...coreTs) * 1000).toISOString() : null;
+  const quoteAt = coreTs.length ? new Date(Math.min(...coreTs) * 1000).toISOString() : null;
   const body = { ok: true, asOf, quoteAt, generatedAt: new Date().toISOString(), tiles };
   cache = { at: Date.now(), body, duringSession: marketSessionOpen() };
   return body;

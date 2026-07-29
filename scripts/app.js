@@ -141,6 +141,10 @@ function renderMarkets(market, lamp) {
     cell.appendChild(el('div', 'mk-name', ix.label));
     cell.appendChild(el('div', 'mk-pct ' + (pct == null ? '' : pct >= 0 ? 'up' : 'down'), pct == null ? '—' : fmtPct(pct)));
     cell.appendChild(el('div', 'mk-last', t ? t.last : '—'));
+    /* This tile's OWN quote clock. The panel stamp is a floor across all four,
+       so a tile quoted later than the floor would otherwise look staler than it
+       is; the tooltip is where an exact broker-vs-desk comparison gets made. */
+    if (t && t.quoteTs) cell.title = ix.label + ' quoted ' + fmtClock(new Date(t.quoteTs * 1000));
     tilesBox.appendChild(cell);
   }
 
