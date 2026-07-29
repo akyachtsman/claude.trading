@@ -152,13 +152,20 @@ function normalizeLists(raw: any[]): List[] {
 }
 
 // The owner's live roster. Service-role read of an RLS deny-all table.
+//
+// Do NOT send the browser-shaped UA on this call. This project's service key is
+// the newer `sb_secret_…` format, and Supabase's gateway refuses a secret key
+// whenever the request looks like it came from a browser — a Mozilla/5.0
+// user-agent is enough to trip it, and the reply is a 401 "Forbidden use of
+// secret API key in browser" that this function's .catch would swallow into a
+// silent empty roster. UA belongs on the OUTBOUND Yahoo calls only.
 async function listsFromTable(): Promise<List[] | null> {
   const url = Deno.env.get('SUPABASE_URL');
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!url || !key) return null;
   const res = await fetch(
     `${url}/rest/v1/desk_watchlists?select=title,symbols,pos&order=pos.asc,id.asc`,
-    { headers: { apikey: key, Authorization: `Bearer ${key}`, ...UA } },
+    { headers: { apikey: key, Authorization: `Bearer ${key}` } },
   ).catch(() => null);
   if (!res || !res.ok) return null;
   const rows = await res.json().catch(() => null);
