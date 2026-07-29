@@ -239,6 +239,12 @@ Deno.serve(async (req) => {
       let s = j.series as Series;
       let live = false;
       try {
+        // No `prepost` here, deliberately: quote-proxy defaults to the regular
+        // session, and this graft must stay byte-for-byte the same bar set
+        // app.js's graftTodayBar() uses (which drops pre/post via regularOnly).
+        // Turning extended hours on here would fold 4am prints into today's
+        // high/low and silently walk this tool's Stochastic/RSI numbers off the
+        // Pro 1 / Pro 2 panes the owner reads them against.
         const ir = await fetch(`${supaUrl}/functions/v1/quote-proxy`, {
           method: 'POST',
           headers: { ...svc, 'content-type': 'application/json', origin: SITE_ORIGIN },

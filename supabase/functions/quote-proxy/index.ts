@@ -42,13 +42,16 @@ const CACHE_TTL_MS = { daily: 300_000, intraday: 60_000, info: 900_000 }; // 5 m
 type Cached = { at: number; status: number; body: unknown };
 const CACHE = new Map<string, Cached>();
 
-type Series = { t: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
-const emptySeries = (): Series => ({ t: [], o: [], h: [], l: [], c: [], v: [] });
+// `x` marks each bar's session: 0 = regular, 1 = extended (pre/post). It is
+// always emitted — classification is free (Yahoo hands us the per-day session
+// bounds) and it lets callers split the two without re-deriving ET/DST rules.
+type Series = { t: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[]; x: number[] };
+const emptySeries = (): Series => ({ t: [], o: [], h: [], l: [], c: [], v: [], x: [] });
 
-function pack(rows: { t: string; o: number; h: number; l: number; c: number; v: number }[]): Series {
+function pack(rows: { t: string; o: number; h: number; l: number; c: number; v: number; x?: number }[]): Series {
   const s = emptySeries();
   for (const r of rows.slice(-KEEP_BARS)) {
-    s.t.push(r.t); s.o.push(r.o); s.h.push(r.h); s.l.push(r.l); s.c.push(r.c); s.v.push(r.v);
+    s.t.push(r.t); s.o.push(r.o); s.h.push(r.h); s.l.push(r.l); s.c.push(r.c); s.v.push(r.v); s.x.push(r.x ?? 0);
   }
   return s;
 }
@@ -71,27 +74,77 @@ async function stooqDaily(symbol: string): Promise<Series | null> {
   return rows.length >= 30 ? pack(rows) : null;
 }
 
+// Regular-session bounds per day, straight from Yahoo's own `tradingPeriods`
+// (a {pre,post,regular} dict, each a list of one-entry per-day lists). Using
+// the feed's own bounds keeps session classification correct across DST and
+// half-days instead of hardcoding 13:30–20:00 UTC. Falls back to the single
+// `currentTradingPeriod` when the per-day table is absent.
+// deno-lint-ignore no-explicit-any
+function regularRanges(meta: any): [number, number][] {
+  const out: [number, number][] = [];
+  const days = meta?.tradingPeriods?.regular;
+  if (Array.isArray(days)) {
+    for (const day of days) {
+      for (const p of (Array.isArray(day) ? day : [day])) {
+        if (typeof p?.start === 'number' && typeof p?.end === 'number') out.push([p.start, p.end]);
+      }
+    }
+  }
+  const cur = meta?.currentTradingPeriod?.regular;
+  if (!out.length && typeof cur?.start === 'number' && typeof cur?.end === 'number') out.push([cur.start, cur.end]);
+  return out;
+}
+
+// Extended-hours bars arrive with unreliable wicks: Yahoo reports no volume at
+// all outside the session (measured: 1141 of 1142 pre/post bars across QQQ and
+// AAPL had volume 0), and a few percent of them carry a high/low tens of
+// dollars off their own open/close — e.g. QQQ 2026-07-28 16:50, low 647.43
+// against a 676.25 close, a 7.2% phantom wick on zero volume. The bodies are
+// sound; only the extremes are junk. So on EXTENDED bars only, clamp the wick
+// to 1% outside the body — comfortably above any genuine pre/post bar range
+// (the body itself moves with a real earnings gap, so the clamp moves with it)
+// and well under the 2.8–7.2% garbage. Regular-session bars are never touched;
+// they are clean (0 of 780 sampled bars exceeded this bound).
+const EXT_WICK_TOL = 0.01;
+
 // Yahoo v8 chart: primary daily source and the only intraday source.
-async function yahooChart(symbol: string, range: string, interval: string, intraday: boolean): Promise<Series | null> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
+// `prepost` widens an intraday fetch to the 4:00am–8:00pm ET extended session
+// (owner request 2026-07-29). Indices carry `hasPrePostMarketData:false` — an
+// index is computed from constituent trades, so once those stop printing the
+// value simply repeats its close; those flat trailing bars still classify as
+// extended via `x`, so callers can drop them rather than draw a dead flat tail.
+async function yahooChart(symbol: string, range: string, interval: string, intraday: boolean, prepost = false): Promise<Series | null> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=${prepost ? 'true' : 'false'}`;
   const res = await fetch(url, { headers: UA });
   if (!res.ok) return null;
   const json = await res.json().catch(() => null);
   const r = json?.chart?.result?.[0];
   const q = r?.indicators?.quote?.[0];
   if (!r?.timestamp || !q) return null;
+  // Daily bars are whole sessions — classification only means anything intraday.
+  const regs = intraday ? regularRanges(r.meta) : [];
+  const isRegular = (ts: number) => !regs.length || regs.some(([a, b]) => ts >= a && ts < b);
   const rows = [];
   for (let i = 0; i < r.timestamp.length; i++) {
     const [o, h, l, c] = [q.open?.[i], q.high?.[i], q.low?.[i], q.close?.[i]];
     if ([o, h, l, c].some((n) => typeof n !== 'number' || !Number.isFinite(n) || n <= 0)) continue;
-    const d = new Date(r.timestamp[i] * 1000);
+    const ts = r.timestamp[i];
+    const d = new Date(ts * 1000);
     const t = intraday
       ? d.toISOString().slice(0, 16).replace('T', ' ') // YYYY-MM-DD HH:mm (UTC)
       : d.toISOString().slice(0, 10);
-    rows.push({ t, o, h, l, c, v: q.volume?.[i] || 0 });
+    const x = intraday && !isRegular(ts) ? 1 : 0;
+    // De-spike the extended session (see EXT_WICK_TOL). The body always wins:
+    // the clamp can only pull a wick in, never inside open/close.
+    const body = [Math.min(o, c), Math.max(o, c)];
+    const hi = x ? Math.max(body[1], Math.min(h, body[1] * (1 + EXT_WICK_TOL))) : h;
+    const lo = x ? Math.min(body[0], Math.max(l, body[0] * (1 - EXT_WICK_TOL))) : l;
+    rows.push({ t, o, h: hi, l: lo, c, v: q.volume?.[i] || 0, x });
   }
+  // The floor counts REGULAR bars only: a thin pre-market on a quiet ticker
+  // must not let a mostly-empty session pass as a full one.
   const minBars = intraday ? 20 : 30;
-  return rows.length >= minBars ? pack(rows) : null;
+  return rows.filter((b) => !b.x).length >= minBars ? pack(rows) : null;
 }
 
 // ── fundamentals (kind:'info') ───────────────────────────────────────────────
@@ -197,15 +250,18 @@ Deno.serve(async (req) => {
   if (!allowed) return reply(403, { ok: false, error: 'forbidden origin' }, cors);
   if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST only' }, cors);
 
-  let payload: { symbol?: unknown; kind?: unknown };
+  let payload: { symbol?: unknown; kind?: unknown; prepost?: unknown };
   try { payload = await req.json(); } catch { return reply(400, { ok: false, error: 'invalid JSON body' }, cors); }
   const symbol = String(payload.symbol ?? '').trim().toUpperCase();
   const kind = payload.kind === 'intraday' ? 'intraday' : payload.kind === 'info' ? 'info' : 'daily';
+  // Extended hours are intraday-only: daily bars are whole regular sessions.
+  const prepost = kind === 'intraday' && payload.prepost === true;
   if (!symbol) return reply(400, { ok: false, error: 'symbol is required' }, cors);
   if (!/^[A-Z0-9.^-]{1,10}$/.test(symbol)) return reply(400, { ok: false, error: 'symbol format not recognized' }, cors);
 
-  // Serve from the warm-instance cache when fresh.
-  const cacheKey = `${symbol}:${kind}`;
+  // Serve from the warm-instance cache when fresh. The prepost flag is part of
+  // the key — the two variants are different bar sets, never interchangeable.
+  const cacheKey = `${symbol}:${kind}${prepost ? ':pp' : ''}`;
   const hit = CACHE.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS[kind]) return reply(hit.status, hit.body, cors);
 
@@ -224,7 +280,7 @@ Deno.serve(async (req) => {
 
   let series: Series | null = null;
   if (kind === 'intraday') {
-    series = await yahooChart(symbol, '5d', '5m', true);
+    series = await yahooChart(symbol, '5d', '5m', true, prepost);
   } else {
     // Yahoo FIRST, Stooq as the fallback — same reason as desk-market (owner
     // report 2026-07-28): Stooq answers with an HTML JS-challenge page served
@@ -239,7 +295,7 @@ Deno.serve(async (req) => {
     return reply(404, body, cors);
   }
 
-  const body = { ok: true, symbol, kind, asOf: series.t[series.t.length - 1], series };
+  const body = { ok: true, symbol, kind, prepost, asOf: series.t[series.t.length - 1], series };
   CACHE.set(cacheKey, { at: Date.now(), status: 200, body });
   return reply(200, body, cors);
 });

@@ -63,7 +63,28 @@ This project's look is its own — established at kickoff via `/design-intake`
   `withinCloseSettleGrace()` in `scripts/data.js` — keeps the 5-min cadence for
   a short stretch right after the close, since Stooq/Yahoo's final settle
   print doesn't always land at the exact closing bell; added 2026-07-27, owner
-  report of no confidence in the as-of-close numbers). The masthead's
+  report of no confidence in the as-of-close numbers).
+  **Extended-hours rule (owner ruling 2026-07-29) — where pre/post bars may and
+  may NOT go.** The workbench fetches intraday with `prepost:true`, so
+  `wbState.intraday[sym]` holds the full 4am–8pm set; what consumes it differs
+  ON PURPOSE. **Pro 3 only** displays extended bars, gated on its per-pane
+  `cfg.p3.ext` toggle (Session group in the gear popover, ON by default; OFF
+  restores the exact regular-session bar set the ISTOCH 10-3-3 fit was
+  established against). Extended runs render behind a tinted backdrop rect so a
+  thin 4am print never reads as regular-hours conviction, and the caption gains
+  `· EXT`. **`graftTodayBar()` is regular-session ONLY** — it pipes its input
+  through `regularOnly()` (`scripts/data.js`) first, because a daily candle's
+  OHLC has one canonical meaning and folding pre/post prints into today's
+  high/low would silently walk the Pro 1 SWING and Pro 2 LONG-TERM stochastics
+  off their terminal-fitted values. Verified on live data: the grafted bar's H/L
+  matches Yahoo's own `regularMarketDayHigh`/`Low` exactly (QQQ 2026-07-28:
+  679.40 / 667.88), where folding extended hours in would have reported
+  679.40 / **647.43**. `desk-ask`'s `getTechnicals` graft omits `prepost` for
+  the same reason — its readings must match the panes the owner reads them
+  against. `intraTo15()` carries the `x` flag through; 15-min buckets align to
+  the session boundaries (9:30 = minute 570, 16:00 = 960) so one never straddles
+  regular and extended. The Markets window is untouched (regular session).
+  The masthead's
   **"Refresh now" button** (`#refreshNowBtn`, next to the MARKETS lamp, live
   mode only — owner request 2026-07-27) force-bypasses BOTH the poll cooldown
   and every desk-market/desk-news/desk-heatmap/desk-charts in-memory cache in
@@ -150,6 +171,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   52-week range / dividend yield) from Yahoo v7/quote via a cached cookie+crumb
   handshake — powers the charts panel's quote readout + fundamentals strip
   (bid/ask are market-hours-only; Yahoo returns 0 when closed).
+  **Extended hours (owner ruling 2026-07-29):** `kind:'intraday'` accepts
+  `prepost:true`, widening the fetch to the 4:00am–8:00pm ET session; the
+  `prepost` flag is part of the cache key (two different bar sets, never
+  interchangeable). EVERY intraday bar carries `x` — 0 regular, 1 pre/post —
+  classified from Yahoo's own per-day `meta.tradingPeriods.regular`, so the
+  split survives DST and half-days without hardcoded UTC hours. Two measured
+  properties of the extended feed drive the handling: Yahoo reports **no volume
+  at all** outside the session (1141 of 1142 sampled bars were volume 0 — the
+  Pro 3 volume strip is legitimately empty under the shaded band, not broken),
+  and a few percent of pre/post bars carry **phantom wicks** — a high/low tens
+  of dollars off their own open/close on zero volume (QQQ 2026-07-28 16:50: low
+  647.43 against a 676.25 close, 7.2% off). Bodies are sound, so extended bars
+  ONLY are de-spiked by clamping the wick to 1% outside open/close
+  (`EXT_WICK_TOL`); regular bars are never touched (0 of 780 sampled exceeded
+  that bound). **Indices have no extended session at all** — `^IXIC`/`^GSPC`
+  report `hasPrePostMarketData:false` and simply repeat their close (^GSPC held
+  7428.78 flat from 16:00 to 17:10), which is why the Markets index tiles stay
+  at-close and the Markets chart keeps fetching regular-session only.
   Cron-secret-gated: `desk-ibkr-sync` (Flex → tables). Scheduled by pg_cron
   (`desk_005` migration): sync 22:35/09:35 UTC — dual-slot because IBKR
   statements roll overnight. (The scheduled twice-daily AI brief — `desk-brief`,
@@ -291,7 +330,7 @@ run for real against the dedicated project on every PR.
 | S5 | Demo lamps | With `?demo=1`, the desk-state cluster (labeled "MARKETS", Accounts header since 2026-07-22) shows "Demo data" and every panel lamp (news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
 | S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; first-row value order changes accordingly | Order/aria-sort unchanged after click |
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shell pre-auth, valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
-| S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes | Missing pane, empty SVG, dead controls, or popover missing controls |
+| S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
 | S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
