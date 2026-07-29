@@ -540,64 +540,84 @@ const WL_SPARK_W = 44, WL_SPARK_H = 16;
    Order is moved on the list's `symbols` array, NOT on `rows`: rows hold only
    the symbols that quoted, so writing back from rows would delete every
    unresolved ticker the owner had saved. */
-const wlCanReorder = () => DESK.mode !== 'demo' && DESK.authed;
+/* ── sorting (owner request 2026-07-29) ────────────────────────────────────
+   A VIEW over the saved order, never a rewrite of it. "Saved" is the order the
+   roster is stored in — set in the editor — so switching away to A–Z or Price
+   and back returns to it exactly. Nothing here calls the write RPC.
 
-/* Writes are SERIALIZED, not fired per move (Codex review, PR #190).
-   desk_set_watchlists is replace-all, so two in-flight requests carrying
-   different complete rosters can commit out of order and an older move would
-   overwrite a newer one — the order would silently revert on the next poll.
-   One request at a time; moves made while it is flying collapse into a single
-   follow-up carrying only the latest state. */
-let wlWriting = false, wlWritePending = false;
+   Sorting REPLACED drag-to-reorder (owner ruling, same day): with these keys
+   available, arranging symbols by hand earned nothing and cost a great deal —
+   a replace-all write per drag, serialization to stop two moves committing out
+   of order, handlers that had to be torn down on lock, and focus restore that
+   had to reconcile the saved-symbols index against the rendered-tile index.
+   All of that is gone; the roster's order is now only ever set in the editor.
 
-async function wlFlushOrder() {
-  if (wlWriting) { wlWritePending = true; return; }
-  const pin = sessionStorage.getItem('desk_pin');
-  if (!pin || !wlState.payload) return;
-  wlWriting = true;
-  try {
-    do {
-      wlWritePending = false;
-      const payload = wlState.payload.lists.map(l => ({ title: l.title, symbols: l.symbols || [] }));
-      const out = await deskSetWatchlists(pin, payload);
-      if (!out || !out.ok) { loadWatchlist(true); return; }   /* rejected → resync to the truth */
-    } while (wlWritePending);
-  } catch {
-    loadWatchlist(true);
-  } finally {
-    wlWriting = false;
+   The choice is a per-browser display preference, so it lives in localStorage
+   rather than in the roster table: it is how one screen is being read, not
+   what the desk's roster IS. */
+const WL_SORT_KEY = 'wl_sort_v1';
+const WL_SORTS = [
+  ['manual', 'Saved', 'the order your lists are saved in'],
+  ['sym', 'A–Z', 'alphabetical by ticker'],
+  ['price', 'Price', 'by last price'],
+  ['pct', 'Change', 'by day change %'],
+];
+let wlSort = { key: 'manual', dir: 1 };
+try {
+  const raw = JSON.parse(localStorage.getItem(WL_SORT_KEY));
+  if (raw && WL_SORTS.some(s => s[0] === raw.key)) wlSort = { key: raw.key, dir: raw.dir === -1 ? -1 : 1 };
+} catch { /* default */ }
+const saveWlSort = () => { try { localStorage.setItem(WL_SORT_KEY, JSON.stringify(wlSort)); } catch { /* private mode */ } };
+
+/* Sorting returns a NEW array — the caller's list order is the saved one and
+   must survive untouched. A row missing the sort field sinks to the bottom in
+   BOTH directions rather than flipping to the top on a descending sort, which
+   would read as "the most expensive thing I own has no price". */
+function wlSortRows(rows) {
+  if (wlSort.key === 'manual') return rows;
+  const val = r => (wlSort.key === 'sym' ? r.sym : wlSort.key === 'price' ? r.last : r.pct);
+  const missing = r => { const v = val(r); return v == null || (typeof v === 'number' && !Number.isFinite(v)); };
+  return rows.slice().sort((a, b) => {
+    const am = missing(a), bm = missing(b);
+    if (am || bm) return am && bm ? 0 : (am ? 1 : -1);
+    const av = val(a), bv = val(b);
+    const c = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+    return c * wlSort.dir;
+  });
+}
+
+function renderWlSort() {
+  const host = document.getElementById('wlSort');
+  if (!host) return;
+  host.textContent = '';
+  for (const [key, label, why] of WL_SORTS) {
+    const b = el('button', '', label);
+    b.type = 'button';
+    b.dataset.key = key;
+    const on = wlSort.key === key;
+    b.setAttribute('aria-pressed', String(on));
+    /* the active key doubles as the direction toggle — clicking it again flips */
+    b.title = on && key !== 'manual'
+      ? (wlSort.dir === 1 ? 'Ascending — click to reverse' : 'Descending — click to reverse')
+      : 'Sort ' + why;
+    if (on && key !== 'manual') b.appendChild(el('span', 'wl-dir', wlSort.dir === 1 ? '↑' : '↓'));
+    b.addEventListener('click', () => {
+      if (wlSort.key === key && key !== 'manual') wlSort.dir = -wlSort.dir;
+      else wlSort = { key, dir: 1 };
+      saveWlSort();
+      renderWatchlist();
+      /* Re-render REPLACES these buttons, so the one just activated leaves the
+         DOM and focus falls back to <body> — a keyboard user could not press
+         Enter again to reverse the same sort without tabbing the whole page
+         (Codex review, PR #191). Put focus on its replacement. */
+      const again = document.querySelector('#wlSort button[data-key="' + key + '"]');
+      if (again) again.focus();
+    });
+    host.appendChild(b);
   }
 }
 
-async function wlMove(listIdx, from, to) {
-  /* Re-checked here, not just when the tile was built: Lock clears the PIN and
-     flips DESK.authed without re-rendering, so live handlers can outlive auth.
-     Without this the order would visibly change and then silently revert. */
-  if (!wlCanReorder()) return;
-  const list = wlState.payload && wlState.payload.lists && wlState.payload.lists[listIdx];
-  if (!list || !Array.isArray(list.symbols)) return;
-  const syms = list.symbols.slice();
-  if (from < 0 || from >= syms.length || to < 0 || to >= syms.length || from === to) return;
-  const moved = syms.splice(from, 1)[0];
-  syms.splice(to, 0, moved);
-  list.symbols = syms;
-  /* rows follow the same order so the render matches without a refetch */
-  const byS = new Map((list.rows || []).map(r => [r.sym, r]));
-  list.rows = syms.map(s => byS.get(s)).filter(Boolean);
-  renderWatchlist();
-  /* Focus the moved SYMBOL, not a positional index: `to` indexes the complete
-     symbols array while the DOM holds only symbols that quoted, so with an
-     unresolved ticker in the list the two diverge and nth-of-type would focus
-     the wrong tile or none (Codex review, PR #190). */
-  const band = stripBand(listIdx);
-  const back = band && [...band.querySelectorAll('.wl-tile')].find(t => t.dataset.sym === moved);
-  if (back) back.focus();
-
-  wlFlushOrder();
-}
-const stripBand = i => document.querySelectorAll('#wlStrip .mkt-group')[i] || null;
-
-function wlTile(r, listIdx, pos) {
+function wlTile(r) {
   const tile = el('div', 'mkt-tile wl-tile');
   const name = el('span', 'mkt-name', r.sym);
   /* CLOSE means "this session has ended", not "this is an index": during
@@ -639,45 +659,13 @@ function wlTile(r, listIdx, pos) {
     tile.setAttribute('aria-label', r.sym + ' ' + wlPx(r.last) +
       (r.pct != null ? ' ' + fmtPct(r.pct) : '') + ' — ' + detail);
   }
-  tile.tabIndex = 0;   /* focusable regardless, so reordering has a keyboard path */
-  tile.dataset.sym = r.sym;   /* focus restore matches on this, not on position */
-
-  if (wlCanReorder()) {
-    tile.draggable = true;
-    tile.dataset.pos = String(pos);
-    tile.dataset.list = String(listIdx);
-    tile.classList.add('wl-draggable');
-    tile.addEventListener('dragstart', e => {
-      wlDrag = { list: listIdx, from: pos };
-      tile.classList.add('wl-dragging');
-      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', r.sym); }
-    });
-    tile.addEventListener('dragend', () => { tile.classList.remove('wl-dragging'); wlDrag = null; });
-    tile.addEventListener('dragover', e => {
-      if (!wlDrag || wlDrag.list !== listIdx) return;   /* no cross-list moves */
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      tile.classList.add('wl-drop-target');
-    });
-    tile.addEventListener('dragleave', () => tile.classList.remove('wl-drop-target'));
-    tile.addEventListener('drop', e => {
-      tile.classList.remove('wl-drop-target');
-      if (!wlDrag || wlDrag.list !== listIdx) return;
-      e.preventDefault();
-      wlMove(listIdx, wlDrag.from, pos);
-      wlDrag = null;
-    });
-    /* Keyboard equivalent — a drag-only control is unusable by keyboard and on
-       touch. Alt+Arrow shifts the focused tile one slot. */
-    tile.addEventListener('keydown', e => {
-      if (!e.altKey) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); wlMove(listIdx, pos, pos - 1); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); wlMove(listIdx, pos, pos + 1); }
-    });
-  }
+  /* Still focusable: the aria-label above carries bid/ask/volume, and a
+     screen-reader or keyboard user needs to be able to land on the tile to
+     hear it — that was never about dragging. */
+  tile.tabIndex = 0;
+  tile.dataset.sym = r.sym;
   return tile;
 }
-let wlDrag = null;   /* {list, from} while a tile is in flight */
 
 function renderWatchlist(payload, lamp) {
   const lampEl = document.getElementById('wlLamp');
@@ -699,6 +687,7 @@ function renderWatchlist(payload, lamp) {
   }
   /* editing writes to a PIN-gated table, so it only makes sense once unlocked */
   if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
+  renderWlSort();   /* reflects the active key + direction on every render */
 
   const lists = (data && data.lists) || [];
 
@@ -707,7 +696,7 @@ function renderWatchlist(payload, lamp) {
      navigation, so there are no tabs to click through. */
   stripEl.textContent = '';
   let total = 0;
-  lists.forEach((l, li) => {
+  lists.forEach(l => {
     const rows = l.rows || [];
     total += rows.length;
     const group = el('div', 'mkt-group');
@@ -715,10 +704,10 @@ function renderWatchlist(payload, lamp) {
     group.setAttribute('aria-label', l.title);
     group.appendChild(el('span', 'mkt-group-label', l.title));
     const box = el('div', 'mkt-group-tiles');
-    /* tile position indexes the list's SYMBOLS array (the persisted order),
-       not rows, so a drop lands correctly even when some symbols didn't quote */
-    const syms = Array.isArray(l.symbols) ? l.symbols : rows.map(r => r.sym);
-    for (const r of rows) box.appendChild(wlTile(r, li, Math.max(0, syms.indexOf(r.sym))));
+    /* Sorting only changes the DRAW order. `rows` arrives in the saved order,
+       so Manual needs no work and switching back to it is just this loop
+       without a comparator. */
+    for (const r of wlSortRows(rows)) box.appendChild(wlTile(r));
     group.appendChild(box);
     stripEl.appendChild(group);
   });
