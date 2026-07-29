@@ -1504,8 +1504,11 @@ const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default
 const WB_CFG_DEFAULT = () => ({
   p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
   p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
-  /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling) */
-  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
+  /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling).
+     ext = show the 4:00am–8:00pm ET extended session (owner request 2026-07-29).
+     On by default; turning it off restores the exact regular-session bar set the
+     ISTOCH 10-3-3 fit was established against, for terminal parity. */
+  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
 });
 function loadWbCfg() {
   try {
@@ -1929,8 +1932,18 @@ function renderWbSidebar(data) {
    display — the terminal's Pro 3 runs 15-min bars (established by matching
    its hover OHLC against this exact aggregation; see ISTOCH in data.js).
    The raw 5-min series stays untouched for the daily forming-candle graft. */
+/* Pro 3 plots 15-MINUTE bars, so a session's bar count depends on whether
+   extended hours are showing: 9:30–16:00 is 26 bars, 4:00–20:00 is 64. The
+   default window is two sessions either way. */
+const WB_P3_BARS_REG = 26;
+const WB_P3_BARS_EXT = 64;
+const p3Window = ext => 2 * (ext ? WB_P3_BARS_EXT : WB_P3_BARS_REG);
+
+/* Session boundaries land on exact 15-minute marks (9:30 = minute 570, 4:00pm =
+   960), so a bucket never straddles the regular/extended line — the first bar's
+   x flag describes the whole bucket. */
 function intraTo15(s) {
-  const out = { t: [], o: [], h: [], l: [], c: [], v: [] };
+  const out = { t: [], o: [], h: [], l: [], c: [], v: [], x: [] };
   let key = null;
   for (let i = 0; i < s.c.length; i++) {
     const [d, hm] = s.t[i].split(' ');
@@ -1938,7 +1951,7 @@ function intraTo15(s) {
     const bucket = d + ' ' + Math.floor((H * 60 + M) / 15);
     if (bucket !== key) {
       key = bucket;
-      out.t.push(s.t[i]); out.o.push(s.o[i]); out.h.push(s.h[i]); out.l.push(s.l[i]); out.c.push(s.c[i]); out.v.push(s.v ? s.v[i] || 0 : 0);
+      out.t.push(s.t[i]); out.o.push(s.o[i]); out.h.push(s.h[i]); out.l.push(s.l[i]); out.c.push(s.c[i]); out.v.push(s.v ? s.v[i] || 0 : 0); out.x.push(s.x ? s.x[i] || 0 : 0);
     } else {
       const j = out.c.length - 1;
       out.h[j] = Math.max(out.h[j], s.h[i]);
@@ -1950,7 +1963,14 @@ function intraTo15(s) {
   return out;
 }
 
-function graftTodayBar(bars, intra) {
+/* REGULAR-SESSION ONLY, deliberately (owner request 2026-07-29 added extended
+   hours to the intraday feed): a daily candle's OHLC has one canonical meaning
+   — the 9:30–4:00 session — and every other source states it that way. Folding
+   pre/post prints into today's high/low would quietly shift the Pro 1 SWING and
+   Pro 2 LONG-TERM stochastics off the terminal-fitted values they match today.
+   Extended hours show up on Pro 3, where they read as what they are. */
+function graftTodayBar(bars, intraRaw) {
+  const intra = regularOnly(intraRaw);
   const n = intra && intra.t ? intra.t.length : 0;
   if (!n || !bars.t.length) return null;
   const day = intra.t[n - 1].slice(0, 10);
@@ -1983,7 +2003,15 @@ function renderCharts(data, lamp) {
      days3d = the EOD-fallback branch's window in DAILY bars (Codex #149: the
      two branches display different bar sizes, so they carry separate
      window/pan state instead of sharing one number). */
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: 52, days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg: loadWbCfg() };
+  if (!(wbState && wbState.data === data)) {
+    /* days3 is a BAR count, and an extended session holds 64 fifteen-minute
+       bars against a regular session's 26 — so a fixed 52 stops meaning "two
+       sessions" the moment extended hours are on (Codex review, PR #187). Size
+       the default from the toggle instead, and rescale on flip (below) so the
+       view keeps its span rather than collapsing to under one day. */
+    const cfg = loadWbCfg();
+    wbState = { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: p3Window(cfg.p3.ext), days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg };
+  }
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -2111,6 +2139,25 @@ function renderCharts(data, lamp) {
     const chartBot = strips.length ? stripCursor : vY + vH;
 
     text(caption, x0 + 6, 13, { 'font-size': 9, 'font-weight': 600, 'letter-spacing': '.08em', 'font-family': 'var(--font-sans)' });
+
+    /* Extended-hours backdrop (owner request 2026-07-29). Drawn first so every
+       candle, band and gridline lands on top of it. Pre/post bars are thin —
+       a 5-lot print moves them — so they get a tinted regime band rather than
+       being passed off as regular-session conviction. Contiguous runs merge
+       into one rect: two per day at most, not one per bar. */
+    if (opts.intraday && bars.x) {
+      for (let i = i0; i < end; i++) {
+        if (!bars.x[i]) continue;
+        let j = i;
+        while (j + 1 < end && bars.x[j + 1]) j++;
+        const left = x(i) - slotW / 2;
+        svg.appendChild(svgEl('rect', {
+          x: left, y: pY, width: Math.max(1, x(j) + slotW / 2 - left), height: Math.max(0, chartBot - pY),
+          fill: 'var(--color-border)', 'fill-opacity': 0.35, 'pointer-events': 'none',
+        }));
+        i = j;
+      }
+    }
 
     let hi = -Infinity, lo = Infinity;
     for (let i = i0; i < end; i++) { hi = Math.max(hi, bars.h[i]); lo = Math.min(lo, bars.l[i]); }
@@ -2511,7 +2558,7 @@ function renderCharts(data, lamp) {
     const fresh = wbState.intradayAt[sym] && Date.now() - wbState.intradayAt[sym] < INTRADAY_TTL_MS;
     if (wbIntradayPending.has(sym) || (wbState.intraday[sym] && fresh)) return;
     wbIntradayPending.add(sym);
-    deskQuote(sym, 'intraday')
+    deskQuote(sym, 'intraday', true)
       .then(out => {
         if (out.ok && out.series && out.series.c.length >= 30) {
           wbState.intraday[sym] = out.series;
@@ -2586,9 +2633,13 @@ function renderCharts(data, lamp) {
          (the 5-min feed aggregated via intraTo15) with the ISTOCH 10-3-3 slow
          stochastic — both established from the terminal's own Pro 3 hover
          readout; see the ISTOCH comment in data.js for the fit evidence. */
-      const intra15 = intraTo15(intra);
+      /* EXT off → regular session only, the bar set ISTOCH was fitted against.
+         EXT on → pre/post bars join the series, shaded in the chart body so a
+         thin 4am print is never mistaken for regular-hours conviction. */
+      const intra15 = intraTo15(wbState.cfg.p3.ext ? intra : regularOnly(intra));
       const ist = stochSeries(intra15, ISTOCH);
-      panes.push([intra15, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 15-MIN', {
+      const extOn = wbState.cfg.p3.ext && intra15.x && intra15.x.some(v => v);
+      panes.push([intra15, ist, stochMarks(ist), 'PRO 3 · DAY TRADING · ' + sym + ' · 15-MIN' + (extOn ? ' · EXT' : ''), {
         /* no presets: the range navigator sets the window (in 15-min bars)
            anywhere within the ~5-day intraday feed */
         window: paneWindow(wbState.days3, intra15), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
@@ -2709,6 +2760,18 @@ function buildWbSettings() {
       ...(key === 'p2' ? [['Stochastic (weekly)', () => cfg.stochW, v => { cfg.stochW = v; }]] : []),
     ];
     group('Indicators', ind);
+    /* Pro 3 alone trades on intraday bars, so it alone can show the extended
+       session (owner request 2026-07-29). */
+    if (key === 'p3') group('Session', [['Extended hours (4am–8pm ET)', () => cfg.ext, v => {
+      /* Rescale the window and pan offset across the flip so the pane keeps the
+         same CALENDAR span — 64 bars/day extended vs 26 regular. Without this,
+         switching on would shrink the view to well under a single day. */
+      const before = cfg.ext ? WB_P3_BARS_EXT : WB_P3_BARS_REG;
+      const after = v ? WB_P3_BARS_EXT : WB_P3_BARS_REG;
+      cfg.ext = v;
+      wbState.days3 = Math.max(20, Math.round(wbState.days3 * after / before));
+      wbState.off3 = Math.round(wbState.off3 * after / before);
+    }]]);
     if (full) {
       group('Moving averages', [25, 50, 100, 200, 1].map(n =>
         ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));

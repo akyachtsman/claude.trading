@@ -409,7 +409,9 @@ async function deskAsk(pin, question, context) {
    free-source chain (Stooq → Yahoo; Yahoo for intraday). No PIN — the function
    is origin-guarded instead (owner ruling 2026-07-14); anyone on the site can
    chart any symbol. Free-tier quotes — near-real-time US, delayed elsewhere. */
-async function deskQuote(symbol, kind) {
+/* prepost (intraday only) widens the fetch to the 4:00am–8:00pm ET extended
+   session; every bar then carries series.x — 0 regular, 1 pre/post. */
+async function deskQuote(symbol, kind, prepost) {
   const res = await fetch(DESK_DB.url + '/functions/v1/quote-proxy', {
     method: 'POST',
     headers: {
@@ -417,11 +419,25 @@ async function deskQuote(symbol, kind) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ symbol, kind: kind || 'daily' }),
+    body: JSON.stringify({ symbol, kind: kind || 'daily', prepost: prepost === true }),
   });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('quote-proxy → HTTP ' + res.status);
-  return out; /* {ok:true, symbol, kind, asOf, series:{t,o,h,l,c,v}} | {ok:false, error} */
+  return out; /* {ok:true, symbol, kind, prepost, asOf, series:{t,o,h,l,c,v,x}} | {ok:false, error} */
+}
+
+/* Split a series to REGULAR-session bars only (x===1 marks pre/post). Older
+   cached payloads predate the x flag — treat a missing flag as regular so a
+   warm cache never silently drops bars. */
+function regularOnly(s) {
+  if (!s || !s.x || !s.x.some(v => v)) return s;
+  const out = { t: [], o: [], h: [], l: [], c: [], v: [], x: [] };
+  for (let i = 0; i < s.c.length; i++) {
+    if (s.x[i]) continue;
+    out.t.push(s.t[i]); out.o.push(s.o[i]); out.h.push(s.h[i]);
+    out.l.push(s.l[i]); out.c.push(s.c[i]); out.v.push(s.v ? s.v[i] || 0 : 0); out.x.push(0);
+  }
+  return out;
 }
 
 /* Extra map universes (Crypto/Futures/World): delayed quotes fetched on
