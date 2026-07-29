@@ -593,6 +593,7 @@ function renderWlSort() {
   for (const [key, label, why] of WL_SORTS) {
     const b = el('button', '', label);
     b.type = 'button';
+    b.dataset.key = key;
     const on = wlSort.key === key;
     b.setAttribute('aria-pressed', String(on));
     /* the active key doubles as the direction toggle — clicking it again flips */
@@ -605,6 +606,12 @@ function renderWlSort() {
       else wlSort = { key, dir: 1 };
       saveWlSort();
       renderWatchlist();
+      /* Re-render REPLACES these buttons, so the one just activated leaves the
+         DOM and focus falls back to <body> — a keyboard user could not press
+         Enter again to reverse the same sort without tabbing the whole page
+         (Codex review, PR #191). Put focus on its replacement. */
+      const again = document.querySelector('#wlSort button[data-key="' + key + '"]');
+      if (again) again.focus();
     });
     host.appendChild(b);
   }

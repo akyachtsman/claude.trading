@@ -268,8 +268,20 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   .wl-strip .mkt-group-tiles { flex: 0 0 auto; }
 }
 
-/* sort control — the shared .seg chrome, shrunk to sit inside a panel header */
+/* sort control — the shared .seg chrome, shrunk to sit inside a panel header.
+   That header carries title + lamp + ✎ + these four buttons + stamp, which
+   stops fitting on one line on a phone. Measured before fixing (Codex review,
+   PR #191): at 390px the title is already truncated to 30 of 93px, at 360px it
+   is squeezed to ZERO — the panel silently loses its heading, which is worse
+   than the overflow — and by 320px the header spills 24px and the page scrolls
+   sideways. So the header wraps, and below 480px the sort takes its own row
+   where the title keeps its full width. */
+.area-watchlist .panel-header { flex-wrap: wrap; }
 .wl-sort { flex: 0 0 auto; }
+@media (max-width: 480px) {
+  .area-watchlist .wl-sort { order: 1; width: 100%; }
+  .area-watchlist .wl-sort button { flex: 1 1 0; }
+}
 .wl-sort button {
   min-width: 0; min-height: 28px; padding: 4px 9px;
   font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
