@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260729a">
-<link rel="stylesheet" href="styles/components.css?v=20260729a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260729z">
+<link rel="stylesheet" href="styles/components.css?v=20260729z">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -519,6 +519,32 @@
     </section>
   </div>
 
+  <!-- Watchlist editor (owner request 2026-07-29), same modal idiom as the
+       system-prompt panel above. Rows are built by renderWlEditor(). Symbols
+       are edited as free text because the owner's source is a pasted broker
+       table — separators are normalised on save, and the RPC filters anything
+       that isn't a ticker. Save & exit writes the COMPLETE state through
+       desk_set_watchlists (one atomic replace-all); ✕ / backdrop close without
+       saving. -->
+  <div class="modal-backdrop" id="wlEditBackdrop" hidden>
+    <section class="panel modal-panel" id="wlEditPanel" aria-labelledby="wlEditTitle" role="dialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlEditTitle">Edit watchlists</h2>
+        <span class="stamp ml-auto" id="wlEditStamp">—</span>
+        <button type="button" class="btn btn-secondary" id="wlEditCloseBtn" aria-label="Close without saving">✕</button>
+      </div>
+      <div class="panel-body">
+        <p class="lock-explain">Rename a list, paste or edit its symbols, add a list, or delete one. Separate symbols with commas, spaces or new lines.</p>
+        <div id="wlEditLists"></div>
+        <div class="wl-edit-actions">
+          <button type="button" class="btn btn-secondary" id="wlAddListBtn">+ Add list</button>
+          <button type="button" class="btn" id="wlSaveBtn">Save &amp; exit</button>
+        </div>
+        <p class="lock-error" id="wlEditErr" hidden></p>
+      </div>
+    </section>
+  </div>
+
   <div class="top-boxes">
     <section class="area-accounts" aria-labelledby="accountsTitle">
       <div class="accounts-head">
@@ -551,6 +577,45 @@
       </div>
 
   </div>
+
+  <!-- Watchlists (owner request 2026-07-29): multiple named lists, unbounded
+       symbols each. Rosters live in desk_watchlists (desk_010) and are edited
+       in place from here via the PIN RPCs — the ✎ trigger flips the panel into
+       edit mode. Quotes arrive batched from desk-watchlist (one upstream call
+       per 50 symbols). Tabs are built by renderWatchlist(). -->
+  <section class="panel area-watchlist" aria-labelledby="wlTitle">
+    <div class="panel-header">
+      <h2 class="panel-title" id="wlTitle">Watchlists</h2>
+      <span class="lamp lamp--demo" id="wlLamp">Demo</span>
+      <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
+      <span class="stamp ml-auto" id="wlStamp">—</span>
+    </div>
+    <div class="panel-body">
+      <div class="wl-tabs" role="tablist" aria-label="Watchlist" id="wlTabs"></div>
+      <div class="wl-scroll" id="wlScroll" tabindex="0" aria-label="Watchlist quotes — scrollable">
+        <table class="data-table wl-table" id="wlTable">
+          <thead>
+            <tr>
+              <th scope="col" data-type="text">Symbol</th>
+              <th scope="col" data-type="text" class="wl-name-col">Name</th>
+              <th scope="col" data-type="number">Last</th>
+              <th scope="col" data-type="number">Chg %</th>
+              <th scope="col" data-type="number">Bid</th>
+              <th scope="col" data-type="number">Ask</th>
+              <th scope="col" data-type="number">Volume</th>
+            </tr>
+          </thead>
+          <tbody id="wlRows"></tbody>
+        </table>
+      </div>
+      <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
+      <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
+           splitting a pasted broker table on whitespace can turn "BRK B" into
+           BRK + B, and both look like valid tickers, so the only honest signal
+           is which ones came back unknown. -->
+      <p class="wl-missing" id="wlMissing" hidden></p>
+    </div>
+  </section>
 
   <section class="panel area-charts" aria-labelledby="chartsTitle">
     <div class="panel-header wb-panel-header">
@@ -647,8 +712,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260729a"></script>
-<script src="scripts/data.js?v=20260729a"></script>
-<script src="scripts/app.js?v=20260729a"></script>
+<script src="scripts/config.js?v=20260729z"></script>
+<script src="scripts/data.js?v=20260729z"></script>
+<script src="scripts/app.js?v=20260729z"></script>
 </body>
 </html>

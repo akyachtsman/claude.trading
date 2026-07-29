@@ -493,6 +493,293 @@ function renderAccounts(accounts, lamp) {
 }
 
 /* ── news ──────────────────────────────────────────────────────────────── */
+/* ── Watchlists (owner request 2026-07-29) ─────────────────────────────────
+   Multiple named lists, unbounded symbols each; one tab per list. Rows come
+   from desk-watchlist already grouped, so this only lays them out.
+   The Last column shows the extended-hours price where one exists, and marks
+   which session it came from — EXT for a pre/post print, CLOSE for an index,
+   which has no extended session at all (owner ruling 2026-07-29). Change % is
+   always measured from the prior close, so it keeps one meaning all day. */
+let wlState = { payload: null, active: 0, lamp: null };
+
+/* wl-prefixed: the desk already has a fmtVol for the strip tiles, which assumes
+   a positive number and never renders an em dash. A watchlist cell must cope
+   with a missing volume (indices report none), so it gets its own. */
+const wlVol = v => {
+  if (v == null || !Number.isFinite(v) || v <= 0) return '—';
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
+  return String(v);
+};
+const wlPx = v => (v == null || !Number.isFinite(v) ? '—' : v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+function renderWatchlist(payload, lamp) {
+  const lampEl = document.getElementById('wlLamp');
+  const tabsEl = document.getElementById('wlTabs');
+  const bodyEl = document.getElementById('wlRows');
+  const emptyEl = document.getElementById('wlEmpty');
+  const editBtn = document.getElementById('wlEditBtn');
+  if (!lampEl || !tabsEl || !bodyEl) return;
+
+  if (payload) wlState.payload = payload;
+  if (lamp) wlState.lamp = lamp;
+  const data = wlState.payload;
+  const lp = wlState.lamp || { cls: 'lamp--stale', text: 'Stale' };
+  lampEl.className = 'lamp ' + lp.cls;
+  lampEl.textContent = lp.text;
+  const stampEl = document.getElementById('wlStamp');
+  if (stampEl) {
+    if (DESK.mode === 'demo') stampEl.textContent = 'Demo data';
+    else applyLampStamp(stampEl, lp);
+  }
+  /* editing writes to a PIN-gated table, so it only makes sense once unlocked */
+  if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
+
+  const lists = (data && data.lists) || [];
+  if (wlState.active >= lists.length) wlState.active = 0;
+
+  tabsEl.textContent = '';
+  lists.forEach((l, i) => {
+    const b = el('button', 'wl-tab');
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(i === wlState.active));
+    b.appendChild(document.createTextNode(l.title));
+    const c = el('span', 'wl-count', String((l.rows || []).length));
+    b.appendChild(c);
+    b.addEventListener('click', () => { wlState.active = i; renderWatchlist(); });
+    tabsEl.appendChild(b);
+  });
+
+  const rows = (lists[wlState.active] && lists[wlState.active].rows) || [];
+  bodyEl.textContent = '';
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const td = (cls, text) => { const c = el('td', cls, text); tr.appendChild(c); return c; };
+    td('wl-sym', r.sym);
+    td('wl-name', r.name || '—');
+    /* Last + which session it came from */
+    const lastCell = td('', wlPx(r.last));
+    lastCell.dataset.sort = String(r.last == null ? -Infinity : r.last);
+    /* CLOSE means "this session has ended", not "this is an index" (Codex
+       review, PR #188): during regular hours ^VIX carries a live, moving price,
+       and stamping that CLOSE would misstate an intraday quote as a settled
+       one. Indices have no extended session, so once the bell rings their value
+       genuinely is the close — that is the only time the marker is true. */
+    if (r.index) { if (!marketSessionOpen()) lastCell.appendChild(el('span', 'wl-mark', 'CLOSE')); }
+    else if (r.ext) lastCell.appendChild(el('span', 'wl-mark', 'EXT'));
+    const pctCell = td(r.pct == null ? '' : (r.pct >= 0 ? 'up' : 'down'), r.pct == null ? '—' : fmtPct(r.pct));
+    pctCell.dataset.sort = String(r.pct == null ? -Infinity : r.pct);
+    /* formatted cells carry their raw value so the shared sorter compares
+       numbers, not "1.34M" / "—" strings */
+    const bidCell = td('wl-muted', wlPx(r.bid));
+    bidCell.dataset.sort = String(r.bid == null ? -Infinity : r.bid);
+    const askCell = td('wl-muted', wlPx(r.ask));
+    askCell.dataset.sort = String(r.ask == null ? -Infinity : r.ask);
+    const volCell = td('wl-muted', wlVol(r.vol));
+    volCell.dataset.sort = String(r.vol == null ? -Infinity : r.vol);
+    bodyEl.appendChild(tr);
+  }
+  if (emptyEl) emptyEl.hidden = rows.length > 0;
+  const tableEl = document.getElementById('wlTable');
+  if (tableEl) tableEl.hidden = rows.length === 0;
+  /* The headers declare sort types and render with a pointer cursor, so they
+     must actually sort (Codex review, PR #188) — an inert control that looks
+     live is worse than no control. Bound once: makeSortable attaches header
+     listeners, and this function re-runs on every tab switch and poll. */
+  if (tableEl && !tableEl.dataset.sortable) {
+    makeSortable(tableEl);
+    tableEl.dataset.sortable = '1';
+  }
+
+  /* Unknown tickers, named. A pasted broker table split on whitespace can turn
+     "BRK B" into BRK + B — both look like real symbols, so the only honest
+     signal the owner gets is which ones the feed couldn't resolve. */
+  const missEl = document.getElementById('wlMissing');
+  if (missEl) {
+    const miss = (data && data.missing) || [];
+    missEl.textContent = miss.length
+      ? (miss.length === 1 ? 'No quote found for ' : 'No quotes found for ') + miss.join(', ') + ' — check the spelling in Edit.'
+      : '';
+    missEl.hidden = !miss.length;
+  }
+}
+
+/* ── watchlist editor ──────────────────────────────────────────────────────
+   Reads the roster through desk_get_watchlists (PIN-gated, so the editor shows
+   the owner's authoritative lists rather than whatever the quote feed last
+   cached) and writes the COMPLETE desired state back through
+   desk_set_watchlists — one atomic replace-all covering add/remove symbol and
+   create/rename/reorder/delete list.
+
+   Symbols are edited as free text on purpose: the owner's source is a pasted
+   broker table, so any of comma / space / newline has to work. Normalisation
+   happens here for the preview count and again server-side, where the RPC is
+   the real authority on what a ticker may look like. */
+let wlEdit = null;        /* [{title, symbols:[…]}] while the modal is open */
+let wlEditLoaded = false; /* did the authoritative read succeed? gates saving */
+
+/* Split ONLY on the documented delimiters — comma and whitespace — then keep
+   whole tokens that are valid tickers (Codex review, PR #188). Splitting on
+   "any invalid character" instead would shatter `BAD!!SYM` into BAD + SYM, two
+   real-looking symbols that could quietly resolve to unrelated securities.
+   Preserving the token means it simply fails validation and is dropped, which
+   is what the editor's promise actually says happens. */
+const WL_SYM_RE = /^[A-Z0-9.^-]{1,10}$/;
+const wlParseSyms = txt => [...new Set(
+  String(txt || '').toUpperCase().split(/[,\s]+/).filter(t => WL_SYM_RE.test(t))
+)];
+
+function renderWlEditor() {
+  const host = document.getElementById('wlEditLists');
+  if (!host) return;
+  host.textContent = '';
+  wlEdit.forEach((l, i) => {
+    const row = el('div', 'wl-edit-row');
+    const head = el('div', 'wl-edit-head');
+
+    const title = document.createElement('input');
+    title.type = 'text';
+    title.className = 'wl-edit-title';
+    title.value = l.title;
+    title.maxLength = 60;
+    title.setAttribute('aria-label', 'List name');
+    title.addEventListener('input', () => { l.title = title.value; });
+    head.appendChild(title);
+
+    const count = el('span', 'wl-edit-count', l.symbols.length + ' symbols');
+    head.appendChild(count);
+
+    const del = el('button', 'wl-edit-del', 'Delete');
+    del.type = 'button';
+    del.setAttribute('aria-label', 'Delete list ' + l.title);
+    del.addEventListener('click', () => {
+      /* deleting a whole list is the one destructive control here, and the
+         save is a replace-all — confirm rather than let a stray click drop it */
+      if (l.symbols.length && !confirm('Delete the list "' + l.title + '" and its ' + l.symbols.length + ' symbols?')) return;
+      wlEdit.splice(i, 1);
+      renderWlEditor();
+    });
+    head.appendChild(del);
+    row.appendChild(head);
+
+    const ta = document.createElement('textarea');
+    ta.className = 'wl-edit-syms';
+    ta.rows = 4;
+    ta.value = l.symbols.join(', ');
+    ta.setAttribute('aria-label', 'Symbols in ' + l.title);
+    ta.addEventListener('input', () => {
+      l.symbols = wlParseSyms(ta.value);
+      count.textContent = l.symbols.length + ' symbols';
+    });
+    row.appendChild(ta);
+    host.appendChild(row);
+  });
+}
+
+function wlEditErr(msg) {
+  const e = document.getElementById('wlEditErr');
+  if (!e) return;
+  e.textContent = msg || '';
+  e.hidden = !msg;
+}
+
+async function openWlEditor() {
+  const pin = sessionStorage.getItem('desk_pin');
+  if (!pin) return;
+  const back = document.getElementById('wlEditBackdrop');
+  wlEditErr('');
+  /* A FAILED read must never become an editable empty draft (Codex review,
+     PR #188). Save is a replace-all, so if the load failed and the owner then
+     confirmed the empty-state prompt, a recovered connection would delete every
+     real list on the strength of a draft that never reflected them. On failure
+     the editor opens read-only with the reason shown, and Save is disabled. */
+  let loaded = false;
+  try {
+    const out = await deskGetWatchlists(pin);
+    if (out && out.ok) {
+      wlEdit = (out.lists || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+      loaded = true;
+    } else {
+      wlEditErr('Could not load your watchlists — unlock again before editing.');
+      wlEdit = [];
+    }
+  } catch {
+    wlEditErr('Could not reach the desk to load your watchlists.');
+    wlEdit = [];
+  }
+  const saveBtn = document.getElementById('wlSaveBtn');
+  const addBtn = document.getElementById('wlAddListBtn');
+  if (saveBtn) saveBtn.disabled = !loaded;
+  if (addBtn) addBtn.disabled = !loaded;
+  wlEditLoaded = loaded;
+  renderWlEditor();
+  const stamp = document.getElementById('wlEditStamp');
+  if (stamp) stamp.textContent = wlEdit.length + (wlEdit.length === 1 ? ' list' : ' lists');
+  back.hidden = false;
+  const first = back.querySelector('.wl-edit-title');
+  if (first) first.focus();
+}
+
+function closeWlEditor() {
+  const back = document.getElementById('wlEditBackdrop');
+  if (back) back.hidden = true;
+  wlEdit = null;
+  const btn = document.getElementById('wlEditBtn');
+  if (btn) btn.focus();
+}
+
+async function saveWlEditor() {
+  const pin = sessionStorage.getItem('desk_pin');
+  /* wlEditLoaded gates this too, not just the button's disabled attribute —
+     a replace-all built from a draft that never loaded would delete real lists */
+  if (!pin || !wlEdit || !wlEditLoaded) return;
+  const lists = wlEdit
+    .map(l => ({ title: String(l.title || '').trim(), symbols: l.symbols }))
+    .filter(l => l.title);
+  /* An empty submission wipes every list. That is a legitimate thing to want,
+     but never something to do by accident on a replace-all. */
+  if (!lists.length && !confirm('Save with no lists at all? This removes every watchlist.')) return;
+  const btn = document.getElementById('wlSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  wlEditErr('');
+  try {
+    const out = await deskSetWatchlists(pin, lists);
+    if (!out || !out.ok) { wlEditErr('The desk rejected the save — check your PIN and try again.'); return; }
+    closeWlEditor();
+    /* force past the feed's cache so the panel shows the roster just saved */
+    await loadWatchlist(true);
+  } catch {
+    wlEditErr('Could not reach the desk to save.');
+  } finally {
+    if (btn) { btn.disabled = !wlEditLoaded; btn.textContent = 'Save & exit'; }
+  }
+}
+
+function wireWatchlistEditor() {
+  const btn = document.getElementById('wlEditBtn');
+  if (btn) btn.addEventListener('click', openWlEditor);
+  const close = document.getElementById('wlEditCloseBtn');
+  if (close) close.addEventListener('click', closeWlEditor);
+  const back = document.getElementById('wlEditBackdrop');
+  if (back) back.addEventListener('click', e => { if (e.target === back) closeWlEditor(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && back && !back.hidden) closeWlEditor();
+  });
+  const add = document.getElementById('wlAddListBtn');
+  if (add) add.addEventListener('click', () => {
+    if (!wlEdit) return;
+    wlEdit.push({ title: 'New list', symbols: [] });
+    renderWlEditor();
+    const rows = document.querySelectorAll('#wlEditLists .wl-edit-title');
+    const last = rows[rows.length - 1];
+    if (last) { last.focus(); last.select(); }
+  });
+  const save = document.getElementById('wlSaveBtn');
+  if (save) save.addEventListener('click', saveWlEditor);
+}
+
 function renderNews(news, lamp) {
   const list = document.getElementById('newsList');
   while (list.firstChild) list.removeChild(list.firstChild);
@@ -770,6 +1057,10 @@ function renderLockedPanels() {
       DESK.authed = true;
       await loadPrivate(input.value);
       renderMasthead();
+      /* the watchlist's ✎ is gated on DESK.authed, and the panel already
+         rendered while locked — re-render so unlocking reveals it without a
+         reload (Codex review, PR #188) */
+      renderWatchlist();
     } else {
       err.textContent = (res && res.error) || 'PIN not recognized — try again.';
       err.hidden = false;
@@ -3153,7 +3444,11 @@ setInterval(retickStamps, STAMP_TICK_MS);
    every server-side cache too — see the desk-* edge functions' `force` param). */
 let feedPollTimer = 0;
 async function feedPollTick(force) {
-  await Promise.all([refreshMarket(force), refreshNews(force), loadHeatmap(force), loadCharts(force)]);
+  /* loadWatchlist belongs here, not just at boot (Codex review, PR #188):
+     without it a page left open never refetches quotes, and the panel's lamp
+     stays LIVE from the first render while the prices behind it go hours
+     stale — the exact lie the lamp exists to prevent. */
+  await Promise.all([refreshMarket(force), refreshNews(force), loadHeatmap(force), loadCharts(force), loadWatchlist(force)]);
   renderMasthead(); /* the masthead lamp tracks the freshest market fetch */
 }
 function scheduleFeedPoll() {
@@ -3344,6 +3639,40 @@ async function loadWidgets() {
   }
 }
 
+/* Watchlists loader. Demo seeds from the committed bootstrap roster (read
+   client-side, same as the widget config); live pulls the batched quote feed.
+   A failure lamps the panel Stale and keeps the last good render — never
+   fabricated rows (live is real-data-or-nothing). */
+async function loadWatchlist(force) {
+  if (DESK.mode === 'demo') {
+    try {
+      const cfg = await fetchPublic('config/watchlists.json');
+      renderWatchlist(buildDemoWatchlist(cfg.lists || []), { cls: 'lamp--demo', text: 'Demo' });
+    } catch {
+      renderWatchlist({ ok: true, lists: [] }, { cls: 'lamp--demo', text: 'Demo' });
+    }
+    return;
+  }
+  if (!DESK_DB.url) return;
+  try {
+    const out = await deskWatchlist(force);
+    if (out && out.ok) {
+      /* Price-bound lamps read EOD + "at close" the moment the regular session
+         ends — correct for every other panel, wrong here: this feed keeps
+         quoting through pre/post, so an EXT price would sit beside an "at
+         close" stamp (Codex review, PR #188). Only relax it when BOTH hold —
+         we're inside the 4am–8pm window AND rows really carry extended prints.
+         Yahoo still returns last night's postMarketPrice at 2am, so the clock
+         alone would lie. */
+      const anyExt = (out.lists || []).some(l => (l.rows || []).some(r => r.ext));
+      const streaming = anyExt && extendedSessionOpen();
+      renderWatchlist(out, liveLampFor(out.generatedAt, out.asOf, !streaming));
+    } else renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+  } catch {
+    renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+  }
+}
+
 async function boot() {
   DESK.mode = resolveMode();
   if (DESK.mode === 'demo') {
@@ -3356,6 +3685,7 @@ async function boot() {
     renderPrivate();
     loadHeatmap();
     loadCharts();
+    loadWatchlist();
     loadWidgets();
     return;
   }
@@ -3371,12 +3701,13 @@ async function boot() {
   renderMasthead();
   loadHeatmap();
   loadCharts();
+  loadWatchlist();
   loadWidgets();
   startFeedPolling();
   const pin = sessionStorage.getItem('desk_pin');
   if (pin) {
     const res = await deskLogin(pin).catch(() => ({ ok: false }));
-    if (res && res.ok) { DESK.authed = true; await loadPrivate(pin); renderMasthead(); return; }
+    if (res && res.ok) { DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return; }
     sessionStorage.removeItem('desk_pin');
   }
   renderLockedPanels();
@@ -3384,5 +3715,6 @@ async function boot() {
 
 wireCharts();
 wireMapFilter();
+wireWatchlistEditor();
 wireSysPromptModal();
 boot();

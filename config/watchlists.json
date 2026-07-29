@@ -1,0 +1,51 @@
+{
+  "_note": "BOOTSTRAP FALLBACK ONLY. The live, owner-editable rosters live in the desk_watchlists table (desk_010) and are edited from the dashboard's Watchlists panel — desk-watchlist reads that table first and only falls back to this file if the read fails. Editing this file does NOT change what the panel shows once the table is populated. Kept so the panel still renders a working roster if the table is unreachable. Symbols use Yahoo form: '^' prefixes an index (^VIX), '.' separates a share class (BRK.B). NEVER derive a list from account holdings — this repo is public.",
+  "lists": [
+    {
+      "title": "ETFs",
+      "symbols": [
+        "^VIX",
+        "UUP",
+        "TLT",
+        "SPY",
+        "SPYD",
+        "SPYG",
+        "DDM",
+        "DIA",
+        "QQQ",
+        "IWM",
+        "EEM",
+        "FXI",
+        "BRK.B",
+        "INDA",
+        "JPXN",
+        "FLCH",
+        "GLD",
+        "SPYV",
+        "SOXL",
+        "BX",
+        "IEF",
+        "BN",
+        "VIG",
+        "AGG",
+        "SHY",
+        "VTI",
+        "BLK",
+        "ARKQ",
+        "TLH",
+        "CMF",
+        "JOET",
+        "ARKK",
+        "IGV",
+        "BUG",
+        "XLK",
+        "XLV",
+        "XLB",
+        "XLE",
+        "XLI",
+        "XLF",
+        "SMH"
+      ]
+    }
+  ]
+}
