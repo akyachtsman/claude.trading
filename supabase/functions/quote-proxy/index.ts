@@ -42,9 +42,10 @@ const CACHE_TTL_MS = { daily: 300_000, intraday: 60_000, info: 900_000 }; // 5 m
 type Cached = { at: number; status: number; body: unknown };
 const CACHE = new Map<string, Cached>();
 
-// `x` marks each bar's session: 0 = regular, 1 = extended (pre/post). It is
-// always emitted — classification is free (Yahoo hands us the per-day session
-// bounds) and it lets callers split the two without re-deriving ET/DST rules.
+// `x` marks each bar's session: 0 = regular, 1 = extended (pre/post). Always
+// present, so callers can split the two without re-deriving ET/DST rules — but
+// only ever 1 on a prepost:true intraday fetch, since that is the only response
+// that contains extended bars at all. On every other response it is all zeros.
 type Series = { t: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[]; x: number[] };
 const emptySeries = (): Series => ({ t: [], o: [], h: [], l: [], c: [], v: [], x: [] });
 
@@ -121,8 +122,14 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
   const r = json?.chart?.result?.[0];
   const q = r?.indicators?.quote?.[0];
   if (!r?.timestamp || !q) return null;
-  // Daily bars are whole sessions — classification only means anything intraday.
-  const regs = intraday ? regularRanges(r.meta) : [];
+  // Classify ONLY when extended hours were actually requested. Two reasons:
+  // daily bars are whole sessions, and with includePrePost=false Yahoo returns
+  // regular bars exclusively — so every bar is regular by construction, and
+  // consulting `tradingPeriods` there is not just redundant but WRONG: that
+  // table comes back in a narrower shape on a regular-only response, matching
+  // just one day of a 5-day window, which flagged 313 of 391 genuinely regular
+  // QQQ bars as extended. Caught live before any caller depended on it.
+  const regs = intraday && prepost ? regularRanges(r.meta) : [];
   const isRegular = (ts: number) => !regs.length || regs.some(([a, b]) => ts >= a && ts < b);
   const rows = [];
   for (let i = 0; i < r.timestamp.length; i++) {
@@ -133,7 +140,7 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
     const t = intraday
       ? d.toISOString().slice(0, 16).replace('T', ' ') // YYYY-MM-DD HH:mm (UTC)
       : d.toISOString().slice(0, 10);
-    const x = intraday && !isRegular(ts) ? 1 : 0;
+    const x = intraday && prepost && !isRegular(ts) ? 1 : 0;
     // De-spike the extended session (see EXT_WICK_TOL). The body always wins:
     // the clamp can only pull a wick in, never inside open/close.
     const body = [Math.min(o, c), Math.max(o, c)];
