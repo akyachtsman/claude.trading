@@ -268,6 +268,14 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   .wl-strip .mkt-group-tiles { flex: 0 0 auto; }
 }
 
+/* sort control — the shared .seg chrome, shrunk to sit inside a panel header */
+.wl-sort { flex: 0 0 auto; }
+.wl-sort button {
+  min-width: 0; min-height: 28px; padding: 4px 9px;
+  font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
+}
+.wl-sort .wl-dir { margin-left: 3px; font-size: 10px; }
+
 /* Tile with today's shape (owner request 2026-07-29): the % pill moved beneath
    the price and a sparkline took its slot. A third text row cannot fit the
    owner's +10% budget on a 120×48 tile, so padding and the pill tighten to land
