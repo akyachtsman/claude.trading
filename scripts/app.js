@@ -446,7 +446,11 @@ function renderAccounts(accounts, lamp) {
    always measured from the prior close, so it keeps one meaning all day. */
 /* no `active` index any more — every list renders as its own band, so there is
    no selected tab to track */
-let wlState = { payload: null, lamp: null };
+/* `range` records which timeframe the RENDERED payload actually covers. It is
+   not the same thing as wlTf, which is what the owner has selected: between a
+   click and its reply those two disagree, and drawing the old series under the
+   new label is precisely the mislabelling to avoid (Codex review, PR #195). */
+let wlState = { payload: null, lamp: null, range: null };
 
 /* wl-prefixed: the desk already has a fmtVol for the strip tiles, which assumes
    a positive number and never renders an em dash. A watchlist cell must cope
@@ -612,7 +616,11 @@ function renderWlSort() {
   }
 }
 
-function wlTile(r) {
+/* `pending` = the payload in hand covers a DIFFERENT window than the one now
+   selected (a switch is in flight, or the backend refused the range). Only the
+   sparkline is timeframe-specific — the price and Change % are true at any
+   span — so the line alone is withheld rather than blanking the whole panel. */
+function wlTile(r, pending) {
   const tile = el('div', 'mkt-tile wl-tile');
   const name = el('span', 'mkt-name', r.sym);
   /* CLOSE means "this session has ended", not "this is an index": during
@@ -628,7 +636,7 @@ function wlTile(r) {
   /* The line is coloured by the DAY's direction so it agrees with the pill
      below it; a green line over a red pill would be two answers to one
      question. Gain/loss colour on a price path is P&L, not decoration. */
-  if (Array.isArray(r.spark) && r.spark.length >= 2) {
+  if (!pending && Array.isArray(r.spark) && r.spark.length >= 2) {
     const wrap = el('span', 'wl-spark');
     wrap.appendChild(sparkline(r.spark, WL_SPARK_W, WL_SPARK_H,
       (r.pct ?? 0) >= 0 ? 'var(--color-gain)' : 'var(--color-loss)'));
@@ -669,7 +677,11 @@ function renderWatchlist(payload, lamp) {
   const editBtn = document.getElementById('wlEditBtn');
   if (!lampEl || !stripEl) return;
 
-  if (payload) wlState.payload = payload;
+  if (payload) {
+    wlState.payload = payload;
+    /* Demo builds for whatever is selected; live echoes what it drew. */
+    wlState.range = payload.range || (DESK.mode === 'demo' ? wlTf : null);
+  }
   if (lamp) wlState.lamp = lamp;
   const data = wlState.payload;
   const lp = wlState.lamp || { cls: 'lamp--stale', text: 'Stale' };
@@ -686,6 +698,8 @@ function renderWatchlist(payload, lamp) {
   renderWlTf();     /* and the active chart timeframe */
 
   const lists = (data && data.lists) || [];
+  /* Withhold the lines whenever what we hold isn't the window now selected. */
+  const pending = !!data && wlState.range !== wlTf;
 
   /* One labelled band per list, in the market strip's idiom (owner request
      2026-07-29). Every list is on screen at once — the bands ARE the
@@ -703,7 +717,7 @@ function renderWatchlist(payload, lamp) {
     /* Sorting only changes the DRAW order. `rows` arrives in the saved order,
        so Manual needs no work and switching back to it is just this loop
        without a comparator. */
-    for (const r of wlSortRows(rows)) box.appendChild(wlTile(r));
+    for (const r of wlSortRows(rows)) box.appendChild(wlTile(r, pending));
     group.appendChild(box);
     stripEl.appendChild(group);
   });
@@ -3811,6 +3825,18 @@ async function loadWatchlist(force) {
        drop anything that isn't the range still selected. */
     if (wlTf !== asked) return;
     if (out && out.range && out.range !== asked) return;
+    /* Version skew (Codex review, PR #195). Pages publishes automatically but
+       the edge function is deployed by hand, so between a merge and that deploy
+       the PREVIOUS desk-watchlist is live — and it ignores `range` entirely,
+       answering a 5Y request with a perfectly successful 1D payload that has no
+       `range` field. Rendering that would put today's line under a 5Y label,
+       which is exactly the class of quiet mislabelling this panel keeps getting
+       bitten by. A missing `range` on a non-1D ask means the backend predates
+       the control, so refuse it. */
+    if (out && out.ok && !out.range && asked !== '1d') {
+      renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+      return;
+    }
     if (out && out.ok) {
       /* Price-bound lamps read EOD + "at close" the moment the regular session
          ends — correct for every other panel, wrong here: this feed keeps

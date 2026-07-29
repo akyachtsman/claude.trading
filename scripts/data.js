@@ -494,6 +494,9 @@ function buildDemoWatchlist(lists, tf) {
     ok: true,
     source: 'demo',
     asOf: lastTradingDay(new Date()).toISOString(),
+    /* Mirrors the live payload's echo so the renderer's "is this the window I
+       asked for?" check works identically in demo. */
+    range: tf || '1d',
     missing: [],
     lists: (lists || []).map(l => ({
       title: l.title,

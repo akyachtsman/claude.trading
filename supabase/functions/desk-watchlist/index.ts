@@ -327,8 +327,19 @@ async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config' 
 const cache = new Map<string, { at: number; body: unknown }>();
 const inflight = new Map<string, Promise<unknown>>(); // single-flight, per range
 
-async function refresh(tf: string): Promise<unknown> {
-  const intraday = tf === '1d';
+// The quote roster is IDENTICAL for every timeframe — only the spark series
+// differs — so it is fetched once and shared (Codex review, PR #195). Keying
+// single-flight purely by timeframe meant clicking through all seven buttons on
+// a cold cache started seven complete sweeps, each re-fetching the same quotes:
+// at the 1000-symbol cap that is 20 quote calls per sweep, 140 for the burst,
+// reachable anonymously without `force`. Now a burst costs ONE quote sweep plus
+// one spark sweep per range.
+// deno-lint-ignore no-explicit-any
+type Sweep = { lists: List[]; source: 'table' | 'config'; uniq: string[]; truncated: string[]; byYahoo: Map<string, any>; quoted: number };
+let quoteCache: { at: number; data: Sweep } | null = null;
+let quoteInflight: Promise<Sweep> | null = null;
+
+async function quoteSweep(): Promise<Sweep> {
   const { lists, source } = await loadLists();
   // One fetch per unique symbol no matter how many lists repeat it.
   const all = [...new Set(lists.flatMap((l) => l.symbols))];
@@ -340,21 +351,51 @@ async function refresh(tf: string): Promise<unknown> {
   const truncated = all.slice(MAX_SYMBOLS);
   const chunks: string[][] = [];
   for (let i = 0; i < uniq.length; i += CHUNK) chunks.push(uniq.slice(i, i + CHUNK));
-  const sparkChunks: string[][] = [];
-  for (let i = 0; i < uniq.length; i += SPARK_CHUNK) sparkChunks.push(uniq.slice(i, i + SPARK_CHUNK));
-  // Quotes and sparks fetched together; sparks are best-effort so their failure
-  // never reaches the caller's catch.
-  const [results, sparkMaps] = await Promise.all([
-    Promise.all(chunks.map((c) => quoteChunk(c))),
-    Promise.all(sparkChunks.map((c) => sparkChunk(c, tf).catch(() => new Map<string, number[]>()))),
-  ]);
-  const sparks = new Map<string, number[]>();
-  for (const m of sparkMaps) for (const [k, v] of m) sparks.set(k, v);
-
+  const results = await Promise.all(chunks.map((c) => quoteChunk(c)));
   // Key upstream rows by Yahoo's form so BRK.B → BRK-B still resolves.
   // deno-lint-ignore no-explicit-any
   const byYahoo = new Map<string, any>();
   for (const q of results.flat()) if (q?.symbol) byYahoo.set(String(q.symbol).toUpperCase(), q);
+  return { lists, source, uniq, truncated, byYahoo, quoted: results.flat().length };
+}
+
+function sharedSweep(): Promise<Sweep> {
+  if (quoteCache && Date.now() - quoteCache.at < ttlMs()) return Promise.resolve(quoteCache.data);
+  quoteInflight ??= quoteSweep()
+    .then((s) => { quoteCache = { at: Date.now(), data: s }; return s; })
+    .finally(() => { quoteInflight = null; });
+  return quoteInflight;
+}
+
+// Spark series ARE range-specific, so these stay keyed by timeframe.
+const sparkCache = new Map<string, { at: number; map: Map<string, number[]> }>();
+const sparkInflight = new Map<string, Promise<Map<string, number[]>>>();
+
+function sharedSparks(uniq: string[], tf: string): Promise<Map<string, number[]>> {
+  const hit = sparkCache.get(tf);
+  if (hit && Date.now() - hit.at < ttlMs()) return Promise.resolve(hit.map);
+  let job = sparkInflight.get(tf);
+  if (!job) {
+    const sparkChunks: string[][] = [];
+    for (let i = 0; i < uniq.length; i += SPARK_CHUNK) sparkChunks.push(uniq.slice(i, i + SPARK_CHUNK));
+    // Best-effort: a failed spark chunk costs its tiles their line, never the quote.
+    job = Promise.all(sparkChunks.map((c) => sparkChunk(c, tf).catch(() => new Map<string, number[]>())))
+      .then((maps) => {
+        const out = new Map<string, number[]>();
+        for (const m of maps) for (const [k, v] of m) out.set(k, v);
+        sparkCache.set(tf, { at: Date.now(), map: out });
+        return out;
+      })
+      .finally(() => { sparkInflight.delete(tf); });
+    sparkInflight.set(tf, job);
+  }
+  return job;
+}
+
+async function refresh(tf: string): Promise<unknown> {
+  const intraday = tf === '1d';
+  const { lists, source, uniq, truncated, byYahoo, quoted } = await sharedSweep();
+  const sparks = await sharedSparks(uniq, tf);
 
   const rows = new Map<string, ReturnType<typeof priceRow>>();
   const missing: string[] = [...truncated];
@@ -369,7 +410,7 @@ async function refresh(tf: string): Promise<unknown> {
   // unresolved-ticker warning that explains it, and an edit would appear not to
   // apply. quoteChunk already throws on a genuine upstream failure, which is
   // the only case that should reach the caller's catch.
-  if (uniq.length && !rows.size && !results.flat().length && !byYahoo.size) {
+  if (uniq.length && !rows.size && !quoted && !byYahoo.size) {
     throw new Error('no quotes resolved for any symbol');
   }
 
@@ -417,6 +458,17 @@ Deno.serve(async (req) => {
     // cached client asking for a range this deploy doesn't know should still
     // get a working panel.
     tf = rangeKey(body?.range);
+  }
+
+  // A force is either the manual "Refresh now" or a roster edit that just
+  // saved, and it has to invalidate EVERY timeframe (Codex review, PR #195).
+  // Clearing only the selected one left the others holding the pre-edit roster
+  // for up to the closed-session hour: add a symbol while on 1D, switch back to
+  // 1Y, and the old list reappears as though the save had failed.
+  if (force) {
+    quoteCache = null;
+    sparkCache.clear();
+    cache.clear();
   }
 
   const hit = cache.get(tf);
