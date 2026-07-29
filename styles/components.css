@@ -319,6 +319,53 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip .wl-pct { align-self: flex-start; font-size: 9px; line-height: 1.3; padding: 0 4px; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
+/* ── quick add / hold-to-remove (owner request 2026-07-30) ─────────────────
+   The list name and its + share the band's gutter. The gutter widens from the
+   bare label's 78px to fit the button; the label inside gives up its own
+   flex-basis so a long name still wraps rather than shoving the + out of view.
+   Scoped under .wl-strip because .mkt-group-label lives in index.html's inline
+   <style>, which loads after this sheet and would otherwise win on source
+   order. */
+.wl-strip .wl-band-head { flex: 0 0 96px; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.wl-strip .wl-band-head .mkt-group-label { flex: 1 1 auto; min-width: 0; }
+.wl-add {
+  flex: 0 0 auto; width: 17px; height: 17px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--color-border); border-radius: 50%;
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font: 600 12px/1 var(--font-sans); cursor: pointer;
+}
+.wl-add:hover, .wl-add:focus-visible { color: var(--color-accent-bright); border-color: var(--color-accent-bright); }
+@media (max-width: 640px) {
+  /* the band stacks, so the gutter stops being a fixed column */
+  .wl-strip .wl-band-head { flex-basis: auto; }
+}
+
+/* A three-second wait with no feedback reads as a dead control, so the tile
+   fills as the hold progresses. Deliberately NOT gain/loss red: those colours
+   are P&L-only on this desk, never decorative or semantic elsewhere. */
+.wl-strip .wl-tile { position: relative; }
+.wl-strip .wl-tile.wl-holding {
+  -webkit-touch-callout: none; user-select: none; -webkit-user-select: none;
+}
+.wl-strip .wl-tile.wl-holding::after {
+  content: ''; position: absolute; left: 0; bottom: 0; height: 2px;
+  background: var(--color-accent-bright);
+  animation: wl-hold-fill 3s linear forwards;
+}
+@keyframes wl-hold-fill { from { width: 0; } to { width: 100%; } }
+/* Reduced motion still needs the progress signal — it just shouldn't animate.
+   A static half-width bar says "something is happening" without the sweep. */
+@media (prefers-reduced-motion: reduce) {
+  .wl-strip .wl-tile.wl-holding::after { animation: none; width: 50%; }
+}
+
+.wl-quick-input {
+  width: 100%; margin-bottom: var(--space-3); text-transform: uppercase;
+  resize: vertical; min-height: 62px; font-family: var(--font-mono);
+}
+.wl-quick-panel, .wl-rm-panel { max-width: 420px; }
+
 /* EXT / CLOSE provenance marker — which session the price came from.
    Deliberately not colored: it is a data-provenance note, and gain/loss color
    is reserved for P&L (project standard). */

@@ -833,6 +833,122 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
   await expect(page.locator('#wlTf button', { hasText: '1Y' })).toHaveAttribute('aria-pressed', 'true');
 });
 
+// S21 — Watchlist quick add + hold-to-remove (owner request 2026-07-30).
+//
+// The first half is the security invariant and is pure black box: no write
+// control may exist without auth, because the roster lives behind the PIN RPCs.
+//
+// The second half reaches into DESK to force the authed state. That is
+// deliberate: the controls are auth-gated, so the alternative is NO coverage of
+// a destructive action, and what is being tested is this repo's own render and
+// timing logic rather than the backend. It catches the regressions that matter
+// — a hold shortened to something accidental, a drag that arms a removal, or
+// the keyboard path disappearing.
+test('S21: watchlist write controls are auth-gated and the hold is deliberate', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+
+  // no auth → no way to mutate the roster
+  expect(await page.locator('.wl-add').count(), 'demo must offer no + buttons').toBe(0);
+  await expect(page.locator('#wlEditBtn')).toBeHidden();
+
+  // force the authed state so the write affordances render against demo rows
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = true; renderWatchlist(); });
+  const bands = await page.locator('.wl-strip .mkt-group').count();
+  expect(await page.locator('.wl-add').count(), 'one + per list band').toBe(bands);
+
+  const tile = page.locator('.wl-strip .wl-tile').first();
+  const box = await tile.boundingBox();
+  const mid = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+  // a short press must NOT arm the removal
+  await page.mouse.move(mid.x, mid.y);
+  await page.mouse.down();
+  await page.waitForTimeout(1200);
+  await expect(page.locator('#wlRmBackdrop'), '1.2s is not a hold').toBeHidden();
+  expect(await tile.evaluate(t => t.classList.contains('wl-holding')), 'the fill shows progress').toBe(true);
+  // ...but the full three seconds does
+  await page.waitForTimeout(2200);
+  await expect(page.locator('#wlRmBackdrop')).toBeVisible();
+  await page.mouse.up();
+  await expect(page.locator('#wlRmText')).toContainText(/^Remove .+ from/);
+  // a destructive dialog opens on the safe choice
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('wlRmCancelBtn');
+  await page.locator('#wlRmCancelBtn').click();
+  await expect(page.locator('#wlRmBackdrop')).toBeHidden();
+
+  // dragging (or touch-scrolling) with a finger down must not arm it
+  await page.mouse.move(box.x + 10, box.y + 10);
+  await page.mouse.down();
+  await page.waitForTimeout(400);
+  await page.mouse.move(box.x + 90, box.y + 60);
+  await page.waitForTimeout(2800);
+  await expect(page.locator('#wlRmBackdrop'), 'a drag is not a hold').toBeHidden();
+  await page.mouse.up();
+
+  // keyboard reaches the same dialog — a hold is pointer-only
+  await tile.focus();
+  await page.keyboard.press('Delete');
+  await expect(page.locator('#wlRmBackdrop')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlRmBackdrop')).toBeHidden();
+
+  // quick add targets the band whose + was pressed, and rejects junk
+  await page.locator('.wl-add').first().click();
+  await expect(page.locator('#wlQuickTitle')).toContainText(/Add to/i);
+  await page.locator('#wlQuickInput').fill('!!!');
+  await page.locator('#wlQuickSaveBtn').click();
+  await expect(page.locator('#wlQuickErr')).toBeVisible();
+
+  // A pasted broker column must survive as SEPARATE symbols. A single-line
+  // input silently joined them into one token that passed the ticker grammar
+  // (Codex review, PR #196), so the field has to hold newlines.
+  const field = page.locator('#wlQuickInput');
+  expect(await field.evaluate(e => e.tagName), 'newlines need a textarea').toBe('TEXTAREA');
+  await field.fill('SPY\nQQQ');
+  expect(await field.inputValue(), 'the newline must survive').toBe('SPY\nQQQ');
+  expect(
+    await page.evaluate(() => wlParseSyms(document.getElementById('wlQuickInput').value)),
+    'two lines are two symbols, never one concatenated token',
+  ).toEqual(['SPY', 'QQQ']);
+
+  // closing hands focus back to the + that opened it
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlQuickBackdrop')).toBeHidden();
+  expect(
+    await page.evaluate(() => document.activeElement?.classList.contains('wl-add')),
+    'focus returns to the invoking +',
+  ).toBe(true);
+});
+
+// S22 — Duplicate list titles must not misroute a quick edit (Codex review,
+// PR #196). The editor permits two lists with the same name and hands out
+// "New list" by default, so targeting by title alone could add to the first
+// band while the dialog named the second. Position is the key; the title is
+// checked against it.
+test('S22: quick edits resolve the right band when two lists share a title', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+
+  const picked = await page.evaluate(() => {
+    /* two same-named lists, distinguishable only by position */
+    const lists = [
+      { title: 'Dupe', symbols: ['AAA'], rows: [{ sym: 'AAA', last: 1, pct: 0 }] },
+      { title: 'Dupe', symbols: ['BBB'], rows: [{ sym: 'BBB', last: 2, pct: 0 }] },
+    ];
+    return [0, 1].map(i => {
+      const l = wlPick(lists, i, 'Dupe');
+      return l ? l.symbols[0] : null;
+    });
+  });
+  expect(picked, 'each position must resolve to its own list').toEqual(['AAA', 'BBB']);
+
+  // and if the roster moved under us, refuse rather than mutate the wrong one
+  const stale = await page.evaluate(() =>
+    wlPick([{ title: 'Renamed', symbols: [] }, { title: 'Other', symbols: [] }], 0, 'Dupe'));
+  expect(stale, 'a shifted roster must resolve to nothing').toBe(null);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // S15–S19 — Live desk assistant (memory + research + live data + advice + clear).
 // Each makes a REAL desk-ask Claude tool-loop call (slow, nondeterministic, costs
