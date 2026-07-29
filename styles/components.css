@@ -328,14 +328,20 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    order. */
 .wl-strip .wl-band-head { flex: 0 0 96px; display: flex; align-items: center; gap: 4px; min-width: 0; }
 .wl-strip .wl-band-head .mkt-group-label { flex: 1 1 auto; min-width: 0; }
+/* Sized for DISCOVERABILITY, not daintiness (owner report 2026-07-30: "not
+   seeing the way to add symbols"). The first cut was 17px in the secondary text
+   colour beside a 9px label — present, but easy to miss even when looked for.
+   It now carries the accent colour and a full-strength border at 22px, which is
+   also a more honest touch target on a phone. */
 .wl-add {
-  flex: 0 0 auto; width: 17px; height: 17px; padding: 0;
+  flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--color-border); border-radius: 50%;
-  background: var(--color-surface); color: var(--color-text-secondary);
-  font: 600 12px/1 var(--font-sans); cursor: pointer;
+  border: 1px solid var(--color-accent-bright); border-radius: 50%;
+  background: var(--color-surface); color: var(--color-accent-bright);
+  font: 600 15px/1 var(--font-sans); cursor: pointer;
 }
-.wl-add:hover, .wl-add:focus-visible { color: var(--color-accent-bright); border-color: var(--color-accent-bright); }
+.wl-add:hover, .wl-add:focus-visible { background: var(--color-accent-bright); color: var(--color-surface); }
+.wl-add:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
 @media (max-width: 640px) {
   /* the band stacks, so the gutter stops being a fixed column */
   .wl-strip .wl-band-head { flex-basis: auto; }
