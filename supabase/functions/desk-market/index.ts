@@ -248,7 +248,14 @@ export function tenYearTile(rows: { date: string; value: number }[]) {
 }
 
 // ── handler ──────────────────────────────────────────────────────────────────
-let cache: { at: number; body: unknown } | null = null;
+// `duringSession` records whether the body was captured while the market was
+// OPEN, so it can be dropped the moment the market shuts. Without it a body
+// cached at 15:59 stays servable for the rest of the closed TTL, and the client
+// renders mid-session prices under an "at close" stamp — EOD is a claim that
+// the number IS the closing print (Codex review, PR #193). The settle grace
+// usually replaces such a body within a minute of the bell, but only if a
+// request happens to arrive in that window; this makes it unconditional.
+let cache: { at: number; body: unknown; duringSession: boolean } | null = null;
 let inflight: Promise<unknown> | null = null; // single-flight: a concurrent burst shares one sweep
 
 async function refresh(): Promise<unknown> {
@@ -276,7 +283,7 @@ async function refresh(): Promise<unknown> {
     if (rows && rows.length >= 2) tiles.push(tileFrom(m.name, rows));
   });
   const body = { ok: true, asOf, generatedAt: new Date().toISOString(), tiles };
-  cache = { at: Date.now(), body };
+  cache = { at: Date.now(), body, duringSession: marketSessionOpen() };
   return body;
 }
 
@@ -292,7 +299,11 @@ Deno.serve(async (req) => {
     force = body?.force === true;
   }
 
-  if (!force && cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
+  // A body captured during the open session is discarded once the session is
+  // shut, however much of its TTL is left: it is mid-session data, and after
+  // the bell the client would label it as the close.
+  const crossedClose = !!cache && cache.duringSession && !marketSessionOpen();
+  if (!force && cache && !crossedClose && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
 
   try {
     inflight ??= refresh().finally(() => { inflight = null; });
