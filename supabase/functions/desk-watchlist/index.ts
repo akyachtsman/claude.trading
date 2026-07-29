@@ -39,6 +39,30 @@ const SPARK_CHUNK = 20;
 const SPARK_POINTS = 24;   // downsampled from Yahoo's 78 five-minute closes
 const MAX_SYMBOLS = 1000;  // runaway guard on a hand-edited config, not a product cap
 
+// Chart timeframe (owner request 2026-07-30). The caller sends a TOKEN, which
+// is looked up here; the range/interval strings that reach Yahoo come from this
+// table and are never built from caller input. That is what keeps the header
+// comment's "no caller input reaches the upstream URL" true now that the panel
+// has a control — an anon-callable function must not let a query param through
+// to a third party.
+//
+// Interval is paired to range so the point count stays in the same band before
+// downsampling (Yahoo caps intraday history, and a 5y daily series would be
+// ~1250 points to throw away): minutes for a day, days out to a year, weeks
+// beyond that.
+const WL_RANGES: Record<string, { range: string; interval: string }> = {
+  '1d': { range: '1d', interval: '5m' },
+  '1mo': { range: '1mo', interval: '1d' },
+  '3mo': { range: '3mo', interval: '1d' },
+  '6mo': { range: '6mo', interval: '1d' },
+  '1y': { range: '1y', interval: '1d' },
+  '2y': { range: '2y', interval: '1wk' },
+  '5y': { range: '5y', interval: '1wk' },
+};
+const DEFAULT_RANGE = '1d';
+const rangeKey = (raw: unknown): string =>
+  typeof raw === 'string' && Object.hasOwn(WL_RANGES, raw) ? raw : DEFAULT_RANGE;
+
 // ── session-aware TTL (mirrors desk-market) ─────────────────────────────────
 function sessionOpen(now = new Date()): boolean {
   // US equities regular session in ET, weekdays. Holidays are not modelled —
@@ -103,11 +127,13 @@ async function quoteChunk(symbols: string[]): Promise<any[]> {
 // request 2026-07-29: a tile shows the whole day's movement, not just a number).
 // Best-effort by design — a failed spark chunk costs its tiles their sparkline,
 // never the quote itself, so the panel degrades to what it showed before.
-async function sparkChunk(symbols: string[]): Promise<Map<string, number[]>> {
+async function sparkChunk(symbols: string[], tf: string): Promise<Map<string, number[]>> {
   const out = new Map<string, number[]>();
   const q = symbols.map(toYahoo).map(encodeURIComponent).join(',');
+  // Both come from WL_RANGES (see rangeKey) — never from the request body.
+  const { range, interval } = WL_RANGES[tf] ?? WL_RANGES[DEFAULT_RANGE];
   const res = await fetch(
-    `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${q}&range=1d&interval=5m`,
+    `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${q}&range=${range}&interval=${interval}`,
     { headers: UA },
   ).catch(() => null);
   if (!res || !res.ok) return out;
@@ -143,7 +169,7 @@ async function sparkChunk(symbols: string[]): Promise<Map<string, number[]>> {
 //   data: SOXL reg −14.522%, post +1.8486% → −12.94%.
 // Pre-market has no regular session yet, so pre% IS already the prior-close move.
 // deno-lint-ignore no-explicit-any
-function priceRow(sym: string, q: any, spark?: number[]) {
+function priceRow(sym: string, q: any, spark: number[] | undefined, intraday: boolean) {
   const reg = num(q.regularMarketPrice);
   const regPct = num(q.regularMarketChangePercent);
   const post = num(q.postMarketPrice), postPct = num(q.postMarketChangePercent);
@@ -181,8 +207,9 @@ function priceRow(sym: string, q: any, spark?: number[]) {
     // it lets the panel say "at close" rather than imply a stalled quote.
     index: sym.startsWith('^') || q.quoteType === 'INDEX',
     at,
-    // Today's shape — see buildSpark for why pre and post are handled apart.
-    spark: buildSpark(spark, last, reg, extKind),
+    // The selected window's shape — see buildSpark for why pre and post are
+    // handled apart, and why that only applies intraday.
+    spark: buildSpark(spark, last, reg, extKind, intraday),
   };
 }
 
@@ -202,19 +229,29 @@ function priceRow(sym: string, q: any, spark?: number[]) {
 //   (Codex review, PR #190). Instead the line becomes the only true statement
 //   available: prior close → current pre-market price, which is exactly what
 //   the pre-market Change % measures.
+//
+// Both of those are properties of a ONE-DAY window, so they apply only when the
+// selected timeframe is intraday (owner request 2026-07-30 added 1M…5Y). On a
+// multi-day range the series is a run of daily/weekly closes and neither
+// special case holds: the pre-market rewrite would throw away a year of history
+// to draw a two-point line, and there is no "yesterday's path mislabelled as
+// today" hazard because the series legitimately spans many days. What stays
+// true at every timeframe is that the line should END where the displayed price
+// is, so an extended print is appended in both modes.
 function buildSpark(
   series: number[] | undefined,
   last: number | null,
   regClose: number | null,
   extKind: 'pre' | 'post' | null,
+  intraday: boolean,
 ): number[] | null {
   if (last == null) return series && series.length >= 2 ? series : null;
-  if (extKind === 'pre') {
+  if (intraday && extKind === 'pre') {
     // During pre-market Yahoo's regularMarketPrice is still the prior close.
     return regClose != null && regClose !== last ? [regClose, Number(last.toFixed(4))] : null;
   }
   if (!series || series.length < 2) return null;
-  if (extKind !== 'post' || series[series.length - 1] === last) return series;
+  if (!extKind || series[series.length - 1] === last) return series;
   return [...series, Number(last.toFixed(4))];
 }
 
@@ -281,10 +318,17 @@ async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config' 
 }
 
 // ── handler ─────────────────────────────────────────────────────────────────
-let cache: { at: number; body: unknown } | null = null;
-let inflight: Promise<unknown> | null = null; // single-flight: a burst shares one sweep
+// Keyed BY TIMEFRAME (owner request 2026-07-30). Two ranges are two different
+// bodies — a 1D sweep and a 5Y sweep share their quotes but never their spark
+// series — so one shared slot would serve whichever range asked last to
+// whoever asked next, and flipping the control would appear to do nothing (or
+// worse, redraw the wrong window under the right label). Same reasoning as
+// quote-proxy's prepost cache key.
+const cache = new Map<string, { at: number; body: unknown }>();
+const inflight = new Map<string, Promise<unknown>>(); // single-flight, per range
 
-async function refresh(): Promise<unknown> {
+async function refresh(tf: string): Promise<unknown> {
+  const intraday = tf === '1d';
   const { lists, source } = await loadLists();
   // One fetch per unique symbol no matter how many lists repeat it.
   const all = [...new Set(lists.flatMap((l) => l.symbols))];
@@ -302,7 +346,7 @@ async function refresh(): Promise<unknown> {
   // never reaches the caller's catch.
   const [results, sparkMaps] = await Promise.all([
     Promise.all(chunks.map((c) => quoteChunk(c))),
-    Promise.all(sparkChunks.map((c) => sparkChunk(c).catch(() => new Map<string, number[]>()))),
+    Promise.all(sparkChunks.map((c) => sparkChunk(c, tf).catch(() => new Map<string, number[]>()))),
   ]);
   const sparks = new Map<string, number[]>();
   for (const m of sparkMaps) for (const [k, v] of m) sparks.set(k, v);
@@ -316,7 +360,7 @@ async function refresh(): Promise<unknown> {
   const missing: string[] = [...truncated];
   for (const sym of uniq) {
     const q = byYahoo.get(toYahoo(sym));
-    if (q) rows.set(sym, priceRow(sym, q, sparks.get(toYahoo(sym))));
+    if (q) rows.set(sym, priceRow(sym, q, sparks.get(toYahoo(sym)), intraday));
     else missing.push(sym);
   }
   // NOT an error when the upstream calls succeeded and simply knew none of the
@@ -341,6 +385,10 @@ async function refresh(): Promise<unknown> {
     // A symbol upstream doesn't know (a typo the owner just saved) is reported,
     // not silently dropped — otherwise a fat-fingered ticker just vanishes.
     missing,
+    // Echoed so the client can tell WHICH window it is drawing. A late reply
+    // for the range the owner just switched away from would otherwise repaint
+    // the tiles with the wrong series under the newly-selected label.
+    range: tf,
     lists: lists.map((l) => ({
       title: l.title,
       // The COMPLETE saved order, including symbols that resolved to nothing.
@@ -351,7 +399,7 @@ async function refresh(): Promise<unknown> {
       rows: l.symbols.map((s) => rows.get(s)).filter(Boolean),
     })),
   };
-  cache = { at: Date.now(), body };
+  cache.set(tf, { at: Date.now(), body });
   return body;
 }
 
@@ -361,18 +409,32 @@ Deno.serve(async (req) => {
 
   // force: the dashboard's "Refresh now" button bypasses the cache.
   let force = false;
+  let tf = DEFAULT_RANGE;
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
     force = body?.force === true;
+    // Anything unrecognised falls back to 1d rather than erroring: an older
+    // cached client asking for a range this deploy doesn't know should still
+    // get a working panel.
+    tf = rangeKey(body?.range);
   }
 
-  if (!force && cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
+  const hit = cache.get(tf);
+  if (!force && hit && Date.now() - hit.at < ttlMs()) return reply(200, hit.body);
 
   try {
-    inflight ??= refresh().finally(() => { inflight = null; });
-    return reply(200, await inflight);
+    let job = inflight.get(tf);
+    if (!job) {
+      job = refresh(tf).finally(() => { inflight.delete(tf); });
+      inflight.set(tf, job);
+    }
+    return reply(200, await job);
   } catch (e) {
-    if (cache) return reply(200, cache.body); // stale-but-honest beats a dead panel
+    // Stale-but-honest beats a dead panel — but only from THIS range's slot.
+    // Serving another timeframe's body here would draw the wrong window under
+    // the label the owner selected.
+    const stale = cache.get(tf);
+    if (stale) return reply(200, stale.body);
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });
   }
 });

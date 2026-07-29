@@ -447,7 +447,7 @@ function regularOnly(s) {
    rosters. The roster itself lives in desk_watchlists and is edited through
    the PIN RPCs; this feed resolves it server-side and returns rows already
    grouped by list, so the panel never fans out per symbol. */
-async function deskWatchlist(force) {
+async function deskWatchlist(force, range) {
   const res = await fetch(DESK_DB.url + '/functions/v1/desk-watchlist', {
     method: 'POST',
     headers: {
@@ -455,7 +455,10 @@ async function deskWatchlist(force) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ force: force === true }),
+    /* `range` picks the tile sparkline's window (owner request 2026-07-30).
+       The function validates it against its own allowlist, so an unknown token
+       degrades to 1d rather than failing the panel. */
+    body: JSON.stringify({ force: force === true, range: range || '1d' }),
   });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-watchlist → HTTP ' + res.status);
@@ -476,7 +479,17 @@ function symSeed(s) {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
   return h;
 }
-function buildDemoWatchlist(lists) {
+/* Approximate trading days behind each timeframe token. Used only to shape the
+   demo walk — the live feed gets a genuinely longer series from Yahoo, and the
+   demo has to move like it or the new control reads as broken under ?demo=1. */
+const DEMO_WL_SPAN = { '1d': 1, '1mo': 21, '3mo': 63, '6mo': 126, '1y': 252, '2y': 504, '5y': 1260 };
+
+function buildDemoWatchlist(lists, tf) {
+  /* A random walk's spread grows with √t, so a 1Y line should wander ~16× a
+     single day's range — not 252×. Scaling the per-step volatility by √days
+     keeps a 5Y demo tile dramatic without going to noise. */
+  const span = DEMO_WL_SPAN[tf] || 1;
+  const scale = Math.sqrt(span);
   return {
     ok: true,
     source: 'demo',
@@ -507,11 +520,17 @@ function buildDemoWatchlist(lists) {
           ask: index ? null : Number((last + spread).toFixed(2)),
           vol: index ? Math.round(r() * 5_000) : Math.round(r() * 4_000_000),
           at: null,
-          /* today's shape — a seeded walk that opens at the implied prior close
-             and lands exactly on `last`, so the demo line agrees with the demo
-             pill's direction the same way the live one does */
-          spark: walk(symSeed(sym) ^ 0x5f5f, last / (1 + pct / 100), 0, 0.006, 24, last)
-            .map(v => Number(v.toFixed(4))),
+          /* The window's shape — a seeded walk landing exactly on `last`.
+             At 1D it opens at the implied prior close so the line agrees with
+             the pill's direction, exactly as the live one does. Over a longer
+             window that anchor is meaningless (the pill still measures ONE
+             day), so the line opens at a seeded distance instead — far enough
+             back to look like a year, still ending where the price is. */
+          spark: walk(
+            symSeed(sym) ^ 0x5f5f,
+            span === 1 ? last / (1 + pct / 100) : last / (1 + (r() - 0.42) * 0.05 * scale),
+            0, 0.006 * scale, 24, last,
+          ).map(v => Number(v.toFixed(4))),
         };
       }),
     })),
