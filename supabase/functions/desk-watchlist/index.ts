@@ -72,8 +72,12 @@ async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string
   return yauth;
 }
 
-// Yahoo hyphenates share-class dots (BRK.B → BRK-B); '^' index prefixes pass through.
-const toYahoo = (s: string) => s.replace(/\./g, '-');
+// Yahoo hyphenates a SHARE-CLASS dot (BRK.B → BRK-B) but keeps an EXCHANGE
+// suffix intact (DX-Y.NYB, the dollar index, stays as it is). Replacing every
+// dot mangled the second kind into DX-Y-NYB, which resolves to nothing — so the
+// rule is narrowed to a dot followed by a single trailing letter, which is what
+// a share class looks like and an exchange code never is.
+const toYahoo = (s: string) => s.replace(/\.([A-Z])$/, '-$1');
 const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
 // deno-lint-ignore no-explicit-any
@@ -223,7 +227,7 @@ function normalizeLists(raw: any[]): List[] {
     const title = typeof l?.title === 'string' ? l.title.trim() : '';
     const symbols = (Array.isArray(l?.symbols) ? l.symbols : [])
       .map((s: unknown) => String(s ?? '').trim().toUpperCase())
-      .filter((s: string) => /^[A-Z0-9.^-]{1,10}$/.test(s));
+      .filter((s: string) => /^[A-Z0-9.^=-]{1,10}$/.test(s));
     // A list with no symbols is kept: the panel should show the owner's empty
     // list as an empty tab, not silently lose it.
     if (title) out.push({ title, symbols });

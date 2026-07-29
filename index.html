@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260730g">
-<link rel="stylesheet" href="styles/components.css?v=20260730g">
+<link rel="stylesheet" href="styles/tokens.css?v=20260730h">
+<link rel="stylesheet" href="styles/components.css?v=20260730h">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -50,6 +50,10 @@
      square corners so the stack reads as one continuous strip. */
   /* Top band (owner request 2026-07-18): strip on the LEFT (its tile rows capped
      at 4), the accounts / news boxes side by side on the RIGHT. */
+  /* Watchlists lead the page (owner request 2026-07-29) — the panel sits
+     between the masthead and the top band, OUTSIDE .layout, so it carries its
+     own bottom margin instead of inheriting that grid's gap. */
+  .area-watchlist { margin-bottom: var(--space-4); }
   .top-band { display: flex; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-4); }
   /* new top row (owner request 2026-07-21): market strip | Markets | Ask-the-desk.
      Strip + Markets render at 90% — a genuine 10% shrink via `zoom`, which
@@ -458,6 +462,40 @@
        headline-indices band was dropped 2026-07-22 (it duplicated the Markets
        panel's index tiles); the strip now leads with Global & income. -->
   <!-- (strip #marketStrip: asset-class bands, ≤4 tiles/row) -->
+  <!-- Watchlists (owner request 2026-07-29): multiple named lists, unbounded
+       symbols each. Rosters live in desk_watchlists (desk_010) and are edited
+       in place from here via the PIN RPCs — the ✎ trigger flips the panel into
+       edit mode. Quotes arrive batched from desk-watchlist (one upstream call
+       per 50 symbols). Tabs are built by renderWatchlist(). -->
+  <section class="panel area-watchlist" aria-labelledby="wlTitle">
+    <div class="panel-header">
+      <h2 class="panel-title" id="wlTitle">Watchlists</h2>
+      <span class="lamp lamp--demo" id="wlLamp">Demo</span>
+      <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
+      <!-- Sort is a VIEW, not an edit (owner request 2026-07-29): it reorders
+           what is drawn and never touches the saved order, so switching back to
+           Manual restores the arrangement dragged earlier. Built by
+           renderWlSort(); drag-to-reorder is only offered in Manual, where a
+           drag isn't fighting a sort key. -->
+      <div class="seg wl-sort" id="wlSort" role="group" aria-label="Sort watchlist symbols"></div>
+      <span class="stamp ml-auto" id="wlStamp">—</span>
+    </div>
+    <div class="panel-body">
+      <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
+           labelled band in the market strip's own idiom — list name on the
+           left, its symbols as tiles packed left-to-right across the full
+           panel width. Built by renderWatchlist(); every band and tile reuses
+           .mkt-group / .mkt-tile so the two surfaces stay one visual system. -->
+      <div class="wl-strip" id="wlStrip"></div>
+      <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
+      <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
+           splitting a pasted broker table on whitespace can turn "BRK B" into
+           BRK + B, and both look like valid tickers, so the only honest signal
+           is which ones came back unknown. -->
+      <p class="wl-missing" id="wlMissing" hidden></p>
+    </div>
+  </section>
+
   <div class="top-band">
     <section class="market-strip" id="marketStrip" aria-label="Market summary"></section>
 
@@ -578,40 +616,6 @@
 
   </div>
 
-  <!-- Watchlists (owner request 2026-07-29): multiple named lists, unbounded
-       symbols each. Rosters live in desk_watchlists (desk_010) and are edited
-       in place from here via the PIN RPCs — the ✎ trigger flips the panel into
-       edit mode. Quotes arrive batched from desk-watchlist (one upstream call
-       per 50 symbols). Tabs are built by renderWatchlist(). -->
-  <section class="panel area-watchlist" aria-labelledby="wlTitle">
-    <div class="panel-header">
-      <h2 class="panel-title" id="wlTitle">Watchlists</h2>
-      <span class="lamp lamp--demo" id="wlLamp">Demo</span>
-      <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
-      <!-- Sort is a VIEW, not an edit (owner request 2026-07-29): it reorders
-           what is drawn and never touches the saved order, so switching back to
-           Manual restores the arrangement dragged earlier. Built by
-           renderWlSort(); drag-to-reorder is only offered in Manual, where a
-           drag isn't fighting a sort key. -->
-      <div class="seg wl-sort" id="wlSort" role="group" aria-label="Sort watchlist symbols"></div>
-      <span class="stamp ml-auto" id="wlStamp">—</span>
-    </div>
-    <div class="panel-body">
-      <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
-           labelled band in the market strip's own idiom — list name on the
-           left, its symbols as tiles packed left-to-right across the full
-           panel width. Built by renderWatchlist(); every band and tile reuses
-           .mkt-group / .mkt-tile so the two surfaces stay one visual system. -->
-      <div class="wl-strip" id="wlStrip"></div>
-      <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
-      <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
-           splitting a pasted broker table on whitespace can turn "BRK B" into
-           BRK + B, and both look like valid tickers, so the only honest signal
-           is which ones came back unknown. -->
-      <p class="wl-missing" id="wlMissing" hidden></p>
-    </div>
-  </section>
-
   <section class="panel area-charts" aria-labelledby="chartsTitle">
     <div class="panel-header wb-panel-header">
       <h2 class="panel-title" id="chartsTitle">Stochastic charts</h2>
@@ -707,8 +711,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260730g"></script>
-<script src="scripts/data.js?v=20260730g"></script>
-<script src="scripts/app.js?v=20260730g"></script>
+<script src="scripts/config.js?v=20260730h"></script>
+<script src="scripts/data.js?v=20260730h"></script>
+<script src="scripts/app.js?v=20260730h"></script>
 </body>
 </html>

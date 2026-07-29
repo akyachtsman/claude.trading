@@ -119,6 +119,14 @@ function regularRanges(meta: any): [number, number][] {
 // they are clean (0 of 780 sampled bars exceeded this bound).
 const EXT_WICK_TOL = 0.01;
 
+// Yahoo hyphenates a SHARE-CLASS dot (BRK.B → BRK-B) but keeps an EXCHANGE
+// suffix intact (DX-Y.NYB, the dollar index). Measured against v8/chart:
+// BRK.B 404s, BRK-B 200s, DX-Y.NYB 200s as it stands — so the rule is a dot
+// followed by a single trailing letter, which is what a share class looks like
+// and an exchange code never is. Shared by both upstream call sites; the same
+// helper (and the same reasoning) lives in desk-watchlist.
+const toYahoo = (s: string) => s.replace(/\.([A-Z])$/, '-$1');
+
 // Yahoo v8 chart: primary daily source and the only intraday source.
 // `prepost` widens an intraday fetch to the 4:00am–8:00pm ET extended session
 // (owner request 2026-07-29). Indices carry `hasPrePostMarketData:false` — an
@@ -126,7 +134,7 @@ const EXT_WICK_TOL = 0.01;
 // value simply repeats its close; those flat trailing bars still classify as
 // extended via `x`, so callers can drop them rather than draw a dead flat tail.
 async function yahooChart(symbol: string, range: string, interval: string, intraday: boolean, prepost = false): Promise<Series | null> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=${prepost ? 'true' : 'false'}`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(toYahoo(symbol))}?range=${range}&interval=${interval}&includePrePost=${prepost ? 'true' : 'false'}`;
   const res = await fetch(url, { headers: UA });
   if (!res.ok) return null;
   const json = await res.json().catch(() => null);
@@ -205,8 +213,7 @@ async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string
 
 async function yahooInfo(symbol: string): Promise<Info | null> {
   const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
-  // Yahoo hyphenates share-class dots (BRK.B → BRK-B); keep ^ for indices.
-  const ysym = symbol.replace(/\./g, '-');
+  const ysym = toYahoo(symbol);
   const quoteUrl = (crumb: string) =>
     `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}&crumb=${encodeURIComponent(crumb)}`;
   let auth = await yahooAuth();
@@ -278,7 +285,11 @@ Deno.serve(async (req) => {
   // Extended hours are intraday-only: daily bars are whole regular sessions.
   const prepost = kind === 'intraday' && payload.prepost === true;
   if (!symbol) return reply(400, { ok: false, error: 'symbol is required' }, cors);
-  if (!/^[A-Z0-9.^-]{1,10}$/.test(symbol)) return reply(400, { ok: false, error: 'symbol format not recognized' }, cors);
+  // Must stay in lockstep with the client's own pattern (scripts/app.js) and
+  // desk-watchlist's: a symbol the chart box accepts and this proxy rejects
+  // surfaces as a bare format error instead of a chart (Codex review, PR #192 —
+  // '=' was widened upstream for futures like GC=F but not here).
+  if (!/^[A-Z0-9.^=-]{1,10}$/.test(symbol)) return reply(400, { ok: false, error: 'symbol format not recognized' }, cors);
 
   // Serve from the warm-instance cache when fresh. The prepost flag is part of
   // the key — the two variants are different bar sets, never interchangeable.
