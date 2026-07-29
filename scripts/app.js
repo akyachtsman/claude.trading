@@ -472,11 +472,12 @@ const wlPx = v => (v == null || !Number.isFinite(v) ? '—' : v.toLocaleString('
    price, which costs one text row. A third row cannot fit inside the owner's
    +10% budget on the 120×48 tile, so the padding and pill were tightened to
    land at 132×52 — +10% wide, +8% tall. */
-/* 5% larger than the original 44×16 (owner request 2026-07-30). The DISPLAYED
+/* 10% larger than the original 44×16 (owner request 2026-07-30, revised from 5%
+   the same day — 5% came to ~2px and read as no change at all). The DISPLAYED
    size is the CSS rule on .wl-strip .wl-spark svg, which was bumped in step;
    these drive the viewBox, so the two have to move together or the line
    stretches. */
-const WL_SPARK_W = 46, WL_SPARK_H = 17;
+const WL_SPARK_W = 48, WL_SPARK_H = 18;
 
 /* Reordering (owner request 2026-07-29). Only offered when unlocked, because
    the new order is written straight back through the PIN-gated RPC — a drag we
