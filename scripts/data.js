@@ -541,8 +541,13 @@ const DEMO_WL = {
   SMH: ['VanEck Semiconductor ETF', 534.34, 0.90],
   /* the strip's own categories, seeded 2026-07-29 with the same lists. Without
      an entry here a symbol falls back to a name-seeded price, which reads fine
-     for an ETF but absurd for an index (^GSPC at 80). Sector and macro figures
-     match the demo market strip's so the two surfaces agree. */
+     for an ETF but absurd for an index (^GSPC at 80). Each row the demo market
+     strip also carries takes the STRIP's figure verbatim, so the two adjacent
+     surfaces never contradict each other on the same ticker. The rows above are
+     a separate, older seed — the owner's own pasted session — and differ from
+     the strip on 17 shared tickers; left alone rather than rewriting figures
+     that came from a real broker table. So the agreement claimed here holds for
+     the rows added below, not for DEMO_WL as a whole. */
   '^GSPC': ['S&P 500', 6318.42, 0.54], '^IXIC': ['Nasdaq Composite', 23104.88, 0.81],
   '^RUT': ['Russell 2000', 2438.60, -0.33], '^DJI': ['Dow Jones Industrial Average', 44912.30, 0.12],
   '^TNX': ['CBOE 10-Year Treasury Yield', 4.31, 1.18],
@@ -551,7 +556,7 @@ const DEMO_WL = {
   XLC: ['Communication Svcs Sel SPDR', 108.70, 0.55], XLY: ['Consumer Discret Sel SPDR', 224.60, 0.83],
   XLP: ['Consumer Staples Sel SPDR', 82.40, -0.06], XLU: ['Utilities Select Sector SPDR', 81.20, 0.41],
   XLRE: ['Real Estate Select Sector SPDR', 41.30, 0.24],
-  KRE: ['SPDR S&P Regional Banking ETF', 65.40, -0.96], SLV: ['iShares Silver Trust', 33.80, 0.61],
+  KRE: ['SPDR S&P Regional Banking ETF', 62.80, 0.66], SLV: ['iShares Silver Trust', 30.15, 0.88],
 };
 
 /* Extra map universes (Crypto/Futures/World): delayed quotes fetched on
