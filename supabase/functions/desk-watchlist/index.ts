@@ -109,14 +109,21 @@ function priceRow(sym: string, q: any) {
   const post = num(q.postMarketPrice), postPct = num(q.postMarketChangePercent);
   const pre = num(q.preMarketPrice), prePct = num(q.preMarketChangePercent);
   let last = reg, pct = regPct, ext = false;
+  // `at` must timestamp the price we actually SHOW (Codex review, PR #188):
+  // a pre-market row stamped with regularMarketTime would date a current
+  // pre-open print to the prior close, and the roster-wide asOf is a max over
+  // these — so one mis-stamped row would drag the panel's whole as-of back.
+  let at = num(q.regularMarketTime);
   if (post != null) {
     last = post;
     pct = postPct != null && regPct != null ? ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100 : regPct;
     ext = true;
+    at = num(q.postMarketTime) ?? at;
   } else if (pre != null) {
     last = pre;
     pct = prePct;
     ext = true;
+    at = num(q.preMarketTime) ?? at;
   }
   return {
     sym,                                        // the roster's own form (BRK.B, ^VIX)
@@ -130,7 +137,7 @@ function priceRow(sym: string, q: any) {
     // they simply repeat their close once constituents stop printing. Flagging
     // it lets the panel say "at close" rather than imply a stalled quote.
     index: sym.startsWith('^') || q.quoteType === 'INDEX',
-    at: num(q.postMarketTime) ?? num(q.regularMarketTime),
+    at,
   };
 }
 
@@ -170,8 +177,12 @@ async function listsFromTable(): Promise<List[] | null> {
   if (!res || !res.ok) return null;
   const rows = await res.json().catch(() => null);
   if (!Array.isArray(rows)) return null;
-  const lists = normalizeLists(rows);
-  return lists.length ? lists : null;
+  // An EMPTY array is a successful read of a deliberately empty roster, not a
+  // failure (Codex review, PR #188). Returning null here would fall through to
+  // the bootstrap config, so deleting every list would appear not to persist —
+  // the owner's save would silently resurrect the seeded ETFs. Only an
+  // unreachable/!ok/non-array response counts as failure.
+  return normalizeLists(rows);
 }
 
 // Bootstrap fallback — the committed config, used only if the table read fails.
@@ -185,7 +196,8 @@ async function listsFromConfig(): Promise<List[] | null> {
 
 async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config' }> {
   const fromTable = await listsFromTable();
-  if (fromTable) return { lists: fromTable, source: 'table' };
+  // null = read failed; [] = read succeeded and the owner has no lists.
+  if (fromTable !== null) return { lists: fromTable, source: 'table' };
   const fromConfig = await listsFromConfig();
   if (fromConfig) return { lists: fromConfig, source: 'config' };
   throw new Error('no watchlists available from desk_watchlists or config');
@@ -198,7 +210,13 @@ let inflight: Promise<unknown> | null = null; // single-flight: a burst shares o
 async function refresh(): Promise<unknown> {
   const { lists, source } = await loadLists();
   // One fetch per unique symbol no matter how many lists repeat it.
-  const uniq = [...new Set(lists.flatMap((l) => l.symbols))].slice(0, MAX_SYMBOLS);
+  const all = [...new Set(lists.flatMap((l) => l.symbols))];
+  const uniq = all.slice(0, MAX_SYMBOLS);
+  // Anything past the cap is REPORTED, never silently dropped (Codex review,
+  // PR #188): the RPC will happily persist more symbols than this fetch covers,
+  // and a saved ticker vanishing from its tab with no explanation is exactly
+  // the silent-truncation failure the `missing` channel exists to prevent.
+  const truncated = all.slice(MAX_SYMBOLS);
   const chunks: string[][] = [];
   for (let i = 0; i < uniq.length; i += CHUNK) chunks.push(uniq.slice(i, i + CHUNK));
   const results = await Promise.all(chunks.map((c) => quoteChunk(c)));
@@ -209,15 +227,21 @@ async function refresh(): Promise<unknown> {
   for (const q of results.flat()) if (q?.symbol) byYahoo.set(String(q.symbol).toUpperCase(), q);
 
   const rows = new Map<string, ReturnType<typeof priceRow>>();
-  const missing: string[] = [];
+  const missing: string[] = [...truncated];
   for (const sym of uniq) {
     const q = byYahoo.get(toYahoo(sym));
     if (q) rows.set(sym, priceRow(sym, q));
     else missing.push(sym);
   }
-  // Only a genuine upstream failure is an error. An owner who emptied every
-  // list asked for nothing, and must get empty tabs back — not a 502.
-  if (uniq.length && !rows.size) throw new Error('no quotes resolved for any symbol');
+  // NOT an error when the upstream calls succeeded and simply knew none of the
+  // symbols (Codex review, PR #188). Throwing there would 502 — or serve a
+  // stale cached roster — so a list of pure typos could never show the
+  // unresolved-ticker warning that explains it, and an edit would appear not to
+  // apply. quoteChunk already throws on a genuine upstream failure, which is
+  // the only case that should reach the caller's catch.
+  if (uniq.length && !rows.size && !results.flat().length && !byYahoo.size) {
+    throw new Error('no quotes resolved for any symbol');
+  }
 
   const body = {
     ok: true,

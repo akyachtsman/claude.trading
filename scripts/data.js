@@ -591,6 +591,24 @@ function marketSessionOpen(now) {
   const minutes = Number(get('hour')) * 60 + Number(get('minute'));
   return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
+/* Extended US session — 4:00am–8:00pm ET on a trading weekday. CLAUDE.md's
+   2026-07-22 lamp ruling anticipated this: "a future extended-hours quote feed
+   would widen the LIVE window". The watchlist IS that feed, so while pre/post
+   prints are actually flowing its lamp may read LIVE rather than EOD. Panels
+   without an extended feed keep the regular-session rule. */
+function extendedSessionOpen(now) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now || new Date());
+  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 4 * 60 && minutes < 20 * 60;
+}
 /* Owner report 2026-07-27: both the client poll cadence and every session-aware
    edge-function cache jump from 5-min to 60-min the INSTANT the session is
    marked closed. If Stooq/Yahoo's final settle print lands a few minutes after

@@ -561,18 +561,37 @@ function renderWatchlist(payload, lamp) {
     td('wl-name', r.name || '—');
     /* Last + which session it came from */
     const lastCell = td('', wlPx(r.last));
-    if (r.index) lastCell.appendChild(el('span', 'wl-mark', 'CLOSE'));
+    lastCell.dataset.sort = String(r.last == null ? -Infinity : r.last);
+    /* CLOSE means "this session has ended", not "this is an index" (Codex
+       review, PR #188): during regular hours ^VIX carries a live, moving price,
+       and stamping that CLOSE would misstate an intraday quote as a settled
+       one. Indices have no extended session, so once the bell rings their value
+       genuinely is the close — that is the only time the marker is true. */
+    if (r.index) { if (!marketSessionOpen()) lastCell.appendChild(el('span', 'wl-mark', 'CLOSE')); }
     else if (r.ext) lastCell.appendChild(el('span', 'wl-mark', 'EXT'));
     const pctCell = td(r.pct == null ? '' : (r.pct >= 0 ? 'up' : 'down'), r.pct == null ? '—' : fmtPct(r.pct));
     pctCell.dataset.sort = String(r.pct == null ? -Infinity : r.pct);
-    td('wl-muted', wlPx(r.bid));
-    td('wl-muted', wlPx(r.ask));
-    td('wl-muted', wlVol(r.vol));
+    /* formatted cells carry their raw value so the shared sorter compares
+       numbers, not "1.34M" / "—" strings */
+    const bidCell = td('wl-muted', wlPx(r.bid));
+    bidCell.dataset.sort = String(r.bid == null ? -Infinity : r.bid);
+    const askCell = td('wl-muted', wlPx(r.ask));
+    askCell.dataset.sort = String(r.ask == null ? -Infinity : r.ask);
+    const volCell = td('wl-muted', wlVol(r.vol));
+    volCell.dataset.sort = String(r.vol == null ? -Infinity : r.vol);
     bodyEl.appendChild(tr);
   }
   if (emptyEl) emptyEl.hidden = rows.length > 0;
   const tableEl = document.getElementById('wlTable');
   if (tableEl) tableEl.hidden = rows.length === 0;
+  /* The headers declare sort types and render with a pointer cursor, so they
+     must actually sort (Codex review, PR #188) — an inert control that looks
+     live is worse than no control. Bound once: makeSortable attaches header
+     listeners, and this function re-runs on every tab switch and poll. */
+  if (tableEl && !tableEl.dataset.sortable) {
+    makeSortable(tableEl);
+    tableEl.dataset.sortable = '1';
+  }
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn
      "BRK B" into BRK + B — both look like real symbols, so the only honest
@@ -598,10 +617,18 @@ function renderWatchlist(payload, lamp) {
    broker table, so any of comma / space / newline has to work. Normalisation
    happens here for the preview count and again server-side, where the RPC is
    the real authority on what a ticker may look like. */
-let wlEdit = null;   /* [{title, symbols:[…]}] while the modal is open */
+let wlEdit = null;        /* [{title, symbols:[…]}] while the modal is open */
+let wlEditLoaded = false; /* did the authoritative read succeed? gates saving */
 
+/* Split ONLY on the documented delimiters — comma and whitespace — then keep
+   whole tokens that are valid tickers (Codex review, PR #188). Splitting on
+   "any invalid character" instead would shatter `BAD!!SYM` into BAD + SYM, two
+   real-looking symbols that could quietly resolve to unrelated securities.
+   Preserving the token means it simply fails validation and is dropped, which
+   is what the editor's promise actually says happens. */
+const WL_SYM_RE = /^[A-Z0-9.^-]{1,10}$/;
 const wlParseSyms = txt => [...new Set(
-  String(txt || '').toUpperCase().split(/[^A-Z0-9.^-]+/).filter(Boolean)
+  String(txt || '').toUpperCase().split(/[,\s]+/).filter(t => WL_SYM_RE.test(t))
 )];
 
 function renderWlEditor() {
@@ -663,14 +690,30 @@ async function openWlEditor() {
   if (!pin) return;
   const back = document.getElementById('wlEditBackdrop');
   wlEditErr('');
+  /* A FAILED read must never become an editable empty draft (Codex review,
+     PR #188). Save is a replace-all, so if the load failed and the owner then
+     confirmed the empty-state prompt, a recovered connection would delete every
+     real list on the strength of a draft that never reflected them. On failure
+     the editor opens read-only with the reason shown, and Save is disabled. */
+  let loaded = false;
   try {
     const out = await deskGetWatchlists(pin);
-    if (!out || !out.ok) { wlEditErr('Could not load your watchlists — try unlocking again.'); }
-    wlEdit = ((out && out.lists) || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+    if (out && out.ok) {
+      wlEdit = (out.lists || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+      loaded = true;
+    } else {
+      wlEditErr('Could not load your watchlists — unlock again before editing.');
+      wlEdit = [];
+    }
   } catch {
     wlEditErr('Could not reach the desk to load your watchlists.');
     wlEdit = [];
   }
+  const saveBtn = document.getElementById('wlSaveBtn');
+  const addBtn = document.getElementById('wlAddListBtn');
+  if (saveBtn) saveBtn.disabled = !loaded;
+  if (addBtn) addBtn.disabled = !loaded;
+  wlEditLoaded = loaded;
   renderWlEditor();
   const stamp = document.getElementById('wlEditStamp');
   if (stamp) stamp.textContent = wlEdit.length + (wlEdit.length === 1 ? ' list' : ' lists');
@@ -689,7 +732,9 @@ function closeWlEditor() {
 
 async function saveWlEditor() {
   const pin = sessionStorage.getItem('desk_pin');
-  if (!pin || !wlEdit) return;
+  /* wlEditLoaded gates this too, not just the button's disabled attribute —
+     a replace-all built from a draft that never loaded would delete real lists */
+  if (!pin || !wlEdit || !wlEditLoaded) return;
   const lists = wlEdit
     .map(l => ({ title: String(l.title || '').trim(), symbols: l.symbols }))
     .filter(l => l.title);
@@ -708,7 +753,7 @@ async function saveWlEditor() {
   } catch {
     wlEditErr('Could not reach the desk to save.');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Save & exit'; }
+    if (btn) { btn.disabled = !wlEditLoaded; btn.textContent = 'Save & exit'; }
   }
 }
 
@@ -1012,6 +1057,10 @@ function renderLockedPanels() {
       DESK.authed = true;
       await loadPrivate(input.value);
       renderMasthead();
+      /* the watchlist's ✎ is gated on DESK.authed, and the panel already
+         rendered while locked — re-render so unlocking reveals it without a
+         reload (Codex review, PR #188) */
+      renderWatchlist();
     } else {
       err.textContent = (res && res.error) || 'PIN not recognized — try again.';
       err.hidden = false;
@@ -3395,7 +3444,11 @@ setInterval(retickStamps, STAMP_TICK_MS);
    every server-side cache too — see the desk-* edge functions' `force` param). */
 let feedPollTimer = 0;
 async function feedPollTick(force) {
-  await Promise.all([refreshMarket(force), refreshNews(force), loadHeatmap(force), loadCharts(force)]);
+  /* loadWatchlist belongs here, not just at boot (Codex review, PR #188):
+     without it a page left open never refetches quotes, and the panel's lamp
+     stays LIVE from the first render while the prices behind it go hours
+     stale — the exact lie the lamp exists to prevent. */
+  await Promise.all([refreshMarket(force), refreshNews(force), loadHeatmap(force), loadCharts(force), loadWatchlist(force)]);
   renderMasthead(); /* the masthead lamp tracks the freshest market fetch */
 }
 function scheduleFeedPoll() {
@@ -3603,8 +3656,18 @@ async function loadWatchlist(force) {
   if (!DESK_DB.url) return;
   try {
     const out = await deskWatchlist(force);
-    if (out && out.ok) renderWatchlist(out, liveLampFor(out.generatedAt, out.asOf, true));
-    else renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+    if (out && out.ok) {
+      /* Price-bound lamps read EOD + "at close" the moment the regular session
+         ends — correct for every other panel, wrong here: this feed keeps
+         quoting through pre/post, so an EXT price would sit beside an "at
+         close" stamp (Codex review, PR #188). Only relax it when BOTH hold —
+         we're inside the 4am–8pm window AND rows really carry extended prints.
+         Yahoo still returns last night's postMarketPrice at 2am, so the clock
+         alone would lie. */
+      const anyExt = (out.lists || []).some(l => (l.rows || []).some(r => r.ext));
+      const streaming = anyExt && extendedSessionOpen();
+      renderWatchlist(out, liveLampFor(out.generatedAt, out.asOf, !streaming));
+    } else renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
   } catch {
     renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
   }
@@ -3644,7 +3707,7 @@ async function boot() {
   const pin = sessionStorage.getItem('desk_pin');
   if (pin) {
     const res = await deskLogin(pin).catch(() => ({ ok: false }));
-    if (res && res.ok) { DESK.authed = true; await loadPrivate(pin); renderMasthead(); return; }
+    if (res && res.ok) { DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return; }
     sessionStorage.removeItem('desk_pin');
   }
   renderLockedPanels();
