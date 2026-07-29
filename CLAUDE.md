@@ -127,6 +127,30 @@ This project's look is its own — established at kickoff via `/design-intake`
   former per-panel lamps; CSS hides row + stamp when nothing renders. Read
   CLIENT-side (`fetchPublic`), not by an edge function. Mode-independent (live
   external data in demo + live).
+- **Watchlists panel** (`renderWatchlist()` + the editor, owner request
+  2026-07-29) — multiple named lists, unbounded symbols each, one tab per list.
+  **The roster is NOT in this repo.** It lives in `desk_watchlists`
+  (`desk_010`): RLS deny-all, reached by anon only through the SECURITY DEFINER
+  PIN RPCs `desk_get_watchlists` / `desk_set_watchlists`, and read server-side
+  by `desk-watchlist` with the service key. `config/watchlists.json` is a
+  BOOTSTRAP FALLBACK ONLY — editing it does nothing once the table is
+  populated, and it says so in its own `_note`. `desk_set_watchlists` takes the
+  COMPLETE desired state, so add/remove symbol and create/rename/reorder/delete
+  list all land atomically in one replace-all; the seed is guarded on emptiness
+  (not a fixed id) so a replay can't clobber later edits — the documented
+  `desk_009` hazard. Editing is the ✎ in the panel header (live + authed only)
+  → a modal in the system-prompt idiom; symbols are free text because the
+  owner's source is a pasted broker table, normalised client-side for the count
+  and again server-side where the RPC is the real authority.
+  **Two display rules, both from the 2026-07-29 extended-hours ruling:** the
+  Last column marks its session — `EXT` for a pre/post print, `CLOSE` for an
+  index (no extended session exists) — and Change % always measures from the
+  PRIOR CLOSE including extended hours, so one number means the same thing all
+  day and all evening. Neither marker is colour-coded (gain/loss colour is
+  P&L-only). Unresolved tickers render in `#wlMissing` rather than vanishing:
+  splitting a pasted table on whitespace turns "BRK B" into BRK + B, both of
+  which *look* like tickers, so naming what didn't resolve is the only honest
+  signal.
 - `supabase/functions/` — versioned sources of the edge-function data layer
   (deployed only to the dedicated project). Anon-callable public feeds:
   `desk-market` (Stooq→Yahoo tiles + FRED 10Y for the core 6, plus
@@ -270,6 +294,16 @@ This project's look is its own — established at kickoff via `/design-intake`
   each vendor sees the viewer's IP/UA and sets its own cookies in its own frame;
   no desk data crosses the boundary. Roster is owner-controlled
   (`config/widgets.json`).
+- **NEVER send a browser-shaped `user-agent` on an edge function's own
+  Supabase REST call** (learned the hard way, 2026-07-29). This project's
+  service key is the newer `sb_secret_…` format, and the API gateway refuses a
+  secret key whenever the request looks like it came from a browser — a
+  `Mozilla/5.0` UA is enough. The reply is `401 Forbidden use of secret API key
+  in browser`, which a `.catch(() => null)` will happily swallow into a silent
+  empty result (this cost a full debugging round on `desk-watchlist`: the
+  function 502'd with no clue, and the table read only worked once the UA was
+  dropped). The `UA` const belongs on OUTBOUND third-party fetches (Yahoo,
+  Stooq, FRED) and nowhere else.
 - Server-side keys (`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, IBKR
   token/query-id, `CRON_SECRET`) live only in edge-function secrets;
   `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —

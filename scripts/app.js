@@ -573,6 +573,166 @@ function renderWatchlist(payload, lamp) {
   if (emptyEl) emptyEl.hidden = rows.length > 0;
   const tableEl = document.getElementById('wlTable');
   if (tableEl) tableEl.hidden = rows.length === 0;
+
+  /* Unknown tickers, named. A pasted broker table split on whitespace can turn
+     "BRK B" into BRK + B — both look like real symbols, so the only honest
+     signal the owner gets is which ones the feed couldn't resolve. */
+  const missEl = document.getElementById('wlMissing');
+  if (missEl) {
+    const miss = (data && data.missing) || [];
+    missEl.textContent = miss.length
+      ? (miss.length === 1 ? 'No quote found for ' : 'No quotes found for ') + miss.join(', ') + ' — check the spelling in Edit.'
+      : '';
+    missEl.hidden = !miss.length;
+  }
+}
+
+/* ── watchlist editor ──────────────────────────────────────────────────────
+   Reads the roster through desk_get_watchlists (PIN-gated, so the editor shows
+   the owner's authoritative lists rather than whatever the quote feed last
+   cached) and writes the COMPLETE desired state back through
+   desk_set_watchlists — one atomic replace-all covering add/remove symbol and
+   create/rename/reorder/delete list.
+
+   Symbols are edited as free text on purpose: the owner's source is a pasted
+   broker table, so any of comma / space / newline has to work. Normalisation
+   happens here for the preview count and again server-side, where the RPC is
+   the real authority on what a ticker may look like. */
+let wlEdit = null;   /* [{title, symbols:[…]}] while the modal is open */
+
+const wlParseSyms = txt => [...new Set(
+  String(txt || '').toUpperCase().split(/[^A-Z0-9.^-]+/).filter(Boolean)
+)];
+
+function renderWlEditor() {
+  const host = document.getElementById('wlEditLists');
+  if (!host) return;
+  host.textContent = '';
+  wlEdit.forEach((l, i) => {
+    const row = el('div', 'wl-edit-row');
+    const head = el('div', 'wl-edit-head');
+
+    const title = document.createElement('input');
+    title.type = 'text';
+    title.className = 'wl-edit-title';
+    title.value = l.title;
+    title.maxLength = 60;
+    title.setAttribute('aria-label', 'List name');
+    title.addEventListener('input', () => { l.title = title.value; });
+    head.appendChild(title);
+
+    const count = el('span', 'wl-edit-count', l.symbols.length + ' symbols');
+    head.appendChild(count);
+
+    const del = el('button', 'wl-edit-del', 'Delete');
+    del.type = 'button';
+    del.setAttribute('aria-label', 'Delete list ' + l.title);
+    del.addEventListener('click', () => {
+      /* deleting a whole list is the one destructive control here, and the
+         save is a replace-all — confirm rather than let a stray click drop it */
+      if (l.symbols.length && !confirm('Delete the list "' + l.title + '" and its ' + l.symbols.length + ' symbols?')) return;
+      wlEdit.splice(i, 1);
+      renderWlEditor();
+    });
+    head.appendChild(del);
+    row.appendChild(head);
+
+    const ta = document.createElement('textarea');
+    ta.className = 'wl-edit-syms';
+    ta.rows = 4;
+    ta.value = l.symbols.join(', ');
+    ta.setAttribute('aria-label', 'Symbols in ' + l.title);
+    ta.addEventListener('input', () => {
+      l.symbols = wlParseSyms(ta.value);
+      count.textContent = l.symbols.length + ' symbols';
+    });
+    row.appendChild(ta);
+    host.appendChild(row);
+  });
+}
+
+function wlEditErr(msg) {
+  const e = document.getElementById('wlEditErr');
+  if (!e) return;
+  e.textContent = msg || '';
+  e.hidden = !msg;
+}
+
+async function openWlEditor() {
+  const pin = sessionStorage.getItem('desk_pin');
+  if (!pin) return;
+  const back = document.getElementById('wlEditBackdrop');
+  wlEditErr('');
+  try {
+    const out = await deskGetWatchlists(pin);
+    if (!out || !out.ok) { wlEditErr('Could not load your watchlists — try unlocking again.'); }
+    wlEdit = ((out && out.lists) || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+  } catch {
+    wlEditErr('Could not reach the desk to load your watchlists.');
+    wlEdit = [];
+  }
+  renderWlEditor();
+  const stamp = document.getElementById('wlEditStamp');
+  if (stamp) stamp.textContent = wlEdit.length + (wlEdit.length === 1 ? ' list' : ' lists');
+  back.hidden = false;
+  const first = back.querySelector('.wl-edit-title');
+  if (first) first.focus();
+}
+
+function closeWlEditor() {
+  const back = document.getElementById('wlEditBackdrop');
+  if (back) back.hidden = true;
+  wlEdit = null;
+  const btn = document.getElementById('wlEditBtn');
+  if (btn) btn.focus();
+}
+
+async function saveWlEditor() {
+  const pin = sessionStorage.getItem('desk_pin');
+  if (!pin || !wlEdit) return;
+  const lists = wlEdit
+    .map(l => ({ title: String(l.title || '').trim(), symbols: l.symbols }))
+    .filter(l => l.title);
+  /* An empty submission wipes every list. That is a legitimate thing to want,
+     but never something to do by accident on a replace-all. */
+  if (!lists.length && !confirm('Save with no lists at all? This removes every watchlist.')) return;
+  const btn = document.getElementById('wlSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  wlEditErr('');
+  try {
+    const out = await deskSetWatchlists(pin, lists);
+    if (!out || !out.ok) { wlEditErr('The desk rejected the save — check your PIN and try again.'); return; }
+    closeWlEditor();
+    /* force past the feed's cache so the panel shows the roster just saved */
+    await loadWatchlist(true);
+  } catch {
+    wlEditErr('Could not reach the desk to save.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & exit'; }
+  }
+}
+
+function wireWatchlistEditor() {
+  const btn = document.getElementById('wlEditBtn');
+  if (btn) btn.addEventListener('click', openWlEditor);
+  const close = document.getElementById('wlEditCloseBtn');
+  if (close) close.addEventListener('click', closeWlEditor);
+  const back = document.getElementById('wlEditBackdrop');
+  if (back) back.addEventListener('click', e => { if (e.target === back) closeWlEditor(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && back && !back.hidden) closeWlEditor();
+  });
+  const add = document.getElementById('wlAddListBtn');
+  if (add) add.addEventListener('click', () => {
+    if (!wlEdit) return;
+    wlEdit.push({ title: 'New list', symbols: [] });
+    renderWlEditor();
+    const rows = document.querySelectorAll('#wlEditLists .wl-edit-title');
+    const last = rows[rows.length - 1];
+    if (last) { last.focus(); last.select(); }
+  });
+  const save = document.getElementById('wlSaveBtn');
+  if (save) save.addEventListener('click', saveWlEditor);
 }
 
 function renderNews(news, lamp) {
@@ -3492,5 +3652,6 @@ async function boot() {
 
 wireCharts();
 wireMapFilter();
+wireWatchlistEditor();
 wireSysPromptModal();
 boot();
