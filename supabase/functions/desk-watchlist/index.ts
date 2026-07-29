@@ -317,6 +317,11 @@ async function refresh(): Promise<unknown> {
     missing,
     lists: lists.map((l) => ({
       title: l.title,
+      // The COMPLETE saved order, including symbols that resolved to nothing.
+      // `rows` holds only what quoted, so a client that reordered tiles and
+      // wrote back from rows alone would silently delete every unresolved
+      // ticker. Reordering has to operate on this array.
+      symbols: l.symbols,
       rows: l.symbols.map((s) => rows.get(s)).filter(Boolean),
     })),
   };
