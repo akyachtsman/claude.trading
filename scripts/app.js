@@ -57,7 +57,7 @@ function renderMasthead() {
        (LIVE/EOD/STALE) is the signal; the Markets panel's own stamp
        already carries the full as-of time for anyone who wants it. */
     const lamp = DESK.liveStamp
-      ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true)
+      ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true, DESK.liveStamp.quoteAt)
       : { cls: 'lamp--stale', text: 'Stale', stamp: 'Live feed unreachable' };
     wrap.appendChild(el('span', 'lamp ' + lamp.cls, lamp.text));
     /* manual force-refresh (owner request 2026-07-27): market/news/heatmap/
@@ -3434,7 +3434,7 @@ let marketLive = false, newsLive = false;
    starts admitting it is stale even while nothing new is arriving. */
 function relampMarket() {
   if (!marketLive || !DESK.liveStamp) return;
-  renderMarkets(DESK.data.market, liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true));
+  renderMarkets(DESK.data.market, liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true, DESK.liveStamp.quoteAt));
 }
 
 async function refreshMarket(force) {
@@ -3442,8 +3442,8 @@ async function refreshMarket(force) {
     const market = await deskFeed('desk-market', force ? { force: true } : undefined);
     clearTimeout(marketRetry.timer); marketRetry.wait = 0;
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
-    DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf };
-    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true));
+    DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf, quoteAt: market.quoteAt || null };
+    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true, market.quoteAt));
     fetchMktSeries();   /* one-shot: hydrate the index chart series (self-guarded) */
     marketLive = true;
     return;
