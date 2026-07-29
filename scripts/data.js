@@ -440,6 +440,99 @@ function regularOnly(s) {
   return out;
 }
 
+/* Watchlists (owner request 2026-07-29): batched quotes for the owner's
+   rosters. The roster itself lives in desk_watchlists and is edited through
+   the PIN RPCs; this feed resolves it server-side and returns rows already
+   grouped by list, so the panel never fans out per symbol. */
+async function deskWatchlist(force) {
+  const res = await fetch(DESK_DB.url + '/functions/v1/desk-watchlist', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: DESK_DB.anonKey,
+      authorization: 'Bearer ' + DESK_DB.anonKey,
+    },
+    body: JSON.stringify({ force: force === true }),
+  });
+  const out = await res.json().catch(() => null);
+  if (!out) throw new Error('desk-watchlist → HTTP ' + res.status);
+  return out; /* {ok, source, asOf, missing, lists:[{title, rows:[…]}]} */
+}
+
+/* PIN-gated roster read/write (desk_010). The panel's edit mode uses these;
+   the quote feed above reads the same table server-side. */
+async function deskGetWatchlists(pin) { return deskRpc('desk_get_watchlists', pin); }
+async function deskSetWatchlists(pin, lists) { return deskRpc('desk_set_watchlists', pin, { new_lists: lists }); }
+
+/* ── demo watchlist ────────────────────────────────────────────────────────
+   ?demo=1 ONLY (live is real-data-or-nothing). Rows are seeded off the symbol
+   itself, so the same ticker always shows the same figures, and are shaped
+   exactly like the live payload so renderWatchlist() is shared. */
+function symSeed(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h;
+}
+function buildDemoWatchlist(lists) {
+  return {
+    ok: true,
+    source: 'demo',
+    asOf: lastTradingDay(new Date()).toISOString(),
+    missing: [],
+    lists: (lists || []).map(l => ({
+      title: l.title,
+      rows: (l.symbols || []).map(sym => {
+        const r = lcg(symSeed(sym));
+        const known = DEMO_WL[sym];
+        /* A symbol the demo table doesn't know still renders — seeded off its
+           own name — so a newly added ticker never blanks the demo panel. */
+        const last = known ? known[1] : Number((20 + r() * 300).toFixed(2));
+        const pct = known ? known[2] : Number(((r() - 0.48) * 3).toFixed(2));
+        const index = sym.startsWith('^');
+        const spread = Math.max(0.01, Number((last * 0.0006).toFixed(2)));
+        return {
+          sym,
+          name: known ? known[0] : sym,
+          last, pct,
+          /* mirrors the live split: indices carry no extended print */
+          ext: !index && r() > 0.5,
+          index,
+          bid: index ? null : Number((last - spread).toFixed(2)),
+          ask: index ? null : Number((last + spread).toFixed(2)),
+          vol: index ? Math.round(r() * 5_000) : Math.round(r() * 4_000_000),
+          at: null,
+        };
+      }),
+    })),
+  };
+}
+/* [name, last, day%] per symbol — demo only. Seeded from a real session so the
+   demo panel reads like a plausible desk instead of noise; live rows carry
+   Yahoo's own name and price. Public market data, no holdings implied. */
+const DEMO_WL = {
+  '^VIX': ['CBOE Volatility Index', 18.21, -2.46], UUP: ['Invesco DB USD Index Bullish', 28.57, -0.03],
+  TLT: ['iShares 20+ Year Treasury Bond', 84.17, -0.08], SPY: ['SPDR S&P 500 ETF Trust', 743.62, 0.37],
+  SPYD: ['SPDR Portfolio S&P 500 High Div', 50.52, -0.04], SPYG: ['SPDR Portfolio S&P 500 Growth', 114.64, 0.38],
+  DDM: ['ProShares Ultra Dow30', 66.22, -0.24], DIA: ['SPDR Dow Jones Industrial Avg', 527.57, 0.13],
+  QQQ: ['Invesco QQQ Trust Series 1', 679.39, 0.58], IWM: ['iShares Russell 2000 ETF', 294.43, 0.36],
+  EEM: ['iShares MSCI Emerging Markets', 62.99, 1.01], FXI: ['iShares China Large-Cap ETF', 35.70, 0.14],
+  'BRK.B': ['Berkshire Hathaway Inc Cl B', 512.25, -0.02], INDA: ['iShares MSCI India ETF', 49.35, -0.06],
+  JPXN: ['iShares JPX-Nikkei 400 ETF', 96.45, -0.22], FLCH: ['Franklin FTSE China ETF', 21.64, 0.09],
+  GLD: ['SPDR Gold Shares', 369.18, -0.05], SPYV: ['SPDR Portfolio S&P 500 Value', 62.76, -0.02],
+  SOXL: ['Direxion Daily Semi Bull 3X', 112.23, 2.46], BX: ['Blackstone Inc', 133.97, 0.05],
+  IEF: ['iShares 7-10 Year Treasury Bond', 93.54, -0.02], BN: ['Brookfield Corp', 42.31, -0.14],
+  VIG: ['Vanguard Dividend Apprec ETF', 241.67, -0.03], AGG: ['iShares Core US Aggregate Bond', 98.08, 0.16],
+  SHY: ['iShares 1-3 Year Treasury Bond', 81.93, -0.01], VTI: ['Vanguard Total Stock Mkt ETF', 367.19, 0.33],
+  BLK: ['BlackRock Inc', 1097.86, 0.03], ARKQ: ['ARK Autonomous Tech & Robotics', 113.59, 0.00],
+  TLH: ['iShares 10-20 Year Treasury', 98.30, 0.02], CMF: ['iShares California Muni Bond', 56.73, -0.02],
+  JOET: ['Virtus Terranova US Qual Mom', 45.53, 0.00], ARKK: ['ARK Innovation ETF', 72.70, 0.35],
+  IGV: ['iShares Expanded Tech-Software', 91.80, 0.02], BUG: ['Global X Cybersecurity ETF', 37.39, -0.29],
+  XLK: ['Technology Select Sector SPDR', 172.79, 0.99], XLV: ['Health Care Select Sector SPDR', 167.44, 0.11],
+  XLB: ['Materials Select Sector SPDR', 52.34, 0.00], XLE: ['Energy Select Sector SPDR', 58.10, 0.92],
+  XLI: ['Industrial Select Sector SPDR', 182.52, 0.02], XLF: ['Financial Select Sector SPDR', 57.55, -0.09],
+  SMH: ['VanEck Semiconductor ETF', 534.34, 0.90],
+};
+
 /* Extra map universes (Crypto/Futures/World): delayed quotes fetched on
    demand through the desk-maps edge function (fixed server-side roster, no
    PIN — public data; owner ruling 2026-07-13 replaced the nightly batch). */

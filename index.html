@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260729a">
-<link rel="stylesheet" href="styles/components.css?v=20260729a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260729w">
+<link rel="stylesheet" href="styles/components.css?v=20260729w">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -552,6 +552,40 @@
 
   </div>
 
+  <!-- Watchlists (owner request 2026-07-29): multiple named lists, unbounded
+       symbols each. Rosters live in desk_watchlists (desk_010) and are edited
+       in place from here via the PIN RPCs — the ✎ trigger flips the panel into
+       edit mode. Quotes arrive batched from desk-watchlist (one upstream call
+       per 50 symbols). Tabs are built by renderWatchlist(). -->
+  <section class="panel area-watchlist" aria-labelledby="wlTitle">
+    <div class="panel-header">
+      <h2 class="panel-title" id="wlTitle">Watchlists</h2>
+      <span class="lamp lamp--demo" id="wlLamp">Demo</span>
+      <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
+      <span class="stamp ml-auto" id="wlStamp">—</span>
+    </div>
+    <div class="panel-body">
+      <div class="wl-tabs" role="tablist" aria-label="Watchlist" id="wlTabs"></div>
+      <div class="wl-scroll" id="wlScroll" tabindex="0" aria-label="Watchlist quotes — scrollable">
+        <table class="data-table wl-table" id="wlTable">
+          <thead>
+            <tr>
+              <th scope="col" data-type="text">Symbol</th>
+              <th scope="col" data-type="text" class="wl-name-col">Name</th>
+              <th scope="col" data-type="number">Last</th>
+              <th scope="col" data-type="number">Chg %</th>
+              <th scope="col" data-type="number">Bid</th>
+              <th scope="col" data-type="number">Ask</th>
+              <th scope="col" data-type="number">Volume</th>
+            </tr>
+          </thead>
+          <tbody id="wlRows"></tbody>
+        </table>
+      </div>
+      <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
+    </div>
+  </section>
+
   <section class="panel area-charts" aria-labelledby="chartsTitle">
     <div class="panel-header wb-panel-header">
       <h2 class="panel-title" id="chartsTitle">Stochastic charts</h2>
@@ -647,8 +681,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260729a"></script>
-<script src="scripts/data.js?v=20260729a"></script>
-<script src="scripts/app.js?v=20260729a"></script>
+<script src="scripts/config.js?v=20260729w"></script>
+<script src="scripts/data.js?v=20260729w"></script>
+<script src="scripts/app.js?v=20260729w"></script>
 </body>
 </html>

@@ -493,6 +493,88 @@ function renderAccounts(accounts, lamp) {
 }
 
 /* ── news ──────────────────────────────────────────────────────────────── */
+/* ── Watchlists (owner request 2026-07-29) ─────────────────────────────────
+   Multiple named lists, unbounded symbols each; one tab per list. Rows come
+   from desk-watchlist already grouped, so this only lays them out.
+   The Last column shows the extended-hours price where one exists, and marks
+   which session it came from — EXT for a pre/post print, CLOSE for an index,
+   which has no extended session at all (owner ruling 2026-07-29). Change % is
+   always measured from the prior close, so it keeps one meaning all day. */
+let wlState = { payload: null, active: 0, lamp: null };
+
+/* wl-prefixed: the desk already has a fmtVol for the strip tiles, which assumes
+   a positive number and never renders an em dash. A watchlist cell must cope
+   with a missing volume (indices report none), so it gets its own. */
+const wlVol = v => {
+  if (v == null || !Number.isFinite(v) || v <= 0) return '—';
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
+  return String(v);
+};
+const wlPx = v => (v == null || !Number.isFinite(v) ? '—' : v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+function renderWatchlist(payload, lamp) {
+  const lampEl = document.getElementById('wlLamp');
+  const tabsEl = document.getElementById('wlTabs');
+  const bodyEl = document.getElementById('wlRows');
+  const emptyEl = document.getElementById('wlEmpty');
+  const editBtn = document.getElementById('wlEditBtn');
+  if (!lampEl || !tabsEl || !bodyEl) return;
+
+  if (payload) wlState.payload = payload;
+  if (lamp) wlState.lamp = lamp;
+  const data = wlState.payload;
+  const lp = wlState.lamp || { cls: 'lamp--stale', text: 'Stale' };
+  lampEl.className = 'lamp ' + lp.cls;
+  lampEl.textContent = lp.text;
+  const stampEl = document.getElementById('wlStamp');
+  if (stampEl) {
+    if (DESK.mode === 'demo') stampEl.textContent = 'Demo data';
+    else applyLampStamp(stampEl, lp);
+  }
+  /* editing writes to a PIN-gated table, so it only makes sense once unlocked */
+  if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
+
+  const lists = (data && data.lists) || [];
+  if (wlState.active >= lists.length) wlState.active = 0;
+
+  tabsEl.textContent = '';
+  lists.forEach((l, i) => {
+    const b = el('button', 'wl-tab');
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(i === wlState.active));
+    b.appendChild(document.createTextNode(l.title));
+    const c = el('span', 'wl-count', String((l.rows || []).length));
+    b.appendChild(c);
+    b.addEventListener('click', () => { wlState.active = i; renderWatchlist(); });
+    tabsEl.appendChild(b);
+  });
+
+  const rows = (lists[wlState.active] && lists[wlState.active].rows) || [];
+  bodyEl.textContent = '';
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const td = (cls, text) => { const c = el('td', cls, text); tr.appendChild(c); return c; };
+    td('wl-sym', r.sym);
+    td('wl-name', r.name || '—');
+    /* Last + which session it came from */
+    const lastCell = td('', wlPx(r.last));
+    if (r.index) lastCell.appendChild(el('span', 'wl-mark', 'CLOSE'));
+    else if (r.ext) lastCell.appendChild(el('span', 'wl-mark', 'EXT'));
+    const pctCell = td(r.pct == null ? '' : (r.pct >= 0 ? 'up' : 'down'), r.pct == null ? '—' : fmtPct(r.pct));
+    pctCell.dataset.sort = String(r.pct == null ? -Infinity : r.pct);
+    td('wl-muted', wlPx(r.bid));
+    td('wl-muted', wlPx(r.ask));
+    td('wl-muted', wlVol(r.vol));
+    bodyEl.appendChild(tr);
+  }
+  if (emptyEl) emptyEl.hidden = rows.length > 0;
+  const tableEl = document.getElementById('wlTable');
+  if (tableEl) tableEl.hidden = rows.length === 0;
+}
+
 function renderNews(news, lamp) {
   const list = document.getElementById('newsList');
   while (list.firstChild) list.removeChild(list.firstChild);
@@ -3344,6 +3426,30 @@ async function loadWidgets() {
   }
 }
 
+/* Watchlists loader. Demo seeds from the committed bootstrap roster (read
+   client-side, same as the widget config); live pulls the batched quote feed.
+   A failure lamps the panel Stale and keeps the last good render — never
+   fabricated rows (live is real-data-or-nothing). */
+async function loadWatchlist(force) {
+  if (DESK.mode === 'demo') {
+    try {
+      const cfg = await fetchPublic('config/watchlists.json');
+      renderWatchlist(buildDemoWatchlist(cfg.lists || []), { cls: 'lamp--demo', text: 'Demo' });
+    } catch {
+      renderWatchlist({ ok: true, lists: [] }, { cls: 'lamp--demo', text: 'Demo' });
+    }
+    return;
+  }
+  if (!DESK_DB.url) return;
+  try {
+    const out = await deskWatchlist(force);
+    if (out && out.ok) renderWatchlist(out, liveLampFor(out.generatedAt, out.asOf, true));
+    else renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+  } catch {
+    renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+  }
+}
+
 async function boot() {
   DESK.mode = resolveMode();
   if (DESK.mode === 'demo') {
@@ -3356,6 +3462,7 @@ async function boot() {
     renderPrivate();
     loadHeatmap();
     loadCharts();
+    loadWatchlist();
     loadWidgets();
     return;
   }
@@ -3371,6 +3478,7 @@ async function boot() {
   renderMasthead();
   loadHeatmap();
   loadCharts();
+  loadWatchlist();
   loadWidgets();
   startFeedPolling();
   const pin = sessionStorage.getItem('desk_pin');
