@@ -3426,6 +3426,17 @@ async function loadPrivate(pin) {
    the panel lamps Stale rather than showing demo data as real. */
 let marketLive = false, newsLive = false;
 
+/* Re-evaluate the Markets lamp against the age of the data ALREADY on screen,
+   without fetching. The lamp is only ever computed inside a render, so any
+   stretch where rendering stops — a failing poll, a hidden tab — freezes the
+   lamp along with the prices, and a frozen lamp keeps claiming whatever it last
+   said. Calling this re-reads liveLampFor against Date.now(), so stale data
+   starts admitting it is stale even while nothing new is arriving. */
+function relampMarket() {
+  if (!marketLive || !DESK.liveStamp) return;
+  renderMarkets(DESK.data.market, liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true));
+}
+
 async function refreshMarket(force) {
   try {
     const market = await deskFeed('desk-market', force ? { force: true } : undefined);
@@ -3436,8 +3447,20 @@ async function refreshMarket(force) {
     fetchMktSeries();   /* one-shot: hydrate the index chart series (self-guarded) */
     marketLive = true;
     return;
-  } catch { /* keep last good; masthead lamps Stale via liveStamp age */ }
-  if (!marketLive) {
+  } catch { /* keep last good — but re-lamp it below, never leave it claiming LIVE */ }
+  if (marketLive) {
+    /* A failed poll used to return silently here. That kept the last good
+       PRICES on screen (correct — FR-R9) but also kept the last good LAMP, so
+       the panel went on asserting LIVE beside a frozen number for as long as
+       the feed stayed down; only the masthead aged, because renderMasthead
+       recomputes from DESK.liveStamp every tick while the panel lamp only
+       changes when renderMarkets runs. Re-lamping from the CURRENT age of the
+       data we are still showing is what makes the lamp mean something: past
+       liveLampFor's 6-minute threshold it flips to STALE on its own.
+       (Owner report 2026-07-29: a NASDAQ tile read −0.95% against IBKR's
+       −0.58% — the same index ~28 minutes apart, under a LIVE lamp.) */
+    relampMarket();
+  } else {
     /* first-load failure: dash tiles (the live boot blanked the demo
        placeholder) — and retry fast rather than waiting out the poller */
     renderMarkets(DESK.data.market, { cls: 'lamp--stale', text: 'Stale' });
@@ -3539,7 +3562,17 @@ function startFeedPolling() {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { clearTimeout(feedPollTimer); clearTimeout(marketPollTimer); }
-    else feedPollTick(false).then(() => { scheduleFeedPoll(); scheduleMarketPoll(); });
+    else {
+      /* Re-lamp BEFORE the refetch, not just after it. Polling is paused while
+         hidden, so a tab that sat in the background for half an hour comes back
+         showing half-hour-old prices under the lamp they were rendered with —
+         LIVE. The refetch fixes that, but only once it lands; until then the
+         first thing the owner sees is a stale number claiming to be current,
+         which is exactly the moment a figure gets compared against a broker
+         screen and lands wrong. */
+      relampMarket();
+      feedPollTick(false).then(() => { scheduleFeedPoll(); scheduleMarketPoll(); });
+    }
   });
   scheduleFeedPoll();
   scheduleMarketPoll();
