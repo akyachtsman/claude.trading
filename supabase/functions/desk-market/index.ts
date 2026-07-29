@@ -281,6 +281,7 @@ export function tenYearTile(rows: { date: string; value: number }[]) {
     chg: Number((last.value - prev.value).toFixed(2)),
     spark: rows.slice(-30).map((r) => r.value),
     asOf: last.date, // series date — FRED lags T-1 (plan lamp carve-out)
+    quoteTs: null,   // daily series, no intraday quote clock
   };
 }
 
