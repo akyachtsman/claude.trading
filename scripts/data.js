@@ -769,11 +769,22 @@ function marketCloseInstant(asOfDate) {
 /* Lamps carry the RAW stamp inputs (atIso/asOf/tail/stampSuffix) alongside the
    rendered `stamp` string so applyStamp() in app.js can re-render the
    time-sensitive "delayed by" clause later without another fetch. */
-function liveLampFor(generatedAt, dataAsOf, priceBound) {
+function liveLampFor(generatedAt, dataAsOf, priceBound, quoteAt) {
+  /* Two different clocks, and conflating them is what made the desk
+     unfalsifiable against a broker screen (owner report 2026-07-29):
+       generatedAt — when WE fetched. Answers "is our poller alive?", so the
+                     staleness threshold below is measured against it.
+       quoteAt     — when the MARKET last printed this price. That is the
+                     number's real age, so it is what gets DISPLAYED.
+     They differ whenever an upstream serves a delayed tick: a 15:10 quote
+     fetched at 15:31 is a live fetch of old data, and only quoteAt says so.
+     Absent (Stooq/FRED, which carry no quote clock) the fetch clock stands in,
+     exactly as before. */
+  const shownAt = quoteAt || generatedAt;
   const closeIso = marketCloseInstant(dataAsOf);
   const stale = {
-    cls: 'lamp--stale', text: 'STALE', stamp: fmtUpdated(generatedAt, dataAsOf, 'age') + ' — refresh overdue',
-    atIso: generatedAt, asOf: dataAsOf, tail: 'age', stampSuffix: ' — refresh overdue',
+    cls: 'lamp--stale', text: 'STALE', stamp: fmtUpdated(shownAt, dataAsOf, 'age') + ' — refresh overdue',
+    atIso: shownAt, asOf: dataAsOf, tail: 'age', stampSuffix: ' — refresh overdue',
   };
   if (priceBound && !marketSessionOpen()) {
     /* EOD is a CLAIM — "this number is the closing print" — and the stamp then
@@ -786,8 +797,9 @@ function liveLampFor(generatedAt, dataAsOf, priceBound) {
        honest one: not LIVE (the session is shut) and not EOD (this is not the
        close). The settle grace keeps the window short — desk-market drops to a
        1-minute TTL for 15 minutes after the bell — and "Refresh now" clears it
-       immediately. */
-    if (generatedAt && closeIso && new Date(generatedAt) < new Date(closeIso)) return stale;
+       immediately. The test is on the DATA's clock, not the fetch clock — a
+       15:59 quote pulled at 16:05 is still a mid-session price. */
+    if (shownAt && closeIso && new Date(shownAt) < new Date(closeIso)) return stale;
     const atIso = closeIso || generatedAt;
     return {
       cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(atIso, dataAsOf, 'close'),
@@ -798,8 +810,8 @@ function liveLampFor(generatedAt, dataAsOf, priceBound) {
   const fresh = Number.isFinite(ageMs) && ageMs <= 6 * 60000;
   return fresh
     ? {
-      cls: 'lamp--live', text: 'LIVE', stamp: fmtUpdated(generatedAt, dataAsOf, 'age'),
-      atIso: generatedAt, asOf: dataAsOf, tail: 'age',
+      cls: 'lamp--live', text: 'LIVE', stamp: fmtUpdated(shownAt, dataAsOf, 'age'),
+      atIso: shownAt, asOf: dataAsOf, tail: 'age',
     }
     : stale;
 }

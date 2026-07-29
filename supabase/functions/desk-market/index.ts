@@ -129,6 +129,14 @@ const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? OPEN_TTL_
 
 // ── quote chain (verbatim ports of lib/stooq.js + lib/quotes.js) ────────────
 type Row = { date: string; close: number };
+// A symbol's daily closes plus, when the upstream gives one, the exact instant
+// its last price was quoted. `quoteTs` is what lets the desk print the QUOTE
+// time rather than its own fetch clock — the difference that makes a
+// side-by-side against a broker screen meaningful (owner report 2026-07-29: an
+// IBKR tile read +0.07% against the desk's −0.43%; both were the Composite off
+// the same prior close, IBKR's tick was ~21 minutes old, and nothing on either
+// screen said so).
+type Series = { rows: Row[]; quoteTs?: number };
 
 export function parseStooqDaily(csv: string): Row[] {
   const rows: Row[] = [];
@@ -144,7 +152,7 @@ export function parseStooqDaily(csv: string): Row[] {
   return rows;
 }
 
-async function stooqDaily(symbol: string): Promise<Row[]> {
+async function stooqDaily(symbol: string): Promise<Series> {
   const ymd = (d: Date) => d.toISOString().slice(0, 10).replaceAll('-', '');
   const d2 = new Date();
   const d1 = new Date(d2.getTime() - 90 * 86400000);
@@ -152,7 +160,9 @@ async function stooqDaily(symbol: string): Promise<Row[]> {
   const res = await fetch(url, { headers: UA });
   const rows = parseStooqDaily(await res.text());
   if (rows.length < 2) throw new Error(`Stooq: ${rows.length} usable rows for ${symbol}`);
-  return rows;
+  // Stooq's daily CSV carries no intraday quote clock, so no quoteTs — the
+  // client falls back to the fetch clock for these, as it always did.
+  return { rows };
 }
 
 export function yahooSymbol(stooqSym: string): string {
@@ -177,13 +187,36 @@ export function parseYahooChart(json: unknown): Row[] {
   return rows;
 }
 
-async function yahooDaily(stooqSym: string): Promise<Row[]> {
+async function yahooDaily(stooqSym: string): Promise<Series> {
   const sym = yahooSymbol(stooqSym);
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d`;
   const res = await fetch(url, { headers: UA });
-  const rows = parseYahooChart(await res.json().catch(() => null));
+  const json = await res.json().catch(() => null);
+  const rows = parseYahooChart(json);
   if (rows.length < 2) throw new Error(`Yahoo: ${rows.length} usable rows for ${sym}`);
-  return rows;
+  // deno-lint-ignore no-explicit-any
+  const meta = (json as any)?.chart?.result?.[0]?.meta;
+  const price = Number(meta?.regularMarketPrice);
+  const ts = Number(meta?.regularMarketTime);
+  const last = rows[rows.length - 1];
+  // The live tick beats the daily bar's close, which trails it by up to a
+  // minute mid-session. Only applied when the quote falls on the SAME ET
+  // session as the last bar — otherwise a pre-open tick would be scored
+  // against the wrong previous close.
+  //
+  // Deliberately NOT taking `meta.chartPreviousClose` as the day-change
+  // baseline: that field is the close preceding the REQUESTED RANGE, so on
+  // this 3-month call it reads ~3 months back (measured 24,673.24 against
+  // yesterday's real 24,876.91). The baseline stays the second-to-last daily
+  // bar, which is the actual prior session.
+  if (Number.isFinite(price) && price > 0 && Number.isFinite(ts)) {
+    const quoteDate = new Date(ts * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    if (quoteDate === last.date) {
+      last.close = price;
+      return { rows, quoteTs: ts };
+    }
+  }
+  return { rows };
 }
 
 // Yahoo FIRST, Stooq as the fallback (owner report 2026-07-28, verified same
@@ -203,7 +236,7 @@ const dailyCloses = (symbol: string) => yahooDaily(symbol).catch(() => stooqDail
 // hung/slow upstream, so a stalled optional quote can never hold the core
 // payload past the edge timeout (Codex #109). clearTimeout avoids a dangling
 // isolate timer on the happy path.
-function bestEffort(p: Promise<Row[]>, ms: number): Promise<Row[] | null> {
+function bestEffort(p: Promise<Series>, ms: number): Promise<Series | null> {
   return new Promise((resolve) => {
     const t = setTimeout(() => resolve(null), ms);
     p.then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(null); });
@@ -213,7 +246,8 @@ function bestEffort(p: Promise<Row[]>, ms: number): Promise<Row[] | null> {
 // ── tile shaping (verbatim ports of fetch-market.js) ────────────────────────
 const fmtLast = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function tileFrom(name: string, rows: Row[]) {
+export function tileFrom(name: string, series: Series) {
+  const rows = series.rows;
   const closes = rows.map((r) => r.close);
   const [prev, last] = closes.slice(-2);
   return {
@@ -222,6 +256,9 @@ export function tileFrom(name: string, rows: Row[]) {
     chg: Number(((last / prev - 1) * 100).toFixed(2)),
     spark: closes.slice(-30).map((c) => Number(c.toFixed(4))),
     asOf: rows[rows.length - 1].date,
+    // When this price was QUOTED, not when we fetched it. Absent on the Stooq
+    // fallback and on FRED, where the client keeps using the fetch clock.
+    quoteTs: series.quoteTs ?? null,
   };
 }
 
@@ -244,6 +281,7 @@ export function tenYearTile(rows: { date: string; value: number }[]) {
     chg: Number((last.value - prev.value).toFixed(2)),
     spark: rows.slice(-30).map((r) => r.value),
     asOf: last.date, // series date — FRED lags T-1 (plan lamp carve-out)
+    quoteTs: null,   // daily series, no intraday quote clock
   };
 }
 
@@ -280,9 +318,21 @@ async function refresh(): Promise<unknown> {
   // append whichever extras resolved (need ≥2 closes for a day change)
   EXTRA_SYMBOLS.forEach((m, i) => {
     const rows = extraRows[i];
-    if (rows && rows.length >= 2) tiles.push(tileFrom(m.name, rows));
+    if (rows && rows.rows.length >= 2) tiles.push(tileFrom(m.name, rows));
   });
-  const body = { ok: true, asOf, generatedAt: new Date().toISOString(), tiles };
+  // OLDEST core quote instant — the clock the desk should PRINT, so a tile can
+  // be compared like-for-like against a broker screen. Deliberately the oldest,
+  // not the freshest (Codex PR #194): one panel stamp speaks for several tiles,
+  // so it has to be a floor ("everything here is at least this fresh"). Taking
+  // the max would let a live S&P vouch for a VIX quoted 15 minutes earlier —
+  // exactly the ambiguity this whole change exists to remove. Per-tile `quoteTs`
+  // rides along in the payload for anyone who needs the precise figure.
+  // Core only, for the same reason asOf is: 24/7 crypto would otherwise
+  // overstate equity freshness.
+  const coreTs = tiles.slice(0, MARKET_SYMBOLS.length)
+    .map((t) => t.quoteTs).filter((t): t is number => typeof t === 'number' && t > 0);
+  const quoteAt = coreTs.length ? new Date(Math.min(...coreTs) * 1000).toISOString() : null;
+  const body = { ok: true, asOf, quoteAt, generatedAt: new Date().toISOString(), tiles };
   cache = { at: Date.now(), body, duringSession: marketSessionOpen() };
   return body;
 }
