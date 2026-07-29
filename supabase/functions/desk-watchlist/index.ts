@@ -174,8 +174,22 @@ function priceRow(sym: string, q: any, spark?: number[]) {
     // it lets the panel say "at close" rather than imply a stalled quote.
     index: sym.startsWith('^') || q.quoteType === 'INDEX',
     at,
-    spark: spark && spark.length >= 2 ? spark : null,  // today's shape, or null
+    // Today's shape. The spark endpoint is regular-session ONLY — it ignores
+    // includePrePost entirely (measured: same 79 points, same last value with
+    // the flag on) — so on an extended print its line would stop at the close
+    // while the tile shows a later price, e.g. SPY ending at 740.86 beside a
+    // displayed 743.62. Appending the extended last makes the line finish where
+    // the price and the pill do, and the resulting steep final segment is not a
+    // distortion: that gap is the after-hours move, which is exactly what the
+    // owner's prior-close Change % already counts.
+    spark: buildSpark(spark, last, ext),
   };
+}
+
+function buildSpark(series: number[] | undefined, last: number | null, ext: boolean): number[] | null {
+  if (!series || series.length < 2) return null;
+  if (!ext || last == null || series[series.length - 1] === last) return series;
+  return [...series, Number(last.toFixed(4))];
 }
 
 type List = { title: string; symbols: string[] };
