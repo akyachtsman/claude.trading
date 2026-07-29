@@ -1,5 +1,5 @@
 {
-  "_note": "BOOTSTRAP FALLBACK ONLY. The live, owner-editable rosters live in the desk_watchlists table (desk_010) and are edited from the dashboard's Watchlists panel — desk-watchlist reads that table first and only falls back to this file if the read fails. Editing this file does NOT change what the panel shows once the table is populated. Kept so the panel still renders a working roster if the table is unreachable. Symbols use Yahoo form: '^' prefixes an index (^VIX), '.' separates a share class (BRK.B). NEVER derive a list from account holdings — this repo is public.",
+  "_note": "BOOTSTRAP FALLBACK ONLY. The live, owner-editable rosters live in the desk_watchlists table (desk_010) and are edited from the dashboard's Watchlists panel — desk-watchlist reads that table first and only falls back to this file if the read fails. Editing this file does NOT change what the panel shows once the table is populated. Lists mirror the market strip's own categories (MKT_BANDS in scripts/app.js) so both surfaces name the same groups. Symbols use Yahoo form: '^' prefixes an index (^VIX, ^TNX), '.' separates a share class (BRK.B) or an exchange suffix (DX-Y.NYB), '=' marks a future (GC=F). NEVER derive a list from account holdings — this repo is public.",
   "lists": [
     {
       "title": "ETFs",
@@ -45,6 +45,70 @@
         "XLI",
         "XLF",
         "SMH"
+      ]
+    },
+    {
+      "title": "Indices",
+      "symbols": [
+        "^GSPC",
+        "^IXIC",
+        "^RUT",
+        "^DJI",
+        "^VIX"
+      ]
+    },
+    {
+      "title": "Global & income",
+      "symbols": [
+        "EEM",
+        "FXI",
+        "INDA",
+        "JPXN",
+        "SPYD"
+      ]
+    },
+    {
+      "title": "Macro",
+      "symbols": [
+        "^VIX",
+        "^TNX",
+        "DX-Y.NYB",
+        "UUP",
+        "BTC-USD",
+        "GC=F"
+      ]
+    },
+    {
+      "title": "US sectors",
+      "symbols": [
+        "XLK",
+        "XLF",
+        "XLC",
+        "XLY",
+        "XLV",
+        "XLI",
+        "XLP",
+        "XLE",
+        "XLU",
+        "XLB",
+        "XLRE"
+      ]
+    },
+    {
+      "title": "Industry & metals",
+      "symbols": [
+        "SMH",
+        "KRE",
+        "GLD",
+        "SLV"
+      ]
+    },
+    {
+      "title": "Treasuries",
+      "symbols": [
+        "SHY",
+        "TLH",
+        "TLT"
       ]
     }
   ]

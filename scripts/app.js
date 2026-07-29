@@ -746,7 +746,7 @@ let wlEditLoaded = false; /* did the authoritative read succeed? gates saving */
    real-looking symbols that could quietly resolve to unrelated securities.
    Preserving the token means it simply fails validation and is dropped, which
    is what the editor's promise actually says happens. */
-const WL_SYM_RE = /^[A-Z0-9.^-]{1,10}$/;
+const WL_SYM_RE = /^[A-Z0-9.^=-]{1,10}$/;
 const wlParseSyms = txt => [...new Set(
   String(txt || '').toUpperCase().split(/[,\s]+/).filter(t => WL_SYM_RE.test(t))
 )];
@@ -3318,7 +3318,7 @@ function wireCharts() {
     ev.preventDefault();
     if (!wbState) return;
     const sym = symInput.value.trim().toUpperCase();
-    if (!/^[A-Z0-9.^-]{1,10}$/.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
+    if (!/^[A-Z0-9.^=-]{1,10}$/.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
     if (wbState.data.symbols[sym]) { symNote.textContent = ''; wbPick(sym); return; }
     if (DESK.mode === 'demo' || !DESK_DB.url) {
       symNote.textContent = 'Live ticker lookups are off in demo mode';

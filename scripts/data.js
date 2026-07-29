@@ -539,6 +539,19 @@ const DEMO_WL = {
   XLB: ['Materials Select Sector SPDR', 52.34, 0.00], XLE: ['Energy Select Sector SPDR', 58.10, 0.92],
   XLI: ['Industrial Select Sector SPDR', 182.52, 0.02], XLF: ['Financial Select Sector SPDR', 57.55, -0.09],
   SMH: ['VanEck Semiconductor ETF', 534.34, 0.90],
+  /* the strip's own categories, seeded 2026-07-29 with the same lists. Without
+     an entry here a symbol falls back to a name-seeded price, which reads fine
+     for an ETF but absurd for an index (^GSPC at 80). Sector and macro figures
+     match the demo market strip's so the two surfaces agree. */
+  '^GSPC': ['S&P 500', 6318.42, 0.54], '^IXIC': ['Nasdaq Composite', 23104.88, 0.81],
+  '^RUT': ['Russell 2000', 2438.60, -0.33], '^DJI': ['Dow Jones Industrial Average', 44912.30, 0.12],
+  '^TNX': ['CBOE 10-Year Treasury Yield', 4.31, 1.18],
+  'DX-Y.NYB': ['US Dollar Index', 104.28, -0.12],
+  'BTC-USD': ['Bitcoin USD', 64216.00, -0.77], 'GC=F': ['Gold Feb 26', 2634.50, 0.31],
+  XLC: ['Communication Svcs Sel SPDR', 108.70, 0.55], XLY: ['Consumer Discret Sel SPDR', 224.60, 0.83],
+  XLP: ['Consumer Staples Sel SPDR', 82.40, -0.06], XLU: ['Utilities Select Sector SPDR', 81.20, 0.41],
+  XLRE: ['Real Estate Select Sector SPDR', 41.30, 0.24],
+  KRE: ['SPDR S&P Regional Banking ETF', 65.40, -0.96], SLV: ['iShares Silver Trust', 33.80, 0.61],
 };
 
 /* Extra map universes (Crypto/Futures/World): delayed quotes fetched on
