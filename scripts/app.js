@@ -1932,6 +1932,13 @@ function renderWbSidebar(data) {
    display — the terminal's Pro 3 runs 15-min bars (established by matching
    its hover OHLC against this exact aggregation; see ISTOCH in data.js).
    The raw 5-min series stays untouched for the daily forming-candle graft. */
+/* Pro 3 plots 15-MINUTE bars, so a session's bar count depends on whether
+   extended hours are showing: 9:30–16:00 is 26 bars, 4:00–20:00 is 64. The
+   default window is two sessions either way. */
+const WB_P3_BARS_REG = 26;
+const WB_P3_BARS_EXT = 64;
+const p3Window = ext => 2 * (ext ? WB_P3_BARS_EXT : WB_P3_BARS_REG);
+
 /* Session boundaries land on exact 15-minute marks (9:30 = minute 570, 4:00pm =
    960), so a bucket never straddles the regular/extended line — the first bar's
    x flag describes the whole bucket. */
@@ -1996,7 +2003,15 @@ function renderCharts(data, lamp) {
      days3d = the EOD-fallback branch's window in DAILY bars (Codex #149: the
      two branches display different bar sizes, so they carry separate
      window/pan state instead of sharing one number). */
-  wbState = wbState && wbState.data === data ? wbState : { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: 52, days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg: loadWbCfg() };
+  if (!(wbState && wbState.data === data)) {
+    /* days3 is a BAR count, and an extended session holds 64 fifteen-minute
+       bars against a regular session's 26 — so a fixed 52 stops meaning "two
+       sessions" the moment extended hours are on (Codex review, PR #187). Size
+       the default from the toggle instead, and rescale on flip (below) so the
+       view keeps its span rather than collapsing to under one day. */
+    const cfg = loadWbCfg();
+    wbState = { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: p3Window(cfg.p3.ext), days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg };
+  }
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
   lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
@@ -2747,7 +2762,16 @@ function buildWbSettings() {
     group('Indicators', ind);
     /* Pro 3 alone trades on intraday bars, so it alone can show the extended
        session (owner request 2026-07-29). */
-    if (key === 'p3') group('Session', [['Extended hours (4am–8pm ET)', () => cfg.ext, v => { cfg.ext = v; }]]);
+    if (key === 'p3') group('Session', [['Extended hours (4am–8pm ET)', () => cfg.ext, v => {
+      /* Rescale the window and pan offset across the flip so the pane keeps the
+         same CALENDAR span — 64 bars/day extended vs 26 regular. Without this,
+         switching on would shrink the view to well under a single day. */
+      const before = cfg.ext ? WB_P3_BARS_EXT : WB_P3_BARS_REG;
+      const after = v ? WB_P3_BARS_EXT : WB_P3_BARS_REG;
+      cfg.ext = v;
+      wbState.days3 = Math.max(20, Math.round(wbState.days3 * after / before));
+      wbState.off3 = Math.round(wbState.off3 * after / before);
+    }]]);
     if (full) {
       group('Moving averages', [25, 50, 100, 200, 1].map(n =>
         ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));

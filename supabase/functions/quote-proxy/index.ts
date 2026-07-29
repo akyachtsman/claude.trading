@@ -35,6 +35,12 @@ const reply = (status: number, body: unknown, cors: Record<string, string>) =>
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk quote-proxy; +https://akyachtsman.github.io/claude.trading/)' };
 const KEEP_BARS = 800; // ~3 years of daily view + weekly-stoch warmup (owner ruling 2026-07-14)
+// Intraday needs its own, larger cap. A 5-day extended-hours response is ~961
+// 5-minute bars (4:00am–8:00pm ET × 5 sessions), so the 800 daily cap would
+// silently drop the oldest ~161 — most of the first session — and Pro 3's
+// navigator could no longer reach the five days the feed advertises. Sized with
+// headroom over the measured 961 (Codex review, PR #187).
+const KEEP_BARS_INTRADAY = 1200;
 
 // Small in-memory response cache (per warm instance) — a soft guardrail that
 // collapses repeat lookups of the same ticker before they reach upstream.
@@ -49,9 +55,9 @@ const CACHE = new Map<string, Cached>();
 type Series = { t: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[]; x: number[] };
 const emptySeries = (): Series => ({ t: [], o: [], h: [], l: [], c: [], v: [], x: [] });
 
-function pack(rows: { t: string; o: number; h: number; l: number; c: number; v: number; x?: number }[]): Series {
+function pack(rows: { t: string; o: number; h: number; l: number; c: number; v: number; x?: number }[], keep = KEEP_BARS): Series {
   const s = emptySeries();
-  for (const r of rows.slice(-KEEP_BARS)) {
+  for (const r of rows.slice(-keep)) {
     s.t.push(r.t); s.o.push(r.o); s.h.push(r.h); s.l.push(r.l); s.c.push(r.c); s.v.push(r.v); s.x.push(r.x ?? 0);
   }
   return s;
@@ -91,8 +97,13 @@ function regularRanges(meta: any): [number, number][] {
       }
     }
   }
-  const cur = meta?.currentTradingPeriod?.regular;
-  if (!out.length && typeof cur?.start === 'number' && typeof cur?.end === 'number') out.push([cur.start, cur.end]);
+  // Deliberately NO currentTradingPeriod fallback (Codex review, PR #187).
+  // That field describes ONE day, and applying it to a 5-day response marks
+  // every prior day's regular bars as extended — which the 20-regular-bar floor
+  // can still pass on the current day alone, after which regularOnly() would
+  // quietly discard almost all history and the daily graft would be built from
+  // a single session. An empty result is the honest answer; the caller retries
+  // without extended hours rather than classifying on a guess.
   return out;
 }
 
@@ -130,6 +141,9 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
   // just one day of a 5-day window, which flagged 313 of 391 genuinely regular
   // QQQ bars as extended. Caught live before any caller depended on it.
   const regs = intraday && prepost ? regularRanges(r.meta) : [];
+  // Extended bars we cannot classify are worse than no extended bars: they would
+  // flow unmarked into regularOnly() and the daily graft. Retry regular-only.
+  if (intraday && prepost && !regs.length) return yahooChart(symbol, range, interval, intraday, false);
   const isRegular = (ts: number) => !regs.length || regs.some(([a, b]) => ts >= a && ts < b);
   const rows = [];
   for (let i = 0; i < r.timestamp.length; i++) {
@@ -151,7 +165,7 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
   // The floor counts REGULAR bars only: a thin pre-market on a quiet ticker
   // must not let a mostly-empty session pass as a full one.
   const minBars = intraday ? 20 : 30;
-  return rows.filter((b) => !b.x).length >= minBars ? pack(rows) : null;
+  return rows.filter((b) => !b.x).length >= minBars ? pack(rows, intraday ? KEEP_BARS_INTRADAY : KEEP_BARS) : null;
 }
 
 // ── fundamentals (kind:'info') ───────────────────────────────────────────────

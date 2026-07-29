@@ -747,14 +747,23 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   // The weekly-stoch overlay toggle now lives on Pro 2 ALONE (owner ruling
   // 2026-07-17); Pro 1/Pro 3 show only their native stochastic.
   // Pro 1 = full set (bb, vol, stoch, 5 SMAs, 3 S/R, 5 SMA-price = 16 boxes
-  // + 2 style radios); Pro 3 = slim day-trading panel (bb, vol, stoch = 3 boxes)
+  // + 2 style radios); Pro 3 = slim day-trading panel (bb, vol, stoch) PLUS the
+  // Session -> Extended hours toggle (owner request 2026-07-29) = 4 boxes.
+  // Pro 3 alone gets that toggle: it is the only intraday tier.
   await page.locator('#wbGear-p1').click();
   await expect(page.locator('#wbSettings-p1')).toBeVisible();
   expect(await page.locator('#wbSettings-p1 input[type=radio]').count()).toBe(2);
   expect(await page.locator('#wbSettings-p1 input[type=checkbox]').count()).toBe(16);
   await page.locator('#wbGear-p3').click();
   await expect(page.locator('#wbSettings-p1')).toBeHidden();
-  expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(3);
+  expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(4);
+  // the extended-hours control is present, on by default, and actually toggles
+  const ext = page.locator('#wbSettings-p3 label', { hasText: 'Extended hours' });
+  await expect(ext).toBeVisible();
+  const extBox = ext.locator('input[type=checkbox]');
+  await expect(extBox).toBeChecked();
+  await extBox.uncheck();
+  await expect(extBox).not.toBeChecked();
 });
 
 // S13 — Heatmap MAP FILTER rail: index cuts re-render the treemap, the ETF
