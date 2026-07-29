@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260730n">
-<link rel="stylesheet" href="styles/components.css?v=20260730n">
+<link rel="stylesheet" href="styles/tokens.css?v=20260730p">
+<link rel="stylesheet" href="styles/components.css?v=20260730p">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -578,8 +578,14 @@
         <button type="button" class="btn btn-secondary ml-auto" id="wlQuickCloseBtn" aria-label="Cancel">✕</button>
       </div>
       <div class="panel-body">
-        <p class="lock-explain" id="wlQuickHint">Separate symbols with commas, spaces or new lines.</p>
-        <input class="input wl-quick-input" id="wlQuickInput" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="wlQuickHint">
+        <p class="lock-explain" id="wlQuickHint">Separate symbols with commas, spaces or new lines. Enter adds them; Shift+Enter starts a new line.</p>
+        <!-- A textarea, not a text input (Codex review, PR #196): a single-line
+             input strips the newlines out of a pasted broker column, so SPY and
+             QQQ on two lines arrived as "SPYQQQ" — which passes the ticker
+             grammar and would have been saved as a symbol that doesn't exist.
+             Pasting a column is the documented workflow, so the field has to
+             hold what was pasted. -->
+        <textarea class="input wl-quick-input" id="wlQuickInput" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="wlQuickHint"></textarea>
         <div class="wl-edit-actions">
           <button type="button" class="btn" id="wlQuickSaveBtn">Add</button>
         </div>
@@ -754,8 +760,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260730n"></script>
-<script src="scripts/data.js?v=20260730n"></script>
-<script src="scripts/app.js?v=20260730n"></script>
+<script src="scripts/config.js?v=20260730p"></script>
+<script src="scripts/data.js?v=20260730p"></script>
+<script src="scripts/app.js?v=20260730p"></script>
 </body>
 </html>

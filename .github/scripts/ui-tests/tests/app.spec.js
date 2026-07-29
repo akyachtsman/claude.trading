@@ -899,6 +899,54 @@ test('S21: watchlist write controls are auth-gated and the hold is deliberate', 
   await page.locator('#wlQuickInput').fill('!!!');
   await page.locator('#wlQuickSaveBtn').click();
   await expect(page.locator('#wlQuickErr')).toBeVisible();
+
+  // A pasted broker column must survive as SEPARATE symbols. A single-line
+  // input silently joined them into one token that passed the ticker grammar
+  // (Codex review, PR #196), so the field has to hold newlines.
+  const field = page.locator('#wlQuickInput');
+  expect(await field.evaluate(e => e.tagName), 'newlines need a textarea').toBe('TEXTAREA');
+  await field.fill('SPY\nQQQ');
+  expect(await field.inputValue(), 'the newline must survive').toBe('SPY\nQQQ');
+  expect(
+    await page.evaluate(() => wlParseSyms(document.getElementById('wlQuickInput').value)),
+    'two lines are two symbols, never one concatenated token',
+  ).toEqual(['SPY', 'QQQ']);
+
+  // closing hands focus back to the + that opened it
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlQuickBackdrop')).toBeHidden();
+  expect(
+    await page.evaluate(() => document.activeElement?.classList.contains('wl-add')),
+    'focus returns to the invoking +',
+  ).toBe(true);
+});
+
+// S22 — Duplicate list titles must not misroute a quick edit (Codex review,
+// PR #196). The editor permits two lists with the same name and hands out
+// "New list" by default, so targeting by title alone could add to the first
+// band while the dialog named the second. Position is the key; the title is
+// checked against it.
+test('S22: quick edits resolve the right band when two lists share a title', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+
+  const picked = await page.evaluate(() => {
+    /* two same-named lists, distinguishable only by position */
+    const lists = [
+      { title: 'Dupe', symbols: ['AAA'], rows: [{ sym: 'AAA', last: 1, pct: 0 }] },
+      { title: 'Dupe', symbols: ['BBB'], rows: [{ sym: 'BBB', last: 2, pct: 0 }] },
+    ];
+    return [0, 1].map(i => {
+      const l = wlPick(lists, i, 'Dupe');
+      return l ? l.symbols[0] : null;
+    });
+  });
+  expect(picked, 'each position must resolve to its own list').toEqual(['AAA', 'BBB']);
+
+  // and if the roster moved under us, refuse rather than mutate the wrong one
+  const stale = await page.evaluate(() =>
+    wlPick([{ title: 'Renamed', symbols: [] }, { title: 'Other', symbols: [] }], 0, 'Dupe'));
+  expect(stale, 'a shifted roster must resolve to nothing').toBe(null);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

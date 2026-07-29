@@ -709,7 +709,7 @@ function renderWatchlist(payload, lamp) {
      navigation, so there are no tabs to click through. */
   stripEl.textContent = '';
   let total = 0;
-  lists.forEach(l => {
+  lists.forEach((l, li) => {
     const rows = l.rows || [];
     total += rows.length;
     const group = el('div', 'mkt-group');
@@ -725,7 +725,7 @@ function renderWatchlist(payload, lamp) {
       add.type = 'button';
       add.title = 'Add symbols to ' + l.title;
       add.setAttribute('aria-label', 'Add symbols to ' + l.title);
-      add.addEventListener('click', () => openWlQuickAdd(l.title));
+      add.addEventListener('click', () => openWlQuickAdd(li, l.title, add));
       head.appendChild(add);
     }
     group.appendChild(head);
@@ -735,7 +735,7 @@ function renderWatchlist(payload, lamp) {
        without a comparator. */
     for (const r of wlSortRows(rows)) {
       const tile = wlTile(r, pending);
-      if (canEdit) wlWireHold(tile, r.sym, l.title);
+      if (canEdit) wlWireHold(tile, r.sym, li, l.title);
       box.appendChild(tile);
     }
     group.appendChild(box);
@@ -798,6 +798,32 @@ const wlCanEdit = () => DESK.mode !== 'demo' && DESK.authed;
        roster edited on another device would be silently rolled back by an add
        built from that stale payload.
    `mutate` returns false to mean "nothing to do", which skips the write. */
+/* One quick edit at a time (Codex review, PR #196). Both dialogs are
+   read-modify-write against a replace-all, so two overlapping runs read the
+   same roster and the second write silently discards the first one's addition.
+   The button's disabled attribute alone did not cover this — Enter in the
+   input, or closing and reopening the dialog for another list, reached the
+   submit path while a request was still in flight. */
+let wlBusy = false;
+
+/* Resolve the band the owner acted on inside the AUTHORITATIVE roster.
+   Targeting by title alone was wrong (Codex review, PR #196): the editor
+   permits duplicate titles and hands out "New list" by default, so `find` on
+   the title could mutate the first band while the dialog named the second.
+
+   Position is a sound key here because both sides order identically — the edge
+   function reads `order=pos.asc,id.asc` and desk_get_watchlists aggregates
+   `order by w.pos, w.id` (desk_010). The title is then checked against that
+   position as a guard: if they disagree the roster moved under us, and refusing
+   is the only safe answer. Falls back to a title match only when it is
+   UNAMBIGUOUS, which covers an ordering surprise without reintroducing the bug. */
+function wlPick(lists, idx, title) {
+  const at = lists[idx];
+  if (at && at.title === title) return at;
+  const named = lists.filter(l => l.title === title);
+  return named.length === 1 ? named[0] : null;
+}
+
 async function wlMutate(mutate) {
   const pin = sessionStorage.getItem('desk_pin');
   if (!pin) return { ok: false, err: 'Unlock the desk first.' };
@@ -823,7 +849,19 @@ async function wlMutate(mutate) {
 }
 
 /* ── quick add ─────────────────────────────────────────────────────────── */
-let wlQuickList = null;   /* which list's + was pressed */
+let wlQuickList = null;   /* {idx, title} — which band's + was pressed */
+let wlReturnFocus = null; /* the + or tile that opened a dialog, to restore to */
+
+/* Both quick dialogs hand focus back to whatever opened them (Codex review,
+   PR #196), the way the full editor already does. Without it a keyboard user who
+   pressed Delete on a tile and then chose "Keep it" is dropped on <body> and has
+   to tab the whole page to get back to where they were. */
+function wlRestoreFocus() {
+  const el = wlReturnFocus;
+  wlReturnFocus = null;
+  /* the panel may have re-rendered under us, which replaces the node */
+  if (el && el.isConnected && typeof el.focus === 'function') el.focus();
+}
 
 function wlQuickErr(msg) {
   const p = document.getElementById('wlQuickErr');
@@ -832,40 +870,46 @@ function wlQuickErr(msg) {
   p.hidden = !msg;
 }
 
-function openWlQuickAdd(title) {
-  if (!wlCanEdit()) return;
-  wlQuickList = title;
+function openWlQuickAdd(idx, title, invoker) {
+  if (!wlCanEdit() || wlBusy) return;
+  wlQuickList = { idx, title };
+  wlReturnFocus = invoker || null;
   const back = document.getElementById('wlQuickBackdrop');
   const head = document.getElementById('wlQuickTitle');
   const input = document.getElementById('wlQuickInput');
   if (!back || !input) return;
   if (head) head.textContent = 'Add to ' + title;
   input.value = '';
+  input.disabled = false;
   wlQuickErr('');
   back.hidden = false;
   input.focus();
 }
 
 function closeWlQuickAdd() {
+  if (wlBusy) return;   /* don't abandon a write mid-flight */
   const back = document.getElementById('wlQuickBackdrop');
   if (back) back.hidden = true;
   wlQuickList = null;
+  wlRestoreFocus();
 }
 
 async function submitWlQuickAdd() {
   const input = document.getElementById('wlQuickInput');
   const btn = document.getElementById('wlQuickSaveBtn');
-  if (!input || wlQuickList == null) return;
+  if (!input || !wlQuickList || wlBusy) return;
   /* Same parse the editor uses, so "BRK.B, SPY" and a pasted broker column
      behave identically here (and the RPC re-validates regardless). */
   const syms = wlParseSyms(input.value);
   if (!syms.length) { wlQuickErr('No usable ticker in that — letters, digits, . ^ = - only.'); return; }
-  const target = wlQuickList;
+  const { idx, title } = wlQuickList;
+  wlBusy = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
-  let already = [];
+  input.disabled = true;   /* the Enter path has to be shut too, not just the button */
+  let already = [], found = true;
   const res = await wlMutate(lists => {
-    const l = lists.find(x => x.title === target);
-    if (!l) return false;
+    const l = wlPick(lists, idx, title);
+    if (!l) { found = false; return false; }
     const have = new Set(l.symbols);
     already = syms.filter(s => have.has(s));
     const fresh = syms.filter(s => !have.has(s));
@@ -873,13 +917,17 @@ async function submitWlQuickAdd() {
     l.symbols.push(...fresh);
     return true;
   });
+  wlBusy = false;
   if (btn) { btn.disabled = false; btn.textContent = 'Add'; }
+  input.disabled = false;
   if (res.ok) { closeWlQuickAdd(); return; }
+  input.focus();
   /* A pure duplicate is not an error worth a scary message, but it must not
      look like a successful add either. */
-  wlQuickErr(res.err || (already.length
-    ? (already.length === 1 ? already[0] + ' is already in ' : 'Already in ') + target + '.'
-    : 'That list is no longer there — reload and try again.'));
+  wlQuickErr(res.err || (!found
+    ? 'That list moved or was renamed — reload and try again.'
+    : already.length === 1 ? already[0] + ' is already in ' + title + '.'
+    : 'Already in ' + title + '.'));
 }
 
 /* ── hold to remove ────────────────────────────────────────────────────── */
@@ -893,9 +941,10 @@ function wlRmErr(msg) {
   p.hidden = !msg;
 }
 
-function openWlRemove(sym, title) {
-  if (!wlCanEdit()) return;
-  wlRmTarget = { sym, title };
+function openWlRemove(sym, idx, title, invoker) {
+  if (!wlCanEdit() || wlBusy) return;
+  wlRmTarget = { sym, idx, title };
+  wlReturnFocus = invoker || null;
   const back = document.getElementById('wlRmBackdrop');
   const text = document.getElementById('wlRmText');
   if (!back) return;
@@ -907,27 +956,34 @@ function openWlRemove(sym, title) {
 }
 
 function closeWlRemove() {
+  if (wlBusy) return;
   const back = document.getElementById('wlRmBackdrop');
   if (back) back.hidden = true;
   wlRmTarget = null;
+  wlRestoreFocus();
 }
 
 async function confirmWlRemove() {
-  if (!wlRmTarget) return;
-  const { sym, title } = wlRmTarget;
+  if (!wlRmTarget || wlBusy) return;
+  const { sym, idx, title } = wlRmTarget;
   const btn = document.getElementById('wlRmConfirmBtn');
+  wlBusy = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Removing…'; }
+  let found = true;
   const res = await wlMutate(lists => {
-    const l = lists.find(x => x.title === title);
-    if (!l) return false;
+    const l = wlPick(lists, idx, title);
+    if (!l) { found = false; return false; }
     const i = l.symbols.indexOf(sym);
     if (i < 0) return false;
     l.symbols.splice(i, 1);
     return true;
   });
+  wlBusy = false;
   if (btn) { btn.disabled = false; btn.textContent = 'Remove'; }
   if (res.ok) { closeWlRemove(); return; }
-  wlRmErr(res.err || sym + ' was already gone from that list.');
+  wlRmErr(res.err || (!found
+    ? 'That list moved or was renamed — reload and try again.'
+    : sym + ' was already gone from that list.'));
 }
 
 /* Three seconds of pointer-down on a tile opens the confirm dialog. A hold is
@@ -938,7 +994,7 @@ async function confirmWlRemove() {
    A hold is pointer-only, so Delete/Backspace on a focused tile reaches the
    same dialog: the tiles are already focusable for screen readers, and a
    remove that only a mouse can reach is not a remove everyone has. */
-function wlWireHold(tile, sym, title) {
+function wlWireHold(tile, sym, idx, title) {
   let timer = null, sx = 0, sy = 0;
   const stop = () => {
     if (timer) { clearTimeout(timer); timer = null; }
@@ -948,7 +1004,7 @@ function wlWireHold(tile, sym, title) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     sx = e.clientX; sy = e.clientY;
     tile.classList.add('wl-holding');
-    timer = setTimeout(() => { stop(); openWlRemove(sym, title); }, WL_HOLD_MS);
+    timer = setTimeout(() => { stop(); openWlRemove(sym, idx, title, tile); }, WL_HOLD_MS);
   });
   /* A drag or a touch-scroll is not a hold — without this, scrolling the page
      with a finger resting on a tile would arm a removal. */
@@ -961,7 +1017,7 @@ function wlWireHold(tile, sym, title) {
   tile.addEventListener('keydown', e => {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
     e.preventDefault();
-    openWlRemove(sym, title);
+    openWlRemove(sym, idx, title, tile);
   });
 }
 
@@ -973,7 +1029,14 @@ function wireWatchlistQuickEdits() {
   if (qClose) qClose.addEventListener('click', closeWlQuickAdd);
   if (qSave) qSave.addEventListener('click', submitWlQuickAdd);
   if (q) q.addEventListener('click', e => { if (e.target === q) closeWlQuickAdd(); });
-  if (qInput) qInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitWlQuickAdd(); } });
+  /* Enter submits, Shift+Enter breaks a line. Pasting is unaffected either way —
+     a paste inserts its own newlines without going through this handler, which
+     is what lets the textarea take a broker column verbatim. */
+  if (qInput) qInput.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    submitWlQuickAdd();
+  });
 
   const r = document.getElementById('wlRmBackdrop');
   const rCancel = document.getElementById('wlRmCancelBtn');

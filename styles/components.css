@@ -360,7 +360,10 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   .wl-strip .wl-tile.wl-holding::after { animation: none; width: 50%; }
 }
 
-.wl-quick-input { width: 100%; margin-bottom: var(--space-3); text-transform: uppercase; }
+.wl-quick-input {
+  width: 100%; margin-bottom: var(--space-3); text-transform: uppercase;
+  resize: vertical; min-height: 62px; font-family: var(--font-mono);
+}
 .wl-quick-panel, .wl-rm-panel { max-width: 420px; }
 
 /* EXT / CLOSE provenance marker — which session the price came from.
