@@ -1987,10 +1987,13 @@ let mapView = { key: 'sp500', period: '1d', filters: null };
    tiles (feed's daily 1y sweep — absent for a few minutes after a cold
    function boot, and always absent in demo) */
 const PERIOD_FIELD = { '1w': 'pctW', '1m': 'pctM', 'ytd': 'pctYtd' };
+/* Unlocks 1W/1M/YTD only if some tile actually carries a usable reading.
+   Sampling one tile for `pctW !== undefined` was too weak: the feed records
+   symbols it could not price with a null reading, so a single null-valued
+   first tile would open the dropdown onto a period that renders nothing. */
 function datasetHasPeriods(hm) {
   if (!hm || !hm.sectors) return false;
-  const t = hm.sectors[0] && hm.sectors[0].tiles[0];
-  return Boolean(t && t.pctW !== undefined);
+  return hm.sectors.some(s => s.tiles.some(t => Number.isFinite(t.pctW)));
 }
 /* re-color a cut by the selected period; tiles without that period drop out */
 function recolorForPeriod(hm, period) {
