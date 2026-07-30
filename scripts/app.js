@@ -3002,9 +3002,35 @@ function renderCharts(data, lamp) {
     let vMax = 0;
     if (opts.cfg.vol) for (let i = i0; i < end; i++) vMax = Math.max(vMax, bars.v[i]);
     const isLine = opts.cfg.type === 'line';
+    /* `opts.colorSt` (Pro 2 only) colours the candles by a STOCHASTIC CROSSOVER
+       instead of the day's open/close — %K (red) above %D (yellow) = green,
+       below = red. The owner reads that pane for long-term entries, where "is
+       momentum with me" is the decision and a single day's direction is noise.
+
+       The series passed in is the WEEKLY-SCALE 92-15-15, not the fast daily
+       (owner ruling 2026-07-30): on a long-term pane the regime that matters is
+       the long-term one. It is computed independently of the weekly OVERLAY
+       toggle, so turning that strip off changes what is drawn, never what the
+       candles mean.
+
+       CONSEQUENCE, deliberately accepted: in this pane a green candle can be a
+       DOWN day. The body still shows direction — open vs close positions it —
+       but the fill now means momentum regime, not today's result. */
+    const cst = opts.colorSt;
+    const byStoch = !!(cst && cst.k && cst.d);
+    const barUp = i => {
+      if (byStoch) {
+        const k = cst.k[i], d = cst.d[i];
+        /* Before the stochastic warms up (the leading bars are null) there is
+           no regime to show, so those fall back to price direction rather than
+           defaulting everything to one colour. */
+        if (k != null && d != null) return k > d;
+      }
+      return bars.c[i] >= bars.o[i];
+    };
     let closeD = '';
     for (let i = i0; i < end; i++) {
-      const up = bars.c[i] >= bars.o[i];
+      const up = barUp(i);
       const col = up ? WB.up : WB.down;
       const cx = x(i);
       if (isLine) {
@@ -3013,7 +3039,13 @@ function renderCharts(data, lamp) {
         line(cx, py(bars.h[i]), cx, py(bars.l[i]), { stroke: col, 'stroke-width': 1 });
         svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col, 'shape-rendering': 'crispEdges' }));
       }
-      if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: col, 'shape-rendering': 'crispEdges' }));
+      /* VOLUME keeps price direction even in the stochastic-coloured pane: a
+         volume bar is a fact about that one day, and tinting it by a momentum
+         regime would make the histogram claim something it does not measure. */
+      if (vMax) {
+        const vcol = bars.c[i] >= bars.o[i] ? WB.up : WB.down;
+        svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: vcol, 'shape-rendering': 'crispEdges' }));
+      }
     }
     /* line style draws closes in gain-green, like the reference platform */
     if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
@@ -3358,16 +3390,28 @@ function renderCharts(data, lamp) {
        2026-07-22: daily circles are Pro 1's swing signal). */
     const sym = effSym(wbState.cfg.p2);
     const d = daily(sym);
-    const stW2 = wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null;
+    /* The weekly stochastic is computed unconditionally because it drives the
+       CANDLE COLOUR below; the overlay toggle only decides whether its strip is
+       also drawn. Tying the two would make turning the strip off silently
+       change what every candle means. */
+    const wk2 = weeklyStochOnDaily(d.bars);
+    const stW2 = wbState.cfg.p2.stochW ? wk2 : null;
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · LONG-TERM · ' + sym, {
       window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
+      /* Candles by the WEEKLY stochastic crossover — Pro 2 ONLY (owner ruling
+         2026-07-30). Pro 1 and Pro 3 keep open/close, where a day's direction
+         is the point. */
+      colorSt: wk2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
       marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
       stochCaption: stochTag() + ' · DAILY',
-      stochWCaption: stochWTag() + ' · WEEKLY SCALE',
+      /* names the strip the candles take their colour from — in this pane a
+         green candle can be a down day, so leaving that unstated would read
+         as a rendering bug rather than the intended signal */
+      stochWCaption: stochWTag() + ' · WEEKLY SCALE · CANDLE COLOUR',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,

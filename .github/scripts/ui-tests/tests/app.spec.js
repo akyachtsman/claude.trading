@@ -1011,6 +1011,112 @@ test('S24: a failed accounts load keeps the desk authenticated', async ({ page }
     .toBeGreaterThan(0);
 });
 
+// S25 — Pro 2 colours candles by the WEEKLY STOCHASTIC CROSSOVER, not open/close
+// and not the fast daily (owner ruling 2026-07-30): %K (red) above %D (yellow)
+// = green candle, below = red. Pro 1 keeps price colouring.
+//
+// Read off the rendered SVG rather than by comparing the two panes' colour
+// sequences to each other — the panes run different default windows (63 vs 126
+// bars), so "the sequences differ" would pass even with Pro 2 silently fallen
+// back to price colouring, which is the exact regression at issue. Both the
+// daily strip and Pro 1 serve as negative controls: the rule must hold against
+// the weekly series and visibly FAIL against the other two, or the check isn't
+// distinguishing which stochastic is in play.
+test('S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await page.waitForSelector('#wbChart');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(800);
+
+  const probe = await page.evaluate(() => {
+    const svg = document.getElementById('wbChart');
+    const W = svg.viewBox.baseVal.width;
+    const texts = [...svg.querySelectorAll('text')];
+    const pts = el => (el.getAttribute('d').match(/[ML][-\d.]+[ ,][-\d.]+/g) || [])
+      .map(s => s.slice(1).split(/[ ,]/).map(Number)).map(([x, y]) => ({ x, y }));
+
+    /* Pane bounds come from the pane titles — each pane owns the x band from
+       its own title to the next. Everything below is scoped to that band;
+       without it a lookup silently strays into a neighbouring pane. */
+    const titles = texts.filter(t => /^PRO \d/.test(t.textContent))
+      .map(t => ({ t: t.textContent, x: +t.getAttribute('x') }))
+      .sort((a, c) => a.x - c.x);
+
+    const read = (titleRe, capRe) => {
+      const ti = titles.findIndex(t => titleRe.test(t.t));
+      if (ti < 0) return { err: 'pane title not found: ' + titleRe };
+      const x0 = titles[ti].x - 10;
+      const x1 = ti + 1 < titles.length ? titles[ti + 1].x - 10 : W;
+      const inPane = x => x >= x0 && x < x1;
+
+      const cap = texts.find(t => capRe.test(t.textContent) && inPane(+t.getAttribute('x')));
+      if (!cap) return { err: 'caption not found in pane: ' + capRe };
+      const capY = +cap.getAttribute('y');
+
+      // this strip's own %K/%D are the nearest paths below its caption
+      const near = stroke => [...svg.querySelectorAll('path[stroke="' + stroke + '"]')]
+        .map(p => ({ p, b: p.getBBox() })).filter(o => inPane(o.b.x) && o.b.y > capY)
+        .sort((a, c) => a.b.y - c.b.y)[0];
+      const kO = near('#e23b3b'), dO = near('#f5c518');
+      if (!kO || !dO) return { err: 'strip paths not found under ' + capRe };
+      const k = pts(kO.p), d = pts(dO.p);
+
+      // candles sit above the pane's FIRST strip, never above a lower one
+      const topCapY = Math.min(...texts
+        .filter(t => /STOCH|RSI/.test(t.textContent) && inPane(+t.getAttribute('x')))
+        .map(t => +t.getAttribute('y')));
+      let rects = [...svg.querySelectorAll('rect[shape-rendering=crispEdges]')]
+        .map(r => ({ cx: +r.getAttribute('x') + +r.getAttribute('width') / 2, y: +r.getAttribute('y'), h: +r.getAttribute('height'), fill: r.getAttribute('fill') }))
+        .filter(r => inPane(r.cx) && r.y < topCapY - 20);
+      /* Volume bars share the candle shape but all rest on ONE baseline, so the
+         modal bottom edge identifies them. They stay price-coloured on purpose,
+         and counting them here would fake a disagreement. */
+      const tally = {};
+      for (const r of rects) { const bb = (r.y + r.h).toFixed(1); tally[bb] = (tally[bb] || 0) + 1; }
+      const vol = Object.entries(tally).sort((a, c) => c[1] - a[1])[0];
+      if (vol && vol[1] > 5) rects = rects.filter(r => (r.y + r.h).toFixed(1) !== vol[0]);
+
+      /* Tolerance scales with bar spacing. A fixed pixel budget spans three
+         bars once the pane is 166px wide on a phone, which is how an earlier
+         version passed on a desktop viewport and failed in CI on both mobile
+         projects. */
+      const step = k.length > 1 ? (k[k.length - 1].x - k[0].x) / (k.length - 1) : 1;
+      const tol = step / 2 + 0.01;
+      const at = (arr, x) => arr.reduce((best, p) => Math.abs(p.x - x) < Math.abs(best.x - x) ? p : best, arr[0]);
+      let agree = 0, disagree = 0;
+      for (const bd of rects) {
+        const kp = at(k, bd.cx), dp = at(d, bd.cx);
+        if (Math.abs(kp.x - bd.cx) > tol || Math.abs(dp.x - bd.cx) > tol) continue;  // warm-up gap
+        if (Math.abs(kp.y - dp.y) < 0.25) continue;                                  // too close to call
+        (bd.fill.includes('gain') === (kp.y < dp.y)) ? agree++ : disagree++;         // lower y = higher value
+      }
+      return { agree, disagree };
+    };
+    return {
+      weekly: read(/^PRO 2/, /CANDLE COLOUR/),        // the rule
+      daily: read(/^PRO 2/, /· DAILY$/),              // must NOT be what drives it
+      p1: read(/^PRO 1/, /· DAILY$/),                 // must still follow price
+    };
+  });
+
+  for (const [key, r] of Object.entries(probe)) expect(r.err, `${key} located`).toBeUndefined();
+  expect(probe.weekly.agree, 'Pro 2 candles sampled').toBeGreaterThan(40);
+  expect(probe.p1.agree + probe.p1.disagree, 'Pro 1 candles sampled').toBeGreaterThan(20);
+
+  // Pro 2: EVERY candle must match the WEEKLY crossover — no exceptions.
+  expect(probe.weekly.disagree, 'every Pro 2 candle matches the weekly %K vs %D').toBe(0);
+
+  // ...and must NOT be explainable by the fast daily strip in the same pane —
+  // otherwise this passes whichever series the code happens to use.
+  expect(probe.daily.disagree, 'Pro 2 colour is the weekly series, not the daily one')
+    .toBeGreaterThan(probe.daily.agree * 0.2);
+
+  // Pro 1 is the control: it follows open/close, so it must contradict its own
+  // stochastic on a real share of bars. Zero here would mean the rule leaked.
+  expect(probe.p1.disagree, 'Pro 1 still follows open/close, not the stochastic')
+    .toBeGreaterThan(probe.p1.agree * 0.1);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // S15–S19 — Live desk assistant (memory + research + live data + advice + clear).
 // Each makes a REAL desk-ask Claude tool-loop call (slow, nondeterministic, costs
