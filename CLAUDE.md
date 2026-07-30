@@ -175,17 +175,20 @@ This project's look is its own — established at kickoff via `/design-intake`
   splitting a pasted table on whitespace turns "BRK B" into BRK + B, both of
   which *look* like tickers, so naming what didn't resolve is the only honest
   signal.
-  **Quick add / hold-to-remove** (owner request 2026-07-30) — per-list edits
+  **Quick add / double-click remove** (owner request 2026-07-30) — per-list edits
   without opening the full ✎ editor. A small round **+** sits in each band's
   gutter beside the list name (`.wl-band-head`) and opens a dialog that adds
-  symbols to THAT list; a **1-second hold** on a tile (`wlWireHold`,
-  `WL_HOLD_MS` — cut from 3s the same day after the owner used it; keep the
-  `wl-hold-fill` CSS animation duration in step or the bar finishes at a
-  different moment than the dialog opens) opens a confirm dialog before removing
-  it. A locked-state signpost (a disabled ✎ pointing at the PIN field) was built
-  and removed the same day — **owner ruling: the edit controls are not to be tied
-  to unlock messaging.** The auth gate itself stays, because
-  `desk_set_watchlists` takes the PIN and there is no write path without one.
+  symbols to THAT list; a **double-click** on a tile (`wlWireRemove`) opens a confirm dialog
+  before removing it — owner ruling 2026-07-30, replacing a hold that went
+  3s → 1s → gone. The confirm dialog was always the real safety net, so the
+  gesture only has to beat a stray single click. **`touch-action:
+  manipulation` on `.wl-tile` is load-bearing**: mobile browsers reserve
+  double-tap for zoom and would swallow the gesture, so without it removal
+  works on a desktop and silently does nothing on a phone. A locked-state
+  signpost (a disabled ✎ pointing at the PIN field) was built and removed the
+  same day — **owner ruling: the edit controls are not to be tied to unlock
+  messaging.** The auth gate itself stays, because `desk_set_watchlists` takes
+  the PIN and there is no write path without one.
   Both are gated on
   `wlCanEdit()` (live + authed) exactly like the ✎ — the roster lives behind the
   PIN RPCs, so unauthenticated there is nothing to write to and NO write control
@@ -430,7 +433,7 @@ run for real against the dedicated project on every PR.
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shell pre-auth, valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
-| S21 | Watchlist quick add + hold-to-remove | With `?demo=1`, NO write control exists unauthenticated (0 `.wl-add`, `#wlEditBtn` hidden). Then forcing `DESK.authed` renders one + per band; a 350ms tap does NOT open `#wlRmBackdrop` but a 1.4s hold does (focus on "Keep it"), a drag cancels it, Delete on a focused tile opens the same dialog, and quick-add rejects junk input | A + offered without auth, the hold firing early or surviving a drag, no keyboard path, or junk accepted |
+| S21 | Watchlist quick add + double-click remove | With `?demo=1`, NO write control exists unauthenticated (0 `.wl-add`, `#wlEditBtn` hidden). Then forcing `DESK.authed` renders one + per band; a SINGLE click does NOT open `#wlRmBackdrop` but a double-click does (focus on "Keep it"), the tiles compute `touch-action: manipulation` so a phone double-tap is not eaten by zoom, Delete on a focused tile opens the same dialog, and quick-add rejects junk input | A + offered without auth, the hold firing early or surviving a drag, no keyboard path, or junk accepted |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
 | S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |

@@ -740,7 +740,7 @@ function renderWatchlist(payload, lamp) {
        without a comparator. */
     for (const r of wlSortRows(rows)) {
       const tile = wlTile(r, pending);
-      if (canEdit) wlWireHold(tile, r.sym, li, l.title);
+      if (canEdit) wlWireRemove(tile, r.sym, li, l.title);
       box.appendChild(tile);
     }
     group.appendChild(box);
@@ -935,14 +935,8 @@ async function submitWlQuickAdd() {
     : 'Already in ' + title + '.'));
 }
 
-/* ── hold to remove ────────────────────────────────────────────────────── */
-/* 1s (owner ruling 2026-07-30, cut from 3s after using it). Still a deliberate
-   press rather than a tap, and the confirm dialog is the real safety net — the
-   hold only has to be long enough that a stray touch doesn't reach it. Keep in
-   step with the wl-hold-fill animation duration in components.css, or the bar
-   finishes at a different moment than the dialog opens. */
-const WL_HOLD_MS = 1000;
-let wlRmTarget = null;            /* {sym, title} awaiting confirmation */
+/* ── double-click to remove ────────────────────────────────────────────── */
+let wlRmTarget = null;            /* {sym, idx, title} awaiting confirmation */
 
 function wlRmErr(msg) {
   const p = document.getElementById('wlRmErr');
@@ -996,34 +990,24 @@ async function confirmWlRemove() {
     : sym + ' was already gone from that list.'));
 }
 
-/* Holding pointer-down on a tile for WL_HOLD_MS opens the confirm dialog. A
-   hold is harder to trigger by accident than a tap, which is the point for a
-   destructive action, and the tile fills as it goes so the press visibly does
-   something rather than sitting inert.
+/* DOUBLE-CLICK a tile to reach the confirm dialog (owner ruling 2026-07-30,
+   replacing the hold — 3s, then 1s, then this). The confirm dialog was always
+   the real safety net, so the gesture only has to be more deliberate than a
+   stray single click, which a double-click is.
 
-   A hold is pointer-only, so Delete/Backspace on a focused tile reaches the
-   same dialog: the tiles are already focusable for screen readers, and a
-   remove that only a mouse can reach is not a remove everyone has. */
-function wlWireHold(tile, sym, idx, title) {
-  let timer = null, sx = 0, sy = 0;
-  const stop = () => {
-    if (timer) { clearTimeout(timer); timer = null; }
-    tile.classList.remove('wl-holding');
-  };
-  tile.addEventListener('pointerdown', e => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    sx = e.clientX; sy = e.clientY;
-    tile.classList.add('wl-holding');
-    timer = setTimeout(() => { stop(); openWlRemove(sym, idx, title, tile); }, WL_HOLD_MS);
+   `dblclick` fires on touch double-taps too, but mobile browsers treat a
+   double-tap as zoom by default and would swallow it — hence
+   `touch-action: manipulation` on the tiles in components.css. Without that
+   the gesture works on desktop and silently does nothing on a phone.
+
+   Delete/Backspace on a focused tile reaches the same dialog: the tiles are
+   already focusable for screen readers, and a remove that only a pointer can
+   reach is not a remove everyone has. */
+function wlWireRemove(tile, sym, idx, title) {
+  tile.addEventListener('dblclick', e => {
+    e.preventDefault();
+    openWlRemove(sym, idx, title, tile);
   });
-  /* A drag or a touch-scroll is not a hold — without this, scrolling the page
-     with a finger resting on a tile would arm a removal. */
-  tile.addEventListener('pointermove', e => {
-    if (timer && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) stop();
-  });
-  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) tile.addEventListener(ev, stop);
-  /* touch platforms raise their own callout on a long press */
-  tile.addEventListener('contextmenu', e => { if (tile.classList.contains('wl-holding')) e.preventDefault(); });
   tile.addEventListener('keydown', e => {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
     e.preventDefault();

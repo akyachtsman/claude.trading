@@ -844,7 +844,7 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
 // timing logic rather than the backend. It catches the regressions that matter
 // — a hold shortened to something accidental, a drag that arms a removal, or
 // the keyboard path disappearing.
-test('S21: watchlist write controls are auth-gated and the hold is deliberate', async ({ page }) => {
+test('S21: watchlist write controls are auth-gated and removal needs a double-click', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -858,36 +858,32 @@ test('S21: watchlist write controls are auth-gated and the hold is deliberate', 
   expect(await page.locator('.wl-add').count(), 'one + per list band').toBe(bands);
 
   const tile = page.locator('.wl-strip .wl-tile').first();
-  const box = await tile.boundingBox();
-  const mid = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 
-  // A tap must NOT arm the removal. Bounds track WL_HOLD_MS (1s — owner ruling
-  // 2026-07-30, cut from 3s): 350ms is comfortably a tap, 1.4s comfortably a hold.
-  await page.mouse.move(mid.x, mid.y);
-  await page.mouse.down();
-  await page.waitForTimeout(350);
-  await expect(page.locator('#wlRmBackdrop'), 'a tap is not a hold').toBeHidden();
-  expect(await tile.evaluate(t => t.classList.contains('wl-holding')), 'the fill shows progress').toBe(true);
-  // ...but holding past the threshold does
-  await page.waitForTimeout(1050);
+  // A SINGLE click must not remove anything — the gesture has to be deliberate,
+  // and a stray click on a price tile is common (owner ruling 2026-07-30 replaced
+  // the hold with a double-click).
+  await tile.click();
+  await page.waitForTimeout(400);   /* past any dblclick coalescing window */
+  await expect(page.locator('#wlRmBackdrop'), 'one click must not arm a removal').toBeHidden();
+
+  // ...but a double-click reaches the confirm dialog
+  await tile.dblclick();
   await expect(page.locator('#wlRmBackdrop')).toBeVisible();
-  await page.mouse.up();
   await expect(page.locator('#wlRmText')).toContainText(/^Remove .+ from/);
-  // a destructive dialog opens on the safe choice
+  // a destructive dialog opens on the SAFE choice, so a stray Enter keeps the symbol
   expect(await page.evaluate(() => document.activeElement?.id)).toBe('wlRmCancelBtn');
   await page.locator('#wlRmCancelBtn').click();
   await expect(page.locator('#wlRmBackdrop')).toBeHidden();
 
-  // dragging (or touch-scrolling) with a finger down must not arm it
-  await page.mouse.move(box.x + 10, box.y + 10);
-  await page.mouse.down();
-  await page.waitForTimeout(200);
-  await page.mouse.move(box.x + 90, box.y + 60);
-  await page.waitForTimeout(1400);   /* well past WL_HOLD_MS */
-  await expect(page.locator('#wlRmBackdrop'), 'a drag is not a hold').toBeHidden();
-  await page.mouse.up();
+  // Mobile browsers reserve double-tap for zoom and would swallow the gesture,
+  // so the tiles must opt out of it — without this the feature works on desktop
+  // and silently does nothing on a phone.
+  expect(
+    await tile.evaluate(t => getComputedStyle(t).touchAction),
+    'tiles must opt out of double-tap zoom',
+  ).toMatch(/manipulation/);
 
-  // keyboard reaches the same dialog — a hold is pointer-only
+  // keyboard reaches the same dialog — a double-click is pointer-only
   await tile.focus();
   await page.keyboard.press('Delete');
   await expect(page.locator('#wlRmBackdrop')).toBeVisible();
