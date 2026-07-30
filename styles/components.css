@@ -347,9 +347,11 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   .wl-strip .wl-band-head { flex-basis: auto; }
 }
 
-/* A three-second wait with no feedback reads as a dead control, so the tile
-   fills as the hold progresses. Deliberately NOT gain/loss red: those colours
-   are P&L-only on this desk, never decorative or semantic elsewhere. */
+/* The tile fills as the hold progresses, so the press reads as doing something.
+   Duration MUST match WL_HOLD_MS in app.js (1s — owner ruling 2026-07-30, cut
+   from 3s), or the bar completes at a different moment than the dialog opens.
+   Deliberately NOT gain/loss red: those colours are P&L-only on this desk,
+   never decorative or semantic elsewhere. */
 .wl-strip .wl-tile { position: relative; }
 .wl-strip .wl-tile.wl-holding {
   -webkit-touch-callout: none; user-select: none; -webkit-user-select: none;
@@ -357,7 +359,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip .wl-tile.wl-holding::after {
   content: ''; position: absolute; left: 0; bottom: 0; height: 2px;
   background: var(--color-accent-bright);
-  animation: wl-hold-fill 3s linear forwards;
+  animation: wl-hold-fill 1s linear forwards;
 }
 @keyframes wl-hold-fill { from { width: 0; } to { width: 100%; } }
 /* Reduced motion still needs the progress signal — it just shouldn't animate.

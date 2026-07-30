@@ -693,6 +693,11 @@ function renderWatchlist(payload, lamp) {
     else applyLampStamp(stampEl, lp);
   }
   /* editing writes to a PIN-gated table, so it only makes sense once unlocked */
+  /* Editing writes to a PIN-gated table, so it only makes sense once unlocked.
+     A locked-state signpost (a disabled ✎ pointing at the PIN field) was built
+     and then removed the same day — owner ruling 2026-07-30: the edit controls
+     should not be tied to unlock messaging. The gate itself stays, because
+     desk_set_watchlists takes the PIN and there is no write path without it. */
   if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
   renderWlSort();   /* reflects the active key + direction on every render */
   renderWlTf();     /* and the active chart timeframe */
@@ -783,7 +788,7 @@ const wlParseSyms = txt => [...new Set(
 
 /* ── per-list add / hold-to-remove (owner request 2026-07-30) ───────────────
    Quick edits without opening the full editor: a + in each band's gutter adds
-   symbols to THAT list, and a three-second hold on a tile asks before removing
+   symbols to THAT list, and a brief hold on a tile asks before removing
    it. Both write the same way the editor does, and both are offered only when
    the desk is live AND unlocked — the roster lives behind the PIN RPCs, so
    there is nothing to write to otherwise. */
@@ -931,7 +936,12 @@ async function submitWlQuickAdd() {
 }
 
 /* ── hold to remove ────────────────────────────────────────────────────── */
-const WL_HOLD_MS = 3000;          /* owner's choice; the fill shows the wait */
+/* 1s (owner ruling 2026-07-30, cut from 3s after using it). Still a deliberate
+   press rather than a tap, and the confirm dialog is the real safety net — the
+   hold only has to be long enough that a stray touch doesn't reach it. Keep in
+   step with the wl-hold-fill animation duration in components.css, or the bar
+   finishes at a different moment than the dialog opens. */
+const WL_HOLD_MS = 1000;
 let wlRmTarget = null;            /* {sym, title} awaiting confirmation */
 
 function wlRmErr(msg) {
@@ -986,10 +996,10 @@ async function confirmWlRemove() {
     : sym + ' was already gone from that list.'));
 }
 
-/* Three seconds of pointer-down on a tile opens the confirm dialog. A hold is
-   deliberately hard to trigger by accident, which is the point for a
-   destructive action, so the tile fills as it goes — a silent 3-second wait
-   reads as a dead control.
+/* Holding pointer-down on a tile for WL_HOLD_MS opens the confirm dialog. A
+   hold is harder to trigger by accident than a tap, which is the point for a
+   destructive action, and the tile fills as it goes so the press visibly does
+   something rather than sitting inert.
 
    A hold is pointer-only, so Delete/Backspace on a focused tile reaches the
    same dialog: the tiles are already focusable for screen readers, and a
