@@ -956,6 +956,53 @@ test('S22: quick edits resolve the right band when two lists share a title', asy
   expect(stale, 'a shifted roster must resolve to nothing').toBe(null);
 });
 
+// S24 — A failed ACCOUNTS fetch must not revoke authentication (owner report
+// 2026-07-30, reported three times before it was traced). deskGetDashboard
+// collapses every failure to null, and loadPrivate treated that as a bad PIN:
+// it cleared DESK.authed straight after a CORRECT unlock, so the watchlist's +
+// and ✎ silently vanished with no error shown anywhere.
+test('S24: a failed accounts load keeps the desk authenticated', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+
+  const state = await page.evaluate(async () => {
+    // Stand in for the live desk holding a validated PIN, then make the
+    // ACCOUNTS payload fetch fail the way a network blip or empty table does.
+    DESK.mode = 'live';
+    DESK.authed = true;
+    sessionStorage.setItem('desk_pin', '0000');
+    window.deskGetDashboard = async () => null;
+    await loadPrivate('0000');
+    return {
+      authed: DESK.authed,
+      canEdit: wlCanEdit(),
+      // the panel must explain what actually failed, not imply a bad PIN
+      explain: document.querySelector('.panel-lock .lock-explain')?.textContent || '',
+      // ...and must NOT re-present the auth gate, which is both wrong and useless
+      pinFields: document.querySelectorAll('.panel-lock .lock-form input').length,
+      hasRetry: !![...document.querySelectorAll('.panel-lock button')]
+        .find(b => /retry/i.test(b.textContent)),
+      // THE ONE THAT MATTERS: no fabricated holdings may survive into the
+      // context the assistant is told is the owner's real portfolio.
+      acctCount: (DESK.data.accounts || []).length,
+      askAccounts: (buildAskContext()?.accounts || []).length,
+    };
+  });
+
+  expect(state.authed, 'a data failure must not clear authentication').toBe(true);
+  expect(state.canEdit, 'the watchlist stays editable — its writes only need the PIN').toBe(true);
+  expect(state.explain, 'the message must not imply the PIN was wrong').toMatch(/PIN worked/i);
+  expect(state.pinFields, 'unavailable is not locked — do not re-ask for a valid PIN').toBe(0);
+  expect(state.hasRetry, 'offer a retry that reuses the validated PIN').toBe(true);
+  expect(state.acctCount, 'no demo accounts may linger in live mode').toBe(0);
+  expect(state.askAccounts, 'the assistant must never receive fabricated holdings').toBe(0);
+
+  // and the edit controls really do render in that state
+  await page.evaluate(() => renderWatchlist());
+  expect(await page.locator('.wl-add').count(), '+ survives a failed accounts load')
+    .toBeGreaterThan(0);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // S15–S19 — Live desk assistant (memory + research + live data + advice + clear).
 // Each makes a REAL desk-ask Claude tool-loop call (slow, nondeterministic, costs
