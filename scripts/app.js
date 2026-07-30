@@ -3002,28 +3002,28 @@ function renderCharts(data, lamp) {
     let vMax = 0;
     if (opts.cfg.vol) for (let i = i0; i < end; i++) vMax = Math.max(vMax, bars.v[i]);
     const isLine = opts.cfg.type === 'line';
-    /* Pro 2 colours its candles by the STOCHASTIC CROSSOVER, not by the day's
-       open/close (owner ruling 2026-07-30, matching the reference terminal):
-       %K (red) above %D (yellow) = green, below = red. The owner reads that
-       pane for long-term entries, where "is momentum with me" is the decision
-       and a single day's direction is noise.
+    /* `opts.colorSt` (Pro 2 only) colours the candles by a STOCHASTIC CROSSOVER
+       instead of the day's open/close — %K (red) above %D (yellow) = green,
+       below = red. The owner reads that pane for long-term entries, where "is
+       momentum with me" is the decision and a single day's direction is noise.
 
-       Established from the terminal's own output, not assumed — on META, 17–30
-       Jul the FAST 14-3-3 reads K<D while the weekly-scale 92-15-15 reads K>D,
-       and the terminal's Pro 2 showed RED across that stretch. So the colour
-       follows the fast DAILY stochastic (`st`), counterintuitive though that is
-       on the long-term pane.
+       The series passed in is the WEEKLY-SCALE 92-15-15, not the fast daily
+       (owner ruling 2026-07-30): on a long-term pane the regime that matters is
+       the long-term one. It is computed independently of the weekly OVERLAY
+       toggle, so turning that strip off changes what is drawn, never what the
+       candles mean.
 
        CONSEQUENCE, deliberately accepted: in this pane a green candle can be a
        DOWN day. The body still shows direction — open vs close positions it —
        but the fill now means momentum regime, not today's result. */
-    const byStoch = opts.colorBy === 'stoch' && st && st.k && st.d;
+    const cst = opts.colorSt;
+    const byStoch = !!(cst && cst.k && cst.d);
     const barUp = i => {
       if (byStoch) {
-        const k = st.k[i], d = st.d[i];
-        /* Before the stochastic warms up (the first k+kSmooth+d bars are null)
-           there is no regime to show, so those fall back to price direction
-           rather than defaulting everything to one colour. */
+        const k = cst.k[i], d = cst.d[i];
+        /* Before the stochastic warms up (the leading bars are null) there is
+           no regime to show, so those fall back to price direction rather than
+           defaulting everything to one colour. */
         if (k != null && d != null) return k > d;
       }
       return bars.c[i] >= bars.o[i];
@@ -3390,22 +3390,28 @@ function renderCharts(data, lamp) {
        2026-07-22: daily circles are Pro 1's swing signal). */
     const sym = effSym(wbState.cfg.p2);
     const d = daily(sym);
-    const stW2 = wbState.cfg.p2.stochW ? weeklyStochOnDaily(d.bars) : null;
+    /* The weekly stochastic is computed unconditionally because it drives the
+       CANDLE COLOUR below; the overlay toggle only decides whether its strip is
+       also drawn. Tying the two would make turning the strip off silently
+       change what every candle means. */
+    const wk2 = weeklyStochOnDaily(d.bars);
+    const stW2 = wbState.cfg.p2.stochW ? wk2 : null;
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · LONG-TERM · ' + sym, {
       window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
-      /* Candles by stochastic crossover — Pro 2 ONLY (owner ruling 2026-07-30).
-         Pro 1 and Pro 3 keep open/close, where a day's direction is the point. */
-      colorBy: 'stoch',
+      /* Candles by the WEEKLY stochastic crossover — Pro 2 ONLY (owner ruling
+         2026-07-30). Pro 1 and Pro 3 keep open/close, where a day's direction
+         is the point. */
+      colorSt: wk2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
       marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
+      stochCaption: stochTag() + ' · DAILY',
       /* names the strip the candles take their colour from — in this pane a
          green candle can be a down day, so leaving that unstated would read
          as a rendering bug rather than the intended signal */
-      stochCaption: stochTag() + ' · DAILY · CANDLE COLOUR',
-      stochWCaption: stochWTag() + ' · WEEKLY SCALE',
+      stochWCaption: stochWTag() + ' · WEEKLY SCALE · CANDLE COLOUR',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
