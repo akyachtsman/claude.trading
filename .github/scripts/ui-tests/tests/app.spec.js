@@ -870,6 +870,10 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
   const bands = await page.locator('.wl-strip .mkt-group').count();
   expect(await page.locator('.wl-add').count(), 'one + per list band').toBe(bands);
+  // The full editor must follow the SAME predicate — it was left on
+  // DESK.authed, so creating/renaming/deleting LISTS still needed an unlock
+  // while add/remove did not (Codex review, PR #202).
+  await expect(page.locator('#wlEditBtn'), 'the ✎ must not need an unlock either').toBeVisible();
 
   const tile = page.locator('.wl-strip .wl-tile').first();
 

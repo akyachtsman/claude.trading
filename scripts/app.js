@@ -692,22 +692,18 @@ function renderWatchlist(payload, lamp) {
     if (DESK.mode === 'demo') stampEl.textContent = 'Demo data';
     else applyLampStamp(stampEl, lp);
   }
-  /* editing writes to a PIN-gated table, so it only makes sense once unlocked */
-  /* Editing writes to a PIN-gated table, so it only makes sense once unlocked.
-     A locked-state signpost (a disabled ✎ pointing at the PIN field) was built
-     and then removed the same day — owner ruling 2026-07-30: the edit controls
-     should not be tied to unlock messaging. The gate itself stays, because
-     desk_set_watchlists takes the PIN and there is no write path without it. */
-  if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
   renderWlSort();   /* reflects the active key + direction on every render */
   renderWlTf();     /* and the active chart timeframe */
 
   const lists = (data && data.lists) || [];
   /* Withhold the lines whenever what we hold isn't the window now selected. */
   const pending = !!data && wlState.range !== wlTf;
-  /* Quick add/remove write through the PIN RPCs, so they exist only when there
-     is something to write to — same gate as the ✎. */
+  /* ONE predicate behind every write control — the ✎, the per-band +, and the
+     double-click removal. They were split across two conditions, and only the
+     first two followed the owner's ruling, so list create/rename/reorder/delete
+     still demanded an unlock (Codex review, PR #202). */
   const canEdit = wlCanEdit();
+  if (editBtn) editBtn.hidden = !canEdit;
 
   /* One labelled band per list, in the market strip's idiom (owner request
      2026-07-29). Every list is on screen at once — the bands ARE the
