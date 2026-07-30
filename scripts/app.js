@@ -692,22 +692,18 @@ function renderWatchlist(payload, lamp) {
     if (DESK.mode === 'demo') stampEl.textContent = 'Demo data';
     else applyLampStamp(stampEl, lp);
   }
-  /* editing writes to a PIN-gated table, so it only makes sense once unlocked */
-  /* Editing writes to a PIN-gated table, so it only makes sense once unlocked.
-     A locked-state signpost (a disabled ✎ pointing at the PIN field) was built
-     and then removed the same day — owner ruling 2026-07-30: the edit controls
-     should not be tied to unlock messaging. The gate itself stays, because
-     desk_set_watchlists takes the PIN and there is no write path without it. */
-  if (editBtn) editBtn.hidden = !(DESK.mode !== 'demo' && DESK.authed);
   renderWlSort();   /* reflects the active key + direction on every render */
   renderWlTf();     /* and the active chart timeframe */
 
   const lists = (data && data.lists) || [];
   /* Withhold the lines whenever what we hold isn't the window now selected. */
   const pending = !!data && wlState.range !== wlTf;
-  /* Quick add/remove write through the PIN RPCs, so they exist only when there
-     is something to write to — same gate as the ✎. */
+  /* ONE predicate behind every write control — the ✎, the per-band +, and the
+     double-click removal. They were split across two conditions, and only the
+     first two followed the owner's ruling, so list create/rename/reorder/delete
+     still demanded an unlock (Codex review, PR #202). */
   const canEdit = wlCanEdit();
+  if (editBtn) editBtn.hidden = !canEdit;
 
   /* One labelled band per list, in the market strip's idiom (owner request
      2026-07-29). Every list is on screen at once — the bands ARE the
@@ -792,7 +788,11 @@ const wlParseSyms = txt => [...new Set(
    it. Both write the same way the editor does, and both are offered only when
    the desk is live AND unlocked — the roster lives behind the PIN RPCs, so
    there is nothing to write to otherwise. */
-const wlCanEdit = () => DESK.mode !== 'demo' && DESK.authed;
+/* NOT gated on DESK.authed (owner ruling 2026-07-30, stated twice: the
+   watchlist is not to depend on unlocking). Still excludes demo, where the
+   roster is a committed bootstrap file with no backend to write to — offering
+   an edit there would be a control that cannot work. */
+const wlCanEdit = () => DESK.mode !== 'demo';
 
 /* Every quick edit is a READ-MODIFY-WRITE against the authoritative RPC, never
    a patch of what the panel happens to be showing. Two reasons, both already
@@ -830,8 +830,10 @@ function wlPick(lists, idx, title) {
 }
 
 async function wlMutate(mutate) {
-  const pin = sessionStorage.getItem('desk_pin');
-  if (!pin) return { ok: false, err: 'Unlock the desk first.' };
+  /* No PIN needed — the watchlist RPCs are open (desk_011). Still a
+     read-modify-write against the AUTHORITATIVE roster, never a patch of the
+     rendered payload: that omits unresolved symbols and can be an hour stale. */
+  const pin = null;
   let lists;
   try {
     const got = await deskGetWatchlists(pin);
@@ -1107,8 +1109,8 @@ function wlEditErr(msg) {
 }
 
 async function openWlEditor() {
-  const pin = sessionStorage.getItem('desk_pin');
-  if (!pin) return;
+  const pin = null;   /* open RPCs — no PIN (desk_011) */
+  if (!wlCanEdit()) return;
   const back = document.getElementById('wlEditBackdrop');
   wlEditErr('');
   /* A FAILED read must never become an editable empty draft (Codex review,
@@ -1152,10 +1154,10 @@ function closeWlEditor() {
 }
 
 async function saveWlEditor() {
-  const pin = sessionStorage.getItem('desk_pin');
-  /* wlEditLoaded gates this too, not just the button's disabled attribute —
-     a replace-all built from a draft that never loaded would delete real lists */
-  if (!pin || !wlEdit || !wlEditLoaded) return;
+  const pin = null;   /* open RPCs — no PIN (desk_011) */
+  /* wlEditLoaded still gates this, and matters MORE now that no PIN does: a
+     replace-all built from a draft that never loaded would delete real lists. */
+  if (!wlEdit || !wlEditLoaded) return;
   const lists = wlEdit
     .map(l => ({ title: String(l.title || '').trim(), symbols: l.symbols }))
     .filter(l => l.title);

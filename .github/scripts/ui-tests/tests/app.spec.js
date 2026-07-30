@@ -844,28 +844,36 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
 // timing logic rather than the backend. It catches the regressions that matter
 // — a hold shortened to something accidental, a drag that arms a removal, or
 // the keyboard path disappearing.
-test('S21: watchlist write controls are auth-gated and removal needs a double-click', async ({ page }) => {
+test('S21: watchlist edits need no unlock; removal needs a double-click', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
-  // no auth → no way to mutate the roster
+  // DEMO has no backend to write to — the roster is a committed bootstrap file —
+  // so an edit control there would be one that cannot work.
   expect(await page.locator('.wl-add').count(), 'demo must offer no + buttons').toBe(0);
   await expect(page.locator('#wlEditBtn')).toBeHidden();
 
-  // ...and no removal wired means the touch-gesture override must NOT apply:
+  // ...and with no removal wired, the touch-gesture override must NOT apply:
   // stripping double-tap zoom where nothing listens for a double-tap takes a
   // real mobile gesture away for nothing (Codex review, PR #200).
   expect(await page.locator('.wl-strip .wl-tile.wl-removable').count(),
-    'unauthed tiles must not be marked removable').toBe(0);
+    'demo tiles must not be marked removable').toBe(0);
   expect(
     await page.locator('.wl-strip .wl-tile').first().evaluate(t => getComputedStyle(t).touchAction),
-    'unauthed tiles must keep native double-tap zoom',
+    'demo tiles must keep native double-tap zoom',
   ).not.toMatch(/manipulation/);
 
-  // force the authed state so the write affordances render against demo rows
-  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = true; renderWatchlist(); });
+  // Live WITHOUT auth: the write controls must render anyway (owner ruling
+  // 2026-07-30 — the watchlist is not to depend on unlocking; desk_011 gave it
+  // PIN-free RPCs). DESK.authed stays FALSE here on purpose: setting it would
+  // let a regression back to auth-gating pass unnoticed.
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
   const bands = await page.locator('.wl-strip .mkt-group').count();
   expect(await page.locator('.wl-add').count(), 'one + per list band').toBe(bands);
+  // The full editor must follow the SAME predicate — it was left on
+  // DESK.authed, so creating/renaming/deleting LISTS still needed an unlock
+  // while add/remove did not (Codex review, PR #202).
+  await expect(page.locator('#wlEditBtn'), 'the ✎ must not need an unlock either').toBeVisible();
 
   const tile = page.locator('.wl-strip .wl-tile').first();
 

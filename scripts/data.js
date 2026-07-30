@@ -356,6 +356,22 @@ async function deskRpc(fn, pin, extra) {
   if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
   return res.json();
 }
+/* Same transport as deskRpc but sends NO pin key at all, rather than sending
+   one the function would ignore — the body should say what the call actually
+   is. Used only by the watchlist's open RPCs. */
+async function deskRpcOpen(fn, extra) {
+  const res = await fetch(DESK_DB.url + '/rest/v1/rpc/' + fn, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: DESK_DB.anonKey,
+      authorization: 'Bearer ' + DESK_DB.anonKey,
+    },
+    body: JSON.stringify(extra || {}),
+  });
+  if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
+  return res.json();
+}
 async function deskLogin(pin) {
   const out = await deskRpc('desk_login', pin);
   return out && out.ok ? out : { ok: false, error: 'PIN not recognized — try again.' };
@@ -467,8 +483,22 @@ async function deskWatchlist(force, range) {
 
 /* PIN-gated roster read/write (desk_010). The panel's edit mode uses these;
    the quote feed above reads the same table server-side. */
-async function deskGetWatchlists(pin) { return deskRpc('desk_get_watchlists', pin); }
-async function deskSetWatchlists(pin, lists) { return deskRpc('desk_set_watchlists', pin, { new_lists: lists }); }
+/* NO PIN (owner ruling 2026-07-30, stated twice: the watchlist is not to depend
+   on unlocking). These call the `_open` RPCs from desk_011, which carry the same
+   validation — symbol grammar, 50-list and 2000-symbol caps, replace-all — and
+   simply skip the PIN check.
+
+   The trade is explicit: the anon key ships in this very file's sibling
+   config.js, so anyone who loads the site can rewrite the roster. Reading was
+   already public (desk-watchlist serves the panel to unauthenticated visitors);
+   writing is what changed. Balances, positions, the assistant and the system
+   prompt remain PIN-gated — nothing here touches money or trading.
+
+   The PIN versions from desk_010 are still in the database, so reverting is
+   switching these two lines back. The `pin` parameter is kept in the signatures
+   for exactly that reason, and ignored. */
+async function deskGetWatchlists(_pin) { return deskRpcOpen('desk_get_watchlists_open'); }
+async function deskSetWatchlists(_pin, lists) { return deskRpcOpen('desk_set_watchlists_open', { new_lists: lists }); }
 
 /* ── demo watchlist ────────────────────────────────────────────────────────
    ?demo=1 ONLY (live is real-data-or-nothing). Rows are seeded off the symbol
