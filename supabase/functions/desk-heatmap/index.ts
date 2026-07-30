@@ -78,7 +78,10 @@ function withinCloseSettleGrace(now = new Date()): boolean {
 }
 const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? 300_000 : 3_600_000);
 
-type Quote = { pct: number; cap: number | null; last: number | null; sector?: string; name?: string; industry?: string };
+// extPct/extLast: the post-market print, prior-close basis (owner request
+// 2026-07-30). Null whenever the symbol has no extended session or none has
+// printed yet — never silently 0, which would read as "flat after hours".
+type Quote = { pct: number; cap: number | null; last: number | null; extPct?: number | null; extLast?: number | null; sector?: string; name?: string; industry?: string };
 type Constituent = { sym: string; name: string; sector: string; ind: string };
 type Periods = { w: number | null; m: number | null; ytd: number | null };
 
@@ -172,7 +175,13 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
   for (let i = 0; i < symbols.length; i += batchSize) {
     if (deadStreak >= 2) break;
     const chunk = symbols.slice(i, i + batchSize);
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,regularMarketPrice,marketCap&crumb=${encodeURIComponent(auth.crumb)}`;
+    // postMarket* added 2026-07-30 (owner request: extended hours everywhere it
+    // exists). Stocks genuinely trade after the bell, so a heatmap tile can
+    // carry its own extended move — unlike an index, which has no extended
+    // session at all. Pre-market fields are requested too because the same
+    // compounding covers both, but only post is surfaced (owner: "not
+    // premarket, I'm mostly interested in post market").
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,regularMarketPrice,marketCap,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent&crumb=${encodeURIComponent(auth.crumb)}`;
     try {
       const res = await fetch(url, { headers: { ...UA, cookie: auth.cookie } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -182,7 +191,23 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
         const pct = Number(q.regularMarketChangePercent);
         const last = Number(q.regularMarketPrice);
         if (Number.isFinite(pct)) {
-          out.set(String(q.symbol), { pct: Number(pct.toFixed(2)), cap: Number(q.marketCap) || null, last: Number.isFinite(last) && last > 0 ? last : null });
+          // Extended move measured from the PRIOR CLOSE, by compounding the two
+          // percentages Yahoo gives — post% is off today's regular close, reg%
+          // is off the prior close, so (1+reg)(1+post)-1 is the prior-close
+          // move. Same rule as desk-watchlist and desk-market, so one number
+          // means one thing across every panel. regularMarketPreviousClose is
+          // NOT used: it shifts basis during pre-market (verified 07-29).
+          const postPct = Number(q.postMarketChangePercent);
+          const postPx = Number(q.postMarketPrice);
+          const hasPost = Number.isFinite(postPx) && postPx > 0 && Number.isFinite(postPct);
+          const extPct = hasPost ? ((1 + pct / 100) * (1 + postPct / 100) - 1) * 100 : null;
+          out.set(String(q.symbol), {
+            pct: Number(pct.toFixed(2)),
+            cap: Number(q.marketCap) || null,
+            last: Number.isFinite(last) && last > 0 ? last : null,
+            extPct: extPct == null ? null : Number(extPct.toFixed(2)),
+            extLast: hasPost ? Number(postPx.toFixed(2)) : null,
+          });
         }
       }
       deadStreak = out.size > before ? 0 : deadStreak + 1;
@@ -274,7 +299,7 @@ export function buildHeatmap(
   prevCaps: Map<string, number>,
   periods?: Map<string, Periods> | null,
 ) {
-  const bySector = new Map<string, { sym: string; name: string; cap: number; pct: number; ind: string; last: number | null; pctW?: number | null; pctM?: number | null; pctYtd?: number | null }[]>();
+  const bySector = new Map<string, { sym: string; name: string; cap: number; pct: number; ind: string; last: number | null; extPct?: number | null; extLast?: number | null; pctW?: number | null; pctM?: number | null; pctYtd?: number | null }[]>();
   let covered = 0;
   for (const c of constituents) {
     const q = quotes.get(yahooTicker(c.sym)) || quotes.get(c.sym);
@@ -286,6 +311,9 @@ export function buildHeatmap(
     const p = periods?.get(yahooTicker(c.sym)) || periods?.get(c.sym);
     bySector.get(c.sector)!.push({
       sym: c.sym, name: c.name, cap, pct: q.pct, ind: c.ind || '', last: q.last ?? null,
+      /* Only carried when an extended print exists, so the client can tell
+         "no after-hours trade" from "unchanged after hours". */
+      ...(q.extPct != null ? { extPct: q.extPct, extLast: q.extLast ?? null } : {}),
       ...(p ? { pctW: p.w, pctM: p.m, pctYtd: p.ytd } : {}),
     });
   }

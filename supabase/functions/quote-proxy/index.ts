@@ -187,10 +187,44 @@ type Info = {
   // bid/ask are market-hours-only on free Yahoo data (0 when closed).
   change: number | null; changePct: number | null;
   bid: number | null; ask: number | null;
+  // Post-market print (owner request 2026-07-30). extPct is measured from the
+  // PRIOR CLOSE — the same basis as changePct — so the two are directly
+  // comparable instead of one being a move off the closing print. Null when the
+  // instrument has no extended session (every index) or nothing has traded yet;
+  // never 0, which would read as "flat after hours".
+  // This field reaches BOTH the charts quote readout and the assistant, since
+  // desk-ask's get_quote forwards `info` verbatim.
+  extPrice: number | null; extPct: number | null; extAt: number | null;
   marketCap: number | null; pe: number | null; peFwd: boolean;
   wkLow: number | null; wkHigh: number | null; divYield: number | null;
   earningsTs: number | null; earningsEstimate: boolean;
 };
+// The post-market print, on a prior-close basis (owner request 2026-07-30).
+// Compounds Yahoo's two percentages rather than dividing by
+// regularMarketPreviousClose: post% is measured off today's regular close and
+// reg% off the prior close, so (1+reg)(1+post)-1 is the exact prior-close move.
+// `regularMarketPreviousClose` silently shifts basis during pre-market (it can
+// point at the session before last) — verified 2026-07-29 on SOXL.
+//
+// Post only. Pre-market is deliberately not surfaced (owner: "not premarket,
+// I'm mostly interested in post market"); the same compounding would cover it.
+// deno-lint-ignore no-explicit-any
+function extInfo(q: any): { extPrice: number | null; extPct: number | null; extAt: number | null } {
+  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  const px = n(q?.postMarketPrice);
+  if (px == null || px <= 0) return { extPrice: null, extPct: null, extAt: null };
+  const regPct = n(q?.regularMarketChangePercent);
+  const postPct = n(q?.postMarketChangePercent);
+  const pct = postPct != null && regPct != null
+    ? ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100
+    : regPct;
+  return {
+    extPrice: px,
+    extPct: pct == null ? null : Number(pct.toFixed(2)),
+    extAt: n(q?.postMarketTime),
+  };
+}
+
 let yauth: { cookie: string; crumb: string; at: number } | null = null;
 const YAUTH_TTL_MS = 3_600_000;
 
@@ -256,6 +290,7 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
     changePct: num(q.regularMarketChangePercent),
     bid: num(q.bid),
     ask: num(q.ask),
+    ...extInfo(q),
     marketCap: num(q.marketCap),
     pe: fwdPe ?? ttmPe,
     peFwd: fwdPe != null,

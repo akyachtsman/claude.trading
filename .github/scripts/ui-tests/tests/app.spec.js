@@ -1115,6 +1115,39 @@ test('S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close'
   // stochastic on a real share of bars. Zero here would mean the rule leaked.
   expect(probe.p1.disagree, 'Pro 1 still follows open/close, not the stochastic')
     .toBeGreaterThan(probe.p1.agree * 0.1);
+// S23 — Extended hours across the desk (owner request 2026-07-30). Demo-gated so
+// it runs every PR; the demo generator mirrors the live payload's shape,
+// including the parts that must be ABSENT.
+test('S23: post-market prints render, and only where the instrument trades', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#mktTiles .mk-tile').first()).toBeVisible({ timeout: 10000 });
+
+  // All four index tiles carry an after-hours line, and each NAMES its proxy —
+  // an index has no extended session, so an unlabelled number here would claim
+  // SPY's move was the S&P 500's value.
+  const exts = page.locator('#mktTiles .mk-ext');
+  expect(await exts.count(), 'every index tile shows an after-hours line').toBe(4);
+  for (const [i, sym] of [[0, 'SPY'], [1, 'QQQ'], [2, 'IWM'], [3, 'DIA']]) {
+    await expect(exts.nth(i), 'the proxy must be named').toContainText(sym);
+    await expect(exts.nth(i)).toContainText(/after hrs/i);
+  }
+  // The extended figure must be a DIFFERENT number than the regular one —
+  // if they matched, the second line would be telling the reader nothing.
+  const regular = (await page.locator('#mktTiles .mk-tile').first().locator('.mk-pct').innerText()).trim();
+  const after = (await exts.first().locator('.mk-ext-pct').innerText()).trim();
+  expect(after, 'after-hours must not just repeat the close').not.toContain(regular);
+
+  // Sector ETFs genuinely trade after the bell, so they need no proxy.
+  expect(await page.locator('#mktSectors .mk-sec-ext').count(), 'all 11 sectors').toBe(11);
+
+  // Heatmap: the print rides in the TOOLTIP (a tile is a few pixels at the
+  // tail), and is absent on names that didn't trade rather than shown as 0.
+  const demo = await page.evaluate(() => {
+    const all = buildDemoHeatmap().sectors.flatMap(s => s.tiles);
+    return { total: all.length, withExt: all.filter(t => t.extPct != null).length };
+  });
+  expect(demo.withExt, 'some names carry a post-market print').toBeGreaterThan(0);
+  expect(demo.withExt, 'and some genuinely do not — absent, not zero').toBeLessThan(demo.total);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
