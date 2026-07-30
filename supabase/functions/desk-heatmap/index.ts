@@ -232,8 +232,14 @@ export function periodsFromCloses(dates: string[], closes: number[]): Periods {
   };
 }
 
-async function periodSweep(symbols: string[], batchSize = 20): Promise<Map<string, Periods>> {
+// Returns the readings AND the symbols whose batch actually got a reply.
+// The caller needs to tell "Yahoo answered, it has nothing for this symbol"
+// apart from "the request failed": the first deserves a permanent empty
+// reading, the second must be retried. Collapsing them lets one transient
+// batch failure bury 20 names for 24 hours.
+async function periodSweep(symbols: string[], batchSize = 20): Promise<{ out: Map<string, Periods>; answered: Set<string> }> {
   const out = new Map<string, Periods>();
+  const answered = new Set<string>();
   for (let i = 0; i < symbols.length; i += batchSize) {
     const chunk = symbols.slice(i, i + batchSize);
     const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=1y&interval=1d`;
@@ -241,7 +247,9 @@ async function periodSweep(symbols: string[], batchSize = 20): Promise<Map<strin
     if (!res || !res.ok) continue;
     // deno-lint-ignore no-explicit-any
     const json: any = await res.json().catch(() => null);
-    for (const [sym, node] of Object.entries(json || {})) {
+    if (!json) continue;                     // unparseable body = not an answer
+    for (const s of chunk) answered.add(s);
+    for (const [sym, node] of Object.entries(json)) {
       // deno-lint-ignore no-explicit-any
       const ts: number[] = (node as any)?.timestamp || [];
       // deno-lint-ignore no-explicit-any
@@ -256,7 +264,7 @@ async function periodSweep(symbols: string[], batchSize = 20): Promise<Map<strin
       out.set(sym, periodsFromCloses(dates, closes));
     }
   }
-  return out;
+  return { out, answered };
 }
 
 // ── shaping (buildHeatmap port + period merge) ───────────────────────────────
@@ -421,13 +429,23 @@ async function advanceSweep(universe: string, symbols: string[]): Promise<void> 
   const slice = symbols.filter((s) => !(s in map)).slice(0, SWEEP_STEP_BATCHES * 20);
 
   if (slice.length) {
-    const got = await periodSweep(slice);
-    // A symbol Yahoo returns nothing for is recorded with an EMPTY reading
-    // rather than left out. Otherwise it stays "missing" forever: the ledger
-    // never completes, every request keeps paying a sweep step, and we are
-    // back to the 546s this change exists to stop. An empty reading renders
-    // exactly like no reading — the client drops non-finite periods.
-    for (const sym of slice) map[sym] = got.get(sym) ?? { w: null, m: null, ytd: null };
+    const { out: got, answered } = await periodSweep(slice);
+    for (const sym of slice) {
+      // The ledger is keyed by ROSTER symbol (what `want` compares against),
+      // but periodSweep answers in Yahoo's form — BRK.B comes back as BRK-B.
+      // Resolve through yahooTicker or every dotted ticker loses its periods.
+      const p = got.get(yahooTicker(sym)) ?? got.get(sym);
+      if (p) map[sym] = p;
+      // Yahoo replied but carries nothing for this symbol → record an EMPTY
+      // reading. Left out entirely it stays "missing" forever, the ledger
+      // never completes, and every request keeps paying a sweep step — the
+      // 546s this change exists to stop. An empty reading renders exactly
+      // like no reading, since the client drops non-finite periods.
+      else if (answered.has(sym)) map[sym] = { w: null, m: null, ytd: null };
+      // else: the batch itself failed. Leave the symbol missing so the next
+      // request retries it — burying 20 names for 24 hours on one transient
+      // network blip is not the same thing as knowing they have no data.
+    }
   }
 
   const done = Object.keys(map).length;
@@ -507,8 +525,15 @@ async function refreshR2k(): Promise<unknown> {
   const constituents = r2kConstituents(quotes);
   if (constituents.length < 1200) throw new Error(`r2k roster too thin (${constituents.length})`);
   let periods = await loadPeriods('r2k');
-  // periods must cover the roster — a partial map would shrink period views
-  if (periods && periods.map.size < constituents.length * 0.8) periods = null;
+  // Periods must cover the roster — a partial map would shrink period views.
+  // Count FINITE readings, not map entries: symbols Yahoo has no data for are
+  // recorded as empty placeholders, and counting those as coverage would let a
+  // map that is mostly blanks pass the guard and unlock period views onto a
+  // small, unrepresentative subset of the index.
+  const usable = periods
+    ? [...periods.map.values()].filter((p) => Number.isFinite(p.w) || Number.isFinite(p.m) || Number.isFinite(p.ytd)).length
+    : 0;
+  if (periods && usable < constituents.length * 0.8) periods = null;
   const { sectors, covered } = buildHeatmap(constituents, quotes, new Map(), periods?.map);
   if (covered < 1200) throw new Error(`r2k coverage too thin (${covered})`);
   await kickPeriodSweep('r2k', constituents.map((c) => c.sym));
