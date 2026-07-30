@@ -722,6 +722,24 @@ function marketSessionOpen(now) {
    would widen the LIVE window". The watchlist IS that feed, so while pre/post
    prints are actually flowing its lamp may read LIVE rather than EOD. Panels
    without an extended feed keep the regular-session rule. */
+/* POST-market only, 16:00–20:00 ET (Codex review, PR #199). Distinct from
+   extendedSessionOpen() below, which spans the whole 4am–8pm extended day: the
+   desk shows post-market prints but deliberately not pre-market ones, so the
+   poller has to wake for the second half of that window and not the first. */
+function postMarketOpen(now) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now || new Date());
+  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 16 * 60 && minutes < 20 * 60;
+}
+
 function extendedSessionOpen(now) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', weekday: 'short',

@@ -147,10 +147,16 @@ function renderMarkets(market, lamp) {
 
        An index tile shows its PROXY and names it, because SPY's after-hours
        move is not the S&P 500's value and an unlabelled number would claim it
-       was. A tile that already IS an ETF (the R2K tile is IWM) carries its own
-       print and needs no attribution. */
-    const xt = t && (t.ext && t.ext.kind === 'post' ? t.ext
-      : t.extProxy && t.extProxy.kind === 'post' ? t.extProxy : null);
+       was.
+
+       extProxy is preferred over ext (Codex review, PR #199): in LIVE data the
+       R2K tile receives BOTH, because its symbol IS IWM and IWM is also in the
+       proxy map. Taking `ext` first dropped the "IWM" label and printed a bare
+       second percentage on a tile captioned "Russell 2000" — losing exactly the
+       attribution this line exists to carry. Demo only ever sends extProxy, so
+       S23 could not have caught it. */
+    const xt = t && (t.extProxy && t.extProxy.kind === 'post' ? t.extProxy
+      : t.ext && t.ext.kind === 'post' ? t.ext : null);
     if (xt && xt.chg != null) {
       const line = el('div', 'mk-ext');
       const num = el('span', 'mk-ext-pct ' + (xt.chg >= 0 ? 'up' : 'down'),
@@ -4061,14 +4067,20 @@ function scheduleFeedPoll() {
    desk-market is a cheap call, while desk-heatmap's screener sweep and
    desk-charts' 25-symbol OHLC pull are the expensive ones, and dragging those
    to a 1-minute cadence would multiply quota for data that barely changes.
-   Only runs during the open session (plus the post-close settle grace) —
-   once prices are frozen the hourly all-feeds tick already covers it. */
+   Runs during the open session, the post-close settle grace, AND the
+   POST-MARKET window (16:00–20:00 ET, owner request 2026-07-30 + Codex review,
+   PR #199). That last one is not optional now that the tiles show after-hours
+   prices: without it the poller stopped at the bell and an on-screen extended
+   quote could sit nearly two hours behind the tape, which is precisely the
+   window the feature exists for. Once 20:00 ET passes and prices really are
+   frozen, the hourly all-feeds tick covers it again. */
 const MARKET_POLL_MS = 60000;
 let marketPollTimer = 0;
 function scheduleMarketPoll() {
   clearTimeout(marketPollTimer);
   if (document.hidden) return; /* visibilitychange rearms */
-  if (!(marketSessionOpen() || withinCloseSettleGrace())) return; /* closed: hourly tick covers it */
+  /* postMarketOpen(): 16:00–20:00 ET, when extended prints are still arriving */
+  if (!(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return;
   marketPollTimer = setTimeout(async () => {
     await refreshMarket(false);
     renderMasthead();

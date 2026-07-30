@@ -215,14 +215,15 @@ function extInfo(q: any): { extPrice: number | null; extPct: number | null; extA
   if (px == null || px <= 0) return { extPrice: null, extPct: null, extAt: null };
   const regPct = n(q?.regularMarketChangePercent);
   const postPct = n(q?.postMarketChangePercent);
-  const pct = postPct != null && regPct != null
-    ? ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100
-    : regPct;
-  return {
-    extPrice: px,
-    extPct: pct == null ? null : Number(pct.toFixed(2)),
-    extAt: n(q?.postMarketTime),
-  };
+  // BOTH components required (Codex review, PR #199). Falling back to regPct
+  // labels the REGULAR session's move as the after-hours move; returning 0 for a
+  // total absence claims "flat after hours". A price with no percentage is the
+  // honest answer for an incompletely populated quote.
+  if (regPct == null || postPct == null) {
+    return { extPrice: px, extPct: null, extAt: n(q?.postMarketTime) };
+  }
+  const pct = ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100;
+  return { extPrice: px, extPct: Number(pct.toFixed(2)), extAt: n(q?.postMarketTime) };
 }
 
 let yauth: { cookie: string; crumb: string; at: number } | null = null;

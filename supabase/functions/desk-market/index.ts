@@ -125,7 +125,29 @@ function withinCloseSettleGrace(now = new Date()): boolean {
 // TTL stays at 60 min: prices are frozen, so re-polling buys nothing.
 const OPEN_TTL_MS = 60_000;
 const CLOSED_TTL_MS = 3_600_000;
-const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? OPEN_TTL_MS : CLOSED_TTL_MS);
+
+// POST-MARKET runs 16:00–20:00 ET and prices genuinely move in it (Codex review,
+// PR #199). Before this, the TTL jumped to 60 min the moment the regular session
+// closed, so the after-hours figures the owner asked for could sit nearly two
+// hours stale — the feature would have looked broken for exactly the window it
+// exists to cover. The 15-minute settle grace is kept as a separate concept: it
+// covers the final REGULAR print landing late, which is why it applies even on a
+// day with no extended trading.
+function withinPostMarket(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(`${get('year')}-${get('month')}-${get('day')}`)) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 16 * 60 && minutes < 20 * 60;
+}
+const ttlMs = () =>
+  (marketSessionOpen() || withinCloseSettleGrace() || withinPostMarket() ? OPEN_TTL_MS : CLOSED_TTL_MS);
 
 // ── quote chain (verbatim ports of lib/stooq.js + lib/quotes.js) ────────────
 type Row = { date: string; close: number };
@@ -263,12 +285,22 @@ async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string
 // deno-lint-ignore no-explicit-any
 async function quoteBatch(yahooSyms: string[]): Promise<Map<string, any>> {
   const out = new Map<string, unknown>();
-  const auth = await yahooAuth();
+  let auth = await yahooAuth();
   if (!auth) return out as Map<string, any>;
   for (let i = 0; i < yahooSyms.length; i += 50) {
     const q = yahooSyms.slice(i, i + 50).map(encodeURIComponent).join(',');
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${q}&crumb=${encodeURIComponent(auth.crumb)}`;
-    const res = await fetch(url, { headers: { ...UA, Cookie: auth.cookie } }).catch(() => null);
+    const url = (crumb: string) =>
+      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${q}&crumb=${encodeURIComponent(crumb)}`;
+    let res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }).catch(() => null);
+    // A crumb can be invalidated before YAUTH_TTL_MS expires, and silently
+    // skipping the batch meant the extended lines vanished for a whole closed-
+    // market TTL — the empty result gets cached (Codex review, PR #199). Retry
+    // once on 401, matching desk-watchlist and quote-proxy.
+    if (res && res.status === 401) {
+      auth = await yahooAuth(true);
+      if (!auth) return out as Map<string, any>;
+      res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }).catch(() => null);
+    }
     if (!res || !res.ok) continue;
     const json = await res.json().catch(() => null);
     // deno-lint-ignore no-explicit-any
@@ -299,10 +331,14 @@ function extFrom(q: any): { kind: 'pre' | 'post'; price: number; pct: number; at
   const regPct = n(q.regularMarketChangePercent);
   const post = n(q.postMarketPrice), postPct = n(q.postMarketChangePercent);
   if (post != null) {
-    const pct = postPct != null && regPct != null
-      ? ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100
-      : regPct;
-    return { kind: 'post', price: post, pct: Number((pct ?? 0).toFixed(2)), at: n(q.postMarketTime) };
+    // BOTH components required (Codex review, PR #199). Falling back to regPct
+    // labels the REGULAR move as the after-hours move, and `pct ?? 0` turned a
+    // total absence into a confident "0.00%" — i.e. "flat after hours". Both
+    // break this payload's own absent-vs-flat contract, so an incomplete quote
+    // is dropped rather than guessed at.
+    if (regPct == null || postPct == null) return null;
+    const pct = ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100;
+    return { kind: 'post', price: post, pct: Number(pct.toFixed(2)), at: n(q.postMarketTime) };
   }
   const pre = n(q.preMarketPrice), prePct = n(q.preMarketChangePercent);
   // pre% is already the prior-close move — there is no regular session yet.
@@ -327,6 +363,11 @@ function extFrom(q: any): { kind: 'pre' | 'post'; price: number; pct: number; at
 // VIX is absent because no ETF tracks spot VIX — VXX holds futures and would be
 // a different instrument wearing the same name, which is exactly the trap the
 // Nasdaq-100/Composite switch and the Russell 1000/2000 mismatch came from.
+// Cap for the whole auth-and-quote operation. Generous enough for a cold crumb
+// handshake plus one 30-symbol batch, short enough that the core payload is
+// never held past its own latency budget.
+const EXT_QUOTE_TIMEOUT_MS = 4000;
+
 const EXT_PROXY: Record<string, string> = {
   'S&P 500': 'SPY',
   'Nasdaq Composite': 'QQQ',
@@ -444,7 +485,17 @@ async function refresh(): Promise<unknown> {
     const nameToSym = new Map<string, string>();
     for (const m of [...MARKET_SYMBOLS, ...EXTRA_SYMBOLS]) nameToSym.set(m.name, yahooSymbol(m.sym));
     const wanted = new Set<string>([...nameToSym.values(), ...Object.values(EXT_PROXY)]);
-    const quotes = await quoteBatch([...wanted]);
+    // BOUNDED (Codex review, PR #199). try/catch only covers settled rejections:
+    // a Yahoo endpoint that STALLS rather than failing would hold the
+    // already-complete core payload until the edge runtime deadline, so the
+    // "additive" call could take the Markets panel down. Same latency-cap
+    // discipline as bestEffort() above, applied to auth + fetch together.
+    const quotes = await Promise.race([
+      quoteBatch([...wanted]),
+      new Promise<Map<string, unknown>>((resolve) =>
+        setTimeout(() => resolve(new Map()), EXT_QUOTE_TIMEOUT_MS)),
+      // deno-lint-ignore no-explicit-any
+    ]) as Map<string, any>;
     for (const t of tiles) {
       // A tile's OWN extended print, when the instrument actually trades.
       const own = nameToSym.get(t.name);
