@@ -792,7 +792,11 @@ const wlParseSyms = txt => [...new Set(
    it. Both write the same way the editor does, and both are offered only when
    the desk is live AND unlocked — the roster lives behind the PIN RPCs, so
    there is nothing to write to otherwise. */
-const wlCanEdit = () => DESK.mode !== 'demo' && DESK.authed;
+/* NOT gated on DESK.authed (owner ruling 2026-07-30, stated twice: the
+   watchlist is not to depend on unlocking). Still excludes demo, where the
+   roster is a committed bootstrap file with no backend to write to — offering
+   an edit there would be a control that cannot work. */
+const wlCanEdit = () => DESK.mode !== 'demo';
 
 /* Every quick edit is a READ-MODIFY-WRITE against the authoritative RPC, never
    a patch of what the panel happens to be showing. Two reasons, both already
@@ -830,8 +834,10 @@ function wlPick(lists, idx, title) {
 }
 
 async function wlMutate(mutate) {
-  const pin = sessionStorage.getItem('desk_pin');
-  if (!pin) return { ok: false, err: 'Unlock the desk first.' };
+  /* No PIN needed — the watchlist RPCs are open (desk_011). Still a
+     read-modify-write against the AUTHORITATIVE roster, never a patch of the
+     rendered payload: that omits unresolved symbols and can be an hour stale. */
+  const pin = null;
   let lists;
   try {
     const got = await deskGetWatchlists(pin);
@@ -1107,8 +1113,8 @@ function wlEditErr(msg) {
 }
 
 async function openWlEditor() {
-  const pin = sessionStorage.getItem('desk_pin');
-  if (!pin) return;
+  const pin = null;   /* open RPCs — no PIN (desk_011) */
+  if (!wlCanEdit()) return;
   const back = document.getElementById('wlEditBackdrop');
   wlEditErr('');
   /* A FAILED read must never become an editable empty draft (Codex review,
@@ -1152,10 +1158,10 @@ function closeWlEditor() {
 }
 
 async function saveWlEditor() {
-  const pin = sessionStorage.getItem('desk_pin');
-  /* wlEditLoaded gates this too, not just the button's disabled attribute —
-     a replace-all built from a draft that never loaded would delete real lists */
-  if (!pin || !wlEdit || !wlEditLoaded) return;
+  const pin = null;   /* open RPCs — no PIN (desk_011) */
+  /* wlEditLoaded still gates this, and matters MORE now that no PIN does: a
+     replace-all built from a draft that never loaded would delete real lists. */
+  if (!wlEdit || !wlEditLoaded) return;
   const lists = wlEdit
     .map(l => ({ title: String(l.title || '').trim(), symbols: l.symbols }))
     .filter(l => l.title);
