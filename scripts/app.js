@@ -1004,6 +1004,12 @@ async function confirmWlRemove() {
    already focusable for screen readers, and a remove that only a pointer can
    reach is not a remove everyone has. */
 function wlWireRemove(tile, sym, idx, title) {
+  /* Marks the tile as actually having a removal wired, so the touch-gesture
+     override in components.css applies ONLY here (Codex review, PR #200).
+     Putting it on every .wl-tile cost mobile users double-tap zoom in demo and
+     locked sessions, where nothing is listening for the gesture — a real
+     capability traded for nothing. */
+  tile.classList.add('wl-removable');
   tile.addEventListener('dblclick', e => {
     e.preventDefault();
     openWlRemove(sym, idx, title, tile);

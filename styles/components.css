@@ -353,13 +353,18 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    `touch-action: manipulation` is load-bearing, not tidying: mobile browsers
    reserve a double-tap for zoom and would swallow the gesture, so without it
    double-click-to-remove works on a desktop and silently does nothing on a
-   phone. It disables double-tap zoom on the TILES only — pinch-zoom and page
+   phone. It disables double-tap zoom on these tiles only — pinch-zoom and page
    scrolling are untouched.
+
+   Scoped to .wl-removable, which wlWireRemove() adds (Codex review, PR #200).
+   On every .wl-tile it also stripped double-tap zoom in demo and locked
+   sessions, where no removal is wired — taking away a real gesture in exchange
+   for nothing.
 
    Selection is suppressed for the same reason a double-click needs it anywhere:
    the second click would otherwise select the ticker text under the cursor. */
-.wl-strip .wl-tile {
-  position: relative;
+.wl-strip .wl-tile { position: relative; }
+.wl-strip .wl-tile.wl-removable {
   touch-action: manipulation;
   user-select: none; -webkit-user-select: none;
 }

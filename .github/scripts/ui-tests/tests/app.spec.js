@@ -852,6 +852,16 @@ test('S21: watchlist write controls are auth-gated and removal needs a double-cl
   expect(await page.locator('.wl-add').count(), 'demo must offer no + buttons').toBe(0);
   await expect(page.locator('#wlEditBtn')).toBeHidden();
 
+  // ...and no removal wired means the touch-gesture override must NOT apply:
+  // stripping double-tap zoom where nothing listens for a double-tap takes a
+  // real mobile gesture away for nothing (Codex review, PR #200).
+  expect(await page.locator('.wl-strip .wl-tile.wl-removable').count(),
+    'unauthed tiles must not be marked removable').toBe(0);
+  expect(
+    await page.locator('.wl-strip .wl-tile').first().evaluate(t => getComputedStyle(t).touchAction),
+    'unauthed tiles must keep native double-tap zoom',
+  ).not.toMatch(/manipulation/);
+
   // force the authed state so the write affordances render against demo rows
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = true; renderWatchlist(); });
   const bands = await page.locator('.wl-strip .mkt-group').count();
