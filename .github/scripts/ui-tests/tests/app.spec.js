@@ -861,14 +861,15 @@ test('S21: watchlist write controls are auth-gated and the hold is deliberate', 
   const box = await tile.boundingBox();
   const mid = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 
-  // a short press must NOT arm the removal
+  // A tap must NOT arm the removal. Bounds track WL_HOLD_MS (1s — owner ruling
+  // 2026-07-30, cut from 3s): 350ms is comfortably a tap, 1.4s comfortably a hold.
   await page.mouse.move(mid.x, mid.y);
   await page.mouse.down();
-  await page.waitForTimeout(1200);
-  await expect(page.locator('#wlRmBackdrop'), '1.2s is not a hold').toBeHidden();
+  await page.waitForTimeout(350);
+  await expect(page.locator('#wlRmBackdrop'), 'a tap is not a hold').toBeHidden();
   expect(await tile.evaluate(t => t.classList.contains('wl-holding')), 'the fill shows progress').toBe(true);
-  // ...but the full three seconds does
-  await page.waitForTimeout(2200);
+  // ...but holding past the threshold does
+  await page.waitForTimeout(1050);
   await expect(page.locator('#wlRmBackdrop')).toBeVisible();
   await page.mouse.up();
   await expect(page.locator('#wlRmText')).toContainText(/^Remove .+ from/);
@@ -880,9 +881,9 @@ test('S21: watchlist write controls are auth-gated and the hold is deliberate', 
   // dragging (or touch-scrolling) with a finger down must not arm it
   await page.mouse.move(box.x + 10, box.y + 10);
   await page.mouse.down();
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(200);
   await page.mouse.move(box.x + 90, box.y + 60);
-  await page.waitForTimeout(2800);
+  await page.waitForTimeout(1400);   /* well past WL_HOLD_MS */
   await expect(page.locator('#wlRmBackdrop'), 'a drag is not a hold').toBeHidden();
   await page.mouse.up();
 
