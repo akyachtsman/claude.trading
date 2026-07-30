@@ -1445,9 +1445,39 @@ function wireSysPromptModal() {
 }
 
 /* ── locked state (live mode, pre-auth) ────────────────────────────────── */
+/* The desk is unlocked but the accounts payload did not arrive (Codex review,
+   PR #201). Deliberately NOT the lock gate: the PIN is valid, so asking for it
+   again is both wrong and useless. Retry re-runs the fetch with the PIN already
+   held for this session. No balances are drawn, because there are none to draw. */
+function renderAccountsUnavailable() {
+  const grid = document.getElementById('accountGrid');
+  if (!grid) return;
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+  const panel = el('section', 'panel panel-lock');
+  const head = el('div', 'panel-header');
+  head.appendChild(el('h3', 'panel-title', 'Accounts'));
+  head.appendChild(el('span', 'lamp ml-auto lamp--stale', 'Unavailable'));
+  panel.appendChild(head);
+  const body = el('div', 'panel-body');
+  body.appendChild(el('p', 'lock-explain',
+    'Your PIN worked — the desk just could not load your accounts. Everything else on the page is unaffected.'));
+  const btn = el('button', 'btn', 'Retry');
+  btn.type = 'button';
+  btn.addEventListener('click', async () => {
+    const pin = sessionStorage.getItem('desk_pin');
+    if (!pin) return;
+    btn.disabled = true; btn.textContent = 'Loading…';
+    await loadPrivate(pin);
+    /* On success loadPrivate has replaced this panel; on failure it re-rendered
+       a fresh one, so this node is gone either way — nothing to restore. */
+  });
+  body.appendChild(btn);
+  panel.appendChild(body);
+  grid.appendChild(panel);
+}
+
 /* `why` (optional): shown in place of the generic explainer when the panel is
-   locked because the ACCOUNTS FETCH failed rather than because the desk is
-   locked. Those are different states and used to look identical. */
+   locked for a reason other than the desk simply being locked. */
 function renderLockedPanels(why) {
   const grid = document.getElementById('accountGrid');
   while (grid.firstChild) grid.removeChild(grid.firstChild);
@@ -3793,7 +3823,14 @@ async function loadPrivate(pin) {
        watchlist writes through desk_set_watchlists(pin, ...) and needs nothing
        from this payload, so it keeps working. Only the accounts panel is
        unavailable, and it now says so instead of implying the PIN was wrong. */
-    renderLockedPanels('Your PIN worked, but the desk could not load your accounts just now — try again.');
+    /* Accounts are UNAVAILABLE, not locked (Codex review, PR #201). Rendering
+       the lock gate here contradicted itself — a PIN field labelled "Locked"
+       while DESK.authed is true — and pointed at the very recovery step that
+       does not help, which is the whole failure this change exists to end.
+       Retry reuses the PIN already validated in this session. */
+    DESK.data = { ...DESK.data, accounts: [] };   /* never hold stale/foreign balances */
+    renderAccountsUnavailable();
+    renderAsk();
     return;
   }
   const mapped = mapDashboardPayload(payload);
@@ -4187,6 +4224,15 @@ async function boot() {
      and so the demo tiles can never leak into the ask context either. */
   DESK.data.market = [];
   DESK.data.news = [];
+  /* ACCOUNTS too (Codex review, PR #201). The rule above always covered these —
+     buildAskContext() sends nav, cash and every position — but only market and
+     news were actually blanked, so buildDemoData()'s fabricated holdings sat in
+     memory through a live boot. Harmless only while a dashboard failure also
+     revoked auth and locked the assistant; the moment that stopped being true,
+     a failed first fetch could have handed invented positions to an assistant
+     told they are the owner's real portfolio. Blank at the source so the class
+     of bug cannot come back through some other path. */
+  DESK.data.accounts = [];
   await Promise.all([refreshMarket(), refreshNews()]);
   renderMasthead();
   loadHeatmap();

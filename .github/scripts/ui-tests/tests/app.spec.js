@@ -970,6 +970,7 @@ test('S24: a failed accounts load keeps the desk authenticated', async ({ page }
     // ACCOUNTS payload fetch fail the way a network blip or empty table does.
     DESK.mode = 'live';
     DESK.authed = true;
+    sessionStorage.setItem('desk_pin', '0000');
     window.deskGetDashboard = async () => null;
     await loadPrivate('0000');
     return {
@@ -977,12 +978,24 @@ test('S24: a failed accounts load keeps the desk authenticated', async ({ page }
       canEdit: wlCanEdit(),
       // the panel must explain what actually failed, not imply a bad PIN
       explain: document.querySelector('.panel-lock .lock-explain')?.textContent || '',
+      // ...and must NOT re-present the auth gate, which is both wrong and useless
+      pinFields: document.querySelectorAll('.panel-lock .lock-form input').length,
+      hasRetry: !![...document.querySelectorAll('.panel-lock button')]
+        .find(b => /retry/i.test(b.textContent)),
+      // THE ONE THAT MATTERS: no fabricated holdings may survive into the
+      // context the assistant is told is the owner's real portfolio.
+      acctCount: (DESK.data.accounts || []).length,
+      askAccounts: (buildAskContext()?.accounts || []).length,
     };
   });
 
   expect(state.authed, 'a data failure must not clear authentication').toBe(true);
   expect(state.canEdit, 'the watchlist stays editable — its writes only need the PIN').toBe(true);
   expect(state.explain, 'the message must not imply the PIN was wrong').toMatch(/PIN worked/i);
+  expect(state.pinFields, 'unavailable is not locked — do not re-ask for a valid PIN').toBe(0);
+  expect(state.hasRetry, 'offer a retry that reuses the validated PIN').toBe(true);
+  expect(state.acctCount, 'no demo accounts may linger in live mode').toBe(0);
+  expect(state.askAccounts, 'the assistant must never receive fabricated holdings').toBe(0);
 
   // and the edit controls really do render in that state
   await page.evaluate(() => renderWatchlist());
