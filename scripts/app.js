@@ -1445,7 +1445,10 @@ function wireSysPromptModal() {
 }
 
 /* ── locked state (live mode, pre-auth) ────────────────────────────────── */
-function renderLockedPanels() {
+/* `why` (optional): shown in place of the generic explainer when the panel is
+   locked because the ACCOUNTS FETCH failed rather than because the desk is
+   locked. Those are different states and used to look identical. */
+function renderLockedPanels(why) {
   const grid = document.getElementById('accountGrid');
   while (grid.firstChild) grid.removeChild(grid.firstChild);
   const lockPanel = el('section', 'panel panel-lock');
@@ -1454,7 +1457,8 @@ function renderLockedPanels() {
   head.appendChild(el('span', 'lamp ml-auto lamp--locked', 'Locked'));
   lockPanel.appendChild(head);
   const body = el('div', 'panel-body');
-  body.appendChild(el('p', 'lock-explain', 'Account balances and charts are private — enter the desk PIN to unlock.'));
+  body.appendChild(el('p', 'lock-explain', why ||
+    'Account balances and charts are private — enter the desk PIN to unlock.'));
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
@@ -3776,7 +3780,22 @@ function renderPrivate() {
 
 async function loadPrivate(pin) {
   const payload = await deskGetDashboard(pin).catch(() => null);
-  if (!payload) { DESK.authed = false; renderLockedPanels(); return; }
+  if (!payload) {
+    /* A failed ACCOUNTS fetch is NOT a failed PIN (owner report 2026-07-30 —
+       the watchlist + went missing three times before this was traced).
+       deskGetDashboard collapses every failure to null: a network blip, an
+       empty IBKR table, an RPC hiccup. Clearing DESK.authed here treated all
+       of those as "wrong PIN" and silently revoked the watchlist's edit
+       controls immediately after a CORRECT unlock — with no error shown,
+       because deskLogin itself had succeeded.
+
+       DESK.authed means "we hold a validated PIN", which is still true. The
+       watchlist writes through desk_set_watchlists(pin, ...) and needs nothing
+       from this payload, so it keeps working. Only the accounts panel is
+       unavailable, and it now says so instead of implying the PIN was wrong. */
+    renderLockedPanels('Your PIN worked, but the desk could not load your accounts just now — try again.');
+    return;
+  }
   const mapped = mapDashboardPayload(payload);
   DESK.data = { ...DESK.data, accounts: mapped.accounts, labels: mapped.labels };
   DESK.privateAsOf = mapped.asOf;
