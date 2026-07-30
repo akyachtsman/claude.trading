@@ -3002,9 +3002,35 @@ function renderCharts(data, lamp) {
     let vMax = 0;
     if (opts.cfg.vol) for (let i = i0; i < end; i++) vMax = Math.max(vMax, bars.v[i]);
     const isLine = opts.cfg.type === 'line';
+    /* Pro 2 colours its candles by the STOCHASTIC CROSSOVER, not by the day's
+       open/close (owner ruling 2026-07-30, matching the reference terminal):
+       %K (red) above %D (yellow) = green, below = red. The owner reads that
+       pane for long-term entries, where "is momentum with me" is the decision
+       and a single day's direction is noise.
+
+       Established from the terminal's own output, not assumed — on META, 17–30
+       Jul the FAST 14-3-3 reads K<D while the weekly-scale 92-15-15 reads K>D,
+       and the terminal's Pro 2 showed RED across that stretch. So the colour
+       follows the fast DAILY stochastic (`st`), counterintuitive though that is
+       on the long-term pane.
+
+       CONSEQUENCE, deliberately accepted: in this pane a green candle can be a
+       DOWN day. The body still shows direction — open vs close positions it —
+       but the fill now means momentum regime, not today's result. */
+    const byStoch = opts.colorBy === 'stoch' && st && st.k && st.d;
+    const barUp = i => {
+      if (byStoch) {
+        const k = st.k[i], d = st.d[i];
+        /* Before the stochastic warms up (the first k+kSmooth+d bars are null)
+           there is no regime to show, so those fall back to price direction
+           rather than defaulting everything to one colour. */
+        if (k != null && d != null) return k > d;
+      }
+      return bars.c[i] >= bars.o[i];
+    };
     let closeD = '';
     for (let i = i0; i < end; i++) {
-      const up = bars.c[i] >= bars.o[i];
+      const up = barUp(i);
       const col = up ? WB.up : WB.down;
       const cx = x(i);
       if (isLine) {
@@ -3013,7 +3039,13 @@ function renderCharts(data, lamp) {
         line(cx, py(bars.h[i]), cx, py(bars.l[i]), { stroke: col, 'stroke-width': 1 });
         svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: py(Math.max(bars.o[i], bars.c[i])), width: bodyW, height: Math.max(1, Math.abs(py(bars.o[i]) - py(bars.c[i]))), fill: col, 'shape-rendering': 'crispEdges' }));
       }
-      if (vMax) svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: col, 'shape-rendering': 'crispEdges' }));
+      /* VOLUME keeps price direction even in the stochastic-coloured pane: a
+         volume bar is a fact about that one day, and tinting it by a momentum
+         regime would make the histogram claim something it does not measure. */
+      if (vMax) {
+        const vcol = bars.c[i] >= bars.o[i] ? WB.up : WB.down;
+        svg.appendChild(svgEl('rect', { x: cx - bodyW / 2, y: vY + vH - (bars.v[i] / vMax) * vH, width: bodyW, height: (bars.v[i] / vMax) * vH, fill: vcol, 'shape-rendering': 'crispEdges' }));
+      }
     }
     /* line style draws closes in gain-green, like the reference platform */
     if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
@@ -3362,11 +3394,17 @@ function renderCharts(data, lamp) {
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · LONG-TERM · ' + sym, {
       window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
       tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
+      /* Candles by stochastic crossover — Pro 2 ONLY (owner ruling 2026-07-30).
+         Pro 1 and Pro 3 keep open/close, where a day's direction is the point. */
+      colorBy: 'stoch',
       pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
       marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
-      stochCaption: stochTag() + ' · DAILY',
+      /* names the strip the candles take their colour from — in this pane a
+         green candle can be a down day, so leaving that unstated would read
+         as a rendering bug rather than the intended signal */
+      stochCaption: stochTag() + ' · DAILY · CANDLE COLOUR',
       stochWCaption: stochWTag() + ' · WEEKLY SCALE',
     }]);
   }

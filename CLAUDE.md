@@ -58,6 +58,23 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `scripts/app.js` — all rendering + interactions (accounts with per-card
   equity sparklines, news, ask-the-desk panel, the Markets window, stochastic
   charts workbench, PIN lock/unlock flow) + the
+  **Pro 2 candle colouring follows the STOCHASTIC CROSSOVER, not open/close**
+  (owner ruling 2026-07-30, matching the reference terminal): `%K` (red) above
+  `%D` (yellow) ⇒ green candle, below ⇒ red — "red over yellow is a buy sign",
+  and on the long-term pane the decision is whether momentum is with you, not
+  what one day did. `drawPane`'s `opts.colorBy === 'stoch'` is set on the **Pro 2
+  pane only**; Pro 1 and Pro 3 keep open/close. The colour reads the pane's
+  **fast DAILY 14-3-3** (`d.st`) — NOT the 92-15-15 weekly overlay, established
+  from the terminal's own output (META 17–30 Jul: the fast reads K<D matching
+  the terminal's red, the slow reads K>D contradicting it), counterintuitive
+  though that is on a long-term pane. Two deliberate consequences: a green
+  candle in this pane **can be a down day** (the body still shows direction; the
+  fill now means momentum regime), which is why the strip caption reads
+  `· CANDLE COLOUR` rather than leaving it to look like a rendering bug; and
+  **volume bars stay price-coloured**, since a volume bar is a fact about one
+  day and tinting it by a regime would make the histogram claim something it
+  does not measure. Bars before the stochastic warms up fall back to
+  open/close rather than defaulting to one colour. Also carries the
   session-aware feed poller (5 min market-open / 60 min closed, paused
   while the tab is hidden; a `CLOSE_SETTLE_GRACE_MIN` window — 15 min,
   `withinCloseSettleGrace()` in `scripts/data.js` — keeps the 5-min cadence for
@@ -432,8 +449,9 @@ run for real against the dedicated project on every PR.
 | S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; first-row value order changes accordingly | Order/aria-sort unchanged after click |
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shell pre-auth, valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
+| S25 | Pro 2 stochastic candles | With `?demo=1`, EVERY Pro 2 candle's colour matches its own daily `%K` vs `%D` (read off the rendered SVG, volume bars excluded — they stay price-coloured); Pro 1 is the control and must contradict its stochastic on a real share of bars | Any Pro 2 candle disagreeing with the crossover (a silent fallback to open/close), or Pro 1 agreeing everywhere (the rule leaked into the wrong pane) |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
-| S21 | Watchlist quick add + double-click remove | With `?demo=1`, NO write control exists unauthenticated (0 `.wl-add`, `#wlEditBtn` hidden). Then forcing `DESK.authed` renders one + per band; a SINGLE click does NOT open `#wlRmBackdrop` but a double-click does (focus on "Keep it"), the tiles compute `touch-action: manipulation` so a phone double-tap is not eaten by zoom, Delete on a focused tile opens the same dialog, and quick-add rejects junk input | A + offered without auth, the hold firing early or surviving a drag, no keyboard path, or junk accepted |
+| S21 | Watchlist quick add + double-click remove | With `?demo=1` (no backend to write to) NO write control renders and tiles keep native double-tap zoom. Switching to live with `DESK.authed` left **false** must still render one + per band (owner ruling 2026-07-30 — edits do not depend on unlocking); a SINGLE click does NOT open `#wlRmBackdrop` but a double-click does (focus on "Keep it"), the tiles compute `touch-action: manipulation` so a phone double-tap is not eaten by zoom, Delete on a focused tile opens the same dialog, and quick-add rejects junk input | A + offered in demo, edits re-gated on auth, a single click removing, no keyboard path, or junk accepted |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
 | S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |

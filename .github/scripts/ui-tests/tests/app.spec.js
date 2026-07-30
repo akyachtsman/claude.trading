@@ -1011,6 +1011,77 @@ test('S24: a failed accounts load keeps the desk authenticated', async ({ page }
     .toBeGreaterThan(0);
 });
 
+// S25 — Pro 2 colours candles by the STOCHASTIC CROSSOVER, not open/close
+// (owner ruling 2026-07-30, matching the reference terminal): %K (red) above
+// %D (yellow) = green candle, below = red. Pro 1 keeps price colouring.
+//
+// This reads the rule off the rendered SVG rather than comparing the two panes'
+// colour sequences to each other — the panes run different default windows
+// (63 vs 126 bars), so "the sequences differ" would pass even if Pro 2 had
+// silently fallen back to price colouring, which is the exact regression here.
+test('S25: Pro 2 candles follow the stochastic; Pro 1 follows open/close', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await page.waitForSelector('#wbChart');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(800);
+
+  const probe = await page.evaluate(() => {
+    const svg = document.getElementById('wbChart');
+    const pts = el => (el.getAttribute('d').match(/[ML][-\d.]+[ ,][-\d.]+/g) || [])
+      .map(s => s.slice(1).split(/[ ,]/).map(Number)).map(([x, y]) => ({ x, y }));
+
+    /* Each pane names its own strips, so the caption is what locates them —
+       no reliance on pane order or on a hardcoded slice of the viewBox. */
+    const read = capRe => {
+      const cap = [...svg.querySelectorAll('text')].find(t => capRe.test(t.textContent));
+      if (!cap) return { err: 'caption not found: ' + capRe };
+      const capX = +cap.getAttribute('x'), capY = +cap.getAttribute('y');
+      // the strip's own %K/%D paths sit directly under its caption
+      const near = stroke => [...svg.querySelectorAll('path[stroke="' + stroke + '"]')]
+        .find(p => { const b = p.getBBox(); return b.x > capX - 20 && b.y > capY && b.y < capY + 100; });
+      const kEl = near('#e23b3b'), dEl = near('#f5c518');
+      if (!kEl || !dEl) return { err: 'strip paths not found under ' + capRe };
+      const k = pts(kEl), d = pts(dEl);
+
+      const x0 = capX - 20, x1 = capX + kEl.getBBox().width + 20;
+      let rects = [...svg.querySelectorAll('rect[shape-rendering=crispEdges]')]
+        .map(r => ({ x: +r.getAttribute('x'), y: +r.getAttribute('y'), h: +r.getAttribute('height'), fill: r.getAttribute('fill') }))
+        .filter(r => r.x >= x0 && r.x <= x1 && r.y < capY - 20);
+      /* Volume bars share the price rect shape but all rest on ONE baseline,
+         so the modal bottom edge identifies them. They stay price-coloured on
+         purpose, and counting them here would fake a disagreement. */
+      const tally = {};
+      for (const r of rects) { const b = (r.y + r.h).toFixed(1); tally[b] = (tally[b] || 0) + 1; }
+      const vol = Object.entries(tally).sort((a, c) => c[1] - a[1])[0];
+      if (vol && vol[1] > 5) rects = rects.filter(r => (r.y + r.h).toFixed(1) !== vol[0]);
+
+      const at = (arr, x) => arr.reduce((best, p) => Math.abs(p.x - x) < Math.abs(best.x - x) ? p : best, arr[0]);
+      let agree = 0, disagree = 0;
+      for (const bd of rects) {
+        const kp = at(k, bd.x), dp = at(d, bd.x);
+        if (Math.abs(kp.x - bd.x) > 4 || Math.abs(dp.x - bd.x) > 4) continue;   // stoch warm-up gap
+        if (Math.abs(kp.y - dp.y) < 0.5) continue;                              // too close to call
+        (bd.fill.includes('gain') === (kp.y < dp.y)) ? agree++ : disagree++;    // lower y = higher value
+      }
+      return { n: rects.length, agree, disagree };
+    };
+    return { p2: read(/CANDLE COLOUR/), p1: read(/^STOCH 14-3-3 · DAILY$/) };
+  });
+
+  expect(probe.p2.err, 'Pro 2 strip located').toBeUndefined();
+  expect(probe.p1.err, 'Pro 1 strip located').toBeUndefined();
+  expect(probe.p2.agree, 'Pro 2 candles sampled').toBeGreaterThan(40);
+  expect(probe.p1.agree + probe.p1.disagree, 'Pro 1 candles sampled').toBeGreaterThan(20);
+
+  // Pro 2: EVERY candle must match its stochastic crossover — no exceptions.
+  expect(probe.p2.disagree, 'every Pro 2 candle matches %K vs %D').toBe(0);
+
+  // Pro 1 is the control: it follows open/close, so it must contradict its own
+  // stochastic on a real share of bars. Zero here would mean the rule leaked.
+  expect(probe.p1.disagree, 'Pro 1 still follows open/close, not the stochastic')
+    .toBeGreaterThan(probe.p1.agree * 0.1);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // S15–S19 — Live desk assistant (memory + research + live data + advice + clear).
 // Each makes a REAL desk-ask Claude tool-loop call (slow, nondeterministic, costs
