@@ -400,22 +400,47 @@ async function loadPeriods(universe: string): Promise<{ at: number; map: Map<str
   return entry;
 }
 
+// Progress is tracked BY SYMBOL, not by position in the roster.
+//
+// The original ledger compared roster SIZE (`row.total !== symbols.length →
+// resweep`) and sliced the next step by an index into a freshly-fetched list.
+// Both assumptions fail against the live screener: it re-sorts by market cap
+// and drifts a name or two most days. So a finished 500-name sweep was
+// discarded whenever 498 came back, and every subsequent request redid a
+// 160-symbol step (8 Yahoo 1-year spark calls) inline before it could answer.
+// That extra work is what pushed the worker past its resource limit — the
+// function returned HTTP 546 on roughly one call in three, and the desk showed
+// a blank map with a STALE lamp (owner report 2026-07-30). Set-based progress
+// converges instead: a two-name drift now costs two lookups, not 500.
 async function advanceSweep(universe: string, symbols: string[]): Promise<void> {
-  let row = await readSweepRow(universe);
-  if (row && row.total !== symbols.length) row = null; // roster changed → resweep
-  if (sweepComplete(row)) return;
-  // stale-complete or missing → restart the ledger
-  if (!row || (row.total > 0 && row.done >= row.total)) {
-    row = { at: Date.now(), done: 0, total: symbols.length, map: {} };
+  const prev = await readSweepRow(universe);
+  const fresh = Boolean(prev && Date.now() - prev.at < 86_400_000);   // else: daily refresh
+  const map: Record<string, Periods> = fresh ? { ...prev!.map } : {};
+  const want = new Set(symbols);
+  for (const sym of Object.keys(map)) if (!want.has(sym)) delete map[sym];  // dropped from roster
+  const slice = symbols.filter((s) => !(s in map)).slice(0, SWEEP_STEP_BATCHES * 20);
+
+  if (slice.length) {
+    const got = await periodSweep(slice);
+    // A symbol Yahoo returns nothing for is recorded with an EMPTY reading
+    // rather than left out. Otherwise it stays "missing" forever: the ledger
+    // never completes, every request keeps paying a sweep step, and we are
+    // back to the 546s this change exists to stop. An empty reading renders
+    // exactly like no reading — the client drops non-finite periods.
+    for (const sym of slice) map[sym] = got.get(sym) ?? { w: null, m: null, ytd: null };
   }
-  const slice = symbols.slice(row.done, row.done + SWEEP_STEP_BATCHES * 20);
-  if (!slice.length) { row.done = row.total; await writeSweepRow(universe, row); return; }
-  const got = await periodSweep(slice);
-  for (const [sym, p] of got) row.map[sym] = p;
-  row.done += slice.length;
-  row.at = Date.now();
+
+  const done = Object.keys(map).length;
+  const row: SweepRow = { at: Date.now(), done, total: symbols.length, map };
+  if (!slice.length) {
+    // Nothing left to sweep. Preserve the original timestamp so the 24h
+    // refresh still fires on schedule — stamping `at` on every no-op call
+    // would hold the ledger permanently "fresh" and freeze the period data.
+    if (fresh && prev!.done === done && prev!.total === symbols.length) return;
+    row.at = fresh ? prev!.at : Date.now();
+  }
   await writeSweepRow(universe, row);
-  if (row.done >= row.total) payloadCache.delete(universe); // next call rebuilds WITH periods
+  if (done >= symbols.length) payloadCache.delete(universe); // next call rebuilds WITH periods
 }
 
 async function kickPeriodSweep(universe: string, symbols: string[]): Promise<void> {
