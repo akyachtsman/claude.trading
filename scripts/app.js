@@ -2569,7 +2569,39 @@ async function refreshR2kMap() {
   if (mapView.key === 'r2k') applyMapView();
 }
 
+/* Collapsed by default (owner request 2026-07-31). The gate is deliberately in
+   loadHeatmap itself rather than only at the call site: the panel is refreshed
+   from the poller too, and a collapsed panel must not quietly keep paying for
+   the desk's heaviest feed on a timer. `force` is exempt — "Refresh now" is an
+   explicit act, and an open panel is the only way to see the result anyway. */
+const HM_OPEN_KEY = 'hm_open_v1';
+let hmOpen = false;
+try { hmOpen = localStorage.getItem(HM_OPEN_KEY) === '1'; } catch { /* private mode */ }
+
+function renderHeatToggle() {
+  const btn = document.getElementById('heatToggle');
+  const body = document.getElementById('heatBody');
+  if (!btn || !body) return;
+  btn.textContent = hmOpen ? 'Hide' : 'Show';
+  btn.setAttribute('aria-expanded', hmOpen ? 'true' : 'false');
+  body.hidden = !hmOpen;
+}
+
+function wireHeatToggle() {
+  const btn = document.getElementById('heatToggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    hmOpen = !hmOpen;
+    try { localStorage.setItem(HM_OPEN_KEY, hmOpen ? '1' : '0'); } catch { /* private mode */ }
+    renderHeatToggle();
+    /* First open is what triggers the fetch — nothing was loaded while closed. */
+    if (hmOpen) loadHeatmap();
+  });
+  renderHeatToggle();
+}
+
 async function loadHeatmap(force) {
+  if (!hmOpen && !force) return;   /* collapsed → costs nothing */
   if (!mapView.filters) {
     try { mapView.filters = await fetchPublic('config/map-filters.json'); }
     catch { mapView.filters = {}; }
@@ -4700,6 +4732,7 @@ async function boot() {
     renderMarkets(DESK.data.market, { cls: 'lamp--demo', text: 'Demo' });
     renderNews(DESK.data.news, { cls: 'lamp--demo', text: 'Demo' });
     renderPrivate();
+    wireHeatToggle();
     loadHeatmap();
     loadCharts();
     loadWatchlist();
@@ -4725,6 +4758,7 @@ async function boot() {
   DESK.data.accounts = [];
   await Promise.all([refreshMarket(), refreshNews()]);
   renderMasthead();
+  wireHeatToggle();
   loadHeatmap();
   loadCharts();
   loadWatchlist();

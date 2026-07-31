@@ -379,8 +379,8 @@ const EXT_PROXY: Record<string, string> = {
 // hung/slow upstream, so a stalled optional quote can never hold the core
 // payload past the edge timeout (Codex #109). clearTimeout avoids a dangling
 // isolate timer on the happy path.
-function bestEffort(p: Promise<Series>, ms: number): Promise<Series | null> {
-  return new Promise((resolve) => {
+function bestEffort<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
     const t = setTimeout(() => resolve(null), ms);
     p.then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(null); });
   });
@@ -445,14 +445,23 @@ async function refresh(): Promise<unknown> {
   const cosd = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
   const [idxRows, fredCsv, extraRows] = await Promise.all([
     Promise.all(MARKET_SYMBOLS.map((m) => dailyCloses(m.sym))),
-    fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }).then((r) => r.text()),
+    // BEST-EFFORT, with the same latency cap as the extras (owner report
+    // 2026-07-31: the dashboard took ~a minute to load). FRED was the one core
+    // input with no cap and no fallback, so a slow or empty DGS10 response held
+    // the whole sweep and then threw — measured live at 61s for a 48-byte
+    // `{"ok":false,"error":"FRED DGS10: 0 usable rows"}`. Every tile the desk
+    // could actually price was discarded because ONE optional row was missing.
+    bestEffort(fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }).then((r) => r.text()), 4000),
     // best-effort with a latency cap (see bestEffort): a slow/rejected extra → null
     Promise.all(EXTRA_SYMBOLS.map((m) => bestEffort(dailyCloses(m.sym), 4000))),
   ]);
   const tiles = MARKET_SYMBOLS.map((m, i) => tileFrom(m.name, idxRows[i]));
-  const fredRows = parseFred(fredCsv);
-  if (fredRows.length < 2) throw new Error(`FRED DGS10: ${fredRows.length} usable rows`);
-  tiles.push(tenYearTile(fredRows));
+  // The 10Y DROPS ITS TILE when FRED is unavailable; it never gates the others.
+  // Same rule Bitcoin/Gold/US Dollar have always had — a flaky extra costs its
+  // own tile and nothing else. It was the odd one out only because it happens
+  // to be sourced differently, not because it is more essential.
+  const fredRows = fredCsv ? parseFred(fredCsv) : [];
+  if (fredRows.length >= 2) tiles.push(tenYearTile(fredRows));
   // Aggregate as-of is computed from the CORE tiles ONLY (Codex #109): the
   // extras include 24/7 crypto, so their date would otherwise push the
   // masthead "as of" past the equities' real trading day, overstating core

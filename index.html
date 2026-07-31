@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260731h">
-<link rel="stylesheet" href="styles/components.css?v=20260731h">
+<link rel="stylesheet" href="styles/tokens.css?v=20260731i">
+<link rel="stylesheet" href="styles/components.css?v=20260731i">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -753,9 +753,18 @@
     <div class="panel-header">
       <h2 class="panel-title" id="heatTitle">Heatmap — S&amp;P 500</h2>
       <span class="lamp lamp--demo" id="heatLamp">Demo</span>
+      <!-- Collapsed BY DEFAULT (owner request 2026-07-31, load time). The
+           heatmap is the desk's heaviest panel by a wide margin — 498 tiles
+           over 11 sectors, 78KB, ~3.2s upstream — and it is the one panel the
+           owner opens deliberately rather than reads at a glance. Nothing is
+           fetched until it is expanded: the toggle is what triggers the first
+           load, so a collapsed panel costs one button and zero network. The
+           choice persists (hm_open_v1) so a deliberate open survives a reload. -->
+      <button type="button" class="btn btn-secondary heat-toggle" id="heatToggle"
+              aria-expanded="false" aria-controls="heatBody">Show</button>
       <span class="stamp ml-auto" id="heatStamp">—</span>
     </div>
-    <div class="panel-body">
+    <div class="panel-body" id="heatBody" hidden>
       <div class="heat-grid">
         <aside class="map-filter" aria-label="Map filter">
           <p class="map-filter-title">Map filter</p>
@@ -783,8 +792,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260731h"></script>
-<script src="scripts/data.js?v=20260731h"></script>
-<script src="scripts/app.js?v=20260731h"></script>
+<script src="scripts/config.js?v=20260731i"></script>
+<script src="scripts/data.js?v=20260731i"></script>
+<script src="scripts/app.js?v=20260731i"></script>
 </body>
 </html>
