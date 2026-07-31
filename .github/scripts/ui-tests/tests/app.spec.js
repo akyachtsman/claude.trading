@@ -214,7 +214,20 @@ function testValueFor(el) {
 // ─────────────────────────────────────────────────────────────────────────────
 test('S1: page loads without JS errors', async ({ page }) => {
   const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  /* Declared before BOTH listeners: WebKit surfaces a blocked cross-origin
+     fetch as a pageerror, not only as a console error, so the same allowlist
+     has to cover both. Chromium only logs it to the console, which is why this
+     failed on iphone alone. */
+  const FEED_ORIGIN = '.supabase.co/functions/v1/';
+  const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
+  page.on('pageerror', e => {
+    const t = e.message || '';
+    /* Scoped tight: the message must NAME the feed origin as well as look like
+       a CORS rejection. pageerror is where genuine application faults land, and
+       widening it on phrasing alone would mute a real one. */
+    if (t.includes(FEED_ORIGIN) && FEED_CORS.test(t)) return;
+    errors.push(t);
+  });
   // Allowlist (spec Clarifications #7, Group C): failed fetches to the live
   // feed origin log browser console errors we can't suppress from JS
   // ("Failed to load resource … functions/v1/desk-*"). The app handles those
@@ -222,7 +235,6 @@ test('S1: page loads without JS errors', async ({ page }) => {
   // feed health. Everything else still fails S1. Narrow on purpose: origin
   // substring only, never a blanket console mute.
   // Network-layer console errors carry the URL in location(), not text().
-  const FEED_ORIGIN = '.supabase.co/functions/v1/';
   page.on('console', m => {
     if (m.type() !== 'error') return;
     const at = (m.location() && m.location().url) || '';
@@ -239,7 +251,7 @@ test('S1: page loads without JS errors', async ({ page }) => {
        polled every minute since the SMH staleness fix, instead of being fetched
        once per tab. Same fix already applied to S3's listener; S1 has its own
        and was missed. */
-    if (/Access-Control-Allow-Origin|access control checks/i.test(m.text())) return;
+    if (FEED_CORS.test(m.text())) return;
     errors.push(`${m.text()} (${at || 'no url'})`);
   });
   await page.goto('./');
