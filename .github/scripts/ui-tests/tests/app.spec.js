@@ -1022,10 +1022,12 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   // The panel + asks WHICH LIST (owner ruling 2026-07-31, replacing the staging
   // tray) and still rejects junk. The picker is the whole point of the change:
   // add-and-be-done, instead of minting a tile and dragging it somewhere.
+  // The + lands in RADAR, always (owner ruling 2026-07-31, replacing the
+  // dropdown that replaced the staging tray). No destination question at all:
+  // the heading names where it goes, and the list is created on first use.
   await page.locator('#wlTrayAdd').click();
-  await expect(page.locator('#wlQuickList'), 'the + must offer a destination').toBeVisible();
-  expect(await page.locator('#wlQuickList option').count(),
-    'every list is a destination').toBeGreaterThan(1);
+  await expect(page.locator('#wlQuickTitle')).toContainText(/Radar/i);
+  expect(await page.locator('#wlQuickList').count(), 'no destination dropdown').toBe(0);
   await page.locator('#wlQuickInput').fill('!!!');
   await page.locator('#wlQuickSaveBtn').click();
   await expect(page.locator('#wlQuickErr')).toBeVisible();

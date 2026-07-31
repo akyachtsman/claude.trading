@@ -1119,7 +1119,22 @@ let wlBusy = false;
    position as a guard: if they disagree the roster moved under us, and refusing
    is the only safe answer. Falls back to a title match only when it is
    UNAMBIGUOUS, which covers an ordering surprise without reintroducing the bug. */
+/* The landing list for the panel-level + (owner ruling 2026-07-31). Matched and
+   CREATED by name, so the owner never has to seed it by hand and a rename in the
+   editor simply means the next + makes a fresh one. */
+const WL_RADAR = 'Radar';
+
 function wlPick(lists, idx, title) {
+  /* idx === null is the Radar path: find it by name, or mint it. Done inside
+     wlMutate's callback, so the create and the add are ONE atomic replace-all
+     — never a create followed by a second write that could half-land. */
+  if (idx === null) {
+    const found = lists.find(l => (l.title || '').trim().toLowerCase() === WL_RADAR.toLowerCase());
+    if (found) return found;
+    const made = { title: WL_RADAR, symbols: [] };
+    lists.push(made);
+    return made;
+  }
   const at = lists[idx];
   if (at && at.title === title) return at;
   const named = lists.filter(l => l.title === title);
@@ -1182,27 +1197,13 @@ function openWlQuickAdd(idx, title, invoker) {
   const head = document.getElementById('wlQuickTitle');
   const input = document.getElementById('wlQuickInput');
   if (!back || !input) return;
-  /* `idx == null` means the panel-level + — show the picker. Opened from a
-     band, the destination is already known and the picker would be a question
-     with one answer, so it is hidden and the heading names the list instead.
-     Rebuilt on every open so a rename or a new list needs no other wiring. */
-  const sel = document.getElementById('wlQuickList');
-  const lbl = document.getElementById('wlQuickListLabel');
-  const pick = idx == null;
-  if (sel && lbl) {
-    sel.hidden = !pick; lbl.hidden = !pick;
-    if (pick) {
-      sel.textContent = '';
-      (wlState.payload && wlState.payload.lists || []).forEach((l, i) => {
-        const o = document.createElement('option');
-        o.value = String(i);
-        o.textContent = l.title || ('List ' + (i + 1));
-        sel.appendChild(o);
-      });
-      if (!sel.options.length) { wlQuickErr('No list to add to yet — create one in the editor first.'); }
-    }
-  }
-  if (head) head.textContent = pick ? 'Add symbols' : 'Add to ' + title;
+  /* The panel-level + always targets RADAR (owner ruling 2026-07-31). It briefly
+     offered a destination dropdown; the owner replaced that with a fixed
+     landing list — "just automatically add any new stock via the plus sign to
+     the radar watch list". One question fewer between seeing a ticker and
+     keeping it, which is the whole point of a quick add. Moving it elsewhere is
+     a drag, which already exists. */
+  if (head) head.textContent = 'Add to ' + (title || WL_RADAR);
   input.value = '';
   input.disabled = false;
   wlQuickErr('');
@@ -1226,16 +1227,12 @@ async function submitWlQuickAdd() {
      behave identically here (and the RPC re-validates regardless). */
   const syms = wlParseSyms(input.value);
   if (!syms.length) { wlQuickErr('No usable ticker in that — letters, digits, . ^ = - only.'); return; }
-  /* A fixed target when the dialog was opened for one band; otherwise whatever
-     the picker says. The picker is the default path now (owner ruling
-     2026-07-31) — the staging tray it replaced made adding a symbol two
-     gestures and a piece of persisted state to reach one outcome. */
-  const sel = document.getElementById('wlQuickList');
-  const chosen = wlQuickList.idx == null && sel && sel.value !== ''
-    ? { idx: Number(sel.value), title: sel.options[sel.selectedIndex].textContent }
-    : wlQuickList;
-  const { idx, title } = chosen;
-  if (idx == null || Number.isNaN(idx)) { wlQuickErr('Pick a list to add them to.'); return; }
+  /* Opened from a band → that band. Opened from the panel + → RADAR, by name
+     rather than by index: indexes shift when lists are reordered, and this
+     lookup happens inside the authoritative read below, so a rename or a
+     reorder between opening the dialog and saving cannot land the symbols in
+     the wrong list. */
+  const { idx, title } = wlQuickList.idx == null ? { idx: null, title: WL_RADAR } : wlQuickList;
   wlBusy = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   input.disabled = true;   /* the Enter path has to be shut too, not just the button */
