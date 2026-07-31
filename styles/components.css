@@ -398,17 +398,13 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 }
 
 /* ── staging tray, trash and drag (owner request 2026-07-31) ─────────────── */
-.wl-tray {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 12px; border-bottom: 1px solid var(--color-border);
-}
-/* A class selector outranks the UA's `[hidden] { display: none }`, so without
-   this the tray stayed on screen in demo — a write control offered where there
-   is nothing to write to, which is the one thing this panel must not do. */
-.wl-tray[hidden] { display: none; }
-.wl-tray-tiles { display: flex; gap: 6px; flex-wrap: wrap; min-height: 30px; min-width: 90px; align-items: center; }
-.wl-tray-hint { margin: 0; font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
-.wl-tile--tray { opacity: .92; border-style: dashed; }
+
+/* Transient note in the panel header (replaces the staging row's hint line). */
+.wl-note { font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
+.wl-note[hidden] { display: none; }
+/* The destination picker in the quick-add dialog. */
+.wl-quick-list { display: block; width: 100%; margin-bottom: 8px; }
+.wl-quick-list[hidden], #wlQuickListLabel[hidden] { display: none; }
 /* Header-resident now (owner ruling 2026-07-31), so NO `margin-left: auto` —
    that pushed it to the far edge when it lived on its own row, and in the
    header it would shove the as-of stamp off its own `ml-auto` anchor. Sized to
@@ -428,7 +424,6 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
    desk means P&L, and a red glow on a hover target would read as a number. */
 .wl-trash.wl-drop-over,
-.wl-tray-tiles.wl-drop-over,
 .mkt-group-tiles.wl-drop-over { outline: 2px dashed var(--color-accent-bright); outline-offset: 2px; }
 
 /* The tile follows the pointer; the original stays put at reduced opacity so

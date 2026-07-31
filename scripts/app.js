@@ -731,17 +731,6 @@ function wlTile(r, pending) {
    and wlSortRows() returns rows untouched under Manual. So this adds no storage
    and no migration — it only gives the owner a way to SET what the desk could
    already hold. */
-const WL_TRAY_KEY = 'wl_tray_v1';
-let wlTray = [];
-try {
-  const raw = JSON.parse(localStorage.getItem(WL_TRAY_KEY) || '[]');
-  /* regex inlined, not WL_SYM_RE: this runs at load time and that const is
-     declared further down the file, so referencing it here throws on the
-     temporal dead zone and takes the whole script with it */
-  if (Array.isArray(raw)) wlTray = raw.filter(s => typeof s === 'string' && /^[A-Z0-9.^=-]{1,10}$/.test(s)).slice(0, 40);
-} catch { /* private mode */ }
-const saveWlTray = () => { try { localStorage.setItem(WL_TRAY_KEY, JSON.stringify(wlTray)); } catch { /* private mode */ } };
-
 /* Movement past this many px is a drag; anything less stays a click, which is
    what keeps the double-click removal working unchanged. */
 const WL_DRAG_SLOP = 6;
@@ -754,12 +743,16 @@ const WL_TOUCH_ARM_MS = 300;
 
 const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null };
 
+/* Transient feedback for a drag that could not be committed. The staging row
+   that used to carry this is gone (owner ruling 2026-07-31), so it borrows the
+   panel's own sort note — the only always-present line in the header area. */
 function wlNote(msg) {
-  const hint = document.getElementById('wlTrayHint');
+  const hint = document.getElementById('wlNote');
   if (!hint) return;
   hint.textContent = msg;
+  hint.hidden = false;
   clearTimeout(wlNote.t);
-  wlNote.t = setTimeout(() => { hint.textContent = 'Drag a tile into any list'; }, 4000);
+  wlNote.t = setTimeout(() => { hint.textContent = ''; hint.hidden = true; }, 4000);
 }
 
 /* A hand-made order can only survive under Manual — any other key re-sorts on
@@ -776,7 +769,7 @@ function wlEnsureManual() {
   return false;
 }
 
-const wlDropZones = () => [...document.querySelectorAll('.mkt-group-tiles[data-band], #wlTrayTiles, #wlTrash')];
+const wlDropZones = () => [...document.querySelectorAll('.mkt-group-tiles[data-band], #wlTrash')];
 
 /* Which slot the pointer is over, in reading order: a tile counts as "already
    passed" when the pointer is below its row, or on its row and past its middle.
@@ -804,7 +797,7 @@ function wlDragMove(ev) {
   wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
   wlClearMarker();
   const under = document.elementFromPoint(ev.clientX, ev.clientY);
-  const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrayTiles, #wlTrash');
+  const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
   if (!zone) return;
   zone.classList.add('wl-drop-over');
   if (zone.id === 'wlTrash') return;
@@ -820,7 +813,7 @@ function wlDragEnd(ev, cancelled) {
   clearTimeout(d.armed);
   if (!d.on) { d.sym = null; d.tile = null; return; }
   const under = cancelled ? null : document.elementFromPoint(ev.clientX, ev.clientY);
-  const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrayTiles, #wlTrash');
+  const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
   const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX, ev.clientY) : 0;
   wlClearMarker();
   if (d.ghost) d.ghost.remove();
@@ -829,11 +822,10 @@ function wlDragEnd(ev, cancelled) {
   d.on = false;
   const from = d.from, sym = d.sym;
   d.ghost = null; d.tile = null; d.from = null; d.sym = null;
-  wlSyncTray(); /* drag over — the row folds away again unless it holds a tile */
+  wlSyncWriteControls();
   if (!zone || cancelled) return;
   const to = zone.id === 'wlTrash' ? { band: 'trash' }
-    : zone.id === 'wlTrayTiles' ? { band: 'tray', idx: at }
-      : { band: Number(zone.dataset.band), title: zone.dataset.title, idx: at };
+    : { band: Number(zone.dataset.band), title: zone.dataset.title, idx: at };
   wlCommitMove(from, to, sym);
 }
 
@@ -846,7 +838,7 @@ function wlDragStart(ev, tile, from, sym) {
      empty now that it no longer carries the + and 🗑 (owner ruling
      2026-07-31), and a hidden drop zone is not a drop zone — without this the
      first tile could never be staged. */
-  wlSyncTray();
+  wlSyncWriteControls();
   const ghost = tile.cloneNode(true);
   ghost.className = 'mkt-tile wl-tile wl-ghost';
   ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
@@ -859,22 +851,13 @@ function wlDragStart(ev, tile, from, sym) {
    TWO lists, which is precisely why it has to be one write. */
 async function wlCommitMove(from, to, sym) {
   if (!from || !sym) return;
-  /* tray → tray is a reorder of a local list; nothing to write to the desk */
-  if (from.band === 'tray' && to.band === 'tray') {
-    wlTray.splice(from.idx, 1);
-    wlTray.splice(Math.min(to.idx, wlTray.length), 0, sym);
-    saveWlTray(); renderWlTray(); return;
-  }
-  if (from.band === 'tray' && to.band === 'trash') {
-    wlTray.splice(from.idx, 1); saveWlTray(); renderWlTray(); return;
-  }
   if (from.band === to.band && to.band !== 'trash' && from.idx === to.idx) return;   /* dropped where it started */
 
   const res = await wlMutate(lists => {
-    const src = from.band === 'tray' ? null : wlPick(lists, from.band, from.title);
-    if (from.band !== 'tray' && !src) return false;
-    const dst = to.band === 'trash' || to.band === 'tray' ? null : wlPick(lists, to.band, to.title);
-    if (to.band !== 'trash' && to.band !== 'tray' && !dst) return false;
+    const src = wlPick(lists, from.band, from.title);
+    if (!src) return false;
+    const dst = to.band === 'trash' ? null : wlPick(lists, to.band, to.title);
+    if (to.band !== 'trash' && !dst) return false;
 
     if (src) {
       const at = src.symbols.indexOf(sym);
@@ -890,10 +873,7 @@ async function wlCommitMove(from, to, sym) {
     }
     return true;
   });
-  if (res.ok) {
-    if (from.band === 'tray') { wlTray.splice(from.idx, 1); saveWlTray(); renderWlTray(); }
-    if (to.band === 'tray') { wlTray.push(sym); saveWlTray(); renderWlTray(); }
-  } else if (res.err) wlNote(res.err);
+  if (!res.ok && res.err) wlNote(res.err);
 }
 
 /* Pointer wiring. Kept off the tile's own click/dblclick handlers entirely:
@@ -946,7 +926,7 @@ function wlWireDrag(tile, from, sym) {
      for every mouse gesture — Alt+←/→ moves within the band, Alt+↑/↓ moves to
      the band above or below. Removal already has one (Delete opens the dialog). */
   tile.addEventListener('keydown', ev => {
-    if (!ev.altKey || from.band === 'tray') return;
+    if (!ev.altKey) return;
     const d = { ArrowLeft: -1, ArrowRight: 1 }[ev.key];
     const band = { ArrowUp: -1, ArrowDown: 1 }[ev.key];
     if (d == null && band == null) return;
@@ -962,43 +942,18 @@ function wlWireDrag(tile, from, sym) {
   });
 }
 
-/* The tray holds symbols that belong to no list yet. Persisted, so a tile
-   minted before a reload is still waiting afterwards. */
-/* The staging row earns its space or it doesn't take any (owner ruling
-   2026-07-31). It used to stand under the header whenever the desk could write,
-   which meant a permanent full-width band holding two buttons — and those two
-   have moved into the header. It now appears only when it holds a tile, or
-   while a drag is in flight so there is somewhere to drop the FIRST one; an
-   empty hidden row would otherwise be unreachable and the tray unusable. */
-function wlSyncTray() {
+/* Show the write controls only when there is somewhere to write. They live in
+   the panel header now, so nothing else gates them: `#wlTray` used to, and when
+   the + and the trash moved out of it they rendered in demo against a roster
+   that cannot be written — caught by S21. Both the `hidden` attribute AND a
+   `[hidden] { display: none }` rule are needed, because a class selector
+   setting `display` outranks the UA's default. */
+function wlSyncWriteControls() {
   const canEdit = wlCanEdit();
-  /* The + and the 🗑 used to live INSIDE #wlTray, so `tray.hidden` hid them
-     too. Moving them into the header (owner ruling 2026-07-31) silently took
-     that gate away, and they rendered in demo — a write control offered where
-     there is nothing to write to, which is the one thing this panel must never
-     do. Caught by S21, which is exactly what it is for. */
   for (const id of ['wlTrayAdd', 'wlTrash']) {
     const el = document.getElementById(id);
     if (el) el.hidden = !canEdit;
   }
-  const tray = document.getElementById('wlTray');
-  if (!tray) return;
-  tray.hidden = !canEdit || (!wlTray.length && !wlDrag.on);
-}
-
-function renderWlTray() {
-  const tray = document.getElementById('wlTray');
-  const box = document.getElementById('wlTrayTiles');
-  if (!tray || !box) return;
-  wlSyncTray();
-  box.textContent = '';
-  wlTray.forEach((sym, i) => {
-    const t = wlTile({ sym, last: null, pct: null }, true);
-    t.classList.add('wl-tile--tray');
-    t.title = sym + ' — drag into a list';
-    wlWireDrag(t, { band: 'tray', idx: i }, sym);
-    box.appendChild(t);
-  });
 }
 
 function renderWatchlist(payload, lamp) {
@@ -1083,7 +1038,7 @@ function renderWatchlist(payload, lamp) {
     stripEl.appendChild(group);
   });
   if (emptyEl) emptyEl.hidden = total > 0;
-  renderWlTray();
+  wlSyncWriteControls();
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn
      "BRK B" into BRK + B — both look like real symbols, so the only honest
@@ -1226,7 +1181,27 @@ function openWlQuickAdd(idx, title, invoker) {
   const head = document.getElementById('wlQuickTitle');
   const input = document.getElementById('wlQuickInput');
   if (!back || !input) return;
-  if (head) head.textContent = 'Add to ' + title;
+  /* `idx == null` means the panel-level + — show the picker. Opened from a
+     band, the destination is already known and the picker would be a question
+     with one answer, so it is hidden and the heading names the list instead.
+     Rebuilt on every open so a rename or a new list needs no other wiring. */
+  const sel = document.getElementById('wlQuickList');
+  const lbl = document.getElementById('wlQuickListLabel');
+  const pick = idx == null;
+  if (sel && lbl) {
+    sel.hidden = !pick; lbl.hidden = !pick;
+    if (pick) {
+      sel.textContent = '';
+      (wlState.payload && wlState.payload.lists || []).forEach((l, i) => {
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = l.title || ('List ' + (i + 1));
+        sel.appendChild(o);
+      });
+      if (!sel.options.length) { wlQuickErr('No list to add to yet — create one in the editor first.'); }
+    }
+  }
+  if (head) head.textContent = pick ? 'Add symbols' : 'Add to ' + title;
   input.value = '';
   input.disabled = false;
   wlQuickErr('');
@@ -1250,19 +1225,16 @@ async function submitWlQuickAdd() {
      behave identically here (and the RPC re-validates regardless). */
   const syms = wlParseSyms(input.value);
   if (!syms.length) { wlQuickErr('No usable ticker in that — letters, digits, . ^ = - only.'); return; }
-  const { idx, title } = wlQuickList;
-  /* The tray is local state, not a list — nothing to write to the desk. A tile
-     minted here belongs to no list until it is dropped into one. */
-  if (idx === 'tray') {
-    const fresh = syms.filter(s => !wlTray.includes(s));
-    if (!fresh.length) { wlQuickErr(syms.length === 1 ? syms[0] + ' is already waiting in the tray.' : 'Already waiting in the tray.'); return; }
-    wlTray.push(...fresh);
-    saveWlTray();
-    renderWlTray();
-    closeWlQuickAdd();
-    wlNote(fresh.length === 1 ? 'Drag ' + fresh[0] + ' into a list' : 'Drag them into a list');
-    return;
-  }
+  /* A fixed target when the dialog was opened for one band; otherwise whatever
+     the picker says. The picker is the default path now (owner ruling
+     2026-07-31) — the staging tray it replaced made adding a symbol two
+     gestures and a piece of persisted state to reach one outcome. */
+  const sel = document.getElementById('wlQuickList');
+  const chosen = wlQuickList.idx == null && sel && sel.value !== ''
+    ? { idx: Number(sel.value), title: sel.options[sel.selectedIndex].textContent }
+    : wlQuickList;
+  const { idx, title } = chosen;
+  if (idx == null || Number.isNaN(idx)) { wlQuickErr('Pick a list to add them to.'); return; }
   wlBusy = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   input.disabled = true;   /* the Enter path has to be shut too, not just the button */
@@ -1377,11 +1349,11 @@ function wlWireRemove(tile, sym, idx, title) {
 }
 
 function wireWatchlistQuickEdits() {
-  /* ONE + for the whole panel (owner request 2026-07-31). It mints into the
-     tray rather than into a list, because which list it belongs in is what the
-     drag is for. */
+  /* ONE + for the whole panel, and it asks WHICH LIST (owner ruling
+     2026-07-31, replacing the staging tray). `null` means "no fixed target" —
+     openWlQuickAdd then shows the picker. */
   const trayAdd = document.getElementById('wlTrayAdd');
-  if (trayAdd) trayAdd.addEventListener('click', () => openWlQuickAdd('tray', 'the tray', trayAdd));
+  if (trayAdd) trayAdd.addEventListener('click', () => openWlQuickAdd(null, null, trayAdd));
   const trash = document.getElementById('wlTrash');
   if (trash) {
     /* A drop target is pointer-only, so the trash also answers to a click when

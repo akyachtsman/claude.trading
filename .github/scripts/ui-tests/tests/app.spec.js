@@ -935,7 +935,7 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   // OFFERED, not that the markup is absent from the document.
   expect(await page.locator('.wl-add:visible').count(), 'demo must offer no + button').toBe(0);
   await expect(page.locator('#wlEditBtn')).toBeHidden();
-  await expect(page.locator('#wlTray'), 'and no staging tray either').toBeHidden();
+  await expect(page.locator('#wlTrash'), 'and no trash either').toBeHidden();
 
   // ...and with no removal wired, the touch-gesture override must NOT apply:
   // stripping double-tap zoom where nothing listens for a double-tap takes a
@@ -995,9 +995,13 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await page.keyboard.press('Escape');
   await expect(page.locator('#wlRmBackdrop')).toBeHidden();
 
-  // the panel + opens the same dialog, now aimed at the tray, and rejects junk
+  // The panel + asks WHICH LIST (owner ruling 2026-07-31, replacing the staging
+  // tray) and still rejects junk. The picker is the whole point of the change:
+  // add-and-be-done, instead of minting a tile and dragging it somewhere.
   await page.locator('#wlTrayAdd').click();
-  await expect(page.locator('#wlQuickTitle')).toContainText(/Add to/i);
+  await expect(page.locator('#wlQuickList'), 'the + must offer a destination').toBeVisible();
+  expect(await page.locator('#wlQuickList option').count(),
+    'every list is a destination').toBeGreaterThan(1);
   await page.locator('#wlQuickInput').fill('!!!');
   await page.locator('#wlQuickSaveBtn').click();
   await expect(page.locator('#wlQuickErr')).toBeVisible();
@@ -1034,7 +1038,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
 
   // Demo has no backend to write to, so no write surface may render at all —
   // the tray and the trash are write controls like the + always was.
-  await expect(page.locator('#wlTray'), 'no staging tray in demo').toBeHidden();
+  await expect(page.locator('#wlTrash'), 'no write control in demo').toBeHidden();
 
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
@@ -1046,7 +1050,6 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   // reveal-on-drag is covered further down, where a drag is actually running.
   await expect(page.locator('#wlTrayAdd')).toBeVisible();
   await expect(page.locator('#wlTrash')).toBeVisible();
-  await expect(page.locator('#wlTray'), 'empty tray stays folded away').toBeHidden();
   expect(await page.locator('.mkt-group-tiles[data-band]').count(),
     'every band is a drop target').toBeGreaterThan(0);
 
@@ -1061,7 +1064,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   await page.mouse.move(r.x + 40, r.y + 30, { steps: 6 });
   expect(await page.locator('.wl-ghost').count(), 'no drag begins under a sort key').toBe(0);
   expect(await page.evaluate(() => wlSort.key), 'the drag snapped the sort to Manual').toBe('manual');
-  await expect(page.locator('#wlTrayHint')).toContainText(/Manual/i);
+  await expect(page.locator('#wlNote')).toContainText(/Manual/i);
   await page.mouse.up();
 
   // ── a real drag, now that Manual is active ──────────────────────────────
@@ -1091,18 +1094,16 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   expect(await page.locator('.wl-ghost').count(), 'Escape cancels the drag').toBe(0);
   await page.mouse.up();
 
-  // ── the tray persists ───────────────────────────────────────────────────
-  // A tile in the tray belongs to no list yet; losing it on reload would make
-  // the staging step a trap rather than a queue.
+  // ── no staging tray survives anywhere ──────────────────────────────────
+  // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,
+  // its persistence key and its drop zone must ALL be gone — a leftover
+  // localStorage key would silently repopulate a surface that no longer exists.
+  expect(await page.locator('#wlTray, #wlTrayTiles, #wlTrayHint').count(),
+    'no staging-tray markup remains').toBe(0);
   await page.locator('#wlTrayAdd').click();
-  await page.locator('#wlQuickInput').fill('ZZZZ');
-  await page.locator('#wlQuickSaveBtn').click();
-  await expect(page.locator('#wlTrayTiles .wl-tile')).toHaveCount(1);
-  expect(await page.evaluate(() => localStorage.getItem('wl_tray_v1')), 'the tray is written through').toContain('ZZZZ');
-  await page.reload();
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
-  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
-  await expect(page.locator('#wlTrayTiles .wl-tile'), 'the tray survives a reload').toHaveCount(1);
+  expect(await page.evaluate(() => localStorage.getItem('wl_tray_v1')),
+    'the tray key is never written again').toBeNull();
+  await page.locator('#wlQuickCloseBtn').click();
 
   // ── double-click removal is KEPT (owner ruling 2026-07-31) ──────────────
   // The trash is the drag-native equivalent, not a replacement, so the fast
