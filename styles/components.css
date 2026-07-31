@@ -520,3 +520,20 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 /* A scheduled question is marked so it never reads as one the owner forgot
    writing. Border, not colour: gain/loss colour on this desk means P&L. */
 .ask-q--sched { border-left: 2px solid var(--color-accent-bright); padding-left: 6px; }
+
+/* ── row reorder + arrangement lock (owner request 2026-07-31) ─────────────── */
+.wl-move {
+  width: 18px; height: 18px; flex: 0 0 auto; padding: 0; margin-left: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--color-border); border-radius: 4px;
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font: 500 10px/1 var(--font-sans); cursor: pointer;
+}
+.wl-move:disabled { opacity: .35; cursor: default; }
+.wl-lock { width: 26px; height: 26px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--color-border); border-radius: 6px;
+  font-size: 14px; line-height: 1; cursor: pointer; background: var(--color-surface); }
+.wl-lock[aria-pressed="true"] { border-style: solid; border-color: var(--color-accent-bright); }
+/* Class selectors set `display`, so they outrank the UA's [hidden] rule. */
+.wl-lock[hidden], .wl-move[hidden] { display: none; }
