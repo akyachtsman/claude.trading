@@ -345,7 +345,20 @@ test('S3: interactive elements discovered and exercised without errors', async (
     const text = m.text();
     if (BENIGN_CONSOLE.test(text)) return;
     const src = (m.location() && m.location().url) || '';
-    if (FEED_ORIGIN.test(src) && /Failed to load resource/i.test(text)) return;
+    /* Feed-origin noise only, per the S1/S3 rule in CLAUDE.md — every other
+       console error still blocks.
+       `Access-Control-Allow-Origin` joined the list 2026-07-31. quote-proxy's
+       guard is an ORIGIN ALLOWLIST holding exactly the GitHub Pages origin, and
+       this job serves the app from http://localhost:8080 — so the browser is
+       *supposed* to refuse that call. It is the security control working, not a
+       defect, and the live job (real origin) never sees it.
+       It surfaced now rather than earlier because the charts quote used to be
+       fetched once per tab; it is polled every minute since the SMH staleness
+       fix, so it lands inside S3's sweep window. Matched on the TEXT as well as
+       the source: the CORS pair's first message names the blocked origin rather
+       than the URL, so a source-only test misses half of it. */
+    const feed = FEED_ORIGIN.test(src) || FEED_ORIGIN.test(text);
+    if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
     consoleErrors.push(text);
   });
 
