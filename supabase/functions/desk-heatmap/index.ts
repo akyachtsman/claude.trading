@@ -76,7 +76,26 @@ function withinCloseSettleGrace(now = new Date()): boolean {
   const closeMin = 16 * 60;
   return minutes >= closeMin && minutes < closeMin + CLOSE_SETTLE_GRACE_MIN;
 }
-const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? 300_000 : 3_600_000);
+/* 16:00–20:00 ET, the window where a post-market print exists to fetch. Same
+   rule as desk-market's copy. Weekends and holidays never qualify: the regular
+   session has to have happened for there to be an after-hours session. */
+function withinPostMarket(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(`${get('year')}-${get('month')}-${get('day')}`)) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 16 * 60 && minutes < 20 * 60;
+}
+/* Post-market keeps the 5-min cadence too: prints are still arriving, and an
+   hour-stale after-hours number is the thing the owner asked to fix. */
+const ttlMs = () =>
+  (marketSessionOpen() || withinCloseSettleGrace() || withinPostMarket() ? 300_000 : 3_600_000);
 
 // extPct/extLast: the post-market print, prior-close basis (owner request
 // 2026-07-30). Null whenever the symbol has no extended session or none has
@@ -518,6 +537,26 @@ async function refreshSp500(): Promise<unknown> {
   try {
     quotes = await nasdaqScreener();
     if (hits(quotes) < 300) throw new Error(`screener coverage too thin (${hits(quotes)})`);
+    /* The screener carries no after-hours print, and it is the path this
+       function actually takes — extPct was only ever computed in the Yahoo
+       FALLBACK below, so the heatmap's post-market tooltips never appeared in
+       practice (Codex review, PR #199). Merge one Yahoo pass over the roster on
+       top of the screener's regular quotes.
+
+       Cheap by construction: it runs only during post-market, and only on a
+       cache MISS (60-min TTL when the session is shut), so it costs about four
+       batched calls an hour rather than anything per request — which matters in
+       this function, whose 546s came from per-request upstream work. Wrapped
+       so a Yahoo auth failure costs the extended lines and nothing else. */
+    if (withinPostMarket()) {
+      try {
+        const ext = await quoteBatch(constituents.map((c) => c.sym), await getCrumb());
+        for (const [sym, q] of ext) {
+          const base = quotes.get(sym);
+          if (base && q.extPct != null) { base.extPct = q.extPct; base.extLast = q.extLast ?? null; }
+        }
+      } catch { /* extended lines only — the core payload stands */ }
+    }
   } catch {
     try {
       quotes = await quoteBatch(constituents.map((c) => c.sym), await getCrumb());
