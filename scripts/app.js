@@ -1600,14 +1600,30 @@ function buildAskContext() {
        the instrument did not trade after hours, which is not the same as flat.
        `extProxy` names the ETF standing in for an index, so the model reports
        "SPY −1.14% after hours" rather than attributing it to the S&P itself. */
-    market: (d.market || []).map(m => ({
-      name: m.name, last: m.last, dayChgPct: m.chg,
-      ...(m.ext ? { afterHoursLast: m.ext.last, afterHoursChgPct: m.ext.chg } : {}),
-      /* An index has no extended session, so its after-hours figure belongs to
-         a NAMED proxy. Sent as the proxy's own reading rather than the index's,
-         or the model would report SPY's move as the S&P's. */
-      ...(m.extProxy ? { afterHoursProxy: m.extProxy.sym, afterHoursProxyChgPct: m.extProxy.chg } : {}),
-    })),
+    market: (d.market || []).map(m => {
+      /* Same two rules the RENDER path applies (see mk-ext at the Markets tiles
+         and mk-sec-ext at the sector cells) — the context had neither, which
+         put two wrong numbers in front of the model (both reviews of PR #207):
+
+         1. POST ONLY. `desk-market` tags each print `kind: 'pre' | 'post'`, and
+            the desk deliberately shows nothing pre-market (owner: "not
+            premarket"). Without this filter, between 04:00 and 09:30 ET the
+            model was told a PRE-market move was an after-hours one — and the
+            panel beside it renders nothing, so there was no way to catch it.
+         2. PROXY WINS. An index tile can carry BOTH its own `ext` (the index
+            repeating its close — indices have no extended session) and
+            `extProxy` (the ETF's real move). Sending both let the model
+            attribute SPY's move to the S&P itself, which is the exact
+            instrument-wearing-the-wrong-name trap `extProxy` exists to stop. */
+      const post = x => (x && x.kind === 'post' && x.chg != null ? x : null);
+      const proxy = post(m.extProxy);
+      const own = proxy ? null : post(m.ext);
+      return {
+        name: m.name, last: m.last, dayChgPct: m.chg,
+        ...(own ? { afterHoursLast: own.last, afterHoursChgPct: own.chg } : {}),
+        ...(proxy ? { afterHoursProxy: proxy.sym, afterHoursProxyChgPct: proxy.chg } : {}),
+      };
+    }),
     /* Pre-converted to Pacific here (fmtStampDateTime) rather than sending the
        raw UTC ISO string — every other clock on the desk is pinned to Pacific
        by a formatter before it reaches a screen (owner ruling 2026-07-22); the

@@ -93,9 +93,16 @@ function withinPostMarket(now = new Date()): boolean {
   return minutes >= 16 * 60 && minutes < 20 * 60;
 }
 /* Post-market keeps the 5-min cadence too: prints are still arriving, and an
-   hour-stale after-hours number is the thing the owner asked to fix. */
+   hour-stale after-hours number is the thing the owner asked to fix. Note this
+   also sets the ceiling on the extended Yahoo sweep further down — 12 refreshes
+   an hour through 16:00-20:00 ET, not the 1/hr its comment first claimed. */
 const ttlMs = () =>
   (marketSessionOpen() || withinCloseSettleGrace() || withinPostMarket() ? 300_000 : 3_600_000);
+
+/* Cap for the extended sweep, matching desk-market's EXT_QUOTE_TIMEOUT_MS: long
+   enough for a cold crumb handshake plus the batched quotes, short enough that
+   the core payload is never held past its own latency budget. */
+const EXT_QUOTE_TIMEOUT_MS = 4000;
 
 // extPct/extLast: the post-market print, prior-close basis (owner request
 // 2026-07-30). Null whenever the symbol has no extended session or none has
@@ -543,14 +550,28 @@ async function refreshSp500(): Promise<unknown> {
        practice (Codex review, PR #199). Merge one Yahoo pass over the roster on
        top of the screener's regular quotes.
 
-       Cheap by construction: it runs only during post-market, and only on a
-       cache MISS (60-min TTL when the session is shut), so it costs about four
-       batched calls an hour rather than anything per request — which matters in
-       this function, whose 546s came from per-request upstream work. Wrapped
-       so a Yahoo auth failure costs the extended lines and nothing else. */
+       Cost, stated correctly (the first version of this comment was wrong).
+       It claimed a "60-min TTL when the session is shut ... about four batched
+       calls an hour". But the same commit put withinPostMarket() into ttlMs(),
+       so throughout 16:00-20:00 ET the TTL is 300_000 — FIVE minutes. The real
+       ceiling is up to 12 refreshes an hour during that window, each a full
+       screener download plus this Yahoo sweep, on an anon-callable function
+       whose 546s came from exactly this kind of per-refresh upstream work.
+       That is a deliberate trade (a stale after-hours number is the thing this
+       feature exists to fix), but it should be recorded as what it is.
+
+       Bounded like desk-market's identical call. A REJECTING Yahoo was already
+       handled; a STALLING one was not, and that is the shape that kills the
+       invocation after the screener has already succeeded — the documented
+       546 → blank map + STALE lamp path. Promise.race resolves an empty map
+       instead, so a hung upstream costs the extended lines and nothing else. */
     if (withinPostMarket()) {
       try {
-        const ext = await quoteBatch(constituents.map((c) => c.sym), await getCrumb());
+        const ext = await Promise.race([
+          quoteBatch(constituents.map((c) => c.sym), await getCrumb()),
+          new Promise<Map<string, Quote>>((resolve) =>
+            setTimeout(() => resolve(new Map()), EXT_QUOTE_TIMEOUT_MS)),
+        ]);
         for (const [sym, q] of ext) {
           const base = quotes.get(sym);
           if (base && q.extPct != null) { base.extPct = q.extPct; base.extLast = q.extLast ?? null; }

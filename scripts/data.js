@@ -924,10 +924,28 @@ function liveLampFor(generatedAt, dataAsOf, priceBound, quoteAt, extAt) {
        inventing a third state would break that for a wording problem. What
        changes is the CLAIM: the stamp names the extended print's own time and
        says which session it came from. */
-    if (extAt && closeIso && new Date(extAt) > new Date(closeIso)) {
+    /* Bounded to the POST window — 16:00–20:00 ET, i.e. within 4h of the close.
+       Two bugs this closes (Codex-equivalent review, PR #207):
+
+       - `extAt > closeIso` alone also matches the NEXT morning's pre-market
+         print, which is ~17.5h past the prior close. The desk shows nothing
+         pre-market by ruling, so the stamp would have labelled a 06:00 print
+         "after hrs" beside a panel displaying yesterday's close.
+       - The tail was 'age', and fmtDelay renders uncapped MINUTES off a
+         timestamp Yahoo keeps serving all weekend. A healthy feed read
+         "delayed by 2580 minutes" by Sunday, re-rendered every 30s — the exact
+         growing-tail failure the 2026-07-28 ruling removed everywhere else.
+
+       So the stamp now NAMES the extended print's instant and its session, with
+       no delay tail: "Last updated 17:12, Jul 30 — after hrs". */
+    const POST_WINDOW_MS = 4 * 60 * 60 * 1000;
+    const extMs = extAt ? new Date(extAt).getTime() : NaN;
+    const closeMs = closeIso ? new Date(closeIso).getTime() : NaN;
+    if (Number.isFinite(extMs) && Number.isFinite(closeMs) &&
+        extMs > closeMs && extMs - closeMs <= POST_WINDOW_MS) {
       return {
-        cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(extAt, dataAsOf, 'age') + ' — after hrs',
-        atIso: extAt, asOf: dataAsOf, tail: 'age', stampSuffix: ' — after hrs',
+        cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(extAt, dataAsOf, '') + ' — after hrs',
+        atIso: extAt, asOf: dataAsOf, tail: '', stampSuffix: ' — after hrs',
       };
     }
     const atIso = closeIso || generatedAt;

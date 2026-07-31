@@ -163,7 +163,15 @@ every push; qa-pipeline runs at each phase boundary.
 > it can show.
 >
 > - **B4a** — `TEST_AUTH_CREDENTIAL` is set. Evidence: S10 (valid PIN unlocks
->   accounts) passes on every live CI run; it cannot run at all without the secret.
+>   accounts) passes on every live CI run, which it could not do against the real
+>   backend with a wrong value.
+>   *(Correction, same day: this first read "it cannot run at all without the
+>   secret." That is false. `readCredentialFromClaude()` falls back to parsing
+>   CLAUDE.md, and against the current file it returns the literal string
+>   `"repo"` — the `[:|]` in its pattern eats the table pipe in the `Valid test
+>   credential | repo secret …` row. Without the secret S10 therefore RUNS and
+>   FAILS rather than skipping, and a fork or local run hits the same trap. The
+>   passing run is still evidence the secret is set; the reasoning was not.)*
 > - **C11** — the function secrets and variables are set, and the real PIN is in
 >   place. Evidence: `desk-ibkr-sync` runs on its pg_cron schedule and the desk
 >   serves live accounts behind the PIN.
