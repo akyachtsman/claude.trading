@@ -44,7 +44,31 @@ const KEEP_BARS_INTRADAY = 1200;
 
 // Small in-memory response cache (per warm instance) — a soft guardrail that
 // collapses repeat lookups of the same ticker before they reach upstream.
+// `info` carries BOTH slow fundamentals (market cap, P/E, earnings date) and a
+// LIVE quote line (last / change / bid / ask). A single 15-minute TTL served the
+// fundamentals and starved the quote: the charts readout could sit a quarter of
+// an hour behind the tape while its panel claimed to be a minute old. So the
+// info TTL is session-aware like every other feed on this desk — 60s while
+// prints are arriving, 15 min once the tape is frozen and the numbers cannot
+// move. Fundamentals are unchanged by the shorter window; they simply come
+// along on a call the quote already needed.
 const CACHE_TTL_MS = { daily: 300_000, intraday: 60_000, info: 900_000 }; // 5 min / 1 min / 15 min
+// 4:00am–8:00pm ET on a weekday: pre-market through post-market, the whole span
+// in which a quote can change. Deliberately wider than the regular session —
+// `info` surfaces the post-market print too.
+function pricesMoving(now = new Date()): boolean {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (t: string) => p.find((x) => x.type === t)?.value ?? '';
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  const mins = Number(get('hour')) * 60 + Number(get('minute'));
+  return mins >= 4 * 60 && mins < 20 * 60;
+}
+const ttlFor = (kind: 'daily' | 'intraday' | 'info') =>
+  (kind === 'info' && pricesMoving() ? 60_000 : CACHE_TTL_MS[kind]);
 type Cached = { at: number; status: number; body: unknown };
 const CACHE = new Map<string, Cached>();
 
@@ -313,7 +337,7 @@ Deno.serve(async (req) => {
   if (!allowed) return reply(403, { ok: false, error: 'forbidden origin' }, cors);
   if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST only' }, cors);
 
-  let payload: { symbol?: unknown; kind?: unknown; prepost?: unknown };
+  let payload: { symbol?: unknown; kind?: unknown; prepost?: unknown; force?: unknown };
   try { payload = await req.json(); } catch { return reply(400, { ok: false, error: 'invalid JSON body' }, cors); }
   const symbol = String(payload.symbol ?? '').trim().toUpperCase();
   const kind = payload.kind === 'intraday' ? 'intraday' : payload.kind === 'info' ? 'info' : 'daily';
@@ -330,7 +354,12 @@ Deno.serve(async (req) => {
   // the key — the two variants are different bar sets, never interchangeable.
   const cacheKey = `${symbol}:${kind}${prepost ? ':pp' : ''}`;
   const hit = CACHE.get(cacheKey);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS[kind]) return reply(hit.status, hit.body, cors);
+  // `force` is the masthead "Refresh now" button, matching the desk-* feeds:
+  // it must skip the TTL check here too, or the guaranteed-fresh escape hatch
+  // returns a cached body and the owner's distrust of the number is confirmed
+  // rather than resolved.
+  const force = payload.force === true;
+  if (!force && hit && Date.now() - hit.at < ttlFor(kind)) return reply(hit.status, hit.body, cors);
 
   // Fundamentals: earnings date + key stats (Yahoo v7/quote, crumb-gated).
   if (kind === 'info') {

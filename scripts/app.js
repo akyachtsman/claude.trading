@@ -2733,8 +2733,21 @@ let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg 
 let wbDrag = null, wbPanRaf = 0;
 const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
 const INTRADAY_TTL_MS = 60_000;        /* max age of a cached 5-min snapshot before the forming-candle graft refetches it */
-const wbInfoCache = {};                /* symbol → fundamentals object, or null for a known miss */
+/* symbol → { at, info } — info is null for a known miss. The TIMESTAMP is
+   load-bearing (owner report 2026-07-31): this used to be a bare symbol→info
+   map keyed only on presence, so the first fetch of a symbol was the LAST one
+   for the life of the tab. A desk left open overnight kept showing the previous
+   session's quote — SMH read "538.90 +34.68 (+6.88%)", which was Jul 30's close
+   and Jul 30's move, while the tape had it at 544.91 +6.01 (+1.12%) — and the
+   panel stamp said "delayed by 1 minute", because that stamp tracks the BAR
+   feed, not this quote. A stale price under a fresh stamp is the worst of both. */
+const wbInfoCache = {};
 const wbInfoPending = new Set();       /* per-symbol info fetches in flight */
+/* This is a live price line, not just fundamentals, so it expires on the same
+   cadence the market tiles do: 1 min while prints are arriving (open session,
+   settle grace, or post-market), 15 min once the tape is frozen. */
+const wbInfoTtlMs = () =>
+  (marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen()) ? 60_000 : 900_000;
 const wbRealSyms = new Set();          /* symbols backed by REAL data (live desk-charts feed or an
                                           ad-hoc quote-proxy load) — fundamentals show only for these,
                                           never for the synthetic demo-fallback watchlist */
@@ -2950,13 +2963,22 @@ function fmtEarnings(ts, estimate) {
    synthetic demo bars (Demo lamp), but a ticker the user loads by hand is still
    real and must show its stats (never mix real stats over synthetic bars). */
 const wbSymLive = sym => DESK.mode !== 'demo' && !!DESK_DB.url && wbRealSyms.has(sym);
-function maybeFetchWbInfo(sym) {
+function maybeFetchWbInfo(sym, force) {
   if (!wbSymLive(sym)) return;
-  if (sym in wbInfoCache || wbInfoPending.has(sym)) return;
+  if (wbInfoPending.has(sym)) return;
+  const hit = wbInfoCache[sym];
+  /* Age, not presence. `force` is the masthead "Refresh now" button, which must
+     bypass this cache for the same reason it bypasses the feeds' — it is the
+     escape hatch for exactly the state where the owner does not trust what is
+     on screen. */
+  if (!force && hit && Date.now() - hit.at < wbInfoTtlMs()) return;
   wbInfoPending.add(sym);
-  deskQuote(sym, 'info')
-    .then(out => { wbInfoCache[sym] = (out && out.ok && out.info) ? out.info : null; })
-    .catch(() => { wbInfoCache[sym] = null; })
+  deskQuote(sym, 'info', false, force ? { force: true } : undefined)
+    .then(out => { wbInfoCache[sym] = { at: Date.now(), info: (out && out.ok && out.info) ? out.info : null }; })
+    /* Keep the last good reading on a failed refresh rather than blanking a
+       populated strip, but stamp it so the next tick retries instead of
+       treating the failure as a fresh answer. */
+    .catch(() => { wbInfoCache[sym] = { at: Date.now(), info: hit ? hit.info : null }; })
     .finally(() => {
       wbInfoPending.delete(sym);
       /* Re-render (not just renderWbInfo) so the chart height re-fits: the
@@ -2979,7 +3001,7 @@ function renderWbInfo() {
   };
   const sym = wbState.sym;
   const live = wbSymLive(sym);
-  const info = live ? wbInfoCache[sym] : undefined;
+  const info = live && wbInfoCache[sym] ? wbInfoCache[sym].info : undefined;
 
   /* Quote readout — the terminal top line (owner request 2026-07-16): last ·
      change (change%) · Bid · Ask · Diff, before the earnings/stats. Last +
@@ -4379,6 +4401,16 @@ setInterval(retickStamps, STAMP_TICK_MS);
    while the tab is hidden, refreshed immediately on return. feedPollTick is
    also reused by the manual "Refresh now" masthead button (force:true bypasses
    every server-side cache too — see the desk-* edge functions' `force` param). */
+/* Refresh the quote/fundamentals strip for the symbol currently on the charts
+   workbench. One symbol, one call, and quote-proxy caches it server-side, so
+   this rides the fast market cadence rather than the 5-minute all-feeds tick:
+   it is a live price the owner reads against the tape, and it was the one
+   number on the desk that never refreshed at all (owner report 2026-07-31). */
+function refreshWbQuote(force) {
+  const sym = wbState && wbState.sym;
+  if (sym) maybeFetchWbInfo(sym, force);
+}
+
 let feedPollTimer = 0;
 async function feedPollTick(force) {
   /* loadWatchlist belongs here, not just at boot (Codex review, PR #188):
@@ -4386,6 +4418,7 @@ async function feedPollTick(force) {
      stays LIVE from the first render while the prices behind it go hours
      stale — the exact lie the lamp exists to prevent. */
   await Promise.all([refreshMarket(force), refreshNews(force), loadHeatmap(force), loadCharts(force), loadWatchlist(force)]);
+  refreshWbQuote(force); /* the charts quote readout — see the note on wbInfoCache */
   renderMasthead(); /* the masthead lamp tracks the freshest market fetch */
 }
 function scheduleFeedPoll() {
@@ -4418,6 +4451,7 @@ function scheduleMarketPoll() {
   if (!(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return;
   marketPollTimer = setTimeout(async () => {
     await refreshMarket(false);
+    refreshWbQuote(false); /* same cadence as the tiles — it is the same kind of number */
     renderMasthead();
     scheduleMarketPoll();
   }, MARKET_POLL_MS);

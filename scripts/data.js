@@ -475,7 +475,11 @@ async function deskAsk(pin, question, context) {
    chart any symbol. Free-tier quotes — near-real-time US, delayed elsewhere. */
 /* prepost (intraday only) widens the fetch to the 4:00am–8:00pm ET extended
    session; every bar then carries series.x — 0 regular, 1 pre/post. */
-async function deskQuote(symbol, kind, prepost) {
+/* `opts.force` bypasses quote-proxy's warm-instance cache, mirroring the `force`
+   the desk-* feeds already take — the masthead "Refresh now" button has to reach
+   every cache on the path, or the one it misses is the number the owner is
+   staring at. */
+async function deskQuote(symbol, kind, prepost, opts) {
   const res = await fetch(DESK_DB.url + '/functions/v1/quote-proxy', {
     method: 'POST',
     headers: {
@@ -483,7 +487,10 @@ async function deskQuote(symbol, kind, prepost) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ symbol, kind: kind || 'daily', prepost: prepost === true }),
+    body: JSON.stringify({
+      symbol, kind: kind || 'daily', prepost: prepost === true,
+      ...(opts && opts.force ? { force: true } : {}),
+    }),
   });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('quote-proxy → HTTP ' + res.status);
