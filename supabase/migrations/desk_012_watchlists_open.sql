@@ -69,7 +69,11 @@ begin
     return jsonb_build_object('ok', false, 'error', 'too many symbols in a list (max 2000)');
   end if;
 
-  delete from public.desk_watchlists;
+  -- WHERE clause is REQUIRED, not decoration: Supabase runs PostgREST with the
+  -- safeupdate guard, which rejects an unqualified DELETE with 21000 "DELETE
+  -- requires a WHERE clause". Without it this function has never written once
+  -- (found 2026-07-31 adding a list) — every write path silently 400d.
+  delete from public.desk_watchlists where true;
 
   for item in select * from jsonb_array_elements(new_lists) loop
     exit when i >= 50;
