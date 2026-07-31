@@ -663,6 +663,14 @@ function renderWlSort() {
 function wlTile(r, pending) {
   const tile = el('div', 'mkt-tile wl-tile');
   const name = el('span', 'mkt-name', r.sym);
+  /* Length-driven, not global (owner ruling 2026-07-31, half-width tiles). CSS
+     cannot branch on text length, and at 66px a 9-character price like
+     "23,104.88" overflows its box at the base size — a CLIPPED PRICE IS A WRONG
+     PRICE, which is the one thing this desk must never render. Widening the tile
+     does not fix it (measured: 23,104.88 / 44,912.30 / 64,216.00 still clip at
+     76px); the base font size is the constraint, so long values step down one
+     size and everything else is untouched. */
+  if (r.sym && r.sym.length > 5) name.classList.add('is-long');
   /* CLOSE means "this session has ended", not "this is an index": during
      regular hours ^VIX carries a live, moving price, and stamping that CLOSE
      would misstate an intraday quote as a settled one. Indices have no extended
@@ -672,7 +680,10 @@ function wlTile(r, pending) {
   tile.appendChild(name);
 
   const row = el('div', 'mkt-vals wl-vals');
-  row.appendChild(el('span', 'mkt-last', wlPx(r.last)));
+  const px = wlPx(r.last);
+  const last = el('span', 'mkt-last', px);
+  if (px && px.length > 7) last.classList.add('is-long'); /* see the note above */
+  row.appendChild(last);
   /* The line is coloured by the DAY's direction so it agrees with the pill
      below it; a green line over a red pill would be two answers to one
      question. Gain/loss colour on a price path is P&L, not decoration. */
@@ -818,6 +829,7 @@ function wlDragEnd(ev, cancelled) {
   d.on = false;
   const from = d.from, sym = d.sym;
   d.ghost = null; d.tile = null; d.from = null; d.sym = null;
+  wlSyncTray(); /* drag over — the row folds away again unless it holds a tile */
   if (!zone || cancelled) return;
   const to = zone.id === 'wlTrash' ? { band: 'trash' }
     : zone.id === 'wlTrayTiles' ? { band: 'tray', idx: at }
@@ -830,6 +842,11 @@ function wlDragStart(ev, tile, from, sym) {
   d.on = true; d.tile = tile; d.from = from; d.sym = sym;
   tile.classList.add('wl-dragging');
   document.body.classList.add('wl-drag-active');
+  /* Reveal the staging row for the duration of the drag. It is hidden while
+     empty now that it no longer carries the + and 🗑 (owner ruling
+     2026-07-31), and a hidden drop zone is not a drop zone — without this the
+     first tile could never be staged. */
+  wlSyncTray();
   const ghost = tile.cloneNode(true);
   ghost.className = 'mkt-tile wl-tile wl-ghost';
   ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
@@ -947,11 +964,23 @@ function wlWireDrag(tile, from, sym) {
 
 /* The tray holds symbols that belong to no list yet. Persisted, so a tile
    minted before a reload is still waiting afterwards. */
+/* The staging row earns its space or it doesn't take any (owner ruling
+   2026-07-31). It used to stand under the header whenever the desk could write,
+   which meant a permanent full-width band holding two buttons — and those two
+   have moved into the header. It now appears only when it holds a tile, or
+   while a drag is in flight so there is somewhere to drop the FIRST one; an
+   empty hidden row would otherwise be unreachable and the tray unusable. */
+function wlSyncTray() {
+  const tray = document.getElementById('wlTray');
+  if (!tray) return;
+  tray.hidden = !wlCanEdit() || (!wlTray.length && !wlDrag.on);
+}
+
 function renderWlTray() {
   const tray = document.getElementById('wlTray');
   const box = document.getElementById('wlTrayTiles');
   if (!tray || !box) return;
-  tray.hidden = !wlCanEdit();
+  wlSyncTray();
   box.textContent = '';
   wlTray.forEach((sym, i) => {
     const t = wlTile({ sym, last: null, pct: null }, true);
@@ -1600,14 +1629,30 @@ function buildAskContext() {
        the instrument did not trade after hours, which is not the same as flat.
        `extProxy` names the ETF standing in for an index, so the model reports
        "SPY −1.14% after hours" rather than attributing it to the S&P itself. */
-    market: (d.market || []).map(m => ({
-      name: m.name, last: m.last, dayChgPct: m.chg,
-      ...(m.ext ? { afterHoursLast: m.ext.last, afterHoursChgPct: m.ext.chg } : {}),
-      /* An index has no extended session, so its after-hours figure belongs to
-         a NAMED proxy. Sent as the proxy's own reading rather than the index's,
-         or the model would report SPY's move as the S&P's. */
-      ...(m.extProxy ? { afterHoursProxy: m.extProxy.sym, afterHoursProxyChgPct: m.extProxy.chg } : {}),
-    })),
+    market: (d.market || []).map(m => {
+      /* Same two rules the RENDER path applies (see mk-ext at the Markets tiles
+         and mk-sec-ext at the sector cells) — the context had neither, which
+         put two wrong numbers in front of the model (both reviews of PR #207):
+
+         1. POST ONLY. `desk-market` tags each print `kind: 'pre' | 'post'`, and
+            the desk deliberately shows nothing pre-market (owner: "not
+            premarket"). Without this filter, between 04:00 and 09:30 ET the
+            model was told a PRE-market move was an after-hours one — and the
+            panel beside it renders nothing, so there was no way to catch it.
+         2. PROXY WINS. An index tile can carry BOTH its own `ext` (the index
+            repeating its close — indices have no extended session) and
+            `extProxy` (the ETF's real move). Sending both let the model
+            attribute SPY's move to the S&P itself, which is the exact
+            instrument-wearing-the-wrong-name trap `extProxy` exists to stop. */
+      const post = x => (x && x.kind === 'post' && x.chg != null ? x : null);
+      const proxy = post(m.extProxy);
+      const own = proxy ? null : post(m.ext);
+      return {
+        name: m.name, last: m.last, dayChgPct: m.chg,
+        ...(own ? { afterHoursLast: own.last, afterHoursChgPct: own.chg } : {}),
+        ...(proxy ? { afterHoursProxy: proxy.sym, afterHoursProxyChgPct: proxy.chg } : {}),
+      };
+    }),
     /* Pre-converted to Pacific here (fmtStampDateTime) rather than sending the
        raw UTC ISO string — every other clock on the desk is pinned to Pacific
        by a formatter before it reaches a screen (owner ruling 2026-07-22); the
@@ -2717,8 +2762,21 @@ let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg 
 let wbDrag = null, wbPanRaf = 0;
 const wbIntradayPending = new Set();   /* Pro 3 intraday fetches in flight */
 const INTRADAY_TTL_MS = 60_000;        /* max age of a cached 5-min snapshot before the forming-candle graft refetches it */
-const wbInfoCache = {};                /* symbol → fundamentals object, or null for a known miss */
+/* symbol → { at, info } — info is null for a known miss. The TIMESTAMP is
+   load-bearing (owner report 2026-07-31): this used to be a bare symbol→info
+   map keyed only on presence, so the first fetch of a symbol was the LAST one
+   for the life of the tab. A desk left open overnight kept showing the previous
+   session's quote — SMH read "538.90 +34.68 (+6.88%)", which was Jul 30's close
+   and Jul 30's move, while the tape had it at 544.91 +6.01 (+1.12%) — and the
+   panel stamp said "delayed by 1 minute", because that stamp tracks the BAR
+   feed, not this quote. A stale price under a fresh stamp is the worst of both. */
+const wbInfoCache = {};
 const wbInfoPending = new Set();       /* per-symbol info fetches in flight */
+/* This is a live price line, not just fundamentals, so it expires on the same
+   cadence the market tiles do: 1 min while prints are arriving (open session,
+   settle grace, or post-market), 15 min once the tape is frozen. */
+const wbInfoTtlMs = () =>
+  (marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen()) ? 60_000 : 900_000;
 const wbRealSyms = new Set();          /* symbols backed by REAL data (live desk-charts feed or an
                                           ad-hoc quote-proxy load) — fundamentals show only for these,
                                           never for the synthetic demo-fallback watchlist */
@@ -2934,13 +2992,22 @@ function fmtEarnings(ts, estimate) {
    synthetic demo bars (Demo lamp), but a ticker the user loads by hand is still
    real and must show its stats (never mix real stats over synthetic bars). */
 const wbSymLive = sym => DESK.mode !== 'demo' && !!DESK_DB.url && wbRealSyms.has(sym);
-function maybeFetchWbInfo(sym) {
+function maybeFetchWbInfo(sym, force) {
   if (!wbSymLive(sym)) return;
-  if (sym in wbInfoCache || wbInfoPending.has(sym)) return;
+  if (wbInfoPending.has(sym)) return;
+  const hit = wbInfoCache[sym];
+  /* Age, not presence. `force` is the masthead "Refresh now" button, which must
+     bypass this cache for the same reason it bypasses the feeds' — it is the
+     escape hatch for exactly the state where the owner does not trust what is
+     on screen. */
+  if (!force && hit && Date.now() - hit.at < wbInfoTtlMs()) return;
   wbInfoPending.add(sym);
-  deskQuote(sym, 'info')
-    .then(out => { wbInfoCache[sym] = (out && out.ok && out.info) ? out.info : null; })
-    .catch(() => { wbInfoCache[sym] = null; })
+  deskQuote(sym, 'info', false, force ? { force: true } : undefined)
+    .then(out => { wbInfoCache[sym] = { at: Date.now(), info: (out && out.ok && out.info) ? out.info : null }; })
+    /* Keep the last good reading on a failed refresh rather than blanking a
+       populated strip, but stamp it so the next tick retries instead of
+       treating the failure as a fresh answer. */
+    .catch(() => { wbInfoCache[sym] = { at: Date.now(), info: hit ? hit.info : null }; })
     .finally(() => {
       wbInfoPending.delete(sym);
       /* Re-render (not just renderWbInfo) so the chart height re-fits: the
@@ -2963,7 +3030,7 @@ function renderWbInfo() {
   };
   const sym = wbState.sym;
   const live = wbSymLive(sym);
-  const info = live ? wbInfoCache[sym] : undefined;
+  const info = live && wbInfoCache[sym] ? wbInfoCache[sym].info : undefined;
 
   /* Quote readout — the terminal top line (owner request 2026-07-16): last ·
      change (change%) · Bid · Ask · Diff, before the earnings/stats. Last +
@@ -4363,6 +4430,16 @@ setInterval(retickStamps, STAMP_TICK_MS);
    while the tab is hidden, refreshed immediately on return. feedPollTick is
    also reused by the manual "Refresh now" masthead button (force:true bypasses
    every server-side cache too — see the desk-* edge functions' `force` param). */
+/* Refresh the quote/fundamentals strip for the symbol currently on the charts
+   workbench. One symbol, one call, and quote-proxy caches it server-side, so
+   this rides the fast market cadence rather than the 5-minute all-feeds tick:
+   it is a live price the owner reads against the tape, and it was the one
+   number on the desk that never refreshed at all (owner report 2026-07-31). */
+function refreshWbQuote(force) {
+  const sym = wbState && wbState.sym;
+  if (sym) maybeFetchWbInfo(sym, force);
+}
+
 let feedPollTimer = 0;
 async function feedPollTick(force) {
   /* loadWatchlist belongs here, not just at boot (Codex review, PR #188):
@@ -4370,6 +4447,7 @@ async function feedPollTick(force) {
      stays LIVE from the first render while the prices behind it go hours
      stale — the exact lie the lamp exists to prevent. */
   await Promise.all([refreshMarket(force), refreshNews(force), loadHeatmap(force), loadCharts(force), loadWatchlist(force)]);
+  refreshWbQuote(force); /* the charts quote readout — see the note on wbInfoCache */
   renderMasthead(); /* the masthead lamp tracks the freshest market fetch */
 }
 function scheduleFeedPoll() {
@@ -4402,6 +4480,7 @@ function scheduleMarketPoll() {
   if (!(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return;
   marketPollTimer = setTimeout(async () => {
     await refreshMarket(false);
+    refreshWbQuote(false); /* same cadence as the tiles — it is the same kind of number */
     renderMasthead();
     scheduleMarketPoll();
   }, MARKET_POLL_MS);

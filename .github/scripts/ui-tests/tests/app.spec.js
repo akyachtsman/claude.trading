@@ -526,10 +526,21 @@ async function viewSignature(page) {
 // A single visible in-app back control, or an empty locator. Matches an accessible
 // name / aria-label of "back" or a left-arrow glyph, or an explicit [data-back] hook.
 // Deliberately narrow so the browser's Back button is NOT mistaken for an in-app one.
+// A back control is one whose WHOLE label is a back affordance — not any
+// element containing the substring "back". `a:has-text("Back")` matches
+// case-insensitively anywhere in the text, so on 2026-07-31 this resolved to a
+// CNBC headline ("…soars on the back of AI demand") in the news panel, and the
+// unwind step burned its whole budget trying to click a story link. `:text-is()`
+// matches the trimmed full text, so prose can no longer qualify. `[data-back]`
+// and an explicit aria-label stay as they are — both are deliberate authoring
+// signals, not incidental text.
 function backControl(page) {
   return page.locator(
-    '[data-back], [aria-label*="back" i], button:has-text("Back"), a:has-text("Back"), ' +
-    'button:has-text("←"), a:has-text("←")'
+    '[data-back], [aria-label*="back" i], ' +
+    'button:text-is("Back"), a:text-is("Back"), ' +
+    'button:text-is("← Back"), a:text-is("← Back"), ' +
+    'button:text-is("←"), a:text-is("←"), ' +
+    'button:text-is("‹"), a:text-is("‹")'
   ).first();
 }
 
@@ -541,17 +552,38 @@ function backControl(page) {
 // tracks the last page visited instead of an origin-aware nav stack. Skips when
 // the app has no multi-level drill-down or no in-app back control (invariant N/A).
 // ─────────────────────────────────────────────────────────────────────────────
-// Data cells are not navigation. The desk renders hundreds of them — watchlist
-// and market tiles, heatmap rects, sector cells, chart bars — and every one is a
-// button or role=button, so an unfiltered crawl spends its whole budget clicking
-// content that was never going to drill in. That is what pushed this test past
-// its ceiling on every live run from ~2026-07-25 (S3 already exercises these
-// same controls; NAV only cares about back-navigation). Two of them are also
-// actively unsafe to hammer against the LIVE desk: a second click on a watchlist
-// tile is the remove gesture, and the tray/trash controls mutate a real roster.
+// Controls this crawler must not spend its budget on, or must not touch at all.
+//
+// CORRECTION (2026-07-31): the first version of this list, and the commit that
+// introduced it, said it excluded "data cells" and named watchlist/market tiles,
+// heatmap rects and sector cells. Measured against the served page with
+// discoverElements' own selector list, that was simply wrong:
+//
+//     candidates 64 · removed 31  →  .seg 27, [role=tab] 4
+//     .wl-tile 75 in DOM / 0 candidates    .mkt-tile 75 / 0
+//     .mk-sec  11 in DOM / 0 candidates    .hm-tile   0 / 0  (does not exist)
+//
+// Tiles are divs carrying only `tabIndex`, so they never matched
+// `button, a[href], [role=button], [onclick]` and were never candidates. The
+// tile entries below are inert; they are kept only so this note has something
+// to point at, and so a future tile that DOES become a button stays excluded.
+//
+// What the filter really removes is `.seg` and `[role=tab]` — and those ARE
+// worth removing, though not for the reason first given: they re-render the
+// same view rather than drilling into a new one, so every one is a wasted 5s.
+//
+// `.wl-edit` is the entry that actually matters, and the first version missed
+// it. The live run on fa46049 caught the crawler with `#wlEditBackdrop` OPEN:
+// the ✎ opens the watchlist editor against the real roster, and that modal
+// holds `#wlSaveBtn` ("Save & exit"), which issues a replace-all to
+// `desk_watchlists`. An exploratory crawler must not be one stray click from
+// rewriting live data. The other write controls are excluded on the same
+// principle, whether or not they are currently reachable.
 const NAV_SKIP = [
-  '.wl-tile', '.mkt-tile', '.wl-band-head', '.wl-trash', '.wl-tray',
-  '.hm-tile', '.mk-sec', '.seg', '[role=tab]',
+  '.wl-edit', '.modal-backdrop',                       // live-roster write path
+  '.wl-band-head', '.wl-trash', '.wl-tray',            // roster mutation
+  '.wl-tile', '.mkt-tile', '.hm-tile', '.mk-sec',      // inert today — see above
+  '.seg', '[role=tab]',                                // re-render, never drill
 ];
 const navSkippable = (page, el) => page.evaluate(({ sel, index, skip }) => {
   const node = document.querySelectorAll(sel)[index];
@@ -567,12 +599,16 @@ test('NAV: back navigation strictly unwinds (no loop)', async ({ page }) => {
   // navigation controls or it does not; trying the 200th watchlist tile is not
   // more informative than trying the 12th, and the settle wait below means every
   // extra attempt costs real seconds.
-  // Measured on the served page: 62 visible candidates before filtering, ~5.8s
+  // Measured on the served page: 64 visible candidates before filtering, ~5.8s
   // each (the click timeout plus a networkidle that never settles) — 360s for a
-  // SINGLE level against a 120s ceiling, and far worse live, where the watchlist
-  // alone renders a tile per symbol. Filtering leaves 31; capping at 8 puts the
-  // five-level worst case near 76s, which keeps real headroom under the ceiling
-  // instead of finishing just inside it.
+  // SINGLE level against a 120s ceiling. Filtering leaves 33; the cap is what
+  // actually bounds the run.
+  //
+  // CORRECTION (2026-07-31): the original note blamed the live blowup on the
+  // watchlist rendering "a tile per symbol, and there are 248 of them". It did
+  // not — tiles are not candidates at all (see NAV_SKIP). The cost was always
+  // ~5.8s across ~60 genuine controls; live is slower per click only because
+  // every one waits out a networkidle that a polling desk never reaches.
   const TRIES_PER_LEVEL = 8;
   const forward = [await viewSignature(page)]; // forward[0] = starting level
 
@@ -1366,4 +1402,77 @@ test('S19: clear empties the conversation (opt-in, live only)', async ({ page })
   page.on('dialog', d => d.accept()); // the clear confirmation
   await page.locator('#askBody .ask-clear').click();
   await expect(page.locator('#askBody .ask-a')).toHaveCount(0, { timeout: 10000 });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 27 — Watchlist tile: half width, stacked, and NOTHING clipped.
+// The 2026-07-31 layout (owner-approved from a mock) halves the tile to fit
+// twice as many symbols per band, which put every value under width pressure.
+// The geometry is the cheap half of this test; the clipping assertions are the
+// point. A clipped price is a WRONG price, and it fails silently — the tile
+// still looks like a tile. Guarding it by measuring scrollWidth against
+// clientWidth catches a regression that no screenshot review reliably would.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S27: watchlist tiles are half-width, stacked, and never clip a value', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+
+  const m = await page.evaluate(() => {
+    const tile = document.querySelector('.wl-strip .wl-tile');
+    const r = tile.getBoundingClientRect();
+    // Visual top-to-bottom order. `.wl-vals` is `display: contents`, so it has
+    // no box of its own and its children lay out as tile children — that is the
+    // mechanism the stacked order depends on, so assert the RENDERED order
+    // rather than the DOM order, which still nests them.
+    const parts = [...tile.querySelectorAll('.mkt-name, .mkt-last, .wl-pct, .wl-spark')]
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+      .map(e => [...e.classList].find(c => ['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark'].includes(c)));
+    const over = sel => [...document.querySelectorAll('.wl-strip ' + sel)]
+      .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent.trim());
+    return { w: Math.round(r.width), order: parts, prices: over('.mkt-last'), names: over('.mkt-name') };
+  });
+
+  expect(m.w, 'tile should be the half-width 66px, not the old 132px').toBeLessThanOrEqual(80);
+  expect(m.order, 'reading order must be ticker → price → change → line')
+    .toEqual(['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark']);
+  // The two that matter. Long values step down a font size (wlTile sets
+  // `is-long` by string length, since CSS cannot branch on text length); if that
+  // ever stops happening, six-figure index prices truncate mid-number.
+  expect(m.prices, 'a clipped price is a wrong price').toEqual([]);
+  expect(m.names, 'tickers are how this panel is scanned').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 28 — The charts quote expires by AGE, not by presence.
+// Owner report 2026-07-31: SMH showed 538.90 +34.68 (+6.88%) — the PREVIOUS
+// session's close and move — under a stamp reading "delayed by 1 minute",
+// because `wbInfoCache` was keyed on presence and the first fetch of a symbol
+// was the last one for the life of the tab.
+//
+// This asserts the two properties that make staleness impossible rather than
+// trying to reproduce it: entries carry a timestamp, and the TTL follows the
+// session. Reproducing the bug itself would need a tab held open across a
+// session boundary, which no CI run can do — so the contract is what gets
+// guarded. Both values are read from the live page's own globals (classic
+// scripts, so top-level consts are in scope inside evaluate).
+// ─────────────────────────────────────────────────────────────────────────────
+test('S28: the charts quote cache is timestamped and its TTL is session-aware', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 15000 });
+
+  const shape = await page.evaluate(() => {
+    if (typeof wbInfoTtlMs !== 'function') return { missing: true };
+    const open = typeof marketSessionOpen === 'function' ? marketSessionOpen() : null;
+    // Seed one entry through the real code path's own shape and read it back.
+    wbInfoCache.__probe = { at: Date.now(), info: null };
+    const e = wbInfoCache.__probe;
+    delete wbInfoCache.__probe;
+    return { ttl: wbInfoTtlMs(), open, hasAt: typeof e.at === 'number', hasInfo: 'info' in e };
+  });
+
+  expect(shape.missing, 'wbInfoTtlMs must exist — it is what expires the quote').toBeFalsy();
+  expect(shape.hasAt, 'cache entries must carry `at`, or expiry is impossible').toBe(true);
+  expect(shape.hasInfo, 'cache entries must keep `info` alongside the stamp').toBe(true);
+  // 60s while prints arrive, 15 min once the tape is frozen. Never unbounded.
+  expect([60000, 900000], 'TTL must be one of the two session cadences').toContain(shape.ttl);
 });

@@ -308,15 +308,43 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* Every rule here is scoped under .wl-strip on purpose: the .mkt-tile chrome
    lives in index.html's inline <style>, which loads AFTER this sheet, so a bare
    .wl-tile would tie on specificity and lose on source order. */
-.wl-strip .wl-tile { flex: 0 0 132px; padding: 4px 7px; gap: 0; }
-.wl-strip .wl-vals { flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 4px; }
-.wl-strip .wl-spark { display: inline-flex; align-items: center; flex: 0 0 auto; opacity: .9; }
-/* 10% up from 44×14 (owner request 2026-07-30, revised from 5% the same day —
-   5% was ~2px and effectively invisible). Keep in step with WL_SPARK_W/H in
-   app.js, which set the viewBox these scale. Still inside the 132px tile, so
-   nothing reflows and the row keeps its ~11 tiles at 1600px. */
-.wl-strip .wl-spark svg { display: block; width: 48px; height: 15px; }
-.wl-strip .wl-pct { align-self: flex-start; font-size: 9px; line-height: 1.3; padding: 0 4px; }
+/* HALF-WIDTH, stacked (owner request 2026-07-31, approved from a mock built on
+   the real page). The sparkline moved out from beside the price to below the
+   % pill, which is what frees the width: 132px → 66px, and the band shows 21
+   tiles instead of 10 at 1600px. Height goes 49 → 63px, which the owner
+   accepted explicitly ("I don't mind the greater height").
+
+   Reading order is now ticker → price → change → line: the number and its
+   direction sit together as one unit, with the path as context beneath, rather
+   than the line splitting them.
+
+   `display: contents` on .wl-vals is what makes that possible. The markup nests
+   the price and the sparkline inside that wrapper, so the line could never be
+   ordered below the pill — which is a SIBLING of the wrapper — while the
+   wrapper generated a box. Dissolving it promotes both to direct flex children
+   of the tile, and `order` can then place all four. */
+.wl-strip .wl-tile { flex: 0 0 66px; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
+.wl-strip .wl-vals { display: contents; }
+.wl-strip .mkt-name { order: 1; font-size: 9px; }
+.wl-strip .mkt-last { order: 2; font-size: 12px; line-height: 1.15; }
+.wl-strip .wl-pct { order: 3; align-self: flex-start; font-size: 9px; line-height: 1.3; padding: 0 4px; }
+.wl-strip .wl-spark { order: 4; display: block; width: 100%; margin-top: 2px; opacity: .9; }
+/* Full tile width now, not a fixed 48px. The SVG carries a viewBox (sparkline()
+   in app.js), so it scales cleanly — the line is actually more legible at 66px
+   wide than it was at 48 inside the old 132px tile. */
+.wl-strip .wl-spark svg { display: block; width: 100%; height: 15px; }
+/* Long values step down one size rather than clipping — see the note in
+   wlTile(), which sets these classes by string length. A clipped price would be
+   a wrong price. */
+.wl-strip .mkt-last.is-long { font-size: 10px; letter-spacing: -.02em; }
+/* The base .mkt-name carries `letter-spacing: .05em`, which on a 7-character
+   ticker like BTC-USD is ~2.5px of pure air — enough on its own to push the
+   EXT badge past the edge. A long ticker drops the tracking as well as the
+   size. A truncated TICKER is milder than a truncated price, but this panel is
+   scanned by ticker, so it is still worth not doing. */
+.wl-strip .mkt-name.is-long { font-size: 8px; letter-spacing: 0; }
+/* The EXT/CLOSE badge shares the ticker line, so it tightens to match. */
+.wl-strip .wl-mark { font-size: 7px; padding: 0 1px; margin-left: 2px; letter-spacing: 0; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
 /* ── quick add / hold-to-remove (owner request 2026-07-30) ─────────────────
@@ -381,12 +409,17 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-tray-tiles { display: flex; gap: 6px; flex-wrap: wrap; min-height: 30px; min-width: 90px; align-items: center; }
 .wl-tray-hint { margin: 0; font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
 .wl-tile--tray { opacity: .92; border-style: dashed; }
+/* Header-resident now (owner ruling 2026-07-31), so NO `margin-left: auto` —
+   that pushed it to the far edge when it lived on its own row, and in the
+   header it would shove the as-of stamp off its own `ml-auto` anchor. Sized to
+   sit level with the ✎ and the seg controls beside it. */
 .wl-trash {
-  margin-left: auto; width: 30px; height: 30px; flex: 0 0 auto;
+  width: 26px; height: 26px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px dashed var(--color-border); border-radius: 6px;
-  font-size: 15px; line-height: 1; cursor: pointer; user-select: none;
+  font-size: 14px; line-height: 1; cursor: pointer; user-select: none;
 }
+.wl-add--tray { width: 26px; height: 26px; flex: 0 0 auto; }
 /* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
    desk means P&L, and a red glow on a hover target would read as a number. */
 .wl-trash.wl-drop-over,
