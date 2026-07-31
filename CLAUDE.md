@@ -123,6 +123,33 @@ This project's look is its own — established at kickoff via `/design-intake`
   index ETF proxies SPY/QQQ/IWM/DIA), and an 11-cell **Performance by Sector**
   grid (SPDR sector ETFs XLK…XLRE, heatmap-tinted by day-%). Carries its own
   `#mktLamp` data-state lamp + `#mktStamp` as-of stamp like every panel.
+  **Extended hours (owner request 2026-07-30) — POST-market only** ("not
+  premarket, I'm mostly interested in post market"; pre IS computed server-side,
+  so enabling it is a display change). **v8/chart carries NO pre/post fields** —
+  measured: with `includePrePost=true` AND `hasPrePostMarketData:true`, SPY's
+  meta still returns only `regularMarket*`. The print lives in **v7/quote**, so
+  `desk-market` gains ONE batched v7/quote call (best-effort: an auth failure
+  costs the extended lines, never the core payload S14 depends on).
+  One rule desk-wide: the extended % measures from the **PRIOR CLOSE**, reached
+  by COMPOUNDING Yahoo's two percentages — `(1+reg%)(1+post%)-1` — because post%
+  is off today's regular close and reg% off the prior close.
+  `regularMarketPreviousClose` is NEVER used (it shifts basis during pre-market).
+  **Indices have no extended session**, so the four index tiles render a NAMED
+  ETF proxy on its own line (`.mk-ext`, `extProxy` in the payload) — SPY / QQQ /
+  DIA — never folded into the index's own number. The R2K tile is in `EXT_PROXY`
+  too: its data already IS IWM, but the tile reads "Russell 2000", so naming IWM
+  stops it printing two unattributed percentages. **VIX is deliberately excluded**
+  — no ETF tracks spot VIX (VXX holds futures), the same
+  instrument-wearing-the-wrong-name trap as the Nasdaq-100/Composite and Russell
+  1000/2000 mismatches. Sector cells and heatmap tiles carry their OWN `ext`
+  (they genuinely trade); the heatmap's rides in the **tooltip** (`.tip-ext`)
+  because a tile is a few pixels tall at the tail, and **both grids keep tinting
+  by the REGULAR day-%** — re-tinting only the names that happen to have an
+  after-hours trade would make the map compare two different measurements.
+  Absent means "did not trade after hours" and is never rendered as 0.
+  `quote-proxy kind:'info'` gained `extPrice`/`extPct`/`extAt`, which reaches the
+  charts quote readout AND the assistant at once — `desk-ask`'s `get_quote`
+  forwards `info` verbatim, so it needed no change.
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
@@ -454,6 +481,7 @@ run for real against the dedicated project on every PR.
 | S25 | Pro 2 stochastic candles | With `?demo=1`, EVERY Pro 2 candle's colour matches the **weekly** `%K` vs `%D` (read off the rendered SVG, pane-scoped by title, volume bars excluded — they stay price-coloured). TWO negative controls must both fail the same comparison: the pane's own daily strip, and Pro 1 against its stochastic. Sampling tolerance scales with bar spacing, so it holds at phone width | Any Pro 2 candle disagreeing with the weekly crossover (a silent fallback to open/close), the daily strip also matching (the wrong series drives the colour), or Pro 1 agreeing everywhere (the rule leaked into the wrong pane) |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
 | S21 | Watchlist quick add + double-click remove | With `?demo=1` (no backend to write to) NO write control renders and tiles keep native double-tap zoom. Switching to live with `DESK.authed` left **false** must still render one + per band (owner ruling 2026-07-30 — edits do not depend on unlocking); a SINGLE click does NOT open `#wlRmBackdrop` but a double-click does (focus on "Keep it"), the tiles compute `touch-action: manipulation` so a phone double-tap is not eaten by zoom, Delete on a focused tile opens the same dialog, and quick-add rejects junk input | A + offered in demo, edits re-gated on auth, a single click removing, no keyboard path, or junk accepted |
+| S23 | Extended hours (post-market) | With `?demo=1`, all four index tiles carry a `.mk-ext` line NAMING their proxy (SPY/QQQ/IWM/DIA) + "after hrs", the extended % differs from the regular one, all 11 sector cells carry `.mk-sec-ext`, and the demo heatmap has SOME tiles with `extPct` and some without (absent = did not trade, never 0) | A tile showing an unattributed second %, the extended figure repeating the close, or every heatmap name carrying a print |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S13 | Heatmap map filter | With `?demo=1`, the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
 | S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |

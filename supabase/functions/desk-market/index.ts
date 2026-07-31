@@ -125,7 +125,29 @@ function withinCloseSettleGrace(now = new Date()): boolean {
 // TTL stays at 60 min: prices are frozen, so re-polling buys nothing.
 const OPEN_TTL_MS = 60_000;
 const CLOSED_TTL_MS = 3_600_000;
-const ttlMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? OPEN_TTL_MS : CLOSED_TTL_MS);
+
+// POST-MARKET runs 16:00–20:00 ET and prices genuinely move in it (Codex review,
+// PR #199). Before this, the TTL jumped to 60 min the moment the regular session
+// closed, so the after-hours figures the owner asked for could sit nearly two
+// hours stale — the feature would have looked broken for exactly the window it
+// exists to cover. The 15-minute settle grace is kept as a separate concept: it
+// covers the final REGULAR print landing late, which is why it applies even on a
+// day with no extended trading.
+function withinPostMarket(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(`${get('year')}-${get('month')}-${get('day')}`)) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 16 * 60 && minutes < 20 * 60;
+}
+const ttlMs = () =>
+  (marketSessionOpen() || withinCloseSettleGrace() || withinPostMarket() ? OPEN_TTL_MS : CLOSED_TTL_MS);
 
 // ── quote chain (verbatim ports of lib/stooq.js + lib/quotes.js) ────────────
 type Row = { date: string; close: number };
@@ -232,6 +254,127 @@ async function yahooDaily(stooqSym: string): Promise<Series> {
 // (only tried if Yahoo throws) and revives on its own if the challenge lifts.
 const dailyCloses = (symbol: string) => yahooDaily(symbol).catch(() => stooqDaily(symbol));
 
+// ── extended hours (owner request 2026-07-30) ────────────────────────────────
+// v8/chart carries NO pre/post fields — measured: with includePrePost=true and
+// hasPrePostMarketData:true, SPY's meta still returns only regularMarket*. The
+// extended print lives in v7/quote, which is the endpoint desk-watchlist has
+// used since 07-29. So this is a BATCHED second call (one per 50 symbols), not
+// a change to the per-symbol chart sweep.
+//
+// v7/quote needs a cookie + crumb or it 401s; same handshake as
+// desk-watchlist/quote-proxy, cached per warm instance.
+let yauth: { cookie: string; crumb: string; at: number } | null = null;
+const YAUTH_TTL_MS = 3_600_000;
+
+async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string } | null> {
+  if (!force && yauth && Date.now() - yauth.at < YAUTH_TTL_MS) return yauth;
+  const c = await fetch('https://fc.yahoo.com/', { headers: UA });
+  // deno-lint-ignore no-explicit-any
+  const setCookies: string[] = (c.headers as any).getSetCookie?.() ?? [];
+  let cookie = setCookies.map((s) => s.split(';')[0]).filter(Boolean).join('; ');
+  if (!cookie) { const one = c.headers.get('set-cookie'); if (one) cookie = one.split(';')[0]; }
+  if (!cookie) return null;
+  const cr = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } });
+  if (!cr.ok) return null;
+  const crumb = (await cr.text()).trim();
+  if (!crumb || crumb.length > 32 || crumb.includes('<')) return null;
+  yauth = { cookie, crumb, at: Date.now() };
+  return yauth;
+}
+
+// deno-lint-ignore no-explicit-any
+async function quoteBatch(yahooSyms: string[]): Promise<Map<string, any>> {
+  const out = new Map<string, unknown>();
+  let auth = await yahooAuth();
+  if (!auth) return out as Map<string, any>;
+  for (let i = 0; i < yahooSyms.length; i += 50) {
+    const q = yahooSyms.slice(i, i + 50).map(encodeURIComponent).join(',');
+    const url = (crumb: string) =>
+      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${q}&crumb=${encodeURIComponent(crumb)}`;
+    let res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }).catch(() => null);
+    // A crumb can be invalidated before YAUTH_TTL_MS expires, and silently
+    // skipping the batch meant the extended lines vanished for a whole closed-
+    // market TTL — the empty result gets cached (Codex review, PR #199). Retry
+    // once on 401, matching desk-watchlist and quote-proxy.
+    if (res && res.status === 401) {
+      auth = await yahooAuth(true);
+      if (!auth) return out as Map<string, any>;
+      res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }).catch(() => null);
+    }
+    if (!res || !res.ok) continue;
+    const json = await res.json().catch(() => null);
+    // deno-lint-ignore no-explicit-any
+    for (const r of ((json as any)?.quoteResponse?.result ?? [])) {
+      if (r?.symbol) out.set(String(r.symbol).toUpperCase(), r);
+    }
+  }
+  return out as Map<string, any>;
+}
+
+// An extended print, measured from the PRIOR CLOSE — the same basis the regular
+// `chg` uses, so the two numbers on a tile are comparable rather than one being
+// a move-off-the-close and the other a move-off-the-open.
+//
+// Reached by COMPOUNDING Yahoo's two percentages, exactly as desk-watchlist
+// does: post% is measured off today's regular close and reg% off the prior
+// close, so (1+reg)(1+post)-1 is the true prior-close move.
+// regularMarketPreviousClose is deliberately NOT used — it shifts basis during
+// the pre-market window (verified 07-29).
+//
+// Pre-market is COMPUTED here but the Markets panel only renders post (owner
+// ruling 2026-07-30: "not premarket, I'm mostly interested in post market"), so
+// turning it on later is a display change, not a feed change.
+// deno-lint-ignore no-explicit-any
+function extFrom(q: any): { kind: 'pre' | 'post'; price: number; pct: number; at: number | null } | null {
+  if (!q) return null;
+  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  const regPct = n(q.regularMarketChangePercent);
+  const post = n(q.postMarketPrice), postPct = n(q.postMarketChangePercent);
+  if (post != null) {
+    // BOTH components required (Codex review, PR #199). Falling back to regPct
+    // labels the REGULAR move as the after-hours move, and `pct ?? 0` turned a
+    // total absence into a confident "0.00%" — i.e. "flat after hours". Both
+    // break this payload's own absent-vs-flat contract, so an incomplete quote
+    // is dropped rather than guessed at.
+    if (regPct == null || postPct == null) return null;
+    const pct = ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100;
+    return { kind: 'post', price: post, pct: Number(pct.toFixed(2)), at: n(q.postMarketTime) };
+  }
+  const pre = n(q.preMarketPrice), prePct = n(q.preMarketChangePercent);
+  // pre% is already the prior-close move — there is no regular session yet.
+  if (pre != null && prePct != null) {
+    return { kind: 'pre', price: pre, pct: Number(prePct.toFixed(2)), at: n(q.preMarketTime) };
+  }
+  return null;
+}
+
+// Indices are NOT traded, so they have no extended session of their own —
+// ^GSPC/^IXIC report hasPrePostMarketData:false and simply repeat their close
+// (measured 07-29: ^GSPC held 7428.78 flat from 16:00 to 17:10). The only
+// honest after-hours read for an index is its liquid ETF proxy, attached here
+// as a SEPARATE field and rendered on its own labelled line — never folded into
+// the index's own number (owner ruling 2026-07-30).
+//
+// The R2K tile is here even though its data already IS IWM: the tile is
+// LABELLED "Russell 2000", so relative to what the reader sees, IWM is still a
+// proxy and naming it keeps the line honest. Without this the tile showed two
+// bare percentages with nothing saying they measure different instruments.
+//
+// VIX is absent because no ETF tracks spot VIX — VXX holds futures and would be
+// a different instrument wearing the same name, which is exactly the trap the
+// Nasdaq-100/Composite switch and the Russell 1000/2000 mismatch came from.
+// Cap for the whole auth-and-quote operation. Generous enough for a cold crumb
+// handshake plus one 30-symbol batch, short enough that the core payload is
+// never held past its own latency budget.
+const EXT_QUOTE_TIMEOUT_MS = 4000;
+
+const EXT_PROXY: Record<string, string> = {
+  'S&P 500': 'SPY',
+  'Nasdaq Composite': 'QQQ',
+  'Dow Jones': 'DIA',
+  'IWM (R2K proxy)': 'IWM',
+};
+
 // Latency guard for the best-effort extras: resolve null on rejection OR on a
 // hung/slow upstream, so a stalled optional quote can never hold the core
 // payload past the edge timeout (Codex #109). clearTimeout avoids a dangling
@@ -332,6 +475,47 @@ async function refresh(): Promise<unknown> {
   const coreTs = tiles.slice(0, MARKET_SYMBOLS.length)
     .map((t) => t.quoteTs).filter((t): t is number => typeof t === 'number' && t > 0);
   const quoteAt = coreTs.length ? new Date(Math.min(...coreTs) * 1000).toISOString() : null;
+
+  // ── attach extended-hours prints (owner request 2026-07-30) ───────────────
+  // BEST-EFFORT, deliberately: this is one extra batched call after the core
+  // payload is already assembled, so a Yahoo auth failure or a 401 costs the
+  // extended lines and nothing else. The regular tiles — which the S14 canary
+  // and the FR-R9 all-or-nothing contract depend on — are untouched either way.
+  try {
+    const nameToSym = new Map<string, string>();
+    for (const m of [...MARKET_SYMBOLS, ...EXTRA_SYMBOLS]) nameToSym.set(m.name, yahooSymbol(m.sym));
+    const wanted = new Set<string>([...nameToSym.values(), ...Object.values(EXT_PROXY)]);
+    // BOUNDED (Codex review, PR #199). try/catch only covers settled rejections:
+    // a Yahoo endpoint that STALLS rather than failing would hold the
+    // already-complete core payload until the edge runtime deadline, so the
+    // "additive" call could take the Markets panel down. Same latency-cap
+    // discipline as bestEffort() above, applied to auth + fetch together.
+    const quotes = await Promise.race([
+      quoteBatch([...wanted]),
+      new Promise<Map<string, unknown>>((resolve) =>
+        setTimeout(() => resolve(new Map()), EXT_QUOTE_TIMEOUT_MS)),
+      // deno-lint-ignore no-explicit-any
+    ]) as Map<string, any>;
+    for (const t of tiles) {
+      // A tile's OWN extended print, when the instrument actually trades.
+      const own = nameToSym.get(t.name);
+      const mine = own ? extFrom(quotes.get(own)) : null;
+      if (mine) {
+        (t as Record<string, unknown>).ext = {
+          kind: mine.kind, last: fmtLast(mine.price), chg: mine.pct, at: mine.at,
+        };
+      }
+      // An index tile instead names its proxy, so the UI can say WHOSE move it
+      // is showing. Never merged into t.chg.
+      const proxySym = EXT_PROXY[t.name];
+      const proxy = proxySym ? extFrom(quotes.get(proxySym)) : null;
+      if (proxy) {
+        (t as Record<string, unknown>).extProxy = {
+          sym: proxySym, kind: proxy.kind, last: fmtLast(proxy.price), chg: proxy.pct, at: proxy.at,
+        };
+      }
+    }
+  } catch { /* extended lines are additive; never gate the core payload */ }
   const body = { ok: true, asOf, quoteAt, generatedAt: new Date().toISOString(), tiles };
   cache = { at: Date.now(), body, duringSession: marketSessionOpen() };
   return body;

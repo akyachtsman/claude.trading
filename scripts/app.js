@@ -141,6 +141,36 @@ function renderMarkets(market, lamp) {
     cell.appendChild(el('div', 'mk-name', ix.label));
     cell.appendChild(el('div', 'mk-pct ' + (pct == null ? '' : pct >= 0 ? 'up' : 'down'), pct == null ? '—' : fmtPct(pct)));
     cell.appendChild(el('div', 'mk-last', t ? t.last : '—'));
+    /* Extended-hours line (owner request 2026-07-30). POST only: the owner
+       reads after-hours, not pre-market, so the feed computes a pre print but
+       nothing draws it here — enabling it is a one-line change.
+
+       An index tile shows its PROXY and names it, because SPY's after-hours
+       move is not the S&P 500's value and an unlabelled number would claim it
+       was.
+
+       extProxy is preferred over ext (Codex review, PR #199): in LIVE data the
+       R2K tile receives BOTH, because its symbol IS IWM and IWM is also in the
+       proxy map. Taking `ext` first dropped the "IWM" label and printed a bare
+       second percentage on a tile captioned "Russell 2000" — losing exactly the
+       attribution this line exists to carry. Demo only ever sends extProxy, so
+       S23 could not have caught it. */
+    const xt = t && (t.extProxy && t.extProxy.kind === 'post' ? t.extProxy
+      : t.ext && t.ext.kind === 'post' ? t.ext : null);
+    if (xt && xt.chg != null) {
+      const line = el('div', 'mk-ext');
+      const num = el('span', 'mk-ext-pct ' + (xt.chg >= 0 ? 'up' : 'down'),
+        (xt.sym ? xt.sym + ' ' : '') + fmtPct(xt.chg));
+      line.appendChild(num);
+      line.appendChild(el('span', 'mk-ext-tag', 'after hrs'));
+      /* Both numbers measure from the SAME prior close, so the tooltip can say
+         so plainly — otherwise a reader could take the smaller one for a move
+         off the closing print. */
+      line.title = (xt.sym ? xt.sym + ' ' : ix.label + ' ') + xt.last +
+        ' after hours, ' + fmtPct(xt.chg) + ' from the prior close' +
+        (xt.at ? ' · last print ' + fmtClock(new Date(xt.at * 1000)) : '');
+      cell.appendChild(line);
+    }
     /* This tile's OWN quote clock. The panel stamp is a floor across all four,
        so a tile quoted later than the floor would otherwise look staler than it
        is; the tooltip is where an exact broker-vs-desk comparison gets made. */
@@ -172,6 +202,16 @@ function renderMarkets(market, lamp) {
     cell.style.cssText = mktSecTint(pct);
     cell.appendChild(el('div', 'mk-sec-name', name));
     cell.appendChild(el('div', 'mk-sec-pct', pct == null ? '—' : fmtPct(pct)));
+    /* Sector ETFs genuinely trade after the bell, so these need no proxy — the
+       cell shows its own post-market move. The TINT stays keyed to the regular
+       day-% on purpose: the grid is read as one heatmap, and re-tinting only the
+       cells that happen to have an extended print would make the map compare
+       two different measurements against each other. */
+    if (t && t.ext && t.ext.kind === 'post' && t.ext.chg != null) {
+      const x = el('div', 'mk-sec-ext ' + (t.ext.chg >= 0 ? 'up' : 'down'), fmtPct(t.ext.chg));
+      x.title = sym + ' ' + t.ext.last + ' after hours, ' + fmtPct(t.ext.chg) + ' from the prior close';
+      cell.appendChild(x);
+    }
     secBox.appendChild(cell);
   }
   syncAskHeight();
@@ -1764,6 +1804,20 @@ function renderHeatmap(hm, lamp) {
     if (Number.isFinite(t.last)) cur.appendChild(el('span', 'tip-price ' + dir(t.pct), fmtPrice(t.last)));
     cur.appendChild(el('span', dir(t.pct), fmtPct(t.pct)));
     tip.appendChild(cur);
+    /* Post-market print (owner request 2026-07-30). It goes in the TOOLTIP, not
+       on the tile: ~2000 tiles means a tile is a few pixels tall at the tail and
+       a second number simply will not fit. The TINT also stays keyed to the
+       regular day-% — re-tinting only the names that happen to have an
+       after-hours trade would make the map compare two different measurements
+       side by side, which is the whole failure mode this desk keeps fixing.
+       Re-tinting the WHOLE map by extended % is a separate control, not built. */
+    if (t.extPct != null) {
+      const x = el('div', 'tip-ext');
+      x.appendChild(el('span', 'tip-ext-tag', 'After hours'));
+      if (Number.isFinite(t.extLast)) x.appendChild(el('span', 'tip-price ' + dir(t.extPct), fmtPrice(t.extLast)));
+      x.appendChild(el('span', dir(t.extPct), fmtPct(t.extPct)));
+      tip.appendChild(x);
+    }
     tip.appendChild(el('div', 'tip-name', (t.name && t.name !== t.sym ? t.name + ' · ' : '') + fmtCap(t.cap)));
     /* EVERY member of the hovered SECTOR (owner ruling 2026-07-14, extended
        to the whole sector) — the tip scrolls when the list outgrows its max
@@ -4013,14 +4067,20 @@ function scheduleFeedPoll() {
    desk-market is a cheap call, while desk-heatmap's screener sweep and
    desk-charts' 25-symbol OHLC pull are the expensive ones, and dragging those
    to a 1-minute cadence would multiply quota for data that barely changes.
-   Only runs during the open session (plus the post-close settle grace) —
-   once prices are frozen the hourly all-feeds tick already covers it. */
+   Runs during the open session, the post-close settle grace, AND the
+   POST-MARKET window (16:00–20:00 ET, owner request 2026-07-30 + Codex review,
+   PR #199). That last one is not optional now that the tiles show after-hours
+   prices: without it the poller stopped at the bell and an on-screen extended
+   quote could sit nearly two hours behind the tape, which is precisely the
+   window the feature exists for. Once 20:00 ET passes and prices really are
+   frozen, the hourly all-feeds tick covers it again. */
 const MARKET_POLL_MS = 60000;
 let marketPollTimer = 0;
 function scheduleMarketPoll() {
   clearTimeout(marketPollTimer);
   if (document.hidden) return; /* visibilitychange rearms */
-  if (!(marketSessionOpen() || withinCloseSettleGrace())) return; /* closed: hourly tick covers it */
+  /* postMarketOpen(): 16:00–20:00 ET, when extended prints are still arriving */
+  if (!(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return;
   marketPollTimer = setTimeout(async () => {
     await refreshMarket(false);
     renderMasthead();

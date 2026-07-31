@@ -104,7 +104,40 @@ function buildDemoData() {
       ['UUP', 27.85, -0.12], ['EEM', 46.20, 0.35], ['FXI', 33.10, 1.02],
       ['INDA', 54.70, 0.26], ['JPXN', 72.40, 0.44], ['SPYD', 43.90, 0.21],
     ].map(([name, price, chg], i) => ({ name, last: price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), chg, seed: 101 + i * 6 })),
-  ].map(m => ({ ...m, spark: walk(m.seed, 100, m.chg >= 0 ? 0.001 : -0.001, 0.02, 30, m.chg >= 0 ? 102 : 98) }));
+  ].map(m => ({ ...m, spark: walk(m.seed, 100, m.chg >= 0 ? 0.001 : -0.001, 0.02, 30, m.chg >= 0 ? 102 : 98) }))
+    /* Extended-hours prints, mirroring the live payload's shape so the renderer
+       is shared (owner request 2026-07-30). Two rules the live feed obeys and
+       the demo therefore has to:
+         - INDICES carry no extended session of their own, so S&P/Nasdaq/Dow get
+           an `extProxy` naming SPY/QQQ/DIA instead of an `ext`. VIX gets
+           neither — no ETF tracks spot VIX.
+         - Everything that genuinely trades (the sector ETFs, the R2K tile which
+           IS IWM) carries its own `ext`.
+       The extended % is seeded off the regular one so the demo drifts a little
+       past the close rather than repeating it, which is what makes the second
+       line worth drawing at all. */
+    .map(m => {
+      /* Mirrors desk-market's EXT_PROXY, including the R2K tile: its data IS
+         IWM, but the tile reads "Russell 2000", so the line names IWM rather
+         than showing a second unattributed percentage. */
+      const proxy = {
+        'S&P 500': 'SPY', 'Nasdaq Composite': 'QQQ', 'Dow Jones': 'DIA',
+        'IWM (R2K proxy)': 'IWM',
+      }[m.name];
+      const noExt = m.name === 'VIX' || m.name === 'US 10Y';
+      if (noExt) return m;
+      const r = lcg(m.seed ^ 0x7a1d);
+      /* Wide enough that the extended figure is visibly a DIFFERENT number.
+         A tighter drift landed within 0.01 of the regular %, which reads as a
+         rendering bug rather than a second measurement. */
+      const drift = Number(((r() - 0.45) * 1.4).toFixed(2));
+      const chg = Number((m.chg + drift).toFixed(2));
+      const last = m.last;   /* price text is not what this line is read for */
+      const at = null;
+      return proxy
+        ? { ...m, extProxy: { sym: proxy, kind: 'post', last, chg, at } }
+        : { ...m, ext: { kind: 'post', last, chg, at } };
+    });
   const news = [
     { t: '15:58', src: 'Reuters',   h: 'S&P 500 ends higher as megacap tech extends rally', chips: [['SPY', 0.54]] },
     { t: '15:41', src: 'Bloomberg', h: 'Nvidia supplier checks point to firm data-center demand', chips: [['NVDA', 1.84]] },
@@ -136,11 +169,23 @@ const DEMO_HEAT_SECTORS = [
 function buildDemoHeatmap() {
   const rnd = lcg(97);
   const sectors = DEMO_HEAT_SECTORS.map(([name, list]) => {
-    const tiles = list.map(([sym, capB, ind]) => ({
-      sym, name: sym, cap: capB * 1e9, ind,
-      pct: Number(((rnd() - 0.47) * 3.4).toFixed(2)),
-      last: Number((30 + rnd() * 500).toFixed(2)),
-    }));
+    const tiles = list.map(([sym, capB, ind]) => {
+      const pct = Number(((rnd() - 0.47) * 3.4).toFixed(2));
+      const last = Number((30 + rnd() * 500).toFixed(2));
+      /* Post-market print on ~2 in 3 names, mirroring the live feed: plenty of
+         listed stocks simply don't trade after the bell, and the client must
+         distinguish "no after-hours trade" (absent) from "flat after hours"
+         (present and 0). A demo where every tile had one would hide that. */
+      const traded = rnd() > 0.34;
+      const extPct = traded ? Number((pct + (rnd() - 0.45) * 1.8).toFixed(2)) : null;
+      return {
+        sym, name: sym, cap: capB * 1e9, ind, pct, last,
+        ...(extPct == null ? {} : {
+          extPct,
+          extLast: Number((last * (1 + (extPct - pct) / 100)).toFixed(2)),
+        }),
+      };
+    });
     return { name, cap: tiles.reduce((s, t) => s + t.cap, 0), tiles };
   }).sort((a, b) => b.cap - a.cap);
   return { asOf: isoDate(lastTradingDay(new Date())), source: 'demo', sectors };
@@ -677,6 +722,24 @@ function marketSessionOpen(now) {
    would widen the LIVE window". The watchlist IS that feed, so while pre/post
    prints are actually flowing its lamp may read LIVE rather than EOD. Panels
    without an extended feed keep the regular-session rule. */
+/* POST-market only, 16:00–20:00 ET (Codex review, PR #199). Distinct from
+   extendedSessionOpen() below, which spans the whole 4am–8pm extended day: the
+   desk shows post-market prints but deliberately not pre-market ones, so the
+   poller has to wake for the second half of that window and not the first. */
+function postMarketOpen(now) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now || new Date());
+  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 16 * 60 && minutes < 20 * 60;
+}
+
 function extendedSessionOpen(now) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', weekday: 'short',
