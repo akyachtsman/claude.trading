@@ -81,8 +81,11 @@ group. `[P]` = parallel-safe within its group.
   check `cron.job_run_details` and the brief row.
 - [x] **B6** `.github/workflows/data-refresh.yml`: remove the IBKR and
   brief steps (workflow shell remains until Group C).
-- [ ] **B7** Gates + `qa-pipeline`; PR B merge on green + owner approval
+- [x] **B7** Gates + `qa-pipeline`; PR B merge on green + owner approval
   (backend class); confirm next-morning accounts/brief lamps are fresh.
+      *(Ticked 2026-07-31, owner-directed: the gates and qa-pipeline ran with PR
+      B and the accounts lamp has been fresh since; the brief half of the check
+      is moot — the daily brief was retired 2026-07-23.)*
 
 ## Group C — the deletion (PR C)
 

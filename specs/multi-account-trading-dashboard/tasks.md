@@ -71,7 +71,7 @@ every push; qa-pipeline runs at each phase boundary.
       hash — owner rotates via SQL editor; instructions in PR body), test
       row with a session-generated test PIN (demo-grade snapshots + 260d
       equity + one brief for the test user). dep: B2
-- [ ] B4a. OWNER: add that generated test PIN as the
+- [x] B4a. OWNER: add that generated test PIN as the
       `TEST_AUTH_CREDENTIAL` repo secret (needed by qa-live/E1; B8 uses the
       value directly in-session, so B-phase e2e is not blocked on this).
       dep: B4
@@ -130,7 +130,7 @@ every push; qa-pipeline runs at each phase boundary.
       serving the previous `data/market.json` with its older as-of stamp
       visible, and the failure email fires. Record evidence in
       `.agent-reports/test-report.md`. dep: C10
-- [ ] C11. OWNER: add secrets (IBKR_FLEX_TOKEN, IBKR_FLEX_QUERY_ID,
+- [x] C11. OWNER: add secrets (IBKR_FLEX_TOKEN, IBKR_FLEX_QUERY_ID,
       ANTHROPIC_API_KEY, DB_SERVICE_KEY — TEST_AUTH_CREDENTIAL already done
       at B4a) + variables (DB_URL, DB_ANON_KEY); set real PIN; then
       dispatch with backfill. Blocking for live accounts only.
@@ -153,9 +153,28 @@ every push; qa-pipeline runs at each phase boundary.
       Scenarios table, Security Constraints (PIN residuals, anon key,
       bot-data-commit exception, Supabase auto-pause runbook), coding
       standards (2-dp price percentages). dep: D2
-- [ ] E3. Full qa-pipeline (test-verifier → ui-tester → code review →
+- [x] E3. Full qa-pipeline (test-verifier → ui-tester → code review →
       security review → pr-readiness); fix findings; final PR + merge +
       live verify. dep: E1, E2
+
+> **Closure note (2026-07-31, owner-directed).** The four boxes above were
+> completed in practice long before they were ticked; each is recorded here with
+> the evidence rather than ticked silently, so the chain does not claim more than
+> it can show.
+>
+> - **B4a** — `TEST_AUTH_CREDENTIAL` is set. Evidence: S10 (valid PIN unlocks
+>   accounts) passes on every live CI run; it cannot run at all without the secret.
+> - **C11** — the function secrets and variables are set, and the real PIN is in
+>   place. Evidence: `desk-ibkr-sync` runs on its pg_cron schedule and the desk
+>   serves live accounts behind the PIN.
+> - **E3** — the full qa-pipeline has run many times since, most recently across
+>   the PR series #196–#208; `.agent-reports/` holds the reports.
+>
+> One caveat worth keeping visible: `QA — UI Tests (live)` was red from ~2026-07-25
+> to 2026-07-31 on two harness defects (S11's ambiguous `.lock-error` selector and
+> the NAV crawler's timeout). It is not a PR gate — it fires after a Pages deploy —
+> so it never blocked a merge, but E3's "live verify" was weaker than it looked
+> during that window. Both were fixed in PR #208.
 
 ## Traceability (requirement → tasks)
 FR-A1..4→A1/A2/B7 · FR-C1→A2/A9 · FR-CH1..4→A2/A8/B7 · FR-M1..2→A4/C3 ·
