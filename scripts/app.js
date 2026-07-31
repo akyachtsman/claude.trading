@@ -1643,6 +1643,142 @@ function buildAskContext() {
   };
 }
 
+/* ── scheduled asks (owner request 2026-07-31) ────────────────────────────────
+   A question the desk asks ITSELF on a timer, answered into the same thread a
+   typed question lands in. Deliberately CLIENT-SIDE: desk-ask already appends
+   every exchange to desk_chat_memory, so a scheduled answer persists and
+   replays on reload for free — no table, no panel, no cron, no timezone or DST
+   handling. The trade, stated plainly because it is the whole limitation: it
+   only fires while the dashboard is OPEN. A 6:30am question on a closed tab
+   runs when you next open the desk, not before you sit down. If that ever
+   matters more than the simplicity, pg_cron can write into this same thread
+   later without redoing any of this UI. */
+const ASK_SCHED_KEY = 'ask_sched_v1';
+let askSched = [];
+try {
+  const raw = JSON.parse(localStorage.getItem(ASK_SCHED_KEY) || '[]');
+  if (Array.isArray(raw)) {
+    askSched = raw.filter(r => r && typeof r.prompt === 'string' && r.prompt.trim())
+      .slice(0, 10)   /* a cap: each firing is a real Claude tool-loop call */
+      .map(r => ({
+        prompt: String(r.prompt).slice(0, 500),
+        mins: Math.max(15, Math.min(1440, Number(r.mins) || 60)),
+        marketOnly: r.marketOnly !== false,
+        enabled: r.enabled !== false,
+        last: Number(r.last) || 0,
+      }));
+  }
+} catch { /* private mode */ }
+/* The 15-minute floor is enforced HERE, at the write boundary, not only in the
+   number input's change handler. Every firing spends real Claude quota, so the
+   cap has to hold however the object was mutated — a direct assignment, a
+   restored payload, a future caller — not just when it came from that one
+   field. Same for the 10-row cap. */
+const saveAskSched = () => {
+  askSched = askSched.slice(0, 10).map(r => ({
+    ...r,
+    prompt: String(r.prompt || '').slice(0, 500),
+    mins: Math.max(15, Math.min(1440, Number(r.mins) || 60)),
+  }));
+  try { localStorage.setItem(ASK_SCHED_KEY, JSON.stringify(askSched)); } catch { /* private mode */ }
+};
+
+let askBusy = false;      /* a scheduled run must never collide with a typed one */
+let askRun = null;        /* set by renderAsk() — the shared send path */
+let askSchedTimer = 0;
+
+/* MINIMUM 15 minutes, and market-day gating on by default. Both are cost and
+   noise guards: every firing spends real quota, and an answer about "today's
+   indicators" generated on a Sunday is worse than no answer because it looks
+   current. */
+const ASK_SCHED_TICK_MS = 60000;
+
+function askSchedDue(r, now) {
+  if (!r.enabled) return false;
+  if (r.marketOnly && !(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return false;
+  return now - (r.last || 0) >= r.mins * 60000;
+}
+
+async function askSchedTick() {
+  if (document.hidden || askBusy || !askRun) return;
+  if (DESK.mode === 'demo' || !DESK.authed) return;   /* nothing to ask against */
+  const now = Date.now();
+  /* ONE per tick, never a burst: two scheduled questions coming due together
+     would otherwise fire back-to-back tool loops and read as a wall of text. */
+  const due = askSched.find(r => askSchedDue(r, now));
+  if (!due) return;
+  due.last = now;
+  saveAskSched();          /* stamp BEFORE the call, so a failure cannot loop */
+  await askRun(due.prompt, { scheduled: true });
+}
+
+function scheduleAskTick() {
+  clearInterval(askSchedTimer);
+  if (!askSched.some(r => r.enabled)) return;
+  askSchedTimer = setInterval(askSchedTick, ASK_SCHED_TICK_MS);
+}
+
+
+/* Roster editor for scheduled asks. Built in JS like the rest of this panel
+   rather than as static markup, because the row count is data. */
+function openAskSched() {
+  const back = document.getElementById('askSchedBackdrop');
+  const list = document.getElementById('askSchedList');
+  if (!back || !list) return;
+  const draw = () => {
+    list.textContent = '';
+    if (!askSched.length) list.appendChild(el('p', 'lock-explain', 'Nothing scheduled yet.'));
+    askSched.forEach((r, i) => {
+      const row = el('div', 'ask-sched-row');
+      const on = document.createElement('input');
+      on.type = 'checkbox'; on.checked = r.enabled;
+      on.setAttribute('aria-label', 'Enabled');
+      on.addEventListener('change', () => { r.enabled = on.checked; saveAskSched(); scheduleAskTick(); });
+      const q = document.createElement('input');
+      q.type = 'text'; q.className = 'input'; q.value = r.prompt; q.maxLength = 500;
+      q.setAttribute('aria-label', 'Question');
+      q.addEventListener('change', () => { r.prompt = q.value.trim().slice(0, 500); saveAskSched(); });
+      const every = document.createElement('input');
+      every.type = 'number'; every.className = 'input ask-sched-mins';
+      every.min = '15'; every.max = '1440'; every.step = '15'; every.value = String(r.mins);
+      every.setAttribute('aria-label', 'Every N minutes');
+      every.addEventListener('change', () => {
+        r.mins = Math.max(15, Math.min(1440, Number(every.value) || 60));
+        every.value = String(r.mins); saveAskSched();
+      });
+      const mkt = document.createElement('input');
+      mkt.type = 'checkbox'; mkt.checked = r.marketOnly;
+      mkt.setAttribute('aria-label', 'Market hours only');
+      mkt.addEventListener('change', () => { r.marketOnly = mkt.checked; saveAskSched(); });
+      const del = el('button', 'btn btn-secondary', '✕'); del.type = 'button';
+      del.setAttribute('aria-label', 'Remove');
+      del.addEventListener('click', () => { askSched.splice(i, 1); saveAskSched(); scheduleAskTick(); draw(); });
+      row.appendChild(on); row.appendChild(q);
+      row.appendChild(el('span', 'ask-sched-lbl', 'every'));
+      row.appendChild(every);
+      row.appendChild(el('span', 'ask-sched-lbl', 'min · market hrs'));
+      row.appendChild(mkt); row.appendChild(del);
+      list.appendChild(row);
+    });
+  };
+  const add = document.getElementById('askSchedAdd');
+  if (add && !add.dataset.wired) {
+    add.dataset.wired = '1';
+    add.addEventListener('click', () => {
+      if (askSched.length >= 10) return;
+      askSched.push({ prompt: '', mins: 60, marketOnly: true, enabled: true, last: 0 });
+      saveAskSched(); scheduleAskTick(); draw();
+    });
+  }
+  const close = document.getElementById('askSchedCloseBtn');
+  if (close && !close.dataset.wired) {
+    close.dataset.wired = '1';
+    close.addEventListener('click', () => { back.hidden = true; scheduleAskTick(); });
+  }
+  draw();
+  back.hidden = false;
+}
+
 function renderAsk() {
   const body = document.getElementById('askBody');
   const lampEl = document.getElementById('askLamp');
@@ -1675,11 +1811,16 @@ function renderAsk() {
   input.placeholder = 'Ask about your desk…';
   input.setAttribute('aria-label', 'Ask the desk assistant a question');
   const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
+  /* ⏱ beside ⚙ — same idiom, same place. Opens the schedule roster. */
+  const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
+  schedBtn.setAttribute('aria-label', 'Scheduled questions');
+  schedBtn.title = 'Questions the desk asks itself on a timer';
+  schedBtn.addEventListener('click', () => openAskSched());
   const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin));
   const err = el('p', 'lock-error', ''); err.hidden = true;
-  form.appendChild(input); form.appendChild(btn); form.appendChild(sysBtn);
+  form.appendChild(input); form.appendChild(btn); form.appendChild(schedBtn); form.appendChild(sysBtn);
   body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
   body.appendChild(el('p', 'ai-disclaimer',
     'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'));
@@ -1727,30 +1868,49 @@ function renderAsk() {
     if (out && out.ok) { while (thread.firstChild) thread.removeChild(thread.firstChild); clearBtn.hidden = true; }
   });
 
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    const q = input.value.trim();
-    if (!q) return;
+  /* ONE send path for a typed question and a scheduled one. They differ only in
+     where the text came from and whether the question line is marked, so
+     sharing this keeps a scheduled answer identical to a typed one in the
+     thread, in desk_chat_memory, and in how failures surface. */
+  async function runAsk(q, { scheduled = false } = {}) {
+    if (!q || askBusy) return;
+    askBusy = true;
     err.hidden = true;
     btn.disabled = true; btn.textContent = 'Asking…'; input.disabled = true;
-    thread.appendChild(el('p', 'ask-q', q));
+    const qEl = el('p', 'ask-q' + (scheduled ? ' ask-q--sched' : ''), q);
+    /* Marked so the owner can tell at a glance what they asked from what the
+       desk asked on their behalf — otherwise a scheduled answer reads as a
+       question they forgot writing. */
+    if (scheduled) qEl.title = 'Asked automatically on a schedule';
+    thread.appendChild(qEl);
     thread.scrollTop = thread.scrollHeight;
     const res = await deskAsk(pin, q, buildAskContext())
       .catch(() => ({ ok: false, error: 'Could not reach the ask service — try again in a moment.' }));
     btn.disabled = false; btn.textContent = 'Ask'; input.disabled = false;
+    askBusy = false;
     if (res && res.ok) {
       thread.appendChild(el('p', 'ask-a', res.answer));
       appendSources(res.sources);
       clearBtn.hidden = false;
-      input.value = '';
+      if (!scheduled) input.value = '';
     } else {
       err.textContent = (res && res.error) || 'Something went wrong — try again.';
       err.hidden = false;
     }
     thread.scrollTop = thread.scrollHeight;
+    return res;
+  }
+  askRun = runAsk;
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+    await runAsk(q);
     input.focus();
   });
   syncAskHeight();
+  scheduleAskTick();
 }
 
 /* Ask-the-desk system prompt (desk_009) — an on-demand modal (owner request
