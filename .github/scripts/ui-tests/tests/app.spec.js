@@ -1115,6 +1115,8 @@ test('S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close'
   // stochastic on a real share of bars. Zero here would mean the rule leaked.
   expect(probe.p1.disagree, 'Pro 1 still follows open/close, not the stochastic')
     .toBeGreaterThan(probe.p1.agree * 0.1);
+});
+
 // S23 — Extended hours across the desk (owner request 2026-07-30). Demo-gated so
 // it runs every PR; the demo generator mirrors the live payload's shape,
 // including the parts that must be ABSENT.
