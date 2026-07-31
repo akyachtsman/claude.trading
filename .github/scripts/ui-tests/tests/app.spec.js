@@ -227,6 +227,19 @@ test('S1: page loads without JS errors', async ({ page }) => {
     if (m.type() !== 'error') return;
     const at = (m.location() && m.location().url) || '';
     if (m.text().includes(FEED_ORIGIN) || at.includes(FEED_ORIGIN)) return;
+    /* A CORS REJECTION from the feed origin is the same allowlisted noise, but
+       it arrives as a PAIR and only the second message names the URL — the
+       first says "Origin http://localhost:8080 is not allowed by
+       Access-Control-Allow-Origin" with an EMPTY location, so neither existing
+       test catches it. That is quote-proxy's origin allowlist working: it
+       admits exactly the GitHub Pages origin and this job serves from
+       localhost, so the browser is supposed to refuse. The live job, on the
+       real origin, never sees it.
+       It only started landing inside S1's window because the charts quote is
+       polled every minute since the SMH staleness fix, instead of being fetched
+       once per tab. Same fix already applied to S3's listener; S1 has its own
+       and was missed. */
+    if (/Access-Control-Allow-Origin|access control checks/i.test(m.text())) return;
     errors.push(`${m.text()} (${at || 'no url'})`);
   });
   await page.goto('./');
