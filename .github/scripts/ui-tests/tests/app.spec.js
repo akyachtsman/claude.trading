@@ -690,7 +690,14 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   await expect(pinInput).toBeVisible();
   await pinInput.fill('000000');
   await page.locator('.lock-form button').click();
-  await expect(page.locator('.lock-error')).toBeVisible({ timeout: 15000 });
+  // Scoped to the lock panel ON PURPOSE. `.lock-error` is the desk's shared
+  // error-line class, and every modal that grew a validation message adopted it
+  // — the system prompt editor, watchlist quick-add, remove-confirm and edit. A
+  // bare `.lock-error` matched 2 elements by PR #167 and 5 by PR #196, so
+  // Playwright's strict mode rejected it before the assertion ever ran and S11
+  // failed on a live desk that was behaving correctly. The next modal would have
+  // made it 6; scoping to the panel under test is what keeps this stable.
+  await expect(page.locator('.panel-lock .lock-error')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#accountGrid .hero-number')).toHaveCount(0);
 });
 
