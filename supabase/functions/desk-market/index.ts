@@ -516,7 +516,18 @@ async function refresh(): Promise<unknown> {
       }
     }
   } catch { /* extended lines are additive; never gate the core payload */ }
-  const body = { ok: true, asOf, quoteAt, generatedAt: new Date().toISOString(), tiles };
+  // The NEWEST extended print across the core tiles. The panel stamp otherwise
+  // claims 4pm while an after-hours price sits on screen beside it — the lamp
+  // stays EOD (the regular session really has ended, and S14 canaries that
+  // contract) but the stamp names this instant instead of the bell.
+  // Max, not min: unlike `quoteAt` this is not a freshness floor for a set of
+  // tiles, it is "when did the thing you are looking at last print".
+  const extTs = tiles.slice(0, MARKET_SYMBOLS.length).flatMap((t) => {
+    const r = t as Record<string, { at?: number } | undefined>;
+    return [r.ext?.at, r.extProxy?.at];
+  }).filter((t): t is number => typeof t === 'number' && t > 0);
+  const extAt = extTs.length ? new Date(Math.max(...extTs) * 1000).toISOString() : null;
+  const body = { ok: true, asOf, quoteAt, extAt, generatedAt: new Date().toISOString(), tiles };
   cache = { at: Date.now(), body, duringSession: marketSessionOpen() };
   return body;
 }

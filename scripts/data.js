@@ -884,7 +884,7 @@ function marketCloseInstant(asOfDate) {
 /* Lamps carry the RAW stamp inputs (atIso/asOf/tail/stampSuffix) alongside the
    rendered `stamp` string so applyStamp() in app.js can re-render the
    time-sensitive "delayed by" clause later without another fetch. */
-function liveLampFor(generatedAt, dataAsOf, priceBound, quoteAt) {
+function liveLampFor(generatedAt, dataAsOf, priceBound, quoteAt, extAt) {
   /* Two different clocks, and conflating them is what made the desk
      unfalsifiable against a broker screen (owner report 2026-07-29):
        generatedAt — when WE fetched. Answers "is our poller alive?", so the
@@ -915,6 +915,21 @@ function liveLampFor(generatedAt, dataAsOf, priceBound, quoteAt) {
        immediately. The test is on the DATA's clock, not the fetch clock — a
        15:59 quote pulled at 16:05 is still a mid-session price. */
     if (shownAt && closeIso && new Date(shownAt) < new Date(closeIso)) return stale;
+    /* An after-hours print outranks the close as the thing on screen. Stamping
+       4pm while the panel shows a 5:12pm price states the wrong time for the
+       number the owner is looking at (Codex review, PR #199).
+
+       The LAMP stays EOD deliberately: the regular session really is over, and
+       EOD/LIVE is the contract S14 canaries the whole feed layer against —
+       inventing a third state would break that for a wording problem. What
+       changes is the CLAIM: the stamp names the extended print's own time and
+       says which session it came from. */
+    if (extAt && closeIso && new Date(extAt) > new Date(closeIso)) {
+      return {
+        cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(extAt, dataAsOf, 'age') + ' — after hrs',
+        atIso: extAt, asOf: dataAsOf, tail: 'age', stampSuffix: ' — after hrs',
+      };
+    }
     const atIso = closeIso || generatedAt;
     return {
       cls: 'lamp--eod', text: 'EOD', stamp: fmtUpdated(atIso, dataAsOf, 'close'),

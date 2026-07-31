@@ -57,7 +57,7 @@ function renderMasthead() {
        (LIVE/EOD/STALE) is the signal; the Markets panel's own stamp
        already carries the full as-of time for anyone who wants it. */
     const lamp = DESK.liveStamp
-      ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true, DESK.liveStamp.quoteAt)
+      ? liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true, DESK.liveStamp.quoteAt, DESK.liveStamp.extAt)
       : { cls: 'lamp--stale', text: 'Stale', stamp: 'Live feed unreachable' };
     wrap.appendChild(el('span', 'lamp ' + lamp.cls, lamp.text));
     /* manual force-refresh (owner request 2026-07-27): market/news/heatmap/
@@ -1592,7 +1592,22 @@ function buildAskContext() {
       label: a.label, nav: a.nav, dayPnl: a.day, totalUnrealized: a.total, cash: a.cash,
       positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: p.dayPct, unrl: p.unrl })),
     })),
-    market: (d.market || []).map(m => ({ name: m.name, last: m.last, dayChgPct: m.chg })),
+    /* The extended print rides along when there is one (Codex review, PR #199).
+       Without it the assistant answers "how did the market close" with the
+       regular close while the panel beside it shows a later after-hours price —
+       two different numbers for the same question. Named fields, never folded
+       into `last`, so the model can tell the two sessions apart; absent means
+       the instrument did not trade after hours, which is not the same as flat.
+       `extProxy` names the ETF standing in for an index, so the model reports
+       "SPY −1.14% after hours" rather than attributing it to the S&P itself. */
+    market: (d.market || []).map(m => ({
+      name: m.name, last: m.last, dayChgPct: m.chg,
+      ...(m.ext ? { afterHoursLast: m.ext.last, afterHoursChgPct: m.ext.chg } : {}),
+      /* An index has no extended session, so its after-hours figure belongs to
+         a NAMED proxy. Sent as the proxy's own reading rather than the index's,
+         or the model would report SPY's move as the S&P's. */
+      ...(m.extProxy ? { afterHoursProxy: m.extProxy.sym, afterHoursProxyChgPct: m.extProxy.chg } : {}),
+    })),
     /* Pre-converted to Pacific here (fmtStampDateTime) rather than sending the
        raw UTC ISO string — every other clock on the desk is pinned to Pacific
        by a formatter before it reaches a screen (owner ruling 2026-07-22); the
@@ -2980,6 +2995,19 @@ function renderWbInfo() {
     if (bid != null && bid > 0) item('Bid', fmtPrice(bid));
     if (ask != null && ask > 0) item('Ask', fmtPrice(ask));
     if (bid != null && bid > 0 && ask != null && ask > 0) item('Diff', fmtPrice(ask - bid));
+    /* After-hours print, on its own marked line rather than replacing the last
+       (Codex review, PR #199): the regular close and the extended price are two
+       different facts, and overwriting one with the other is how a tile ends up
+       showing an unattributed number. Absent means "did not trade after hours",
+       never 0. The % is already prior-close based server-side, so it is
+       directly comparable with the change above it. */
+    if (info && info.extPrice != null) {
+      const ep = info.extPct;
+      const esign = ep > 0 ? '+' : '';
+      box.appendChild(el('span', 'wb-info-item wb-quote-ext',
+        'AFTER HRS ' + fmtPrice(info.extPrice) +
+        (ep == null ? '' : ' (' + esign + ep.toFixed(2) + '%)')));
+    }
   }
 
   if (!live) { muted('Earnings & key stats show in live mode'); return; }
@@ -4248,7 +4276,7 @@ let marketLive = false, newsLive = false;
    starts admitting it is stale even while nothing new is arriving. */
 function relampMarket() {
   if (!marketLive || !DESK.liveStamp) return;
-  renderMarkets(DESK.data.market, liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true, DESK.liveStamp.quoteAt));
+  renderMarkets(DESK.data.market, liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true, DESK.liveStamp.quoteAt, DESK.liveStamp.extAt));
 }
 
 async function refreshMarket(force) {
@@ -4256,8 +4284,8 @@ async function refreshMarket(force) {
     const market = await deskFeed('desk-market', force ? { force: true } : undefined);
     clearTimeout(marketRetry.timer); marketRetry.wait = 0;
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
-    DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf, quoteAt: market.quoteAt || null };
-    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true, market.quoteAt));
+    DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf, quoteAt: market.quoteAt || null, extAt: market.extAt || null };
+    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true, market.quoteAt, market.extAt));
     fetchMktSeries();   /* one-shot: hydrate the index chart series (self-guarded) */
     marketLive = true;
     return;
