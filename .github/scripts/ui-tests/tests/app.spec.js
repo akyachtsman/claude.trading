@@ -541,11 +541,39 @@ function backControl(page) {
 // tracks the last page visited instead of an origin-aware nav stack. Skips when
 // the app has no multi-level drill-down or no in-app back control (invariant N/A).
 // ─────────────────────────────────────────────────────────────────────────────
+// Data cells are not navigation. The desk renders hundreds of them — watchlist
+// and market tiles, heatmap rects, sector cells, chart bars — and every one is a
+// button or role=button, so an unfiltered crawl spends its whole budget clicking
+// content that was never going to drill in. That is what pushed this test past
+// its ceiling on every live run from ~2026-07-25 (S3 already exercises these
+// same controls; NAV only cares about back-navigation). Two of them are also
+// actively unsafe to hammer against the LIVE desk: a second click on a watchlist
+// tile is the remove gesture, and the tray/trash controls mutate a real roster.
+const NAV_SKIP = [
+  '.wl-tile', '.mkt-tile', '.wl-band-head', '.wl-trash', '.wl-tray',
+  '.hm-tile', '.mk-sec', '.seg', '[role=tab]',
+];
+const navSkippable = (page, el) => page.evaluate(({ sel, index, skip }) => {
+  const node = document.querySelectorAll(sel)[index];
+  return !node || skip.some((s) => node.closest(s));
+}, { sel: el.selector, index: el.index, skip: NAV_SKIP });
+
 test('NAV: back navigation strictly unwinds (no loop)', async ({ page }) => {
   test.setTimeout(120_000);
   await gotoAndAuth(page);
 
   const DEPTH_CAP = 5;
+  // Per-level candidate cap. A drill-in either exists among the page's genuine
+  // navigation controls or it does not; trying the 200th watchlist tile is not
+  // more informative than trying the 12th, and the settle wait below means every
+  // extra attempt costs real seconds.
+  // Measured on the served page: 62 visible candidates before filtering, ~5.8s
+  // each (the click timeout plus a networkidle that never settles) — 360s for a
+  // SINGLE level against a 120s ceiling, and far worse live, where the watchlist
+  // alone renders a tile per symbol. Filtering leaves 31; capping at 8 puts the
+  // five-level worst case near 76s, which keeps real headroom under the ceiling
+  // instead of finishing just inside it.
+  const TRIES_PER_LEVEL = 8;
   const forward = [await viewSignature(page)]; // forward[0] = starting level
 
   // Drill down: at each level click the first "drill-in" candidate that BOTH changes
@@ -554,15 +582,24 @@ test('NAV: back navigation strictly unwinds (no loop)', async ({ page }) => {
   for (let d = 0; d < DEPTH_CAP; d++) {
     const before = forward[forward.length - 1];
     let advanced = false;
+    let tried = 0;
     for (const el of await discoverElements(page)) {
+      if (tried >= TRIES_PER_LEVEL) break;
       if (!['a', 'button'].includes(el.tag) && !el.selector.includes('role=button')) continue;
       if (/back|←|‹|◀|return|home/i.test(el.label)) continue; // never drill via a back/home control
+      if (await navSkippable(page, el)) continue; // data cell, not navigation — see NAV_SKIP
       try {
         const loc = el.id ? page.locator(`[id=${JSON.stringify(el.id)}]`) : page.locator(el.selector).nth(el.index);
         if (!await loc.isVisible().catch(() => false)) continue;
+        tried++;
         await loc.click({ timeout: 3000 });
         await page.waitForTimeout(800);
-        await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
+        // Short settle, NOT networkidle. The desk polls its feeds on a timer and
+        // streams quotes while the market is open, so the network never goes
+        // idle — the old 4s budget was spent in full on every single candidate
+        // and bought nothing. A view change here is a DOM change, not a network
+        // one, and the 800ms above is what actually observes it.
+        await page.waitForLoadState('domcontentloaded', { timeout: 1000 }).catch(() => {});
       } catch { continue; }
       const after = await viewSignature(page);
       const hasBack = await backControl(page).isVisible().catch(() => false);
