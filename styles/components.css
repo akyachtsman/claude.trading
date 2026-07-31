@@ -420,6 +420,11 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   font-size: 14px; line-height: 1; cursor: pointer; user-select: none;
 }
 .wl-add--tray { width: 26px; height: 26px; flex: 0 0 auto; }
+/* Same trap as `.wl-tray[hidden]` two rules up: a class selector setting
+   `display` outranks the UA's `[hidden] { display: none }`, so setting the
+   attribute alone left both controls on screen in demo — a write control
+   offered where there is nothing to write to. Caught by S21. */
+.wl-add[hidden], .wl-trash[hidden] { display: none; }
 /* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
    desk means P&L, and a red glow on a hover target would read as a number. */
 .wl-trash.wl-drop-over,

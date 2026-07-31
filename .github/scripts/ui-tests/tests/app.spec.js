@@ -1039,7 +1039,14 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
-  await expect(page.locator('#wlTray')).toBeVisible();
+  // The WRITE CONTROLS are what must appear in live — the + and the trash.
+  // The staging row itself is now hidden while empty (owner ruling
+  // 2026-07-31: the permanent second row was unnecessary), so asserting it
+  // visible here would pin the old layout rather than the behaviour. Its
+  // reveal-on-drag is covered further down, where a drag is actually running.
+  await expect(page.locator('#wlTrayAdd')).toBeVisible();
+  await expect(page.locator('#wlTrash')).toBeVisible();
+  await expect(page.locator('#wlTray'), 'empty tray stays folded away').toBeHidden();
   expect(await page.locator('.mkt-group-tiles[data-band]').count(),
     'every band is a drop target').toBeGreaterThan(0);
 

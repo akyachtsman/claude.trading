@@ -971,9 +971,19 @@ function wlWireDrag(tile, from, sym) {
    while a drag is in flight so there is somewhere to drop the FIRST one; an
    empty hidden row would otherwise be unreachable and the tray unusable. */
 function wlSyncTray() {
+  const canEdit = wlCanEdit();
+  /* The + and the 🗑 used to live INSIDE #wlTray, so `tray.hidden` hid them
+     too. Moving them into the header (owner ruling 2026-07-31) silently took
+     that gate away, and they rendered in demo — a write control offered where
+     there is nothing to write to, which is the one thing this panel must never
+     do. Caught by S21, which is exactly what it is for. */
+  for (const id of ['wlTrayAdd', 'wlTrash']) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = !canEdit;
+  }
   const tray = document.getElementById('wlTray');
   if (!tray) return;
-  tray.hidden = !wlCanEdit() || (!wlTray.length && !wlDrag.on);
+  tray.hidden = !canEdit || (!wlTray.length && !wlDrag.on);
 }
 
 function renderWlTray() {
