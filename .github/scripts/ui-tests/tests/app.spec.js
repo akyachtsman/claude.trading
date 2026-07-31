@@ -850,8 +850,12 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
 
   // DEMO has no backend to write to — the roster is a committed bootstrap file —
   // so an edit control there would be one that cannot work.
-  expect(await page.locator('.wl-add').count(), 'demo must offer no + buttons').toBe(0);
+  // `:visible`, not a raw count: the panel-level + lives inside the staging
+  // tray, which is hidden in demo. What matters is that no write control is
+  // OFFERED, not that the markup is absent from the document.
+  expect(await page.locator('.wl-add:visible').count(), 'demo must offer no + button').toBe(0);
   await expect(page.locator('#wlEditBtn')).toBeHidden();
+  await expect(page.locator('#wlTray'), 'and no staging tray either').toBeHidden();
 
   // ...and with no removal wired, the touch-gesture override must NOT apply:
   // stripping double-tap zoom where nothing listens for a double-tap takes a
@@ -868,8 +872,11 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   // PIN-free RPCs). DESK.authed stays FALSE here on purpose: setting it would
   // let a regression back to auth-gating pass unnoticed.
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
-  const bands = await page.locator('.wl-strip .mkt-group').count();
-  expect(await page.locator('.wl-add').count(), 'one + per list band').toBe(bands);
+  // ONE + for the whole panel now (owner request 2026-07-31) — it mints into
+  // the staging tray, and the drag decides which list. The per-band buttons are
+  // gone: fifteen bands meant fifteen controls doing the same job.
+  expect(await page.locator('.wl-strip .wl-add').count(), 'no per-band + survives').toBe(0);
+  expect(await page.locator('#wlTrayAdd').count(), 'exactly one panel-level +').toBe(1);
   // The full editor must follow the SAME predicate — it was left on
   // DESK.authed, so creating/renaming/deleting LISTS still needed an unlock
   // while add/remove did not (Codex review, PR #202).
@@ -908,8 +915,8 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await page.keyboard.press('Escape');
   await expect(page.locator('#wlRmBackdrop')).toBeHidden();
 
-  // quick add targets the band whose + was pressed, and rejects junk
-  await page.locator('.wl-add').first().click();
+  // the panel + opens the same dialog, now aimed at the tray, and rejects junk
+  await page.locator('#wlTrayAdd').click();
   await expect(page.locator('#wlQuickTitle')).toContainText(/Add to/i);
   await page.locator('#wlQuickInput').fill('!!!');
   await page.locator('#wlQuickSaveBtn').click();
@@ -934,6 +941,91 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
     await page.evaluate(() => document.activeElement?.classList.contains('wl-add')),
     'focus returns to the invoking +',
   ).toBe(true);
+});
+
+// S26 — Drag to arrange (owner request 2026-07-31). Built on POINTER events
+// because mobile never fires dragstart, so an HTML5 implementation would pass a
+// desktop test and be dead on a phone. Covers the three decisions the owner
+// signed off on: the sort snaps to Manual, the tray persists, and the trash is
+// an ADDITION to double-click removal rather than a replacement.
+test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+
+  // Demo has no backend to write to, so no write surface may render at all —
+  // the tray and the trash are write controls like the + always was.
+  await expect(page.locator('#wlTray'), 'no staging tray in demo').toBeHidden();
+
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  await expect(page.locator('#wlTray')).toBeVisible();
+  expect(await page.locator('.mkt-group-tiles[data-band]').count(),
+    'every band is a drop target').toBeGreaterThan(0);
+
+  // ── the sort snap ───────────────────────────────────────────────────────
+  // A hand-made order cannot survive under a sort key, so the first drag spends
+  // itself switching to Manual and says so, rather than leaving a dead control.
+  await page.evaluate(() => { wlSort = { key: 'pct', dir: -1 }; renderWatchlist(); });
+  const tile = page.locator('.mkt-group-tiles[data-band] .wl-tile').first();
+  let r = await tile.boundingBox();
+  await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(r.x + 40, r.y + 30, { steps: 6 });
+  expect(await page.locator('.wl-ghost').count(), 'no drag begins under a sort key').toBe(0);
+  expect(await page.evaluate(() => wlSort.key), 'the drag snapped the sort to Manual').toBe('manual');
+  await expect(page.locator('#wlTrayHint')).toContainText(/Manual/i);
+  await page.mouse.up();
+
+  // ── a real drag, now that Manual is active ──────────────────────────────
+  const src = page.locator('.mkt-group-tiles[data-band] .wl-tile').first();
+  r = await src.boundingBox();
+  const zone = await page.locator('.mkt-group-tiles[data-band]').nth(1).boundingBox();
+  await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(r.x + 40, r.y + 20, { steps: 5 });
+  await page.mouse.move(zone.x + 30, zone.y + zone.height / 2, { steps: 8 });
+  // the ghost follows the pointer and the insertion point is shown, so a drop
+  // is never a guess about where the tile will land
+  expect(await page.locator('.wl-ghost').count(), 'a ghost follows the pointer').toBe(1);
+  expect(await page.locator('.wl-drop-marker').count(), 'the insertion point is drawn').toBe(1);
+  expect(await page.locator('.mkt-group-tiles.wl-drop-over').count(), 'the target band lights up').toBe(1);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  expect(await page.locator('.wl-ghost').count(), 'the ghost is cleaned up').toBe(0);
+  expect(await page.locator('.wl-drop-marker').count(), 'the marker is cleaned up').toBe(0);
+
+  // Escape abandons a drag rather than committing it somewhere unintended
+  r = await page.locator('.mkt-group-tiles[data-band] .wl-tile').first().boundingBox();
+  await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(r.x + 60, r.y + 40, { steps: 6 });
+  await page.keyboard.press('Escape');
+  expect(await page.locator('.wl-ghost').count(), 'Escape cancels the drag').toBe(0);
+  await page.mouse.up();
+
+  // ── the tray persists ───────────────────────────────────────────────────
+  // A tile in the tray belongs to no list yet; losing it on reload would make
+  // the staging step a trap rather than a queue.
+  await page.locator('#wlTrayAdd').click();
+  await page.locator('#wlQuickInput').fill('ZZZZ');
+  await page.locator('#wlQuickSaveBtn').click();
+  await expect(page.locator('#wlTrayTiles .wl-tile')).toHaveCount(1);
+  expect(await page.evaluate(() => localStorage.getItem('wl_tray_v1')), 'the tray is written through').toContain('ZZZZ');
+  await page.reload();
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  await expect(page.locator('#wlTrayTiles .wl-tile'), 'the tray survives a reload').toHaveCount(1);
+
+  // ── double-click removal is KEPT (owner ruling 2026-07-31) ──────────────
+  // The trash is the drag-native equivalent, not a replacement, so the fast
+  // path must still reach the confirm dialog.
+  await page.locator('.wl-strip .wl-tile').first().dblclick();
+  await expect(page.locator('#wlRmBackdrop'), 'double-click still removes').toBeVisible();
+  await page.keyboard.press('Escape');
+  expect(await page.locator('#wlTrash').count(), 'the trash is a real button, reachable without a pointer').toBe(1);
+
+  expect(errs, 'no page errors during any drag').toEqual([]);
 });
 
 // S22 — Duplicate list titles must not misroute a quick edit (Codex review,

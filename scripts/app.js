@@ -710,6 +710,258 @@ function wlTile(r, pending) {
   return tile;
 }
 
+/* ── drag to arrange (owner request 2026-07-31) ─────────────────────────────
+   Built on POINTER events, not the HTML5 drag-and-drop API: mobile browsers
+   never fire dragstart, so an HTML5 implementation would work on a desktop and
+   be silently dead on the owner's phone — the same trap as the double-tap zoom
+   that `touch-action: manipulation` exists to dodge.
+
+   The saved order was already the display order: `symbols` is an ordered text[]
+   and wlSortRows() returns rows untouched under Manual. So this adds no storage
+   and no migration — it only gives the owner a way to SET what the desk could
+   already hold. */
+const WL_TRAY_KEY = 'wl_tray_v1';
+let wlTray = [];
+try {
+  const raw = JSON.parse(localStorage.getItem(WL_TRAY_KEY) || '[]');
+  /* regex inlined, not WL_SYM_RE: this runs at load time and that const is
+     declared further down the file, so referencing it here throws on the
+     temporal dead zone and takes the whole script with it */
+  if (Array.isArray(raw)) wlTray = raw.filter(s => typeof s === 'string' && /^[A-Z0-9.^=-]{1,10}$/.test(s)).slice(0, 40);
+} catch { /* private mode */ }
+const saveWlTray = () => { try { localStorage.setItem(WL_TRAY_KEY, JSON.stringify(wlTray)); } catch { /* private mode */ } };
+
+/* Movement past this many px is a drag; anything less stays a click, which is
+   what keeps the double-click removal working unchanged. */
+const WL_DRAG_SLOP = 6;
+/* Touch has no hover state to telegraph a pick-up, and a tile that grabbed the
+   gesture immediately would make the panel unscrollable. So a finger must rest
+   before the drag arms; a mouse drags at once. This is a hold to PICK UP, not
+   the hold-to-delete the owner rejected — the confirm-free destructive gesture
+   is what they objected to, and removal still goes through a dialog. */
+const WL_TOUCH_ARM_MS = 300;
+
+const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null };
+
+function wlNote(msg) {
+  const hint = document.getElementById('wlTrayHint');
+  if (!hint) return;
+  hint.textContent = msg;
+  clearTimeout(wlNote.t);
+  wlNote.t = setTimeout(() => { hint.textContent = 'Drag a tile into any list'; }, 4000);
+}
+
+/* A hand-made order can only survive under Manual — any other key re-sorts on
+   the next repaint and the arrangement is gone. Rather than disable dragging
+   under a sort (a dead control reads as a bug), the first drag SNAPS the sort
+   to Manual and says so. The gesture is spent on the switch because the tiles
+   are about to be redrawn in a different order underneath the finger. */
+function wlEnsureManual() {
+  if (wlSort.key === 'manual') return true;
+  wlSort = { key: 'manual', dir: 1 };
+  saveWlSort();
+  renderWatchlist();
+  wlNote('Switched to Manual so your order can stick — drag again');
+  return false;
+}
+
+const wlDropZones = () => [...document.querySelectorAll('.mkt-group-tiles[data-band], #wlTrayTiles, #wlTrash')];
+
+/* Which slot the pointer is over, in reading order: a tile counts as "already
+   passed" when the pointer is below its row, or on its row and past its middle.
+   Tiles wrap, so an x-only comparison would put a drop on row 3 at the end of
+   row 1. */
+function wlDropIndex(zone, x, y) {
+  const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
+  let i = 0;
+  for (const t of tiles) {
+    const r = t.getBoundingClientRect();
+    if (y > r.bottom || (y >= r.top && x > r.left + r.width / 2)) i++;
+    else break;
+  }
+  return i;
+}
+
+function wlClearMarker() {
+  if (wlDrag.marker) wlDrag.marker.remove();
+  wlDrag.marker = null;
+  for (const z of wlDropZones()) z.classList.remove('wl-drop-over');
+}
+
+function wlDragMove(ev) {
+  if (!wlDrag.on) return;
+  wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
+  wlClearMarker();
+  const under = document.elementFromPoint(ev.clientX, ev.clientY);
+  const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrayTiles, #wlTrash');
+  if (!zone) return;
+  zone.classList.add('wl-drop-over');
+  if (zone.id === 'wlTrash') return;
+  const at = wlDropIndex(zone, ev.clientX, ev.clientY);
+  const mark = el('div', 'wl-drop-marker');
+  const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
+  zone.insertBefore(mark, tiles[at] || null);
+  wlDrag.marker = mark;
+}
+
+function wlDragEnd(ev, cancelled) {
+  const d = wlDrag;
+  clearTimeout(d.armed);
+  if (!d.on) { d.sym = null; d.tile = null; return; }
+  const under = cancelled ? null : document.elementFromPoint(ev.clientX, ev.clientY);
+  const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrayTiles, #wlTrash');
+  const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX, ev.clientY) : 0;
+  wlClearMarker();
+  if (d.ghost) d.ghost.remove();
+  if (d.tile) d.tile.classList.remove('wl-dragging');
+  document.body.classList.remove('wl-drag-active');
+  d.on = false;
+  const from = d.from, sym = d.sym;
+  d.ghost = null; d.tile = null; d.from = null; d.sym = null;
+  if (!zone || cancelled) return;
+  const to = zone.id === 'wlTrash' ? { band: 'trash' }
+    : zone.id === 'wlTrayTiles' ? { band: 'tray', idx: at }
+      : { band: Number(zone.dataset.band), title: zone.dataset.title, idx: at };
+  wlCommitMove(from, to, sym);
+}
+
+function wlDragStart(ev, tile, from, sym) {
+  const d = wlDrag;
+  d.on = true; d.tile = tile; d.from = from; d.sym = sym;
+  tile.classList.add('wl-dragging');
+  document.body.classList.add('wl-drag-active');
+  const ghost = tile.cloneNode(true);
+  ghost.className = 'mkt-tile wl-tile wl-ghost';
+  ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
+  document.body.appendChild(ghost);
+  d.ghost = ghost;
+}
+
+/* One move = one atomic replace-all through wlMutate, never a patch of the
+   rendered payload (the desk_009 / PR #188 hazard). A cross-band move touches
+   TWO lists, which is precisely why it has to be one write. */
+async function wlCommitMove(from, to, sym) {
+  if (!from || !sym) return;
+  /* tray → tray is a reorder of a local list; nothing to write to the desk */
+  if (from.band === 'tray' && to.band === 'tray') {
+    wlTray.splice(from.idx, 1);
+    wlTray.splice(Math.min(to.idx, wlTray.length), 0, sym);
+    saveWlTray(); renderWlTray(); return;
+  }
+  if (from.band === 'tray' && to.band === 'trash') {
+    wlTray.splice(from.idx, 1); saveWlTray(); renderWlTray(); return;
+  }
+  if (from.band === to.band && to.band !== 'trash' && from.idx === to.idx) return;   /* dropped where it started */
+
+  const res = await wlMutate(lists => {
+    const src = from.band === 'tray' ? null : wlPick(lists, from.band, from.title);
+    if (from.band !== 'tray' && !src) return false;
+    const dst = to.band === 'trash' || to.band === 'tray' ? null : wlPick(lists, to.band, to.title);
+    if (to.band !== 'trash' && to.band !== 'tray' && !dst) return false;
+
+    if (src) {
+      const at = src.symbols.indexOf(sym);
+      if (at < 0) return false;                 /* moved out from under us */
+      src.symbols.splice(at, 1);
+    }
+    if (dst) {
+      /* Same list: the removal above shifted everything after it left, so a
+         drop past the old slot lands one place too far without this. */
+      let idx = to.idx;
+      if (src === dst && from.idx < to.idx) idx -= 1;
+      dst.symbols.splice(Math.max(0, Math.min(idx, dst.symbols.length)), 0, sym);
+    }
+    return true;
+  });
+  if (res.ok) {
+    if (from.band === 'tray') { wlTray.splice(from.idx, 1); saveWlTray(); renderWlTray(); }
+    if (to.band === 'tray') { wlTray.push(sym); saveWlTray(); renderWlTray(); }
+  } else if (res.err) wlNote(res.err);
+}
+
+/* Pointer wiring. Kept off the tile's own click/dblclick handlers entirely:
+   a drag only begins after WL_DRAG_SLOP of movement (or a rested finger), so
+   the double-click removal path is untouched. */
+function wlWireDrag(tile, from, sym) {
+  tile.addEventListener('pointerdown', ev => {
+    if (ev.button != null && ev.button !== 0) return;
+    if (wlDrag.on) return;
+    const startX = ev.clientX, startY = ev.clientY;
+    wlDrag.sym = sym; wlDrag.from = from; wlDrag.tile = tile;
+    const touch = ev.pointerType === 'touch';
+    /* Arming on touch flips the tile to touch-action:none so the browser stops
+       treating the gesture as a scroll — but only once the finger has rested,
+       so an ordinary swipe over the panel still scrolls the page. */
+    if (touch) wlDrag.armed = setTimeout(() => { tile.classList.add('wl-armed'); }, WL_TOUCH_ARM_MS);
+    const move = e => {
+      if (wlDrag.on) { wlDragMove(e); return; }
+      const far = Math.hypot(e.clientX - startX, e.clientY - startY) > WL_DRAG_SLOP;
+      if (!far) return;
+      if (touch && !tile.classList.contains('wl-armed')) { clearTimeout(wlDrag.armed); cleanup(); return; }
+      /* Snap to Manual BEFORE capturing: the snap re-renders the panel, which
+         detaches this tile, and setPointerCapture on a detached node throws
+         InvalidStateError. The gesture is spent either way. */
+      if (!wlEnsureManual()) { cleanup(); return; }
+      /* Best-effort: the drag is driven by window listeners, so a refused
+         capture (pointer already released, node replaced) costs nothing. */
+      try { tile.setPointerCapture(ev.pointerId); } catch { /* not fatal */ }
+      wlDragStart(e, tile, from, sym);
+      if (wlDrag.on) wlDragMove(e);
+    };
+    const up = e => { wlDragEnd(e, false); cleanup(); };
+    const cancel = e => { wlDragEnd(e, true); cleanup(); };
+    const key = e => { if (e.key === 'Escape') { wlDragEnd(e, true); cleanup(); } };
+    function cleanup() {
+      clearTimeout(wlDrag.armed);
+      tile.classList.remove('wl-armed');
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('keydown', key);
+    }
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('keydown', key);
+  });
+
+  /* Keyboard parity. A drag is pointer-only, and this desk has a keyboard path
+     for every mouse gesture — Alt+←/→ moves within the band, Alt+↑/↓ moves to
+     the band above or below. Removal already has one (Delete opens the dialog). */
+  tile.addEventListener('keydown', ev => {
+    if (!ev.altKey || from.band === 'tray') return;
+    const d = { ArrowLeft: -1, ArrowRight: 1 }[ev.key];
+    const band = { ArrowUp: -1, ArrowDown: 1 }[ev.key];
+    if (d == null && band == null) return;
+    ev.preventDefault();
+    if (!wlEnsureManual()) return;
+    if (d != null) wlCommitMove(from, { ...from, idx: from.idx + (d > 0 ? 2 : -1) }, sym);
+    else {
+      const lists = (wlState.payload && wlState.payload.lists) || [];
+      const t = from.band + band;
+      if (t < 0 || t >= lists.length) return;
+      wlCommitMove(from, { band: t, title: lists[t].title, idx: (lists[t].rows || []).length }, sym);
+    }
+  });
+}
+
+/* The tray holds symbols that belong to no list yet. Persisted, so a tile
+   minted before a reload is still waiting afterwards. */
+function renderWlTray() {
+  const tray = document.getElementById('wlTray');
+  const box = document.getElementById('wlTrayTiles');
+  if (!tray || !box) return;
+  tray.hidden = !wlCanEdit();
+  box.textContent = '';
+  wlTray.forEach((sym, i) => {
+    const t = wlTile({ sym, last: null, pct: null }, true);
+    t.classList.add('wl-tile--tray');
+    t.title = sym + ' — drag into a list';
+    wlWireDrag(t, { band: 'tray', idx: i }, sym);
+    box.appendChild(t);
+  });
+}
+
 function renderWatchlist(payload, lamp) {
   const lampEl = document.getElementById('wlLamp');
   const stripEl = document.getElementById('wlStrip');
@@ -759,30 +1011,40 @@ function renderWatchlist(payload, lamp) {
     /* The list name and its + share the gutter, so they stay together when the
        band stacks on a narrow screen instead of the button drifting to the
        tiles' row. */
+    /* The per-band + is gone (owner request 2026-07-31): one + in the panel
+       header mints a tile into the tray, and it is dragged to whichever band it
+       belongs in. Fifteen bands meant fifteen buttons doing the same job. */
     const head = el('div', 'wl-band-head');
     head.appendChild(el('span', 'mkt-group-label', l.title));
-    if (canEdit) {
-      const add = el('button', 'wl-add', '+');
-      add.type = 'button';
-      add.title = 'Add symbols to ' + l.title;
-      add.setAttribute('aria-label', 'Add symbols to ' + l.title);
-      add.addEventListener('click', () => openWlQuickAdd(li, l.title, add));
-      head.appendChild(add);
-    }
     group.appendChild(head);
     const box = el('div', 'mkt-group-tiles');
+    /* Drop target identity. The title rides along so wlPick() can still refuse
+       a write when the roster moved under us — position alone was the PR #196
+       bug, and a drop is just another read-modify-write. */
+    if (canEdit) {
+      box.dataset.band = String(li);
+      box.dataset.title = l.title;
+    }
     /* Sorting only changes the DRAW order. `rows` arrives in the saved order,
        so Manual needs no work and switching back to it is just this loop
        without a comparator. */
-    for (const r of wlSortRows(rows)) {
+    /* Under Manual the draw order IS the saved order, so a tile's position in
+       this loop is its index in `symbols` — which is what makes a drop
+       addressable. Under any other key it is not, which is why a drag snaps the
+       sort to Manual before it will move anything. */
+    wlSortRows(rows).forEach((r, ri) => {
       const tile = wlTile(r, pending);
-      if (canEdit) wlWireRemove(tile, r.sym, li, l.title);
+      if (canEdit) {
+        wlWireRemove(tile, r.sym, li, l.title);
+        wlWireDrag(tile, { band: li, title: l.title, idx: ri }, r.sym);
+      }
       box.appendChild(tile);
-    }
+    });
     group.appendChild(box);
     stripEl.appendChild(group);
   });
   if (emptyEl) emptyEl.hidden = total > 0;
+  renderWlTray();
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn
      "BRK B" into BRK + B — both look like real symbols, so the only honest
@@ -950,6 +1212,18 @@ async function submitWlQuickAdd() {
   const syms = wlParseSyms(input.value);
   if (!syms.length) { wlQuickErr('No usable ticker in that — letters, digits, . ^ = - only.'); return; }
   const { idx, title } = wlQuickList;
+  /* The tray is local state, not a list — nothing to write to the desk. A tile
+     minted here belongs to no list until it is dropped into one. */
+  if (idx === 'tray') {
+    const fresh = syms.filter(s => !wlTray.includes(s));
+    if (!fresh.length) { wlQuickErr(syms.length === 1 ? syms[0] + ' is already waiting in the tray.' : 'Already waiting in the tray.'); return; }
+    wlTray.push(...fresh);
+    saveWlTray();
+    renderWlTray();
+    closeWlQuickAdd();
+    wlNote(fresh.length === 1 ? 'Drag ' + fresh[0] + ' into a list' : 'Drag them into a list');
+    return;
+  }
   wlBusy = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   input.disabled = true;   /* the Enter path has to be shut too, not just the button */
@@ -1064,6 +1338,23 @@ function wlWireRemove(tile, sym, idx, title) {
 }
 
 function wireWatchlistQuickEdits() {
+  /* ONE + for the whole panel (owner request 2026-07-31). It mints into the
+     tray rather than into a list, because which list it belongs in is what the
+     drag is for. */
+  const trayAdd = document.getElementById('wlTrayAdd');
+  if (trayAdd) trayAdd.addEventListener('click', () => openWlQuickAdd('tray', 'the tray', trayAdd));
+  const trash = document.getElementById('wlTrash');
+  if (trash) {
+    /* A drop target is pointer-only, so the trash also answers to a click when
+       a tile is focused — otherwise removal-by-trash is a control a keyboard
+       cannot reach. Double-click on the tile remains the fast path either way. */
+    trash.addEventListener('click', () => {
+      const t = document.activeElement;
+      if (!t || !t.classList || !t.classList.contains('wl-tile')) { wlNote('Focus a symbol first, then press the bin'); return; }
+      t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    });
+  }
+
   const q = document.getElementById('wlQuickBackdrop');
   const qClose = document.getElementById('wlQuickCloseBtn');
   const qSave = document.getElementById('wlQuickSaveBtn');

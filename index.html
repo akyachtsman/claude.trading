@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260731a">
-<link rel="stylesheet" href="styles/components.css?v=20260731a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260731b">
+<link rel="stylesheet" href="styles/components.css?v=20260731b">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -485,6 +485,23 @@
       <div class="seg wl-tf" id="wlTf" role="group" aria-label="Chart timeframe"></div>
       <span class="stamp ml-auto" id="wlStamp">—</span>
     </div>
+    <!-- Staging tray + trash (owner request 2026-07-31). ONE + for the whole
+         panel mints a tile here rather than into a list; you then drag it to
+         whichever band it belongs in. The tray is PERSISTED (localStorage
+         wl_tray_v1): a tile that belongs to no list yet would otherwise vanish
+         on reload, and queueing several before placing them is the point.
+         Built by renderWlTray(); hidden entirely when the desk can't write. -->
+    <div class="wl-tray" id="wlTray" hidden>
+      <button type="button" class="wl-add wl-add--tray" id="wlTrayAdd"
+              aria-label="New symbol tile" title="New symbol tile — drag it into a list">+</button>
+      <div class="wl-tray-tiles" id="wlTrayTiles" role="group" aria-label="Unplaced symbols"></div>
+      <p class="wl-tray-hint" id="wlTrayHint">Drag a tile into any list</p>
+      <!-- Drop target for removal. Double-click on a tile stays the fast path
+           (owner ruling 2026-07-30, reaffirmed 07-31) — this is the drag-native
+           equivalent, not a replacement. -->
+      <button type="button" class="wl-trash" id="wlTrash"
+              aria-label="Remove the focused symbol, or drag one here">🗑</button>
+    </div>
     <div class="panel-body">
       <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
            labelled band in the market strip's own idiom — list name on the
@@ -760,8 +777,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260731a"></script>
-<script src="scripts/data.js?v=20260731a"></script>
-<script src="scripts/app.js?v=20260731a"></script>
+<script src="scripts/config.js?v=20260731b"></script>
+<script src="scripts/data.js?v=20260731b"></script>
+<script src="scripts/app.js?v=20260731b"></script>
 </body>
 </html>
