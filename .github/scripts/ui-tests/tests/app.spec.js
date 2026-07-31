@@ -863,6 +863,17 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
 // map unlocks multi-period performance, unfetched feeds stay disabled.
 test('S13: heatmap map-filter cuts and period select respond', async ({ page }) => {
   await page.goto('./?demo=1');
+  // The panel is COLLAPSED by default now (owner request 2026-07-31, load
+  // time) and fetches nothing until opened, so the cut/period assertions below
+  // have to open it first. Asserted rather than just clicked through: "closed
+  // on arrival" is the behaviour that keeps the desk's heaviest feed off the
+  // boot path, and a regression there would otherwise show up only as a slow
+  // dashboard, which no test would catch.
+  await expect(page.locator('#heatBody'), 'heatmap starts collapsed').toBeHidden();
+  await expect(page.locator('#heatToggle')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#heatToggle').click();
+  await expect(page.locator('#heatBody')).toBeVisible();
+
   const svg = page.locator('#heatmapSvg');
   await expect(svg.locator('rect').first()).toBeVisible({ timeout: 10000 });
   const allCount = await svg.locator('rect').count();
