@@ -1518,3 +1518,44 @@ test('S28: the charts quote cache is timestamped and its TTL is session-aware', 
   // 60s while prints arrive, 15 min once the tape is frozen. Never unbounded.
   expect([60000, 900000], 'TTL must be one of the two session cadences').toContain(shape.ttl);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 29 — Scheduled asks: the roster, and the guards that bound cost.
+// Every firing is a real Claude tool-loop call, so the 15-minute floor and the
+// 10-row cap are not UI polish — they are what stops a stray edit turning the
+// panel into a billing incident. Asserted at the WRITE boundary (saveAskSched),
+// not through the number input, because that is where they actually hold.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S29: scheduled asks persist, and the cost guards hold at the save boundary', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
+  await page.evaluate(() => { localStorage.clear(); DESK.mode = 'live'; DESK.authed = true; renderAsk(); });
+
+  await expect(page.locator('.ask-sched-btn'), 'the ⏱ opens the roster').toHaveCount(1);
+  await page.locator('.ask-sched-btn').click();
+  await expect(page.locator('#askSchedBackdrop')).toBeVisible();
+  await page.locator('#askSchedAdd').click();
+  await expect(page.locator('.ask-sched-row')).toHaveCount(1);
+
+  const g = await page.evaluate(() => {
+    askSched[0].prompt = 'SMH indicators?';
+    askSched[0].mins = 1;                       // below the floor, set directly
+    for (let i = 0; i < 30; i++) askSched.push({ prompt: 'x', mins: 60, enabled: true, last: 0 });
+    saveAskSched();
+    const stored = JSON.parse(localStorage.getItem('ask_sched_v1'));
+    const now = Date.now();
+    return {
+      mins: stored[0].mins, rows: stored.length, prompt: stored[0].prompt,
+      due: askSchedDue({ enabled: true, marketOnly: false, mins: 15, last: 0 }, now),
+      notYet: askSchedDue({ enabled: true, marketOnly: false, mins: 15, last: now }, now),
+      off: askSchedDue({ enabled: false, marketOnly: false, mins: 15, last: 0 }, now),
+    };
+  });
+
+  expect(g.prompt, 'the question survives a save').toBe('SMH indicators?');
+  expect(g.mins, '15-minute floor holds even on a direct assignment').toBe(15);
+  expect(g.rows, 'row cap holds').toBeLessThanOrEqual(10);
+  expect(g.due, 'fires once the interval has elapsed').toBe(true);
+  expect(g.notYet, 'does not fire before it is due').toBe(false);
+  expect(g.off, 'a disabled row never fires').toBe(false);
+});
