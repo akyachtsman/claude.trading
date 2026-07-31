@@ -1447,6 +1447,14 @@ test('S19: clear empties the conversation (opt-in, live only)', async ({ page })
 // ─────────────────────────────────────────────────────────────────────────────
 test('S27: watchlist tiles are half-width, stacked, and never clip a value', async ({ page }) => {
   await page.goto('./?demo=1');
+  // Start from a clean slate. This test runs late in the file, after S13 (which
+  // now persists the heatmap open, hm_open_v1), S20 (wl_tf_v1) and S26 (sort +
+  // tray keys) — and Playwright shares one storage origin across a project's
+  // tests. Measuring tile geometry against whatever earlier tests happened to
+  // leave behind makes this pass or fail on test ORDER rather than on layout,
+  // which is exactly the kind of flake that wastes a debugging round.
+  await page.evaluate(() => { try { localStorage.clear(); } catch { /* private mode */ } });
+  await page.reload();
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
 
   const m = await page.evaluate(() => {
