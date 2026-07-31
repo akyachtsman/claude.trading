@@ -352,7 +352,14 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    EXT badge past the edge. A long ticker drops the tracking as well as the
    size. A truncated TICKER is milder than a truncated price, but this panel is
    scanned by ticker, so it is still worth not doing. */
-.wl-strip .mkt-name.is-long { font-size: 8px; letter-spacing: 0; }
+/* WRAPS rather than shrinking further. Two font-size guesses (10px, then 9px
+   for prices) failed CI because I was tuning numbers against metrics I could
+   not measure. Wrapping is deterministic: a line that can break cannot
+   overflow, whatever the typeface does, so `scrollWidth > clientWidth` is
+   impossible here by construction instead of by a size that happens to fit.
+   Costs one line of height on the few tiles with a long ticker AND a session
+   badge (BTC-USD EXT); the owner accepted extra height for width. */
+.wl-strip .mkt-name.is-long { font-size: 8px; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
 /* The EXT/CLOSE badge shares the ticker line, so it tightens to match. */
 .wl-strip .wl-mark { font-size: 7px; padding: 0 1px; margin-left: 2px; letter-spacing: 0; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
