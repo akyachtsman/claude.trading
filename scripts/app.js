@@ -663,6 +663,14 @@ function renderWlSort() {
 function wlTile(r, pending) {
   const tile = el('div', 'mkt-tile wl-tile');
   const name = el('span', 'mkt-name', r.sym);
+  /* Length-driven, not global (owner ruling 2026-07-31, half-width tiles). CSS
+     cannot branch on text length, and at 66px a 9-character price like
+     "23,104.88" overflows its box at the base size — a CLIPPED PRICE IS A WRONG
+     PRICE, which is the one thing this desk must never render. Widening the tile
+     does not fix it (measured: 23,104.88 / 44,912.30 / 64,216.00 still clip at
+     76px); the base font size is the constraint, so long values step down one
+     size and everything else is untouched. */
+  if (r.sym && r.sym.length > 5) name.classList.add('is-long');
   /* CLOSE means "this session has ended", not "this is an index": during
      regular hours ^VIX carries a live, moving price, and stamping that CLOSE
      would misstate an intraday quote as a settled one. Indices have no extended
@@ -672,7 +680,10 @@ function wlTile(r, pending) {
   tile.appendChild(name);
 
   const row = el('div', 'mkt-vals wl-vals');
-  row.appendChild(el('span', 'mkt-last', wlPx(r.last)));
+  const px = wlPx(r.last);
+  const last = el('span', 'mkt-last', px);
+  if (px && px.length > 7) last.classList.add('is-long'); /* see the note above */
+  row.appendChild(last);
   /* The line is coloured by the DAY's direction so it agrees with the pill
      below it; a green line over a red pill would be two answers to one
      question. Gain/loss colour on a price path is P&L, not decoration. */
