@@ -381,12 +381,17 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-tray-tiles { display: flex; gap: 6px; flex-wrap: wrap; min-height: 30px; min-width: 90px; align-items: center; }
 .wl-tray-hint { margin: 0; font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
 .wl-tile--tray { opacity: .92; border-style: dashed; }
+/* Header-resident now (owner ruling 2026-07-31), so NO `margin-left: auto` —
+   that pushed it to the far edge when it lived on its own row, and in the
+   header it would shove the as-of stamp off its own `ml-auto` anchor. Sized to
+   sit level with the ✎ and the seg controls beside it. */
 .wl-trash {
-  margin-left: auto; width: 30px; height: 30px; flex: 0 0 auto;
+  width: 26px; height: 26px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px dashed var(--color-border); border-radius: 6px;
-  font-size: 15px; line-height: 1; cursor: pointer; user-select: none;
+  font-size: 14px; line-height: 1; cursor: pointer; user-select: none;
 }
+.wl-add--tray { width: 26px; height: 26px; flex: 0 0 auto; }
 /* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
    desk means P&L, and a red glow on a hover target would read as a number. */
 .wl-trash.wl-drop-over,

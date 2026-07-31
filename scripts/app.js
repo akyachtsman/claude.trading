@@ -818,6 +818,7 @@ function wlDragEnd(ev, cancelled) {
   d.on = false;
   const from = d.from, sym = d.sym;
   d.ghost = null; d.tile = null; d.from = null; d.sym = null;
+  wlSyncTray(); /* drag over — the row folds away again unless it holds a tile */
   if (!zone || cancelled) return;
   const to = zone.id === 'wlTrash' ? { band: 'trash' }
     : zone.id === 'wlTrayTiles' ? { band: 'tray', idx: at }
@@ -830,6 +831,11 @@ function wlDragStart(ev, tile, from, sym) {
   d.on = true; d.tile = tile; d.from = from; d.sym = sym;
   tile.classList.add('wl-dragging');
   document.body.classList.add('wl-drag-active');
+  /* Reveal the staging row for the duration of the drag. It is hidden while
+     empty now that it no longer carries the + and 🗑 (owner ruling
+     2026-07-31), and a hidden drop zone is not a drop zone — without this the
+     first tile could never be staged. */
+  wlSyncTray();
   const ghost = tile.cloneNode(true);
   ghost.className = 'mkt-tile wl-tile wl-ghost';
   ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
@@ -947,11 +953,23 @@ function wlWireDrag(tile, from, sym) {
 
 /* The tray holds symbols that belong to no list yet. Persisted, so a tile
    minted before a reload is still waiting afterwards. */
+/* The staging row earns its space or it doesn't take any (owner ruling
+   2026-07-31). It used to stand under the header whenever the desk could write,
+   which meant a permanent full-width band holding two buttons — and those two
+   have moved into the header. It now appears only when it holds a tile, or
+   while a drag is in flight so there is somewhere to drop the FIRST one; an
+   empty hidden row would otherwise be unreachable and the tray unusable. */
+function wlSyncTray() {
+  const tray = document.getElementById('wlTray');
+  if (!tray) return;
+  tray.hidden = !wlCanEdit() || (!wlTray.length && !wlDrag.on);
+}
+
 function renderWlTray() {
   const tray = document.getElementById('wlTray');
   const box = document.getElementById('wlTrayTiles');
   if (!tray || !box) return;
-  tray.hidden = !wlCanEdit();
+  wlSyncTray();
   box.textContent = '';
   wlTray.forEach((sym, i) => {
     const t = wlTile({ sym, last: null, pct: null }, true);
