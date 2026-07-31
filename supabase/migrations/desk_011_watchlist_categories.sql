@@ -40,7 +40,9 @@ begin
     return jsonb_build_object('ok', false, 'error', 'lists must be an array');
   end if;
 
-  delete from public.desk_watchlists;
+  -- WHERE clause required — see desk_013. An unqualified DELETE is rejected
+  -- by Supabase's safeupdate guard (21000) on every PostgREST call.
+  delete from public.desk_watchlists where true;
 
   for item in select * from jsonb_array_elements(new_lists) loop
     exit when i >= 50;
