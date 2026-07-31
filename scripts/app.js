@@ -850,8 +850,50 @@ function wlDragStart(ev, tile, from, sym) {
 /* One move = one atomic replace-all through wlMutate, never a patch of the
    rendered payload (the desk_009 / PR #188 hazard). A cross-band move touches
    TWO lists, which is precisely why it has to be one write. */
+/* ARRANGEMENT LOCK (owner request 2026-07-31). Freezes POSITION, not content:
+   row order, tile order within a row, and tile moves between rows. Adding and
+   removing stay available — the owner is protecting a layout they tuned, not
+   freezing the roster.
+   The trash is deliberately still live: dragging a tile to 🗑 is a removal, not
+   a rearrangement, and removal is explicitly allowed. */
+const WL_LOCK_KEY = 'wl_locked_v1';
+let wlLocked = false;
+try { wlLocked = localStorage.getItem(WL_LOCK_KEY) === '1'; } catch { /* private mode */ }
+const saveWlLock = () => {
+  try { localStorage.setItem(WL_LOCK_KEY, wlLocked ? '1' : '0'); } catch { /* private mode */ }
+};
+
+/* Move a whole list one place. Splices inside wlMutate's callback, so the read
+   and the write are ONE atomic replace-all against the authoritative roster —
+   never a patch of the rendered payload, which omits unresolved symbols and can
+   be an hour stale (the desk_009 / PR #188 hazard). Matched by TITLE as well as
+   index so a roster that shifted under us aborts instead of moving the wrong
+   row. */
+async function wlMoveBand(idx, delta) {
+  if (wlLocked) { wlNote('Arrangement is locked'); return; }
+  const cur = (wlState.payload && wlState.payload.lists) || [];
+  const title = cur[idx] && cur[idx].title;
+  if (title == null) return;
+  const res = await wlMutate(lists => {
+    const at = lists.findIndex(l => l.title === title);
+    const to = at + delta;
+    if (at < 0 || to < 0 || to >= lists.length) return false;
+    const [moved] = lists.splice(at, 1);
+    lists.splice(to, 0, moved);
+    return true;
+  });
+  if (!res.ok && res.err) wlNote(res.err);
+}
+
 async function wlCommitMove(from, to, sym) {
   if (!from || !sym) return;
+  /* Enforced HERE, at the write boundary, not only on the controls. Every
+     rearrangement — band reorder, in-band reorder, cross-band move — funnels
+     through this one function, so one check covers all three however the move
+     was started. Disabling buttons alone would leave the drag path open. Same
+     lesson as the scheduled-ask floor, which only held once it moved out of the
+     input handler and into the save. */
+  if (wlLocked && to.band !== 'trash') { wlNote('Arrangement is locked'); return; }
   if (from.band === to.band && to.band !== 'trash' && from.idx === to.idx) return;   /* dropped where it started */
 
   const res = await wlMutate(lists => {
@@ -951,6 +993,22 @@ function wlWireDrag(tile, from, sym) {
    setting `display` outranks the UA's default. */
 function wlSyncWriteControls() {
   const canEdit = wlCanEdit();
+  const lock = document.getElementById('wlLock');
+  if (lock) {
+    lock.hidden = !canEdit;
+    lock.textContent = wlLocked ? '🔒' : '🔓';
+    lock.setAttribute('aria-pressed', wlLocked ? 'true' : 'false');
+    lock.title = wlLocked ? 'Arrangement locked — click to unlock' : 'Lock the arrangement';
+    if (!lock.dataset.wired) {
+      lock.dataset.wired = '1';
+      lock.addEventListener('click', () => {
+        wlLocked = !wlLocked;
+        saveWlLock();
+        wlSyncWriteControls();
+        renderWatchlist();   /* redraw so the ↑/↓ pick up their disabled state */
+      });
+    }
+  }
   for (const id of ['wlTrayAdd', 'wlTrash']) {
     const el = document.getElementById(id);
     if (el) el.hidden = !canEdit;
@@ -1011,6 +1069,25 @@ function renderWatchlist(payload, lamp) {
        belongs in. Fifteen bands meant fifteen buttons doing the same job. */
     const head = el('div', 'wl-band-head');
     head.appendChild(el('span', 'mkt-group-label', l.title));
+    /* ↑/↓ move the WHOLE list (owner request 2026-07-31). Buttons rather than a
+       row drag: tile drag already owns the pointer inside a band, so a row drag
+       would have to disambiguate "move this tile" from "move this list", and
+       the tile gesture is the one used constantly. Arrows also work on touch
+       with no arm-and-hold delay.
+       DISABLED at the ends and when locked, never hidden — a control that
+       vanishes reads as a bug, one that greys out reads as unavailable. */
+    if (wlCanEdit()) {
+      const mk = (glyph, delta, off) => {
+        const b = el('button', 'wl-move', glyph);
+        b.type = 'button';
+        b.setAttribute('aria-label', (delta < 0 ? 'Move ' : 'Move ') + l.title + (delta < 0 ? ' up' : ' down'));
+        b.disabled = off || wlLocked;
+        b.addEventListener('click', () => wlMoveBand(li, delta));
+        return b;
+      };
+      head.appendChild(mk('↑', -1, li === 0));
+      head.appendChild(mk('↓', 1, li === lists.length - 1));
+    }
     group.appendChild(head);
     const box = el('div', 'mkt-group-tiles');
     /* Drop target identity. The title rides along so wlPick() can still refuse
