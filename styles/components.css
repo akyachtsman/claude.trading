@@ -369,6 +369,51 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   user-select: none; -webkit-user-select: none;
 }
 
+/* ── staging tray, trash and drag (owner request 2026-07-31) ─────────────── */
+.wl-tray {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--color-border);
+}
+/* A class selector outranks the UA's `[hidden] { display: none }`, so without
+   this the tray stayed on screen in demo — a write control offered where there
+   is nothing to write to, which is the one thing this panel must not do. */
+.wl-tray[hidden] { display: none; }
+.wl-tray-tiles { display: flex; gap: 6px; flex-wrap: wrap; min-height: 30px; min-width: 90px; align-items: center; }
+.wl-tray-hint { margin: 0; font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
+.wl-tile--tray { opacity: .92; border-style: dashed; }
+.wl-trash {
+  margin-left: auto; width: 30px; height: 30px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--color-border); border-radius: 6px;
+  font-size: 15px; line-height: 1; cursor: pointer; user-select: none;
+}
+/* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
+   desk means P&L, and a red glow on a hover target would read as a number. */
+.wl-trash.wl-drop-over,
+.wl-tray-tiles.wl-drop-over,
+.mkt-group-tiles.wl-drop-over { outline: 2px dashed var(--color-accent-bright); outline-offset: 2px; }
+
+/* The tile follows the pointer; the original stays put at reduced opacity so
+   the row does not reflow underneath the drag. */
+.wl-ghost {
+  position: fixed; top: 0; left: 0; z-index: 60;
+  pointer-events: none; opacity: .9;
+  box-shadow: var(--shadow-raised, 0 4px 14px rgba(0,0,0,.35));
+}
+.wl-tile.wl-dragging { opacity: .35; }
+/* Armed = a finger has rested on the tile and the drag is about to take over,
+   so the browser must stop treating the gesture as a scroll. Applied ONLY
+   while armed: `touch-action: none` on every tile would make the panel
+   unscrollable on a phone, which is the same class of mistake as stripping
+   double-tap zoom from tiles that had no removal wired (PR #200). */
+.wl-tile.wl-armed { touch-action: none; outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
+body.wl-drag-active { cursor: grabbing; }
+body.wl-drag-active .wl-tile { cursor: grabbing; }
+.wl-drop-marker {
+  flex: 0 0 auto; width: 3px; align-self: stretch; min-height: 26px;
+  background: var(--color-accent-bright); border-radius: 2px;
+}
+
 .wl-quick-input {
   width: 100%; margin-bottom: var(--space-3); text-transform: uppercase;
   resize: vertical; min-height: 62px; font-family: var(--font-mono);
