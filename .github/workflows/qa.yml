@@ -92,7 +92,19 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           # Per-project: paths whose changes warrant a browser run.
-          UI_PATHS: '^(index\.html$|\.github/scripts/ui-tests/|\.github/workflows/qa\.yml$)'
+          #
+          # Widened 2026-07-31 (owner ruling). This was the TEMPLATE DEFAULT —
+          # entry HTML plus the test directory — and the setup checklist at the
+          # top of this file says to adjust it to the project layout. That was
+          # never done, and `index.html` here is markup only: every behaviour
+          # lives in scripts/ and every appearance in styles/, so the browser
+          # job skipped on exactly the changes most likely to break the browser.
+          #
+          # It is not hypothetical. PRs #167, #188, #196 and #200 each added a
+          # modal reusing the `.lock-error` class and each touched app.js alone,
+          # so none ran a browser test; the selector count climbed 1 → 5 and S11
+          # was broken for six days before anyone saw it.
+          UI_PATHS: '^(index\.html$|scripts/|styles/|config/|\.github/scripts/ui-tests/|\.github/workflows/qa\.yml$)'
         run: |
           # No app yet (no index.html in the repo) → nothing to browser-test.
           # Keeps the scaffold/bootstrap PR clean: skip until the app exists.
@@ -155,15 +167,24 @@ jobs:
           "./$UI_TESTS_DIR/node_modules/.bin/http-server" . -p 8080 --silent &
           sleep 2
 
-      # UI Tests against the local server are non-blocking: the backend API is
-      # unreachable on CI runners, so API-dependent scenarios fail with
-      # "API status: no call" by design. The authoritative UI gate is qa-live.yml.
-      - name: Run Playwright tests
-        continue-on-error: true
+      # BLOCKING as of 2026-07-31 (owner ruling). This and the UI_PATHS widening
+      # go together — either one alone is close to useless.
+      #
+      # It was `continue-on-error: true` because API-dependent scenarios cannot
+      # pass against a local server. That much was true, but the flag applied to
+      # the WHOLE run, so the demo scenarios could not fail a merge either. And
+      # a step-level continue-on-error still reports the JOB as success, so the
+      # "notify on green" step announced a green QA over a run in which 11 tests
+      # had failed — which is how PR #209 merged on a red suite.
+      #
+      # The exclusion now sits where it belongs: live-only scenarios are skipped
+      # by name and stay qa-live.yml's job; everything that CAN pass against a
+      # local server gates the merge.
+      - name: Run Playwright tests (demo scenarios — blocking)
         env:
           APP_URL: http://localhost:8080
           TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
-        run: npx playwright test --reporter=list
+        run: npx playwright test --reporter=list --grep-invert "live only"
         working-directory: ${{ env.UI_TESTS_DIR }}
 
       - name: Upload test results

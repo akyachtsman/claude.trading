@@ -345,7 +345,20 @@ test('S3: interactive elements discovered and exercised without errors', async (
     const text = m.text();
     if (BENIGN_CONSOLE.test(text)) return;
     const src = (m.location() && m.location().url) || '';
-    if (FEED_ORIGIN.test(src) && /Failed to load resource/i.test(text)) return;
+    /* Feed-origin noise only, per the S1/S3 rule in CLAUDE.md — every other
+       console error still blocks.
+       `Access-Control-Allow-Origin` joined the list 2026-07-31. quote-proxy's
+       guard is an ORIGIN ALLOWLIST holding exactly the GitHub Pages origin, and
+       this job serves the app from http://localhost:8080 — so the browser is
+       *supposed* to refuse that call. It is the security control working, not a
+       defect, and the live job (real origin) never sees it.
+       It surfaced now rather than earlier because the charts quote used to be
+       fetched once per tab; it is polled every minute since the SMH staleness
+       fix, so it lands inside S3's sweep window. Matched on the TEXT as well as
+       the source: the CORS pair's first message names the blocked origin rather
+       than the URL, so a source-only test misses half of it. */
+    const feed = FEED_ORIGIN.test(src) || FEED_ORIGIN.test(text);
+    if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
     consoleErrors.push(text);
   });
 
@@ -850,6 +863,17 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
 // map unlocks multi-period performance, unfetched feeds stay disabled.
 test('S13: heatmap map-filter cuts and period select respond', async ({ page }) => {
   await page.goto('./?demo=1');
+  // The panel is COLLAPSED by default now (owner request 2026-07-31, load
+  // time) and fetches nothing until opened, so the cut/period assertions below
+  // have to open it first. Asserted rather than just clicked through: "closed
+  // on arrival" is the behaviour that keeps the desk's heaviest feed off the
+  // boot path, and a regression there would otherwise show up only as a slow
+  // dashboard, which no test would catch.
+  await expect(page.locator('#heatBody'), 'heatmap starts collapsed').toBeHidden();
+  await expect(page.locator('#heatToggle')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#heatToggle').click();
+  await expect(page.locator('#heatBody')).toBeVisible();
+
   const svg = page.locator('#heatmapSvg');
   await expect(svg.locator('rect').first()).toBeVisible({ timeout: 10000 });
   const allCount = await svg.locator('rect').count();
@@ -935,7 +959,7 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   // OFFERED, not that the markup is absent from the document.
   expect(await page.locator('.wl-add:visible').count(), 'demo must offer no + button').toBe(0);
   await expect(page.locator('#wlEditBtn')).toBeHidden();
-  await expect(page.locator('#wlTray'), 'and no staging tray either').toBeHidden();
+  await expect(page.locator('#wlTrash'), 'and no trash either').toBeHidden();
 
   // ...and with no removal wired, the touch-gesture override must NOT apply:
   // stripping double-tap zoom where nothing listens for a double-tap takes a
@@ -995,9 +1019,15 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await page.keyboard.press('Escape');
   await expect(page.locator('#wlRmBackdrop')).toBeHidden();
 
-  // the panel + opens the same dialog, now aimed at the tray, and rejects junk
+  // The panel + asks WHICH LIST (owner ruling 2026-07-31, replacing the staging
+  // tray) and still rejects junk. The picker is the whole point of the change:
+  // add-and-be-done, instead of minting a tile and dragging it somewhere.
+  // The + lands in RADAR, always (owner ruling 2026-07-31, replacing the
+  // dropdown that replaced the staging tray). No destination question at all:
+  // the heading names where it goes, and the list is created on first use.
   await page.locator('#wlTrayAdd').click();
-  await expect(page.locator('#wlQuickTitle')).toContainText(/Add to/i);
+  await expect(page.locator('#wlQuickTitle')).toContainText(/Radar/i);
+  expect(await page.locator('#wlQuickList').count(), 'no destination dropdown').toBe(0);
   await page.locator('#wlQuickInput').fill('!!!');
   await page.locator('#wlQuickSaveBtn').click();
   await expect(page.locator('#wlQuickErr')).toBeVisible();
@@ -1034,12 +1064,18 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
 
   // Demo has no backend to write to, so no write surface may render at all —
   // the tray and the trash are write controls like the + always was.
-  await expect(page.locator('#wlTray'), 'no staging tray in demo').toBeHidden();
+  await expect(page.locator('#wlTrash'), 'no write control in demo').toBeHidden();
 
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
-  await expect(page.locator('#wlTray')).toBeVisible();
+  // The WRITE CONTROLS are what must appear in live — the + and the trash.
+  // The staging row itself is now hidden while empty (owner ruling
+  // 2026-07-31: the permanent second row was unnecessary), so asserting it
+  // visible here would pin the old layout rather than the behaviour. Its
+  // reveal-on-drag is covered further down, where a drag is actually running.
+  await expect(page.locator('#wlTrayAdd')).toBeVisible();
+  await expect(page.locator('#wlTrash')).toBeVisible();
   expect(await page.locator('.mkt-group-tiles[data-band]').count(),
     'every band is a drop target').toBeGreaterThan(0);
 
@@ -1054,7 +1090,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   await page.mouse.move(r.x + 40, r.y + 30, { steps: 6 });
   expect(await page.locator('.wl-ghost').count(), 'no drag begins under a sort key').toBe(0);
   expect(await page.evaluate(() => wlSort.key), 'the drag snapped the sort to Manual').toBe('manual');
-  await expect(page.locator('#wlTrayHint')).toContainText(/Manual/i);
+  await expect(page.locator('#wlNote')).toContainText(/Manual/i);
   await page.mouse.up();
 
   // ── a real drag, now that Manual is active ──────────────────────────────
@@ -1084,18 +1120,16 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   expect(await page.locator('.wl-ghost').count(), 'Escape cancels the drag').toBe(0);
   await page.mouse.up();
 
-  // ── the tray persists ───────────────────────────────────────────────────
-  // A tile in the tray belongs to no list yet; losing it on reload would make
-  // the staging step a trap rather than a queue.
+  // ── no staging tray survives anywhere ──────────────────────────────────
+  // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,
+  // its persistence key and its drop zone must ALL be gone — a leftover
+  // localStorage key would silently repopulate a surface that no longer exists.
+  expect(await page.locator('#wlTray, #wlTrayTiles, #wlTrayHint').count(),
+    'no staging-tray markup remains').toBe(0);
   await page.locator('#wlTrayAdd').click();
-  await page.locator('#wlQuickInput').fill('ZZZZ');
-  await page.locator('#wlQuickSaveBtn').click();
-  await expect(page.locator('#wlTrayTiles .wl-tile')).toHaveCount(1);
-  expect(await page.evaluate(() => localStorage.getItem('wl_tray_v1')), 'the tray is written through').toContain('ZZZZ');
-  await page.reload();
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
-  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
-  await expect(page.locator('#wlTrayTiles .wl-tile'), 'the tray survives a reload').toHaveCount(1);
+  expect(await page.evaluate(() => localStorage.getItem('wl_tray_v1')),
+    'the tray key is never written again').toBeNull();
+  await page.locator('#wlQuickCloseBtn').click();
 
   // ── double-click removal is KEPT (owner ruling 2026-07-31) ──────────────
   // The trash is the drag-native equivalent, not a replacement, so the fast
@@ -1415,6 +1449,14 @@ test('S19: clear empties the conversation (opt-in, live only)', async ({ page })
 // ─────────────────────────────────────────────────────────────────────────────
 test('S27: watchlist tiles are half-width, stacked, and never clip a value', async ({ page }) => {
   await page.goto('./?demo=1');
+  // Start from a clean slate. This test runs late in the file, after S13 (which
+  // now persists the heatmap open, hm_open_v1), S20 (wl_tf_v1) and S26 (sort +
+  // tray keys) — and Playwright shares one storage origin across a project's
+  // tests. Measuring tile geometry against whatever earlier tests happened to
+  // leave behind makes this pass or fail on test ORDER rather than on layout,
+  // which is exactly the kind of flake that wastes a debugging round.
+  await page.evaluate(() => { try { localStorage.clear(); } catch { /* private mode */ } });
+  await page.reload();
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
 
   const m = await page.evaluate(() => {

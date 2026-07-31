@@ -336,13 +336,39 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* Long values step down one size rather than clipping — see the note in
    wlTile(), which sets these classes by string length. A clipped price would be
    a wrong price. */
+/* Two tiers, not one, and sized for HEADROOM rather than to just fit. The
+   single 10px tier was verified in a sandbox where the IBM Plex webfont could
+   not load, so it was measured against fallback metrics — CI, with the real
+   font, still clipped. A 9-character price like 23,104.88 needs more than a
+   1px margin at 66px, so the longest values step down again. */
 .wl-strip .mkt-last.is-long { font-size: 10px; letter-spacing: -.02em; }
+.wl-strip .mkt-last.is-xlong { font-size: 9px; letter-spacing: -.03em; }
+/* Last-resort guard: even if a value still overruns, it must not paint over the
+   tile's neighbour — the box clips instead, which S27 then catches as a real
+   finding rather than letting it bleed silently across the band. */
+/* The ticker line WRAPS on every tile, not only long ones. Scoping the wrap to
+   `.is-long` (>5 chars) left a short symbol plus its session badge — SOXL EXT —
+   able to overflow, and that is what kept failing. Wrapping unconditionally
+   makes `scrollWidth > clientWidth` impossible here for ANY combination of
+   ticker and badge, which is the property worth having; a size that happens to
+   fit is not. The price keeps nowrap + ellipsis: a number must never break
+   across lines, so it steps down in size instead (see the is-long/is-xlong
+   tiers above). */
+.wl-strip .mkt-last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-strip .mkt-name { min-width: 0; white-space: normal; overflow-wrap: anywhere; overflow: visible; }
 /* The base .mkt-name carries `letter-spacing: .05em`, which on a 7-character
    ticker like BTC-USD is ~2.5px of pure air — enough on its own to push the
    EXT badge past the edge. A long ticker drops the tracking as well as the
    size. A truncated TICKER is milder than a truncated price, but this panel is
    scanned by ticker, so it is still worth not doing. */
-.wl-strip .mkt-name.is-long { font-size: 8px; letter-spacing: 0; }
+/* WRAPS rather than shrinking further. Two font-size guesses (10px, then 9px
+   for prices) failed CI because I was tuning numbers against metrics I could
+   not measure. Wrapping is deterministic: a line that can break cannot
+   overflow, whatever the typeface does, so `scrollWidth > clientWidth` is
+   impossible here by construction instead of by a size that happens to fit.
+   Costs one line of height on the few tiles with a long ticker AND a session
+   badge (BTC-USD EXT); the owner accepted extra height for width. */
+.wl-strip .mkt-name.is-long { font-size: 8px; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
 /* The EXT/CLOSE badge shares the ticker line, so it tightens to match. */
 .wl-strip .wl-mark { font-size: 7px; padding: 0 1px; margin-left: 2px; letter-spacing: 0; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
@@ -398,17 +424,13 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 }
 
 /* ── staging tray, trash and drag (owner request 2026-07-31) ─────────────── */
-.wl-tray {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 12px; border-bottom: 1px solid var(--color-border);
-}
-/* A class selector outranks the UA's `[hidden] { display: none }`, so without
-   this the tray stayed on screen in demo — a write control offered where there
-   is nothing to write to, which is the one thing this panel must not do. */
-.wl-tray[hidden] { display: none; }
-.wl-tray-tiles { display: flex; gap: 6px; flex-wrap: wrap; min-height: 30px; min-width: 90px; align-items: center; }
-.wl-tray-hint { margin: 0; font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
-.wl-tile--tray { opacity: .92; border-style: dashed; }
+
+/* Transient note in the panel header (replaces the staging row's hint line). */
+.wl-note { font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
+.wl-note[hidden] { display: none; }
+/* The destination picker in the quick-add dialog. */
+.wl-quick-list { display: block; width: 100%; margin-bottom: 8px; }
+.wl-quick-list[hidden], #wlQuickListLabel[hidden] { display: none; }
 /* Header-resident now (owner ruling 2026-07-31), so NO `margin-left: auto` —
    that pushed it to the far edge when it lived on its own row, and in the
    header it would shove the as-of stamp off its own `ml-auto` anchor. Sized to
@@ -420,10 +442,14 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   font-size: 14px; line-height: 1; cursor: pointer; user-select: none;
 }
 .wl-add--tray { width: 26px; height: 26px; flex: 0 0 auto; }
+/* Same trap as `.wl-tray[hidden]` two rules up: a class selector setting
+   `display` outranks the UA's `[hidden] { display: none }`, so setting the
+   attribute alone left both controls on screen in demo — a write control
+   offered where there is nothing to write to. Caught by S21. */
+.wl-add[hidden], .wl-trash[hidden] { display: none; }
 /* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
    desk means P&L, and a red glow on a hover target would read as a number. */
 .wl-trash.wl-drop-over,
-.wl-tray-tiles.wl-drop-over,
 .mkt-group-tiles.wl-drop-over { outline: 2px dashed var(--color-accent-bright); outline-offset: 2px; }
 
 /* The tile follows the pointer; the original stays put at reduced opacity so

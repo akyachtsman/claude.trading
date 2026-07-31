@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260731e">
-<link rel="stylesheet" href="styles/components.css?v=20260731e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260731l">
+<link rel="stylesheet" href="styles/components.css?v=20260731l">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -493,20 +493,12 @@
               aria-label="New symbol tile" title="New symbol tile — drag it into a list">+</button>
       <button type="button" class="wl-trash" id="wlTrash"
               aria-label="Remove the focused symbol, or drag one here">🗑</button>
+      <!-- Transient feedback for a drag that could not be committed. The
+           staging row that used to carry it is gone (owner ruling 2026-07-31),
+           and a failed move needs to say so somewhere the eye already is.
+           aria-live so it is announced rather than only seen. -->
+      <span class="wl-note" id="wlNote" role="status" aria-live="polite" hidden></span>
       <span class="stamp ml-auto" id="wlStamp">—</span>
-    </div>
-    <!-- Staging row (owner request 2026-07-31). The + mints a tile here rather
-         than into a list; you then drag it to whichever band it belongs in.
-         PERSISTED (localStorage wl_tray_v1): a tile that belongs to no list yet
-         would otherwise vanish on reload, and queueing several before placing
-         them is the point.
-
-         Now shows ONLY when it holds something, or while a drag is in flight so
-         there is somewhere to drop the first tile (owner ruling 2026-07-31: the
-         permanent second row was unnecessary). Built by renderWlTray(). -->
-    <div class="wl-tray" id="wlTray" hidden>
-      <div class="wl-tray-tiles" id="wlTrayTiles" role="group" aria-label="Unplaced symbols"></div>
-      <p class="wl-tray-hint" id="wlTrayHint">Drag a tile into any list</p>
     </div>
     <div class="panel-body">
       <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
@@ -753,9 +745,18 @@
     <div class="panel-header">
       <h2 class="panel-title" id="heatTitle">Heatmap — S&amp;P 500</h2>
       <span class="lamp lamp--demo" id="heatLamp">Demo</span>
+      <!-- Collapsed BY DEFAULT (owner request 2026-07-31, load time). The
+           heatmap is the desk's heaviest panel by a wide margin — 498 tiles
+           over 11 sectors, 78KB, ~3.2s upstream — and it is the one panel the
+           owner opens deliberately rather than reads at a glance. Nothing is
+           fetched until it is expanded: the toggle is what triggers the first
+           load, so a collapsed panel costs one button and zero network. The
+           choice persists (hm_open_v1) so a deliberate open survives a reload. -->
+      <button type="button" class="btn btn-secondary heat-toggle" id="heatToggle"
+              aria-expanded="false" aria-controls="heatBody">Show</button>
       <span class="stamp ml-auto" id="heatStamp">—</span>
     </div>
-    <div class="panel-body">
+    <div class="panel-body" id="heatBody" hidden>
       <div class="heat-grid">
         <aside class="map-filter" aria-label="Map filter">
           <p class="map-filter-title">Map filter</p>
@@ -783,8 +784,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260731e"></script>
-<script src="scripts/data.js?v=20260731e"></script>
-<script src="scripts/app.js?v=20260731e"></script>
+<script src="scripts/config.js?v=20260731l"></script>
+<script src="scripts/data.js?v=20260731l"></script>
+<script src="scripts/app.js?v=20260731l"></script>
 </body>
 </html>
