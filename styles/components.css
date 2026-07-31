@@ -336,7 +336,17 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* Long values step down one size rather than clipping — see the note in
    wlTile(), which sets these classes by string length. A clipped price would be
    a wrong price. */
+/* Two tiers, not one, and sized for HEADROOM rather than to just fit. The
+   single 10px tier was verified in a sandbox where the IBM Plex webfont could
+   not load, so it was measured against fallback metrics — CI, with the real
+   font, still clipped. A 9-character price like 23,104.88 needs more than a
+   1px margin at 66px, so the longest values step down again. */
 .wl-strip .mkt-last.is-long { font-size: 10px; letter-spacing: -.02em; }
+.wl-strip .mkt-last.is-xlong { font-size: 9px; letter-spacing: -.03em; }
+/* Last-resort guard: even if a value still overruns, it must not paint over the
+   tile's neighbour — the box clips instead, which S27 then catches as a real
+   finding rather than letting it bleed silently across the band. */
+.wl-strip .mkt-last, .wl-strip .mkt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The base .mkt-name carries `letter-spacing: .05em`, which on a 7-character
    ticker like BTC-USD is ~2.5px of pure air — enough on its own to push the
    EXT badge past the edge. A long ticker drops the tracking as well as the
