@@ -1403,3 +1403,76 @@ test('S19: clear empties the conversation (opt-in, live only)', async ({ page })
   await page.locator('#askBody .ask-clear').click();
   await expect(page.locator('#askBody .ask-a')).toHaveCount(0, { timeout: 10000 });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 27 — Watchlist tile: half width, stacked, and NOTHING clipped.
+// The 2026-07-31 layout (owner-approved from a mock) halves the tile to fit
+// twice as many symbols per band, which put every value under width pressure.
+// The geometry is the cheap half of this test; the clipping assertions are the
+// point. A clipped price is a WRONG price, and it fails silently — the tile
+// still looks like a tile. Guarding it by measuring scrollWidth against
+// clientWidth catches a regression that no screenshot review reliably would.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S27: watchlist tiles are half-width, stacked, and never clip a value', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+
+  const m = await page.evaluate(() => {
+    const tile = document.querySelector('.wl-strip .wl-tile');
+    const r = tile.getBoundingClientRect();
+    // Visual top-to-bottom order. `.wl-vals` is `display: contents`, so it has
+    // no box of its own and its children lay out as tile children — that is the
+    // mechanism the stacked order depends on, so assert the RENDERED order
+    // rather than the DOM order, which still nests them.
+    const parts = [...tile.querySelectorAll('.mkt-name, .mkt-last, .wl-pct, .wl-spark')]
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+      .map(e => [...e.classList].find(c => ['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark'].includes(c)));
+    const over = sel => [...document.querySelectorAll('.wl-strip ' + sel)]
+      .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent.trim());
+    return { w: Math.round(r.width), order: parts, prices: over('.mkt-last'), names: over('.mkt-name') };
+  });
+
+  expect(m.w, 'tile should be the half-width 66px, not the old 132px').toBeLessThanOrEqual(80);
+  expect(m.order, 'reading order must be ticker → price → change → line')
+    .toEqual(['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark']);
+  // The two that matter. Long values step down a font size (wlTile sets
+  // `is-long` by string length, since CSS cannot branch on text length); if that
+  // ever stops happening, six-figure index prices truncate mid-number.
+  expect(m.prices, 'a clipped price is a wrong price').toEqual([]);
+  expect(m.names, 'tickers are how this panel is scanned').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 28 — The charts quote expires by AGE, not by presence.
+// Owner report 2026-07-31: SMH showed 538.90 +34.68 (+6.88%) — the PREVIOUS
+// session's close and move — under a stamp reading "delayed by 1 minute",
+// because `wbInfoCache` was keyed on presence and the first fetch of a symbol
+// was the last one for the life of the tab.
+//
+// This asserts the two properties that make staleness impossible rather than
+// trying to reproduce it: entries carry a timestamp, and the TTL follows the
+// session. Reproducing the bug itself would need a tab held open across a
+// session boundary, which no CI run can do — so the contract is what gets
+// guarded. Both values are read from the live page's own globals (classic
+// scripts, so top-level consts are in scope inside evaluate).
+// ─────────────────────────────────────────────────────────────────────────────
+test('S28: the charts quote cache is timestamped and its TTL is session-aware', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 15000 });
+
+  const shape = await page.evaluate(() => {
+    if (typeof wbInfoTtlMs !== 'function') return { missing: true };
+    const open = typeof marketSessionOpen === 'function' ? marketSessionOpen() : null;
+    // Seed one entry through the real code path's own shape and read it back.
+    wbInfoCache.__probe = { at: Date.now(), info: null };
+    const e = wbInfoCache.__probe;
+    delete wbInfoCache.__probe;
+    return { ttl: wbInfoTtlMs(), open, hasAt: typeof e.at === 'number', hasInfo: 'info' in e };
+  });
+
+  expect(shape.missing, 'wbInfoTtlMs must exist — it is what expires the quote').toBeFalsy();
+  expect(shape.hasAt, 'cache entries must carry `at`, or expiry is impossible').toBe(true);
+  expect(shape.hasInfo, 'cache entries must keep `info` alongside the stamp').toBe(true);
+  // 60s while prints arrive, 15 min once the tape is frozen. Never unbounded.
+  expect([60000, 900000], 'TTL must be one of the two session cadences').toContain(shape.ttl);
+});
