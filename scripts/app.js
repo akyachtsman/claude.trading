@@ -1108,7 +1108,19 @@ function renderWatchlist(payload, lamp) {
        box — it reads as a rendering fault rather than as a list with nothing
        in it yet, and it gives a drag no target to aim at. The hint reserves a
        tile's worth of height and says what the band is for. */
-    if (!rows.length) box.appendChild(el('span', 'wl-band-empty', canEdit ? 'Empty — drag a tile here' : 'Empty'));
+    /* SAVED symbols, not drawn rows, decide what this says. A list whose every
+       ticker is a typo (or past the fetch cap) keeps them in `symbols` and has
+       no `rows` at all — calling that "Empty" would contradict the missing-
+       symbol warning directly below, which is naming the very tickers it holds.
+       And the drag invitation is only offered when a drag would actually be
+       accepted: wlCommitMove refuses every non-trash move while the
+       arrangement is locked, so under a lock this stays plain (Codex review). */
+    if (!rows.length) {
+      const saved = (l.symbols || []).length;
+      box.appendChild(el('span', 'wl-band-empty',
+        saved ? 'No quotes for its ' + saved + ' symbol' + (saved === 1 ? '' : 's')
+          : (canEdit && !wlLocked ? 'Empty — drag a tile here' : 'Empty')));
+    }
     wlSortRows(rows).forEach((r, ri) => {
       const tile = wlTile(r, pending);
       if (canEdit) {
