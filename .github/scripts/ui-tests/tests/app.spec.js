@@ -37,6 +37,10 @@ function readCredentialFromClaude() {
 // Falls back to null if neither env var nor CLAUDE.md has a credential.
 // Auth-dependent tests skip gracefully rather than failing when null.
 const AUTH_CREDENTIAL = process.env.TEST_AUTH_CREDENTIAL ?? readCredentialFromClaude() ?? null;
+/* Kept in step with playwright.config.js's baseURL — same env var, same
+   default. Read here so a scenario can tell WHICH origin it is exercising,
+   which is what separates a CI-only cross-origin refusal from a real one. */
+const BASE_URL = process.env.APP_URL || 'https://akyachtsman.github.io/claude.trading/';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API CALL CAPTURE — must wrap fetch before page load via addInitScript
@@ -345,7 +349,6 @@ test('S3: interactive elements discovered and exercised without errors', async (
   // only auth-gated apps with no credential are skipped (decided after page load below).
   const consoleErrors = [];
   const apiAnomalies  = [];
-  page.on('pageerror', e => consoleErrors.push(e.message));
   // Allowlist (same idiom as S1's feed-origin carve-out): the TradingView
   // ticker-tape embed probes the device motion sensors from inside its OWN
   // nested widget sub-frame. That inner frame lacks an accelerometer
@@ -385,6 +388,35 @@ test('S3: interactive elements discovered and exercised without errors', async (
     const feed = FEED_ORIGIN.test(src) || FEED_ORIGIN.test(text);
     if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
     consoleErrors.push(text);
+  });
+
+  /* The pageerror twin of the filter above. Registered here, not beside the
+     `consoleErrors` declaration, so it can see FEED_ORIGIN — it went unfiltered
+     until run 30674862903, where the iphone project alone failed S3 on exactly
+     the errors the console listener was already dropping. WebKit raises a
+     blocked cross-origin fetch as a PAGE ERROR rather than a console message,
+     and a pageerror carries no source URL, so the `src` half of the test above
+     can never see it. Chromium logs it to the console instead, which is why
+     mobile-chrome passed the same run.
+
+     One blocked fetch emits a PAIR, and only the second names the URL:
+       "Origin http://localhost:8080 is not allowed by Access-Control-Allow-Origin…"
+       "…/functions/v1/quote-proxy due to access control checks."
+     so testing for the feed origin alone drops half of it. The first half is
+     matched on the REFUSED ORIGIN instead — and only when that origin is not
+     the production site. quote-proxy's guard is an allowlist holding exactly
+     the GitHub Pages origin, so a localhost run is SUPPOSED to be refused: the
+     control working, not a defect. Against the real origin the carve-out is
+     off entirely, so qa-live still fails loudly if that allowlist ever breaks.
+     Both halves must also be CORS-phrased; every other pageerror fails S3. */
+  const OWN_ORIGIN = (() => { try { return new URL(BASE_URL).origin; } catch { return ''; } })();
+  const PROD_ORIGIN = 'https://akyachtsman.github.io';
+  const offProdOrigin = !!OWN_ORIGIN && OWN_ORIGIN !== PROD_ORIGIN;
+  page.on('pageerror', e => {
+    const t = e.message || '';
+    const cors = /Access-Control-Allow-Origin|access control checks/i.test(t);
+    if (cors && (FEED_ORIGIN.test(t) || (offProdOrigin && t.includes(OWN_ORIGIN)))) return;
+    consoleErrors.push(t);
   });
 
   const getApiCalls = await captureApiCalls(page);
