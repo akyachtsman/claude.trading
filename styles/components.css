@@ -249,6 +249,15 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip .mkt-group-tiles::-webkit-scrollbar-track { background: var(--color-bg); border-radius: 4px; }
 .wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb { background: var(--color-border-hover); border-radius: 4px; }
 .wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+/* Placeholder for a list with no symbols. Height is a tile's height so the
+   band keeps its shape and stays a drop target; muted and italic so it never
+   reads as a ticker. */
+.wl-band-empty {
+  display: flex; align-items: center;
+  min-height: 66px; padding: 0 var(--space-3);
+  font-size: var(--font-size-xs); font-style: italic;
+  color: var(--color-text-secondary); white-space: nowrap;
+}
 /* the band must be free to shrink, or a 41-tile row would stretch it instead */
 .wl-strip .mkt-group { align-items: stretch; }
 .wl-strip .mkt-group-tiles { flex: 1 1 0; min-width: 0; }

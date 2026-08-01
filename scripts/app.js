@@ -1104,6 +1104,11 @@ function renderWatchlist(payload, lamp) {
        this loop is its index in `symbols` — which is what makes a drop
        addressable. Under any other key it is not, which is why a drag snaps the
        sort to Manual before it will move anything. */
+    /* An empty list would otherwise draw as a bare label over a zero-height
+       box — it reads as a rendering fault rather than as a list with nothing
+       in it yet, and it gives a drag no target to aim at. The hint reserves a
+       tile's worth of height and says what the band is for. */
+    if (!rows.length) box.appendChild(el('span', 'wl-band-empty', canEdit ? 'Empty — drag a tile here' : 'Empty'));
     wlSortRows(rows).forEach((r, ri) => {
       const tile = wlTile(r, pending);
       if (canEdit) {
