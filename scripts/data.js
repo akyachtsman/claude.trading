@@ -550,7 +550,15 @@ async function deskWatchlist(force, range) {
    switching these two lines back. The `pin` parameter is kept in the signatures
    for exactly that reason, and ignored. */
 async function deskGetWatchlists(_pin) { return deskRpcOpen('desk_get_watchlists_open'); }
-async function deskSetWatchlists(_pin, lists) { return deskRpcOpen('desk_set_watchlists_open', { new_lists: lists }); }
+/* `version` is the roster version read alongside the lists (desk_014). The
+   write is a REPLACE-ALL, so naming the version it is replacing is what stops a
+   save built from a stale snapshot from deleting a list created since. Always
+   pass it: omitting it makes the RPC fall back to last-write-wins, which is how
+   the Radar list was silently lost on 2026-08-01. A refusal comes back as
+   {ok:false, error:'conflict', version:<current>} — not an exception. */
+async function deskSetWatchlists(_pin, lists, version) {
+  return deskRpcOpen('desk_set_watchlists_open', { new_lists: lists, expected_version: version ?? null });
+}
 
 /* ── demo watchlist ────────────────────────────────────────────────────────
    ?demo=1 ONLY (live is real-data-or-nothing). Rows are seeded off the symbol
