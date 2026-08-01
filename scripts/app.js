@@ -1161,6 +1161,12 @@ function renderWatchlist(payload, lamp) {
    the real authority on what a ticker may look like. */
 let wlEdit = null;        /* [{title, symbols:[…]}] while the modal is open */
 let wlEditLoaded = false; /* did the authoritative read succeed? gates saving */
+/* The roster version this draft was loaded from (desk_014). The editor is the
+   one write path where the read and the write are separated by however long the
+   modal stays open, so a save is only allowed to land on the roster the draft
+   was built from — otherwise anything created meanwhile is deleted by the
+   replace-all, which is precisely how the Radar list vanished. */
+let wlEditVersion = null;
 
 /* Split ONLY on the documented delimiters — comma and whitespace — then keep
    whole tokens that are valid tickers (Codex review, PR #188). Splitting on
@@ -1240,18 +1246,32 @@ async function wlMutate(mutate) {
      read-modify-write against the AUTHORITATIVE roster, never a patch of the
      rendered payload: that omits unresolved symbols and can be an hour stale. */
   const pin = null;
-  let lists;
+  let lists, version;
   try {
     const got = await deskGetWatchlists(pin);
     if (!got || !got.ok) return { ok: false, err: 'Could not load your watchlists — unlock again.' };
     lists = (got.lists || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+    version = got.version ?? null;
   } catch {
     return { ok: false, err: 'Could not reach the desk.' };
   }
   if (!mutate(lists)) return { ok: false, err: null };   /* no-op, not a failure */
   try {
-    const out = await deskSetWatchlists(pin, lists.filter(l => String(l.title || '').trim()));
-    if (!out || !out.ok) return { ok: false, err: 'The desk rejected the change.' };
+    /* The version read a moment ago rides along, so the replace-all can only
+       land on the roster it was computed from (desk_014). A conflict is
+       near-impossible here — the read and the write are milliseconds apart —
+       but it costs nothing and this is the ONE write path that must never lose
+       an edit made elsewhere. */
+    const out = await deskSetWatchlists(pin, lists.filter(l => String(l.title || '').trim()), version);
+    if (!out || !out.ok) {
+      if (out && out.error === 'conflict') {
+        /* Repaint from the truth before telling the owner to retry, or the
+           next attempt is built from the same stale render that just lost. */
+        await loadWatchlist(true);
+        return { ok: false, err: 'Your watchlists changed elsewhere — the panel has been refreshed. Try that again.' };
+      }
+      return { ok: false, err: 'The desk rejected the change.' };
+    }
   } catch {
     return { ok: false, err: 'Could not reach the desk to save.' };
   }
@@ -1557,14 +1577,15 @@ async function openWlEditor() {
     const out = await deskGetWatchlists(pin);
     if (out && out.ok) {
       wlEdit = (out.lists || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+      wlEditVersion = out.version ?? null;
       loaded = true;
     } else {
       wlEditErr('Could not load your watchlists — unlock again before editing.');
-      wlEdit = [];
+      wlEdit = []; wlEditVersion = null;
     }
   } catch {
     wlEditErr('Could not reach the desk to load your watchlists.');
-    wlEdit = [];
+    wlEdit = []; wlEditVersion = null;
   }
   const saveBtn = document.getElementById('wlSaveBtn');
   const addBtn = document.getElementById('wlAddListBtn');
@@ -1579,10 +1600,32 @@ async function openWlEditor() {
   if (first) first.focus();
 }
 
+/* Re-read the roster into the OPEN modal after a conflict. Shares openWlEditor's
+   rule that a failed read must never become an editable draft: on failure the
+   version is cleared to a sentinel no write can match, so Save stays refused
+   rather than falling back to the unguarded last-write-wins path. */
+async function reloadWlEditorDraft() {
+  try {
+    const out = await deskGetWatchlists(null);
+    if (out && out.ok) {
+      wlEdit = (out.lists || []).map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+      wlEditVersion = out.version ?? null;
+      wlEditLoaded = true;
+      renderWlEditor();
+      return true;
+    }
+  } catch { /* fall through to the disabled state below */ }
+  wlEditLoaded = false;
+  const saveBtn = document.getElementById('wlSaveBtn');
+  if (saveBtn) saveBtn.disabled = true;
+  return false;
+}
+
 function closeWlEditor() {
   const back = document.getElementById('wlEditBackdrop');
   if (back) back.hidden = true;
   wlEdit = null;
+  wlEditVersion = null;
   const btn = document.getElementById('wlEditBtn');
   if (btn) btn.focus();
 }
@@ -1602,8 +1645,23 @@ async function saveWlEditor() {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   wlEditErr('');
   try {
-    const out = await deskSetWatchlists(pin, lists);
-    if (!out || !out.ok) { wlEditErr('The desk rejected the save — check your PIN and try again.'); return; }
+    const out = await deskSetWatchlists(pin, lists, wlEditVersion);
+    if (out && out.error === 'conflict') {
+      /* The roster moved while this modal was open, so saving would delete
+         whatever changed. Reload the draft IN PLACE — closing it would throw
+         away the owner's edits, and re-sending the same draft would just lose
+         the race again. They see the current lists and can redo the edit. */
+      /* Branch on the reload: if THAT read also failed, the draft on screen is
+         still the stale one and Save is now disabled, so claiming it was
+         refreshed would leave the owner staring at old data with a dead button
+         and no idea why (Codex review). Say which of the two happened. */
+      const fresh = await reloadWlEditorDraft();
+      wlEditErr(fresh
+        ? 'Your watchlists changed elsewhere while this was open. The list below has been refreshed — redo your edit and save again.'
+        : 'Your watchlists changed elsewhere while this was open, and the desk could not be reached to reload them. Close this and reopen the editor — the list below is out of date and cannot be saved.');
+      return;
+    }
+    if (!out || !out.ok) { wlEditErr('The desk rejected the save — try again.'); return; }
     closeWlEditor();
     /* force past the feed's cache so the panel shows the roster just saved */
     await loadWatchlist(true);

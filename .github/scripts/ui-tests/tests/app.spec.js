@@ -42,6 +42,50 @@ const AUTH_CREDENTIAL = process.env.TEST_AUTH_CREDENTIAL ?? readCredentialFromCl
    which is what separates a CI-only cross-origin refusal from a real one. */
 const BASE_URL = process.env.APP_URL || 'https://akyachtsman.github.io/claude.trading/';
 
+/* ── shared error allowlist ──────────────────────────────────────────────────
+   S1 and S3 each grew their own copy of this, and on 2026-08-01 they drifted:
+   S3's `pageerror` listener had no filter at all while its console twin had one,
+   so the iphone project failed on errors Chromium was already dropping. The
+   vocabulary and the pageerror rule live HERE now so there is one thing to
+   change. Each scenario's console rule stays its own — S1 sweeps page load and
+   S3 sweeps interactions, and they legitimately tolerate different breadth —
+   but both are built from these constants rather than from re-typed literals. */
+const FEED_ORIGIN = '.supabase.co/functions/v1/';
+const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
+/* The TradingView embed probes motion sensors from inside its OWN nested
+   sub-frame, which an `allow=` on the outer iframe cannot reach (tried in
+   PR #78). Exact string only — never a blanket console mute. */
+const BENIGN_CONSOLE = /Permissions policy violation: accelerometer is not allowed/i;
+const OWN_ORIGIN = (() => { try { return new URL(BASE_URL).origin; } catch { return ''; } })();
+/* The origin-based half of the rule below is enabled ONLY for a LOCAL test
+   server — the http-server qa.yml runs against — and not merely for "any origin
+   that isn't production" (Codex review). qa-live accepts an `app_url` override,
+   so a staging or preview deploy would otherwise inherit the carve-out and a
+   genuine quote-proxy CORS misconfiguration there would be swallowed. S14 would
+   not catch it either: it proves the MARKET feed, not quote-proxy. */
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(OWN_ORIGIN);
+
+/* A blocked cross-origin call to the desk's own feed layer, as it arrives on
+   `pageerror`. WebKit raises these as page errors (Chromium only logs them),
+   and a pageerror carries NO source URL, so the match has to come from the text.
+
+   One blocked fetch emits a PAIR and only the second names the URL:
+     "Origin http://localhost:8080 is not allowed by Access-Control-Allow-Origin…"
+     "…/functions/v1/quote-proxy due to access control checks."
+   so a feed-origin test alone drops half of it. The first is matched on the
+   REFUSED ORIGIN being the one this run is served from — quote-proxy's guard is
+   an allowlist holding exactly the Pages origin, so a localhost run is SUPPOSED
+   to be refused: the control working, not a defect.
+
+   Deliberately strict: pageerror is where genuine application faults land, so a
+   message must be CORS-phrased AND name either the feed origin or a LOCAL test
+   origin. Everything else still fails. */
+const benignPageError = (text) => {
+  const t = text || '';
+  return FEED_CORS.test(t) &&
+    (t.includes(FEED_ORIGIN) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API CALL CAPTURE — must wrap fetch before page load via addInitScript
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,18 +262,10 @@ function testValueFor(el) {
 // ─────────────────────────────────────────────────────────────────────────────
 test('S1: page loads without JS errors', async ({ page }) => {
   const errors = [];
-  /* Declared before BOTH listeners: WebKit surfaces a blocked cross-origin
-     fetch as a pageerror, not only as a console error, so the same allowlist
-     has to cover both. Chromium only logs it to the console, which is why this
-     failed on iphone alone. */
-  const FEED_ORIGIN = '.supabase.co/functions/v1/';
-  const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
+  /* Shared with S3 — see benignPageError at the top of this file. */
   page.on('pageerror', e => {
     const t = e.message || '';
-    /* Scoped tight: the message must NAME the feed origin as well as look like
-       a CORS rejection. pageerror is where genuine application faults land, and
-       widening it on phrasing alone would mute a real one. */
-    if (t.includes(FEED_ORIGIN) && FEED_CORS.test(t)) return;
+    if (benignPageError(t)) return;
     errors.push(t);
   });
   // Allowlist (spec Clarifications #7, Group C): failed fetches to the live
@@ -253,8 +289,9 @@ test('S1: page loads without JS errors', async ({ page }) => {
        real origin, never sees it.
        It only started landing inside S1's window because the charts quote is
        polled every minute since the SMH staleness fix, instead of being fetched
-       once per tab. Same fix already applied to S3's listener; S1 has its own
-       and was missed. */
+       once per tab. Broader than benignPageError on purpose: S1's console rule
+       has tolerated any CORS-phrased console error since it was written, and a
+       console error is a far weaker signal than a pageerror. */
     if (FEED_CORS.test(m.text())) return;
     errors.push(`${m.text()} (${at || 'no url'})`);
   });
@@ -349,25 +386,13 @@ test('S3: interactive elements discovered and exercised without errors', async (
   // only auth-gated apps with no credential are skipped (decided after page load below).
   const consoleErrors = [];
   const apiAnomalies  = [];
-  // Allowlist (same idiom as S1's feed-origin carve-out): the TradingView
-  // ticker-tape embed probes the device motion sensors from inside its OWN
-  // nested widget sub-frame. That inner frame lacks an accelerometer
-  // permissions-policy grant, so Chromium logs "accelerometer is not allowed in
-  // this document." when the strip hydrates on first interaction — a benign
-  // vendor-frame warning the desk cannot suppress: an `allow=` on the OUTER
-  // iframe we control does NOT propagate into TradingView's nested child (this
-  // was tried in PR #78 and the violation persisted on the confirmed-live asset
-  // across two runs). Drop ONLY this exact permissions-policy string; every
-  // other console error — ours or third-party — still fails S3. Narrow on
-  // purpose, never a blanket console mute.
-  const BENIGN_CONSOLE = /Permissions policy violation: accelerometer is not allowed/i;
-  /* Feed-origin failures are the app's to absorb (panels lamp STALE by
-     design; S14 is where feed health fails loudly) — the same carve-out S1
-     makes for load-time console errors, extended to the sweep after a
-     transient desk-heatmap 546 failed qa-live run 117. ONLY resource-load
-     errors sourced from the feed origin are dropped; every other console
-     error still counts. */
-  const FEED_ORIGIN = /\.supabase\.co\/functions\/v1\//;
+  /* BENIGN_CONSOLE, FEED_ORIGIN, FEED_CORS and benignPageError are shared with
+     S1 — see the allowlist block at the top of this file. Feed-origin failures
+     are the app's to absorb (panels lamp STALE by design; S14 is where feed
+     health fails loudly), which is why they are dropped in these two scenarios
+     and nowhere else. This local regex is the shared origin STRING escaped for
+     use as a pattern, so the two can never name different origins. */
+  const FEED_ORIGIN_RE = new RegExp(FEED_ORIGIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   page.on('console', m => {
     if (m.type() !== 'error') return;
     const text = m.text();
@@ -385,37 +410,18 @@ test('S3: interactive elements discovered and exercised without errors', async (
        fix, so it lands inside S3's sweep window. Matched on the TEXT as well as
        the source: the CORS pair's first message names the blocked origin rather
        than the URL, so a source-only test misses half of it. */
-    const feed = FEED_ORIGIN.test(src) || FEED_ORIGIN.test(text);
+    const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text);
     if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
     consoleErrors.push(text);
   });
 
-  /* The pageerror twin of the filter above. Registered here, not beside the
-     `consoleErrors` declaration, so it can see FEED_ORIGIN — it went unfiltered
-     until run 30674862903, where the iphone project alone failed S3 on exactly
-     the errors the console listener was already dropping. WebKit raises a
-     blocked cross-origin fetch as a PAGE ERROR rather than a console message,
-     and a pageerror carries no source URL, so the `src` half of the test above
-     can never see it. Chromium logs it to the console instead, which is why
-     mobile-chrome passed the same run.
-
-     One blocked fetch emits a PAIR, and only the second names the URL:
-       "Origin http://localhost:8080 is not allowed by Access-Control-Allow-Origin…"
-       "…/functions/v1/quote-proxy due to access control checks."
-     so testing for the feed origin alone drops half of it. The first half is
-     matched on the REFUSED ORIGIN instead — and only when that origin is not
-     the production site. quote-proxy's guard is an allowlist holding exactly
-     the GitHub Pages origin, so a localhost run is SUPPOSED to be refused: the
-     control working, not a defect. Against the real origin the carve-out is
-     off entirely, so qa-live still fails loudly if that allowlist ever breaks.
-     Both halves must also be CORS-phrased; every other pageerror fails S3. */
-  const OWN_ORIGIN = (() => { try { return new URL(BASE_URL).origin; } catch { return ''; } })();
-  const PROD_ORIGIN = 'https://akyachtsman.github.io';
-  const offProdOrigin = !!OWN_ORIGIN && OWN_ORIGIN !== PROD_ORIGIN;
+  /* Registered next to the console listener rather than beside the
+     `consoleErrors` declaration, so the two sit together and cannot drift apart
+     again — a drift that left this one unfiltered until 2026-08-01. Rule shared
+     with S1: see benignPageError at the top of this file. */
   page.on('pageerror', e => {
     const t = e.message || '';
-    const cors = /Access-Control-Allow-Origin|access control checks/i.test(t);
-    if (cors && (FEED_ORIGIN.test(t) || (offProdOrigin && t.includes(OWN_ORIGIN)))) return;
+    if (benignPageError(t)) return;
     consoleErrors.push(t);
   });
 
@@ -534,7 +540,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
   /* feed-origin 5xx excluded — see the FEED_ORIGIN note on the console
      listener above; a persistent feed outage still fails loudly via S14 */
   const blocking = findings.filter(f =>
-    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN.test(c.url || '')) ||
+    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN_RE.test(c.url || '')) ||
     f.consoleErrors.length > 0);
   expect(blocking, `Blocking anomalies found:\n${JSON.stringify(blocking, null, 2)}`).toHaveLength(0);
 });
@@ -1615,4 +1621,74 @@ test('S29: scheduled asks persist, and the cost guards hold at the save boundary
   expect(g.due, 'fires once the interval has elapsed').toBe(true);
   expect(g.notYet, 'does not fire before it is due').toBe(false);
   expect(g.off, 'a disabled row never fires').toBe(false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 30 — Watchlist writes are version-guarded
+// ─────────────────────────────────────────────────────────────────────────────
+/* Guards the CONTRACT, not the server rule. The refusal itself lives in
+   desk_set_watchlists_open (desk_014) and is exercised against the live table;
+   what CI can hold is the half that broke: the CLIENT must send back the
+   version it read, on BOTH write paths. Send nothing and the RPC silently falls
+   back to last-write-wins — which is how the Radar list was deleted on
+   2026-08-01 by a save built from a snapshot taken before it existed. */
+test('S30: watchlist writes carry the roster version they read', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await page.waitForSelector('.wl-strip .mkt-group', { timeout: 15000 });
+
+  const out = await page.evaluate(async () => {
+    const bodies = [];
+    const realFetch = window.fetch;
+    window.fetch = (url, init) => {
+      const u = String(url);
+      if (u.includes('/rest/v1/rpc/')) {
+        bodies.push({ fn: u.split('/rpc/')[1], body: JSON.parse(init.body || '{}') });
+        /* Answer as the RPC would, so the caller's own error handling runs
+           instead of throwing and hiding what it sent. */
+        const payload = u.endsWith('desk_get_watchlists_open')
+          ? { ok: true, version: '2026-08-01T00:00:00+00:00', lists: [{ title: 'Radar', symbols: [] }] }
+          : { ok: true, version: '2026-08-01T00:00:01+00:00', lists: 1, symbols: 0 };
+        return Promise.resolve(new Response(JSON.stringify(payload), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        }));
+      }
+      return realFetch(url, init);
+    };
+    try {
+      /* 1. The direct wrapper must accept and forward a version. */
+      await deskSetWatchlists(null, [{ title: 'Radar', symbols: [] }], '2026-07-31T12:00:00+00:00');
+      const direct = bodies.pop();
+
+      /* 2. wlMutate must read a version and echo THAT one back — not null,
+            and not one invented at write time. */
+      bodies.length = 0;
+      DESK.mode = 'live'; DESK.authed = true;
+      await wlMutate(lists => { lists.push({ title: 'X', symbols: [] }); return true; });
+      const read = bodies.find(b => b.fn === 'desk_get_watchlists_open');
+      const wrote = bodies.find(b => b.fn === 'desk_set_watchlists_open');
+
+      return {
+        directHasVersion: direct && direct.body.expected_version === '2026-07-31T12:00:00+00:00',
+        mutateRead: !!read,
+        mutateSentVersion: wrote ? wrote.body.expected_version : 'NO WRITE',
+        omittedIsNull: (await (async () => {
+          bodies.length = 0;
+          await deskSetWatchlists(null, []);
+          return bodies.pop().body.expected_version;
+        })()),
+      };
+    } finally {
+      window.fetch = realFetch;
+    }
+  });
+
+  expect(out.directHasVersion, 'deskSetWatchlists forwards the version it was given').toBe(true);
+  expect(out.mutateRead, 'wlMutate reads the authoritative roster first').toBe(true);
+  /* The version the stubbed read handed out — proving it was carried through
+     the mutate rather than dropped or regenerated. */
+  expect(out.mutateSentVersion, 'wlMutate echoes the version it read').toBe('2026-08-01T00:00:00+00:00');
+  /* An omitted version must serialize as an explicit null, never `undefined`:
+     JSON.stringify drops an undefined value entirely, and the RPC would then
+     bind its default and skip the check without anyone noticing. */
+  expect(out.omittedIsNull, 'an absent version is an explicit null on the wire').toBeNull();
 });

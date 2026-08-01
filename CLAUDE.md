@@ -197,6 +197,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
+  **`Radar` is the inbox list** (owner request 2026-07-30): the panel-header `+`
+  routes every new symbol there rather than asking which list, and it is dragged
+  onward from there. It is an ordinary row in `desk_watchlists` — nothing in the
+  code creates or protects it — so it can be renamed or deleted like any other.
+  **An empty list still renders as a full band**: a placeholder sized to one
+  tile, so it keeps its shape and stays a drop target instead of collapsing to a
+  bare label that reads as a rendering fault. The copy comes from the SAVED
+  symbols and the lock state, never from the drawn rows — a list whose every
+  ticker is unresolved has rows `[]` but symbols, and calling that "Empty" would
+  contradict the `#wlMissing` warning naming those very tickers; and the drag
+  invitation is withheld under the lock, since `wlCommitMove` refuses every
+  non-trash move there.
   **The roster is NOT in this repo.** It lives in `desk_watchlists`
   (`desk_010`): RLS deny-all, reached by anon only through the SECURITY DEFINER
   PIN RPCs `desk_get_watchlists` / `desk_set_watchlists`, and read server-side
@@ -206,7 +218,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   COMPLETE desired state, so add/remove symbol and create/rename/reorder/delete
   list all land atomically in one replace-all; the seed is guarded on emptiness
   (not a fixed id) so a replay can't clobber later edits — the documented
-  `desk_009` hazard. Editing is the ✎ in the panel header (live + authed only)
+  `desk_009` hazard.
+  **A replace-all is version-guarded** (`desk_014`). `desk_get_watchlists_open`
+  returns a `version` — `max(updated_at)` — and `desk_set_watchlists_open` takes
+  `expected_version`, holds an exclusive table lock and REFUSES with
+  `{ok:false, error:'conflict', version}` when the table has moved since. Every
+  caller in this repo sends it; `null` means "do not check", so a cached
+  pre-`desk_014` tab keeps working rather than bricking mid-session. This exists
+  because a replace-all is otherwise a last-write-wins overwrite of everything
+  that happened while a dialog was open, and **that is how the Radar list was
+  silently deleted on 2026-08-01** — inserted while the dashboard was open, then
+  erased by a later save built from a pre-Radar snapshot, leaving 15 rows with
+  contiguous ids and no error anywhere. `wlMutate` was never the risk (its read
+  and write are milliseconds apart); the **editor** is, because its draft is
+  loaded when the modal opens and saved whenever the owner presses Save. On a
+  conflict the editor reloads the draft IN PLACE and says so — it must not close
+  (that discards the owner's edits) and must not re-send (that loses the same
+  race again).
+  Editing is the ✎ in the panel header (live + authed only)
   → a modal in the system-prompt idiom; symbols are free text because the
   owner's source is a pasted broker table, normalised client-side for the count
   and again server-side where the RPC is the real authority.
@@ -487,8 +516,9 @@ run for real against the dedicated project on every PR.
 | S28 | Charts quote expires by age | With `?demo=1`, `wbInfoTtlMs()` returns one of the two session cadences (60s / 15 min) and a `wbInfoCache` entry carries both `at` and `info`. Guards the CONTRACT, not the bug: reproducing it needs a tab held open across a session boundary, which CI cannot do | A cache keyed on presence again (the 2026-07-31 SMH report: the prior session's close and move shown under a "delayed by 1 minute" stamp) |
 | S29 | Scheduled asks | With `?demo=1` forced live+authed, the ⏱ opens the roster and adds a row; `saveAskSched()` clamps to the 15-min floor and 10-row cap even on a DIRECT assignment (the guards live at the write boundary, not in the input handler), and `askSchedDue()` fires only when elapsed, never when disabled | A row firing under 15 min, an uncapped roster, or a disabled row running — each is real Claude quota |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
+| S30 | Watchlist write conflict | With `?demo=1`, `deskSetWatchlists` forwards a version it is handed, `wlMutate` echoes back the version its own read returned, and an omitted version serializes as an explicit `null` — `undefined` would be dropped by `JSON.stringify` and silently bind the RPC's no-check default. The refusal itself is server-side (`desk_014`), exercised against the live table rather than in CI | A write with no `expected_version`, a version invented at write time rather than read, or `undefined` on the wire |
 | S13 | Heatmap map filter | With `?demo=1`, the panel starts COLLAPSED (`#heatBody` hidden, `aria-expanded=false`) and opens on `#heatToggle`; then the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
-| S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
+| S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly. That allowlist is now ONE shared block at the top of `app.spec.js` (`FEED_ORIGIN`/`FEED_CORS`/`BENIGN_CONSOLE`/`benignPageError`), not a copy per scenario: on 2026-08-01 the copies drifted and S3's `pageerror` listener had no filter at all, so `[iphone]` failed on exactly what `[mobile-chrome]` was already dropping — **WebKit raises a blocked cross-origin fetch as a pageerror, Chromium only logs it**. `benignPageError` is deliberately stricter than either console rule (pageerror is where real faults land): CORS-phrased AND naming either the feed origin or the run's own origin, and the own-origin half is enabled ONLY for a LOCAL test server (`localhost`/`127.0.0.1`) — not merely "any origin that isn't production", since `qa-live` takes an `app_url` override and a staging deploy would otherwise inherit the carve-out and swallow a real `quote-proxy` CORS break that S14 (which proves the MARKET feed) would not catch | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
 | S15 | Assistant memory (opt-in, live) | With `RUN_ASSISTANT_TESTS=1` + live backend: ask, reload, prior exchange replays from `desk_chat_memory` (transcript contains the earlier text) | Transcript empty after reload despite a stored exchange |
 | S16 | Assistant research (opt-in, live) | A snapshot-absent question renders an answer (web tools available) | No answer bubble renders |
 | S17 | Assistant live data (opt-in, live) | An off-page ticker returns an answer (the `get_quote` path) | No answer bubble renders |
