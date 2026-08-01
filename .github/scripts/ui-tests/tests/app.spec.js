@@ -56,12 +56,14 @@ const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
    sub-frame, which an `allow=` on the outer iframe cannot reach (tried in
    PR #78). Exact string only — never a blanket console mute. */
 const BENIGN_CONSOLE = /Permissions policy violation: accelerometer is not allowed/i;
-const PROD_ORIGIN = 'https://akyachtsman.github.io';
 const OWN_ORIGIN = (() => { try { return new URL(BASE_URL).origin; } catch { return ''; } })();
-/* The origin-based half of the rule below applies ONLY off production. Against
-   the real origin it is disabled entirely, so qa-live still fails loudly if
-   quote-proxy's allowlist ever genuinely breaks. */
-const OFF_PROD_ORIGIN = !!OWN_ORIGIN && OWN_ORIGIN !== PROD_ORIGIN;
+/* The origin-based half of the rule below is enabled ONLY for a LOCAL test
+   server — the http-server qa.yml runs against — and not merely for "any origin
+   that isn't production" (Codex review). qa-live accepts an `app_url` override,
+   so a staging or preview deploy would otherwise inherit the carve-out and a
+   genuine quote-proxy CORS misconfiguration there would be swallowed. S14 would
+   not catch it either: it proves the MARKET feed, not quote-proxy. */
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(OWN_ORIGIN);
 
 /* A blocked cross-origin call to the desk's own feed layer, as it arrives on
    `pageerror`. WebKit raises these as page errors (Chromium only logs them),
@@ -76,12 +78,12 @@ const OFF_PROD_ORIGIN = !!OWN_ORIGIN && OWN_ORIGIN !== PROD_ORIGIN;
    to be refused: the control working, not a defect.
 
    Deliberately strict: pageerror is where genuine application faults land, so a
-   message must be CORS-phrased AND name one of those two origins. Everything
-   else still fails. */
+   message must be CORS-phrased AND name either the feed origin or a LOCAL test
+   origin. Everything else still fails. */
 const benignPageError = (text) => {
   const t = text || '';
   return FEED_CORS.test(t) &&
-    (t.includes(FEED_ORIGIN) || (OFF_PROD_ORIGIN && t.includes(OWN_ORIGIN)));
+    (t.includes(FEED_ORIGIN) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

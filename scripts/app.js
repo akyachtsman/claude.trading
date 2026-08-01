@@ -1651,8 +1651,14 @@ async function saveWlEditor() {
          whatever changed. Reload the draft IN PLACE — closing it would throw
          away the owner's edits, and re-sending the same draft would just lose
          the race again. They see the current lists and can redo the edit. */
-      await reloadWlEditorDraft();
-      wlEditErr('Your watchlists changed elsewhere while this was open. The list below has been refreshed — redo your edit and save again.');
+      /* Branch on the reload: if THAT read also failed, the draft on screen is
+         still the stale one and Save is now disabled, so claiming it was
+         refreshed would leave the owner staring at old data with a dead button
+         and no idea why (Codex review). Say which of the two happened. */
+      const fresh = await reloadWlEditorDraft();
+      wlEditErr(fresh
+        ? 'Your watchlists changed elsewhere while this was open. The list below has been refreshed — redo your edit and save again.'
+        : 'Your watchlists changed elsewhere while this was open, and the desk could not be reached to reload them. Close this and reopen the editor — the list below is out of date and cannot be saved.');
       return;
     }
     if (!out || !out.ok) { wlEditErr('The desk rejected the save — try again.'); return; }

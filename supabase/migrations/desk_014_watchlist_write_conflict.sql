@@ -23,6 +23,11 @@
 -- rewrites every row, and separate RPC calls are separate transactions, so it
 -- advances on every successful write.
 --
+-- The version is NEVER null: an empty roster reports 'epoch' rather than null,
+-- so "I read an empty table" stays distinguishable from "I sent no version".
+-- Without that, a client holding an empty snapshot could save with a null
+-- version, skip the check, and delete a list created in the meantime.
+--
 -- `expected_version` DEFAULTS TO NULL = do not check. A cached client that
 -- predates this migration must keep working rather than be bricked mid-session;
 -- it simply keeps the old last-write-wins behaviour. Every caller in this repo
@@ -46,9 +51,13 @@ set search_path to 'public'
 as $function$
   select jsonb_build_object(
     'ok', true,
-    -- NULL on an empty table, which round-trips as a null version and matches
-    -- the same null on the write side — an empty roster is a real state.
-    'version', (select max(w.updated_at) from public.desk_watchlists w),
+    -- NEVER null. An empty roster is a real, observed state, and returning
+    -- null for it would be indistinguishable from a caller that sent no
+    -- version at all — so a client holding an empty snapshot could save with
+    -- version null, skip the check, and delete a list created since (Codex
+    -- review). 'epoch' can never collide with a real updated_at.
+    'version', coalesce((select max(w.updated_at) from public.desk_watchlists w),
+                        'epoch'::timestamptz),
     'lists', coalesce((
       select jsonb_agg(jsonb_build_object(
                'id', w.id, 'title', w.title, 'symbols', to_jsonb(w.symbols),
@@ -99,10 +108,13 @@ begin
   -- it still permits concurrent reads.
   lock table public.desk_watchlists in exclusive mode;
 
-  select max(w.updated_at) into cur from public.desk_watchlists w;
+  -- Same coalesce as the reader: an empty roster has an OBSERVABLE version, so
+  -- a client that read it empty can still be told the table has moved.
+  select coalesce(max(w.updated_at), 'epoch'::timestamptz) into cur
+    from public.desk_watchlists w;
 
-  -- `is distinct from` rather than <>: on an empty table both sides are NULL,
-  -- and <> would yield NULL (not true), silently skipping the check.
+  -- null here means ONLY "caller sent no version" (a pre-desk_014 client), now
+  -- that an empty roster reports 'epoch' instead of null.
   if expected_version is not null and cur is distinct from expected_version then
     -- The caller gets the CURRENT version back so it can reload and retry
     -- without a second round-trip to find out what it missed.
@@ -134,7 +146,8 @@ begin
     n := n + coalesce(array_length(syms, 1), 0);
   end loop;
 
-  select max(w.updated_at) into cur from public.desk_watchlists w;
+  select coalesce(max(w.updated_at), 'epoch'::timestamptz) into cur
+    from public.desk_watchlists w;
   return jsonb_build_object('ok', true, 'lists', i, 'symbols', n,
                             'version', cur, 'updatedAt', now());
 end;
