@@ -65,9 +65,7 @@ const OWN_ORIGIN = (() => { try { return new URL(BASE_URL).origin; } catch { ret
    not catch it either: it proves the MARKET feed, not quote-proxy. */
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(OWN_ORIGIN);
 
-/* A blocked cross-origin call to the desk's own feed layer, as it arrives on
-   `pageerror`. WebKit raises these as page errors (Chromium only logs them),
-   and a pageerror carries NO source URL, so the match has to come from the text.
+/* A blocked cross-origin call to the desk's own feed layer.
 
    One blocked fetch emits a PAIR and only the second names the URL:
      "Origin http://localhost:8080 is not allowed by Access-Control-Allow-Origin…"
@@ -77,14 +75,24 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.tes
    an allowlist holding exactly the Pages origin, so a localhost run is SUPPOSED
    to be refused: the control working, not a defect.
 
-   Deliberately strict: pageerror is where genuine application faults land, so a
-   message must be CORS-phrased AND name either the feed origin or a LOCAL test
-   origin. Everything else still fails. */
-const benignPageError = (text) => {
-  const t = text || '';
-  return FEED_CORS.test(t) &&
+   Deliberately strict, and the reason this is a predicate rather than a regex:
+   a message must be CORS-PHRASED **and** name either the feed origin or a LOCAL
+   test origin. Everything else still fails. In particular the own-origin half
+   never extends to `Failed to load resource` — on a local server a genuinely
+   broken asset reference reports the run's own origin too, and swallowing that
+   would turn a missing script into a green run.
+
+   `src` is the console location URL when there is one; pageerror carries none,
+   which is why it is optional rather than a second predicate. Passing the two
+   as one haystack is safe — both halves demand the CORS phrasing first. */
+const benignCors = (text, src) => {
+  const t = `${text || ''} ${src || ''}`;
+  return FEED_CORS.test(text || '') &&
     (t.includes(FEED_ORIGIN) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
 };
+/* WebKit raises a blocked cross-origin fetch as a pageerror where Chromium only
+   logs it, so this is the iphone project's half of the same rule. */
+const benignPageError = (text) => benignCors(text);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API CALL CAPTURE — must wrap fetch before page load via addInitScript
@@ -412,6 +420,14 @@ test('S3: interactive elements discovered and exercised without errors', async (
        than the URL, so a source-only test misses half of it. */
     const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text);
     if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
+    /* The rule above demands the FEED ORIGIN appear in the text or the location,
+       which the first message of WebKit's CORS pair supplies in neither — it
+       names only the refused origin. So `[iphone]` failed on 2026-08-01 against
+       0bfb372 on exactly what `[mobile-chrome]` was dropping, one layer below
+       the pageerror drift fixed earlier that day: the shared rule had been
+       applied to the pageerror listener and not to its console twin. Reuse the
+       predicate rather than restating it — that restating is the whole bug. */
+    if (benignCors(text, src)) return;
     consoleErrors.push(text);
   });
 
