@@ -1003,11 +1003,15 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
 // S31 — Create and delete a whole watchlist from the panel (owner request
 // 2026-08-01). Both edits previously required opening the ✎ editor.
 //
+// Delete is gated on the arrangement lock (owner ruling 2026-08-01, revising
+// the first cut, which left it ungated behind its confirm dialog). Creating a
+// list is not — the lock covers arrangement and the one irreversible act.
+//
 // The duplicate-name refusal is the load-bearing assertion here, and it is NOT
 // cosmetic: wlPick() resolves a list by title whenever its index has shifted,
 // and gives up unless exactly one matches. Two lists sharing a name would make
 // every add, remove and drop into either of them silently unaddressable.
-test('S31: create and delete a list, and refuse a duplicate name', async ({ page }) => {
+test('S31: create and delete a list; delete is behind the lock', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -1061,6 +1065,18 @@ test('S31: create and delete a list, and refuse a duplicate name', async ({ page
 
       // The count comes from SAVED symbols, so an unresolved-ticker list cannot
       // be described as empty at the moment it is about to be destroyed.
+      // LOCKED: the × must be disabled, and the guard must hold even when the
+      // dialog is opened directly — a disabled button is a hint, not the rule
+      // (owner ruling 2026-08-01).
+      wlLocked = true;
+      renderWatchlist();
+      r.lockedDisabled = document.querySelectorAll('.wl-del')[0].disabled;
+      r.lockedNewListStillOffered = !document.getElementById('wlNewListBtn').hidden;
+      openWlDelList(0, store[0].title, null);
+      r.lockedDialogRefused = document.getElementById('wlDelBackdrop').hidden;
+      wlLocked = false;
+      renderWatchlist();
+
       document.querySelectorAll('.wl-del')[0].click();
       r.delText = document.getElementById('wlDelText').textContent;
       r.focusOnSafe = document.activeElement.id;
@@ -1079,6 +1095,9 @@ test('S31: create and delete a list, and refuse a duplicate name', async ({ page
   expect(out.delText, 'the confirm must name the list and its symbol count')
     .toContain('Radar');
   expect(out.delText).toContain('2 symbols');
+  expect(out.lockedDisabled, 'the × must be disabled under the lock').toBe(true);
+  expect(out.lockedDialogRefused, 'and the dialog must refuse to open even when called directly').toBe(true);
+  expect(out.lockedNewListStillOffered, 'the lock covers destruction, not creating a list').toBe(true);
   expect(out.focusOnSafe, 'a destructive dialog opens on the safe choice').toBe('wlDelCancelBtn');
   expect(out.afterDelete, 'the deleted list must be gone').toBe('Macro,Earnings');
 });

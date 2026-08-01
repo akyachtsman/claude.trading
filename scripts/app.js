@@ -1087,15 +1087,23 @@ function renderWatchlist(payload, lamp) {
       };
       head.appendChild(mk('↑', -1, li === 0));
       head.appendChild(mk('↓', 1, li === lists.length - 1));
-      /* Delete the WHOLE list (owner request 2026-08-01). Deliberately NOT
-         gated on wlLocked: that lock freezes POSITION only — its own tooltip
-         promises "adding and removing stay available" — and the + and 🗑 in
-         the header already follow that rule. The guard here is the confirm
-         dialog, which names the list and how many symbols go with it. */
+      /* Delete the WHOLE list (owner request 2026-08-01), GATED ON THE LOCK
+         (owner ruling the same day, revising the first cut). The lock had been
+         read as position-only — "adding and removing stay available" — and
+         delete was left ungated behind its confirm dialog. The owner's ruling
+         draws the line differently, and by the more defensible reading: losing
+         a whole list is not the same kind of act as removing one tile, so the
+         lock now covers it. Adding a list stays available; only destruction is
+         behind the lock.
+         DISABLED rather than hidden, like the ↑/↓ beside it — a control that
+         vanishes reads as a bug, one that greys out reads as unavailable. */
       const del = el('button', 'wl-del', '×');
       del.type = 'button';
       del.setAttribute('aria-label', 'Delete the list ' + l.title);
-      del.title = 'Delete “' + l.title + '”';
+      del.disabled = wlLocked;
+      del.title = wlLocked
+        ? 'Unlock the arrangement to delete “' + l.title + '”'
+        : 'Delete “' + l.title + '”';
       del.addEventListener('click', () => openWlDelList(li, l.title, del));
       head.appendChild(del);
     }
@@ -1517,6 +1525,11 @@ async function submitWlNewList() {
 
 function openWlDelList(idx, title, invoker) {
   if (!wlCanEdit() || wlBusy) return;
+  /* Enforced HERE and not only on the button, the same way wlCommitMove and
+     wlMoveBand enforce it rather than trusting their controls. A disabled
+     button is a hint; the keyboard path, a stale render and a console call all
+     reach this function directly. */
+  if (wlLocked) { wlNote('Unlock the arrangement to delete a list'); return; }
   wlDelTarget = { idx, title };
   wlReturnFocus = invoker || null;
   const back = document.getElementById('wlDelBackdrop');
