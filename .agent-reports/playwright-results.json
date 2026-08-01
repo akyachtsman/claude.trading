@@ -4,16 +4,10 @@
       "/opt/node22/bin/node",
       "/home/user/claude.trading/.github/scripts/ui-tests/node_modules/.bin/playwright",
       "test",
-      "-c",
-      "pw.local.mjs",
-      "--grep",
-      "S12",
-      "--project",
-      "mobile-chrome",
-      "--retries",
-      "0"
+      "--list",
+      "--project=iphone"
     ],
-    "configFile": "/home/user/claude.trading/.github/scripts/ui-tests/pw.local.mjs",
+    "configFile": "/home/user/claude.trading/.github/scripts/ui-tests/playwright.config.js",
     "rootDir": "/home/user/claude.trading/.github/scripts/ui-tests/tests",
     "failOnFlakyTests": false,
     "forbidOnly": false,
@@ -24,18 +18,14 @@
     "grep": {},
     "grepInvert": null,
     "maxFailures": 0,
-    "metadata": {
-      "actualWorkers": 1
-    },
+    "metadata": {},
     "preserveOutput": "always",
     "projects": [
       {
         "outputDir": "/home/user/claude.trading/.agent-reports/screenshots",
         "repeatEach": 1,
-        "retries": 0,
-        "metadata": {
-          "actualWorkers": 1
-        },
+        "retries": 1,
+        "metadata": {},
         "id": "mobile-chrome",
         "name": "mobile-chrome",
         "testDir": "/home/user/claude.trading/.github/scripts/ui-tests/tests",
@@ -48,10 +38,8 @@
       {
         "outputDir": "/home/user/claude.trading/.agent-reports/screenshots",
         "repeatEach": 1,
-        "retries": 0,
-        "metadata": {
-          "actualWorkers": 1
-        },
+        "retries": 1,
+        "metadata": {},
         "id": "iphone",
         "name": "iphone",
         "testDir": "/home/user/claude.trading/.github/scripts/ui-tests/tests",
@@ -95,6 +83,226 @@
       "line": 0,
       "specs": [
         {
+          "title": "S1: page loads without JS errors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-ae2441856adffb5aacb4",
+          "file": "app.spec.js",
+          "line": 219,
+          "column": 1
+        },
+        {
+          "title": "S2: auth gate discovered and credential accepted",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-fdde49acf8da1ea450ef",
+          "file": "app.spec.js",
+          "line": 271,
+          "column": 1
+        },
+        {
+          "title": "S3: interactive elements discovered and exercised without errors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-61184dfc09872d7b2b3c",
+          "file": "app.spec.js",
+          "line": 341,
+          "column": 1
+        },
+        {
+          "title": "S4: no horizontal overflow at 390px mobile viewport",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-66a509a0252a5bef41d7",
+          "file": "app.spec.js",
+          "line": 545,
+          "column": 1
+        },
+        {
+          "title": "NAV: back navigation strictly unwinds (no loop)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-172cf251b2335b292e74",
+          "file": "app.spec.js",
+          "line": 663,
+          "column": 1
+        },
+        {
+          "title": "CTRL: no duplicated primary action control",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-4003b273dc3a36b94525",
+          "file": "app.spec.js",
+          "line": 753,
+          "column": 1
+        },
+        {
+          "title": "S5: demo mode shows DEMO lamps on every panel",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-21ac24758bf880f28f16",
+          "file": "app.spec.js",
+          "line": 782,
+          "column": 1
+        },
+        {
+          "title": "S6: positions table sorts on header click",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-87e248c918adf8056408",
+          "file": "app.spec.js",
+          "line": 791,
+          "column": 1
+        },
+        {
+          "title": "S10: valid PIN unlocks accounts (live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-7acf17178a7ee7aefb2b",
+          "file": "app.spec.js",
+          "line": 817,
+          "column": 1
+        },
+        {
+          "title": "S11: invalid PIN shows an error and stays locked (live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-24e4156e3c978349e514",
+          "file": "app.spec.js",
+          "line": 829,
+          "column": 1
+        },
+        {
+          "title": "S14: desk lamp reads LIVE/EOD off the market feed (live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-c47c3cd5d96e86f49438",
+          "file": "app.spec.js",
+          "line": 853,
+          "column": 1
+        },
+        {
           "title": "S12: charts workbench renders panes and controls respond",
           "ok": true,
           "tags": [],
@@ -103,29 +311,335 @@
               "timeout": 30000,
               "annotations": [],
               "expectedStatus": "passed",
-              "projectId": "mobile-chrome",
-              "projectName": "mobile-chrome",
-              "results": [
-                {
-                  "workerIndex": 0,
-                  "parallelIndex": 0,
-                  "status": "passed",
-                  "duration": 3645,
-                  "errors": [],
-                  "stdout": [],
-                  "stderr": [],
-                  "retry": 0,
-                  "startTime": "2026-07-13T04:07:20.390Z",
-                  "annotations": [],
-                  "attachments": []
-                }
-              ],
-              "status": "expected"
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
             }
           ],
-          "id": "a510cc93a867214a2ea0-4ff730dea4bd6e4885e5",
+          "id": "a510cc93a867214a2ea0-430584ab5751035fecc4",
           "file": "app.spec.js",
-          "line": 690,
+          "line": 863,
+          "column": 1
+        },
+        {
+          "title": "S13: heatmap map-filter cuts and period select respond",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-f9ecb3f5ee38e6ec6751",
+          "file": "app.spec.js",
+          "line": 921,
+          "column": 1
+        },
+        {
+          "title": "S20: watchlist timeframe control redraws the tile sparklines",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-5020c74840df4ffcc7a7",
+          "file": "app.spec.js",
+          "line": 972,
+          "column": 1
+        },
+        {
+          "title": "S21: watchlist edits need no unlock; removal needs a double-click",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-f7dc42da852f4dc7a6c6",
+          "file": "app.spec.js",
+          "line": 1008,
+          "column": 1
+        },
+        {
+          "title": "S26: tiles drag to arrange; sort snaps to Manual; the tray persists",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-71962c8c639f3804b0ab",
+          "file": "app.spec.js",
+          "line": 1118,
+          "column": 1
+        },
+        {
+          "title": "S22: quick edits resolve the right band when two lists share a title",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-18faad557bbc488efc0a",
+          "file": "app.spec.js",
+          "line": 1207,
+          "column": 1
+        },
+        {
+          "title": "S24: a failed accounts load keeps the desk authenticated",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-5c1ceacb1a5218b8d89f",
+          "file": "app.spec.js",
+          "line": 1235,
+          "column": 1
+        },
+        {
+          "title": "S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-4473c22e11aa4c044a4d",
+          "file": "app.spec.js",
+          "line": 1288,
+          "column": 1
+        },
+        {
+          "title": "S23: post-market prints render, and only where the instrument trades",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-b020b9bd22041e274956",
+          "file": "app.spec.js",
+          "line": 1386,
+          "column": 1
+        },
+        {
+          "title": "S15: assistant remembers across a reload (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-5fdd5454354421b757c5",
+          "file": "app.spec.js",
+          "line": 1454,
+          "column": 1
+        },
+        {
+          "title": "S16: a research question renders an answer (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-49cc327028760a7deaf0",
+          "file": "app.spec.js",
+          "line": 1463,
+          "column": 1
+        },
+        {
+          "title": "S17: an off-page ticker returns an answer via live data (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-4f4b707914ec38aeaf41",
+          "file": "app.spec.js",
+          "line": 1471,
+          "column": 1
+        },
+        {
+          "title": "S18: gives a directional view, not a refusal; disclaimer stays (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-d112629404a56fa2360c",
+          "file": "app.spec.js",
+          "line": 1479,
+          "column": 1
+        },
+        {
+          "title": "S19: clear empties the conversation (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-a0619eeacf0c17d75cef",
+          "file": "app.spec.js",
+          "line": 1488,
+          "column": 1
+        },
+        {
+          "title": "S27: watchlist tiles are half-width, stacked, and never clip a value",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-842d54ae06441bb183ac",
+          "file": "app.spec.js",
+          "line": 1507,
+          "column": 1
+        },
+        {
+          "title": "S28: the charts quote cache is timestamped and its TTL is session-aware",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-974e7b6f66a302782594",
+          "file": "app.spec.js",
+          "line": 1558,
+          "column": 1
+        },
+        {
+          "title": "S29: scheduled asks persist, and the cost guards hold at the save boundary",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-fa54927ddbd0fbde179e",
+          "file": "app.spec.js",
+          "line": 1586,
           "column": 1
         }
       ]
@@ -133,10 +647,10 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-07-13T04:07:19.373Z",
-    "duration": 5272.915,
-    "expected": 1,
-    "skipped": 0,
+    "startTime": "2026-08-01T00:27:27.111Z",
+    "duration": 368.952,
+    "expected": 0,
+    "skipped": 28,
     "unexpected": 0,
     "flaky": 0
   }
