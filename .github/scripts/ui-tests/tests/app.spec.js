@@ -1000,6 +1000,89 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
   await expect(page.locator('#wlTf button', { hasText: '1Y' })).toHaveAttribute('aria-pressed', 'true');
 });
 
+// S31 — Create and delete a whole watchlist from the panel (owner request
+// 2026-08-01). Both edits previously required opening the ✎ editor.
+//
+// The duplicate-name refusal is the load-bearing assertion here, and it is NOT
+// cosmetic: wlPick() resolves a list by title whenever its index has shifted,
+// and gives up unless exactly one matches. Two lists sharing a name would make
+// every add, remove and drop into either of them silently unaddressable.
+test('S31: create and delete a list, and refuse a duplicate name', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+
+  // Demo has no backend to write to, so neither control may be offered.
+  await expect(page.locator('#wlNewListBtn'), 'demo must offer no new-list button').toBeHidden();
+  expect(await page.locator('.wl-del').count(), 'demo must offer no delete-list button').toBe(0);
+
+  // Force the authed state and stand up a fake roster backend that holds real
+  // state, so a create/delete has to actually persist rather than just repaint.
+  const out = await page.evaluate(async () => {
+    let store = [{ title: 'Radar', symbols: ['NVDA', 'AMD'] }, { title: 'Macro', symbols: ['TLT'] }];
+    const realFetch = window.fetch;
+    window.fetch = (url, init) => {
+      const u = String(url);
+      if (u.endsWith('desk_get_watchlists_open'))
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, version: 'v1',
+          lists: store.map(l => ({ ...l, symbols: l.symbols.slice() })) }),
+          { headers: { 'content-type': 'application/json' } }));
+      if (u.endsWith('desk_set_watchlists_open')) {
+        store = JSON.parse(init.body).new_lists.map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, version: 'v2' }),
+          { headers: { 'content-type': 'application/json' } }));
+      }
+      if (u.includes('/functions/v1/desk-watchlist'))
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, range: wlTf,
+          lists: store.map(l => ({ title: l.title, symbols: l.symbols.slice(),
+            rows: l.symbols.map(sym => ({ sym, last: 100, pct: 1, spark: [1, 2] })) })) }),
+          { headers: { 'content-type': 'application/json' } }));
+      return realFetch(url, init);
+    };
+    const r = {};
+    try {
+      DESK.mode = 'live'; DESK.authed = true;
+      await loadWatchlist(true);
+      r.delsShown = document.querySelectorAll('.wl-del').length;
+      r.newBtnShown = !document.getElementById('wlNewListBtn').hidden;
+
+      document.getElementById('wlNewListBtn').click();
+      document.getElementById('wlNewInput').value = 'Earnings';
+      await submitWlNewList();
+      r.afterCreate = store.map(l => l.title).join(',');
+
+      // Case-insensitive: "earnings" must not join "Earnings".
+      document.getElementById('wlNewListBtn').click();
+      document.getElementById('wlNewInput').value = 'earnings';
+      await submitWlNewList();
+      r.dupeRefused = /already have a list/.test(document.getElementById('wlNewErr').textContent);
+      r.dupeDialogStaysOpen = !document.getElementById('wlNewBackdrop').hidden;
+      r.afterDupe = store.map(l => l.title).join(',');
+      closeWlNewList();
+
+      // The count comes from SAVED symbols, so an unresolved-ticker list cannot
+      // be described as empty at the moment it is about to be destroyed.
+      document.querySelectorAll('.wl-del')[0].click();
+      r.delText = document.getElementById('wlDelText').textContent;
+      r.focusOnSafe = document.activeElement.id;
+      await confirmWlDelList();
+      r.afterDelete = store.map(l => l.title).join(',');
+    } finally { window.fetch = realFetch; }
+    return r;
+  });
+
+  expect(out.newBtnShown, 'authed live must offer the new-list button').toBe(true);
+  expect(out.delsShown, 'one delete per band').toBe(2);
+  expect(out.afterCreate, 'the created list must persist').toBe('Radar,Macro,Earnings');
+  expect(out.dupeRefused, 'a duplicate name must be refused').toBe(true);
+  expect(out.dupeDialogStaysOpen, 'a refusal must not discard the typed name').toBe(true);
+  expect(out.afterDupe, 'and must not write anything').toBe('Radar,Macro,Earnings');
+  expect(out.delText, 'the confirm must name the list and its symbol count')
+    .toContain('Radar');
+  expect(out.delText).toContain('2 symbols');
+  expect(out.focusOnSafe, 'a destructive dialog opens on the safe choice').toBe('wlDelCancelBtn');
+  expect(out.afterDelete, 'the deleted list must be gone').toBe('Macro,Earnings');
+});
+
 // S21 — Watchlist quick add + hold-to-remove (owner request 2026-07-30).
 //
 // The first half is the security invariant and is pure black box: no write

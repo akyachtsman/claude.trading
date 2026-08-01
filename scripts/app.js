@@ -1009,7 +1009,7 @@ function wlSyncWriteControls() {
       });
     }
   }
-  for (const id of ['wlTrayAdd', 'wlTrash']) {
+  for (const id of ['wlTrayAdd', 'wlTrash', 'wlNewListBtn']) {
     const el = document.getElementById(id);
     if (el) el.hidden = !canEdit;
   }
@@ -1087,6 +1087,17 @@ function renderWatchlist(payload, lamp) {
       };
       head.appendChild(mk('↑', -1, li === 0));
       head.appendChild(mk('↓', 1, li === lists.length - 1));
+      /* Delete the WHOLE list (owner request 2026-08-01). Deliberately NOT
+         gated on wlLocked: that lock freezes POSITION only — its own tooltip
+         promises "adding and removing stay available" — and the + and 🗑 in
+         the header already follow that rule. The guard here is the confirm
+         dialog, which names the list and how many symbols go with it. */
+      const del = el('button', 'wl-del', '×');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Delete the list ' + l.title);
+      del.title = 'Delete “' + l.title + '”';
+      del.addEventListener('click', () => openWlDelList(li, l.title, del));
+      head.appendChild(del);
     }
     group.appendChild(head);
     const box = el('div', 'mkt-group-tiles');
@@ -1429,6 +1440,140 @@ async function confirmWlRemove() {
     : sym + ' was already gone from that list.'));
 }
 
+/* ── create / delete a whole list ──────────────────────────────────────────
+   Both were reachable only inside the ✎ editor, which meant opening a modal
+   and saving a draft to do the two commonest roster edits (owner request
+   2026-08-01). Each routes through wlMutate() like every other write: an
+   authoritative read, a mutation, one atomic replace-all. Never a patch of the
+   rendered payload — that omits unresolved symbols and can be an hour stale
+   when the market is shut. */
+let wlDelTarget = null;   /* {idx, title} — which band's × was pressed */
+
+function wlNewErr(msg) {
+  const p = document.getElementById('wlNewErr');
+  if (!p) return;
+  p.textContent = msg || '';
+  p.hidden = !msg;
+}
+
+function wlDelErr(msg) {
+  const p = document.getElementById('wlDelErr');
+  if (!p) return;
+  p.textContent = msg || '';
+  p.hidden = !msg;
+}
+
+function openWlNewList(invoker) {
+  if (!wlCanEdit() || wlBusy) return;
+  wlReturnFocus = invoker || null;
+  const back = document.getElementById('wlNewBackdrop');
+  const input = document.getElementById('wlNewInput');
+  if (!back || !input) return;
+  input.value = '';
+  input.disabled = false;
+  wlNewErr('');
+  back.hidden = false;
+  input.focus();
+}
+
+function closeWlNewList() {
+  if (wlBusy) return;   /* don't abandon a write mid-flight */
+  const back = document.getElementById('wlNewBackdrop');
+  if (back) back.hidden = true;
+  wlRestoreFocus();
+}
+
+async function submitWlNewList() {
+  if (wlBusy) return;
+  const input = document.getElementById('wlNewInput');
+  const btn = document.getElementById('wlNewSaveBtn');
+  const name = String((input && input.value) || '').trim().slice(0, 60);
+  if (!name) { wlNewErr('Give the list a name.'); if (input) input.focus(); return; }
+  wlBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  if (input) input.disabled = true;
+  let dupe = false;
+  const res = await wlMutate(lists => {
+    /* A DUPLICATE NAME IS REFUSED, and not for tidiness: wlPick() falls back to
+       resolving a list by title when the index has moved, and gives up unless
+       exactly one matches. Two lists called the same thing would make every
+       add, remove and drop into either of them unaddressable — a silent
+       failure much worse than this error line. Checked against the
+       authoritative roster inside the mutation, not the render. */
+    if (lists.some(l => (l.title || '').trim().toLowerCase() === name.toLowerCase())) {
+      dupe = true;
+      return false;
+    }
+    lists.push({ title: name, symbols: [] });
+    return true;
+  });
+  wlBusy = false;
+  if (btn) { btn.disabled = false; btn.textContent = 'Create'; }
+  if (input) input.disabled = false;
+  if (res.ok) { closeWlNewList(); return; }
+  wlNewErr(dupe ? 'You already have a list called “' + name + '”.' : (res.err || 'Could not create that list.'));
+  if (input) input.focus();
+}
+
+function openWlDelList(idx, title, invoker) {
+  if (!wlCanEdit() || wlBusy) return;
+  wlDelTarget = { idx, title };
+  wlReturnFocus = invoker || null;
+  const back = document.getElementById('wlDelBackdrop');
+  const text = document.getElementById('wlDelText');
+  if (!back) return;
+  if (text) {
+    /* Counted from the SAVED symbols, not the drawn tiles: a list whose
+       tickers did not resolve has no rows at all, and telling the owner they
+       are deleting an empty list when it holds eleven symbols would be a lie
+       at exactly the moment it matters. */
+    const lists = (wlState.payload && wlState.payload.lists) || [];
+    const l = lists[idx];
+    const n = ((l && l.symbols) || []).length;
+    text.textContent = 'Delete “' + title + '”' +
+      (n ? ' and the ' + n + ' symbol' + (n === 1 ? '' : 's') + ' in it?' : '?') +
+      ' This cannot be undone.';
+  }
+  wlDelErr('');
+  back.hidden = false;
+  const cancel = document.getElementById('wlDelCancelBtn');
+  if (cancel) cancel.focus();   /* destructive dialog opens on the safe choice */
+}
+
+function closeWlDelList() {
+  if (wlBusy) return;
+  const back = document.getElementById('wlDelBackdrop');
+  if (back) back.hidden = true;
+  wlDelTarget = null;
+  wlRestoreFocus();
+}
+
+async function confirmWlDelList() {
+  if (!wlDelTarget || wlBusy) return;
+  const { idx, title } = wlDelTarget;
+  const btn = document.getElementById('wlDelConfirmBtn');
+  wlBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+  let found = true;
+  const res = await wlMutate(lists => {
+    /* wlPick resolves by index, falling back to a unique title — so a roster
+       that shifted under an open dialog deletes the list the owner POINTED AT
+       or nothing at all, never whatever now sits at that index. */
+    const l = wlPick(lists, idx, title);
+    if (!l) { found = false; return false; }
+    const at = lists.indexOf(l);
+    if (at < 0) { found = false; return false; }
+    lists.splice(at, 1);
+    return true;
+  });
+  wlBusy = false;
+  if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
+  if (res.ok) { closeWlDelList(); return; }
+  wlDelErr(res.err || (!found
+    ? 'That list moved or was renamed — reload and try again.'
+    : 'Could not delete that list.'));
+}
+
 /* DOUBLE-CLICK a tile to reach the confirm dialog (owner ruling 2026-07-30,
    replacing the hold — 3s, then 1s, then this). The confirm dialog was always
    the real safety net, so the gesture only has to be more deliberate than a
@@ -1494,6 +1639,28 @@ function wireWatchlistQuickEdits() {
     submitWlQuickAdd();
   });
 
+  const nb = document.getElementById('wlNewListBtn');
+  if (nb) nb.addEventListener('click', () => openWlNewList(nb));
+  const n = document.getElementById('wlNewBackdrop');
+  const nClose = document.getElementById('wlNewCloseBtn');
+  const nSave = document.getElementById('wlNewSaveBtn');
+  const nInput = document.getElementById('wlNewInput');
+  if (nClose) nClose.addEventListener('click', closeWlNewList);
+  if (nSave) nSave.addEventListener('click', submitWlNewList);
+  if (n) n.addEventListener('click', e => { if (e.target === n) closeWlNewList(); });
+  if (nInput) nInput.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    submitWlNewList();
+  });
+
+  const d = document.getElementById('wlDelBackdrop');
+  const dCancel = document.getElementById('wlDelCancelBtn');
+  const dOk = document.getElementById('wlDelConfirmBtn');
+  if (dCancel) dCancel.addEventListener('click', closeWlDelList);
+  if (dOk) dOk.addEventListener('click', confirmWlDelList);
+  if (d) d.addEventListener('click', e => { if (e.target === d) closeWlDelList(); });
+
   const r = document.getElementById('wlRmBackdrop');
   const rCancel = document.getElementById('wlRmCancelBtn');
   const rOk = document.getElementById('wlRmConfirmBtn');
@@ -1505,6 +1672,8 @@ function wireWatchlistQuickEdits() {
     if (e.key !== 'Escape') return;
     if (q && !q.hidden) closeWlQuickAdd();
     if (r && !r.hidden) closeWlRemove();
+    if (n && !n.hidden) closeWlNewList();
+    if (d && !d.hidden) closeWlDelList();
   });
 }
 

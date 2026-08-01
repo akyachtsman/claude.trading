@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260801b">
-<link rel="stylesheet" href="styles/components.css?v=20260801b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260801c">
+<link rel="stylesheet" href="styles/components.css?v=20260801c">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -493,6 +493,15 @@
               aria-label="New symbol tile" title="New symbol tile — drag it into a list">+</button>
       <button type="button" class="wl-trash" id="wlTrash"
               aria-label="Remove the focused symbol, or drag one here">🗑</button>
+      <!-- NEW LIST (owner request 2026-08-01): creating and deleting a whole
+           list used to be reachable only inside the ✎ editor, so the two
+           commonest roster edits meant opening a modal, editing a draft, and
+           saving it. This mints an empty list directly; the × on each band
+           deletes one. It is LABELLED rather than a bare + because the + beside
+           it already means "new SYMBOL tile" — two identical glyphs doing
+           different jobs is how a control gets pressed by mistake. -->
+      <button type="button" class="wl-add wl-newlist" id="wlNewListBtn"
+              aria-label="New watchlist" title="New watchlist">+ list</button>
       <!-- ARRANGEMENT lock (owner request 2026-07-31): freezes POSITION only —
            row order, tile order, and tile moves between rows. Adding and
            removing stay available, so this protects a tuned layout rather than
@@ -654,6 +663,44 @@
     </section>
   </div>
 
+  <!-- Create a list. Non-destructive, so an ordinary dialog opening on the
+       input rather than an alertdialog opening on the safe choice. -->
+  <div class="modal-backdrop" id="wlNewBackdrop" hidden>
+    <section class="panel modal-panel wl-rm-panel" id="wlNewPanel" aria-labelledby="wlNewTitle" role="dialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlNewTitle">New watchlist</h2>
+      </div>
+      <div class="panel-body">
+        <label class="lock-explain" for="wlNewInput">Name it. Drag symbols in once it exists, or use the + to add them.</label>
+        <input type="text" class="input" id="wlNewInput" maxlength="60" autocomplete="off" spellcheck="false" placeholder="Earnings this week">
+        <div class="wl-edit-actions">
+          <button type="button" class="btn btn-secondary" id="wlNewCloseBtn">Cancel</button>
+          <button type="button" class="btn" id="wlNewSaveBtn">Create</button>
+        </div>
+        <p class="lock-error" id="wlNewErr" hidden></p>
+      </div>
+    </section>
+  </div>
+
+  <!-- Delete a whole list. This is the most destructive control on the desk —
+       it takes every symbol in the band with it — so it names the list AND its
+       symbol count, and opens focus on "Keep it" like the tile removal. -->
+  <div class="modal-backdrop" id="wlDelBackdrop" hidden>
+    <section class="panel modal-panel wl-rm-panel" id="wlDelPanel" aria-labelledby="wlDelTitle" aria-describedby="wlDelText" role="alertdialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlDelTitle">Delete watchlist</h2>
+      </div>
+      <div class="panel-body">
+        <p class="lock-explain" id="wlDelText">—</p>
+        <div class="wl-edit-actions">
+          <button type="button" class="btn btn-secondary" id="wlDelCancelBtn">Keep it</button>
+          <button type="button" class="btn" id="wlDelConfirmBtn">Delete</button>
+        </div>
+        <p class="lock-error" id="wlDelErr" hidden></p>
+      </div>
+    </section>
+  </div>
+
   <div class="modal-backdrop" id="wlEditBackdrop" hidden>
     <section class="panel modal-panel" id="wlEditPanel" aria-labelledby="wlEditTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
@@ -810,8 +857,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260801b"></script>
-<script src="scripts/data.js?v=20260801b"></script>
-<script src="scripts/app.js?v=20260801b"></script>
+<script src="scripts/config.js?v=20260801c"></script>
+<script src="scripts/data.js?v=20260801c"></script>
+<script src="scripts/app.js?v=20260801c"></script>
 </body>
 </html>

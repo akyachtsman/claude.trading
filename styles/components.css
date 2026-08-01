@@ -455,7 +455,30 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    `display` outranks the UA's `[hidden] { display: none }`, so setting the
    attribute alone left both controls on screen in demo — a write control
    offered where there is nothing to write to. Caught by S21. */
-.wl-add[hidden], .wl-trash[hidden] { display: none; }
+/* Labelled, so it cannot be confused with the bare + beside it (new SYMBOL
+   tile). Auto width since it carries text. */
+.wl-newlist {
+  width: auto; height: 26px; flex: 0 0 auto; padding: 0 8px;
+  font-size: 11px; letter-spacing: .02em; white-space: nowrap;
+}
+.wl-add[hidden], .wl-trash[hidden], .wl-newlist[hidden] { display: none; }
+/* Delete a whole list, in the band's own gutter beside its ↑/↓. Sized and
+   shaped like .wl-move so the three read as one cluster. The DANGER colour is
+   reserved for hover/focus: at rest this sits beside two harmless arrows and
+   must not shout, but the moment it is the thing under the pointer it has to
+   look different from "move". Not a gain/loss token — those mean P&L. */
+.wl-del {
+  width: 18px; height: 18px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 4px; background: none;
+  color: var(--color-text-muted); font-size: 13px; line-height: 1;
+  cursor: pointer; padding: 0;
+}
+.wl-del:hover:not(:disabled), .wl-del:focus-visible {
+  color: var(--color-danger); border-color: var(--color-danger);
+}
+.wl-del:disabled { opacity: .35; cursor: default; }
+.wl-del[hidden] { display: none; }
 /* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
    desk means P&L, and a red glow on a hover target would read as a number. */
 .wl-trash.wl-drop-over,
