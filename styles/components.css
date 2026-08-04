@@ -552,6 +552,13 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 /* A scheduled question is marked so it never reads as one the owner forgot
    writing. Border, not colour: gain/loss colour on this desk means P&L. */
 .ask-q--sched { border-left: 2px solid var(--color-accent-bright); padding-left: 6px; }
+/* A stopped run is not a failure and not an answer: muted, and its rule is the
+   quiet border colour rather than the accent every real answer carries, so the
+   thread never reads as though the desk replied. Deliberately NOT the loss red
+   — those colours are P&L-only. */
+.ask-a--stopped { color: var(--color-text-secondary); font-style: italic; border-left-color: var(--color-border); }
+/* Sits with the Ask button; secondary weight so Stop never out-shouts Ask. */
+.ask-stop[hidden] { display: none; }
 
 /* ── row reorder + arrangement lock (owner request 2026-07-31) ─────────────── */
 .wl-move {

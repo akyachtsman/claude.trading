@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: app.spec.js >> S30: watchlist writes carry the roster version they read
-- Location: tests/app.spec.js:1633:1
+- Name: app.spec.js >> S32: a question can be interrupted, and the stop is not silent
+- Location: tests/app.spec.js:1822:1
 
 # Error details
 

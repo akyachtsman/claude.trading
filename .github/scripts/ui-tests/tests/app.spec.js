@@ -1810,3 +1810,66 @@ test('S30: watchlist writes carry the roster version they read', async ({ page }
      bind its default and skip the check without anyone noticing. */
   expect(out.omittedIsNull, 'an absent version is an explicit null on the wire').toBeNull();
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 32 — Interrupting a question in flight (owner request 2026-08-01).
+// The desk-ask tool loop can run to 12 tool calls, so "wait it out" is not an
+// answer. Stop severs THIS TAB's wait only — the server run completes and its
+// answer still reaches desk_chat_memory — so the two things that must hold are
+// that the composer comes back immediately, and that the thread SAYS the answer
+// is still coming. A silent stop would look like a lost question on reload.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S32: a question can be interrupted, and the stop is not silent', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
+
+  // Demo has no backend to ask, so no Stop should exist to press.
+  await expect(page.locator('.ask-stop'), 'no Stop in demo — there is nothing in flight').toHaveCount(0);
+
+  /* Forced live+authed with deskAsk replaced by a request that never settles on
+     its own, so the ONLY way out is the abort — exactly the state the owner is
+     in when a research question stalls. The stub honours the signal itself
+     because that is the contract runAsk depends on. */
+  await page.evaluate(() => {
+    DESK.mode = 'live'; DESK.authed = true;
+    sessionStorage.setItem('desk_pin', '0000');
+    /* renderAsk holds the composer disabled until the stored conversation
+       replays, so the history RPC is stubbed empty — otherwise this test waits
+       on a real backend call it is not about. */
+    window.deskChatHistory = () => Promise.resolve([]);
+    window.deskAsk = (pin, q, ctx, signal) => new Promise((_res, rej) => {
+      if (signal) signal.addEventListener('abort', () => {
+        const e = new Error('aborted'); e.name = 'AbortError'; rej(e);
+      });
+    });
+    renderAsk();
+  });
+
+  const form = page.locator('#askBody form');
+  await form.locator('input.input').fill('what is SMH doing?');
+  await expect(page.locator('.ask-stop'), 'Stop stays hidden until a question is in flight').toBeHidden();
+  await form.locator('button[type=submit]').click();
+
+  // In flight: Stop offered, and the composer is NOT taken away.
+  await expect(page.locator('.ask-stop')).toBeVisible();
+  await expect(page.locator('#askBody form button[type=submit]')).toHaveText('Asking…');
+  await expect(page.locator('#askBody form input.input'),
+    'the composer stays usable — someone reaching for Stop wants to retype').toBeEnabled();
+
+  await page.locator('.ask-stop').click();
+
+  // After the stop: composer restored, Stop gone, and the outcome is stated.
+  await expect(page.locator('#askBody form button[type=submit]')).toHaveText('Ask');
+  await expect(page.locator('.ask-stop')).toBeHidden();
+  await expect(page.locator('#askBody form input.input')).toBeEnabled();
+  const note = page.locator('.ask-a--stopped');
+  await expect(note, 'a stop must say the answer is still coming').toHaveCount(1);
+  await expect(note).toContainText(/still|appear|history|reload/i);
+  /* A deliberate stop is not a failure: the red error line must stay hidden, or
+     the owner reads their own action as a fault. */
+  await expect(page.locator('#askBody ~ .lock-error, #askBody .lock-error')).toBeHidden();
+
+  // And the panel is genuinely reusable, not wedged behind a stuck askBusy.
+  const busy = await page.evaluate(() => askBusy);
+  expect(busy, 'askBusy must clear on abort or the panel is dead').toBe(false);
+});
