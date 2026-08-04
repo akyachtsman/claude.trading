@@ -454,7 +454,13 @@ async function deskSetSystemPrompt(pin, content) {
 /* Ask-the-desk: PIN-gated agentic Claude assistant (memory replay + web research
    + live get_quote). The Anthropic key lives only in the edge function's
    secrets (FR-D1); the answer carries a sources[] array of web citations. */
-async function deskAsk(pin, question, context) {
+/* `signal` (owner request 2026-08-01) lets the caller abort a question in
+   flight. It severs THIS BROWSER's wait only — desk-ask runs to completion on
+   the server regardless, so the Claude quota for the run is spent either way
+   and the exchange still reaches desk_chat_memory. runAsk() says so in the
+   thread rather than letting a cancelled question reappear unexplained on the
+   next reload. Stopping the server run needs a desk-ask change and a deploy. */
+async function deskAsk(pin, question, context, signal) {
   const res = await fetch(DESK_DB.url + '/functions/v1/desk-ask', {
     method: 'POST',
     headers: {
@@ -463,6 +469,7 @@ async function deskAsk(pin, question, context) {
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
     body: JSON.stringify({ pin, question, context }),
+    signal,
   });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-ask → HTTP ' + res.status);

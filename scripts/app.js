@@ -2018,6 +2018,9 @@ const saveAskSched = () => {
 };
 
 let askBusy = false;      /* a scheduled run must never collide with a typed one */
+/* The in-flight question's AbortController, or null when idle. Module-scoped
+   because Stop lives in renderAsk's form while runAsk owns the request. */
+let askAbort = null;
 let askRun = null;        /* set by renderAsk() — the shared send path */
 let askSchedTimer = 0;
 
@@ -2145,6 +2148,17 @@ function renderAsk() {
   input.placeholder = 'Ask about your desk…';
   input.setAttribute('aria-label', 'Ask the desk assistant a question');
   const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
+  /* Stop (owner request 2026-08-01). A SEPARATE button rather than the Ask
+     button changing role: a control that swaps what it does under the cursor is
+     how a stop gets pressed as a re-send, and the desk-ask tool loop can run
+     long enough (up to 12 tool calls) that the owner is reaching for it while
+     the page is still settling. Hidden, not disabled, when idle — an always-on
+     Stop with nothing to stop is noise. */
+  const stopBtn = el('button', 'btn btn-secondary ask-stop', 'Stop'); stopBtn.type = 'button';
+  stopBtn.hidden = true;
+  stopBtn.setAttribute('aria-label', 'Stop waiting for the current answer');
+  stopBtn.title = 'Stop waiting for this answer';
+  stopBtn.addEventListener('click', () => { if (askAbort) askAbort.abort(); });
   /* ⏱ beside ⚙ — same idiom, same place. Opens the schedule roster. */
   const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
@@ -2154,7 +2168,7 @@ function renderAsk() {
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin));
   const err = el('p', 'lock-error', ''); err.hidden = true;
-  form.appendChild(input); form.appendChild(btn); form.appendChild(schedBtn); form.appendChild(sysBtn);
+  form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn); form.appendChild(schedBtn); form.appendChild(sysBtn);
   body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
   body.appendChild(el('p', 'ai-disclaimer',
     'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'));
@@ -2210,7 +2224,13 @@ function renderAsk() {
     if (!q || askBusy) return;
     askBusy = true;
     err.hidden = true;
-    btn.disabled = true; btn.textContent = 'Asking…'; input.disabled = true;
+    /* The composer STAYS ENABLED while a question is in flight (owner request
+       2026-08-01). Disabling it was the old way of saying "busy", but it also
+       took away the one thing someone reaching for Stop wants next: typing the
+       question they meant. askBusy still guards against a second send. */
+    btn.disabled = true; btn.textContent = 'Asking…';
+    askAbort = new AbortController();
+    stopBtn.hidden = false;
     const qEl = el('p', 'ask-q' + (scheduled ? ' ask-q--sched' : ''), q);
     /* Marked so the owner can tell at a glance what they asked from what the
        desk asked on their behalf — otherwise a scheduled answer reads as a
@@ -2218,15 +2238,29 @@ function renderAsk() {
     if (scheduled) qEl.title = 'Asked automatically on a schedule';
     thread.appendChild(qEl);
     thread.scrollTop = thread.scrollHeight;
-    const res = await deskAsk(pin, q, buildAskContext())
-      .catch(() => ({ ok: false, error: 'Could not reach the ask service — try again in a moment.' }));
+    const res = await deskAsk(pin, q, buildAskContext(), askAbort.signal)
+      .catch(e => (e && e.name === 'AbortError')
+        ? { ok: false, stopped: true }
+        : { ok: false, error: 'Could not reach the ask service — try again in a moment.' });
     btn.disabled = false; btn.textContent = 'Ask'; input.disabled = false;
+    stopBtn.hidden = true;
+    askAbort = null;
     askBusy = false;
     if (res && res.ok) {
       thread.appendChild(el('p', 'ask-a', res.answer));
       appendSources(res.sources);
       clearBtn.hidden = false;
       if (!scheduled) input.value = '';
+    } else if (res && res.stopped) {
+      /* Not an error line — the owner did this on purpose, and a red error for
+         a deliberate act reads as a fault. It is also NOT silent: the run keeps
+         going on the server, so the answer lands in desk_chat_memory and WILL
+         replay on the next reload. Saying so here is the only thing that stops
+         that looking like a bug later. */
+      const note = el('p', 'ask-a ask-a--stopped', 'Stopped. The desk finishes this one anyway — its answer will appear in the history on your next reload.');
+      note.title = 'Stopping ends the wait in this tab; it cannot call back a question already sent.';
+      thread.appendChild(note);
+      clearBtn.hidden = false;
     } else {
       err.textContent = (res && res.error) || 'Something went wrong — try again.';
       err.hidden = false;

@@ -357,6 +357,19 @@ This project's look is its own — established at kickoff via `/design-intake`
   the owner's live customizations on a future replay. Web-query privacy
   (never sending real position sizes to search) is system-prompt-enforced,
   not hard-filtered.
+  **Interrupting a question** (`.ask-stop` + `askAbort`, owner request
+  2026-08-01) — the tool loop can reach 12 calls, so a stalled question had no
+  exit but waiting. Stop aborts the fetch via an `AbortController` threaded into
+  `deskAsk`. It severs **this tab's wait only**: the edge function runs to
+  completion regardless, so the Claude quota is spent either way AND the
+  exchange still reaches `desk_chat_memory` — the stopped note in the thread
+  says so out loud, because a silent stop means the answer reappears on the next
+  reload looking like a bug. Two deliberate choices: Stop is a **separate button**
+  rather than Ask changing role (a control that swaps jobs under the cursor gets
+  pressed as a re-send), and the **composer stays enabled** while in flight,
+  since someone reaching for Stop wants to retype — `askBusy` still blocks a
+  second send. Genuinely cancelling the SERVER run would need `desk-ask` to
+  honour `req.signal` plus a deploy; not done.
   Origin-guarded anon: `quote-proxy` (OHLC for any ticker — no PIN, restricted
   to the site origin + in-memory cache; owner ruling 2026-07-14, paid plan).
   `kind:'info'` also returns a per-symbol live-quote line (last / day change /
@@ -542,6 +555,7 @@ run for real against the dedicated project on every PR.
 | S23 | Extended hours (post-market) | With `?demo=1`, all four index tiles carry a `.mk-ext` line NAMING their proxy (SPY/QQQ/IWM/DIA) + "after hrs", the extended % differs from the regular one, all 11 sector cells carry `.mk-sec-ext`, and the demo heatmap has SOME tiles with `extPct` and some without (absent = did not trade, never 0) | A tile showing an unattributed second %, the extended figure repeating the close, or every heatmap name carrying a print |
 | S27 | Watchlist tile shape | With `?demo=1`, a tile is ≤80px wide (the half-width 66px layout), its rendered top-to-bottom order is ticker → price → change → line (`.wl-vals` is `display:contents`, so DOM order still nests them), and NO `.mkt-last` or `.mkt-name` overflows its own box | A tile back at 132px, the line between price and pill, or any clipped value — a clipped price is a wrong price and fails silently |
 | S28 | Charts quote expires by age | With `?demo=1`, `wbInfoTtlMs()` returns one of the two session cadences (60s / 15 min) and a `wbInfoCache` entry carries both `at` and `info`. Guards the CONTRACT, not the bug: reproducing it needs a tab held open across a session boundary, which CI cannot do | A cache keyed on presence again (the 2026-07-31 SMH report: the prior session's close and move shown under a "delayed by 1 minute" stamp) |
+| S32 | Interrupt a question | With `?demo=1` NO `.ask-stop` renders (nothing to stop). Forced live+authed with `deskAsk` stubbed to hang until aborted: Stop appears only while in flight, the COMPOSER STAYS ENABLED throughout, and after Stop the button returns to "Ask", `askBusy` clears, and a `.ask-a--stopped` note states the answer is still coming — with the red `.lock-error` line staying hidden | A Stop offered in demo, a composer disabled mid-flight, a wedged `askBusy` (the panel is then dead), a silent stop (the answer reappears on reload looking like a bug), or a deliberate stop rendered as an error |
 | S29 | Scheduled asks | With `?demo=1` forced live+authed, the ⏱ opens the roster and adds a row; `saveAskSched()` clamps to the 15-min floor and 10-row cap even on a DIRECT assignment (the guards live at the write boundary, not in the input handler), and `askSchedDue()` fires only when elapsed, never when disabled | A row firing under 15 min, an uncapped roster, or a disabled row running — each is real Claude quota |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S30 | Watchlist write conflict | With `?demo=1`, `deskSetWatchlists` forwards a version it is handed, `wlMutate` echoes back the version its own read returned, and an omitted version serializes as an explicit `null` — `undefined` would be dropped by `JSON.stringify` and silently bind the RPC's no-check default. The refusal itself is server-side (`desk_014`), exercised against the live table rather than in CI | A write with no `expected_version`, a version invented at write time rather than read, or `undefined` on the wire |
