@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST only' });
 
-  let payload: { pin?: unknown; question?: unknown; context?: unknown };
+  let payload: { pin?: unknown; question?: unknown; context?: unknown; verify?: unknown };
   try { payload = await req.json(); } catch { return reply(400, { ok: false, error: 'invalid JSON body' }); }
   const pin = String(payload.pin ?? '');
   const rawQuestion = String(payload.question ?? '').slice(0, 2000).trim();
