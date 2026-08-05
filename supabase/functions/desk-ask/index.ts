@@ -79,6 +79,22 @@ const MAX_TOOL_CALLS = 12;     // client tool executions (get_quote + get_techni
 // reply whatever thinking didn't consume. Raised with the model swap, never
 // separately (owner ruling 2026-08-05).
 const MAX_ANSWER_TOKENS = 8192;
+// Owner ruling 2026-08-05: the grounding check is BUILT BUT NOT ARMED. It
+// spends tokens on every question whether or not anything is wrong, and the
+// owner would rather hold that cost until the failure recurs. Set the
+// ASK_VERIFY function secret to '1' to arm it — a secret change, not a code
+// change, so it can go live in a minute without a PR or a deploy.
+const VERIFY = Deno.env.get('ASK_VERIFY') === '1';
+const VERIFY_TOKENS = 1500;
+// Sent back when a terminal answer arrived with no web search behind it. The
+// system prompt has demanded a search before every answer since 2026-07 and
+// was ignored, so this is stated as a fact about what happens next rather than
+// as another instruction the model may weigh.
+const NO_SEARCH_NOTE =
+  'You produced that answer without running a single web_search this turn. That is not permitted — ' +
+  'anything you believe from training data may be out of date, and this desk has already been wrong ' +
+  'that way. Run the search now and answer again. If the search shows your draft was wrong, say so ' +
+  'plainly rather than quietly correcting it.';
 const MAX_RESUMES = 3;         // pause_turn resumptions
 const MAX_ITERS = 18;         // overall loop safety net (tool calls + resumes + wrap-up) — raised
                                 // alongside MAX_TOOL_CALLS so a sequential (non-batched) run through
@@ -306,14 +322,77 @@ Deno.serve(async (req) => {
   }
 
   const contextJson = JSON.stringify(payload.context ?? {}).slice(0, 30000);
-  messages.push({ role: 'user', content: `Dashboard snapshot (JSON):\n${contextJson}\n\nQuestion: ${question}` });
+  // Second cache breakpoint. Everything up to and including this turn is fixed
+  // for the whole tool loop — system, tools, the replayed memory, the snapshot
+  // and the question — while only the assistant/tool_result pairs appended
+  // below it grow. The snapshot alone can be 30k characters, so this is the
+  // larger of the two savings.
+  messages.push({
+    role: 'user',
+    content: [{
+      type: 'text',
+      text: `Dashboard snapshot (JSON):\n${contextJson}\n\nQuestion: ${question}`,
+      cache_control: { type: 'ephemeral' },
+    }],
+  });
 
   // ── agentic loop (FR-WEB/FR-DATA) ──────────────────────────────────────────
   const sources: { title: string; url: string }[] = [];
   const seenUrls = new Set<string>();
+  // Raw tool payloads for this turn. These are what an answer is SUPPOSED to
+  // be built from, so they are the only thing worth auditing it against: on
+  // 2026-07-31 the desk reported HOOD at 118.98 with a 26.66 52-week low while
+  // the payload sitting in this very array said 92.39 and 63.515-153.86.
+  const receipts: { tool: string; input: unknown; out: Record<string, unknown> }[] = [];
   // deno-lint-ignore no-explicit-any
   let finalMsg: any = null;
   let toolCalls = 0, resumes = 0, iters = 0;
+  let searchForced = false, verified = false;
+  let unsupported: string[] = [];
+
+  // deno-lint-ignore no-explicit-any
+  const textOf = (m: any) => (m?.content ?? [])
+    .filter((b: { type: string }) => b.type === 'text')
+    .map((b: { text: string }) => b.text).join('\n').trim();
+
+  // Grounding check. Deliberately a MATCHING task, not an opinion task: it is
+  // never asked whether the answer is good, only which claims fail to appear in
+  // the payloads. Asking a model to judge its own output invites it to agree
+  // with itself — the failure the owner named when this was scoped ("how do we
+  // know it isn't just coming up with the same answer twice"). Extraction and
+  // lookup are far less prone to that than evaluation, because a number is
+  // either in the JSON or it is not.
+  async function auditDraft(draft: string): Promise<string[]> {
+    if (!receipts.length && !sources.length) return [];   // nothing to check against
+    const evidence = JSON.stringify({ tool_payloads: receipts, web_sources: sources }).slice(0, 60000);
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': apiKey!, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model,
+        max_tokens: VERIFY_TOKENS,
+        // Low effort on purpose — this is lookup, not reasoning.
+        output_config: { effort: 'low' },
+        system:
+          'You check whether a draft answer is supported by the evidence gathered to produce it. ' +
+          'You are NOT judging whether the answer is good, well-written, or correct in your own opinion — ' +
+          'only whether each specific factual claim appears in the evidence. ' +
+          'Reply with a JSON array of strings and nothing else. Each string quotes one claim from the draft ' +
+          'that is NOT supported by the evidence, and says what the evidence shows instead. ' +
+          'Include every price, percentage, date, range and named fact that is absent from or contradicted by ' +
+          'the evidence. Do NOT flag opinions, forecasts, or directional views — those are the desk\'s job. ' +
+          'If every checkable claim is supported, reply exactly [].',
+        messages: [{ role: 'user', content: `EVIDENCE:\n${evidence}\n\nDRAFT ANSWER:\n${draft}` }],
+      }),
+    });
+    if (!res.ok) return [];   // never block an answer on the checker failing
+    try {
+      const j = await res.json();
+      const raw = textOf(j).replace(/^```(?:json)?|```$/g, '').trim();
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+    } catch { return []; }
+  }
 
   for (;;) {
     if (iters++ >= MAX_ITERS) break;   // hard stop; finalMsg holds the last response
@@ -323,7 +402,13 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model,
         max_tokens: MAX_ANSWER_TOKENS,
-        system: SYSTEM,
+        // Cached, not a bare string. Render order is tools -> system ->
+        // messages, so one breakpoint on the system block covers the tool
+        // definitions too. The tool loop re-sends this entire prefix on every
+        // iteration (up to MAX_ITERS), and before this it was re-billed at
+        // full price each time; reads are ~0.1x. A second breakpoint sits on
+        // the snapshot turn below.
+        system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
         tools: TOOLS,
         messages,
         // Adaptive is the only on-mode; a fixed budget_tokens is a 400 here.
@@ -373,18 +458,50 @@ Deno.serve(async (req) => {
           out = tu.name === 'get_technicals' ? await getTechnicals(symbol) : await getQuote(symbol);
         }
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out), is_error: out.ok === false });
+        receipts.push({ tool: tu.name, input: tu.input, out });
       }
       messages.push({ role: 'assistant', content: msg.content });
       messages.push({ role: 'user', content: results });
       continue;
     }
 
+    // ── terminal answer: gate it before accepting ──────────────────────────
+    // Enforced here rather than asked for in the prompt. The live system
+    // prompt has said "you must run at least one web_search first — no
+    // exceptions, regardless of how confident you are" since 2026-07, and the
+    // desk still answered a question about a company's listing status from
+    // memory. A requirement the model can decline is not a requirement.
+    if (!searchForced && !sources.length) {
+      searchForced = true;
+      messages.push({ role: 'assistant', content: msg.content });
+      messages.push({ role: 'user', content: NO_SEARCH_NOTE });
+      continue;
+    }
+
+    if (VERIFY && !verified) {
+      verified = true;   // one revision pass, never a loop
+      const draft = textOf(msg);
+      const gaps = draft ? await auditDraft(draft) : [];
+      if (gaps.length) {
+        unsupported = gaps;
+        messages.push({ role: 'assistant', content: msg.content });
+        messages.push({
+          role: 'user',
+          content:
+            'These claims in your answer are not supported by the data you actually gathered:\n' +
+            gaps.map((g) => `- ${g}`).join('\n') +
+            '\n\nRewrite the answer using only what the evidence supports. Correct the numbers to what the ' +
+            'payloads say, or drop the claim and state that you could not verify it. Do not repeat an ' +
+            'unsupported figure.',
+        });
+        continue;
+      }
+    }
+
     break; // end_turn or other terminal reason
   }
 
-  const answer = (finalMsg?.content ?? [])
-    .filter((b: { type: string }) => b.type === 'text')
-    .map((b: { text: string }) => b.text).join('\n').trim();
+  const answer = textOf(finalMsg);
   if (!answer) return reply(502, { ok: false, error: 'empty model response' });
 
   // ── memory append (FR-MEM1) — non-fatal ────────────────────────────────────
@@ -396,5 +513,14 @@ Deno.serve(async (req) => {
     });
   } catch (_e) { /* append is best-effort */ }
 
-  return reply(200, { ok: true, answer, sources, model: finalMsg?.model ?? model });
+  // `checked` is reported even while the verifier is dormant, so the flag can
+  // be armed later without a client change — and so a run that answered with
+  // no search behind it is visible rather than indistinguishable.
+  return reply(200, {
+    ok: true,
+    answer,
+    sources,
+    model: finalMsg?.model ?? model,
+    checked: { searched: sources.length > 0, forcedSearch: searchForced, verified: VERIFY, unsupported },
+  });
 });
