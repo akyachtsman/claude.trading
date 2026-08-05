@@ -3621,6 +3621,18 @@ function renderWbInfo() {
     /* symbol ahead of price (owner request 2026-07-23) — the readout otherwise
        opened on a bare number with no ticker to anchor it */
     box.appendChild(el('span', 'wb-info-item wb-quote-sym', sym));
+    /* Full name beside the ticker (owner request 2026-08-05). The name has
+       always been in the quote payload and was simply never drawn, so this
+       costs no extra fetch. It sits AFTER the symbol and BEFORE the price so
+       the ticker still anchors the line — the reason the symbol was put first
+       in the first place — and it is muted so it reads as a label rather than
+       competing with the numbers.
+       It renders only when the name differs from the ticker: for a symbol the
+       feed has no name for, Yahoo echoes the ticker back, and printing "IYT
+       IYT 86.71" would look like a bug. */
+    if (info && info.name && info.name.toUpperCase() !== sym.toUpperCase()) {
+      box.appendChild(el('span', 'wb-info-item wb-quote-name', info.name));
+    }
     box.appendChild(el('span', 'wb-info-item wb-quote-last', fmtPrice(last)));
     if (chg != null) {
       const sign = chg > 0 ? '+' : '';
