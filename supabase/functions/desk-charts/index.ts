@@ -54,6 +54,26 @@ export function parseStooqOHLC(csv: string): Row[] {
   return rows;
 }
 
+// ONE formatter, hoisted — this is the whole 546 fix (owner report 2026-08-05).
+//
+// `d.toLocaleDateString('en-CA', { timeZone })` builds and discards an ICU
+// formatter on EVERY call. This loop runs once per bar: 25 watchlist symbols x
+// ~1250 bars of Yahoo's 5y daily range is ~31k calls per cold sweep. Measured,
+// that is 2611 ms of pure CPU — and the sweep is what the worker's CPU budget
+// is spent on, which is why 20-30% of calls died with WORKER_RESOURCE_LIMIT at
+// 2475-3074 ms while the ones that survived came in at 1736-2401 ms. The
+// failures were not a slow upstream and not the payload serialization; they
+// were this line.
+//
+// Reusing a single Intl.DateTimeFormat is the same work without the per-call
+// construction: 2611 ms -> 50 ms, a 52x cut, for byte-identical output
+// (verified equal across 33,334 timestamps spanning 2000-2026, which covers
+// every DST transition — the reason this must stay timezone-aware rather than
+// become UTC string math).
+const NY_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
 export function parseYahooChartOHLC(json: unknown): Row[] {
   // deno-lint-ignore no-explicit-any
   const r = (json as any)?.chart?.result?.[0];
@@ -63,7 +83,7 @@ export function parseYahooChartOHLC(json: unknown): Row[] {
   for (let i = 0; i < ts.length; i++) {
     const o = Number(q.open?.[i]), h = Number(q.high?.[i]), l = Number(q.low?.[i]), c = Number(q.close?.[i]);
     if (![o, h, l, c].every((n) => Number.isFinite(n) && n > 0)) continue;
-    const date = new Date(ts[i] * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const date = NY_DATE.format(new Date(ts[i] * 1000));
     rows.push({ date, o, h, l, c, v: Number(q.volume?.[i]) > 0 ? Number(q.volume?.[i]) : 0 });
   }
   rows.sort((a, b) => a.date.localeCompare(b.date));
@@ -108,23 +128,23 @@ export function packSeries(rows: Row[]): Packed {
 
 // ── caches ───────────────────────────────────────────────────────────────────
 let rosterCache: { at: number; list: string[] } | null = null;                    // 1h
-// Each symbol is cached PRE-SERIALIZED, not as a Packed object.
+// Each symbol is cached PRE-SERIALIZED, not as a Packed object. This function
+// never READS the bars — it only ships them — so holding the parsed object
+// alongside its own JSON is dead weight; serializing once per symbol at prime
+// time leaves the request path a string join.
 //
-// Owner report 2026-08-05: desk-charts returning 546 (WORKER_RESOURCE_LIMIT) on
-// 20-30% of calls. Measured server-side, the split is a clean threshold — every
-// 200 ran 1736-2401ms, every 546 ran 2475-3074ms — which is a CPU-time ceiling,
-// not memory and not a slow upstream. The tell is that a force:true FULL SWEEP
-// (25 Yahoo 5y fetches) reliably SUCCEEDED while warm-cache calls died: a sweep
-// spends most of its wall time awaiting network, which costs no CPU, whereas a
-// warm-cache call is almost pure CPU. The only work it does is JSON.stringify a
-// ~934 KB payload (25 symbols x 800 bars x 6 arrays), and doing that per
-// request is what exhausts the budget.
-//
-// This function never READS the bars — it only ships them — so the object is
-// dead weight. Serializing once per symbol at prime time moves the cost onto
-// the sweep, which is network-bound and has CPU headroom to spare, and leaves
-// the request path a string join. It also lowers memory: the parsed Packed
-// object is dropped instead of held alongside its own JSON.
+// This was FIRST shipped (v9) as a claimed fix for the 546s and was NOT one —
+// measured before/after, the failure rate did not move. Recorded because the
+// reasoning was wrong in an instructive way: the ~934 KB payload IS expensive
+// to stringify, and a force:true sweep did survive where apparent cache hits
+// died, which looked like per-request serialization was the cost. It wasn't.
+// A warm-cache call was timed against a forced full sweep and cost the SAME
+// (~2.2-2.9s both ways), which only makes sense if the "cache hit" was also
+// sweeping — Supabase spreads requests across short-lived isolates, and
+// seriesCache is per-isolate module state, so nearly every request pays a cold
+// sweep. The real cost was inside that sweep, in parseYahooChartOHLC's
+// per-bar date formatting (see NY_DATE). Keep this change on its own merits;
+// do not re-credit it with fixing the 546s.
 const seriesCache = new Map<string, { at: number; json: string; last: string }>(); // per symbol, 30 min
 let sweepInflight: Promise<void> | null = null;
 
