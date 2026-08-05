@@ -541,30 +541,39 @@ Deno.serve(async (req) => {
   const answer = textOf(finalMsg);
   if (!answer) return reply(502, { ok: false, error: 'empty model response' });
 
+  /* `checked` is reported even while the verifier is dormant, so the flag can
+     be armed later without a client change — and so a run that answered with
+     no search behind it is visible rather than indistinguishable.
+     Built ONCE and both stored and returned (desk_016). It used to be
+     assembled inline in the response and thrown away after the browser
+     rendered it, which meant nothing anywhere could answer "was that answer
+     verified?" after the fact — the one question the verifier exists to make
+     answerable. Reviewing a past answer's grounding is exactly the case where
+     the tab is long gone. */
+  const checked = {
+    searched: sources.length > 0,
+    forcedSearch: searchForced,
+    /* The local `verified` — the check actually RAN — not `verifyThisTurn`,
+       which is only the intent. They come apart: a turn that exhausts
+       MAX_ITERS breaks out before the terminal-answer path, so the audit never
+       happens while the intent was still true. Reporting the intent was
+       survivable while this was a throwaway response field; storing it would
+       write a durable claim that an answer was checked when nothing checked
+       it, which is precisely the false confidence this column exists to
+       prevent. `requested` still records what the owner asked for. */
+    verified,
+    requested: askedToVerify,   // typed on this question, vs armed globally
+    unsupported,
+  };
+
   // ── memory append (FR-MEM1) — non-fatal ────────────────────────────────────
   try {
     await fetch(`${supaUrl}/rest/v1/desk_chat_memory`, {
       method: 'POST',
       headers: { ...svc, 'content-type': 'application/json', prefer: 'return=minimal' },
-      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources, usage }),
+      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources, usage, checked }),
     });
   } catch (_e) { /* append is best-effort */ }
 
-  // `checked` is reported even while the verifier is dormant, so the flag can
-  // be armed later without a client change — and so a run that answered with
-  // no search behind it is visible rather than indistinguishable.
-  return reply(200, {
-    ok: true,
-    answer,
-    sources,
-    model: finalMsg?.model ?? model,
-    usage,
-    checked: {
-      searched: sources.length > 0,
-      forcedSearch: searchForced,
-      verified: verifyThisTurn,
-      requested: askedToVerify,   // typed on this question, vs armed globally
-      unsupported,
-    },
-  });
+  return reply(200, { ok: true, answer, sources, model: finalMsg?.model ?? model, usage, checked });
 });
