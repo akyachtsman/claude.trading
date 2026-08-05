@@ -72,6 +72,13 @@ const MAX_TOOL_CALLS = 12;     // client tool executions (get_quote + get_techni
                                 // (quote + technicals per symbol) burned through 6 fast; this is a
                                 // per-turn CALL-COUNT safety cap against a runaway loop, unrelated
                                 // to the Anthropic account's dollar balance.
+// Opus 5 spends this budget on thinking AND the visible answer — it is ONE
+// ceiling over both, not two. The old 2048 was sized for Opus 4.8, where
+// omitting the `thinking` parameter meant no thinking at all; on Opus 5,
+// omitting it runs adaptive thinking, so the same number would have left the
+// reply whatever thinking didn't consume. Raised with the model swap, never
+// separately (owner ruling 2026-08-05).
+const MAX_ANSWER_TOKENS = 8192;
 const MAX_RESUMES = 3;         // pause_turn resumptions
 const MAX_ITERS = 18;         // overall loop safety net (tool calls + resumes + wrap-up) — raised
                                 // alongside MAX_TOOL_CALLS so a sequential (non-batched) run through
@@ -111,7 +118,11 @@ Deno.serve(async (req) => {
   if (!apiKey) {
     return reply(503, { ok: false, error: 'Ask service not configured yet — the owner needs to add the ANTHROPIC_API_KEY function secret.' });
   }
-  const model = Deno.env.get('ASK_MODEL') || 'claude-opus-4-8';
+  // Owner ruling 2026-08-05. Opus 5 THINKS BY DEFAULT (Opus 4.8 did not), and
+  // max_tokens is ONE ceiling over thinking + the visible answer — so the old
+  // 2048 would have starved the reply the moment the model began reasoning.
+  // Model and budget therefore ship together; either alone is a regression.
+  const model = Deno.env.get('ASK_MODEL') || 'claude-opus-5';
 
   // desk_009: the owner's live-edited system prompt — non-fatal read, falls
   // back to DEFAULT_SYSTEM on any failure (table unreachable, empty, etc).
@@ -309,7 +320,18 @@ Deno.serve(async (req) => {
     const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 2048, system: SYSTEM, tools: TOOLS, messages }),
+      body: JSON.stringify({
+        model,
+        max_tokens: MAX_ANSWER_TOKENS,
+        system: SYSTEM,
+        tools: TOOLS,
+        messages,
+        // Adaptive is the only on-mode; a fixed budget_tokens is a 400 here.
+        // Stated explicitly rather than left to the model default so that a
+        // future default change cannot silently re-tune the desk.
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'high' },
+      }),
     });
     if (!apiRes.ok) return reply(502, { ok: false, error: `model call failed (HTTP ${apiRes.status})` });
     const msg = await apiRes.json();
