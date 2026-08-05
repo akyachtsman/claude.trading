@@ -84,7 +84,10 @@ const MAX_ANSWER_TOKENS = 8192;
 // owner would rather hold that cost until the failure recurs. Set the
 // ASK_VERIFY function secret to '1' to arm it — a secret change, not a code
 // change, so it can go live in a minute without a PR or a deploy.
-const VERIFY = Deno.env.get('ASK_VERIFY') === '1';
+const VERIFY_ALWAYS = Deno.env.get('ASK_VERIFY') === '1';
+// Typed by the owner to check ONE answer: "/verify", "ask_verify" or
+// "!verify", anywhere in the question, any case.
+const VERIFY_MARK = /(?:^|\s)[/!]?ask[_-]?verify\b|(?:^|\s)[/!]verify\b/i;
 const VERIFY_TOKENS = 1500;
 // Sent back when a terminal answer arrived with no web search behind it. The
 // system prompt has demanded a search before every answer since 2026-07 and
@@ -110,7 +113,19 @@ Deno.serve(async (req) => {
   let payload: { pin?: unknown; question?: unknown; context?: unknown };
   try { payload = await req.json(); } catch { return reply(400, { ok: false, error: 'invalid JSON body' }); }
   const pin = String(payload.pin ?? '');
-  const question = String(payload.question ?? '').slice(0, 2000).trim();
+  const rawQuestion = String(payload.question ?? '').slice(0, 2000).trim();
+  // Per-question opt-in (owner request 2026-08-05: "sometimes if I have a
+  // really important question, can I say ask_verify"). Typed into the question
+  // itself, so it works against the deployed dashboard with no client change
+  // and no cache-bust. The marker is STRIPPED before the question reaches the
+  // model or desk_chat_memory — otherwise it would sit in the replayed history
+  // and teach the desk that the word is part of how the owner talks.
+  // A bare "verify" is deliberately NOT a trigger: "verify my thesis on NVDA"
+  // is an ordinary question, and a marker that fires by accident is one the
+  // owner stops trusting.
+  const askedToVerify = VERIFY_MARK.test(rawQuestion);
+  const question = rawQuestion.replace(VERIFY_MARK, ' ').replace(/\s+/g, ' ').trim();
+  const verifyThisTurn = VERIFY_ALWAYS || askedToVerify;
   if (!pin || !question) return reply(400, { ok: false, error: 'pin and question are required' });
 
   const supaUrl = Deno.env.get('SUPABASE_URL')!;
@@ -478,7 +493,7 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    if (VERIFY && !verified) {
+    if (verifyThisTurn && !verified) {
       verified = true;   // one revision pass, never a loop
       const draft = textOf(msg);
       const gaps = draft ? await auditDraft(draft) : [];
@@ -521,6 +536,12 @@ Deno.serve(async (req) => {
     answer,
     sources,
     model: finalMsg?.model ?? model,
-    checked: { searched: sources.length > 0, forcedSearch: searchForced, verified: VERIFY, unsupported },
+    checked: {
+      searched: sources.length > 0,
+      forcedSearch: searchForced,
+      verified: verifyThisTurn,
+      requested: askedToVerify,   // typed on this question, vs armed globally
+      unsupported,
+    },
   });
 });
