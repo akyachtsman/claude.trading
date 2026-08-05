@@ -354,7 +354,21 @@ This project's look is its own — established at kickoff via `/design-intake`
   its tile, never gating the core; owner request 2026-07-16), `desk-heatmap` (Nasdaq
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
-  session-aware cached + single-flight. PIN-gated: `desk-ask` — an **agentic**
+  session-aware cached + single-flight.
+  **`desk-charts` caches each symbol PRE-SERIALIZED, never as an object**
+  (owner report 2026-08-05, 546s on the charts panel): the 25-symbol payload is
+  ~934 KB, and `JSON.stringify`-ing it per request burned the worker's CPU
+  budget, returning `WORKER_RESOURCE_LIMIT` on 20–30% of calls with no upstream
+  fault at all. The tell was that a `force:true` FULL SWEEP reliably SUCCEEDED
+  while warm-cache calls died — a sweep spends its wall time awaiting network,
+  which costs no CPU, whereas a cache hit is almost pure serialization; measured
+  server-side the split was a clean threshold, every 200 in 1736–2401 ms and
+  every 546 in 2475–3074 ms. The function never READS the bars, only ships them,
+  so serializing once at prime time moves the cost onto the network-bound sweep
+  and drops the parsed object from memory. `generatedAt` is still rebuilt per
+  request: `liveLampFor` measures poller health against it, so a memoized one
+  (up to `HISTORY_TTL_MS` old) would lamp the panel STALE mid-session on a
+  healthy feed. PIN-gated: `desk-ask` — an **agentic**
   desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`
   (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤12 calls,
   ≤3 pause resumes) with `web_search`/`web_fetch` + `get_quote` (calls

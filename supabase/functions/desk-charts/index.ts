@@ -108,7 +108,24 @@ export function packSeries(rows: Row[]): Packed {
 
 // ── caches ───────────────────────────────────────────────────────────────────
 let rosterCache: { at: number; list: string[] } | null = null;                    // 1h
-const seriesCache = new Map<string, { at: number; packed: Packed; last: string }>(); // per symbol, 30 min
+// Each symbol is cached PRE-SERIALIZED, not as a Packed object.
+//
+// Owner report 2026-08-05: desk-charts returning 546 (WORKER_RESOURCE_LIMIT) on
+// 20-30% of calls. Measured server-side, the split is a clean threshold — every
+// 200 ran 1736-2401ms, every 546 ran 2475-3074ms — which is a CPU-time ceiling,
+// not memory and not a slow upstream. The tell is that a force:true FULL SWEEP
+// (25 Yahoo 5y fetches) reliably SUCCEEDED while warm-cache calls died: a sweep
+// spends most of its wall time awaiting network, which costs no CPU, whereas a
+// warm-cache call is almost pure CPU. The only work it does is JSON.stringify a
+// ~934 KB payload (25 symbols x 800 bars x 6 arrays), and doing that per
+// request is what exhausts the budget.
+//
+// This function never READS the bars — it only ships them — so the object is
+// dead weight. Serializing once per symbol at prime time moves the cost onto
+// the sweep, which is network-bound and has CPU headroom to spare, and leaves
+// the request path a string join. It also lowers memory: the parsed Packed
+// object is dropped instead of held alongside its own JSON.
+const seriesCache = new Map<string, { at: number; json: string; last: string }>(); // per symbol, 30 min
 let sweepInflight: Promise<void> | null = null;
 
 async function loadWatchlist(): Promise<string[]> {
@@ -131,7 +148,12 @@ async function loadWatchlist(): Promise<string[]> {
 async function primeSymbol(ticker: string): Promise<void> {
   try {
     const rows = await dailyOHLC(ticker);
-    seriesCache.set(ticker, { at: Date.now(), packed: packSeries(rows), last: rows[rows.length - 1].date });
+    // Serialize HERE, inside the sweep, not per request — see the seriesCache note.
+    seriesCache.set(ticker, {
+      at: Date.now(),
+      json: JSON.stringify(packSeries(rows)),
+      last: rows[rows.length - 1].date,
+    });
   } catch { /* keep whatever the cache holds */ }
 }
 
@@ -170,24 +192,30 @@ Deno.serve(async (req) => {
     (globalThis as any).EdgeRuntime?.waitUntil?.(work); // let stragglers finish filling the cache
   }
 
-  const symbols: Record<string, Packed> = {};
+  // Assembled by concatenation from the per-symbol JSON already in the cache,
+  // so the big blob is never re-serialized on the request path. Same bytes as
+  // the object literal this replaced, same key order.
+  const parts: string[] = [];
   let asOf: string | null = null;
   for (const t of watchlist) {
     const hit = seriesCache.get(t);
     if (!hit) continue;
-    symbols[t] = hit.packed;
+    parts.push(`${JSON.stringify(t)}:${hit.json}`);
     if (!asOf || hit.last > asOf) asOf = hit.last;
   }
-  const got = Object.keys(symbols).length;
+  const got = parts.length;
   if (got < Math.ceil(watchlist.length * MIN_COVERAGE)) {
     return reply(502, { ok: false, error: `coverage floor: ${got}/${watchlist.length} watchlist symbols` });
   }
-  return reply(200, {
-    ok: true,
-    partial: got < watchlist.length || undefined,
-    asOf,
-    generatedAt: new Date().toISOString(),
-    count: got,
-    symbols,
-  });
+  // generatedAt stays FRESH per request: the client measures poller staleness
+  // against it (liveLampFor(data.generatedAt, ...)), so serving a memoized one
+  // up to a HISTORY_TTL_MS old would lamp the charts panel STALE mid-session
+  // while the feed was in fact healthy. It is the one field worth rebuilding.
+  const body = '{"ok":true'
+    + (got < watchlist.length ? ',"partial":true' : '')
+    + `,"asOf":${JSON.stringify(asOf)}`
+    + `,"generatedAt":${JSON.stringify(new Date().toISOString())}`
+    + `,"count":${got}`
+    + `,"symbols":{${parts.join(',')}}}`;
+  return new Response(body, { status: 200, headers: { ...CORS, 'content-type': 'application/json' } });
 });
