@@ -301,7 +301,31 @@ async function periodSweep(symbols: string[], batchSize = 20, deadline = Infinit
     if (Date.now() > deadline) break;   // hand back partial progress rather than dying whole
     const chunk = symbols.slice(i, i + batchSize);
     const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=1y&interval=1d`;
-    const res = await fetch(url, { headers: UA }).catch(() => null);
+    /* The deadline has to bound the FETCH, not just the loop head (Codex
+       review, PR #221). Checking it only between batches makes it a promise
+       about starting work, not about finishing: a batch that HANGS never
+       returns, so the loop never gets back to re-check, periodSweep never
+       resolves, advanceSweep never reaches writeSweepRow, and every symbol
+       this request already fetched is thrown away when the worker hits its
+       wall clock — the exact ledger loss SWEEP_BUDGET_MS was added to stop.
+       Deno's fetch has no default timeout, so nothing else bounds it.
+       The signal covers the body read too: aborting tears down the response
+       stream, so a batch that stalls midway through res.json() fails into the
+       same `continue` rather than hanging there instead. An aborted batch
+       leaves its symbols out of `answered`, which the caller already treats
+       as "retry next request" — the right outcome, since we never learned
+       whether Yahoo has data for them. */
+    const left = deadline - Date.now();
+    const res = await fetch(url, {
+      headers: UA,
+      /* deadline defaults to Infinity for callers that want no bound at all
+         (the tests, and any future non-request-path use); AbortSignal.timeout
+         throws on a non-finite delay, so it must stay unset in that case.
+         The 250ms floor gives a batch started just under the wire a fair
+         chance instead of aborting it on arrival, and costs at most one
+         overshoot of that size: the next loop-head check then breaks. */
+      signal: Number.isFinite(left) ? AbortSignal.timeout(Math.max(250, left)) : undefined,
+    }).catch(() => null);
     if (!res || !res.ok) continue;
     // deno-lint-ignore no-explicit-any
     const json: any = await res.json().catch(() => null);
