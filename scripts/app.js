@@ -3227,9 +3227,10 @@ const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default
    Pro 1/Pro 3 render no overlay regardless of this flag. */
 const WB_CFG_DEFAULT = () => ({
   p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
-  /* stochSteady: hold the candle colour through a crossover until %K and %D
-     actually separate by STEADY_GAP points (owner request 2026-08-05). Off by
-     default — see the gear popover and the drawPane comment. */
+  /* stochSteady: confine candle-colour changes to STEADY_BAND — a crossover
+     inside 30–80 turns the colour, one out in the extremes does not (owner
+     ruling 2026-08-05). Off by default — see the gear popover and the drawPane
+     comment, which also records why a separation threshold was rejected. */
   p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, stochSteady: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
   /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling).
      ext = show the 4:00am–8:00pm ET extended session (owner request 2026-07-29).
