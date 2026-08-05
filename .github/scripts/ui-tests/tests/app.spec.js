@@ -1929,3 +1929,111 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
   await expect(verify, 'an error must not disarm — no answer was ever checked')
     .toHaveAttribute('aria-pressed', 'true');
 });
+
+// S34 — Pro 2 "steady" candle colour (owner ruling 2026-08-05). Steady mode
+// acts on a crossover INSIDE the 30–80 band and ignores one out in the
+// extremes, where the doctrine says the turn has not confirmed yet. Measured
+// over ~2y across the 25 charted symbols: 650 colour changes -> 413, with all
+// 269 mid-band crossovers still acted on and 381 extreme ones dropped.
+//
+// A separation threshold flickers less (305 changes, 2 short runs against the
+// band's 56) and is REJECTED, so nothing here may reward one: it silently
+// skips a real mid-band crossover whenever the lines cross and stay close,
+// which is the event this pane exists to show.
+//
+// Two things are checked, and the second is the one that matters. The toggle
+// must genuinely change the render, not just the stored flag — but far more
+// important, the state machine runs over the WHOLE series, so a bar's colour
+// must not depend on where the viewport happens to start. Seeded at the visible
+// window instead, the same candle would change colour as you zoom, which is the
+// kind of fault that quietly destroys trust in the pane.
+test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(800);
+
+  /* Colours of the RIGHTMOST candles in Pro 2, newest first. Keyed from the
+     right edge on purpose: the last N bars are the same N bars at any zoom, so
+     two reads stay comparable while every x-coordinate has moved. */
+  const colours = n => page.evaluate(count => {
+    const svg = document.getElementById('wbChart');
+    const texts = [...svg.querySelectorAll('text')];
+    const titles = texts.filter(t => /^PRO \d/.test(t.textContent))
+      .map(t => ({ t: t.textContent, x: +t.getAttribute('x') })).sort((a, c) => a.x - c.x);
+    const ti = titles.findIndex(t => /^PRO 2/.test(t.t));
+    if (ti < 0) return { err: 'no Pro 2 pane' };
+    const x0 = titles[ti].x - 10;
+    const x1 = ti + 1 < titles.length ? titles[ti + 1].x - 10 : svg.viewBox.baseVal.width;
+    const inPane = x => x >= x0 && x < x1;
+    const topCapY = Math.min(...texts.filter(t => /STOCH|RSI/.test(t.textContent) && inPane(+t.getAttribute('x')))
+      .map(t => +t.getAttribute('y')));
+    let rects = [...svg.querySelectorAll('rect[shape-rendering=crispEdges]')]
+      .map(r => ({ cx: +r.getAttribute('x') + +r.getAttribute('width') / 2, y: +r.getAttribute('y'), h: +r.getAttribute('height'), fill: r.getAttribute('fill') }))
+      .filter(r => inPane(r.cx) && r.y < topCapY - 20);
+    // volume bars share the candle shape but rest on one baseline — and stay
+    // price-coloured, so counting them would fake a disagreement
+    const tally = {};
+    for (const r of rects) { const bb = (r.y + r.h).toFixed(1); tally[bb] = (tally[bb] || 0) + 1; }
+    const vol = Object.entries(tally).sort((a, c) => c[1] - a[1])[0];
+    if (vol && vol[1] > 5) rects = rects.filter(r => (r.y + r.h).toFixed(1) !== vol[0]);
+    return rects.sort((a, c) => c.cx - a.cx).slice(0, count).map(r => r.fill.includes('gain'));
+  }, n);
+
+  const cap = () => page.evaluate(() => {
+    const t = [...document.getElementById('wbChart').querySelectorAll('text')]
+      .find(x => /CANDLE COLOUR/.test(x.textContent));
+    return t ? t.textContent : null;
+  });
+  const changes = a => a.reduce((n, v, i) => n + (i && v !== a[i - 1] ? 1 : 0), 0);
+
+  const plain = await colours(60);
+  expect(plain.err, 'Pro 2 candles located').toBeUndefined();
+  expect(plain.length, 'enough candles sampled').toBeGreaterThan(40);
+  expect(await cap(), 'steady is off by default — it recolours ~23% of bars')
+    .not.toContain('STEADY');
+
+  /* Arm it through the gear popover's own checkbox rather than by poking
+     wbState — the control is what the owner touches, and a state-only test
+     would still pass if the checkbox were never wired to the redraw. */
+  await page.locator('#wbGear-p2').click();
+  await page.getByLabel(/Steady \(ignore crosses in the extremes\)/i).check();
+  await page.waitForTimeout(400);
+
+  const steady = await colours(60);
+  expect(steady.length, 'same bars still drawn').toBe(plain.length);
+
+  /* The caption has to say so: with steady armed the strip can show the lines
+     crossed while the candles hold the old regime, and an unexplained
+     divergence in this pane reads as a stale render. */
+  expect(await cap(), 'the pane names the mode it is in').toContain('STEADY');
+
+  // The toggle must reach the pixels, and in the direction claimed.
+  expect(steady).not.toEqual(plain);
+  expect(changes(steady), 'steady must flip less often, not merely differently')
+    .toBeLessThanOrEqual(changes(plain));
+  /* ...but it must still TURN. A rule that suppressed crossovers generally —
+     rather than only the ones out in the extremes — would sail through the
+     assertion above by never changing colour at all, and that is the failure
+     mode the owner ruled against: a mid-band cross has to act. */
+  expect(changes(steady), 'steady still follows crossovers inside the band').toBeGreaterThan(0);
+
+  /* The real hazard: zoom and the SAME bars must keep the SAME colours. The
+     state carries forward bar to bar, so a machine seeded at the visible
+     window instead of the whole series answers differently — measured on the
+     25 charted symbols, that bug repaints 20 of them, up to 77 bars each.
+     Read the NARROW window first and compare its OLDEST bars: the divergence
+     sits where the seed is, at the left edge, so sampling only the newest bars
+     misses it (this test did, until it was checked against the bug). */
+  const zoom = async wdays => {
+    await page.evaluate(w => { wbState.wdays = w; wbState.woff = 0; renderCharts(wbState.data, wbState.lamp); }, wdays);
+    await page.waitForTimeout(400);
+    return colours(9999);
+  };
+  const narrow = await zoom(21);
+  expect(narrow.length, 'the narrow window drew candles').toBeGreaterThan(10);
+  const wide = await zoom(252);
+  expect(wide.length, 'the wide window drew more').toBeGreaterThan(narrow.length);
+  // colours() reads newest-first, so the same bars are the same leading slice
+  expect(wide.slice(0, narrow.length), 'a candle means the same thing at every zoom')
+    .toEqual(narrow);
+});
