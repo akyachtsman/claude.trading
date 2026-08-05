@@ -366,6 +366,24 @@ Deno.serve(async (req) => {
   let toolCalls = 0, resumes = 0, iters = 0;
   let searchForced = false, verified = false;
   let unsupported: string[] = [];
+  /* What this question actually cost, summed over every Anthropic call in the
+     turn — the tool loop, the forced-search retry, and the grounding check when
+     armed. Reporting only the last call would undercount a 12-tool-call
+     question by an order of magnitude.
+     cacheWrite/cacheRead are the proof that the prompt-cache breakpoints are
+     landing: the prefix should be written once and read back on every later
+     iteration, so cacheRead should dwarf cacheWrite. Both sitting at 0 means
+     caching silently isn't working and the prefix is being re-billed in full. */
+  const usage = { in: 0, out: 0, cacheWrite: 0, cacheRead: 0, calls: 0 };
+  // deno-lint-ignore no-explicit-any
+  const addUsage = (u: any) => {
+    if (!u) return;
+    usage.in += u.input_tokens || 0;
+    usage.out += u.output_tokens || 0;
+    usage.cacheWrite += u.cache_creation_input_tokens || 0;
+    usage.cacheRead += u.cache_read_input_tokens || 0;
+    usage.calls++;
+  };
 
   // deno-lint-ignore no-explicit-any
   const textOf = (m: any) => (m?.content ?? [])
@@ -405,6 +423,7 @@ Deno.serve(async (req) => {
     if (!res.ok) return [];   // never block an answer on the checker failing
     try {
       const j = await res.json();
+      addUsage(j.usage);   // the check is not free — count it with everything else
       const raw = textOf(j).replace(/^```(?:json)?|```$/g, '').trim();
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
@@ -437,6 +456,7 @@ Deno.serve(async (req) => {
     });
     if (!apiRes.ok) return reply(502, { ok: false, error: `model call failed (HTTP ${apiRes.status})` });
     const msg = await apiRes.json();
+    addUsage(msg.usage);
     finalMsg = msg;   // always track the latest response for text extraction
     if (msg.stop_reason === 'refusal') return reply(200, { ok: false, error: 'The model declined this question.' });
 
@@ -526,7 +546,7 @@ Deno.serve(async (req) => {
     await fetch(`${supaUrl}/rest/v1/desk_chat_memory`, {
       method: 'POST',
       headers: { ...svc, 'content-type': 'application/json', prefer: 'return=minimal' },
-      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources }),
+      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources, usage }),
     });
   } catch (_e) { /* append is best-effort */ }
 
@@ -538,6 +558,7 @@ Deno.serve(async (req) => {
     answer,
     sources,
     model: finalMsg?.model ?? model,
+    usage,
     checked: {
       searched: sources.length > 0,
       forcedSearch: searchForced,
