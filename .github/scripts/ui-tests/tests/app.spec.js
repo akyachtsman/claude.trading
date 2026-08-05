@@ -1930,10 +1930,16 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
     .toHaveAttribute('aria-pressed', 'true');
 });
 
-// S34 — Pro 2 "steady" candle colour (owner request 2026-08-05). A bare
-// crossover repaints the pane every time %K and %D graze each other, so steady
-// mode holds the colour until they SEPARATE by STEADY_GAP points. Measured over
-// ~2y across the 25 charted symbols the flicker (runs of <=5 bars) goes 129 -> 2.
+// S34 — Pro 2 "steady" candle colour (owner ruling 2026-08-05). Steady mode
+// acts on a crossover INSIDE the 30–80 band and ignores one out in the
+// extremes, where the doctrine says the turn has not confirmed yet. Measured
+// over ~2y across the 25 charted symbols: 650 colour changes -> 413, with all
+// 269 mid-band crossovers still acted on and 381 extreme ones dropped.
+//
+// A separation threshold flickers less (305 changes, 2 short runs against the
+// band's 56) and is REJECTED, so nothing here may reward one: it silently
+// skips a real mid-band crossover whenever the lines cross and stay close,
+// which is the event this pane exists to show.
 //
 // Two things are checked, and the second is the one that matters. The toggle
 // must genuinely change the render, not just the stored flag — but far more
@@ -1990,7 +1996,7 @@ test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom'
      wbState — the control is what the owner touches, and a state-only test
      would still pass if the checkbox were never wired to the redraw. */
   await page.locator('#wbGear-p2').click();
-  await page.getByLabel(/Steady \(ignore shallow crosses\)/i).check();
+  await page.getByLabel(/Steady \(ignore crosses in the extremes\)/i).check();
   await page.waitForTimeout(400);
 
   const steady = await colours(60);
@@ -2005,6 +2011,11 @@ test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom'
   expect(steady).not.toEqual(plain);
   expect(changes(steady), 'steady must flip less often, not merely differently')
     .toBeLessThanOrEqual(changes(plain));
+  /* ...but it must still TURN. A rule that suppressed crossovers generally —
+     rather than only the ones out in the extremes — would sail through the
+     assertion above by never changing colour at all, and that is the failure
+     mode the owner ruled against: a mid-band cross has to act. */
+  expect(changes(steady), 'steady still follows crossovers inside the band').toBeGreaterThan(0);
 
   /* The real hazard: zoom and the SAME bars must keep the SAME colours. The
      state carries forward bar to bar, so a machine seeded at the visible

@@ -3496,10 +3496,12 @@ function monthlyPivots(s) {
    daily-updating texture its weekly band shows. */
 const weeklyStochOnDaily = daily => stochSeries(daily, WSTOCH);
 
-/* Points of %K/%D separation a crossover must clear before the Pro 2 candle
-   colour follows it, when steady mode is armed. See drawPane for the numbers
-   behind 5. */
-const STEADY_GAP = 5;
+/* The zone a crossover has to land in before the Pro 2 candle colour follows
+   it, when steady mode is armed (owner ruling 2026-08-05): inside the band it
+   acts, out in the extremes it is ignored. Matches the 30–80 band this pane's
+   own weekly strip already draws, so the colour rule and the visible band never
+   disagree about where overbought starts. See drawPane. */
+const STEADY_BAND = [30, 80];
 
 /* Doctrine circles OFF for now (owner request 2026-07-24) — flip true to
    bring them back; stochMarks() below still computes them either way. */
@@ -4052,42 +4054,41 @@ function renderCharts(data, lamp) {
     /* STEADY COLOUR (owner request 2026-08-05, from a reference platform whose
        Pro 2 equivalent flips a handful of times in two years where ours flips
        every few weeks).
-       A bare crossover treats every cross as equally meaningful, so the two
-       lines grazing each other and pulling apart again repaints the whole pane
-       for three bars and then repaints it back. In steady mode the colour
-       HOLDS until %K and %D have actually SEPARATED by `cst.gap` points — the
-       cross itself is not the event, clearing the noise floor is.
-       Measured over the last ~2y across the 25 charted symbols (12,600 bars),
-       counting colour changes and runs of <=5 bars (the flicker):
-         plain crossover  650 changes / 129 flickers
-         separation 3pt   370 /   7
-         separation 5pt   305 /   2   <- STEADY_GAP
-         separation 8pt   238 /   6
-       A 30–80 BAND was built first and measured worse (413 / 56): it cuts the
-       count but not the flicker, because a cross inside the band with the
-       lines a hair apart still turns instantly. It also only looked good on
-       the two symbols it was tuned against — on XLE it went 31 -> 27 and on
-       INDA 25 -> 22, i.e. nothing. Separation improves every symbol.
-       Deliberate consequence: in steady mode the colour can LAG a genuine
-       turn by a few bars, and the two lines can be visibly crossed on the
-       strip while the candles still read the old regime. That is the trade
-       being bought — the strip shows the cross, the candles show the regime
-       that has held.
+       The rule is a BAND, and the owner's ruling on it is explicit: a
+       crossover INSIDE 30–80 must change the colour; a crossover out in the
+       extremes must not. It matches the doctrine the pane already follows —
+       "a cross that's still stuck up near the top hasn't confirmed the turn
+       yet, you want to see it actually breaking down into the band" — so the
+       colour turns bearish only once %K has dropped BELOW 80, and bullish only
+       once it has climbed ABOVE 30. Until then the previous regime holds.
+       An alternative rule requiring %K and %D to SEPARATE by a few points was
+       built and measured (it flickers less: 305 colour changes against the
+       band's 413 over ~2y across the 25 charted symbols, and 2 runs of <=5
+       bars against 56). It is REJECTED, and the reason is not the numbers: a
+       separation threshold silently skips a real mid-band crossover whenever
+       the two lines cross and stay close, which is precisely the event this
+       pane exists to show. Fewer repaints is worth nothing if the one that
+       matters is the one dropped.
+       Deliberate consequence: with the band armed the strip can show the two
+       lines visibly crossed while the candles still read the old regime —
+       that is a cross out in an extreme being ignored on purpose, not a stale
+       render, which is why the caption names the mode.
        Computed across the WHOLE series, never the visible window. The state
        carries forward from bar to bar, so seeding it at i0 would make a
        candle's colour depend on where the viewport happens to start — the same
        bar would change colour as you zoom, which is the kind of bug that
        destroys trust in the pane. */
     let hystUp = null;
-    if (byStoch && cst.gap > 0) {
+    if (byStoch && cst.band) {
+      const [lo, hi] = cst.band;
       hystUp = new Array(bars.c.length).fill(null);
       let state = null;
       for (let i = 0; i < bars.c.length; i++) {
         const k = cst.k[i], d = cst.d[i];
         if (k == null || d == null) continue;      // still warming up
         if (state === null) state = k > d;         // seed on the first usable bar
-        else if (state && d - k >= cst.gap) state = false;
-        else if (!state && k - d >= cst.gap) state = true;
+        else if (state && k < d && k < hi) state = false;
+        else if (!state && k > d && k > lo) state = true;
         hystUp[i] = state;
       }
     }
@@ -4476,10 +4477,13 @@ function renderCharts(data, lamp) {
       /* Candles by the WEEKLY stochastic crossover — Pro 2 ONLY (owner ruling
          2026-07-30). Pro 1 and Pro 3 keep open/close, where a day's direction
          is the point. */
-      /* STEADY_GAP is in %K/%D points, i.e. the same 0–100 units the strip is
-         drawn in, so "5" is readable straight off the pane. Chosen by
-         measurement, not feel — see the table in drawPane. */
-      colorSt: wbState.cfg.p2.stochSteady ? { ...wk2, gap: STEADY_GAP } : wk2,
+      /* Same 30–80 the weekly strip below draws its band at (stochMarks(stW2,
+         30, 80)) — the colour rule and the visible band must not disagree
+         about where overbought starts. Measured on SPY and IYT, a 20 floor
+         gives identical results to 30 over the last year: no bullish cross
+         landed between them, so the lower bound is chosen for consistency
+         with the drawn band, not for effect. */
+      colorSt: wbState.cfg.p2.stochSteady ? { ...wk2, band: STEADY_BAND } : wk2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
@@ -4634,15 +4638,14 @@ function buildWbSettings() {
     ];
     group('Indicators', ind);
     /* Pro 2 alone colours by the crossover, so it alone gets this option.
-       Off by default: it recolours 23% of bars (measured over ~2y across the
+       Off by default: it recolours 21% of bars (measured over ~2y across the
        25 charted symbols), and silently changing what every candle means on a
        pane the owner reads for entries is not a default to assume.
-       The label says "shallow", not "small" or "weak" — what is being ignored
-       is a cross where the two lines never pull apart, which is a statement
-       about the SEPARATION and not about the price move. */
+       The label names WHERE the ignored crosses are, not how big they are —
+       a cross inside the band always acts, however slight. */
     if (key === 'p2') {
       group('Candle colour', [
-        ['Steady (ignore shallow crosses)', () => cfg.stochSteady, v => { cfg.stochSteady = v; }],
+        ['Steady (ignore crosses in the extremes)', () => cfg.stochSteady, v => { cfg.stochSteady = v; }],
       ]);
     }
     /* Pro 3 alone trades on intraday bars, so it alone can show the extended
