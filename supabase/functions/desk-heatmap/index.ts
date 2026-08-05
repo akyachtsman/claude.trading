@@ -288,10 +288,17 @@ export function periodsFromCloses(dates: string[], closes: number[]): Periods {
 // apart from "the request failed": the first deserves a permanent empty
 // reading, the second must be retried. Collapsing them lets one transient
 // batch failure bury 20 names for 24 hours.
-async function periodSweep(symbols: string[], batchSize = 20): Promise<{ out: Map<string, Periods>; answered: Set<string> }> {
+// `deadline` (epoch ms) stops the loop early and returns what it has. The
+// batches are sequential awaited fetches, so a fixed batch COUNT is a promise
+// about work, not about time — and when the upstream is slow that promise is
+// what kills the worker. Symbols never reached are simply absent from both
+// return values, which the caller already treats as "retry next request", so
+// stopping early costs nothing but a slower convergence.
+async function periodSweep(symbols: string[], batchSize = 20, deadline = Infinity): Promise<{ out: Map<string, Periods>; answered: Set<string> }> {
   const out = new Map<string, Periods>();
   const answered = new Set<string>();
   for (let i = 0; i < symbols.length; i += batchSize) {
+    if (Date.now() > deadline) break;   // hand back partial progress rather than dying whole
     const chunk = symbols.slice(i, i + batchSize);
     const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=1y&interval=1d`;
     const res = await fetch(url, { headers: UA }).catch(() => null);
@@ -420,7 +427,25 @@ const periodInflight = new Map<string, Promise<void>>();
 // runtime's background budget. Each request nudges the sweep forward; the
 // client's 5-min poller (or a burst of calls) completes it, and the row is
 // the durable progress ledger. Row payload: { done, total, map }.
-const SWEEP_STEP_BATCHES = 8; // 8 × 20 symbols per nudge — still inside budget
+const SWEEP_STEP_BATCHES = 8; // 8 × 20 symbols per nudge — a CEILING, not a target
+// Wall-clock ceiling on one nudge's Yahoo fetching. A batch count alone cannot
+// bound a run of sequential awaited fetches: when Yahoo is slow, 8 batches is
+// however long 8 batches takes, and on the r2k path that lands on top of a
+// screener download the worker has already paid for.
+//
+// Owner report 2026-08-05: desk-heatmap returning 546 on every call. The
+// ledger told the story — periods:r2k stuck at 480/2000 for TWELVE DAYS,
+// periods:sp500 at 320/500. Neither was converging, because advanceSweep
+// persisted only AFTER the whole slice: a request killed at the resource
+// limit threw away every symbol it had just fetched, and the next request
+// started from the same number. The sweep was doing the work and never
+// keeping it.
+//
+// 2.5s leaves room for the screener download, the heatmap build and the write
+// inside the worker's budget. A slow nudge now advances by one or two batches
+// instead of dying at eight — slower per request, but monotonic, which is the
+// property that was actually missing.
+const SWEEP_BUDGET_MS = 2500;
 function feedCacheHeaders() {
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   return { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' };
@@ -483,7 +508,7 @@ async function advanceSweep(universe: string, symbols: string[]): Promise<void> 
   const slice = symbols.filter((s) => !(s in map)).slice(0, SWEEP_STEP_BATCHES * 20);
 
   if (slice.length) {
-    const { out: got, answered } = await periodSweep(slice);
+    const { out: got, answered } = await periodSweep(slice, 20, Date.now() + SWEEP_BUDGET_MS);
     for (const sym of slice) {
       // The ledger is keyed by ROSTER symbol (what `want` compares against),
       // but periodSweep answers in Yahoo's form — BRK.B comes back as BRK-B.
