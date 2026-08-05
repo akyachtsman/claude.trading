@@ -355,20 +355,42 @@ This project's look is its own — established at kickoff via `/design-intake`
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
   session-aware cached + single-flight.
-  **`desk-charts` caches each symbol PRE-SERIALIZED, never as an object**
-  (owner report 2026-08-05, 546s on the charts panel): the 25-symbol payload is
-  ~934 KB, and `JSON.stringify`-ing it per request burned the worker's CPU
-  budget, returning `WORKER_RESOURCE_LIMIT` on 20–30% of calls with no upstream
-  fault at all. The tell was that a `force:true` FULL SWEEP reliably SUCCEEDED
-  while warm-cache calls died — a sweep spends its wall time awaiting network,
-  which costs no CPU, whereas a cache hit is almost pure serialization; measured
-  server-side the split was a clean threshold, every 200 in 1736–2401 ms and
-  every 546 in 2475–3074 ms. The function never READS the bars, only ships them,
-  so serializing once at prime time moves the cost onto the network-bound sweep
-  and drops the parsed object from memory. `generatedAt` is still rebuilt per
+  **`desk-charts` formats bar dates with ONE HOISTED `Intl.DateTimeFormat`**
+  (`NY_DATE`) — this is the fix for the 546s (owner report 2026-08-05, charts
+  panel blank on 20–50% of loads). `parseYahooChartOHLC` had called
+  `toLocaleDateString('en-CA', {timeZone})` once per bar, which builds and
+  discards an ICU formatter EVERY call; a cold sweep is 25 symbols × ~1250 bars
+  of Yahoo's 5y daily range ≈ **31,000 calls, measured at 2611 ms of pure CPU**,
+  which is the worker's whole budget — hence `WORKER_RESOURCE_LIMIT` with no
+  upstream fault at all. Reusing one formatter is **2611 ms → 50 ms (52×)** for
+  byte-identical output (verified over 33,334 timestamps spanning 2000–2026, so
+  every DST transition; measured live, 10/20 failures → **0/50**, and latency
+  2.19–3.63 s → 0.43–1.84 s). It must stay timezone-aware rather than become UTC
+  string math, or half-days and DST land on the wrong session date. The bar-date
+  guard beside it is load-bearing: the two date paths DISAGREE on a malformed
+  timestamp — `toLocaleDateString` returns the string `"Invalid Date"` while
+  `Intl…format` THROWS `RangeError` — so without it one bad row would fail the
+  whole symbol into the (currently always-missing) Stooq fallback; the bar is
+  skipped, never the symbol. **A prior 546 diagnosis here was WRONG and is
+  recorded in-file so it is not retried:** per-request `JSON.stringify` of the
+  ~934 KB payload was blamed and pre-serializing each symbol shipped as v9 —
+  measured, it did not move the failure rate at all. The misread was that a
+  `force:true` sweep survived where cache hits died; timing them head to head
+  showed a cached call cost the SAME as a forced full sweep, which only makes
+  sense because `seriesCache` is per-isolate module state and Supabase spreads
+  requests across short-lived isolates, so nearly every request was already
+  sweeping. The pre-serialization is kept on its own merits (the request path is
+  a string join, and the parsed object is dropped from memory) but is NOT the
+  fix. Because that path concatenates, the roster is **deduped** in
+  `loadWatchlist`: a repeated ticker would emit the same JSON key twice, and
+  `got` counts both where a parsed object keeps one — inflating `count`, letting
+  the `MIN_COVERAGE` floor pass on fewer real series than it claims, and
+  fetching the symbol twice per sweep. `generatedAt` is still rebuilt per
   request: `liveLampFor` measures poller health against it, so a memoized one
   (up to `HISTORY_TTL_MS` old) would lamp the panel STALE mid-session on a
-  healthy feed. PIN-gated: `desk-ask` — an **agentic**
+  healthy feed. **The same per-bar formatter pattern is still live in
+  `desk-heatmap` (~40,000 calls per sweep nudge — worse than desk-charts was)
+  and, harmlessly, in `desk-market`.** PIN-gated: `desk-ask` — an **agentic**
   desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`
   (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤12 calls,
   ≤3 pause resumes) with `web_search`/`web_fetch` + `get_quote` (calls

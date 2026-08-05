@@ -83,7 +83,19 @@ export function parseYahooChartOHLC(json: unknown): Row[] {
   for (let i = 0; i < ts.length; i++) {
     const o = Number(q.open?.[i]), h = Number(q.high?.[i]), l = Number(q.low?.[i]), c = Number(q.close?.[i]);
     if (![o, h, l, c].every((n) => Number.isFinite(n) && n > 0)) continue;
-    const date = NY_DATE.format(new Date(ts[i] * 1000));
+    // Drop the bar, never the symbol. The two date paths disagree on a bad
+    // timestamp: toLocaleDateString returns the STRING "Invalid Date", while
+    // Intl.DateTimeFormat.format THROWS RangeError (verified for undefined,
+    // NaN and non-numeric input — `null` coerces to 0 and is a real 1969 date
+    // in both). So the old code silently admitted a junk-dated bar and the
+    // hoisted formatter would instead throw out of parseYahooChartOHLC,
+    // failing the whole symbol into a Stooq fallback that is currently a
+    // guaranteed miss (see dailyOHLC) and costing real coverage. Skipping the
+    // one bad bar is right against both: no junk date reaches the payload and
+    // one malformed row can't take 800 good ones with it.
+    const secs = Number(ts[i]);
+    if (!Number.isFinite(secs)) continue;
+    const date = NY_DATE.format(new Date(secs * 1000));
     rows.push({ date, o, h, l, c, v: Number(q.volume?.[i]) > 0 ? Number(q.volume?.[i]) : 0 });
   }
   rows.sort((a, b) => a.date.localeCompare(b.date));
@@ -155,8 +167,22 @@ async function loadWatchlist(): Promise<string[]> {
     if (res.ok) {
       const list = await res.json();
       if (Array.isArray(list) && list.length && list.every((s) => typeof s === 'string')) {
-        // cap 40: bounds the upstream fan-out even if the committed roster balloons
-        rosterCache = { at: Date.now(), list: list.map((s: string) => s.trim().toUpperCase()).filter(Boolean).slice(0, 40) };
+        // DEDUPE, then cap 40 (the cap bounds the upstream fan-out even if the
+        // committed roster balloons). The roster is owner-edited by hand, so a
+        // repeated ticker is an ordinary typo — and it corrupts more than it
+        // looks like it should. The payload is assembled by CONCATENATION, so a
+        // dupe emits the same JSON key twice: `got` counts both, while a parsed
+        // object keeps one. That inflates `count`, can clear the MIN_COVERAGE
+        // floor on fewer real series than it claims, and would make a partial
+        // response render as complete. It also fetches the symbol twice on
+        // every sweep. Deduping here fixes all of it at the one place the
+        // roster is normalized.
+        const seen = new Set<string>();
+        for (const s of list as string[]) {
+          const t = s.trim().toUpperCase();
+          if (t) seen.add(t);
+        }
+        rosterCache = { at: Date.now(), list: [...seen].slice(0, 40) };
         return rosterCache.list;
       }
     }
