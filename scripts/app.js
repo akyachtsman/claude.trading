@@ -2159,6 +2159,28 @@ function renderAsk() {
   stopBtn.setAttribute('aria-label', 'Stop waiting for the current answer');
   stopBtn.title = 'Stop waiting for this answer';
   stopBtn.addEventListener('click', () => { if (askAbort) askAbort.abort(); });
+  /* Verify (owner request 2026-08-05). Arms the server's grounding check for
+     the NEXT question only — it re-reads the answer against the quote and
+     technicals payloads that produced it and forces a rewrite of anything
+     those payloads don't support.
+     It is off by default and DISARMS ITSELF after each answer, at the owner's
+     request, because the check costs real Claude quota on every question it
+     runs on. A toggle that stayed on would quietly bill every follow-up, and
+     the owner would find out from the invoice rather than the interface.
+     It resets on a delivered ANSWER only — not on an error or a Stop. Nothing
+     was checked in those cases, the owner is about to re-send, and silently
+     dropping the arm between the failure and the retry is how a deliberate
+     choice gets lost. */
+  let askVerify = false;
+  const verifyBtn = el('button', 'btn btn-secondary ask-verify', '✓ Verify'); verifyBtn.type = 'button';
+  verifyBtn.setAttribute('aria-pressed', 'false');
+  verifyBtn.setAttribute('aria-label', 'Verify the next answer against its data');
+  verifyBtn.title = 'Check the next answer against the quotes and technicals behind it. Costs extra; turns itself off afterwards.';
+  const setVerify = (on) => {
+    askVerify = on;
+    verifyBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  };
+  verifyBtn.addEventListener('click', () => setVerify(!askVerify));
   /* ⏱ beside ⚙ — same idiom, same place. Opens the schedule roster. */
   const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
@@ -2168,7 +2190,7 @@ function renderAsk() {
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin));
   const err = el('p', 'lock-error', ''); err.hidden = true;
-  form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn); form.appendChild(schedBtn); form.appendChild(sysBtn);
+  form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn); form.appendChild(verifyBtn); form.appendChild(schedBtn); form.appendChild(sysBtn);
   body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
   body.appendChild(el('p', 'ai-disclaimer',
     'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'));
@@ -2238,7 +2260,11 @@ function renderAsk() {
     if (scheduled) qEl.title = 'Asked automatically on a schedule';
     thread.appendChild(qEl);
     thread.scrollTop = thread.scrollHeight;
-    const res = await deskAsk(pin, q, buildAskContext(), askAbort.signal)
+    /* Read once, here, so a mid-flight toggle can't change what THIS question
+       was sent with — the arm the owner set when they pressed Ask is the arm
+       that applies to the answer they get back. */
+    const verifyThis = askVerify;
+    const res = await deskAsk(pin, q, buildAskContext(), askAbort.signal, verifyThis)
       .catch(e => (e && e.name === 'AbortError')
         ? { ok: false, stopped: true }
         : { ok: false, error: 'Could not reach the ask service — try again in a moment.' });
@@ -2250,6 +2276,8 @@ function renderAsk() {
       thread.appendChild(el('p', 'ask-a', res.answer));
       appendSources(res.sources);
       clearBtn.hidden = false;
+      /* Disarm on a delivered answer — see the note where the button is built. */
+      if (verifyThis) setVerify(false);
       if (!scheduled) input.value = '';
     } else if (res && res.stopped) {
       /* Not an error line — the owner did this on purpose, and a red error for

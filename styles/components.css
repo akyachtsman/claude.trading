@@ -574,5 +574,10 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   border: 1px dashed var(--color-border); border-radius: 6px;
   font-size: 14px; line-height: 1; cursor: pointer; background: var(--color-surface); }
 .wl-lock[aria-pressed="true"] { border-style: solid; border-color: var(--color-accent-bright); }
+
+/* Ask-the-desk verify toggle. Reuses the .seg pressed pair rather than minting
+   a colour: that combination is already contrast-checked, and the accent is
+   deliberately not the gain/loss red, which is P&L-only. */
+.ask-verify[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
 /* Class selectors set `display`, so they outrank the UA's [hidden] rule. */
 .wl-lock[hidden], .wl-move[hidden] { display: none; }

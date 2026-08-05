@@ -1873,3 +1873,59 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
   const busy = await page.evaluate(() => askBusy);
   expect(busy, 'askBusy must clear on abort or the panel is dead').toBe(false);
 });
+
+test('S33: verify is armed per question and disarms itself after an answer', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
+
+  // Demo has no backend, so there is no answer to check and no control to offer.
+  await expect(page.locator('.ask-verify'), 'no verify toggle in demo').toHaveCount(0);
+
+  /* Forced live+authed. deskAsk is stubbed to RECORD the verify argument it was
+     handed and answer immediately — the toggle's whole job is what reaches the
+     wire, so asserting on aria-pressed alone would pass even if the flag were
+     never sent. */
+  await page.evaluate(() => {
+    DESK.mode = 'live'; DESK.authed = true;
+    sessionStorage.setItem('desk_pin', '0000');
+    window.deskChatHistory = () => Promise.resolve([]);
+    window.__verifyArgs = [];
+    window.__askFails = false;
+    window.deskAsk = (pin, q, ctx, signal, verify) => {
+      window.__verifyArgs.push(verify);
+      return Promise.resolve(window.__askFails
+        ? { ok: false, error: 'boom' }
+        : { ok: true, answer: 'answered', sources: [] });
+    };
+    renderAsk();
+  });
+
+  const form = page.locator('#askBody form');
+  const verify = page.locator('.ask-verify');
+  const send = async (text) => {
+    await form.locator('input.input').fill(text);
+    await form.locator('button[type=submit]').click();
+  };
+
+  await expect(verify, 'off by default — the check costs quota').toHaveAttribute('aria-pressed', 'false');
+
+  // Armed, then sent: the flag must actually reach deskAsk.
+  await verify.click();
+  await expect(verify).toHaveAttribute('aria-pressed', 'true');
+  await send('is HOOD oversold?');
+  await expect.poll(() => page.evaluate(() => window.__verifyArgs)).toEqual([true]);
+
+  // Disarms itself once an answer lands, so the next question isn't billed for it.
+  await expect(verify, 'auto-off after an answer').toHaveAttribute('aria-pressed', 'false');
+  await send('and NVDA?');
+  await expect.poll(() => page.evaluate(() => window.__verifyArgs),
+    'the second question goes unverified — the reset is real, not cosmetic').toEqual([true, false]);
+
+  /* A FAILED question keeps the arm. Nothing was checked, the owner is about to
+     re-send, and dropping their choice in between is how it gets lost silently. */
+  await page.evaluate(() => { window.__askFails = true; });
+  await verify.click();
+  await send('third question');
+  await expect(verify, 'an error must not disarm — no answer was ever checked')
+    .toHaveAttribute('aria-pressed', 'true');
+});

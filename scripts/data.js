@@ -460,7 +460,11 @@ async function deskSetSystemPrompt(pin, content) {
    and the exchange still reaches desk_chat_memory. runAsk() says so in the
    thread rather than letting a cancelled question reappear unexplained on the
    next reload. Stopping the server run needs a desk-ask change and a deploy. */
-async function deskAsk(pin, question, context, signal) {
+/* `verify` arms the server's grounding check for THIS question only (owner
+   request 2026-08-05). It is a flag rather than text appended to the question,
+   so nothing about the request plumbing ends up inside the question the model
+   reads or the history it replays. */
+async function deskAsk(pin, question, context, signal, verify) {
   const res = await fetch(DESK_DB.url + '/functions/v1/desk-ask', {
     method: 'POST',
     headers: {
@@ -468,7 +472,7 @@ async function deskAsk(pin, question, context, signal) {
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ pin, question, context }),
+    body: JSON.stringify({ pin, question, context, verify: verify === true }),
     signal,
   });
   const out = await res.json().catch(() => null);

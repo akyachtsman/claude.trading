@@ -123,7 +123,9 @@ Deno.serve(async (req) => {
   // A bare "verify" is deliberately NOT a trigger: "verify my thesis on NVDA"
   // is an ordinary question, and a marker that fires by accident is one the
   // owner stops trusting.
-  const askedToVerify = VERIFY_MARK.test(rawQuestion);
+  // Two ways in: the composer's toggle sends a clean flag, and the typed
+  // marker below still works for anyone reaching for the keyboard.
+  const askedToVerify = payload.verify === true || VERIFY_MARK.test(rawQuestion);
   const question = rawQuestion.replace(VERIFY_MARK, ' ').replace(/\s+/g, ' ').trim();
   const verifyThisTurn = VERIFY_ALWAYS || askedToVerify;
   if (!pin || !question) return reply(400, { ok: false, error: 'pin and question are required' });
