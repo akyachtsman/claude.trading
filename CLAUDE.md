@@ -76,6 +76,29 @@ This project's look is its own — established at kickoff via `/design-intake`
   bar is a fact about one day and tinting it by a regime would make the
   histogram claim something it does not measure. Bars before the stochastic
   warms up fall back to open/close rather than defaulting to one colour.
+  **A per-pane "Steady" toggle holds the colour through a SHALLOW cross**
+  (`cfg.p2.stochSteady`, owner request 2026-08-05, from a reference platform
+  that flips a handful of times where ours flipped every few weeks). A bare
+  crossover treats every cross alike, so the two lines grazing each other
+  repaints the whole pane for three bars and then repaints it back; in steady
+  mode the colour holds until `%K`/`%D` have SEPARATED by `STEADY_GAP` (5
+  points, in the strip's own 0–100 units). Chosen by measurement over ~2y across
+  the 25 charted symbols (12,600 bars), counting colour changes / runs ≤5 bars:
+  plain **650/129**, sep-3 370/7, **sep-5 305/2**, sep-8 238/6. A 30–80 **band**
+  was built first and is REJECTED (413/56): it cuts the count but not the
+  flicker, because a cross inside the band with the lines a hair apart still
+  turns instantly, and it only looked good on the two symbols it was tuned
+  against (XLE 31→27, INDA 25→22 — i.e. nothing). Two things are load-bearing:
+  the state machine runs across the **WHOLE series, never the visible window** —
+  seeded at the viewport, 20 of the 25 symbols repaint on zoom (up to 77 bars),
+  and a candle changing colour as you zoom destroys trust in the pane (S34
+  guards exactly this, and only catches it by comparing the NARROW window's
+  OLDEST bars, where the seed divergence lives); and the caption gains
+  `(STEADY)`, because with it armed the strip can show the lines visibly crossed
+  while the candles hold the old regime — the same unexplained-divergence trap
+  the `· CANDLE COLOUR` caption already exists for. OFF by default: it recolours
+  23% of bars, and silently changing what every candle means on an entry pane is
+  not a default to assume.
   Also carries the
   session-aware feed poller (5 min market-open / 60 min closed, paused
   while the tab is hidden; a `CLOSE_SETTLE_GRACE_MIN` window — 15 min,
@@ -548,6 +571,7 @@ run for real against the dedicated project on every PR.
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shell pre-auth, valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
 | S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
 | S25 | Pro 2 stochastic candles | With `?demo=1`, EVERY Pro 2 candle's colour matches the **weekly** `%K` vs `%D` (read off the rendered SVG, pane-scoped by title, volume bars excluded — they stay price-coloured). TWO negative controls must both fail the same comparison: the pane's own daily strip, and Pro 1 against its stochastic. Sampling tolerance scales with bar spacing, so it holds at phone width | Any Pro 2 candle disagreeing with the weekly crossover (a silent fallback to open/close), the daily strip also matching (the wrong series drives the colour), or Pro 1 agreeing everywhere (the rule leaked into the wrong pane) |
+| S34 | Pro 2 steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE and flip no more often than before, and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
 | S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop; Escape cancels; the tray round-trips through `localStorage` across a reload; double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, a tray tile lost on reload, the trash replacing double-click, or any page error during a drag |
 | S31 | Create + delete a whole list | With `?demo=1` NO `#wlNewListBtn` and no `.wl-del` render. Forced live+authed against a stateful fake roster: the created list PERSISTS to the store, a case-insensitive duplicate name is refused without writing and without discarding the typed name, **under `wlLocked` the `×` is disabled AND `openWlDelList` refuses even when called directly while `+ list` stays available**, the delete confirm names the list and its symbol count and opens focus on "Keep it", and the deleted list is gone from the store | A write control in demo, a duplicate accepted (it makes both lists unaddressable via `wlPick`), a delete reachable under the lock (the button guard alone is not the rule), a confirm that doesn't say what is being destroyed, or a delete that only repaints |

@@ -3227,9 +3227,9 @@ const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default
    Pro 1/Pro 3 render no overlay regardless of this flag. */
 const WB_CFG_DEFAULT = () => ({
   p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
-  /* stochSteady: hold the candle colour through a crossover that happens while
-     still in an extreme, turning only once the stochastic moves into the 30–80
-     band (owner request 2026-08-05). Off by default — see the gear popover. */
+  /* stochSteady: hold the candle colour through a crossover until %K and %D
+     actually separate by STEADY_GAP points (owner request 2026-08-05). Off by
+     default — see the gear popover and the drawPane comment. */
   p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, stochSteady: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
   /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling).
      ext = show the 4:00am–8:00pm ET extended session (owner request 2026-07-29).
@@ -3495,6 +3495,11 @@ function monthlyPivots(s) {
    terminal IS the definition here, and the big windows also give the smooth
    daily-updating texture its weekly band shows. */
 const weeklyStochOnDaily = daily => stochSeries(daily, WSTOCH);
+
+/* Points of %K/%D separation a crossover must clear before the Pro 2 candle
+   colour follows it, when steady mode is armed. See drawPane for the numbers
+   behind 5. */
+const STEADY_GAP = 5;
 
 /* Doctrine circles OFF for now (owner request 2026-07-24) — flip true to
    bring them back; stochMarks() below still computes them either way. */
@@ -4044,32 +4049,45 @@ function renderCharts(data, lamp) {
        but the fill now means momentum regime, not today's result. */
     const cst = opts.colorSt;
     const byStoch = !!(cst && cst.k && cst.d);
-    /* STEADY COLOUR (owner request 2026-08-05, from a reference platform).
-       A bare crossover treats every cross as equally meaningful, but the
-       owner's own sell rule already says otherwise: "a cross that's still
-       stuck up near the top hasn't confirmed the turn yet — you want to see it
-       actually breaking down into the band." So the chart and the doctrine
-       disagreed, and the chart was the one that was wrong.
-       With a band, the colour HOLDS through a cross that happens while still
-       buried in the zone it is coming from, and only turns once momentum has
-       moved into the band. Measured over a year: SPY 14 colour changes -> 5,
-       IYT 18 -> 11.
+    /* STEADY COLOUR (owner request 2026-08-05, from a reference platform whose
+       Pro 2 equivalent flips a handful of times in two years where ours flips
+       every few weeks).
+       A bare crossover treats every cross as equally meaningful, so the two
+       lines grazing each other and pulling apart again repaints the whole pane
+       for three bars and then repaints it back. In steady mode the colour
+       HOLDS until %K and %D have actually SEPARATED by `cst.gap` points — the
+       cross itself is not the event, clearing the noise floor is.
+       Measured over the last ~2y across the 25 charted symbols (12,600 bars),
+       counting colour changes and runs of <=5 bars (the flicker):
+         plain crossover  650 changes / 129 flickers
+         separation 3pt   370 /   7
+         separation 5pt   305 /   2   <- STEADY_GAP
+         separation 8pt   238 /   6
+       A 30–80 BAND was built first and measured worse (413 / 56): it cuts the
+       count but not the flicker, because a cross inside the band with the
+       lines a hair apart still turns instantly. It also only looked good on
+       the two symbols it was tuned against — on XLE it went 31 -> 27 and on
+       INDA 25 -> 22, i.e. nothing. Separation improves every symbol.
+       Deliberate consequence: in steady mode the colour can LAG a genuine
+       turn by a few bars, and the two lines can be visibly crossed on the
+       strip while the candles still read the old regime. That is the trade
+       being bought — the strip shows the cross, the candles show the regime
+       that has held.
        Computed across the WHOLE series, never the visible window. The state
        carries forward from bar to bar, so seeding it at i0 would make a
        candle's colour depend on where the viewport happens to start — the same
        bar would change colour as you zoom, which is the kind of bug that
        destroys trust in the pane. */
     let hystUp = null;
-    if (byStoch && cst.band) {
-      const [lo, hi] = cst.band;
+    if (byStoch && cst.gap > 0) {
       hystUp = new Array(bars.c.length).fill(null);
       let state = null;
       for (let i = 0; i < bars.c.length; i++) {
         const k = cst.k[i], d = cst.d[i];
         if (k == null || d == null) continue;      // still warming up
         if (state === null) state = k > d;         // seed on the first usable bar
-        else if (state && k < d && k < hi) state = false;
-        else if (!state && k > d && k > lo) state = true;
+        else if (state && d - k >= cst.gap) state = false;
+        else if (!state && k - d >= cst.gap) state = true;
         hystUp[i] = state;
       }
     }
@@ -4458,13 +4476,10 @@ function renderCharts(data, lamp) {
       /* Candles by the WEEKLY stochastic crossover — Pro 2 ONLY (owner ruling
          2026-07-30). Pro 1 and Pro 3 keep open/close, where a day's direction
          is the point. */
-      /* 30–80 matches the band this pane's own weekly strip already draws
-         (stochMarks(stW2, 30, 80) below) — the colour rule and the visible
-         band should not disagree about where overbought starts. Measured on
-         SPY and IYT, a 20 floor gives identical results to 30 over the last
-         year: no bullish cross landed between them, so the lower bound is
-         doing no work and 30 is chosen for consistency, not effect. */
-      colorSt: wbState.cfg.p2.stochSteady ? { ...wk2, band: [30, 80] } : wk2,
+      /* STEADY_GAP is in %K/%D points, i.e. the same 0–100 units the strip is
+         drawn in, so "5" is readable straight off the pane. Chosen by
+         measurement, not feel — see the table in drawPane. */
+      colorSt: wbState.cfg.p2.stochSteady ? { ...wk2, gap: STEADY_GAP } : wk2,
       pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
@@ -4472,8 +4487,12 @@ function renderCharts(data, lamp) {
       stochCaption: stochTag() + ' · DAILY',
       /* names the strip the candles take their colour from — in this pane a
          green candle can be a down day, so leaving that unstated would read
-         as a rendering bug rather than the intended signal */
-      stochWCaption: stochWTag() + ' · WEEKLY SCALE · CANDLE COLOUR',
+         as a rendering bug rather than the intended signal.
+         STEADY earns its own word for the same reason: with it armed the two
+         lines can be visibly crossed here while the candles still show the old
+         regime, which is the deliberate lag and not a stale render. */
+      stochWCaption: stochWTag() + ' · WEEKLY SCALE · CANDLE COLOUR'
+        + (wbState.cfg.p2.stochSteady ? ' (STEADY)' : ''),
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
@@ -4614,13 +4633,16 @@ function buildWbSettings() {
       ...(key === 'p2' ? [['Stochastic (weekly)', () => cfg.stochW, v => { cfg.stochW = v; }]] : []),
     ];
     group('Indicators', ind);
-    /* Pro 2 alone colours by the crossover, so it alone gets the band option.
-       Off by default: it recolours a large share of bars (41% of SPY's last
-       year, 21% of IYT's), and silently changing what every candle means on a
-       pane the owner reads for entries is not a default to assume. */
+    /* Pro 2 alone colours by the crossover, so it alone gets this option.
+       Off by default: it recolours 23% of bars (measured over ~2y across the
+       25 charted symbols), and silently changing what every candle means on a
+       pane the owner reads for entries is not a default to assume.
+       The label says "shallow", not "small" or "weak" — what is being ignored
+       is a cross where the two lines never pull apart, which is a statement
+       about the SEPARATION and not about the price move. */
     if (key === 'p2') {
       group('Candle colour', [
-        ['Steady (ignore crosses in the extremes)', () => cfg.stochSteady, v => { cfg.stochSteady = v; }],
+        ['Steady (ignore shallow crosses)', () => cfg.stochSteady, v => { cfg.stochSteady = v; }],
       ]);
     }
     /* Pro 3 alone trades on intraday bars, so it alone can show the extended
