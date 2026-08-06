@@ -180,6 +180,27 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
+  **`chart-watchlist.json` did not exist until 2026-08-06** — it 404'd from the
+  day `desk-charts` shipped, so the documented owner-editable roster was inert
+  and every sweep silently used the code's `DEFAULT_WATCHLIST`. It was created
+  holding EXACTLY those 25 defaults, so publishing it changed no behaviour; it
+  is now the live roster and editing it takes effect. Four things bound an
+  edit: it must be a **bare JSON array of strings** (the loader's own
+  predicate — an object wrapper is rejected and falls back to the defaults,
+  which is also why the file carries no `_note` like its neighbours); symbols
+  are trimmed/upper-cased/**deduped** then **capped at 40** (the cap is what
+  bounds upstream fan-out, and answers the old security-review finding that the
+  roster length was unbounded); `rosterCache` holds it for **1 hour**, so an
+  edit is not immediate; and `MIN_COVERAGE` 0.6 means a roster padded with
+  tickers that don't resolve can fail the whole panel to `ok:false`.
+  **The heatmap's ETF cut re-sources from this roster** — `buildEtfHeatmap`
+  iterates the `desk-charts` payload and groups it by `map-filters.json`'s
+  `etfCats` — so the two rosters are coupled, and they DISAGREE: `etfCats`
+  names 35 ETFs, 15 of which (RSP VTI VOO EFA VEA XLRE XBI USO DBC IEF LQD HYG
+  AGG BND UVXY) have no series, so the cut renders **20 of 35** tiles. This
+  predates the file and is unchanged by it. Closing it would need exactly 40
+  symbols — the cap precisely, with no headroom — so it is left for the owner
+  to choose rather than silently widening what the desk charts.
 - `config/widgets.json` — owner-editable roster of embedded third-party
   widgets from TWO providers — **TradingView** (economic calendar) and **FRED**
   (`fred-glance` = the St. Louis Fed "Economy at a glance" widget). Each is
