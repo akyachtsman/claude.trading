@@ -3311,7 +3311,7 @@ function renderHeatTable(hm) {
    Russell 2000 and ETFs are each their own desk-heatmap universe — r2k the
    screener's small-cap band (owner request 2026-07-14), ETFs the etfCats
    roster (2026-08-06, replacing a client-side build off the charts payload
-   that could only draw the 20 of 35 names that panel happened to carry).
+   that could only draw the 25 of 40 names that panel happened to carry).
    Every cut carries pctW/pctM/pctYtd from the feed's daily 1y sweep, so the
    period dropdown works wherever those fields are present. */
 const MAP_CUTS = [
@@ -3381,8 +3381,9 @@ function recolorForPeriod(hm, period) {
 
 /* The ETF cut used to be assembled HERE, out of the charts workbench payload —
    which meant a tile existed only if that panel happened to carry the symbol's
-   full 800-bar OHLCV series. It did not for 15 of the 35 banded names, so the
-   map quietly rendered 20 of 35 and had since it shipped. It is now its own
+   full 800-bar OHLCV series. It did not for 15 of the banded names, so the map
+   drew 25 of 40 for its whole life — 20 properly banded plus 5 swept into a
+   catch-all bucket, which is what hid the mismatch. It is now its own
    desk-heatmap universe, like r2k: the roster and its bands come from the one
    committed object (map-filters.json → etfCats) read on BOTH sides, and the
    periods ride the same sweep every other cut uses. */
@@ -3542,7 +3543,7 @@ async function refreshR2kMap() {
   if (mapView.key === 'r2k') applyMapView();
 }
 
-/* ETF cut — its own desk-heatmap universe. 35 names is one quote batch and one
+/* ETF cut — its own desk-heatmap universe. 40 names is one quote batch and one
    sweep nudge, so this converges on the first call rather than over hours like
    the stock universes. Demo mode is served locally: the cut must keep working
    under ?demo=1, and nothing may call the live feed there. */

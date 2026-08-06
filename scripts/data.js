@@ -192,7 +192,7 @@ function buildDemoHeatmap() {
 }
 
 /* ETF map demo. Built from the REAL etfCats roster rather than a private demo
-   list, so ?demo=1 exercises the same 35 names and 5 bands the live cut renders
+   list, so ?demo=1 exercises the same 40 names and 5 bands the live cut renders
    — a demo with its own shorter roster would hide exactly the "tiles missing
    from a band" fault this cut was just fixed for. Periods are generated so the
    1W/1M/YTD dropdown unlocks in demo like it does live; the gate reads

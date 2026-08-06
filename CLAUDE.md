@@ -466,7 +466,7 @@ This project's look is its own — established at kickoff via `/design-intake`
   the period dropdown** — it used to compute 1W/1M/YTD from chart bars so could
   always answer, and now reads them off the shared sweep like every other cut,
   so it must be gated on `datasetHasPeriods` or picking 1M paints an empty map.
-  35 names is one quote batch and one sweep nudge (160), so unlike the stock
+  40 names is one quote batch and one sweep nudge (160), so unlike the stock
   universes this one converges on its first call. The screener is NOT a fallback
   here (it lists common stocks, not funds); a crumb failure degrades to the 5-day
   spark, losing only the weighting, so every tile hits the floor together and the

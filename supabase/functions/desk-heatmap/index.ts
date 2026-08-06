@@ -40,10 +40,12 @@ const CONSTITUENTS_URL = 'https://raw.githubusercontent.com/datasets/s-and-p-500
 //
 // This cut used to be built CLIENT-side out of the desk-charts payload, which
 // meant a tile could only exist if the charts workbench happened to carry that
-// symbol's full 800-bar OHLCV series. It did not for 15 of the 35 names, so the
-// map rendered 20 of 35 tiles and had done since it shipped. Sourcing it here
-// costs ~46 bytes a name off the period sweep instead of ~36 KB a name off the
-// charts payload — the panel only ever needed a handful of numbers per tile.
+// symbol's full 800-bar OHLCV series. It did not for 15 of the banded names, so
+// the map drew 25 of 40 for its whole life — 20 in their proper bands plus 5
+// swept into a catch-all 'ETFs' bucket by `cats[sym] || 'ETFs'`, which is what
+// kept the mismatch invisible. Sourcing it here costs ~46 bytes a name off the
+// period sweep instead of ~36 KB a name off the charts payload — the panel only
+// ever needed a handful of numbers per tile.
 const MAP_FILTERS_URL = 'https://akyachtsman.github.io/claude.trading/config/map-filters.json';
 const ETF_CAP = 60;  // bounds upstream fan-out if the committed roster balloons
 // Fallback only, for a Pages hiccup — the committed file is the real roster
@@ -556,7 +558,7 @@ let etfCatsCache: { at: number; cats: Record<string, string> } | null = null;  /
 
 /* The ETF roster IS its grouping — one object, so a symbol can never be
    charted without a band or banded without being charted (the drift that left
-   this cut rendering 20 of 35 tiles). Normalised the same way the client reads
+   this cut rendering 25 of 40 tiles). Normalised the same way the client reads
    it, capped like every other runtime-loaded roster, and cached for an hour so
    an edit is picked up without a deploy. A malformed file falls back to the
    built-in copy rather than emptying the map. */
@@ -824,7 +826,7 @@ async function refreshR2k(): Promise<unknown> {
   return body;
 }
 
-/* ETF cut. 35 names is ONE quote batch and well inside a single sweep nudge
+/* ETF cut. 40 names is ONE quote batch and well inside a single sweep nudge
    (160), so unlike the stock universes this one converges on its first call.
    The screener is not a fallback here — it lists common stocks, not funds — so
    a crumb failure degrades to the 5-day spark, which still carries price and
