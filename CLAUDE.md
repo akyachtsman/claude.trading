@@ -354,7 +354,56 @@ This project's look is its own — established at kickoff via `/design-intake`
   its tile, never gating the core; owner request 2026-07-16), `desk-heatmap` (Nasdaq
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
-  session-aware cached + single-flight. PIN-gated: `desk-ask` — an **agentic**
+  session-aware cached + single-flight.
+  **`desk-charts` formats bar dates with ONE HOISTED `Intl.DateTimeFormat`**
+  (`NY_DATE`) — this is the fix for the 546s (owner report 2026-08-05, charts
+  panel blank on 20–50% of loads). `parseYahooChartOHLC` had called
+  `toLocaleDateString('en-CA', {timeZone})` once per bar, which builds and
+  discards an ICU formatter EVERY call; a cold sweep is 25 symbols × ~1250 bars
+  of Yahoo's 5y daily range ≈ **31,000 calls, measured at 2611 ms of pure CPU**,
+  which is the worker's whole budget — hence `WORKER_RESOURCE_LIMIT` with no
+  upstream fault at all. Reusing one formatter is **2611 ms → 50 ms (52×)** for
+  byte-identical output (verified over 33,334 timestamps spanning 2000–2026, so
+  every DST transition; measured live, 10/20 failures → **0/50**, and latency
+  2.19–3.63 s → 0.43–1.84 s). It must stay timezone-aware rather than become UTC
+  string math, or half-days and DST land on the wrong session date. The bar-date
+  guard beside it is load-bearing: the two date paths DISAGREE on a malformed
+  timestamp — `toLocaleDateString` returns the string `"Invalid Date"` while
+  `Intl…format` THROWS `RangeError` — so without it one bad row would fail the
+  whole symbol into the (currently always-missing) Stooq fallback; the bar is
+  skipped, never the symbol. **A prior 546 diagnosis here was WRONG and is
+  recorded in-file so it is not retried:** per-request `JSON.stringify` of the
+  ~934 KB payload was blamed and pre-serializing each symbol shipped as v9 —
+  measured, it did not move the failure rate at all. The misread was that a
+  `force:true` sweep survived where cache hits died; timing them head to head
+  showed a cached call cost the SAME as a forced full sweep, which only makes
+  sense because `seriesCache` is per-isolate module state and Supabase spreads
+  requests across short-lived isolates, so nearly every request was already
+  sweeping. The pre-serialization is kept on its own merits (the request path is
+  a string join, and the parsed object is dropped from memory) but is NOT the
+  fix. Because that path concatenates, the roster is **deduped** in
+  `loadWatchlist`: a repeated ticker would emit the same JSON key twice, and
+  `got` counts both where a parsed object keeps one — inflating `count`, letting
+  the `MIN_COVERAGE` floor pass on fewer real series than it claims, and
+  fetching the symbol twice per sweep. `generatedAt` is still rebuilt per
+  request: `liveLampFor` measures poller health against it, so a memoized one
+  (up to `HISTORY_TTL_MS` old) would lamp the panel STALE mid-session on a
+  healthy feed.
+  **`desk-heatmap` carried the SAME per-bar formatter and was fixed the same
+  day** (`NY_DATE` there too). It was the worse of the two: one sweep nudge is
+  `SWEEP_STEP_BATCHES`×20 = 160 symbols × ~250 bars of the 1y daily spark ≈
+  **40,000 calls, 3778 ms of CPU → 80 ms (47×)**. The number that matters is
+  that 3778 ms exceeded **`SWEEP_BUDGET_MS` (2500)**: that budget bounds the
+  fetch DEADLINE, and the formatting runs after each batch resolves, so no
+  wall-clock bound could ever contain it — which is why the PR #221 hardening
+  (deadline on the fetch, persist partial progress) reduced the damage from
+  being killed without stopping the kills. The sweep was being killed by its
+  own date parsing. Its bar-date guard is load-bearing for a sharper reason
+  than the charts one: a `RangeError` escapes `periodSweep` into
+  `advanceSweep`'s `.catch(() => {})`, discarding the whole nudge before
+  `writeSweepRow` — re-entering the exact ledger loss `SWEEP_BUDGET_MS` exists
+  to prevent, through a different door. The pattern also survives, harmlessly,
+  in `desk-market` (~63 bars × a few symbols). PIN-gated: `desk-ask` — an **agentic**
   desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`
   (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤12 calls,
   ≤3 pause resumes) with `web_search`/`web_fetch` + `get_quote` (calls

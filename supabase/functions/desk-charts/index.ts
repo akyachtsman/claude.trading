@@ -54,6 +54,26 @@ export function parseStooqOHLC(csv: string): Row[] {
   return rows;
 }
 
+// ONE formatter, hoisted — this is the whole 546 fix (owner report 2026-08-05).
+//
+// `d.toLocaleDateString('en-CA', { timeZone })` builds and discards an ICU
+// formatter on EVERY call. This loop runs once per bar: 25 watchlist symbols x
+// ~1250 bars of Yahoo's 5y daily range is ~31k calls per cold sweep. Measured,
+// that is 2611 ms of pure CPU — and the sweep is what the worker's CPU budget
+// is spent on, which is why 20-30% of calls died with WORKER_RESOURCE_LIMIT at
+// 2475-3074 ms while the ones that survived came in at 1736-2401 ms. The
+// failures were not a slow upstream and not the payload serialization; they
+// were this line.
+//
+// Reusing a single Intl.DateTimeFormat is the same work without the per-call
+// construction: 2611 ms -> 50 ms, a 52x cut, for byte-identical output
+// (verified equal across 33,334 timestamps spanning 2000-2026, which covers
+// every DST transition — the reason this must stay timezone-aware rather than
+// become UTC string math).
+const NY_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
 export function parseYahooChartOHLC(json: unknown): Row[] {
   // deno-lint-ignore no-explicit-any
   const r = (json as any)?.chart?.result?.[0];
@@ -63,7 +83,19 @@ export function parseYahooChartOHLC(json: unknown): Row[] {
   for (let i = 0; i < ts.length; i++) {
     const o = Number(q.open?.[i]), h = Number(q.high?.[i]), l = Number(q.low?.[i]), c = Number(q.close?.[i]);
     if (![o, h, l, c].every((n) => Number.isFinite(n) && n > 0)) continue;
-    const date = new Date(ts[i] * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    // Drop the bar, never the symbol. The two date paths disagree on a bad
+    // timestamp: toLocaleDateString returns the STRING "Invalid Date", while
+    // Intl.DateTimeFormat.format THROWS RangeError (verified for undefined,
+    // NaN and non-numeric input — `null` coerces to 0 and is a real 1969 date
+    // in both). So the old code silently admitted a junk-dated bar and the
+    // hoisted formatter would instead throw out of parseYahooChartOHLC,
+    // failing the whole symbol into a Stooq fallback that is currently a
+    // guaranteed miss (see dailyOHLC) and costing real coverage. Skipping the
+    // one bad bar is right against both: no junk date reaches the payload and
+    // one malformed row can't take 800 good ones with it.
+    const secs = Number(ts[i]);
+    if (!Number.isFinite(secs)) continue;
+    const date = NY_DATE.format(new Date(secs * 1000));
     rows.push({ date, o, h, l, c, v: Number(q.volume?.[i]) > 0 ? Number(q.volume?.[i]) : 0 });
   }
   rows.sort((a, b) => a.date.localeCompare(b.date));
@@ -108,7 +140,24 @@ export function packSeries(rows: Row[]): Packed {
 
 // ── caches ───────────────────────────────────────────────────────────────────
 let rosterCache: { at: number; list: string[] } | null = null;                    // 1h
-const seriesCache = new Map<string, { at: number; packed: Packed; last: string }>(); // per symbol, 30 min
+// Each symbol is cached PRE-SERIALIZED, not as a Packed object. This function
+// never READS the bars — it only ships them — so holding the parsed object
+// alongside its own JSON is dead weight; serializing once per symbol at prime
+// time leaves the request path a string join.
+//
+// This was FIRST shipped (v9) as a claimed fix for the 546s and was NOT one —
+// measured before/after, the failure rate did not move. Recorded because the
+// reasoning was wrong in an instructive way: the ~934 KB payload IS expensive
+// to stringify, and a force:true sweep did survive where apparent cache hits
+// died, which looked like per-request serialization was the cost. It wasn't.
+// A warm-cache call was timed against a forced full sweep and cost the SAME
+// (~2.2-2.9s both ways), which only makes sense if the "cache hit" was also
+// sweeping — Supabase spreads requests across short-lived isolates, and
+// seriesCache is per-isolate module state, so nearly every request pays a cold
+// sweep. The real cost was inside that sweep, in parseYahooChartOHLC's
+// per-bar date formatting (see NY_DATE). Keep this change on its own merits;
+// do not re-credit it with fixing the 546s.
+const seriesCache = new Map<string, { at: number; json: string; last: string }>(); // per symbol, 30 min
 let sweepInflight: Promise<void> | null = null;
 
 async function loadWatchlist(): Promise<string[]> {
@@ -118,8 +167,22 @@ async function loadWatchlist(): Promise<string[]> {
     if (res.ok) {
       const list = await res.json();
       if (Array.isArray(list) && list.length && list.every((s) => typeof s === 'string')) {
-        // cap 40: bounds the upstream fan-out even if the committed roster balloons
-        rosterCache = { at: Date.now(), list: list.map((s: string) => s.trim().toUpperCase()).filter(Boolean).slice(0, 40) };
+        // DEDUPE, then cap 40 (the cap bounds the upstream fan-out even if the
+        // committed roster balloons). The roster is owner-edited by hand, so a
+        // repeated ticker is an ordinary typo — and it corrupts more than it
+        // looks like it should. The payload is assembled by CONCATENATION, so a
+        // dupe emits the same JSON key twice: `got` counts both, while a parsed
+        // object keeps one. That inflates `count`, can clear the MIN_COVERAGE
+        // floor on fewer real series than it claims, and would make a partial
+        // response render as complete. It also fetches the symbol twice on
+        // every sweep. Deduping here fixes all of it at the one place the
+        // roster is normalized.
+        const seen = new Set<string>();
+        for (const s of list as string[]) {
+          const t = s.trim().toUpperCase();
+          if (t) seen.add(t);
+        }
+        rosterCache = { at: Date.now(), list: [...seen].slice(0, 40) };
         return rosterCache.list;
       }
     }
@@ -131,7 +194,12 @@ async function loadWatchlist(): Promise<string[]> {
 async function primeSymbol(ticker: string): Promise<void> {
   try {
     const rows = await dailyOHLC(ticker);
-    seriesCache.set(ticker, { at: Date.now(), packed: packSeries(rows), last: rows[rows.length - 1].date });
+    // Serialize HERE, inside the sweep, not per request — see the seriesCache note.
+    seriesCache.set(ticker, {
+      at: Date.now(),
+      json: JSON.stringify(packSeries(rows)),
+      last: rows[rows.length - 1].date,
+    });
   } catch { /* keep whatever the cache holds */ }
 }
 
@@ -170,24 +238,30 @@ Deno.serve(async (req) => {
     (globalThis as any).EdgeRuntime?.waitUntil?.(work); // let stragglers finish filling the cache
   }
 
-  const symbols: Record<string, Packed> = {};
+  // Assembled by concatenation from the per-symbol JSON already in the cache,
+  // so the big blob is never re-serialized on the request path. Same bytes as
+  // the object literal this replaced, same key order.
+  const parts: string[] = [];
   let asOf: string | null = null;
   for (const t of watchlist) {
     const hit = seriesCache.get(t);
     if (!hit) continue;
-    symbols[t] = hit.packed;
+    parts.push(`${JSON.stringify(t)}:${hit.json}`);
     if (!asOf || hit.last > asOf) asOf = hit.last;
   }
-  const got = Object.keys(symbols).length;
+  const got = parts.length;
   if (got < Math.ceil(watchlist.length * MIN_COVERAGE)) {
     return reply(502, { ok: false, error: `coverage floor: ${got}/${watchlist.length} watchlist symbols` });
   }
-  return reply(200, {
-    ok: true,
-    partial: got < watchlist.length || undefined,
-    asOf,
-    generatedAt: new Date().toISOString(),
-    count: got,
-    symbols,
-  });
+  // generatedAt stays FRESH per request: the client measures poller staleness
+  // against it (liveLampFor(data.generatedAt, ...)), so serving a memoized one
+  // up to a HISTORY_TTL_MS old would lamp the charts panel STALE mid-session
+  // while the feed was in fact healthy. It is the one field worth rebuilding.
+  const body = '{"ok":true'
+    + (got < watchlist.length ? ',"partial":true' : '')
+    + `,"asOf":${JSON.stringify(asOf)}`
+    + `,"generatedAt":${JSON.stringify(new Date().toISOString())}`
+    + `,"count":${got}`
+    + `,"symbols":{${parts.join(',')}}}`;
+  return new Response(body, { status: 200, headers: { ...CORS, 'content-type': 'application/json' } });
 });
