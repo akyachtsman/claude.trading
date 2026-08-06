@@ -193,14 +193,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   roster length was unbounded); `rosterCache` holds it for **1 hour**, so an
   edit is not immediate; and `MIN_COVERAGE` 0.6 means a roster padded with
   tickers that don't resolve can fail the whole panel to `ok:false`.
-  **The heatmap's ETF cut re-sources from this roster** — `buildEtfHeatmap`
-  iterates the `desk-charts` payload and groups it by `map-filters.json`'s
-  `etfCats` — so the two rosters are coupled, and they DISAGREE: `etfCats`
-  names 35 ETFs, 15 of which (RSP VTI VOO EFA VEA XLRE XBI USO DBC IEF LQD HYG
-  AGG BND UVXY) have no series, so the cut renders **20 of 35** tiles. This
-  predates the file and is unchanged by it. Closing it would need exactly 40
-  symbols — the cap precisely, with no headroom — so it is left for the owner
-  to choose rather than silently widening what the desk charts.
+  **The heatmap's ETF cut no longer reads this roster at all** (2026-08-06) —
+  it is its own `desk-heatmap` universe; see that entry below. Until then the
+  cut was built client-side out of the `desk-charts` payload, so an ETF got a
+  tile only if the charts workbench happened to carry its 800-bar series, and
+  the two rosters were coupled for no reason other than that.
 - `config/widgets.json` — **EMPTY as of 2026-08-07 (owner ruling): both embeds
   are retired and the desk now runs NO third-party vendor JS at all** — the page
   carries zero iframes. The FRED "Economy at a glance" widget was replaced by
@@ -447,6 +444,33 @@ This project's look is its own — established at kickoff via `/design-intake`
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
   session-aware cached + single-flight.
+  **`desk-heatmap` serves THREE universes** — `sp500` (default), `r2k`, and
+  **`etf`** (added 2026-08-06). The ETF cut used to be assembled CLIENT-side by
+  `buildEtfHeatmap()` out of the `desk-charts` payload, which meant an ETF got a
+  tile only if the charts workbench happened to carry its 800-bar OHLCV series.
+  It did not for 15 of the banded names, so the map drew **25 of 40** for its
+  whole life — 20 in their proper bands plus 5 (KRE TLH UUP FXI INDA) swept into
+  a catch-all `'ETFs'` bucket by `cats[sym] || 'ETFs'`, which is what kept the
+  mismatch invisible. Re-sourcing it is a ~**800× data reduction**: the panel
+  needs about six numbers per tile, which cost ~36 KB/name off the charts
+  payload and ~46 bytes/name off the period sweep. Four things are load-bearing:
+  the roster IS its grouping (`map-filters.json` → `etfCats`, read by BOTH
+  sides), so a symbol can never be charted without a band or banded without
+  being charted — the drift that caused this; tiles are sized by **dollar
+  volume** (`last × averageDailyVolume3Month`, added to the shared `quoteBatch`
+  fields) because an ETF has no market cap, and a missing volume falls to an
+  area floor rather than dropping the tile; the five orphans were **added to
+  `etfCats`** rather than let vanish (a strict rebuild would have shown 35 and
+  silently lost 5 the owner could see — `UUP` in *Commodities* is the one
+  judgement call, the rest are unambiguous); and the cut **lost its free pass on
+  the period dropdown** — it used to compute 1W/1M/YTD from chart bars so could
+  always answer, and now reads them off the shared sweep like every other cut,
+  so it must be gated on `datasetHasPeriods` or picking 1M paints an empty map.
+  35 names is one quote batch and one sweep nudge (160), so unlike the stock
+  universes this one converges on its first call. The screener is NOT a fallback
+  here (it lists common stocks, not funds); a crumb failure degrades to the 5-day
+  spark, losing only the weighting, so every tile hits the floor together and the
+  map stays readable.
   **`desk-charts` formats bar dates with ONE HOISTED `Intl.DateTimeFormat`**
   (`NY_DATE`) — this is the fix for the 546s (owner report 2026-08-05, charts
   panel blank on 20–50% of loads). `parseYahooChartOHLC` had called
@@ -738,7 +762,7 @@ run for real against the dedicated project on every PR.
 | S33 | Verify-answer toggle | With `?demo=1` NO `.ask-verify` renders. Forced live+authed with `deskAsk` stubbed to RECORD its `verify` argument: off by default, arming sends `true` **on the wire** (not just `aria-pressed`), it disarms itself once an answer lands so the next question sends `false`, and a FAILED question keeps the arm | A toggle that stays on (every follow-up silently bills the check), a reset that's only cosmetic, or an error that disarms — the owner re-sends and their choice is gone |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S30 | Watchlist write conflict | With `?demo=1`, `deskSetWatchlists` forwards a version it is handed, `wlMutate` echoes back the version its own read returned, and an omitted version serializes as an explicit `null` — `undefined` would be dropped by `JSON.stringify` and silently bind the RPC's no-check default. The refusal itself is server-side (`desk_014`), exercised against the live table rather than in CI | A write with no `expected_version`, a version invented at write time rather than read, or `undefined` on the wire |
-| S13 | Heatmap map filter | With `?demo=1`, the panel starts COLLAPSED (`#heatBody` hidden, `aria-expanded=false`) and opens on `#heatToggle`; then the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count, ETFs re-source from charts data and unlock the period dropdown); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, or disabled rows clickable |
+| S13 | Heatmap map filter | With `?demo=1`, the panel starts COLLAPSED (`#heatBody` hidden, `aria-expanded=false`) and opens on `#heatToggle`; then the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. On the ETF cut, **every banded ETF gets a tile** — `tiles === Object.keys(etfCats).length`, with NO catch-all band and periods on every tile — read off the dataset via `page.evaluate`, NOT counted in the SVG (tiles are bare `rect`s with no class, sub-3px tiles are skipped by design, and the gloss overlay adds a second rect each, so a DOM count is both ambiguous and flaky at phone width). Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, disabled rows clickable, or a banded ETF with no tile — the 2026-08-06 regression, where the cut drew 25 of 40 because it was built from whatever the charts panel happened to carry |
 | S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly. That allowlist is now ONE shared block at the top of `app.spec.js` (`FEED_ORIGIN`/`FEED_CORS`/`BENIGN_CONSOLE`/`benignPageError`), not a copy per scenario: on 2026-08-01 the copies drifted and S3's `pageerror` listener had no filter at all, so `[iphone]` failed on exactly what `[mobile-chrome]` was already dropping — **WebKit raises a blocked cross-origin fetch as a pageerror, Chromium only logs it**. The SAME drift recurred one layer down hours later (the `0bfb372` post-merge run on `main`): the shared rule had been applied to the pageerror listener but not to S3's CONSOLE twin, which still demanded the FEED ORIGIN appear in the message text or location — and the first message of WebKit's CORS pair names only the refused origin, so `[iphone]` failed again. The rule is therefore ONE predicate, `benignCors(text, src)`, that every listener calls (`benignPageError` is now just its no-`src` alias) — restating it is the bug. It is deliberately stricter than a bare CORS match (pageerror is where real faults land): CORS-phrased AND naming either the feed origin or the run's own origin, and the own-origin half is enabled ONLY for a LOCAL test server (`localhost`/`127.0.0.1`) — not merely "any origin that isn't production", since `qa-live` takes an `app_url` override and a staging deploy would otherwise inherit the carve-out and swallow a real `quote-proxy` CORS break that S14 (which proves the MARKET feed) would not catch | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
 | S15 | Assistant memory (opt-in, live) | With `RUN_ASSISTANT_TESTS=1` + live backend: ask, reload, prior exchange replays from `desk_chat_memory` (transcript contains the earlier text) | Transcript empty after reload despite a stored exchange |
 | S16 | Assistant research (opt-in, live) | A snapshot-absent question renders an answer (web tools available) | No answer bubble renders |

@@ -191,6 +191,42 @@ function buildDemoHeatmap() {
   return { asOf: isoDate(lastTradingDay(new Date())), source: 'demo', sectors };
 }
 
+/* ETF map demo. Built from the REAL etfCats roster rather than a private demo
+   list, so ?demo=1 exercises the same 35 names and 5 bands the live cut renders
+   — a demo with its own shorter roster would hide exactly the "tiles missing
+   from a band" fault this cut was just fixed for. Periods are generated so the
+   1W/1M/YTD dropdown unlocks in demo like it does live; the gate reads
+   pctW off the tiles and would otherwise stay locked. */
+function buildDemoEtfMap(cats) {
+  const entries = Object.entries(cats || {});
+  if (!entries.length) return null;
+  const rnd = lcg(313);
+  const byBand = new Map();
+  for (const [sym, band] of entries) {
+    const pct = Number(((rnd() - 0.47) * 2.6).toFixed(2));
+    const last = Number((20 + rnd() * 420).toFixed(2));
+    /* Weight spread over three orders of magnitude, like real dollar volume —
+       a flat weighting would make the treemap a uniform grid and hide whether
+       tiles are being sized at all. */
+    const dv = last * (2e5 + rnd() * 4e7);
+    if (!byBand.has(band)) byBand.set(band, []);
+    byBand.get(band).push({
+      sym, name: sym, cap: Math.max(dv, 1), ind: band, pct, last,
+      pctW: Number((pct + (rnd() - 0.5) * 4).toFixed(2)),
+      pctM: Number((pct + (rnd() - 0.5) * 9).toFixed(2)),
+      pctYtd: Number((pct + (rnd() - 0.5) * 26).toFixed(2)),
+    });
+  }
+  const sectors = [...byBand.entries()]
+    .map(([name, tiles]) => ({
+      name,
+      cap: tiles.reduce((s, t) => s + t.cap, 0),
+      tiles: tiles.sort((a, b) => b.cap - a.cap),
+    }))
+    .sort((a, b) => b.cap - a.cap);
+  return { asOf: isoDate(lastTradingDay(new Date())), source: 'demo', universe: 'etf', sectors };
+}
+
 /* Markets window demo — normalized %-change series per index for each
    timeframe. A detrended random walk pinned to 0 at the start and to the index's
    end-% at the right edge, so the shape is organic but the endpoints are stable.

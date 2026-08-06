@@ -33,6 +33,35 @@ const reply = (status: number, body: unknown) =>
 const UA_BROWSER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const UA = { 'user-agent': UA_BROWSER };
 const CONSTITUENTS_URL = 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv';
+
+// ETF cut roster. Read from the SAME committed file the client groups the
+// tiles with (map-filters.json → etfCats), so band membership and roster can
+// never drift apart — they are one object.
+//
+// This cut used to be built CLIENT-side out of the desk-charts payload, which
+// meant a tile could only exist if the charts workbench happened to carry that
+// symbol's full 800-bar OHLCV series. It did not for 15 of the 35 names, so the
+// map rendered 20 of 35 tiles and had done since it shipped. Sourcing it here
+// costs ~46 bytes a name off the period sweep instead of ~36 KB a name off the
+// charts payload — the panel only ever needed a handful of numbers per tile.
+const MAP_FILTERS_URL = 'https://akyachtsman.github.io/claude.trading/config/map-filters.json';
+const ETF_CAP = 60;  // bounds upstream fan-out if the committed roster balloons
+// Fallback only, for a Pages hiccup — the committed file is the real roster
+// (same shape as desk-charts' DEFAULT_WATCHLIST relationship to its config).
+const DEFAULT_ETF_CATS: Record<string, string> = {
+  SPY: 'Broad market', QQQ: 'Broad market', DIA: 'Broad market', IWM: 'Broad market',
+  RSP: 'Broad market', VTI: 'Broad market', VOO: 'Broad market',
+  EFA: 'International', EEM: 'International', VEA: 'International',
+  FXI: 'International', INDA: 'International',
+  SMH: 'Sector', XLK: 'Sector', XLF: 'Sector', XLE: 'Sector', XLV: 'Sector',
+  XLI: 'Sector', XLP: 'Sector', XLY: 'Sector', XLU: 'Sector', XLB: 'Sector',
+  XLRE: 'Sector', XBI: 'Sector', KRE: 'Sector',
+  GLD: 'Commodities', SLV: 'Commodities', USO: 'Commodities', DBC: 'Commodities',
+  UUP: 'Commodities',
+  TLT: 'Bonds & vol', IEF: 'Bonds & vol', TLH: 'Bonds & vol', SHY: 'Bonds & vol',
+  LQD: 'Bonds & vol', HYG: 'Bonds & vol', AGG: 'Bonds & vol', BND: 'Bonds & vol',
+  VXX: 'Bonds & vol', UVXY: 'Bonds & vol',
+};
 const R2K_SKIP = 1000;  // ranks 1..1000 ≈ Russell 1000 — not small caps
 const R2K_TAKE = 2000;  // the FULL index, finviz-style (owner ruling 2026-07-14:
                         // never silently shrink an expected scope — small tiles
@@ -127,7 +156,9 @@ const EXT_QUOTE_TIMEOUT_MS = 4000;
 // extPct/extLast: the post-market print, prior-close basis (owner request
 // 2026-07-30). Null whenever the symbol has no extended session or none has
 // printed yet — never silently 0, which would read as "flat after hours".
-type Quote = { pct: number; cap: number | null; last: number | null; extPct?: number | null; extLast?: number | null; sector?: string; name?: string; industry?: string };
+// `advol` = Yahoo's 3-month average daily volume. Carried ONLY for the ETF cut,
+// which has no market cap to size tiles by; stock cuts ignore it.
+type Quote = { pct: number; cap: number | null; last: number | null; extPct?: number | null; extLast?: number | null; sector?: string; name?: string; industry?: string; advol?: number | null };
 type Constituent = { sym: string; name: string; sector: string; ind: string };
 type Periods = { w: number | null; m: number | null; ytd: number | null };
 
@@ -227,7 +258,11 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
     // session at all. Pre-market fields are requested too because the same
     // compounding covers both, but only post is surfaced (owner: "not
     // premarket, I'm mostly interested in post market").
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,regularMarketPrice,marketCap,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent&crumb=${encodeURIComponent(auth.crumb)}`;
+    // averageDailyVolume3Month + shortName added for the ETF cut: an ETF has no
+    // marketCap, so its tile is sized by dollar volume, and its label has to
+    // come from the quote (there is no constituents roster carrying names).
+    // Both are additive — the stock cuts read neither.
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,regularMarketPrice,marketCap,averageDailyVolume3Month,shortName,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent&crumb=${encodeURIComponent(auth.crumb)}`;
     try {
       const res = await fetch(url, { headers: { ...UA, cookie: auth.cookie } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -253,6 +288,8 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
             last: Number.isFinite(last) && last > 0 ? last : null,
             extPct: extPct == null ? null : Number(extPct.toFixed(2)),
             extLast: hasPost ? Number(postPx.toFixed(2)) : null,
+            advol: Number(q.averageDailyVolume3Month) || null,
+            name: typeof q.shortName === 'string' ? q.shortName : undefined,
           });
         }
       }
@@ -457,6 +494,44 @@ export function r2kConstituents(quotes: Map<string, Quote>): Constituent[] {
     .map((r) => ({ sym: r.sym, name: r.name, sector: r.sector, ind: r.industry }));
 }
 
+// ETF cut: group the roster by its own band and size by dollar volume.
+// Tile shape is IDENTICAL to buildHeatmap's, so the client treemap renderer,
+// the period re-colour and the tooltip all work unchanged.
+export function buildEtfMap(
+  cats: Record<string, string>,
+  quotes: Map<string, Quote>,
+  periods?: Map<string, Periods> | null,
+) {
+  const byBand = new Map<string, { sym: string; name: string; cap: number; pct: number; ind: string; last: number | null; extPct?: number | null; extLast?: number | null; pctW?: number | null; pctM?: number | null; pctYtd?: number | null }[]>();
+  let covered = 0;
+  for (const [sym, band] of Object.entries(cats)) {
+    const q = quotes.get(yahooTicker(sym)) || quotes.get(sym);
+    if (!q || !Number.isFinite(q.pct)) continue;
+    covered++;
+    /* Sized by dollar volume — ETFs have no market cap. A missing volume must
+       NOT drop the tile: the treemap only needs a positive area, and a name
+       that trades thinly is still a name the owner asked to see. It falls to
+       the floor and renders small, which is the honest outcome. */
+    const dv = q.last && q.advol ? q.last * q.advol : 0;
+    const p = periods?.get(yahooTicker(sym)) || periods?.get(sym);
+    if (!byBand.has(band)) byBand.set(band, []);
+    byBand.get(band)!.push({
+      sym, name: q.name || sym, cap: Math.max(dv, 1), pct: q.pct, ind: band,
+      last: q.last ?? null,
+      ...(q.extPct != null ? { extPct: q.extPct, extLast: q.extLast ?? null } : {}),
+      ...(p ? { pctW: p.w, pctM: p.m, pctYtd: p.ytd } : {}),
+    });
+  }
+  const sectors = [...byBand.entries()]
+    .map(([name, tiles]) => ({
+      name,
+      cap: tiles.reduce((s, t) => s + t.cap, 0),
+      tiles: tiles.sort((a, b) => b.cap - a.cap),
+    }))
+    .sort((a, b) => b.cap - a.cap);
+  return { sectors, covered };
+}
+
 function lastTradingDayIso(): string {
   // Anchor to the US market's calendar day (Eastern time), NOT UTC. After
   // ~20:00 ET the UTC date has already rolled to "tomorrow", so a UTC-based
@@ -477,6 +552,38 @@ const payloadCache = new Map<string, { at: number; body: unknown }>();     // se
 const inflight = new Map<string, Promise<unknown>>();                      // single-flight
 const periodCache = new Map<string, { at: number; map: Map<string, Periods> }>(); // module mirror
 const periodInflight = new Map<string, Promise<void>>();
+let etfCatsCache: { at: number; cats: Record<string, string> } | null = null;  // 1h
+
+/* The ETF roster IS its grouping — one object, so a symbol can never be
+   charted without a band or banded without being charted (the drift that left
+   this cut rendering 20 of 35 tiles). Normalised the same way the client reads
+   it, capped like every other runtime-loaded roster, and cached for an hour so
+   an edit is picked up without a deploy. A malformed file falls back to the
+   built-in copy rather than emptying the map. */
+async function loadEtfCats(): Promise<Record<string, string>> {
+  if (etfCatsCache && Date.now() - etfCatsCache.at < 3_600_000) return etfCatsCache.cats;
+  try {
+    const res = await fetch(MAP_FILTERS_URL, { headers: UA });
+    if (res.ok) {
+      const json = await res.json();
+      const raw = json?.etfCats;
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(raw)) {
+          const sym = String(k).trim().toUpperCase();
+          const band = typeof v === 'string' ? v.trim() : '';
+          if (sym && band && Object.keys(out).length < ETF_CAP) out[sym] = band;
+        }
+        if (Object.keys(out).length) {
+          etfCatsCache = { at: Date.now(), cats: out };
+          return out;
+        }
+      }
+    }
+  } catch { /* fall through to the built-in roster */ }
+  etfCatsCache = { at: Date.now(), cats: DEFAULT_ETF_CATS };
+  return DEFAULT_ETF_CATS;
+}
 
 // Period sweeps persist in desk_feed_cache (desk_006) and advance in SMALL
 // STEPS (a few spark batches per invocation): module memory dies with the
@@ -717,6 +824,36 @@ async function refreshR2k(): Promise<unknown> {
   return body;
 }
 
+/* ETF cut. 35 names is ONE quote batch and well inside a single sweep nudge
+   (160), so unlike the stock universes this one converges on its first call.
+   The screener is not a fallback here — it lists common stocks, not funds — so
+   a crumb failure degrades to the 5-day spark, which still carries price and
+   day-%; only the dollar-volume weighting is lost, and every tile falls to the
+   area floor together, so the map stays readable rather than disappearing. */
+async function refreshEtf(): Promise<unknown> {
+  const cats = await loadEtfCats();
+  const symbols = Object.keys(cats);
+  let quotes: Map<string, Quote>, source = 'yahoo-quote';
+  try {
+    quotes = await quoteBatch(symbols, await getCrumb());
+    if (quotes.size < symbols.length * 0.6) throw new Error(`quote coverage too thin (${quotes.size})`);
+  } catch {
+    quotes = await sparkBatch(symbols);
+    source = 'yahoo-spark';
+  }
+  const periods = await loadPeriods('etf');
+  const { sectors, covered } = buildEtfMap(cats, quotes, periods?.map);
+  if (covered < Math.ceil(symbols.length * 0.6)) throw new Error(`etf coverage too thin (${covered}/${symbols.length})`);
+  await kickPeriodSweep('etf', symbols);
+  const body = {
+    ok: true, asOf: lastTradingDayIso(), generatedAt: new Date().toISOString(),
+    source, universe: 'etf', count: covered,
+    periodsAsOf: periods ? new Date(periods.at).toISOString() : null, sectors,
+  };
+  payloadCache.set('etf', { at: Date.now(), body });
+  return body;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
@@ -725,7 +862,8 @@ Deno.serve(async (req) => {
   let force = false;
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
-    if (body?.universe === 'r2k') universe = 'r2k'; // strict enum — anything else is sp500
+    // strict enum — anything else is sp500
+    if (body?.universe === 'r2k' || body?.universe === 'etf') universe = body.universe;
     // force (owner request 2026-07-27): the dashboard's manual "Refresh now"
     // button bypasses this cache so a click guarantees a fresh upstream pull.
     force = body?.force === true;
@@ -743,7 +881,7 @@ Deno.serve(async (req) => {
 
   try {
     if (!inflight.has(universe)) {
-      const work = (universe === 'r2k' ? refreshR2k() : refreshSp500())
+      const work = (universe === 'r2k' ? refreshR2k() : universe === 'etf' ? refreshEtf() : refreshSp500())
         .finally(() => { inflight.delete(universe); });
       inflight.set(universe, work);
     }
