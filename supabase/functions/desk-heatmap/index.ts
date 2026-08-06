@@ -38,6 +38,26 @@ const R2K_TAKE = 2000;  // the FULL index, finviz-style (owner ruling 2026-07-14
                         // never silently shrink an expected scope — small tiles
                         // render unlabeled, hover carries the detail)
 
+// ONE formatter for every ET calendar date in this file — same fix as
+// desk-charts (2026-08-05), and it matters MORE here.
+//
+// `toLocaleDateString('en-CA', { timeZone })` builds and discards an ICU
+// formatter on EVERY call. periodSweep runs it once per bar: a nudge is
+// SWEEP_STEP_BATCHES x 20 = 160 symbols x ~250 bars of the 1y daily spark =
+// ~40,000 calls, measured at 3778 ms of pure CPU against a hoisted
+// formatter's 80 ms (47x).
+//
+// Note what that number is bigger than: SWEEP_BUDGET_MS is 2500. The budget
+// CANNOT bound this, because it bounds the fetch DEADLINE — the formatting
+// happens after each batch's fetch resolves, so the worker blows its CPU
+// limit no matter how tight the wall-clock bound is. That is why the PR #221
+// hardening (deadline on the fetch, persist partial progress) reduced the
+// damage from being killed without stopping the kills: the sweep was being
+// killed by its own date parsing the whole time.
+const NY_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
 // Session-aware TTL — same rule as desk-market (Mon–Fri 09:30–16:00 ET minus
 // NYSE holidays). HOLIDAY LIST — refresh annually (seeded 2026–2027).
 const NYSE_HOLIDAYS = new Set([
@@ -340,7 +360,20 @@ async function periodSweep(symbols: string[], batchSize = 20, deadline = Infinit
       for (let j = 0; j < ts.length; j++) {
         const c = Number(rawCloses[j]);
         if (!Number.isFinite(c) || c <= 0) continue;
-        dates.push(new Date(ts[j] * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }));
+        // Guard the timestamp BEFORE either push, so `dates` and `closes` stay
+        // index-aligned (periodsFromCloses reads them positionally).
+        //
+        // This is not defensive padding. The two date paths differ on bad
+        // input: toLocaleDateString returns the string "Invalid Date", while
+        // Intl.DateTimeFormat.format THROWS RangeError. An exception here
+        // escapes periodSweep, and advanceSweep's own `.catch(() => {})`
+        // swallows it — so the whole nudge is discarded BEFORE writeSweepRow,
+        // losing every symbol already fetched. That is precisely the ledger
+        // loss SWEEP_BUDGET_MS exists to prevent, re-entered through a
+        // different door. One bad bar must cost one bar.
+        const secs = Number(ts[j]);
+        if (!Number.isFinite(secs)) continue;
+        dates.push(NY_DATE.format(new Date(secs * 1000)));
         closes.push(c);
       }
       out.set(sym, periodsFromCloses(dates, closes));
@@ -429,7 +462,7 @@ function lastTradingDayIso(): string {
   // ~20:00 ET the UTC date has already rolled to "tomorrow", so a UTC-based
   // stamp read a day ahead for evening US viewers (e.g. 6pm PT showed the next
   // date). Weekends roll back to Friday. (desk-news uses the same ET anchor.)
-  const etIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD in ET
+  const etIso = NY_DATE.format(new Date()); // YYYY-MM-DD in ET
   const d = new Date(etIso + 'T12:00:00Z'); // noon-UTC anchor keeps DOW math on the ET date
   const dow = d.getUTCDay();
   if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);

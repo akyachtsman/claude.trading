@@ -388,9 +388,22 @@ This project's look is its own — established at kickoff via `/design-intake`
   fetching the symbol twice per sweep. `generatedAt` is still rebuilt per
   request: `liveLampFor` measures poller health against it, so a memoized one
   (up to `HISTORY_TTL_MS` old) would lamp the panel STALE mid-session on a
-  healthy feed. **The same per-bar formatter pattern is still live in
-  `desk-heatmap` (~40,000 calls per sweep nudge — worse than desk-charts was)
-  and, harmlessly, in `desk-market`.** PIN-gated: `desk-ask` — an **agentic**
+  healthy feed.
+  **`desk-heatmap` carried the SAME per-bar formatter and was fixed the same
+  day** (`NY_DATE` there too). It was the worse of the two: one sweep nudge is
+  `SWEEP_STEP_BATCHES`×20 = 160 symbols × ~250 bars of the 1y daily spark ≈
+  **40,000 calls, 3778 ms of CPU → 80 ms (47×)**. The number that matters is
+  that 3778 ms exceeded **`SWEEP_BUDGET_MS` (2500)**: that budget bounds the
+  fetch DEADLINE, and the formatting runs after each batch resolves, so no
+  wall-clock bound could ever contain it — which is why the PR #221 hardening
+  (deadline on the fetch, persist partial progress) reduced the damage from
+  being killed without stopping the kills. The sweep was being killed by its
+  own date parsing. Its bar-date guard is load-bearing for a sharper reason
+  than the charts one: a `RangeError` escapes `periodSweep` into
+  `advanceSweep`'s `.catch(() => {})`, discarding the whole nudge before
+  `writeSweepRow` — re-entering the exact ledger loss `SWEEP_BUDGET_MS` exists
+  to prevent, through a different door. The pattern also survives, harmlessly,
+  in `desk-market` (~63 bars × a few symbols). PIN-gated: `desk-ask` — an **agentic**
   desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`
   (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤12 calls,
   ≤3 pause resumes) with `web_search`/`web_fetch` + `get_quote` (calls
