@@ -3306,11 +3306,13 @@ function renderHeatTable(hm) {
 }
 
 /* ── MAP FILTER bar (finviz-parity; owner request 2026-07-13) ─────────────
-   Live cuts derive from data already on hand: index rosters intersect the
-   S&P dataset (config/map-filters.json, owner-editable), the ETF map reads
-   the charts histories. Russell 2000 is its own desk-heatmap universe
-   (screener small-cap band, top 300 — owner request 2026-07-14). Stock
-   cuts carry pctW/pctM/pctYtd from the feed's daily 1y sweep, so the
+   Roster cuts derive from data already on hand: index rosters and theme
+   baskets intersect the S&P dataset (config/map-filters.json, owner-editable).
+   Russell 2000 and ETFs are each their own desk-heatmap universe — r2k the
+   screener's small-cap band (owner request 2026-07-14), ETFs the etfCats
+   roster (2026-08-06, replacing a client-side build off the charts payload
+   that could only draw the 25 of 40 names that panel happened to carry).
+   Every cut carries pctW/pctM/pctYtd from the feed's daily 1y sweep, so the
    period dropdown works wherever those fields are present. */
 const MAP_CUTS = [
   ['sp500', 'S&P 500', 'live'],
@@ -3349,6 +3351,9 @@ let heatExtraAt = 0;                        /* fetch timestamp — refetch on cu
 let heatR2k = null;                         /* desk-heatmap universe:r2k payload + lamp */
 let heatR2kAt = 0;
 let heatR2kErr = false;
+let heatEtf = null;                         /* desk-heatmap universe:etf payload + lamp */
+let heatEtfAt = 0;
+let heatEtfErr = false;
 let mapView = { key: 'sp500', period: '1d', filters: null };
 
 /* period support: '1d' always; longer periods need pctW/pctM/pctYtd on the
@@ -3374,47 +3379,29 @@ function recolorForPeriod(hm, period) {
   return { ...hm, sectors };
 }
 
-function buildEtfHeatmap(period) {
-  if (!wbState || !wbState.data) return null;
-  const cats = (mapView.filters && mapView.filters.etfCats) || {};
-  const nBack = { '1d': 1, '1w': 5, '1m': 21 }[period];
-  const groups = new Map();
-  let asOf = '';
-  for (const [sym, s] of Object.entries(wbState.data.symbols)) {
-    const c = s.c;
-    if (!c || c.length < 25) continue;
-    let ref;
-    if (period === 'ytd') {
-      const yr = s.t[s.t.length - 1].slice(0, 4);
-      const idx = s.t.findIndex(t => t.slice(0, 4) === yr);
-      ref = idx > 0 ? c[idx - 1] : c[0];
-    } else {
-      if (c.length <= nBack) continue;
-      ref = c[c.length - 1 - nBack];
-    }
-    /* tile weight = 21-day average dollar volume (ETFs have no market cap) */
-    let dv = 0;
-    const m = Math.min(21, c.length);
-    for (let i = c.length - m; i < c.length; i++) dv += c[i] * (s.v[i] || 0);
-    const cat = cats[sym] || 'ETFs';
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat).push({ sym, name: sym, cap: Math.max(dv / m, 1), pct: Number(((c[c.length - 1] / ref - 1) * 100).toFixed(2)), ind: '', last: c[c.length - 1] });
-    asOf = s.t[s.t.length - 1];
-  }
-  const sectors = [...groups.entries()]
-    .map(([name, tiles]) => ({ name, cap: tiles.reduce((a, t) => a + t.cap, 0), tiles }))
-    .sort((a, b) => b.cap - a.cap);
-  return sectors.length ? { asOf, source: 'charts', sectors } : null;
-}
+/* The ETF cut used to be assembled HERE, out of the charts workbench payload —
+   which meant a tile existed only if that panel happened to carry the symbol's
+   full 800-bar OHLCV series. It did not for 15 of the banded names, so the map
+   drew 25 of 40 for its whole life — 20 properly banded plus 5 swept into a
+   catch-all bucket, which is what hid the mismatch. It is now its own
+   desk-heatmap universe, like r2k: the roster and its bands come from the one
+   committed object (map-filters.json → etfCats) read on BOTH sides, and the
+   periods ride the same sweep every other cut uses. */
 
 function applyMapView() {
   if (!heatBase) return;
   const label = (MAP_CUTS.find(([k]) => k === mapView.key) || [])[1] || 'S&P 500';
   /* gate first: a period the current cut can't express falls back to 1d
      BEFORE rendering, so a cut switch never paints an empty map */
-  const stockDataset = mapView.key === 'r2k' ? (heatR2k && heatR2k.hm) : heatBase.hm;
-  const multiOk = mapView.key === 'etf'
-    || (['sp500', 'dj30', 'ndx100', 'themes', 'r2k'].includes(mapView.key) && datasetHasPeriods(stockDataset));
+  const cutDataset = mapView.key === 'r2k' ? (heatR2k && heatR2k.hm)
+    : mapView.key === 'etf' ? (heatEtf && heatEtf.hm)
+      : heatBase.hm;
+  /* ETFs no longer get a free pass here. The cut used to compute its own
+     periods from chart bars, so it could always answer 1W/1M/YTD; now it reads
+     them off the shared sweep like every other cut, and must be gated on the
+     sweep having landed — otherwise picking 1M paints an empty map. */
+  const multiOk = ['sp500', 'dj30', 'ndx100', 'themes', 'r2k', 'etf'].includes(mapView.key)
+    && datasetHasPeriods(cutDataset);
   if (!multiOk && mapView.period !== '1d') mapView.period = '1d';
   const periodLabel = (MAP_PERIODS.find(([k]) => k === mapView.period) || [])[1] || '';
   const colored = mapView.period === '1d' ? 'day % change' : periodLabel.toLowerCase();
@@ -3430,9 +3417,11 @@ function applyMapView() {
     out = { ...out, sectors };
     note = 'Hand-kept roster ∩ dataset (' + sectors.reduce((a, s) => a + s.tiles.length, 0) + ' names) · sized by cap · ' + colored;
   } else if (mapView.key === 'etf') {
-    out = buildEtfHeatmap(mapView.period);
-    lamp = wbState && wbState.lamp ? wbState.lamp : lamp;
-    note = out ? 'Sized by 21-day avg dollar volume · colored by ' + periodLabel.toLowerCase() : 'ETF map needs the charts panel data — still loading';
+    out = heatEtf ? heatEtf.hm : null;
+    lamp = heatEtf ? heatEtf.lamp : lamp;
+    note = out ? 'Sized by 3-month avg dollar volume · colored by ' + colored
+      : heatEtfErr ? 'ETF quotes unavailable right now — click again in a minute'
+        : 'Loading the ETF map…';
   } else if (mapView.key === 'themes') {
     /* thematic regroup of the S&P dataset — rosters in config/map-filters.json */
     const themes = (mapView.filters || {}).themes || {};
@@ -3497,6 +3486,11 @@ function wireMapFilter() {
         mapView.key = key;
         for (const other of nav.children) other.setAttribute('aria-current', String(other === b));
         applyMapView();
+        /* Fetched on click, not on load — same reasoning as the extra cuts: a
+           feed error at paint would trip the S1 console gate, and most sessions
+           never open this cut. In demo the call is a no-op and the dataset is
+           already seeded. */
+        if (key === 'etf') refreshEtfMap();
       });
     }
     nav.appendChild(b);
@@ -3547,6 +3541,22 @@ async function refreshR2kMap() {
     heatR2kErr = false;
   } catch { heatR2kErr = !heatR2k; /* keep last good */ }
   if (mapView.key === 'r2k') applyMapView();
+}
+
+/* ETF cut — its own desk-heatmap universe. 40 names is one quote batch and one
+   sweep nudge, so this converges on the first call rather than over hours like
+   the stock universes. Demo mode is served locally: the cut must keep working
+   under ?demo=1, and nothing may call the live feed there. */
+async function refreshEtfMap() {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  if (heatEtf && Date.now() - heatEtfAt < 300000) return;
+  try {
+    const out = await deskFeed('desk-heatmap', { universe: 'etf' });
+    heatEtf = { hm: out, lamp: liveLampFor(out.generatedAt, out.asOf, true) };
+    heatEtfAt = Date.now();
+    heatEtfErr = false;
+  } catch { heatEtfErr = !heatEtf; /* keep last good */ }
+  if (mapView.key === 'etf') applyMapView();
 }
 
 /* Collapsed by default (owner request 2026-07-31). The gate is deliberately in
@@ -3612,6 +3622,11 @@ async function loadHeatmap(force) {
     return;
   }
   heatBase = { hm: buildDemoHeatmap(), lamp: { cls: 'lamp--demo', text: 'Demo' } };
+  /* The ETF cut is a live universe now, so demo has to seed it here — there is
+     no charts payload for it to fall out of any more. Built from the same
+     etfCats object the live roster uses (loaded just above). */
+  const demoEtf = buildDemoEtfMap((mapView.filters || {}).etfCats);
+  if (demoEtf) heatEtf = { hm: demoEtf, lamp: { cls: 'lamp--demo', text: 'Demo' } };
   applyMapView();
 }
 

@@ -938,8 +938,9 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await expect(extBox).not.toBeChecked();
 });
 
-// S13 — Heatmap MAP FILTER rail: index cuts re-render the treemap, the ETF
-// map unlocks multi-period performance, unfetched feeds stay disabled.
+// S13 — Heatmap MAP FILTER rail: index cuts re-render the treemap, the ETF cut
+// draws one tile per banded ETF and unlocks multi-period performance,
+// unfetched feeds stay disabled.
 test('S13: heatmap map-filter cuts and period select respond', async ({ page }) => {
   await page.goto('./?demo=1');
   // The panel is COLLAPSED by default now (owner request 2026-07-31, load
@@ -969,13 +970,42 @@ test('S13: heatmap map-filter cuts and period select respond', async ({ page }) 
   expect(await periodOpts.count()).toBe(4);
   expect(await periodOpts.nth(2).isDisabled(), '1-Month must be disabled on a stock cut').toBe(true);
 
-  // ETF map: renders from charts data and unlocks the period dropdown
+  // ETF map: its own desk-heatmap universe since 2026-08-06 (was assembled
+  // client-side from the charts payload, which could only draw the names that
+  // panel happened to carry — 25 of 35 banded ETFs, for its whole life).
+  //
+  // The assertion that guards that bug is EVERY BANDED ETF GETS A TILE, read
+  // off the dataset rather than counted in the SVG: tiles are bare <rect>s
+  // with no class, sub-3px tiles are skipped by design, and the gloss overlay
+  // adds a second rect per tile — so a DOM count would be both ambiguous and
+  // flaky at small viewports, exactly where a dropped tile matters least and a
+  // false failure matters most.
   await page.locator('.map-filter-btn', { hasText: 'ETFs' }).click();
   await expect(page.locator('#heatTitle')).toContainText('ETFs');
-  expect(await svg.locator('rect').count()).toBeGreaterThan(5);
+  await expect(svg.locator('rect').first()).toBeVisible();
+  const etf = await page.evaluate(() => ({
+    roster: Object.keys((mapView.filters || {}).etfCats || {}).length,
+    tiles: heatEtf ? heatEtf.hm.sectors.reduce((a, s) => a + s.tiles.length, 0) : 0,
+    bands: heatEtf ? heatEtf.hm.sectors.map(s => s.name) : [],
+    withPeriods: heatEtf
+      ? heatEtf.hm.sectors.reduce((a, s) => a + s.tiles.filter(t => Number.isFinite(t.pctW)).length, 0)
+      : 0,
+  }));
+  expect(etf.roster, 'etfCats roster must be non-empty').toBeGreaterThan(0);
+  expect(etf.tiles, 'every banded ETF must get a tile — this is the 2026-08-06 fix')
+    .toBe(etf.roster);
+  // No catch-all band. The old client build grouped unknown symbols under a
+  // literal 'ETFs' bucket, so a roster/band mismatch hid inside a junk drawer
+  // instead of failing visibly.
+  const known = await page.evaluate(() => [...new Set(Object.values((mapView.filters || {}).etfCats || {}))]);
+  expect(etf.bands.filter(b => !known.includes(b)), 'no catch-all band').toEqual([]);
+  expect(etf.withPeriods, 'ETF tiles must carry sweep periods').toBe(etf.roster);
+
   expect(await periodOpts.nth(2).isDisabled(), '1-Month must be enabled on the ETF cut').toBe(false);
   await page.locator('#heatPeriod').selectOption('1m');
   await expect(page.locator('#heatSource')).toContainText(/1-month/i);
+  await expect(page.locator('#heatSource')).toContainText(/dollar volume/i);
+  await page.locator('#heatPeriod').selectOption('1d');
 
   // Themes regroups the S&P dataset client-side
   await page.locator('.map-filter-btn', { hasText: 'Themes' }).click();
