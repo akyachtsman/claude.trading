@@ -260,17 +260,35 @@ This project's look is its own — established at kickoff via `/design-intake`
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
-  **Three across at ≥1900px** (owner request 2026-08-07) — Watchlists moved
+  **Three across at ≥1400px** (owner request 2026-08-07) — Watchlists moved
   INSIDE `.top-band` as `.col-watchlist`, so the row reads Markets | Watchlists |
-  Ask at **387 / 1040 / 385**, all 600px tall (Markets keeps its 0.9 `zoom`, so
-  its basis is the pre-zoom 430×667). The shell cap went 1560 → **1880** to make
-  room: the row needs 1844px, and the old cap left 180px of dead margin each side
-  of a 1920 monitor. It is an **opt-in `min-width: 1900px` query, not a
-  rewrite** — the owner was shown that the row cannot fit below that (every
-  current MacBook is 1440/1512/1728 logical) and chose the widening anyway, so
-  narrower screens keep exactly the layout they had: `order:-1` + a 100% basis
-  puts Watchlists back on its own full-width row ABOVE Markets and Ask. Verified
-  at 1440 that Ask is still 618px — identical to before the move. Two rules are
+  Ask. It reached its current shape over three passes the same day: first
+  387 / 1040 / 385 pinned at 600px tall and gated at 1900px; then Watchlists
+  became the FLUID column and the gate dropped to 1400, because the owner's
+  browser measured `innerWidth` 1152 (a 1512 laptop with DevTools docked) so the
+  1900 version never engaged on the machine it was built for; then Markets was
+  cut by a **THIRD** (387 → **258** rendered) with **Ask matched to it at 258**,
+  Watchlists taking the ~256px that freed. Markets keeps its 0.9 `zoom`, so its
+  basis is the pre-zoom **287** (287 × 0.9 ≈ 258); Ask carries no zoom, so its
+  basis IS the rendered width. Watchlists measures ~932 at 1512 and ~1332 at
+  1920. The shell cap went 1560 → **1880**, so a 1920 monitor doesn't carry
+  180px of dead margin each side. Narrower screens keep exactly the layout they
+  had: `order:-1` + a 100% basis puts Watchlists back on its own full-width row
+  ABOVE Markets and Ask.
+  **No column is height-pinned any more.** Watchlists runs at its FULL length —
+  the 600px cap hid whole lists behind an inner scrollbar — and
+  `align-items: stretch` equalises the other two, which is what "same height as
+  the watchlist" asks for; pinning Markets to a number instead would re-break
+  the moment a list is added or removed. One consequence to know before reading
+  the row: at 258px wide **Markets is the TALLEST column** (chart + 4 tiles + 11
+  sectors ≈ 900px against the watchlist's ~580), so Markets now SETS the shared
+  height and Watchlists carries slack below its tiles. Narrower means taller —
+  that is the cost of the one-third cut, not a layout fault.
+  The Markets grids are also forced **2-up inside this column**: `.mk-tiles` and
+  `.mk-sectors` are `repeat(4, 1fr)` and drop to 2 only under a
+  `max-width: 520px` **viewport** query, which never fires on the wide screen
+  where this narrow column exists — 4-up at 287px pre-zoom puts a ~63px sector
+  cell under a 10px label and a mono %, and they spill the box. Two more rules are
   load-bearing and were both caught by measuring rather than by eye: the ≤1280
   stack must carry **`flex-wrap: nowrap`**, because a `flex-direction: column`
   container that is allowed to wrap spills into EXTRA COLUMNS when its content
