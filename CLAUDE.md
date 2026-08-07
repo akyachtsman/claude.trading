@@ -201,7 +201,25 @@ This project's look is its own — established at kickoff via `/design-intake`
   predates the file and is unchanged by it. Closing it would need exactly 40
   symbols — the cap precisely, with no headroom — so it is left for the owner
   to choose rather than silently widening what the desk charts.
-- `config/widgets.json` — owner-editable roster of embedded third-party
+- `config/widgets.json` — **EMPTY as of 2026-08-07 (owner ruling): both embeds
+  are retired and the desk now runs NO third-party vendor JS at all** — the page
+  carries zero iframes. The FRED "Economy at a glance" widget was replaced by
+  FRED + St. Louis Fed RSS in `config/news-feeds.json`, which puts the same macro
+  material in the News panel's own row idiom; the TradingView **economic
+  calendar** went with it and has no replacement — upcoming-release visibility
+  is simply gone, which the owner chose knowingly. Two things matter for anyone
+  re-adding a widget. **An empty roster now means "none", not "use the
+  defaults"**: the loader tested `Array.isArray(cfg) && cfg.length`, so `[]` was
+  indistinguishable from a missing file and silently restored the built-in pair —
+  there was NO way to turn the embeds off from config. It now tests
+  `Array.isArray(cfg)` alone, so a valid array is authoritative whatever its
+  length and only a fetch/parse failure falls back to `WIDGET_DEFAULTS`. And the
+  file is a **bare JSON array**, so like `chart-watchlist.json` it can carry no
+  `_note` — there is nowhere to put one without a loader change. The machinery
+  below is intact and dormant; re-adding an entry brings a widget back with no
+  code change.
+  Historical, and still the contract if one returns: a roster of embedded
+  third-party
   widgets from TWO providers — **TradingView** (economic calendar) and **FRED**
   (`fred-glance` = the St. Louis Fed "Economy at a glance" widget). Each is
   rendered by `loadWidgets()` as a bare sandboxed **cross-origin** iframe
@@ -245,6 +263,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
+  **Three across at ≥1900px** (owner request 2026-08-07) — Watchlists moved
+  INSIDE `.top-band` as `.col-watchlist`, so the row reads Markets | Watchlists |
+  Ask at **387 / 1040 / 385**, all 600px tall (Markets keeps its 0.9 `zoom`, so
+  its basis is the pre-zoom 430×667). The shell cap went 1560 → **1880** to make
+  room: the row needs 1844px, and the old cap left 180px of dead margin each side
+  of a 1920 monitor. It is an **opt-in `min-width: 1900px` query, not a
+  rewrite** — the owner was shown that the row cannot fit below that (every
+  current MacBook is 1440/1512/1728 logical) and chose the widening anyway, so
+  narrower screens keep exactly the layout they had: `order:-1` + a 100% basis
+  puts Watchlists back on its own full-width row ABOVE Markets and Ask. Verified
+  at 1440 that Ask is still 618px — identical to before the move. Two rules are
+  load-bearing and were both caught by measuring rather than by eye: the ≤1280
+  stack must carry **`flex-wrap: nowrap`**, because a `flex-direction: column`
+  container that is allowed to wrap spills into EXTRA COLUMNS when its content
+  outgrows the box (this sent the panels to 2822px at a 1280 viewport and
+  scrolled the page sideways — the fault S4 exists to catch); and `.col-rail`
+  needs an explicit **380px basis rather than `auto`**, or with wrapping enabled
+  it measures its own content and breaks onto a row of its own at 1440–1728.
   **`Radar` is the inbox list** (owner request 2026-07-30): the panel-header `+`
   routes every new symbol there rather than asking which list, and it is dragged
   onward from there. It is an ordinary row in `desk_watchlists` — nothing in the
@@ -355,6 +391,41 @@ This project's look is its own — established at kickoff via `/design-intake`
   reaches the same dialog, because a hold is pointer-only and a remove only a
   mouse can reach is not a remove everyone has. The confirm dialog is
   `role="alertdialog"` and opens focus on "Keep it".
+  **Symbol detail window** (`#wlDetailBackdrop` / `openWlDetail()`, owner request
+  2026-08-06) — a SINGLE click on a tile opens a larger read-only view: full
+  quote (last, change, and the after-hours print on its own marked line), key
+  stats (bid/ask, earnings, market cap, P/E, 52-week, yield) and a large candle
+  chart with volume, SMA 20/50 and its own 1D…5Y span control. **The load-bearing
+  part is the gesture collision, not the window.** Double-click already removes a
+  tile, and a double-click delivers a `click` FIRST — so a naive handler would
+  open the window underneath every removal and then swallow the second click,
+  breaking removal outright. The open is therefore deferred by `WL_CLICK_MS`
+  (250ms, under the ~500ms platform double-click threshold) and cancelled by the
+  tile's own `dblclick`. The defer applies **only where a removal is actually
+  wired** (`wlCanEdit()`); in demo there is no dblclick listener to protect and
+  lagging the open there would pay for a conflict that does not exist. A
+  completed drag also ends in a `click` on its source tile, so `wlDragEnd` stamps
+  `wlDragClickAt` and the handler ignores clicks for `WL_DRAG_CLICK_MS` — without
+  it, arranging the panel opens a window on every drop. Three further rules: the
+  window is wired **outside** the `canEdit` gate, because opening it READS a
+  symbol and must not depend on an unlock any more than the edits do; it opens on
+  the PANEL's span (`wlTf`) so the chart is the tile's own line made bigger, and
+  changing the span inside the modal is local — it must never retime `wlTf`, which
+  every tile sparkline reads; and `loading` is **tracked, not inferred** from
+  `(bars === null && info === undefined)`, since on a span change the new window
+  clears `bars` but keeps the quote, and the inferred form claimed "no chart data"
+  during an ordinary reload and lamped a healthy backend STALE before its first
+  reply landed. Live is real-data-or-nothing (`quote-proxy` `kind:'daily'` sliced
+  to the span, `kind:'intraday'` for 1D, plus `kind:'info'`); a failure renders the
+  empty state under a STALE lamp, never a demo series under a real ticker. Demo
+  seeds its own OHLC per symbol (`buildDemoDetailBars`), walked backward from the
+  tile's own price so the last candle closes exactly on the number that opened it
+  — the ten names in `DEMO_CHART_SYMBOLS` are far narrower than the rosters, and a
+  window that opened blank on most demo tiles would hide the faults demo exists to
+  surface. The chart is a **self-contained renderer**, deliberately NOT the
+  workbench's `drawPane`: that is a closure inside `renderCharts()` guarded by
+  S12/S25/S34, and prising it out to serve a modal would risk a heavily-ruled
+  surface for a view needing none of its stochastic machinery.
   **Chart timeframe** (`#wlTf` / `renderWlTf()`, owner request 2026-07-30) — a
   segmented 1D/1M/3M/6M/1Y/2Y/5Y control beside the sort, panel-wide (per-list
   spans would make two tiles incomparable) and persisted in `localStorage`
@@ -538,8 +609,16 @@ This project's look is its own — established at kickoff via `/design-intake`
   public news.json. `desk-heatmap` holds it too, solely for the
   `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
   multi-period sweep — public market percentages only.
-- **Third-party widget embeds (owner request 2026-07-15; panels removed in
-  favour of the accounts-row layout 2026-07-16):** the desk embeds TradingView
+- **Third-party widget embeds — RETIRED 2026-08-07 (owner ruling).**
+  `config/widgets.json` is `[]`, so nothing renders and **the desk runs no vendor
+  JS and carries zero iframes**; this whole class of exposure is currently
+  dormant, not merely mitigated. Verified after the change: 0 iframes on the
+  page, the `#acctWidgets` row computing `display:none`, and no page errors.
+  The rules below stay because the machinery is intact and a config edit brings
+  a widget straight back — they are the contract any re-added embed must meet,
+  NOT a description of what the page does today.
+  (owner request 2026-07-15; panels removed in
+  favour of the accounts-row layout 2026-07-16): the desk embeds TradingView
   widgets — the one place it runs vendor JS. Each widget is a **direct cross-origin iframe** on
   `tradingview-widget.com` (NOT a `srcdoc` doc — a srcdoc frame inherits the
   PARENT origin, so `allow-same-origin` there would put the vendor script
@@ -652,6 +731,7 @@ run for real against the dedicated project on every PR.
 | S21 | Watchlist quick add + double-click remove | With `?demo=1` (no backend to write to) NO write control renders and tiles keep native double-tap zoom. Switching to live with `DESK.authed` left **false** must still render one + per band (owner ruling 2026-07-30 — edits do not depend on unlocking); a SINGLE click does NOT open `#wlRmBackdrop` but a double-click does (focus on "Keep it"), the tiles compute `touch-action: manipulation` so a phone double-tap is not eaten by zoom, Delete on a focused tile opens the same dialog, and quick-add rejects junk input | A + offered in demo, edits re-gated on auth, a single click removing, no keyboard path, or junk accepted |
 | S23 | Extended hours (post-market) | With `?demo=1`, all four index tiles carry a `.mk-ext` line NAMING their proxy (SPY/QQQ/IWM/DIA) + "after hrs", the extended % differs from the regular one, all 11 sector cells carry `.mk-sec-ext`, and the demo heatmap has SOME tiles with `extPct` and some without (absent = did not trade, never 0) | A tile showing an unattributed second %, the extended figure repeating the close, or every heatmap name carrying a print |
 | S27 | Watchlist tile shape | With `?demo=1`, a tile is ≤80px wide (the half-width 66px layout), its rendered top-to-bottom order is ticker → price → change → line (`.wl-vals` is `display:contents`, so DOM order still nests them), and NO `.mkt-last` or `.mkt-name` overflows its own box | A tile back at 132px, the line between price and pill, or any clipped value — a clipped price is a wrong price and fails silently |
+| S35 | Symbol detail window | With `?demo=1` a single click opens `#wlDetailBackdrop` on the clicked ticker, the chart draws candles + volume, the span control opens on the panel's own `wlTf` and switching it redraws the chart WITHOUT retiming `wlTf`, and Escape closes. Then forced live (`DESK.authed` left **false** — opening a window READS a symbol and must not need an unlock): a **double-click reaches the removal dialog and leaves the detail window shut** (waited past `WL_CLICK_MS`, so a leaked timer would have fired), a single click still opens it without reaching removal, and a **drag/drop opens nothing** | The window opening under a removal (the deferred-open cancel is broken, and the modal then swallows the second click — removal dies outright), a modal control retiming the whole panel, a drop opening a window on every arrange, or an empty `<svg>` |
 | S28 | Charts quote expires by age | With `?demo=1`, `wbInfoTtlMs()` returns one of the two session cadences (60s / 15 min) and a `wbInfoCache` entry carries both `at` and `info`. Guards the CONTRACT, not the bug: reproducing it needs a tab held open across a session boundary, which CI cannot do | A cache keyed on presence again (the 2026-07-31 SMH report: the prior session's close and move shown under a "delayed by 1 minute" stamp) |
 | S32 | Interrupt a question | With `?demo=1` NO `.ask-stop` renders (nothing to stop). Forced live+authed with `deskAsk` stubbed to hang until aborted: Stop appears only while in flight, the COMPOSER STAYS ENABLED throughout, and after Stop the button returns to "Ask", `askBusy` clears, and a `.ask-a--stopped` note states the answer is still coming — with the red `.lock-error` line staying hidden | A Stop offered in demo, a composer disabled mid-flight, a wedged `askBusy` (the panel is then dead), a silent stop (the answer reappears on reload looking like a bug), or a deliberate stop rendered as an error |
 | S29 | Scheduled asks | With `?demo=1` forced live+authed, the ⏱ opens the roster and adds a row; `saveAskSched()` clamps to the 15-min floor and 10-row cap even on a DIRECT assignment (the guards live at the write boundary, not in the input handler), and `askSchedDue()` fires only when elapsed, never when disabled | A row firing under 15 min, an uncapped roster, or a disabled row running — each is real Claude quota |

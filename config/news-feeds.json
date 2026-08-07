@@ -6,11 +6,16 @@
     "News as fallback, then plain text-matching of tickers in general",
     "headlines). Set enabled:false to run general feeds only.",
     "maxItems caps the rendered list. Edit on GitHub; the next scheduled",
-    "refresh (or a manual Data Refresh dispatch) picks it up."
+    "refresh (or a manual Data Refresh dispatch) picks it up.",
+    "FRED + St. Louis Fed carry the macro headlines that used to sit in the",
+    "embedded FRED widget, retired 2026-08-07 along with the TradingView",
+    "economic calendar. Holdings rank first, so these fill the tail."
   ],
   "general": [
     { "src": "CNBC", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
-    { "src": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories" }
+    { "src": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
+    { "src": "FRED", "url": "https://fredblog.stlouisfed.org/feed/" },
+    { "src": "St. Louis Fed", "url": "https://www.stlouisfed.org/rss/page%20resources/publications/blog-entries" }
   ],
   "perTicker": { "enabled": true, "maxPerSymbol": 3 },
   "maxItems": 20

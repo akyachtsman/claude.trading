@@ -1176,6 +1176,15 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await page.waitForTimeout(400);   /* past any dblclick coalescing window */
   await expect(page.locator('#wlRmBackdrop'), 'one click must not arm a removal').toBeHidden();
 
+  /* A lone single click DOES open the symbol detail window now (owner request
+     2026-08-06, S35) — its backdrop then covers the panel, so it has to be
+     dismissed before the tile can be reached again. Asserted rather than merely
+     stepped past: this is a real consequence of the gesture, and a silent
+     `Escape` here would hide it if the window ever stopped opening. */
+  await expect(page.locator('#wlDetailBackdrop'), 'a lone click opens the detail window').toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlDetailBackdrop')).toBeHidden();
+
   // ...but a double-click reaches the confirm dialog
   await tile.dblclick();
   await expect(page.locator('#wlRmBackdrop')).toBeVisible();
@@ -2036,4 +2045,85 @@ test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom'
   // colours() reads newest-first, so the same bars are the same leading slice
   expect(wide.slice(0, narrow.length), 'a candle means the same thing at every zoom')
     .toEqual(narrow);
+});
+
+/* S35 — the symbol detail window (owner request 2026-08-06).
+
+   The scenario this exists for is the COLLISION. Double-click already removes a
+   tile (owner ruling 2026-07-30), and a double-click delivers a `click` first,
+   so a naive single-click handler opens the detail window underneath every
+   removal and then swallows the second click. Asserting "single click opens it"
+   alone would pass with that bug fully present, which is why the double-click
+   and drag cases below are the load-bearing half of this test. */
+test('S35: a tile opens a detail window; double-click still removes', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+
+  const detail = page.locator('#wlDetailBackdrop');
+  await expect(detail, 'the window starts closed').toBeHidden();
+
+  // ── demo: no removal is wired, so the open is immediate rather than deferred
+  const tile = page.locator('.wl-strip .wl-tile').first();
+  const sym = await tile.getAttribute('data-sym');
+  await tile.click();
+  await expect(detail).toBeVisible();
+  await expect(page.locator('#wlDetailTitle')).toHaveText(sym);
+
+  // The chart must actually draw — an empty <svg> is the failure this catches.
+  const chart = page.locator('#wlDetailChart');
+  await expect(chart).toBeVisible();
+  expect(await chart.locator('rect').count(), 'candles + volume render').toBeGreaterThan(20);
+
+  /* The window opens on the PANEL's span, so the chart is the tile's own line
+     made bigger. Adjusting it here must NOT retime the panel — wlTf is what
+     every tile sparkline reads, and moving it would repaint the whole panel
+     from a control inside a modal. */
+  expect(await page.evaluate(() => wlTf), 'opens on the panel span').toBe('1d');
+  await expect(page.locator('#wlDetailTf button[data-tf="1d"]')).toHaveAttribute('aria-pressed', 'true');
+  const before = await chart.innerHTML();
+  await page.locator('#wlDetailTf button[data-tf="1y"]').click();
+  await expect(page.locator('#wlDetailTf button[data-tf="1y"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => chart.innerHTML(), { timeout: 5000 })
+    .not.toBe(before);                                    /* the span redrew the chart */
+  expect(await page.evaluate(() => wlTf), 'the panel span is untouched by the modal').toBe('1d');
+
+  await page.keyboard.press('Escape');
+  await expect(detail, 'Escape closes').toBeHidden();
+
+  /* ── live: the removal IS wired, and now the gestures have to coexist.
+     DESK.authed stays false — opening a detail window READS a symbol, so it
+     must not depend on an unlock any more than the edits do. */
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  await expect(page.locator('.wl-strip .wl-tile.wl-removable').first()).toBeVisible();
+  const live = page.locator('.wl-strip .wl-tile').first();
+
+  // A double-click removes, and must NOT leave a detail window behind it.
+  await live.dblclick();
+  await expect(page.locator('#wlRmBackdrop'), 'double-click still reaches removal').toBeVisible();
+  // Waited past the deferred-open window: a leaked timer would have fired by now.
+  await page.waitForTimeout(600);
+  await expect(detail, 'the removal gesture must not open the detail window').toBeHidden();
+  await page.locator('#wlRmCancelBtn').click();
+  await expect(page.locator('#wlRmBackdrop')).toBeHidden();
+
+  // A single click still opens it — and does not reach the removal dialog.
+  await live.click();
+  await expect(detail, 'a single click opens the window under live too').toBeVisible();
+  await expect(page.locator('#wlRmBackdrop'), 'and never the removal dialog').toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+
+  /* A drop delivers a `click` to the tile it started from, so arranging the
+     panel would pop a window open on every drag without the suppression. */
+  const a = await live.boundingBox();
+  const c = await page.locator('.wl-strip .wl-tile').nth(3).boundingBox();
+  if (a && c) {
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(a.x + 40, a.y + 10, { steps: 6 });
+    await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    await expect(detail, 'a drop is not a click').toBeHidden();
+  }
 });
