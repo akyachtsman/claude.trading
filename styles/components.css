@@ -581,3 +581,43 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 .ask-verify[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
 /* Class selectors set `display`, so they outrank the UA's [hidden] rule. */
 .wl-lock[hidden], .wl-move[hidden] { display: none; }
+
+/* ── watchlist symbol detail (owner request 2026-08-06) ─────────────────────
+   Wider than the other modals: a candle chart needs horizontal room, and at
+   .modal-panel's 640px the bars collapse into a smear. Height is capped by the
+   shared 85vh so the stats never push the chart off a laptop screen. */
+.wl-detail-panel { max-width: 1040px; }
+.wl-detail-name {
+  font-size: var(--font-size-sm); color: var(--color-text-secondary);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wl-detail-quote { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
+.wl-detail-last { font-size: var(--font-size-xl); font-variant-numeric: tabular-nums; }
+/* Gain/loss on the change only — P&L, never decoration. */
+.wl-detail-chg.up { color: var(--color-gain); }
+.wl-detail-chg.down { color: var(--color-loss); }
+.wl-detail-chg { font-variant-numeric: tabular-nums; }
+/* The extended print sits on its own marked line rather than replacing the
+   last: the regular close and the after-hours price are two different facts,
+   and overwriting one with the other is how an unattributed number ships. */
+.wl-detail-ext {
+  font-size: var(--font-size-sm); color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
+}
+.wl-detail-bar { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+.wl-detail-chart { display: block; width: 100%; height: 380px; margin-top: var(--space-2); }
+.wl-detail-chart[hidden] { display: none; }
+.wl-detail-empty { color: var(--color-text-secondary); font-size: var(--font-size-sm); margin-top: var(--space-3); }
+.wl-detail-stats {
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3); padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-sm); font-variant-numeric: tabular-nums;
+}
+.wl-detail-stats b { color: var(--color-text-secondary); font-weight: 500; margin-right: 6px; }
+.wl-detail-stats .wl-detail-muted { color: var(--color-text-secondary); }
+/* A tile is a control now, so it has to look like one. */
+.wl-strip .wl-tile { cursor: pointer; }
+@media (max-width: 720px) {
+  .wl-detail-chart { height: 260px; }
+}

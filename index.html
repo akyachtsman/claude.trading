@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260805e">
-<link rel="stylesheet" href="styles/components.css?v=20260805e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260807a">
+<link rel="stylesheet" href="styles/components.css?v=20260807a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -710,6 +710,33 @@
     </section>
   </div>
 
+  <!-- Symbol detail (owner request 2026-08-06). A SINGLE click on a tile opens
+       it; the double-click removal is unchanged, which is why app.js defers the
+       open by WL_CLICK_MS and cancels on dblclick. An ordinary dialog, not an
+       alertdialog: it reads, it does not destroy. Carries its own lamp + as-of
+       stamp like every panel on the desk — it fetches its own data, so it owes
+       its own provenance. -->
+  <div class="modal-backdrop" id="wlDetailBackdrop" hidden>
+    <section class="panel modal-panel wl-detail-panel" id="wlDetailPanel" aria-labelledby="wlDetailTitle" role="dialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlDetailTitle">—</h2>
+        <span class="wl-detail-name" id="wlDetailName"></span>
+        <span class="lamp ml-auto" id="wlDetailLamp">—</span>
+        <button type="button" class="btn btn-secondary" id="wlDetailCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="panel-body">
+        <div class="wl-detail-quote" id="wlDetailQuote"></div>
+        <div class="wl-detail-bar">
+          <div class="seg wl-detail-tf" id="wlDetailTf" role="group" aria-label="Chart timeframe"></div>
+          <span class="stamp ml-auto" id="wlDetailStamp">—</span>
+        </div>
+        <svg class="wl-detail-chart" id="wlDetailChart" role="img" aria-label="Price chart"></svg>
+        <p class="wl-detail-empty" id="wlDetailEmpty" hidden>—</p>
+        <div class="wl-detail-stats" id="wlDetailStats"></div>
+      </div>
+    </section>
+  </div>
+
   <div class="modal-backdrop" id="wlEditBackdrop" hidden>
     <section class="panel modal-panel" id="wlEditPanel" aria-labelledby="wlEditTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
@@ -866,8 +893,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260805e"></script>
-<script src="scripts/data.js?v=20260805e"></script>
-<script src="scripts/app.js?v=20260805e"></script>
+<script src="scripts/config.js?v=20260807a"></script>
+<script src="scripts/data.js?v=20260807a"></script>
+<script src="scripts/app.js?v=20260807a"></script>
 </body>
 </html>

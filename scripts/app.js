@@ -813,6 +813,9 @@ function wlDragEnd(ev, cancelled) {
   const d = wlDrag;
   clearTimeout(d.armed);
   if (!d.on) { d.sym = null; d.tile = null; return; }
+  /* A drop still delivers a `click` to the tile it started from. Without this
+     stamp, arranging the panel would open a detail window on every drop. */
+  wlDragClickAt = Date.now();
   const under = cancelled ? null : document.elementFromPoint(ev.clientX, ev.clientY);
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
   const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX, ev.clientY) : 0;
@@ -1146,6 +1149,11 @@ function renderWatchlist(payload, lamp) {
         wlWireRemove(tile, r.sym, li, l.title);
         wlWireDrag(tile, { band: li, title: l.title, idx: ri }, r.sym);
       }
+      /* Outside the canEdit gate on purpose: opening a detail window READS a
+         symbol, so it is not an edit and must not depend on one being possible.
+         canEdit is passed only to decide whether the open waits for a possible
+         double-click — see wlWireOpen. */
+      wlWireOpen(tile, r.sym, canEdit);
       box.appendChild(tile);
     });
     group.appendChild(box);
@@ -1615,6 +1623,425 @@ function wlWireRemove(tile, sym, idx, title) {
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
     e.preventDefault();
     openWlRemove(sym, idx, title, tile);
+  });
+}
+
+/* ── symbol detail window (owner request 2026-08-06) ───────────────────────
+   A SINGLE click on a tile opens a bigger read-only view: full quote, key
+   stats, and a large candle chart with its own span control.
+
+   THE COLLISION, and why the open is deferred. Double-click already removes a
+   tile (owner ruling 2026-07-30, after a 3s hold and then a 1s hold were both
+   rejected), and a double-click fires a `click` FIRST — so a naive click
+   handler would pop the detail window open underneath every removal, and the
+   modal would then swallow the second click and break removal outright. The
+   fix is the standard disambiguation: hold the open for WL_CLICK_MS and cancel
+   it if a `dblclick` lands. 250ms is under the ~500ms platform double-click
+   threshold, so it costs a barely perceptible pause and never eats the second
+   click.
+
+   The delay is applied ONLY where a removal is actually wired. In demo and
+   anywhere else `wlCanEdit()` is false there is no dblclick listener to
+   protect, and lagging the open there would be paying the cost of a conflict
+   that does not exist.
+
+   A drag also ends in a `click` on the tile it started from, so a completed
+   drag arms a short suppression window — without it, arranging the panel would
+   open a detail window on every drop. */
+const WL_CLICK_MS = 250;
+const WL_DRAG_CLICK_MS = 400;
+let wlDragClickAt = 0;
+
+function wlWireOpen(tile, sym, deferred) {
+  let timer = 0;
+  tile.addEventListener('click', () => {
+    /* A drop is not a click on the tile, even though the browser reports one. */
+    if (Date.now() - wlDragClickAt < WL_DRAG_CLICK_MS) return;
+    if (!deferred) { openWlDetail(sym, tile); return; }
+    clearTimeout(timer);
+    timer = setTimeout(() => openWlDetail(sym, tile), WL_CLICK_MS);
+  });
+  /* Cancels the pending open. The removal dialog's own handler still runs — the
+     two listeners are independent, this one only withdraws the detail window. */
+  tile.addEventListener('dblclick', () => clearTimeout(timer));
+  /* Enter/Space reach the same window: a detail view only a pointer can open is
+     not a detail view everyone has. Delete/Backspace stay with removal. */
+  tile.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    openWlDetail(sym, tile);
+  });
+}
+
+/* Trading days behind each span token — the tail of the daily series to draw.
+   1D is the odd one: it is an intraday session, so it reads a different feed
+   (kind:'intraday') rather than slicing one bar off the daily one. */
+const WL_DETAIL_SPAN = { '1mo': 21, '3mo': 63, '6mo': 126, '1y': 252, '2y': 504, '5y': 1260 };
+/* `loading` is tracked, not inferred from (bars === null && info === undefined).
+   Inferring it was wrong on a TIMEFRAME CHANGE: the new span clears `bars` but
+   keeps the quote it already has, so the window claimed "no chart data" during
+   an ordinary reload, and lamped the panel STALE before its first fetch had
+   even settled. */
+const wlDetail = { sym: null, tf: '1d', bars: null, info: undefined, seq: 0, invoker: null, asOf: null, at: null, loading: false };
+
+function openWlDetail(sym, invoker) {
+  const back = document.getElementById('wlDetailBackdrop');
+  if (!back || !sym) return;
+  wlDetail.sym = sym;
+  /* Opens on the span the PANEL is showing, so the chart is the tile's own
+     line made bigger — which is what was asked for. Adjusting it here is local
+     to the window: it must not repaint every tile or refetch the panel, and it
+     is deliberately not persisted, so the next open again matches the panel. */
+  wlDetail.tf = wlTf;
+  wlDetail.bars = null;
+  wlDetail.info = undefined;
+  wlDetail.invoker = invoker || null;
+  const title = document.getElementById('wlDetailTitle');
+  if (title) title.textContent = sym;
+  const nameEl = document.getElementById('wlDetailName');
+  if (nameEl) nameEl.textContent = '';
+  back.hidden = false;
+  renderWlDetailTf();
+  renderWlDetail();
+  loadWlDetail();
+  const close = document.getElementById('wlDetailCloseBtn');
+  if (close) close.focus();
+}
+
+function closeWlDetail() {
+  const back = document.getElementById('wlDetailBackdrop');
+  if (back) back.hidden = true;
+  /* Bumping the sequence orphans any fetch still in flight, so a slow 5Y reply
+     cannot repaint a window the owner has already closed — or, worse, land in
+     the next symbol's window. */
+  wlDetail.seq++;
+  wlDetail.sym = null;
+  const focus = wlDetail.invoker;
+  wlDetail.invoker = null;
+  if (focus && document.body.contains(focus)) focus.focus();
+}
+
+function renderWlDetailTf() {
+  const host = document.getElementById('wlDetailTf');
+  if (!host) return;
+  host.textContent = '';
+  for (const [key, label] of WL_TFS) {
+    const b = el('button', '', label);
+    b.type = 'button';
+    b.dataset.tf = key;
+    b.setAttribute('aria-pressed', String(wlDetail.tf === key));
+    b.addEventListener('click', () => {
+      if (wlDetail.tf === key) return;
+      wlDetail.tf = key;
+      wlDetail.bars = null;
+      renderWlDetailTf();
+      renderWlDetail();
+      loadWlDetail();
+      const again = document.querySelector('#wlDetailTf button[data-tf="' + key + '"]');
+      if (again) again.focus();
+    });
+    host.appendChild(b);
+  }
+}
+
+async function loadWlDetail() {
+  const sym = wlDetail.sym;
+  const tf = wlDetail.tf;
+  const seq = ++wlDetail.seq;
+  const stale = () => seq !== wlDetail.seq || wlDetail.sym !== sym;
+  wlDetail.loading = true;
+
+  if (DESK.mode === 'demo') {
+    wlDetail.loading = false;
+    wlDetail.bars = buildDemoDetailBars(sym, tf);
+    const q = demoWlQuote(sym);
+    wlDetail.info = { name: q.name, price: q.last, changePct: q.pct, change: q.last - q.last / (1 + q.pct / 100) };
+    wlDetail.asOf = lastTradingDay(new Date()).toISOString().slice(0, 10);
+    wlDetail.at = null;
+    renderWlDetail();
+    return;
+  }
+
+  /* LIVE IS REAL DATA OR NOTHING. A failure leaves bars null and renders the
+     empty state with a STALE lamp — never a demo series, which would put a
+     fabricated chart under a real ticker. */
+  const wantIntraday = tf === '1d';
+  const [barsRes, infoRes] = await Promise.all([
+    deskQuote(sym, wantIntraday ? 'intraday' : 'daily').catch(() => null),
+    deskQuote(sym, 'info').catch(() => null),
+  ]);
+  if (stale()) return;
+  wlDetail.loading = false;
+
+  let series = barsRes && barsRes.ok && barsRes.series ? barsRes.series : null;
+  if (series && wantIntraday) series = wlDetailLastSession(series);
+  else if (series) series = wlSliceTail(series, WL_DETAIL_SPAN[tf] || 252);
+  wlDetail.bars = series && series.c && series.c.length >= 2 ? series : null;
+  wlDetail.info = infoRes && infoRes.ok && infoRes.info ? infoRes.info : null;
+  wlDetail.asOf = barsRes && barsRes.asOf ? String(barsRes.asOf).slice(0, 10) : null;
+  wlDetail.at = infoRes && infoRes.asOf ? infoRes.asOf : (barsRes ? barsRes.asOf : null);
+  renderWlDetail();
+}
+
+/* Keep only the newest session's bars from the 5-day intraday feed, so 1D means
+   today rather than a week smeared across one axis. Regular session only: the
+   daily-bar rule (extended prints never fold into a daily OHLC) does not apply
+   to an intraday pane, but mixing a thin 4am print into a "1D" chart would
+   still overstate the day's range. */
+function wlDetailLastSession(s) {
+  const reg = regularOnly(s);
+  if (!reg.t || !reg.t.length) return reg;
+  const dayOf = v => String(v).slice(0, 10);
+  const last = dayOf(reg.t[reg.t.length - 1]);
+  let i = reg.t.length - 1;
+  while (i > 0 && dayOf(reg.t[i - 1]) === last) i--;
+  return wlSliceTail(reg, reg.t.length - i);
+}
+
+function wlSliceTail(s, n) {
+  const len = s.c.length;
+  const from = Math.max(0, len - n);
+  const cut = k => (Array.isArray(s[k]) ? s[k].slice(from) : []);
+  return { t: cut('t'), o: cut('o'), h: cut('h'), l: cut('l'), c: cut('c'), v: cut('v') };
+}
+
+function renderWlDetail() {
+  if (!wlDetail.sym) return;
+  const demo = DESK.mode === 'demo';
+  const info = wlDetail.info;
+  const bars = wlDetail.bars;
+
+  const nameEl = document.getElementById('wlDetailName');
+  if (nameEl) {
+    /* Only when it differs from the ticker: Yahoo echoes the symbol back for
+       names it lacks, and "IYT — IYT" reads as a bug. */
+    const n = info && info.name;
+    nameEl.textContent = (n && n.toUpperCase() !== wlDetail.sym.toUpperCase()) ? n : '';
+  }
+
+  const lampEl = document.getElementById('wlDetailLamp');
+  const stampEl = document.getElementById('wlDetailStamp');
+  if (lampEl && stampEl) {
+    if (demo) {
+      lampEl.className = 'lamp lamp--demo'; lampEl.textContent = 'Demo';
+      stampEl.textContent = 'Seeded demo series';
+    } else if (wlDetail.loading) {
+      /* Not STALE while a fetch is still out — STALE is a claim that the feed
+         has stopped answering, and making it before the first reply lands
+         accuses a healthy backend. */
+      lampEl.className = 'lamp'; lampEl.textContent = '—';
+      stampEl.textContent = 'Fetching…';
+    } else if (!bars && info == null) {
+      lampEl.className = 'lamp lamp--stale'; lampEl.textContent = 'STALE';
+      stampEl.textContent = 'No data for ' + wlDetail.sym;
+    } else {
+      const lamp = liveLampFor(new Date().toISOString(), wlDetail.asOf, true, wlDetail.at);
+      lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
+      stampEl.textContent = lamp.stamp || '';
+    }
+  }
+
+  renderWlDetailQuote(info, bars);
+  renderWlDetailStats(info, demo);
+
+  const svg = document.getElementById('wlDetailChart');
+  const empty = document.getElementById('wlDetailEmpty');
+  const ready = !!(bars && bars.c && bars.c.length >= 2);
+  if (svg) svg.hidden = !ready;
+  if (empty) {
+    empty.hidden = ready;
+    if (!ready) {
+      empty.textContent = wlDetail.loading
+        ? 'Loading…'
+        : 'No chart data for ' + wlDetail.sym + ' over this span.';
+    }
+  }
+  if (ready) drawWlDetailChart(bars);
+}
+
+function renderWlDetailQuote(info, bars) {
+  const box = document.getElementById('wlDetailQuote');
+  if (!box) return;
+  box.textContent = '';
+  let last = null, chg = null, pct = null;
+  if (info && info.price != null) {
+    last = info.price; chg = info.change; pct = info.changePct;
+  } else if (bars && bars.c.length > 1) {
+    const n = bars.c.length;
+    last = bars.c[n - 1]; chg = bars.c[n - 1] - bars.c[n - 2];
+    pct = (bars.c[n - 1] / bars.c[n - 2] - 1) * 100;
+  }
+  if (last == null) return;
+  box.appendChild(el('span', 'wl-detail-last', fmtPrice(last)));
+  if (chg != null) {
+    const sign = chg > 0 ? '+' : '';
+    box.appendChild(el('span', 'wl-detail-chg ' + (chg > 0 ? 'up' : chg < 0 ? 'down' : ''),
+      sign + fmtPrice(chg) + ' (' + sign + (pct == null ? '0.00' : pct.toFixed(2)) + '%)'));
+  }
+  /* Extended print on its own marked line, never replacing the last — the same
+     rule the Markets tiles and the charts readout follow. Absent means "did not
+     trade after hours", never 0. */
+  if (info && info.extPrice != null) {
+    const ep = info.extPct;
+    box.appendChild(el('span', 'wl-detail-ext',
+      'AFTER HRS ' + fmtPrice(info.extPrice) +
+      (ep == null ? '' : ' (' + (ep > 0 ? '+' : '') + ep.toFixed(2) + '%)')));
+  }
+}
+
+function renderWlDetailStats(info, demo) {
+  const box = document.getElementById('wlDetailStats');
+  if (!box) return;
+  box.textContent = '';
+  const item = (label, value) => {
+    const span = el('span', 'wl-detail-item');
+    span.appendChild(el('b', '', label));
+    span.appendChild(document.createTextNode(value));
+    box.appendChild(span);
+  };
+  if (demo) { box.appendChild(el('span', 'wl-detail-muted', 'Key stats show in live mode')); return; }
+  if (info === undefined) { box.appendChild(el('span', 'wl-detail-muted', 'Loading key stats…')); return; }
+  if (info === null) { box.appendChild(el('span', 'wl-detail-muted', 'Key stats unavailable for ' + wlDetail.sym)); return; }
+  if (info.bid != null && info.bid > 0) item('Bid', fmtPrice(info.bid));
+  if (info.ask != null && info.ask > 0) item('Ask', fmtPrice(info.ask));
+  const e = fmtEarnings(info.earningsTs, info.earningsEstimate);
+  if (e) item('Earnings', e.text);
+  if (info.marketCap != null) item('Mkt cap', wbFmtCap(info.marketCap));
+  if (info.pe != null) item(info.peFwd ? 'Fwd P/E' : 'P/E', info.pe.toFixed(1) + (info.peFwd ? '' : ' ttm'));
+  if (info.wkLow != null && info.wkHigh != null) item('52w', '$' + info.wkLow.toFixed(2) + '–$' + info.wkHigh.toFixed(2));
+  if (info.divYield != null && info.divYield > 0) item('Yield', info.divYield.toFixed(2) + '%');
+  if (!box.childNodes.length) box.appendChild(el('span', 'wl-detail-muted', 'Key stats unavailable for ' + wlDetail.sym));
+}
+
+/* Self-contained candle renderer. Deliberately NOT drawPane from the charts
+   workbench: that is a closure inside renderCharts(), tuned to the three Pro
+   panes and guarded by S12/S25/S34, and prising it out to serve a modal would
+   put a heavily-ruled surface at risk for a view that needs none of its
+   stochastic machinery. */
+const WL_SMA = [20, 50];
+function wlSma(values, n) {
+  const out = new Array(values.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= n) sum -= values[i - n];
+    if (i >= n - 1) out[i] = sum / n;
+  }
+  return out;
+}
+
+function drawWlDetailChart(bars) {
+  const svg = document.getElementById('wlDetailChart');
+  if (!svg) return;
+  svg.textContent = '';
+  const box = svg.getBoundingClientRect();
+  const W = Math.max(320, Math.round(box.width) || 900);
+  const H = Math.max(200, Math.round(box.height) || 380);
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.setAttribute('preserveAspectRatio', 'none');
+
+  const PAD_L = 8, PAD_R = 62, PAD_T = 10, PAD_B = 22;
+  const VOL_H = Math.round(H * 0.18);
+  const plotW = W - PAD_L - PAD_R;
+  const priceH = H - PAD_T - PAD_B - VOL_H - 6;
+  const n = bars.c.length;
+  const hi = Math.max(...bars.h), lo = Math.min(...bars.l);
+  const span = (hi - lo) || 1;
+  const pad = span * 0.05;
+  const yTop = hi + pad, yBot = lo - pad;
+  const y = v => PAD_T + (yTop - v) / (yTop - yBot) * priceH;
+  const step = plotW / n;
+  const bw = Math.max(1, Math.min(14, step * 0.66));
+
+  /* Horizontal price grid + right-hand scale. Five lines is enough to read a
+     level off without turning the plot into graph paper. */
+  for (let i = 0; i <= 4; i++) {
+    const v = yBot + (yTop - yBot) * (i / 4);
+    const yy = y(v);
+    svg.appendChild(svgEl('line', {
+      x1: PAD_L, x2: PAD_L + plotW, y1: yy, y2: yy,
+      stroke: 'var(--color-border)', 'stroke-width': 1, opacity: 0.5,
+    }));
+    const lab = svgEl('text', {
+      x: PAD_L + plotW + 6, y: yy + 4, fill: 'var(--color-text-secondary)',
+      'font-size': 11, 'font-variant-numeric': 'tabular-nums',
+    });
+    lab.textContent = fmtPrice(v);
+    svg.appendChild(lab);
+  }
+
+  /* Volume under the price, price-coloured: a volume bar is a fact about one
+     bar, so it takes that bar's own direction. */
+  const vMax = Math.max(1, ...(bars.v || [0]));
+  const volTop = PAD_T + priceH + 6;
+  for (let i = 0; i < n; i++) {
+    const vv = (bars.v && bars.v[i]) || 0;
+    if (!vv) continue;
+    const h = Math.max(1, (vv / vMax) * VOL_H);
+    const up = bars.c[i] >= bars.o[i];
+    svg.appendChild(svgEl('rect', {
+      x: PAD_L + i * step + (step - bw) / 2, y: volTop + VOL_H - h, width: bw, height: h,
+      fill: up ? 'var(--color-gain)' : 'var(--color-loss)', opacity: 0.35,
+    }));
+  }
+
+  for (let i = 0; i < n; i++) {
+    const up = bars.c[i] >= bars.o[i];
+    const col = up ? 'var(--color-gain)' : 'var(--color-loss)';
+    const cx = PAD_L + i * step + step / 2;
+    svg.appendChild(svgEl('line', {
+      x1: cx, x2: cx, y1: y(bars.h[i]), y2: y(bars.l[i]), stroke: col, 'stroke-width': 1,
+    }));
+    const yo = y(bars.o[i]), yc = y(bars.c[i]);
+    svg.appendChild(svgEl('rect', {
+      x: cx - bw / 2, y: Math.min(yo, yc), width: bw,
+      height: Math.max(1, Math.abs(yc - yo)), fill: col,
+    }));
+  }
+
+  /* SMAs only where they are fully warmed — a line that starts mid-chart is
+     honest, one drawn from a partial window is not. Series colours are
+     CVD-validated and must keep their order. */
+  WL_SMA.forEach((period, idx) => {
+    if (n <= period) return;
+    const ma = wlSma(bars.c, period);
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      if (ma[i] == null) continue;
+      pts.push((PAD_L + i * step + step / 2).toFixed(1) + ',' + y(ma[i]).toFixed(1));
+    }
+    if (pts.length < 2) return;
+    svg.appendChild(svgEl('polyline', {
+      points: pts.join(' '), fill: 'none',
+      stroke: 'var(--color-series-' + (idx + 1) + ')', 'stroke-width': 1.5, opacity: 0.9,
+    }));
+  });
+
+  /* First and last date, nothing between: a dense axis of dates on a 5Y chart
+     is unreadable, and the two ends are what actually anchor the span. */
+  const label = (v, x, anchor) => {
+    const txt = svgEl('text', { x, y: H - 6, fill: 'var(--color-text-secondary)', 'font-size': 11, 'text-anchor': anchor });
+    txt.textContent = String(v || '').slice(0, 10);
+    svg.appendChild(txt);
+  };
+  if (bars.t && bars.t.length) {
+    label(bars.t[0], PAD_L, 'start');
+    label(bars.t[n - 1], PAD_L + plotW, 'end');
+  }
+}
+
+function wireWatchlistDetail() {
+  const back = document.getElementById('wlDetailBackdrop');
+  const close = document.getElementById('wlDetailCloseBtn');
+  if (close) close.addEventListener('click', closeWlDetail);
+  if (back) back.addEventListener('click', e => { if (e.target === back) closeWlDetail(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && back && !back.hidden) closeWlDetail();
+  });
+  /* The chart is sized from its rendered box, so a resize has to redraw it or
+     the candles keep the old width's geometry. */
+  window.addEventListener('resize', () => {
+    if (back && !back.hidden && wlDetail.bars) drawWlDetailChart(wlDetail.bars);
   });
 }
 
@@ -5416,5 +5843,6 @@ wireCharts();
 wireMapFilter();
 wireWatchlistEditor();
 wireWatchlistQuickEdits();
+wireWatchlistDetail();
 wireSysPromptModal();
 boot();

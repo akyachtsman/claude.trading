@@ -640,6 +640,62 @@ function buildDemoWatchlist(lists, tf) {
     })),
   };
 }
+
+/* The demo tile's own price, derived exactly as buildDemoWatchlist derives it.
+   Shared rather than duplicated because the detail window has to LAND ON the
+   number the tile shows — a chart whose last candle disagrees with the tile
+   that opened it reads as two different quotes for one symbol. */
+function demoWlQuote(sym) {
+  const r = lcg(symSeed(sym));
+  const known = DEMO_WL[sym];
+  const last = known ? known[1] : Number((20 + r() * 300).toFixed(2));
+  const pct = known ? known[2] : Number(((r() - 0.48) * 3).toFixed(2));
+  return { name: known ? known[0] : sym, last, pct, index: sym.startsWith('^') };
+}
+
+/* ?demo=1 OHLC bars for the detail window (owner request 2026-08-06). Live is
+   real-data-or-nothing and fetches quote-proxy; this exists so the demo suite
+   can exercise the window on ANY watchlist ticker, not just the ten in
+   DEMO_CHART_SYMBOLS — the panel's rosters are far wider than that, and a
+   detail window that opened blank on most tiles would hide exactly the faults
+   the demo mode is there to surface.
+
+   Seeded off the symbol, so a ticker always draws the same chart, and walked
+   BACKWARD from the tile's own `last` so the final candle closes on it. At 1D
+   the series opens at the implied prior close, matching the tile's pill; over a
+   longer window that anchor is meaningless (the pill still measures one day),
+   so it opens a seeded distance away instead. */
+function buildDemoDetailBars(sym, tf) {
+  const span = DEMO_WL_SPAN[tf] || 1;
+  const scale = Math.sqrt(span);
+  const { last, pct } = demoWlQuote(sym);
+  /* 1D is an intraday session: ~78 five-minute bars, not one daily candle. */
+  const n = span === 1 ? 78 : Math.min(span, 260);
+  const start = span === 1 ? last / (1 + pct / 100) : last / (1 + (lcg(symSeed(sym) ^ 0x9e3d)() - 0.42) * 0.05 * scale);
+  const vol = span === 1 ? 0.0016 : 0.006 * Math.sqrt(span / n);
+  const closes = walk(symSeed(sym) ^ 0x5f5f, start, 0, vol, n, last);
+  const rnd = lcg(symSeed(sym) ^ 0x2b7f);
+  const t = span === 1
+    ? closes.map((_, i) => 'T' + i)                    /* intraday slots — labelled by the caller */
+    : tradingISODates(n, lastTradingDay(new Date()));
+  const s = { t, o: [], h: [], l: [], c: [], v: [] };
+  for (let i = 0; i < n; i++) {
+    const close = closes[i];
+    const prev = i === 0 ? start : closes[i - 1];
+    const open = prev * (1 + (rnd() - 0.5) * vol * 0.6);
+    const hi = Math.max(open, close) * (1 + rnd() * vol * 0.7);
+    const lo = Math.min(open, close) * (1 - rnd() * vol * 0.7);
+    s.o.push(+open.toFixed(2)); s.h.push(+hi.toFixed(2));
+    s.l.push(+lo.toFixed(2)); s.c.push(+close.toFixed(2));
+    s.v.push(Math.round((0.4 + rnd()) * (span === 1 ? 120_000 : 3_000_000)));
+  }
+  /* The walk lands on `last` by construction; force the final close so rounding
+     cannot leave the chart a cent off the tile that opened it. */
+  s.c[n - 1] = last;
+  s.h[n - 1] = Math.max(s.h[n - 1], last);
+  s.l[n - 1] = Math.min(s.l[n - 1], last);
+  return s;
+}
 /* [name, last, day%] per symbol — demo only. Seeded from a real session so the
    demo panel reads like a plausible desk instead of noise; live rows carry
    Yahoo's own name and price. Public market data, no holdings implied. */
