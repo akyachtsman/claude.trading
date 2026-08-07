@@ -281,14 +281,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   the watchlist" asks for; pinning Markets to a number instead would re-break
   the moment a list is added or removed. One consequence to know before reading
   the row: at 258px wide **Markets is the TALLEST column** (chart + 4 tiles + 11
-  sectors ≈ 900px against the watchlist's ~580), so Markets now SETS the shared
+  sectors, ~773px against the watchlist's ~580), so Markets now SETS the shared
   height and Watchlists carries slack below its tiles. Narrower means taller —
   that is the cost of the one-third cut, not a layout fault.
-  The Markets grids are also forced **2-up inside this column**: `.mk-tiles` and
-  `.mk-sectors` are `repeat(4, 1fr)` and drop to 2 only under a
+  The Markets grids are therefore re-columned **by the COLUMN's width, not the
+  viewport's**: both are `repeat(4, 1fr)` and drop to 2 only under a
   `max-width: 520px` **viewport** query, which never fires on the wide screen
   where this narrow column exists — 4-up at 287px pre-zoom puts a ~63px sector
-  cell under a 10px label and a mono %, and they spill the box. Two more rules are
+  cell under a 10px label and a mono %, and they spill the box. The two grids
+  then **differ on purpose**, and both splits came from a text-overflow audit
+  rather than taste: index tiles stay **2-up** (forcing them 3-up clips 5–6
+  elements — the `--font-lg` mono % and the `.mk-ext` proxy line), while the 11
+  sectors go **3-up** to pull ~140px out of the row (914 → 773). The 10px sector
+  label does not survive that on its own: a 3-up cell is **71px** and
+  "Communication" needs **76px** — the one label that is a single unbreakable
+  word, so neither wrapping nor `break-word` helps. It is set to **9px in this
+  column only** (~68px, clearing every other name), which sizes the label to the
+  cell instead of clipping or ellipsising it; the stacked layout below 1400px
+  keeps the 10px label at its 4-up width. Two more rules are
   load-bearing and were both caught by measuring rather than by eye: the ≤1280
   stack must carry **`flex-wrap: nowrap`**, because a `flex-direction: column`
   container that is allowed to wrap spills into EXTRA COLUMNS when its content

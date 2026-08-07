@@ -106,11 +106,23 @@
        max-width:520px VIEWPORT query — which never fires here, since this narrow
        column exists only on a wide screen. At 287px pre-zoom a 4-up sector cell
        is ~63px and its 10px label and mono % spill their box, so the row is set
-       by the COLUMN's width rather than the viewport's. 2-up also makes Markets
-       taller, which suits a column that now stretches to the Watchlists height
-       rather than being cropped to 600px. */
-    .top-band > .col-markets .mk-tiles,
-    .top-band > .col-markets .mk-sectors { grid-template-columns: repeat(2, 1fr); }
+       by the COLUMN's width rather than the viewport's.
+       The two grids differ ON PURPOSE. Index tiles stay 2-up: each carries a
+       `--font-lg` mono percentage, the widest thing in the panel. The 11 sector
+       cells go 3-up (owner request 2026-08-07) to pull ~135px out of the row —
+       Markets SETS the shared height here, so its height is the watchlist's
+       slack. Both splits come from a text-overflow audit rather than taste:
+       forcing the index tiles 3-up clips 6 elements (the `--font-lg` mono % and
+       the `.mk-ext` proxy line), while the sectors survive it.
+       The 10px sector label does NOT survive on its own — a 3-up cell measures
+       71px and "Communication" needs 76px, the one label that is a single
+       unbreakable word. 9px brings it to ~68px and clears every other name with
+       room, so the label is sized to the cell instead of being clipped or
+       ellipsised. This is scoped to the narrow column; the stacked layout below
+       1400px keeps the 10px label at its 4-up width. */
+    .top-band > .col-markets .mk-tiles { grid-template-columns: repeat(2, 1fr); }
+    .top-band > .col-markets .mk-sectors { grid-template-columns: repeat(3, 1fr); }
+    .top-band > .col-markets .mk-sec .mk-sec-name { font-size: 9px; }
     /* Watchlists is the FLUID column, not a pinned 1040 (owner's browser
        measured 1152 — a 1512 laptop with DevTools docked — so a fixed 1040 put
        the row at 1844px and three-across never engaged on the machine it was
