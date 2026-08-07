@@ -92,10 +92,17 @@
      the page keeps the layout it has today.
      Markets keeps its 0.9 zoom, so its basis is the PRE-zoom figure: 430×0.9 =
      387 rendered, and 667×0.9 = 600 tall, matching the other two. */
-  @media (min-width: 1900px) {
+  @media (min-width: 1400px) {
     .top-band { flex-wrap: nowrap; align-items: stretch; }
     .top-band > .col-markets { flex: 0 0 430px; height: 667px; }
-    .top-band > .col-watchlist { flex: 0 0 1040px; order: 0; height: 600px; }
+    /* Watchlists is the FLUID column, not a pinned 1040 (owner's browser
+       measured 1152 — a 1512 laptop with DevTools docked — so a fixed 1040 put
+       the row at 1844px and three-across never engaged on the machine it was
+       built for). Markets and Ask keep their exact half-widths at every size and
+       Watchlists absorbs the remainder: ~676 at 1512, ~1084 at 1920. That also
+       makes the breakpoint honest — the row fits by construction rather than at
+       one screen size. */
+    .top-band > .col-watchlist { flex: 1 1 auto; order: 0; height: 600px; min-width: 0; }
     .top-band > .col-rail { flex: 0 0 385px; height: 600px; }
     /* Each column is now a fixed-height box, so its panel fills it and the
        overflow scrolls INSIDE rather than stretching the row. */
