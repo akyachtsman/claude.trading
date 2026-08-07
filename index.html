@@ -28,7 +28,14 @@
      the header now spans the full width so it pins to the true upper-right,
      flush with the full-bleed panels' edge. */
   .shell { margin: 0 auto; padding: var(--space-4) var(--space-4) var(--space-8); }
-  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead) { max-width: 1560px; margin-inline: auto; }
+  /* 1560 → 1880 (owner ruling 2026-08-07), so Markets | Watchlists | Ask can
+     sit in ONE row: at the widths the owner set that row needs 1844px, and the
+     old cap left 180px of dead margin each side of a 1920 monitor. The gain is
+     REAL ONLY ON A ≥1900px BROWSER WINDOW — every current MacBook (1440 / 1512 /
+     1728 logical) is below it — so the three-across layout is opted into by a
+     min-width query rather than imposed, and everything narrower keeps exactly
+     the layout it had. */
+  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -52,7 +59,15 @@
      between the masthead and the top band, OUTSIDE .layout, so it carries its
      own bottom margin instead of inheriting that grid's gap. */
   .area-watchlist { margin-bottom: var(--space-4); }
-  .top-band { display: flex; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-4); }
+  /* wrap rather than overflow: the desk must never scroll sideways, so when the
+     three columns don't fit they stack instead of spilling. */
+  .top-band { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-4); }
+  /* Watchlists moved INSIDE the band (owner request 2026-08-07) to sit between
+     Markets and Ask. Below the three-across breakpoint it takes a full row and
+     `order:-1` puts it back ABOVE the other two — which is exactly the layout it
+     had before, so a narrow screen loses nothing by this move. */
+  .top-band > .col-watchlist { flex: 1 1 100%; order: -1; min-width: 0; }
+  .top-band > .col-watchlist > .area-watchlist { margin-bottom: 0; }
   /* Top row: Markets | Ask-the-desk. Was strip | Markets | Ask until the strip
      came out 2026-07-29. Markets renders at 90% — a genuine 10% shrink via
      `zoom`, which reflows the box (unlike transform:scale, which would leave a
@@ -64,7 +79,29 @@
      evenly, which the Markets chart and its 11-cell sector grid both want more
      than the chat does. */
   .top-band > .col-markets { flex: 0 0 860px; zoom: .9; }
-  .top-band > .col-rail { flex: 1 1 auto; align-self: stretch; }
+  /* Basis 380, not auto. With the band now allowed to wrap, an `auto` basis let
+     the rail measure its own content and break to a row of its own at 1440–1728
+     — beside Markets is where it belongs, and that is the layout these widths
+     had before. A small basis keeps it on the line; `1 1` still grows it into
+     whatever Markets leaves. */
+  .top-band > .col-rail { flex: 1 1 380px; min-width: 0; align-self: stretch; }
+  /* ── three across: Markets | Watchlists | Ask (owner request 2026-08-07) ────
+     Markets and Ask at HALF their old width, Watchlists a third off, all at the
+     Watchlists height. Opted into at 1900px because the row needs 1844px of
+     content plus the shell's own padding — below that the rule above stands and
+     the page keeps the layout it has today.
+     Markets keeps its 0.9 zoom, so its basis is the PRE-zoom figure: 430×0.9 =
+     387 rendered, and 667×0.9 = 600 tall, matching the other two. */
+  @media (min-width: 1900px) {
+    .top-band { flex-wrap: nowrap; align-items: stretch; }
+    .top-band > .col-markets { flex: 0 0 430px; height: 667px; }
+    .top-band > .col-watchlist { flex: 0 0 1040px; order: 0; height: 600px; }
+    .top-band > .col-rail { flex: 0 0 385px; height: 600px; }
+    /* Each column is now a fixed-height box, so its panel fills it and the
+       overflow scrolls INSIDE rather than stretching the row. */
+    .top-band > aside > .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+    .top-band > aside > .panel > .panel-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  }
   /* Ask-the-desk: cap to the Markets tile's height (the row's tallest) and
      scroll the conversation INSIDE instead of letting the panel grow with the
      thread (owner request 2026-07-21). The panel fills the stretched rail; the
@@ -425,10 +462,14 @@
     /* below wide desktop the four top-right boxes are too cramped beside the
        strip, so stack the top band (strip full-width above, boxes wrap below)
        — also fixes phone-width horizontal overflow (Codex #128 P1) */
-    .top-band { flex-direction: column; align-items: stretch; }
+    /* nowrap is load-bearing next to flex-direction:column — a column-wrap
+       container spills into EXTRA COLUMNS when its content is taller than the
+       box, which sent the panels to 2822px at a 1280 viewport and scrolled the
+       page sideways. The band is a plain stack here, so it must never wrap. */
+    .top-band { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
     /* stacked: drop the 10% shrink and let Markets/Ask span the full width */
     .top-band > .col-markets { zoom: 1; }
-    .top-band > .col-markets, .top-band > .col-rail { flex-basis: auto; }
+    .top-band > .col-markets, .top-band > .col-rail, .top-band > .col-watchlist { flex-basis: auto; }
     /* stacked: the rail no longer inherits the Markets tile height, so the
        thread would grow to fit every replayed exchange — cap it so it scrolls */
     .top-band > .col-rail .ask-thread { max-height: 320px; }
@@ -474,73 +515,6 @@
        in place from here via the PIN RPCs — the ✎ trigger flips the panel into
        edit mode. Quotes arrive batched from desk-watchlist (one upstream call
        per 50 symbols). Tabs are built by renderWatchlist(). -->
-  <section class="panel area-watchlist" aria-labelledby="wlTitle">
-    <div class="panel-header">
-      <h2 class="panel-title" id="wlTitle">Watchlists</h2>
-      <span class="lamp lamp--demo" id="wlLamp">Demo</span>
-      <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
-      <!-- Sort is a VIEW, not an edit (owner request 2026-07-29): it reorders
-           what is drawn and never touches the saved order, so switching back to
-           Manual restores the arrangement dragged earlier. Built by
-           renderWlSort(); drag-to-reorder is only offered in Manual, where a
-           drag isn't fighting a sort key. -->
-      <div class="seg wl-sort" id="wlSort" role="group" aria-label="Sort watchlist symbols"></div>
-      <!-- Chart timeframe (owner request 2026-07-30): the window each tile's
-           sparkline draws, 1D through 5Y. Panel-wide, because the bands are one
-           surface and per-list spans would make two tiles incomparable. The
-           Change % pill does NOT follow it — that stays the prior-close move
-           per the 2026-07-29 ruling. Built by renderWlTf(). -->
-      <div class="seg wl-tf" id="wlTf" role="group" aria-label="Chart timeframe"></div>
-      <!-- + and 🗑 sit IN the header beside the timeframe (owner ruling
-           2026-07-31). They were introduced on their own second row, which
-           stood permanently under the header whether or not anything was
-           staged — a full-width band of chrome to hold two buttons. Both are
-           still a drop target and a source: the trash accepts a dragged tile
-           from here exactly as it did from the tray row. -->
-      <button type="button" class="wl-add wl-add--tray" id="wlTrayAdd"
-              aria-label="New symbol tile" title="New symbol tile — drag it into a list">+</button>
-      <button type="button" class="wl-trash" id="wlTrash"
-              aria-label="Remove the focused symbol, or drag one here">🗑</button>
-      <!-- NEW LIST (owner request 2026-08-01): creating and deleting a whole
-           list used to be reachable only inside the ✎ editor, so the two
-           commonest roster edits meant opening a modal, editing a draft, and
-           saving it. This mints an empty list directly; the × on each band
-           deletes one. It is LABELLED rather than a bare + because the + beside
-           it already means "new SYMBOL tile" — two identical glyphs doing
-           different jobs is how a control gets pressed by mistake. -->
-      <button type="button" class="wl-add wl-newlist" id="wlNewListBtn"
-              aria-label="New watchlist" title="New watchlist">+ list</button>
-      <!-- ARRANGEMENT lock (owner request 2026-07-31): freezes row order, tile
-           order, and tile moves between rows — plus DELETING A WHOLE LIST
-           (owner ruling 2026-08-01). Adding a symbol, adding a list, and
-           removing a single tile stay available; the lock covers arrangement
-           and the one irreversible act. Enforced in wlCommitMove/wlMoveBand/
-           openWlDelList, not just on the controls. -->
-      <button type="button" class="wl-lock" id="wlLock" aria-pressed="false"
-              aria-label="Lock the arrangement">🔓</button>
-      <!-- Transient feedback for a drag that could not be committed. The
-           staging row that used to carry it is gone (owner ruling 2026-07-31),
-           and a failed move needs to say so somewhere the eye already is.
-           aria-live so it is announced rather than only seen. -->
-      <span class="wl-note" id="wlNote" role="status" aria-live="polite" hidden></span>
-      <span class="stamp ml-auto" id="wlStamp">—</span>
-    </div>
-    <div class="panel-body">
-      <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
-           labelled band in the market strip's own idiom — list name on the
-           left, its symbols as tiles packed left-to-right across the full
-           panel width. Built by renderWatchlist(); every band and tile reuses
-           .mkt-group / .mkt-tile so the two surfaces stay one visual system. -->
-      <div class="wl-strip" id="wlStrip"></div>
-      <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
-      <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
-           splitting a pasted broker table on whitespace can turn "BRK B" into
-           BRK + B, and both look like valid tickers, so the only honest signal
-           is which ones came back unknown. -->
-      <p class="wl-missing" id="wlMissing" hidden></p>
-    </div>
-  </section>
-
   <div class="top-band">
     <aside class="col-markets" aria-label="Markets">
       <section class="panel markets-panel" aria-labelledby="mktTitle">
@@ -560,6 +534,75 @@
           <div class="mk-sectors" id="mktSectors"></div>
         </div>
       </section>
+    </aside>
+
+    <aside class="col-watchlist" aria-label="Watchlists">
+    <section class="panel area-watchlist" aria-labelledby="wlTitle">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlTitle">Watchlists</h2>
+        <span class="lamp lamp--demo" id="wlLamp">Demo</span>
+        <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
+        <!-- Sort is a VIEW, not an edit (owner request 2026-07-29): it reorders
+             what is drawn and never touches the saved order, so switching back to
+             Manual restores the arrangement dragged earlier. Built by
+             renderWlSort(); drag-to-reorder is only offered in Manual, where a
+             drag isn't fighting a sort key. -->
+        <div class="seg wl-sort" id="wlSort" role="group" aria-label="Sort watchlist symbols"></div>
+        <!-- Chart timeframe (owner request 2026-07-30): the window each tile's
+             sparkline draws, 1D through 5Y. Panel-wide, because the bands are one
+             surface and per-list spans would make two tiles incomparable. The
+             Change % pill does NOT follow it — that stays the prior-close move
+             per the 2026-07-29 ruling. Built by renderWlTf(). -->
+        <div class="seg wl-tf" id="wlTf" role="group" aria-label="Chart timeframe"></div>
+        <!-- + and 🗑 sit IN the header beside the timeframe (owner ruling
+             2026-07-31). They were introduced on their own second row, which
+             stood permanently under the header whether or not anything was
+             staged — a full-width band of chrome to hold two buttons. Both are
+             still a drop target and a source: the trash accepts a dragged tile
+             from here exactly as it did from the tray row. -->
+        <button type="button" class="wl-add wl-add--tray" id="wlTrayAdd"
+                aria-label="New symbol tile" title="New symbol tile — drag it into a list">+</button>
+        <button type="button" class="wl-trash" id="wlTrash"
+                aria-label="Remove the focused symbol, or drag one here">🗑</button>
+        <!-- NEW LIST (owner request 2026-08-01): creating and deleting a whole
+             list used to be reachable only inside the ✎ editor, so the two
+             commonest roster edits meant opening a modal, editing a draft, and
+             saving it. This mints an empty list directly; the × on each band
+             deletes one. It is LABELLED rather than a bare + because the + beside
+             it already means "new SYMBOL tile" — two identical glyphs doing
+             different jobs is how a control gets pressed by mistake. -->
+        <button type="button" class="wl-add wl-newlist" id="wlNewListBtn"
+                aria-label="New watchlist" title="New watchlist">+ list</button>
+        <!-- ARRANGEMENT lock (owner request 2026-07-31): freezes row order, tile
+             order, and tile moves between rows — plus DELETING A WHOLE LIST
+             (owner ruling 2026-08-01). Adding a symbol, adding a list, and
+             removing a single tile stay available; the lock covers arrangement
+             and the one irreversible act. Enforced in wlCommitMove/wlMoveBand/
+             openWlDelList, not just on the controls. -->
+        <button type="button" class="wl-lock" id="wlLock" aria-pressed="false"
+                aria-label="Lock the arrangement">🔓</button>
+        <!-- Transient feedback for a drag that could not be committed. The
+             staging row that used to carry it is gone (owner ruling 2026-07-31),
+             and a failed move needs to say so somewhere the eye already is.
+             aria-live so it is announced rather than only seen. -->
+        <span class="wl-note" id="wlNote" role="status" aria-live="polite" hidden></span>
+        <span class="stamp ml-auto" id="wlStamp">—</span>
+      </div>
+      <div class="panel-body">
+        <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
+             labelled band in the market strip's own idiom — list name on the
+             left, its symbols as tiles packed left-to-right across the full
+             panel width. Built by renderWatchlist(); every band and tile reuses
+             .mkt-group / .mkt-tile so the two surfaces stay one visual system. -->
+        <div class="wl-strip" id="wlStrip"></div>
+        <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
+        <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
+             splitting a pasted broker table on whitespace can turn "BRK B" into
+             BRK + B, and both look like valid tickers, so the only honest signal
+             is which ones came back unknown. -->
+        <p class="wl-missing" id="wlMissing" hidden></p>
+      </div>
+    </section>
     </aside>
 
     <aside class="col-rail" aria-label="Desk tools">

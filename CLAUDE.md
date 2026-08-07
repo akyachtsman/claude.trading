@@ -245,6 +245,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
+  **Three across at ≥1900px** (owner request 2026-08-07) — Watchlists moved
+  INSIDE `.top-band` as `.col-watchlist`, so the row reads Markets | Watchlists |
+  Ask at **387 / 1040 / 385**, all 600px tall (Markets keeps its 0.9 `zoom`, so
+  its basis is the pre-zoom 430×667). The shell cap went 1560 → **1880** to make
+  room: the row needs 1844px, and the old cap left 180px of dead margin each side
+  of a 1920 monitor. It is an **opt-in `min-width: 1900px` query, not a
+  rewrite** — the owner was shown that the row cannot fit below that (every
+  current MacBook is 1440/1512/1728 logical) and chose the widening anyway, so
+  narrower screens keep exactly the layout they had: `order:-1` + a 100% basis
+  puts Watchlists back on its own full-width row ABOVE Markets and Ask. Verified
+  at 1440 that Ask is still 618px — identical to before the move. Two rules are
+  load-bearing and were both caught by measuring rather than by eye: the ≤1280
+  stack must carry **`flex-wrap: nowrap`**, because a `flex-direction: column`
+  container that is allowed to wrap spills into EXTRA COLUMNS when its content
+  outgrows the box (this sent the panels to 2822px at a 1280 viewport and
+  scrolled the page sideways — the fault S4 exists to catch); and `.col-rail`
+  needs an explicit **380px basis rather than `auto`**, or with wrapping enabled
+  it measures its own content and breaks onto a row of its own at 1440–1728.
   **`Radar` is the inbox list** (owner request 2026-07-30): the panel-header `+`
   routes every new symbol there rather than asking which list, and it is dragged
   onward from there. It is an ordinary row in `desk_watchlists` — nothing in the
