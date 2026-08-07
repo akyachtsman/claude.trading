@@ -239,18 +239,18 @@ function renderMarkets(market, lamp) {
       row.appendChild(el('span', 'mk-sec-pct mk-sec-pct--none', '—'));
     }
 
-    /* Sector ETFs genuinely trade after the bell, and they keep their own
-       post-market move — but it moved to the row TOOLTIP when the grid became a
-       258px-wide strip. Measured: name + ticker + price + sparkline + pill + an
-       extended % needs ~292px in a 228px row, and flex resolved that by
-       crushing the label column to 8px, so "Communication" rendered as one
-       clipped letter. The after-hours print is the one item here that is
-       supplementary rather than the row's subject, so it is what gives way; it
-       is still one hover away, the same answer the heatmap reached for its own
-       few-pixel tiles. */
+    /* Sector ETFs genuinely trade after the bell, so this is their OWN
+       post-market move and needs no proxy label. It was briefly tooltip-only,
+       when the column was 258px and a sixth item on the row crushed the label
+       to 8px; the column was widened to 311px instead (owner request
+       2026-08-07) precisely so this can be read at a glance rather than hunted
+       for one row at a time. The tooltip stays as well, because it carries the
+       after-hours PRICE, which the row has no space to state. */
     if (t && t.ext && t.ext.kind === 'post' && t.ext.chg != null) {
-      row.title = name + ' (' + sym + ') ' + t.ext.last + ' after hours, '
+      const x = el('span', 'mk-sec-ext ' + (t.ext.chg >= 0 ? 'up' : 'down'), fmtPct(t.ext.chg));
+      x.title = name + ' (' + sym + ') ' + t.ext.last + ' after hours, '
         + fmtPct(t.ext.chg) + ' from the prior close';
+      row.appendChild(x);
     }
     secBox.appendChild(row);
   }

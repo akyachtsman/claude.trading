@@ -1565,22 +1565,25 @@ test('S23: post-market prints render, and only where the instrument trades', asy
   const after = (await exts.first().locator('.mk-ext-pct').innerText()).trim();
   expect(after, 'after-hours must not just repeat the close').not.toContain(regular);
 
-  // Sector ETFs genuinely trade after the bell, so they need no proxy. The
-  // print moved from a visible cell line into the row TOOLTIP when the grid
-  // became a 258px stacked strip (2026-08-07) — name + ticker + price +
-  // sparkline + day-% already needs the full row, and adding a sixth item
-  // crushed the label to 8px. It must still be present for ALL 11: dropping it
-  // where it exists is a silent data loss, which is what this line guards.
+  // Sector ETFs genuinely trade after the bell, so they need no proxy, and the
+  // print is VISIBLE on every row — it was briefly tooltip-only while the
+  // column was 258px, and the column was widened to 311px (2026-08-07)
+  // specifically to bring it back, so a regression to the tooltip would undo
+  // the width as well as the number.
   const secRows = page.locator('#mktSectors .mk-sec');
   expect(await secRows.count(), 'all 11 sectors render').toBe(11);
-  for (let i = 0; i < 11; i++) {
-    await expect(secRows.nth(i), 'the sector keeps its own after-hours print')
-      .toHaveAttribute('title', /after hours/i);
-  }
-  // and the strip shows no visible ext line — if one came back, the row is
-  // over-stuffed again and the label is being crushed rather than the number
-  // being dropped.
-  expect(await page.locator('#mktSectors .mk-sec-ext').count(), 'ext rides in the tooltip').toBe(0);
+  expect(await page.locator('#mktSectors .mk-sec-ext').count(),
+    'every sector shows its own after-hours move').toBe(11);
+  // The whole point of the widening is that BOTH fit: a sparkline on every row
+  // and the after-hours figure beside the day-%. Losing either silently is the
+  // regression this guards.
+  expect(await page.locator('#mktSectors .mk-sec .wl-spark').count(),
+    'and keeps its sparkline').toBe(11);
+  // Nothing may be clipped to make that fit — a crushed label is how the first
+  // attempt failed, and it fails silently.
+  const clipped = await page.evaluate(() => [...document.querySelectorAll('#mktSectors .mk-sec *')]
+    .filter(e => e.scrollWidth > e.clientWidth + 1 && e.clientWidth > 0).length);
+  expect(clipped, 'no sector row element is clipped').toBe(0);
 
   // Heatmap: the print rides in the TOOLTIP (a tile is a few pixels at the
   // tail), and is absent on names that didn't trade rather than shown as 0.
