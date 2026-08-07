@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260807b">
-<link rel="stylesheet" href="styles/components.css?v=20260807b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260807c">
+<link rel="stylesheet" href="styles/components.css?v=20260807c">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -86,26 +86,57 @@
      whatever Markets leaves. */
   .top-band > .col-rail { flex: 1 1 380px; min-width: 0; align-self: stretch; }
   /* ── three across: Markets | Watchlists | Ask (owner request 2026-08-07) ────
-     Markets and Ask at HALF their old width, Watchlists a third off, all at the
-     Watchlists height. Opted into at 1900px because the row needs 1844px of
-     content plus the shell's own padding — below that the rule above stands and
-     the page keeps the layout it has today.
-     Markets keeps its 0.9 zoom, so its basis is the PRE-zoom figure: 430×0.9 =
-     387 rendered, and 667×0.9 = 600 tall, matching the other two. */
+     Markets and Ask are narrow fixed rails; Watchlists is the fluid column that
+     absorbs everything else. Opted into at 1400px — below that the rule above
+     stands and the page keeps the layout it has today.
+     Widths (owner request 2026-08-07, second pass): Markets came down a THIRD,
+     387 → 258 rendered, and Ask was matched to it at 258 so the two rails frame
+     the page symmetrically. Markets keeps its 0.9 zoom, so its basis is the
+     PRE-zoom figure: 287 × 0.9 ≈ 258. Ask carries no zoom, so its basis IS the
+     rendered width. Watchlists gains the whole ~256px that frees up.
+     HEIGHT: none of the three is pinned any more. Watchlists runs at its FULL
+     length (owner request — a capped panel hid lists behind an inner scrollbar),
+     and `align-items: stretch` makes the other two match whichever column is
+     tallest, which is what "same height as watchlist" asks for. Pinning Markets
+     to a number instead would re-break the moment a list is added or removed. */
   @media (min-width: 1400px) {
     .top-band { flex-wrap: nowrap; align-items: stretch; }
-    .top-band > .col-markets { flex: 0 0 430px; height: 667px; }
+    .top-band > .col-markets { flex: 0 0 287px; }
+    /* The Markets grids are `repeat(4, 1fr)` and drop to 2 only under a
+       max-width:520px VIEWPORT query — which never fires here, since this narrow
+       column exists only on a wide screen. At 287px pre-zoom a 4-up sector cell
+       is ~63px and its 10px label and mono % spill their box, so the row is set
+       by the COLUMN's width rather than the viewport's.
+       The two grids differ ON PURPOSE. Index tiles stay 2-up: each carries a
+       `--font-lg` mono percentage, the widest thing in the panel. The 11 sector
+       cells go 3-up (owner request 2026-08-07) to pull ~135px out of the row —
+       Markets SETS the shared height here, so its height is the watchlist's
+       slack. Both splits come from a text-overflow audit rather than taste:
+       forcing the index tiles 3-up clips 6 elements (the `--font-lg` mono % and
+       the `.mk-ext` proxy line), while the sectors survive it.
+       The 10px sector label does NOT survive on its own — a 3-up cell measures
+       71px and "Communication" needs 76px, the one label that is a single
+       unbreakable word. 9px brings it to ~68px and clears every other name with
+       room, so the label is sized to the cell instead of being clipped or
+       ellipsised. This is scoped to the narrow column; the stacked layout below
+       1400px keeps the 10px label at its 4-up width. */
+    .top-band > .col-markets .mk-tiles { grid-template-columns: repeat(2, 1fr); }
+    .top-band > .col-markets .mk-sectors { grid-template-columns: repeat(3, 1fr); }
+    .top-band > .col-markets .mk-sec .mk-sec-name { font-size: 9px; }
     /* Watchlists is the FLUID column, not a pinned 1040 (owner's browser
        measured 1152 — a 1512 laptop with DevTools docked — so a fixed 1040 put
        the row at 1844px and three-across never engaged on the machine it was
-       built for). Markets and Ask keep their exact half-widths at every size and
-       Watchlists absorbs the remainder: ~676 at 1512, ~1084 at 1920. That also
-       makes the breakpoint honest — the row fits by construction rather than at
-       one screen size. */
-    .top-band > .col-watchlist { flex: 1 1 auto; order: 0; height: 600px; min-width: 0; }
-    .top-band > .col-rail { flex: 0 0 385px; height: 600px; }
-    /* Each column is now a fixed-height box, so its panel fills it and the
-       overflow scrolls INSIDE rather than stretching the row. */
+       built for). Markets and Ask keep their exact widths at every size and
+       Watchlists absorbs the remainder — now ~932 at 1512 and ~1340 at 1920,
+       since the two rails gave back ~256px between them. That also makes the
+       breakpoint honest — the row fits by construction rather than at one
+       screen size. */
+    .top-band > .col-watchlist { flex: 1 1 auto; order: 0; min-width: 0; }
+    .top-band > .col-rail { flex: 0 0 258px; }
+    /* The columns are stretch-sized rather than pinned, so a panel fills the
+       row's height and only scrolls INSIDE when its own content is the taller
+       one. Watchlists sets that height at its full length, so it does not
+       scroll; Ask still does, which is the point of the rule below. */
     .top-band > aside > .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
     .top-band > aside > .panel > .panel-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   }
@@ -943,8 +974,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260807b"></script>
-<script src="scripts/data.js?v=20260807b"></script>
-<script src="scripts/app.js?v=20260807b"></script>
+<script src="scripts/config.js?v=20260807c"></script>
+<script src="scripts/data.js?v=20260807c"></script>
+<script src="scripts/app.js?v=20260807c"></script>
 </body>
 </html>
