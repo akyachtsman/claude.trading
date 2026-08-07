@@ -84,7 +84,7 @@
      — beside Markets is where it belongs, and that is the layout these widths
      had before. A small basis keeps it on the line; `1 1` still grows it into
      whatever Markets leaves. */
-  .top-band > .col-rail { flex: 1 1 380px; min-width: 0; align-self: stretch; }
+  .top-band > .col-news { flex: 1 1 380px; min-width: 0; align-self: stretch; }
   /* ── three across: Markets | Watchlists | Ask (owner request 2026-08-07) ────
      Markets and Ask are narrow fixed rails; Watchlists is the fluid column that
      absorbs everything else. Opted into at 1400px — below that the rule above
@@ -107,22 +107,12 @@
        column exists only on a wide screen. At 287px pre-zoom a 4-up sector cell
        is ~63px and its 10px label and mono % spill their box, so the row is set
        by the COLUMN's width rather than the viewport's.
-       The two grids differ ON PURPOSE. Index tiles stay 2-up: each carries a
-       `--font-lg` mono percentage, the widest thing in the panel. The 11 sector
-       cells go 3-up (owner request 2026-08-07) to pull ~135px out of the row —
-       Markets SETS the shared height here, so its height is the watchlist's
-       slack. Both splits come from a text-overflow audit rather than taste:
-       forcing the index tiles 3-up clips 6 elements (the `--font-lg` mono % and
-       the `.mk-ext` proxy line), while the sectors survive it.
-       The 10px sector label does NOT survive on its own — a 3-up cell measures
-       71px and "Communication" needs 76px, the one label that is a single
-       unbreakable word. 9px brings it to ~68px and clears every other name with
-       room, so the label is sized to the cell instead of being clipped or
-       ellipsised. This is scoped to the narrow column; the stacked layout below
-       1400px keeps the 10px label at its 4-up width. */
+       Only the index tiles need this now: each carries a `--font-lg` mono
+       percentage, the widest thing in the panel, and forcing them 3-up clips
+       5–6 elements (that % plus the `.mk-ext` proxy line). The sectors used to
+       need a 3-up rule and a 9px label here too; both went when the grid became
+       a stacked strip, which gives every name its full width at full size. */
     .top-band > .col-markets .mk-tiles { grid-template-columns: repeat(2, 1fr); }
-    .top-band > .col-markets .mk-sectors { grid-template-columns: repeat(3, 1fr); }
-    .top-band > .col-markets .mk-sec .mk-sec-name { font-size: 9px; }
     /* Watchlists is the FLUID column, not a pinned 1040 (owner's browser
        measured 1152 — a 1512 laptop with DevTools docked — so a fixed 1040 put
        the row at 1844px and three-across never engaged on the machine it was
@@ -132,25 +122,50 @@
        breakpoint honest — the row fits by construction rather than at one
        screen size. */
     .top-band > .col-watchlist { flex: 1 1 auto; order: 0; min-width: 0; }
-    .top-band > .col-rail { flex: 0 0 258px; }
+    .top-band > .col-news { flex: 0 0 258px; }
+    /* News took Ask's slot (owner request 2026-08-07) and inherits its width.
+       `#newsList` carries a 460px max-height for the stacked layout; here the
+       column is stretch-sized, so the cap would leave the list ending well
+       short of the panel it sits in — flex bounds it to the column instead.
+       This is the ONE top-band body that genuinely scrolls (there are always
+       more headlines than column), so it keeps `overflow-y` — but chaining is
+       re-enabled, so reaching the end of the list carries on scrolling the
+       page rather than dead-ending under the cursor. */
+    .top-band > .col-news #newsList { max-height: none; overscroll-behavior: auto; }
     /* The columns are stretch-sized rather than pinned, so a panel fills the
-       row's height and only scrolls INSIDE when its own content is the taller
-       one. Watchlists sets that height at its full length, so it does not
-       scroll; Ask still does, which is the point of the rule below. */
+       row's height and its content sets that height in the first place.
+       These panel-bodies deliberately carry NO `overflow`/`overscroll-behavior`
+       (owner report 2026-08-07: the mouse wheel did nothing over any of the
+       three columns, and the page only scrolled from the far edges of the
+       screen). The pair dated from when every column was cropped to 600px and
+       genuinely needed an inner scrollbar. Once heights became content-driven
+       there was nothing left to scroll — but the elements stayed scroll
+       CONTAINERS, and `overscroll-behavior: contain` on a container that cannot
+       scroll swallows the wheel instead of chaining it to the page. Chromium
+       chains anyway, which is why this reproduced on the owner's machine and
+       not in a Chromium harness; WebKit honours it and the page freezes.
+       Anything here that really must scroll opts in for itself (see #newsList
+       below, and .ask-thread) — never blanket-applied to every panel. */
     .top-band > aside > .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-    .top-band > aside > .panel > .panel-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+    .top-band > aside > .panel > .panel-body { flex: 1 1 auto; min-height: 0; }
   }
-  /* Ask-the-desk: cap to the Markets tile's height (the row's tallest) and
-     scroll the conversation INSIDE instead of letting the panel grow with the
-     thread (owner request 2026-07-21). The panel fills the stretched rail; the
-     thread is the only flexible/scrolling part — form + disclaimer stay pinned. */
-  .top-band > .col-rail > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  .top-band > .col-rail #askBody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* Ask-the-desk: scroll the conversation INSIDE instead of letting the panel
+     grow with the thread (owner request 2026-07-21). The panel fills its
+     stretched column; the thread is the only flexible/scrolling part, so the
+     form + disclaimer stay pinned and reachable however long the thread gets.
+     Ask swapped down into `.top-boxes` when News took its place in the top band
+     (owner request 2026-08-07); these rules moved with it, because the
+     behaviour belongs to the panel, not to the row it happens to sit in. */
+  .top-boxes > .col-rail > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* `.top-boxes .panel-body` caps its children at 320px and scrolls them — right
+     for a news list, wrong for Ask: capping askBody scrolls the COMPOSER out of
+     view instead of the thread. Ask opts out and delegates scrolling downward. */
+  .top-boxes > .col-rail #askBody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; max-height: none; overflow: visible; }
   .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   /* accounts / news shifted DOWN into their own band under the top row */
   .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
   .top-boxes > .area-accounts { flex: 2 1 0; min-width: 0; }
-  .top-boxes > .col-news { flex: 1 1 0; min-width: 0; }
+  .top-boxes > .col-rail { flex: 1 1 0; min-width: 0; }
   .top-boxes .account-grid { grid-template-columns: 1fr 1fr; }
   .top-boxes .account .hero-number { font-size: var(--font-xl); }
   /* narrow account cards: stack the stat pairs so the P&L figures don't collide */
@@ -301,12 +316,33 @@
   .mk-tf button { appearance: none; border: 0; background: none; padding: 4px 10px; font: 600 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); border-radius: var(--radius-sm); cursor: pointer; min-height: 32px; }
   .mk-tf button[aria-pressed="true"] { background: var(--color-surface-2); color: var(--color-accent); }
   .mk-sec-head { font: 600 var(--font-md)/1.2 var(--font-sans); margin: var(--space-2) 0 var(--space-2); }
-  .mk-sectors { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
-  .mk-sec { padding: 8px 4px; border-radius: var(--radius-sm); text-align: center; min-width: 0; }
-  .mk-sec .mk-sec-name { font: 600 10px/1.25 var(--font-sans); color: var(--color-text-primary); }
-  .mk-sec .mk-sec-pct { font: 600 var(--font-sm)/1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
+  /* Sector strip: the watchlist tile idiom, stacked one per row (owner request
+     2026-08-07). Wide and short rather than a grid cell, so the sector NAME can
+     be spelled out at full size beside its ticker and the price + sparkline sit
+     on the same line as the move. `.mkt-tile` supplies the shared chrome; these
+     rules only re-flow it from a column into a row, the same way `.wl-strip`
+     restyles it for the watchlist. */
+  .mk-sectors { display: flex; flex-direction: column; }
+  .mk-sectors .mk-sec { flex: 0 0 auto; flex-direction: row; align-items: center; gap: var(--space-2); padding: 4px var(--space-2); min-width: 0; }
+  /* collapse the shared border between stacked rows into one hairline, exactly
+     as `.mkt-tile + .mkt-tile` does for the horizontal strips */
+  .mk-sectors .mk-sec + .mk-sec { margin-top: -1px; margin-left: 0; }
+  /* the label takes the slack so price/spark/pill stay right-aligned and the
+     numbers line up down the column */
+  .mk-sec-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+  .mk-sec .mk-sec-name { font: 600 11px/1.25 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mk-sec .mkt-name { font-size: 9px; }
+  .mk-sec .mkt-last { flex: 0 0 auto; font-size: 12px; }
+  /* `.wl-spark` sizing is scoped under `.wl-strip`, so outside it the inline
+     SVG has a viewBox and no intrinsic size and lands at the UA default. These
+     match the WL_SPARK_W/H the sparkline is generated at. */
+  .mk-sec .wl-spark { flex: 0 0 auto; display: block; opacity: .9; }
+  .mk-sec .wl-spark svg { display: block; width: 48px; height: 18px; }
+  .mk-sec .mk-sec-pct { flex: 0 0 auto; font-size: 10px; }
+  .mk-sec .mk-sec-pct--none { color: var(--color-text-secondary); font-family: var(--font-mono); }
   /* narrow: tiles + sectors reflow to fewer columns */
-  @media (max-width: 520px) { .mk-sectors, .mk-tiles { grid-template-columns: repeat(2, 1fr); } }
+  /* `.mk-sectors` is no longer a grid, so only the index tiles re-column here */
+  @media (max-width: 520px) { .mk-tiles { grid-template-columns: repeat(2, 1fr); } }
 
   /* Stochastic charts — dark trading-terminal sub-theme (owner ruling
      2026-07-14: match the reference platform, easier to read). A scoped token
@@ -507,13 +543,13 @@
     .top-band { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
     /* stacked: drop the 10% shrink and let Markets/Ask span the full width */
     .top-band > .col-markets { zoom: 1; }
-    .top-band > .col-markets, .top-band > .col-rail, .top-band > .col-watchlist { flex-basis: auto; }
-    /* stacked: the rail no longer inherits the Markets tile height, so the
-       thread would grow to fit every replayed exchange — cap it so it scrolls */
-    .top-band > .col-rail .ask-thread { max-height: 320px; }
+    .top-band > .col-markets, .top-band > .col-news, .top-band > .col-watchlist { flex-basis: auto; }
     .top-boxes { flex-wrap: wrap; }
     .top-boxes > .area-accounts { flex: 2 1 320px; }
-    .top-boxes > .col-news { flex: 1 1 240px; }
+    .top-boxes > .col-rail { flex: 1 1 240px; }
+    /* stacked: Ask no longer inherits a stretched column height, so the thread
+       would grow to fit every replayed exchange — cap it so it scrolls. */
+    .top-boxes > .col-rail .ask-thread { max-height: 320px; }
   }
   @media (max-width: 1160px) {
     .account-grid { grid-template-columns: 1fr; }
@@ -643,13 +679,18 @@
     </section>
     </aside>
 
-    <aside class="col-rail" aria-label="Desk tools">
-      <section class="panel" aria-labelledby="askTitle">
+    <aside class="col-news" aria-label="Market news">
+      <section class="panel" aria-labelledby="newsTitle">
         <div class="panel-header">
-          <h2 class="panel-title" id="askTitle">Ask the desk</h2>
-          <span class="lamp lamp--demo" id="askLamp">Demo</span>
+          <!-- "News", not "News — holdings first": in a 258px rail the longer
+               title ellipsises to "NEWS — H…", which reads as a broken render
+               rather than as a subtitle. The holdings-first ranking is what the
+               list does, not something the header has to announce. -->
+          <h2 class="panel-title" id="newsTitle">News</h2>
+          <span class="lamp lamp--demo" id="newsLamp">Demo</span>
+          <span class="stamp ml-auto" id="newsStamp">—</span>
         </div>
-        <div class="panel-body" id="askBody"></div>
+        <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
       </section>
     </aside>
   </div>
@@ -847,14 +888,13 @@
       <div class="account-grid" id="accountGrid"></div>
     </section>
 
-    <aside class="col-news" aria-label="Market news">
-      <section class="panel" aria-labelledby="newsTitle">
+    <aside class="col-rail" aria-label="Desk tools">
+      <section class="panel" aria-labelledby="askTitle">
         <div class="panel-header">
-          <h2 class="panel-title" id="newsTitle">News — holdings first</h2>
-          <span class="lamp lamp--demo" id="newsLamp">Demo</span>
-          <span class="stamp ml-auto" id="newsStamp">—</span>
+          <h2 class="panel-title" id="askTitle">Ask the desk</h2>
+          <span class="lamp lamp--demo" id="askLamp">Demo</span>
         </div>
-        <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
+        <div class="panel-body" id="askBody"></div>
       </section>
     </aside>
   </div>

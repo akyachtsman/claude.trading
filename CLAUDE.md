@@ -168,11 +168,22 @@ This project's look is its own — established at kickoff via `/design-intake`
   stops it printing two unattributed percentages. **VIX is deliberately excluded**
   — no ETF tracks spot VIX (VXX holds futures), the same
   instrument-wearing-the-wrong-name trap as the Nasdaq-100/Composite and Russell
-  1000/2000 mismatches. Sector cells and heatmap tiles carry their OWN `ext`
-  (they genuinely trade); the heatmap's rides in the **tooltip** (`.tip-ext`)
-  because a tile is a few pixels tall at the tail, and **both grids keep tinting
-  by the REGULAR day-%** — re-tinting only the names that happen to have an
-  after-hours trade would make the map compare two different measurements.
+  1000/2000 mismatches. Sector rows and heatmap tiles carry their OWN `ext`
+  (they genuinely trade), and **both now ride in a TOOLTIP** — the heatmap's in
+  `.tip-ext` because a tile is a few pixels tall at the tail, and the sector
+  strip's on the row itself since 2026-08-07, when the tinted grid became a
+  258px-wide stacked strip: name + ticker + price + sparkline + day-% needs
+  ~292px in a 228px row, and flex answered a sixth item by crushing the label
+  column to 8px. The after-hours print is the one item there that is
+  supplementary rather than the row's subject, so it gave way; **S23 asserts all
+  11 rows still carry it** and that no visible `.mk-sec-ext` returns, since a
+  reappearing one means the row is over-stuffed again. The trade is REVERSIBLE
+  and was measured: dropping the sparkline instead frees 48px and fits the
+  visible ext, but the sparkline is the watchlist idiom the strip was asked for.
+  The heatmap **keeps tinting by the REGULAR day-%** — re-tinting only the names
+  that happen to have an after-hours trade would make the map compare two
+  different measurements. The sector strip has **no tint at all** any more: it
+  encoded the same number its pill now states outright.
   Absent means "did not trade after hours" and is never rendered as 0.
   `quote-proxy kind:'info'` gained `extPrice`/`extPct`/`extAt`, which reaches the
   charts quote readout AND the assistant at once — `desk-ask`'s `get_quote`
