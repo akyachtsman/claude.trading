@@ -97,7 +97,11 @@ const MKT_INDEX = [
 ];
 const MKT_SECTORS = [
   ['Technology', 'XLK'], ['Financials', 'XLF'], ['Health Care', 'XLV'], ['Cons. Disc.', 'XLY'],
-  ['Communication', 'XLC'], ['Cons. Staples', 'XLP'], ['Energy', 'XLE'], ['Industrials', 'XLI'],
+  /* "Comm. Svcs", not "Communication": the stacked strip gives the label 67px
+     and the full word needs 83, and it is the one name here that is a single
+     unbreakable word. Abbreviating matches the panel's own convention for the
+     other two long sectors rather than adding a font hack for one row. */
+  ['Comm. Svcs', 'XLC'], ['Cons. Staples', 'XLP'], ['Energy', 'XLE'], ['Industrials', 'XLI'],
   ['Materials', 'XLB'], ['Utilities', 'XLU'], ['Real Estate', 'XLRE'],
 ];
 const MKT_TFS = [['today', 'Today'], ['5d', '5D'], ['1m', '1M'], ['1y', '1Y'], ['2y', '2Y']];
@@ -193,28 +197,63 @@ function renderMarkets(market, lamp) {
 
   drawMktChart();
 
-  /* sector grid — colored by day-% like a mini heatmap */
+  /* Sector strip — the WATCHLIST tile idiom, stacked (owner request
+     2026-08-07: "I like the watchlist icons better"). Each sector is one wide,
+     short row rather than a cell in a tinted grid, which buys two things the
+     grid could not give at 258px: the sector NAME is spelled out beside its
+     ticker instead of being squeezed to 9px, and price + sparkline fit on the
+     same line as the move.
+     The heat TINT is deliberately gone with the grid. It encoded the same
+     number the pill now states outright, and reading a tint against a pill on
+     one row is reading one fact twice; the pill is also the watchlist's own
+     idiom, which is what was asked for. */
   const secBox = document.getElementById('mktSectors');
   while (secBox.firstChild) secBox.removeChild(secBox.firstChild);
   for (const [name, sym] of MKT_SECTORS) {
     const t = mktTileByName(market, sym), pct = t ? t.chg : null;
-    const cell = el('div', 'mk-sec');
-    cell.style.cssText = mktSecTint(pct);
-    cell.appendChild(el('div', 'mk-sec-name', name));
-    cell.appendChild(el('div', 'mk-sec-pct', pct == null ? '—' : fmtPct(pct)));
-    /* Sector ETFs genuinely trade after the bell, so these need no proxy — the
-       cell shows its own post-market move. The TINT stays keyed to the regular
-       day-% on purpose: the grid is read as one heatmap, and re-tinting only the
-       cells that happen to have an extended print would make the map compare
-       two different measurements against each other. */
-    if (t && t.ext && t.ext.kind === 'post' && t.ext.chg != null) {
-      const x = el('div', 'mk-sec-ext ' + (t.ext.chg >= 0 ? 'up' : 'down'), fmtPct(t.ext.chg));
-      x.title = sym + ' ' + t.ext.last + ' after hours, ' + fmtPct(t.ext.chg) + ' from the prior close';
-      cell.appendChild(x);
+    const row = el('div', 'mkt-tile mk-sec');
+
+    const lab = el('span', 'mk-sec-label');
+    lab.appendChild(el('span', 'mk-sec-name', name));
+    lab.appendChild(el('span', 'mkt-name', sym));
+    row.appendChild(lab);
+
+    /* `last` arrives PRE-FORMATTED as a string from the feed (demo mirrors it),
+       which is why this uses it verbatim like the index tiles above rather than
+       the watchlist's `wlPx` — that takes a number and renders any string as an
+       em dash, which is what every sector row showed on the first cut. */
+    row.appendChild(el('span', 'mkt-last', t && t.last ? t.last : '—'));
+
+    /* Coloured by the DAY's direction so the line agrees with the pill beside
+       it — a green line against a red pill is two answers to one question. */
+    if (t && Array.isArray(t.spark) && t.spark.length >= 2) {
+      const wrap = el('span', 'wl-spark');
+      wrap.appendChild(sparkline(t.spark, WL_SPARK_W, WL_SPARK_H,
+        (pct ?? 0) >= 0 ? 'var(--color-gain)' : 'var(--color-loss)'));
+      row.appendChild(wrap);
     }
-    secBox.appendChild(cell);
+
+    if (pct != null) {
+      row.appendChild(el('span', (pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' mk-sec-pct', fmtPct(pct)));
+    } else {
+      row.appendChild(el('span', 'mk-sec-pct mk-sec-pct--none', '—'));
+    }
+
+    /* Sector ETFs genuinely trade after the bell, and they keep their own
+       post-market move — but it moved to the row TOOLTIP when the grid became a
+       258px-wide strip. Measured: name + ticker + price + sparkline + pill + an
+       extended % needs ~292px in a 228px row, and flex resolved that by
+       crushing the label column to 8px, so "Communication" rendered as one
+       clipped letter. The after-hours print is the one item here that is
+       supplementary rather than the row's subject, so it is what gives way; it
+       is still one hover away, the same answer the heatmap reached for its own
+       few-pixel tiles. */
+    if (t && t.ext && t.ext.kind === 'post' && t.ext.chg != null) {
+      row.title = name + ' (' + sym + ') ' + t.ext.last + ' after hours, '
+        + fmtPct(t.ext.chg) + ' from the prior close';
+    }
+    secBox.appendChild(row);
   }
-  syncAskHeight();
 }
 
 /* Pin the Ask-the-desk panel's BOTTOM to the Markets panel's bottom (owner
@@ -225,22 +264,14 @@ function renderMarkets(market, lamp) {
    unzoomed so viewport px == its CSS px) and pin the rail panel to exactly
    that height; the thread scrolls inside. Cleared when the top band stacks
    (≤1280px), where the thread's own 320px cap rules instead. */
-function syncAskHeight() {
-  const mk = document.querySelector('.top-band > .col-markets');
-  const panel = document.querySelector('.top-band > .col-rail > .panel');
-  if (!mk || !panel) return;
-  if (window.matchMedia('(max-width: 1280px)').matches) { panel.style.height = ''; return; }
-  const h = Math.round(mk.getBoundingClientRect().height);
-  if (h > 120) panel.style.height = h + 'px';
-}
-
-/* light green/red tint by day-% for the sector cells (daylight panel) */
-function mktSecTint(pct) {
-  if (pct == null) return 'background: var(--color-surface-2);';
-  const p = Math.max(-2, Math.min(2, pct)) / 2;   /* clamp ±2% → −1..1 */
-  const rgb = p >= 0 ? '46,180,90' : '224,60,60';
-  return 'background: rgba(' + rgb + ',' + (0.1 + Math.abs(p) * 0.5).toFixed(2) + ');';
-}
+/* `syncAskHeight()` lived here until 2026-08-07. It measured the Markets column
+   and wrote that height onto the Ask panel, because flex cannot cap one sibling
+   by another's height and long answers used to outgrow the row. Both reasons
+   are gone: Ask swapped out of the top band into `.top-boxes`, and the top
+   band's columns are stretch-sized, so the row equalises itself. Left in place
+   it was worse than useless — its `.top-band > .col-rail > .panel` query no
+   longer matches anything, so it silently returned and read as live code.
+   `mktSecTint()` went with the tinted sector grid it existed to colour. */
 
 function drawMktChart() {
   const svg = document.getElementById('mktChart');
@@ -358,7 +389,7 @@ async function fetchMktSeries() {
 
 /* redraw the markets chart on resize (viewBox width tracks the panel) */
 let mktResizeTimer = 0;
-window.addEventListener('resize', () => { clearTimeout(mktResizeTimer); mktResizeTimer = setTimeout(() => { drawMktChart(); syncAskHeight(); }, 150); });
+window.addEventListener('resize', () => { clearTimeout(mktResizeTimer); mktResizeTimer = setTimeout(drawMktChart, 150); });
 
 /* ── sortable tables (design.md standard) ──────────────────────────────── */
 function makeSortable(table) {
@@ -2732,7 +2763,6 @@ function renderAsk() {
     await runAsk(q);
     input.focus();
   });
-  syncAskHeight();
   scheduleAskTick();
 }
 
