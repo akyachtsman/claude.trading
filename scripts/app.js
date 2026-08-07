@@ -5689,10 +5689,16 @@ async function loadWidgets() {
   const row   = document.getElementById('acctWidgets');
   const strip = document.getElementById('widgetStrip');
   if (!row && !strip) return;
+  /* An EMPTY roster means "no widgets", not "use the defaults" (owner ruling
+     2026-08-07, when both embeds were retired). The old test was `cfg.length`,
+     which made [] indistinguishable from a missing file and silently restored
+     the built-in pair — so there was no way to turn the embeds off from config
+     at all. Only a fetch/parse failure falls back now; a valid array is
+     authoritative whatever its length. */
   let specs = WIDGET_DEFAULTS;
   try {
     const cfg = await fetchPublic('config/widgets.json');
-    if (Array.isArray(cfg) && cfg.length) specs = cfg;
+    if (Array.isArray(cfg)) specs = cfg;
   } catch { /* committed config missing/unreachable → built-in defaults */ }
   /* slot:'strip' widgets (the ticker tape) render in the full-width top strip;
      everything else renders as a bare compact frame in the row under the

@@ -201,7 +201,25 @@ This project's look is its own — established at kickoff via `/design-intake`
   predates the file and is unchanged by it. Closing it would need exactly 40
   symbols — the cap precisely, with no headroom — so it is left for the owner
   to choose rather than silently widening what the desk charts.
-- `config/widgets.json` — owner-editable roster of embedded third-party
+- `config/widgets.json` — **EMPTY as of 2026-08-07 (owner ruling): both embeds
+  are retired and the desk now runs NO third-party vendor JS at all** — the page
+  carries zero iframes. The FRED "Economy at a glance" widget was replaced by
+  FRED + St. Louis Fed RSS in `config/news-feeds.json`, which puts the same macro
+  material in the News panel's own row idiom; the TradingView **economic
+  calendar** went with it and has no replacement — upcoming-release visibility
+  is simply gone, which the owner chose knowingly. Two things matter for anyone
+  re-adding a widget. **An empty roster now means "none", not "use the
+  defaults"**: the loader tested `Array.isArray(cfg) && cfg.length`, so `[]` was
+  indistinguishable from a missing file and silently restored the built-in pair —
+  there was NO way to turn the embeds off from config. It now tests
+  `Array.isArray(cfg)` alone, so a valid array is authoritative whatever its
+  length and only a fetch/parse failure falls back to `WIDGET_DEFAULTS`. And the
+  file is a **bare JSON array**, so like `chart-watchlist.json` it can carry no
+  `_note` — there is nowhere to put one without a loader change. The machinery
+  below is intact and dormant; re-adding an entry brings a widget back with no
+  code change.
+  Historical, and still the contract if one returns: a roster of embedded
+  third-party
   widgets from TWO providers — **TradingView** (economic calendar) and **FRED**
   (`fred-glance` = the St. Louis Fed "Economy at a glance" widget). Each is
   rendered by `loadWidgets()` as a bare sandboxed **cross-origin** iframe
@@ -591,8 +609,16 @@ This project's look is its own — established at kickoff via `/design-intake`
   public news.json. `desk-heatmap` holds it too, solely for the
   `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
   multi-period sweep — public market percentages only.
-- **Third-party widget embeds (owner request 2026-07-15; panels removed in
-  favour of the accounts-row layout 2026-07-16):** the desk embeds TradingView
+- **Third-party widget embeds — RETIRED 2026-08-07 (owner ruling).**
+  `config/widgets.json` is `[]`, so nothing renders and **the desk runs no vendor
+  JS and carries zero iframes**; this whole class of exposure is currently
+  dormant, not merely mitigated. Verified after the change: 0 iframes on the
+  page, the `#acctWidgets` row computing `display:none`, and no page errors.
+  The rules below stay because the machinery is intact and a config edit brings
+  a widget straight back — they are the contract any re-added embed must meet,
+  NOT a description of what the page does today.
+  (owner request 2026-07-15; panels removed in
+  favour of the accounts-row layout 2026-07-16): the desk embeds TradingView
   widgets — the one place it runs vendor JS. Each widget is a **direct cross-origin iframe** on
   `tradingview-widget.com` (NOT a `srcdoc` doc — a srcdoc frame inherits the
   PARENT origin, so `allow-same-origin` there would put the vendor script
