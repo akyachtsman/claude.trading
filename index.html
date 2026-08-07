@@ -148,6 +148,24 @@
        below, and .ask-thread) — never blanket-applied to every panel. */
     .top-band > aside > .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
     .top-band > aside > .panel > .panel-body { flex: 1 1 auto; min-height: 0; }
+    /* WATCHLISTS SETS THE ROW HEIGHT (owner request 2026-08-07). Under plain
+       `align-items: stretch` the tallest column wins, and once Markets was cut
+       to 258px it became the tallest — so the row ran on past the last
+       watchlist band and left it standing in dead space.
+       Markets and News are taken OUT OF FLOW to fix that: an absolutely
+       positioned panel contributes nothing to the line's cross size, so the
+       only column still measuring its own content is Watchlists, and the other
+       two resolve `inset: 0` against whatever height it lands on. This is what
+       lets a SHORTER column drive a taller one, which no amount of flex
+       alignment can express.
+       They then genuinely need to scroll, since their content is taller than
+       the row. That is NOT a return of the trap fixed earlier the same day:
+       these can actually scroll, and they leave `overscroll-behavior` at
+       `auto`, so reaching the end chains on to the page instead of dead-ending
+       under the cursor. */
+    .top-band > .col-markets, .top-band > .col-news { position: relative; }
+    .top-band > .col-markets > .panel,
+    .top-band > .col-news > .panel { position: absolute; inset: 0; overflow-y: auto; }
   }
   /* Ask-the-desk: scroll the conversation INSIDE instead of letting the panel
      grow with the thread (owner request 2026-07-21). The panel fills its

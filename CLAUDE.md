@@ -286,15 +286,26 @@ This project's look is its own — established at kickoff via `/design-intake`
   180px of dead margin each side. Narrower screens keep exactly the layout they
   had: `order:-1` + a 100% basis puts Watchlists back on its own full-width row
   ABOVE Markets and Ask.
-  **No column is height-pinned any more.** Watchlists runs at its FULL length —
-  the 600px cap hid whole lists behind an inner scrollbar — and
-  `align-items: stretch` equalises the other two, which is what "same height as
-  the watchlist" asks for; pinning Markets to a number instead would re-break
-  the moment a list is added or removed. One consequence to know before reading
-  the row: at 258px wide **Markets is the TALLEST column** (chart + 4 tiles + 11
-  sectors, ~773px against the watchlist's ~580), so Markets now SETS the shared
-  height and Watchlists carries slack below its tiles. Narrower means taller —
-  that is the cost of the one-third cut, not a layout fault.
+  **No column is height-pinned, and WATCHLISTS is what sets the row height**
+  (owner request 2026-08-07, revising the same day's first cut). Watchlists runs
+  at its FULL length — the old 600px cap hid whole lists behind an inner
+  scrollbar — and the row ends at its last band. The intermediate version used
+  plain `align-items: stretch`, but stretch gives the row to the TALLEST column,
+  and once Markets was cut to 258px it became the tallest (~811px against the
+  watchlist's ~586), so the row ran on past the last band and left Watchlists
+  standing in dead space. Pinning Markets to a number would re-break the moment
+  a list is added or removed.
+  The fix is that **Markets and News are taken out of flow** — `position:
+  absolute; inset: 0` inside a `position: relative` column. An out-of-flow panel
+  contributes nothing to the line's cross size, so the only column still
+  measuring its own content is Watchlists and the other two resolve against
+  whatever height it lands on. That is what lets a SHORTER column drive a taller
+  one, which no flex alignment can express. Both then genuinely scroll, and that
+  is **not** a return of the dead-wheel trap below: they CAN scroll, and they
+  leave `overscroll-behavior` at `auto` so reaching the end chains to the page.
+  In demo (7 lists, ~586px) that puts 8 of the 11 sector rows below the fold of
+  their own panel; the live roster is 12 lists and much taller, so Markets
+  generally fits without scrolling there.
   The Markets grids are therefore re-columned **by the COLUMN's width, not the
   viewport's**: both are `repeat(4, 1fr)` and drop to 2 only under a
   `max-width: 520px` **viewport** query, which never fires on the wide screen
