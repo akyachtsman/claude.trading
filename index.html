@@ -101,7 +101,13 @@
      to a number instead would re-break the moment a list is added or removed. */
   @media (min-width: 1400px) {
     .top-band { flex-wrap: nowrap; align-items: stretch; }
-    .top-band > .col-markets { flex: 0 0 287px; }
+    /* 345 pre-zoom = 311 rendered (owner request 2026-08-07: "expand it a
+       little and make both visible"). A sector row needs its label + price +
+       sparkline + day-% AND the after-hours print on one line; measured at
+       1512, clipping only reaches zero at a 330 basis, so 345 is the first
+       width with real headroom rather than a value that only just fits — live
+       prices run longer than demo's. */
+    .top-band > .col-markets { flex: 0 0 345px; }
     /* The Markets grids are `repeat(4, 1fr)` and drop to 2 only under a
        max-width:520px VIEWPORT query — which never fires here, since this narrow
        column exists only on a wide screen. At 287px pre-zoom a 4-up sector cell
@@ -122,7 +128,11 @@
        breakpoint honest — the row fits by construction rather than at one
        screen size. */
     .top-band > .col-watchlist { flex: 1 1 auto; order: 0; min-width: 0; }
-    .top-band > .col-news { flex: 0 0 258px; }
+    /* Matched to the rendered Markets width, not to its basis: Markets carries
+       the 0.9 zoom and News does not, so 345 × 0.9 ≈ 311. The two rails have
+       been kept equal since the owner asked for it, so widening one widens
+       both. */
+    .top-band > .col-news { flex: 0 0 311px; }
     /* News took Ask's slot (owner request 2026-08-07) and inherits its width.
        `#newsList` carries a 460px max-height for the stacked layout; here the
        column is stretch-sized, so the cap would leave the list ending well
@@ -357,6 +367,12 @@
   .mk-sec .wl-spark { flex: 0 0 auto; display: block; opacity: .9; }
   .mk-sec .wl-spark svg { display: block; width: 48px; height: 18px; }
   .mk-sec .mk-sec-pct { flex: 0 0 auto; font-size: 10px; }
+  /* The after-hours move, to the right of the regular day-% pill. Deliberately
+     NOT pill-shaped: a second pill would read as a second answer to the same
+     question, where this is a different session's number. */
+  .mk-sec .mk-sec-ext { flex: 0 0 auto; font: 600 10px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mk-sec .mk-sec-ext.up { color: var(--color-gain); }
+  .mk-sec .mk-sec-ext.down { color: var(--color-loss); }
   .mk-sec .mk-sec-pct--none { color: var(--color-text-secondary); font-family: var(--font-mono); }
   /* narrow: tiles + sectors reflow to fewer columns */
   /* `.mk-sectors` is no longer a grid, so only the index tiles re-column here */

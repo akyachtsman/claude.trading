@@ -169,17 +169,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   — no ETF tracks spot VIX (VXX holds futures), the same
   instrument-wearing-the-wrong-name trap as the Nasdaq-100/Composite and Russell
   1000/2000 mismatches. Sector rows and heatmap tiles carry their OWN `ext`
-  (they genuinely trade), and **both now ride in a TOOLTIP** — the heatmap's in
-  `.tip-ext` because a tile is a few pixels tall at the tail, and the sector
-  strip's on the row itself since 2026-08-07, when the tinted grid became a
-  258px-wide stacked strip: name + ticker + price + sparkline + day-% needs
+  (they genuinely trade). The heatmap's rides in a **tooltip** (`.tip-ext`)
+  because a tile is a few pixels tall at the tail; the **sector strip's is
+  VISIBLE on every row**, and the column width exists to make that true. It was
+  briefly tooltip-only on 2026-08-07, when the tinted grid first became a
+  258px-wide stacked strip — name + ticker + price + sparkline + day-% needs
   ~292px in a 228px row, and flex answered a sixth item by crushing the label
-  column to 8px. The after-hours print is the one item there that is
-  supplementary rather than the row's subject, so it gave way; **S23 asserts all
-  11 rows still carry it** and that no visible `.mk-sec-ext` returns, since a
-  reappearing one means the row is over-stuffed again. The trade is REVERSIBLE
-  and was measured: dropping the sparkline instead frees 48px and fits the
-  visible ext, but the sparkline is the watchlist idiom the strip was asked for.
+  column to 8px. Rather than drop either number the owner chose to **widen the
+  rails**: Markets 287 → **345 basis** (258 → **311** rendered) and News matched
+  at 311, so the row carries the sparkline AND the after-hours figure with no
+  clipping. Measured at 1512 with both present, clipping only reaches zero at a
+  330 basis, so 345 is the first width with headroom rather than one that merely
+  fits — live prices run longer than demo's. **S23 asserts all 11 rows carry
+  BOTH** plus a zero-clipping check, since the first attempt failed by silently
+  crushing the label rather than by dropping anything. The cost is paid by the
+  watchlist, whose bands are `flex-wrap: nowrap` and scroll horizontally: at
+  1512 the widening moves 3 more tiles per band behind that scroll (29 → 32 of
+  75 in demo). The tooltip stays alongside the visible figure because it carries
+  the after-hours PRICE, which the row has no room to state.
   The heatmap **keeps tinting by the REGULAR day-%** — re-tinting only the names
   that happen to have an after-hours trade would make the map compare two
   different measurements. The sector strip has **no tint at all** any more: it
