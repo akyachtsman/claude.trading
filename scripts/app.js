@@ -501,6 +501,31 @@ function renderAccounts(accounts, lamp) {
     }
     table.appendChild(tbody);
     tblWrap.appendChild(table);
+
+    /* Positions COLLAPSE, closed by default (owner request 2026-08-07: cut the
+       accounts area by ~70%). The table is 176px of a 513px card, the single
+       largest block, so the cut is not reachable while it is always open.
+       It is a disclosure rather than a deletion: holdings are the account's
+       actual contents, and a layout change must not be the thing that puts
+       them out of reach. `hidden` (not display:none in CSS) so the state is
+       readable from the DOM, and the button owns `aria-expanded`. */
+    const posOpenKey = 'acct_pos_' + a.key;
+    let posOpen = false;
+    try { posOpen = localStorage.getItem(posOpenKey) === '1'; } catch { /* private mode */ }
+    const posBtn = el('button', 'acct-pos-toggle');
+    posBtn.type = 'button';
+    const paintPos = () => {
+      posBtn.textContent = (posOpen ? 'Hide' : 'Show') + ' positions (' + a.positions.length + ')';
+      posBtn.setAttribute('aria-expanded', posOpen ? 'true' : 'false');
+      tblWrap.hidden = !posOpen;
+    };
+    posBtn.addEventListener('click', () => {
+      posOpen = !posOpen;
+      try { localStorage.setItem(posOpenKey, posOpen ? '1' : '0'); } catch { /* private mode */ }
+      paintPos();
+    });
+    paintPos();
+    panel.appendChild(posBtn);
     panel.appendChild(tblWrap);
     makeSortable(table);
     grid.appendChild(panel);

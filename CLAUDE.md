@@ -768,6 +768,22 @@ This project's look is its own — established at kickoff via `/design-intake`
 - Gain/loss colors are P&L-only, never decorative.
 - Every panel carries a data-state lamp + as-of stamp (the design signature);
   new panels must too.
+- **NEVER use `overscroll-behavior: contain` (the shorthand) on this page.**
+  The owner reported the same fault three times across 2026-08-07: the mouse
+  wheel dies over a panel and the page only scrolls from the far edges of the
+  screen. `contain` stops a scroll chaining to the page — right at the END of a
+  long list, but it applies just as hard when the container has NOTHING to
+  scroll, and then it simply eats the wheel. **Chromium chains regardless, so
+  this never reproduces in a Chromium harness** (this sandbox has no WebKit
+  build; `playwright install webkit` downloads but its host libraries are
+  missing), which is why two rounds of "verified fixed" were wrong. The last
+  holdout was `.ask-thread`, empty before the first question and therefore
+  invisible to every scan — it needs a live AUTHED session to exist at all.
+  A scan is only meaningful if it checks both axes and every mode: an earlier
+  one tested `overflowY` alone and reported zero traps while `overflow-x`
+  scrollers went unexamined. The axis-scoped `overscroll-behavior-x: contain`
+  on `.wl-strip .mkt-group-tiles` is FINE and stays — it never touched the
+  vertical wheel; only the shorthand is banned.
 
 ## Agent Workflow
 1. Use a `claude/<name>` feature branch

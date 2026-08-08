@@ -141,7 +141,7 @@
        more headlines than column), so it keeps `overflow-y` — but chaining is
        re-enabled, so reaching the end of the list carries on scrolling the
        page rather than dead-ending under the cursor. */
-    .top-band > .col-news #newsList { max-height: none; overscroll-behavior: auto; }
+    .top-band > .col-news #newsList { max-height: none; }
     /* The columns are stretch-sized rather than pinned, so a panel fills the
        row's height and its content sets that height in the first place.
        These panel-bodies deliberately carry NO `overflow`/`overscroll-behavior`
@@ -184,21 +184,62 @@
      Ask swapped down into `.top-boxes` when News took its place in the top band
      (owner request 2026-08-07); these rules moved with it, because the
      behaviour belongs to the panel, not to the row it happens to sit in. */
-  .top-boxes > .col-rail > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* Ask is pinned SHORT (owner request 2026-08-07: "reduce the height of desk
+     AI to one inch"). 158px, not the 96px that 1in actually is — measured, 1in
+     is BELOW this panel's structural minimum and produces a box you cannot type
+     into. The composer alone is 100px (a 48px input, its button, and the
+     not-financial-advice line that has to stay) under a 42px header, so the
+     floor is 158px; at 96px the form’s bottom lands 62px outside the panel and
+     the input is reachable only by scrolling a 53px box. 158px is the measured
+     floor at which the WHOLE composer sits inside the panel, and it still cuts
+     the panel from 565px — a 72% reduction, close to the accounts cut asked for.
+     `align-self: start` stops it being stretched to the accounts row beside it;
+     the flex column then lets the thread absorb the remainder, so a long
+     conversation scrolls instead of pushing the composer out of reach. */
+  .top-boxes > .col-rail { align-self: start; }
+  .top-boxes > .col-rail > .panel { height: 158px; flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column; }
   /* `.top-boxes .panel-body` caps its children at 320px and scrolls them — right
      for a news list, wrong for Ask: capping askBody scrolls the COMPOSER out of
      view instead of the thread. Ask opts out and delegates scrolling downward. */
   .top-boxes > .col-rail #askBody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; max-height: none; overflow: visible; }
-  .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  /* ── No `overscroll-behavior: contain` anywhere on this page ───────────────
+     Owner report 2026-08-07, the THIRD sighting of the same fault: the mouse
+     wheel dies over a panel and the page only scrolls from the far edges of the
+     screen. `contain` stops a scroll from chaining to the page — which is what
+     you want at the END of a long list, but the same rule applies when the
+     container has NOTHING to scroll, and then it simply eats the wheel.
+     Chromium chains regardless, so none of this reproduces in a Chromium
+     harness; WebKit honours it and the page freezes under the cursor.
+     Every container that carried it here can legitimately be short: an empty
+     `.ask-thread` before the first question (the reported case, and invisible
+     to every scan I ran because it needs a live authed session), a news list
+     with few headlines, a settings popover, a tooltip. `contain` is only ever
+     safe on something GUARANTEED to overflow, and nothing here is. The cost of
+     dropping it is that reaching the bottom of a long thread carries on
+     scrolling the page — ordinary web behaviour, and far better than a dead
+     wheel. `overscroll-behavior-x` on the watchlist bands is untouched: it is
+     axis-scoped, so it never blocked the vertical wheel. */
+  .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   /* accounts / news shifted DOWN into their own band under the top row */
   .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
   .top-boxes > .area-accounts { flex: 2 1 0; min-width: 0; }
   .top-boxes > .col-rail { flex: 1 1 0; min-width: 0; }
   .top-boxes .account-grid { grid-template-columns: 1fr 1fr; }
   .top-boxes .account .hero-number { font-size: var(--font-xl); }
-  /* narrow account cards: stack the stat pairs so the P&L figures don't collide */
-  .top-boxes .acct-stats { grid-template-columns: 1fr; }
-  .top-boxes .panel-body { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+  /* Stats 2-up here (owner request 2026-08-07). They were stacked 1-up so the
+     P&L figures could not collide in a narrow card; the accounts column is now
+     ~980px wide, which is ample for two, and the stack was 204px of a 513px
+     card — the second-largest block after the positions table. */
+  .top-boxes .acct-stats { grid-template-columns: 1fr 1fr; }
+  /* The equity sparkline goes too — it is 40px, and the 70% target is not
+     reachable with it. The one-year trend is still on the Markets chart and in
+     the symbol detail window; this was the least load-bearing of the card's
+     five blocks, which is why it went before anything numeric. */
+  .top-boxes .acct-spark { display: none; }
+  .acct-pos-toggle { appearance: none; border: 0; background: none; margin: 0 var(--space-4) var(--space-3); padding: 4px 0; font: 600 var(--font-xs)/1.2 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; text-align: left; }
+  .acct-pos-toggle:hover { color: var(--color-text-primary); }
+  .acct-pos-toggle:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
+  .top-boxes .panel-body { max-height: 320px; overflow-y: auto; }
   /* the label column is 78px (long names wrap to 2 lines) and the band padding
      is trimmed, so a band stays one tile-height tall. */
   .mkt-group { min-width: 0; margin-top: -1px; display: flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 0; }
@@ -246,7 +287,7 @@
   /* News is halved to a fixed reel with its own scrollbar (owner ruling
      2026-07-16): the holdings-first list scrolls in place instead of running
      the full page height. */
-  #newsList { max-height: 460px; overflow-y: auto; overscroll-behavior: contain; }
+  #newsList { max-height: 460px; overflow-y: auto; }
   #newsList:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
   /* Charts break out of the centered column to the full viewport width — a
@@ -457,7 +498,7 @@
   .wb-any-input { width: 118px; min-height: 44px; padding: 4px 10px; font: 600 var(--font-xs)/1.4 var(--font-mono); text-transform: uppercase; }
   /* ticker typeahead listbox — anchored under the symbol box (owner request 2026-07-16) */
   .wb-suggest { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; margin: 0; padding: 4px; list-style: none;
-    min-width: 240px; max-height: 280px; overflow-y: auto; overscroll-behavior: contain;
+    min-width: 240px; max-height: 280px; overflow-y: auto;
     background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: var(--radius-sm); box-shadow: var(--shadow-md); }
   .wb-suggest[hidden] { display: none; }
   .wb-suggest li { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; white-space: nowrap; }
@@ -547,7 +588,7 @@
   /* the peer list shows EVERY member of the framed group (owner ruling
      2026-07-14) — tall groups scroll; pointer-events restored so the wheel
      works while hovering the tip */
-  #heatTip { min-width: 248px; padding: 0 0 6px; overflow-y: auto; max-height: 470px; pointer-events: auto; overscroll-behavior: contain; }
+  #heatTip { min-width: 248px; padding: 0 0 6px; overflow-y: auto; max-height: 470px; pointer-events: auto; }
   #heatTip .tip-head { background: var(--color-surface-2); border-bottom: 1px solid var(--color-border); padding: 5px 10px; font: 600 10px/1.4 var(--font-sans); letter-spacing: .06em; color: var(--color-text-secondary); }
   #heatTip .tip-main { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px 0; font: 700 var(--font-base)/1.4 var(--font-mono); }
   #heatTip .tip-main .tip-sym { font-size: var(--font-lg); }
