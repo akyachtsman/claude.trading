@@ -278,6 +278,26 @@ This project's look is its own — established at kickoff via `/design-intake`
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
+  **The desk row (`.top-boxes`) reads Ask | Account A | Account B at ≥1400px**
+  (owner request 2026-08-08). Ask is on the FAR LEFT and **fluid** — it takes
+  whatever the cards leave (1052 at 1512, 1452 at 1920) — and the two cards are
+  **200×158** beside it, matched to Ask's height. They went 485 → 242 → 200 over
+  two passes; Ask was briefly pinned at 489 and became fluid in the second, so
+  narrowing the cards now widens Ask automatically instead of leaving dead space. Ask moves
+  by `order`, **not** by moving the markup: the accounts section carries the
+  desk's masthead state and the Refresh/Lock controls, and reordering the DOM
+  would drag those out of the reading order keyboard and screen-reader users
+  follow. The card is **scaled, not re-typeset** (owner ruling: "reduce font to
+  fit") — at full size it needs 331px of height, and shrinking individual fonts
+  would leave padding and gaps at their old size, so it would read as starved
+  rather than smaller; `zoom` takes type, padding and borders together, the same
+  device the Markets column uses. **`.62` is the largest scale that fits** —
+  `.66` still overflows by 10px. One asymmetry is easy to get wrong: the width
+  comes from the grid track and is already in rendered pixels, while `height` is
+  set INSIDE the zoomed box and must be divided by the scale to render at 158.
+  The whole block is gated at 1400 because both numbers break a narrow screen —
+  two 200px cards plus gaps overflow a 390px viewport outright,
+  and below 1400 the stats drop to 1-up, which no longer fits 158px.
   **Three across at ≥1400px** (owner request 2026-08-07) — Watchlists moved
   INSIDE `.top-band` as `.col-watchlist`, so the row reads Markets | Watchlists |
   Ask. It reached its current shape over three passes the same day: first

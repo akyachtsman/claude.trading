@@ -249,6 +249,33 @@
   .acct-pos-toggle:hover { color: var(--color-text-primary); }
   .acct-pos-toggle:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
   .top-boxes .panel-body { max-height: 320px; overflow-y: auto; }
+  /* ── Desk row, wide screens only: Ask | Account A | Account B ──────────────
+     Owner request 2026-08-08. Scoped to the desktop breakpoint because BOTH of
+     its numbers break a narrow screen: two 242px cards need 484px plus gaps,
+     which overflows a 390px viewport outright, and below 1400 the stats drop to
+     1-up (they must — 2-up clips the values in a narrow card) so the content no
+     longer fits 158px. Under 1400 the row keeps exactly the layout it had.
+     Ask moves to the far left with `order`, NOT by moving the markup: the
+     accounts section carries the desk's masthead state and the Refresh/Lock
+     controls, and reordering the DOM would drag those out of the reading order
+     that keyboard and screen-reader users follow. `order` is purely visual,
+     which is all that was asked for.
+     The card is SCALED rather than re-typeset ("reduce font to fit"): at full
+     size it needs 331px of height, and shrinking individual fonts would leave
+     the padding and gaps at their old size, so the card would read as starved
+     rather than smaller. `zoom` takes type, padding and borders together — the
+     same device the Markets column uses.
+     .62 is the LARGEST scale that fits; .66 still overflows by 10px. Note the
+     asymmetry, which is easy to get wrong: the width comes from the grid track
+     and so is already in rendered pixels, while `height` is set inside the
+     zoomed box and must be divided by the scale to render at 158. */
+  @media (min-width: 1400px) {
+    .top-boxes { --acct-z: .62; }
+    .top-boxes > .col-rail { order: -1; flex: 1 1 auto; }
+    .top-boxes > .area-accounts { order: 0; flex: 0 1 auto; align-self: start; }
+    .top-boxes .account-grid { grid-template-columns: repeat(2, 200px); justify-content: start; }
+    .top-boxes .account { zoom: var(--acct-z); height: calc(158px / var(--acct-z)); }
+  }
   /* the label column is 78px (long names wrap to 2 lines) and the band padding
      is trimmed, so a band stays one tile-height tall. */
   .mkt-group { min-width: 0; margin-top: -1px; display: flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 0; }
