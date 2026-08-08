@@ -289,6 +289,27 @@
        it; beside the header there is nothing to clear, and it was the last
        12px keeping the cards off the Ask panel's line */
     .top-boxes .account-grid { margin-top: 0; }
+    /* LOCKED state must keep the row's shape (owner report 2026-08-08: the row
+       grew from 158 to 247 the moment the desk locked). The lock panel replaces
+       BOTH cards in the grid, so it spans both tracks and takes the same 158px
+       — the row is then the same height whether the desk is locked or not.
+       Deliberately NOT zoomed like `.account`: the cards are scaled because
+       they carry a lot of figures, whereas this panel is a PIN field, and
+       shrinking a text input people have to type into to 62% would be a
+       usability cost paid for nothing — spanning two tracks already gives it
+       ample room at full size.
+       `min-height`, NOT `height`: the wrong-PIN error renders below the form,
+       and at a fixed 158 it landed 8px OUTSIDE the panel — a failed unlock
+       would have shown no visible reason, and S11 would not have caught it
+       because the element still exists and still has its text. The row is 158
+       whenever the desk is simply locked; it grows ~20px only while an error is
+       on screen, which is the one moment that matters more than the row. */
+    .top-boxes .panel-lock { grid-column: 1 / -1; min-height: 158px; }
+    /* the explainer is the only elastic part; trimming its type and the gap
+       under it is what buys the 17px, so the panel sits at the cards' 158
+       without losing a word of the copy */
+    .top-boxes .panel-lock .lock-explain { font-size: var(--font-sm); line-height: 1.35; margin: 0 0 var(--space-2); }
+    .top-boxes .panel-lock .panel-body { padding-top: var(--space-2); }
   }
   /* the label column is 78px (long names wrap to 2 lines) and the band padding
      is trimmed, so a band stays one tile-height tall. */
