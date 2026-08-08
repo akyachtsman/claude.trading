@@ -296,7 +296,17 @@ This project's look is its own — established at kickoff via `/design-intake`
   holding the cards off Ask's line. **Demo never renders Refresh/Lock**, so none
   of this is visible under `?demo=1` — force `DESK.mode='live'` and
   `DESK.authed=true`, then `renderMasthead()`, to see the header the owner
-  actually has. Ask moves
+  actually has. **The LOCKED state keeps the row's shape too**: the lock
+  panel replaces both cards, so it spans both grid tracks at the same height —
+  it was 200×247 against the cards' 158 and the row jumped the moment the desk
+  locked. It is `min-height`, NOT `height`: the wrong-PIN error renders below
+  the form and at a fixed 158 landed 8px OUTSIDE the panel, so a failed unlock
+  showed no visible reason — and **S11 would not have caught that**, since the
+  element still exists and still carries its text. The row is 158 whenever the
+  desk is merely locked and grows ~27px only while an error is on screen. It is
+  also deliberately NOT `zoom`ed like `.account`: the cards are scaled because
+  they carry many figures, whereas this panel is a text input, and shrinking one
+  people must type into to 62% would buy nothing. Ask moves
   by `order`, **not** by moving the markup: the accounts section carries the
   desk's masthead state and the Refresh/Lock controls, and reordering the DOM
   would drag those out of the reading order keyboard and screen-reader users
