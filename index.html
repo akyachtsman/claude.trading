@@ -272,9 +272,23 @@
   @media (min-width: 1400px) {
     .top-boxes { --acct-z: .62; }
     .top-boxes > .col-rail { order: -1; flex: 1 1 auto; }
-    .top-boxes > .area-accounts { order: 0; flex: 0 1 auto; align-self: start; }
+    .top-boxes > .area-accounts { order: 0; flex: 0 0 auto; align-self: start; }
     .top-boxes .account-grid { grid-template-columns: repeat(2, 200px); justify-content: start; }
     .top-boxes .account { zoom: var(--acct-z); height: calc(158px / var(--acct-z)); }
+    /* Header BESIDE the cards, not above them, so Ask / Account A / Account B
+       all start on the same line (owner report 2026-08-08: stacked, the header
+       pushed the cards 75px down and the row read as staggered). A fixed 150px
+       side column keeps the cards' left edge stable as the lamp text changes
+       between LIVE / EOD / STALE. */
+    .top-boxes > .area-accounts { display: flex; gap: var(--space-3); align-items: flex-start; }
+    .accounts-side { flex: 0 0 150px; min-width: 0; }
+    .accounts-side .accounts-head { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+    .accounts-side .masthead-state { gap: var(--space-2); }
+    .accounts-side .stamp { margin: var(--space-2) 0 0; }
+    /* the grid's 12px top margin exists to separate it from the header ABOVE
+       it; beside the header there is nothing to clear, and it was the last
+       12px keeping the cards off the Ask panel's line */
+    .top-boxes .account-grid { margin-top: 0; }
   }
   /* the label column is 78px (long names wrap to 2 lines) and the band padding
      is trimmed, so a band stays one tile-height tall. */
@@ -338,6 +352,12 @@
   /* accounts */
   .accounts-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
   .accounts-head h2 { margin: 0; font: 600 var(--font-lg)/1.2 var(--font-sans); }
+  /* Refresh/Lock much smaller (owner request 2026-08-08). The shared `.btn` is
+     44px tall with 20px padding — right for a form's primary action, far too
+     heavy for two secondary controls sitting in a panel header, where they were
+     wide enough to wrap the header onto three lines. Applied at every width, so
+     the narrow layout gets the same relief. */
+  .accounts-head .btn { min-height: 26px; padding: 3px 10px; font-size: var(--font-xs); border-radius: var(--radius-sm); box-shadow: none; }
   /* Half-width account cards in a tight 2×2 stack with the widgets below
      (owner ruling 2026-07-16): fixed 245px columns hug the top-left; freed
      width stays empty up to the rail. Interior compacts to match. */
@@ -991,11 +1011,19 @@
 
   <div class="top-boxes">
     <section class="area-accounts" aria-labelledby="accountsTitle">
-      <div class="accounts-head">
-        <h2 id="accountsTitle">Accounts</h2>
-        <div class="masthead-state" id="mastheadState"></div>
+      <!-- Title, desk lamp, Refresh/Lock and the synced stamp are grouped so
+           they can sit BESIDE the cards on a wide screen instead of stacking
+           above them. Stacked, they pushed the cards ~75px below the Ask panel
+           and the three windows no longer lined up (owner report 2026-08-08).
+           The grouping is inert below the breakpoint — the column layout there
+           is exactly what it was. -->
+      <div class="accounts-side">
+        <div class="accounts-head">
+          <h2 id="accountsTitle">Accounts</h2>
+          <div class="masthead-state" id="mastheadState"></div>
+        </div>
+        <p class="stamp" id="accountsStamp"></p>
       </div>
-      <p class="stamp" id="accountsStamp"></p>
       <div class="account-grid" id="accountGrid"></div>
     </section>
 

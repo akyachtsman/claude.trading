@@ -283,7 +283,20 @@ This project's look is its own — established at kickoff via `/design-intake`
   whatever the cards leave (1052 at 1512, 1452 at 1920) — and the two cards are
   **200×158** beside it, matched to Ask's height. They went 485 → 242 → 200 over
   two passes; Ask was briefly pinned at 489 and became fluid in the second, so
-  narrowing the cards now widens Ask automatically instead of leaving dead space. Ask moves
+  narrowing the cards now widens Ask automatically instead of leaving dead space. The accounts header
+  (title, desk lamp, Refresh/Lock, synced stamp) sits in a 150px `.accounts-side`
+  column BESIDE the cards rather than above them: stacked, it pushed the cards
+  ~75px below Ask and the row read as staggered, and in live mode its two
+  full-size buttons wrapped it onto three lines. `.btn` is 44px tall with 20px
+  padding — right for a form's primary action, far too heavy for two secondary
+  header controls — so they are 26px here. Two details are load-bearing:
+  `.area-accounts` must be `flex: 0 0 auto`, or it shrinks below its own content
+  and spills 22px past a 1512 viewport; and `.account-grid`'s 12px `margin-top`
+  is zeroed, since it exists to clear a header ABOVE it and was the last thing
+  holding the cards off Ask's line. **Demo never renders Refresh/Lock**, so none
+  of this is visible under `?demo=1` — force `DESK.mode='live'` and
+  `DESK.authed=true`, then `renderMasthead()`, to see the header the owner
+  actually has. Ask moves
   by `order`, **not** by moving the markup: the accounts section carries the
   desk's masthead state and the Refresh/Lock controls, and reordering the DOM
   would drag those out of the reading order keyboard and screen-reader users
