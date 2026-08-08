@@ -812,7 +812,17 @@ test('S5: demo mode shows DEMO lamps on every panel', async ({ page }) => {
 // S6 — Positions sort: header click reorders rows and flips aria-sort.
 test('S6: positions table sorts on header click', async ({ page }) => {
   await page.goto('./?demo=1');
+  // Positions collapse closed by default (2026-08-07, the accounts-area cut),
+  // so the table has to be disclosed before it can be sorted. Asserting the
+  // toggle is CLOSED first is the point: it guards the cut itself, and a
+  // regression that reopened positions by default would silently give the
+  // accounts area its 176px back.
+  const posBtn = page.locator('#accountGrid .acct-pos-toggle').first();
+  await expect(posBtn).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#accountGrid table').first()).toBeHidden();
+  await posBtn.click();
   const table = page.locator('#accountGrid table').first();
+  await expect(table).toBeVisible();
   const header = table.locator('th', { hasText: 'Unrl P&L' });
   const firstCell = () => table.locator('tbody tr').first().locator('td').nth(3).getAttribute('data-sort');
   await header.click();
