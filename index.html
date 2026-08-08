@@ -226,11 +226,20 @@
   .top-boxes > .col-rail { flex: 1 1 0; min-width: 0; }
   .top-boxes .account-grid { grid-template-columns: 1fr 1fr; }
   .top-boxes .account .hero-number { font-size: var(--font-xl); }
-  /* Stats 2-up here (owner request 2026-08-07). They were stacked 1-up so the
-     P&L figures could not collide in a narrow card; the accounts column is now
-     ~980px wide, which is ample for two, and the stack was 204px of a 513px
-     card — the second-largest block after the positions table. */
-  .top-boxes .acct-stats { grid-template-columns: 1fr 1fr; }
+  /* Stats stay STACKED by default. The 1-up rule exists for narrow cards, where
+     two columns of currency figures do not fit: making it 2-up unconditionally
+     put 409px of content in a 390px viewport and failed S4 on WebKit only
+     (mobile-chrome passed, so a Chromium harness does not catch it). The 2-up
+     cut the owner asked for is opted into at the desktop breakpoint below,
+     where the accounts column is ~980px and has ample room. */
+  .top-boxes .acct-stats { grid-template-columns: 1fr; }
+  /* The accounts-area cut (owner request 2026-08-07) is opted into at the
+     desktop breakpoint, NOT globally: the stacked stats exist for narrow cards,
+     and forcing 2-up at every width put 409px of content in a 390px viewport
+     and failed S4 on WebKit. This block sits AFTER the 1-up default on purpose
+     — a media query adds no specificity, so placing it earlier let the later
+     rule win and the 2-up silently never applied. */
+  @media (min-width: 1400px) { .top-boxes .acct-stats { grid-template-columns: 1fr 1fr; } }
   /* The equity sparkline goes too — it is 40px, and the 70% target is not
      reachable with it. The one-year trend is still on the Markets chart and in
      the symbol detail window; this was the least load-bearing of the card's
