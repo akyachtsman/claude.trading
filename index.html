@@ -1002,6 +1002,10 @@
         <div class="wl-detail-quote" id="wlDetailQuote"></div>
         <div class="wl-detail-bar">
           <div class="seg wl-detail-tf" id="wlDetailTf" role="group" aria-label="Chart timeframe"></div>
+          <!-- Moving-average toggles (owner request 2026-08-08), matching the
+               workbench's set MINUS SMA (1): a 1-period average is the close
+               itself, which the candles already draw. -->
+          <div class="wl-detail-smas" id="wlDetailSmas" role="group" aria-label="Moving averages"></div>
           <span class="stamp ml-auto" id="wlDetailStamp">—</span>
         </div>
         <svg class="wl-detail-chart" id="wlDetailChart" role="img" aria-label="Price chart"></svg>
