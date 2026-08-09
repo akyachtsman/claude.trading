@@ -519,7 +519,20 @@ This project's look is its own — established at kickoff via `/design-intake`
   tile's own price so the last candle closes exactly on the number that opened it
   — the ten names in `DEMO_CHART_SYMBOLS` are far narrower than the rosters, and a
   window that opened blank on most demo tiles would hide the faults demo exists to
-  surface. The chart is a **self-contained renderer**, deliberately NOT the
+  surface. **Moving averages are owner-selectable** (2026-08-08): SMA
+  25/50/100/200 as checkboxes beside the span control, defaulting to 25+50 and
+  persisted in `localStorage` (`wl_detail_smas_v1`) because it is a reading
+  preference, not per-symbol state. **SMA (1) is deliberately absent** — a
+  1-period average IS the close, which the candles already draw, so it would be
+  a control that changes nothing. Colours come from the workbench's own
+  `SMA_COLORS`, so a 50 here is the same colour as a 50 on a Pro pane; the old
+  hard-coded 20/50 pair used the generic series ramp and matched nothing. A line
+  still only draws once **fully warmed**, so on a short span a ticked 100 or 200
+  legitimately shows nothing — the swatch in the control is the chart's key.
+  The **SMA price display** (a right-edge price tag at each enabled SMA) was
+  removed from Pro 1/2/3 the same day, owner request — the config, the popover
+  group and the drawing code all went; the SMA lines themselves are untouched.
+  The chart is a **self-contained renderer**, deliberately NOT the
   workbench's `drawPane`: that is a closure inside `renderCharts()` guarded by
   S12/S25/S34, and prising it out to serve a modal would risk a heavily-ruled
   surface for a view needing none of its stochastic machinery.

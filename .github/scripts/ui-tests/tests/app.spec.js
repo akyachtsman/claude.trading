@@ -928,14 +928,22 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   // per-pane header bars: each gear opens its own popover above its pane.
   // The weekly-stoch overlay toggle now lives on Pro 2 ALONE (owner ruling
   // 2026-07-17); Pro 1/Pro 3 show only their native stochastic.
-  // Pro 1 = full set (bb, vol, stoch, 5 SMAs, 3 S/R, 5 SMA-price = 16 boxes
-  // + 2 style radios); Pro 3 = slim day-trading panel (bb, vol, stoch) PLUS the
+  // Pro 1 = full set (bb, vol, stoch, 5 SMAs, 3 S/R = 11 boxes + 2 style
+  // radios); Pro 3 = slim day-trading panel (bb, vol, stoch) PLUS the
   // Session -> Extended hours toggle (owner request 2026-07-29) = 4 boxes.
   // Pro 3 alone gets that toggle: it is the only intraday tier.
+  // 16 -> 11 on 2026-08-08: the SMA price display group (5 boxes, a price tag
+  // at each enabled SMA's right edge) was removed from all three panes by owner
+  // request. The group's ABSENCE is asserted by name below, so a silent return
+  // of the feature fails here rather than only moving a count nobody reads.
   await page.locator('#wbGear-p1').click();
   await expect(page.locator('#wbSettings-p1')).toBeVisible();
   expect(await page.locator('#wbSettings-p1 input[type=radio]').count()).toBe(2);
-  expect(await page.locator('#wbSettings-p1 input[type=checkbox]').count()).toBe(16);
+  expect(await page.locator('#wbSettings-p1 input[type=checkbox]').count()).toBe(11);
+  // the SMA LINES stay — only their price tags went
+  await expect(page.locator('#wbSettings-p1', { hasText: 'Moving averages' })).toBeVisible();
+  expect(await page.locator('#wbSettings-p1 .wb-set-group', { hasText: 'SMA price display' }).count(),
+    'SMA price display was removed from every pane').toBe(0);
   await page.locator('#wbGear-p3').click();
   await expect(page.locator('#wbSettings-p1')).toBeHidden();
   expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(4);

@@ -1738,7 +1738,7 @@ const WL_DETAIL_SPAN = { '1mo': 21, '3mo': 63, '6mo': 126, '1y': 252, '2y': 504,
    keeps the quote it already has, so the window claimed "no chart data" during
    an ordinary reload, and lamped the panel STALE before its first fetch had
    even settled. */
-const wlDetail = { sym: null, tf: '1d', bars: null, info: undefined, seq: 0, invoker: null, asOf: null, at: null, loading: false };
+const wlDetail = { sym: null, tf: '1d', bars: null, info: undefined, seq: 0, invoker: null, asOf: null, at: null, loading: false , smas: null };
 
 function openWlDetail(sym, invoker) {
   const back = document.getElementById('wlDetailBackdrop');
@@ -1757,7 +1757,10 @@ function openWlDetail(sym, invoker) {
   const nameEl = document.getElementById('wlDetailName');
   if (nameEl) nameEl.textContent = '';
   back.hidden = false;
+  /* read the saved set once per open, not per render */
+  if (!wlDetail.smas) wlDetail.smas = loadWlSmas();
   renderWlDetailTf();
+  renderWlDetailSmas();
   renderWlDetail();
   loadWlDetail();
   const close = document.getElementById('wlDetailCloseBtn');
@@ -1974,7 +1977,51 @@ function renderWlDetailStats(info, demo) {
    panes and guarded by S12/S25/S34, and prising it out to serve a modal would
    put a heavily-ruled surface at risk for a view that needs none of its
    stochastic machinery. */
-const WL_SMA = [20, 50];
+/* Owner-selectable moving averages (2026-08-08). The set matches the charts
+   workbench MINUS SMA (1) — a 1-period average IS the close, which the candles
+   already draw, so offering it here would be a control that changes nothing
+   visible. Colours come from the workbench's own `SMA_COLORS`, so a 50 here is
+   the same colour as a 50 on a Pro pane; the old hard-coded 20/50 pair used the
+   generic series ramp and agreed with nothing.
+   The choice persists, like the panel's timeframe — it is a reading preference,
+   not per-symbol state, so it should survive closing the window. */
+const WL_SMA_SET = [25, 50, 100, 200];
+const WL_SMA_KEY = 'wl_detail_smas_v1';
+function loadWlSmas() {
+  const on = { 25: true, 50: true, 100: false, 200: false };
+  try {
+    const raw = JSON.parse(localStorage.getItem(WL_SMA_KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      for (const n of WL_SMA_SET) if (typeof raw[n] === 'boolean') on[n] = raw[n];
+    }
+  } catch { /* private mode, or a hand-edited value — keep the defaults */ }
+  return on;
+}
+function saveWlSmas() {
+  try { localStorage.setItem(WL_SMA_KEY, JSON.stringify(wlDetail.smas)); } catch { /* private mode */ }
+}
+function renderWlDetailSmas() {
+  const host = document.getElementById('wlDetailSmas');
+  if (!host) return;
+  host.textContent = '';
+  for (const n of WL_SMA_SET) {
+    const lab = el('label', 'wl-sma-opt');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = !!wlDetail.smas[n];
+    box.addEventListener('change', () => {
+      wlDetail.smas[n] = box.checked;
+      saveWlSmas();
+      renderWlDetail();
+    });
+    const swatch = el('span', 'wl-sma-dot');
+    swatch.style.background = SMA_COLORS[n];
+    lab.appendChild(box);
+    lab.appendChild(swatch);
+    lab.appendChild(el('span', '', 'SMA ' + n));
+    host.appendChild(lab);
+  }
+}
 function wlSma(values, n) {
   const out = new Array(values.length).fill(null);
   let sum = 0;
@@ -2058,7 +2105,8 @@ function drawWlDetailChart(bars) {
   /* SMAs only where they are fully warmed — a line that starts mid-chart is
      honest, one drawn from a partial window is not. Series colours are
      CVD-validated and must keep their order. */
-  WL_SMA.forEach((period, idx) => {
+  WL_SMA_SET.forEach(period => {
+    if (!wlDetail.smas || !wlDetail.smas[period]) return;
     if (n <= period) return;
     const ma = wlSma(bars.c, period);
     const pts = [];
@@ -2069,7 +2117,7 @@ function drawWlDetailChart(bars) {
     if (pts.length < 2) return;
     svg.appendChild(svgEl('polyline', {
       points: pts.join(' '), fill: 'none',
-      stroke: 'var(--color-series-' + (idx + 1) + ')', 'stroke-width': 1.5, opacity: 0.9,
+      stroke: SMA_COLORS[period], 'stroke-width': 1.5, opacity: 0.9,
     }));
   });
 
@@ -3723,17 +3771,17 @@ const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default
    Pro 3 = intraday stoch ONLY. The overlay now lives on Pro 2 alone (weekly);
    Pro 1/Pro 3 render no overlay regardless of this flag. */
 const WB_CFG_DEFAULT = () => ({
-  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
+  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, scrollLock: false },
   /* stochSteady: confine candle-colour changes to STEADY_BAND — a crossover
      inside 30–80 turns the colour, one out in the extremes does not (owner
      ruling 2026-08-05). Off by default — see the gear popover and the drawPane
      comment, which also records why a separation threshold was rejected. */
-  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, stochSteady: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
+  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, stochSteady: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, scrollLock: false },
   /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling).
      ext = show the 4:00am–8:00pm ET extended session (owner request 2026-07-29).
      On by default; turning it off restores the exact regular-session bar set the
      ISTOCH 10-3-3 fit was established against, for terminal parity. */
-  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, smaPrice: { 1: false, 25: false, 50: false, 100: false, 200: false }, scrollLock: false },
+  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, scrollLock: false },
 });
 function loadWbCfg() {
   try {
@@ -3747,7 +3795,6 @@ function loadWbCfg() {
           ...d, ...r,
           smas: { ...d.smas, ...(r.smas || {}) },
           sr: { ...d.sr, ...(r.sr || {}) },
-          smaPrice: { ...d.smaPrice, ...(r.smaPrice || {}) },
         };
       }
       return raw;
@@ -4517,18 +4564,9 @@ function renderCharts(data, lamp) {
       if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 1, 'stroke-opacity': 0.8 }));
     }
 
-    /* SMA price display — right-edge tag at each enabled SMA's latest
-       visible value, colored to match its line */
-    for (const len of [1, 25, 50, 100, 200]) {
-      if (!(opts.cfg.smaPrice || {})[len] || end < len) continue;
-      let sum = 0;
-      for (let j = end - len; j < end; j++) sum += bars.c[j];
-      const v = sum / len;
-      if (v <= lo || v >= hi) continue;
-      const yv = py(v);
-      svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW + 2, y: yv - 6, width: padR - 10, height: 12, rx: 2, fill: SMA_COLORS[len] }));
-      text(fmtPrice(v), x0 + 6 + plotW + 5, yv + 3, { fill: 'var(--color-bg)', 'font-size': 8, 'font-weight': 600 });
-    }
+    /* The SMA price display — a right-edge price tag at each enabled SMA — was
+       removed from all three panes on 2026-08-08 (owner request). The SMA lines
+       themselves are untouched; only the numeric tags are gone. */
 
     let vMax = 0;
     if (opts.cfg.vol) for (let i = i0; i < end; i++) vMax = Math.max(vMax, bars.v[i]);
@@ -5163,8 +5201,6 @@ function buildWbSettings() {
         ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));
       group('Support / resistance', [1, 2, 3].map(n =>
         ['S' + n + ' / R' + n, () => cfg.sr[n], v => { cfg.sr[n] = v; }]));
-      group('SMA price display', [25, 50, 100, 200, 1].map(n =>
-        ['SMA (' + n + ')', () => cfg.smaPrice[n], v => { cfg.smaPrice[n] = v; }]));
     }
     cols.appendChild(col);
   }

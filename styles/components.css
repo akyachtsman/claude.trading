@@ -605,6 +605,14 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
 }
 .wl-detail-bar { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+/* Moving-average toggles beside the span control. `flex-wrap` because the four
+   options plus the seven span buttons exceed the modal's width on a phone; the
+   swatch carries each SMA's own line colour, so the chart needs no separate
+   key — the control IS the legend. */
+.wl-detail-smas { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.wl-sma-opt { display: inline-flex; align-items: center; gap: 4px; font: 500 var(--font-xs)/1.2 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; }
+.wl-sma-opt input { margin: 0; cursor: pointer; }
+.wl-sma-dot { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
 .wl-detail-chart { display: block; width: 100%; height: 380px; margin-top: var(--space-2); }
 .wl-detail-chart[hidden] { display: none; }
 .wl-detail-empty { color: var(--color-text-secondary); font-size: var(--font-size-sm); margin-top: var(--space-3); }
