@@ -279,7 +279,17 @@ This project's look is its own — established at kickoff via `/design-intake`
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
   **The desk row (`.top-boxes`) reads Ask | Account A | Account B at ≥1400px**
-  (owner request 2026-08-08). Ask is on the FAR LEFT and **fluid** — it takes
+  (owner request 2026-08-08). **Ask is height-ELASTIC, not pinned**: 192px while
+  its thread is empty, growing with the conversation to a 420px cap past which
+  the thread scrolls. It was briefly a fixed 158 — and at that height the
+  header, composer and disclaimer consume the whole panel, so `.ask-thread`
+  resolved to ZERO and every answer rendered into a 0px box (owner report
+  2026-08-09, "cant see my results"; measured: 255px of answer, 0px of room).
+  The earlier "158 is the floor" figure came from checking only that the FORM
+  fitted, which it did — the thread silently absorbed the shortfall, so the
+  panel looked fine and the assistant was unusable. 192 is what the authed
+  panel actually needs at rest.
+  Ask is on the FAR LEFT and **fluid** — it takes
   whatever the cards leave (1052 at 1512, 1452 at 1920) — and the two cards are
   **200×158** beside it, matched to Ask's height. They went 485 → 242 → 200 over
   two passes; Ask was briefly pinned at 489 and became fluid in the second, so
