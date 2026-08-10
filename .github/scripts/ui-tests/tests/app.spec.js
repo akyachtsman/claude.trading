@@ -2192,3 +2192,47 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
     await expect(detail, 'a drop is not a click').toBeHidden();
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 36 — Pro 1 / Pro 2 spans are sticky (owner request 2026-08-09: they
+// reset to 3M/6M on every refresh). Two things have to hold and only one is
+// obvious. The spans must survive a reload INDEPENDENTLY — restoring Pro 1 to
+// its own default would look like success while doing nothing — and a corrupt
+// stored value must fall back rather than size a window no preset matches,
+// which would leave every seg button unpressed and the pane at a width nothing
+// in the UI explains.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S36: the Pro 1 and Pro 2 spans survive a reload, and a bad one falls back', async ({ page }) => {
+  // three page loads plus three chart renders do not fit the 30s default
+  test.setTimeout(90_000);
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
+  const pressed = async () => page.evaluate(() => ({
+    p1: [...document.querySelectorAll('#chartZoom button')].find(b => b.getAttribute('aria-pressed') === 'true')?.textContent,
+    p2: [...document.querySelectorAll('#chartZoom2 button')].find(b => b.getAttribute('aria-pressed') === 'true')?.textContent,
+  }));
+  // defaults
+  expect(await pressed()).toEqual({ p1: '3M', p2: '6M' });
+
+  // pick spans that BOTH differ from the defaults, so a reload that silently
+  // ignored the store could not accidentally match
+  await page.locator('#chartZoom button', { hasText: '1M' }).click();
+  await page.locator('#chartZoom2 button', { hasText: '1Y' }).click();
+  await page.waitForTimeout(600);
+  expect(await pressed()).toEqual({ p1: '1M', p2: '1Y' });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(800);
+  expect(await pressed(), 'both spans restore, independently').toEqual({ p1: '1M', p2: '1Y' });
+
+  // a hand-edited / corrupt value is not trusted
+  await page.evaluate(() => {
+    const raw = JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}');
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...raw, z1: 4242, z2: 'nonsense' }));
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(800);
+  expect(await pressed(), 'an unrecognised span falls back to the default').toEqual({ p1: '3M', p2: '6M' });
+});

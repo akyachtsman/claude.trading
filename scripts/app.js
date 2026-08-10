@@ -3814,6 +3814,7 @@ const WB_STICKY_KEY = 'wb_sticky_v1';
 const wbFeedRoster = new Set();  /* symbols served by the desk-charts feed; anything else is a manual entry */
 let wbStickyRestored = false;    /* one-shot: restore runs on the first LIVE feed, even after a demo-fallback reload */
 let wbUserPicked = false;        /* the user has chosen a symbol → a slow background restore must not override it */
+const wbZoomOrNull = (v, zooms) => (zooms.some(([, spec]) => spec === v) ? v : null);
 function readWbSticky() {
   try {
     const raw = JSON.parse(localStorage.getItem(WB_STICKY_KEY) || 'null');
@@ -3821,6 +3822,15 @@ function readWbSticky() {
       return {
         syms: Array.isArray(raw.syms) ? raw.syms.filter((s) => typeof s === 'string' && s).slice(0, 12) : [],
         sel: typeof raw.sel === 'string' ? raw.sel : '',
+        /* Per-pane SPAN, sticky across reloads (owner request 2026-08-09: the
+           panes reset to 3M/6M on every refresh). Validated against the pane's
+           own preset list rather than trusted: this is localStorage, and an
+           arbitrary number here would size a window the seg has no button for,
+           leaving every preset unpressed and the pane at a width nothing in the
+           UI can explain. An unrecognised value simply falls back to the
+           built-in default. */
+        z1: wbZoomOrNull(raw.z1, WB_ZOOMS),
+        z2: wbZoomOrNull(raw.z2, WB2_ZOOMS),
       };
     }
   } catch { /* corrupt or absent */ }
@@ -4336,7 +4346,9 @@ function renderCharts(data, lamp) {
        the default from the toggle instead, and rescale on flip (below) so the
        view keeps its span rather than collapsing to under one day. */
     const cfg = loadWbCfg();
-    wbState = { data, lamp, sym: Object.keys(data.symbols)[0], days: 63, wdays: 126, days3: p3Window(cfg.p3.ext), days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg };
+    /* the saved spans win over the built-in 3M/6M when present */
+    const sticky = readWbSticky();
+    wbState = { data, lamp, sym: Object.keys(data.symbols)[0], days: sticky.z1 ?? 63, wdays: sticky.z2 ?? 126, days3: p3Window(cfg.p3.ext), days3d: 156, off: 0, woff: 0, off3: 0, off3d: 0, layout: 'split', cfg };
   }
   wbState.lamp = lamp;
   const lampEl = document.getElementById('chartsLamp');
@@ -5218,6 +5230,10 @@ function buildWbSettings() {
 function wireCharts() {
   const wireZoom = (segId, zooms, initial, apply) => {
     const seg = document.getElementById(segId);
+    /* The initial pressed state is provisional: `wireCharts()` runs at load,
+       before the feed has built `wbState`, so the restored span is not known
+       yet. `syncZoomPressed()` at the end of every `renderCharts` sets the
+       real one from `wbState.days`/`wdays`. */
     for (const [label, spec] of zooms) {
       const b = document.createElement('button');
       b.type = 'button'; b.textContent = label;
@@ -5231,8 +5247,8 @@ function wireCharts() {
       seg.appendChild(b);
     }
   };
-  wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; wbState.off = 0; });
-  wireZoom('chartZoom2', WB2_ZOOMS, 126, spec => { wbState.wdays = spec; wbState.woff = 0; });
+  wireZoom('chartZoom', WB_ZOOMS, 63, spec => { wbState.days = spec; wbState.off = 0; writeWbSticky({ z1: spec }); });
+  wireZoom('chartZoom2', WB2_ZOOMS, 126, spec => { wbState.wdays = spec; wbState.woff = 0; writeWbSticky({ z2: spec }); });
   /* Pro 3 has no window presets: its intraday feed only carries ~5 trading
      days of 5-min bars, so discrete day-presets all collapsed to one window.
      Range control is the bottom navigator instead — drag it to zoom anywhere
