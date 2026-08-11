@@ -2562,143 +2562,298 @@ function buildHeatmapContext() {
   };
 }
 
-/* ── scheduled asks (owner request 2026-07-31) ────────────────────────────────
-   A question the desk asks ITSELF on a timer, answered into the same thread a
-   typed question lands in. Deliberately CLIENT-SIDE: desk-ask already appends
-   every exchange to desk_chat_memory, so a scheduled answer persists and
-   replays on reload for free — no table, no panel, no cron, no timezone or DST
-   handling. The trade, stated plainly because it is the whole limitation: it
-   only fires while the dashboard is OPEN. A 6:30am question on a closed tab
-   runs when you next open the desk, not before you sit down. If that ever
-   matters more than the simplicity, pg_cron can write into this same thread
-   later without redoing any of this UI. */
-const ASK_SCHED_KEY = 'ask_sched_v1';
-let askSched = [];
-try {
-  const raw = JSON.parse(localStorage.getItem(ASK_SCHED_KEY) || '[]');
-  if (Array.isArray(raw)) {
-    askSched = raw.filter(r => r && typeof r.prompt === 'string' && r.prompt.trim())
-      .slice(0, 10)   /* a cap: each firing is a real Claude tool-loop call */
-      .map(r => ({
-        prompt: String(r.prompt).slice(0, 500),
-        mins: Math.max(15, Math.min(1440, Number(r.mins) || 60)),
-        marketOnly: r.marketOnly !== false,
-        enabled: r.enabled !== false,
-        last: Number(r.last) || 0,
-      }));
-  }
-} catch { /* private mode */ }
-/* The 15-minute floor is enforced HERE, at the write boundary, not only in the
-   number input's change handler. Every firing spends real Claude quota, so the
-   cap has to hold however the object was mutated — a direct assignment, a
-   restored payload, a future caller — not just when it came from that one
-   field. Same for the 10-row cap. */
-const saveAskSched = () => {
-  askSched = askSched.slice(0, 10).map(r => ({
-    ...r,
-    prompt: String(r.prompt || '').slice(0, 500),
-    mins: Math.max(15, Math.min(1440, Number(r.mins) || 60)),
-  }));
-  try { localStorage.setItem(ASK_SCHED_KEY, JSON.stringify(askSched)); } catch { /* private mode */ }
-};
+/* ── scheduled asks (owner request 2026-07-31; moved SERVER-side 2026-08-11) ──
+   Questions the desk asks ITSELF on a timer, answered into the same thread a
+   typed question lands in.
+
+   The first version was a setInterval right here, which meant it only fired
+   while the dashboard was OPEN — exactly the case where the owner is already at
+   the desk and could just type the question. The owner's ruling: "the only
+   value a cron task has for me is to be able to wake ITSELF up at a certain
+   time each day and give me a market summary. Otherwise it's of no use."
+
+   So the roster moved into desk_ask_schedule (desk_017 — RLS deny-all + PIN
+   RPCs, same shape as the system prompt and the watchlists), pg_cron ticks
+   every 5 minutes, and desk-cron-ask fires whatever is due: it assembles the
+   whole dashboard server-side (there is no browser to read it from) and hands
+   it to desk-ask, which appends the exchange to desk_chat_memory as usual. That
+   is the table this thread already replays from, so the 8am summary is simply
+   sitting there when the desk is opened.
+
+   NOTHING on this page is required for any of that to happen. What follows is
+   only the editor for the roster — no timer, no firing, no local state. */
+const ASK_CADENCES = [
+  /* key         label              cadence          everyHours */
+  ['hourly',    'Every hour',      'hourly',        null],
+  ['h2',        'Every 2 hours',   'every_n_hours', 2],
+  ['h3',        'Every 3 hours',   'every_n_hours', 3],
+  ['h4',        'Every 4 hours',   'every_n_hours', 4],
+  ['h6',        'Every 6 hours',   'every_n_hours', 6],
+  ['h8',        'Every 8 hours',   'every_n_hours', 8],
+  ['h12',       'Every 12 hours',  'every_n_hours', 12],
+  ['daily',     'Every day at',    'daily',         null],
+  ['weekdays',  'Weekdays at',     'weekdays',      null],
+];
+/* The two cadence families need DIFFERENT time controls, and conflating them is
+   how a scheduler starts lying: an "every 4 hours" row has no meaningful hour
+   (it fires at 00/04/08/12/16/20 PT), only a minute past the hour, so offering
+   it a full clock would let the owner set 8:00 and watch it fire at midnight. */
+const askAtTheHour = r => r.cadence === 'hourly' || r.cadence === 'every_n_hours';
+const askCadenceKey = r => (r.cadence === 'every_n_hours' ? 'h' + r.everyHours : r.cadence);
+const ASK_SCHED_MAX = 10;   /* each firing is a real Claude tool-loop call */
+
+let askSched = [];          /* the server's roster, as last read */
 
 let askBusy = false;      /* a scheduled run must never collide with a typed one */
 /* The in-flight question's AbortController, or null when idle. Module-scoped
    because Stop lives in renderAsk's form while runAsk owns the request. */
 let askAbort = null;
 let askRun = null;        /* set by renderAsk() — the shared send path */
-let askSchedTimer = 0;
 
-/* MINIMUM 15 minutes, and market-day gating on by default. Both are cost and
-   noise guards: every firing spends real quota, and an answer about "today's
-   indicators" generated on a Sunday is worse than no answer because it looks
-   current. */
-const ASK_SCHED_TICK_MS = 60000;
 
-function askSchedDue(r, now) {
-  if (!r.enabled) return false;
-  if (r.marketOnly && !(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return false;
-  return now - (r.last || 0) >= r.mins * 60000;
+/* A row as the RPC returns it, clamped to what the table will accept. Clamping
+   on the way IN as well as on the way out matters: the cron writes last_run_at
+   to these same rows, and a value this editor could not represent would be
+   quietly rewritten by the next Save. */
+function askSchedRow(raw) {
+  const cadence = ['hourly', 'every_n_hours', 'daily', 'weekdays'].includes(raw && raw.cadence)
+    ? raw.cadence : 'daily';
+  const every = [2, 3, 4, 6, 8, 12].includes(Number(raw && raw.everyHours)) ? Number(raw.everyHours) : 4;
+  const min = Math.min(55, Math.max(0, Number(raw && raw.atMin) || 0));
+  return {
+    id: raw && raw.id != null ? raw.id : null,
+    prompt: String((raw && raw.prompt) || '').slice(0, 500),
+    cadence, everyHours: every,
+    atHour: Math.min(23, Math.max(0, Number(raw && raw.atHour) || 0)),
+    atMin: min - (min % 5),                       /* the cron ticks on 5s */
+    marketOnly: !!(raw && raw.marketOnly),
+    enabled: !(raw && raw.enabled === false),
+    lastRunAt: (raw && raw.lastRunAt) || null,
+    lastStatus: (raw && raw.lastStatus) || null,
+  };
 }
 
-async function askSchedTick() {
-  if (document.hidden || askBusy || !askRun) return;
-  if (DESK.mode === 'demo' || !DESK.authed) return;   /* nothing to ask against */
-  const now = Date.now();
-  /* ONE per tick, never a burst: two scheduled questions coming due together
-     would otherwise fire back-to-back tool loops and read as a wall of text. */
-  const due = askSched.find(r => askSchedDue(r, now));
-  if (!due) return;
-  due.last = now;
-  saveAskSched();          /* stamp BEFORE the call, so a failure cannot loop */
-  await askRun(due.prompt, { scheduled: true });
+/* When a cadence actually fires, spelled out. The "every N hours" family fires
+   at the hours DIVISIBLE by N in Pacific — which is not what "every 4 hours"
+   reads like on its own, so it is stated rather than left for the owner to
+   discover at midnight. */
+function askSchedWhen(r) {
+  const mm = String(r.atMin).padStart(2, '0');
+  if (r.cadence === 'hourly') return `fires every hour at :${mm} PT`;
+  if (r.cadence === 'every_n_hours') {
+    const hrs = [];
+    for (let h = 0; h < 24; h += r.everyHours) hrs.push(String(h).padStart(2, '0') + ':' + mm);
+    return 'fires at ' + hrs.join(', ') + ' PT';
+  }
+  return 'fires at ' + String(r.atHour).padStart(2, '0') + ':' + mm + ' PT, ' +
+    (r.cadence === 'weekdays' ? 'Mon–Fri' : 'every day');
 }
 
-function scheduleAskTick() {
-  clearInterval(askSchedTimer);
-  if (!askSched.some(r => r.enabled)) return;
-  askSchedTimer = setInterval(askSchedTick, ASK_SCHED_TICK_MS);
-}
-
-
-/* Roster editor for scheduled asks. Built in JS like the rest of this panel
-   rather than as static markup, because the row count is data. */
-function openAskSched() {
+/* Roster editor for scheduled asks (desk_017). Built in JS like the rest of
+   this panel rather than as static markup, because the row count is data.
+   The draft is local until Save: a write REPLACES the whole roster, so saving
+   on every field would mean a round trip per keystroke. */
+function openAskSched(pin) {
   const back = document.getElementById('askSchedBackdrop');
   const list = document.getElementById('askSchedList');
   if (!back || !list) return;
+  const noteEl = document.getElementById('askSchedNote');
+  const errEl = document.getElementById('askSchedErr');
+  let dirty = false;
+  let closeArmed = false;
+
+  const note = (msg, warn) => {
+    if (!noteEl) return;
+    noteEl.textContent = msg || '';
+    noteEl.classList.toggle('ask-sched-note--warn', !!warn);
+  };
+  const fail = (msg) => {
+    if (!errEl) return;
+    errEl.textContent = msg || '';
+    errEl.hidden = !msg;
+  };
+  const touch = () => { dirty = true; closeArmed = false; note('Unsaved changes', true); };
+
   const draw = () => {
     list.textContent = '';
     if (!askSched.length) list.appendChild(el('p', 'lock-explain', 'Nothing scheduled yet.'));
     askSched.forEach((r, i) => {
       const row = el('div', 'ask-sched-row');
+
       const on = document.createElement('input');
       on.type = 'checkbox'; on.checked = r.enabled;
       on.setAttribute('aria-label', 'Enabled');
-      on.addEventListener('change', () => { r.enabled = on.checked; saveAskSched(); scheduleAskTick(); });
+      on.addEventListener('change', () => { r.enabled = on.checked; touch(); });
+
       const q = document.createElement('input');
-      q.type = 'text'; q.className = 'input'; q.value = r.prompt; q.maxLength = 500;
+      q.type = 'text'; q.className = 'input ask-sched-q'; q.value = r.prompt; q.maxLength = 500;
+      q.placeholder = 'e.g. Summarise the market and my watchlist, and name the best setups';
       q.setAttribute('aria-label', 'Question');
-      q.addEventListener('change', () => { r.prompt = q.value.trim().slice(0, 500); saveAskSched(); });
-      const every = document.createElement('input');
-      every.type = 'number'; every.className = 'input ask-sched-mins';
-      every.min = '15'; every.max = '1440'; every.step = '15'; every.value = String(r.mins);
-      every.setAttribute('aria-label', 'Every N minutes');
-      every.addEventListener('change', () => {
-        r.mins = Math.max(15, Math.min(1440, Number(every.value) || 60));
-        every.value = String(r.mins); saveAskSched();
+      q.addEventListener('input', () => { r.prompt = q.value.slice(0, 500); touch(); });
+
+      const cad = document.createElement('select');
+      cad.className = 'input ask-sched-cad';
+      cad.setAttribute('aria-label', 'How often');
+      for (const [key, label] of ASK_CADENCES) {
+        const o = document.createElement('option');
+        o.value = key; o.textContent = label;
+        cad.appendChild(o);
+      }
+      cad.value = askCadenceKey(r);
+      cad.addEventListener('change', () => {
+        const spec = ASK_CADENCES.find(c => c[0] === cad.value);
+        if (!spec) return;
+        r.cadence = spec[2];
+        if (spec[3]) r.everyHours = spec[3];
+        touch();
+        draw();          /* the time control itself changes shape — see askAtTheHour */
       });
+
+      /* Two different controls, deliberately: an at-the-hour cadence has only a
+         minute to set, and a clock face there would invite an hour it ignores. */
+      let when;
+      if (askAtTheHour(r)) {
+        when = document.createElement('select');
+        when.className = 'input ask-sched-min';
+        when.setAttribute('aria-label', 'Minutes past the hour');
+        for (let m = 0; m < 60; m += 5) {
+          const o = document.createElement('option');
+          o.value = String(m); o.textContent = ':' + String(m).padStart(2, '0');
+          when.appendChild(o);
+        }
+        when.value = String(r.atMin);
+        when.addEventListener('change', () => { r.atMin = Number(when.value) || 0; touch(); draw(); });
+      } else {
+        when = document.createElement('input');
+        when.type = 'time'; when.step = '300'; when.className = 'input ask-sched-time';
+        when.setAttribute('aria-label', 'Time (Pacific)');
+        when.value = String(r.atHour).padStart(2, '0') + ':' + String(r.atMin).padStart(2, '0');
+        when.addEventListener('change', () => {
+          const m = /^(\d{2}):(\d{2})$/.exec(when.value || '');
+          if (!m) { when.value = String(r.atHour).padStart(2, '0') + ':' + String(r.atMin).padStart(2, '0'); return; }
+          r.atHour = Math.min(23, Number(m[1]));
+          const mins = Math.min(55, Number(m[2]));
+          r.atMin = mins - (mins % 5);            /* snap to the grid the cron ticks on */
+          touch(); draw();
+        });
+      }
+
       const mkt = document.createElement('input');
       mkt.type = 'checkbox'; mkt.checked = r.marketOnly;
-      mkt.setAttribute('aria-label', 'Market hours only');
-      mkt.addEventListener('change', () => { r.marketOnly = mkt.checked; saveAskSched(); });
+      mkt.id = 'askSchedMkt' + i;
+      mkt.addEventListener('change', () => { r.marketOnly = mkt.checked; touch(); });
+      const mktLbl = el('label', 'ask-sched-lbl', 'market hrs only');
+      mktLbl.htmlFor = mkt.id;
+      mktLbl.title = 'Skip the firing unless the US market is in session (pre-market through after-hours, weekdays). Exchange holidays are not excluded.';
+
+      /* Run now uses the DRAFT prompt and does not save — it is how you find out
+         what the 8am answer will look like without waiting until 8am. */
+      const now = el('button', 'btn btn-secondary', 'Run now'); now.type = 'button';
+      now.disabled = !r.prompt.trim() || !askRun || askBusy;
+      now.title = 'Ask this question right now, in the thread. Does not save the schedule.';
+      now.addEventListener('click', () => {
+        if (!askRun || !r.prompt.trim()) return;
+        back.hidden = true;
+        askRun(r.prompt.trim(), { scheduled: true });
+      });
+
       const del = el('button', 'btn btn-secondary', '✕'); del.type = 'button';
-      del.setAttribute('aria-label', 'Remove');
-      del.addEventListener('click', () => { askSched.splice(i, 1); saveAskSched(); scheduleAskTick(); draw(); });
-      row.appendChild(on); row.appendChild(q);
-      row.appendChild(el('span', 'ask-sched-lbl', 'every'));
-      row.appendChild(every);
-      row.appendChild(el('span', 'ask-sched-lbl', 'min · market hrs'));
-      row.appendChild(mkt); row.appendChild(del);
+      del.setAttribute('aria-label', 'Remove this question');
+      del.addEventListener('click', () => { askSched.splice(i, 1); touch(); draw(); });
+
+      const head = el('div', 'ask-sched-head');
+      head.appendChild(on); head.appendChild(q); head.appendChild(del);
+      const foot = el('div', 'ask-sched-foot');
+      foot.appendChild(cad); foot.appendChild(when);
+      foot.appendChild(mkt); foot.appendChild(mktLbl);
+      foot.appendChild(now);
+      /* The schedule in words, and whether it has actually run. A roster that
+         showed only what was CONFIGURED could not tell a working row from one
+         that has been failing quietly since it was written. */
+      const state = [askSchedWhen(r)];
+      if (r.lastRunAt) {
+        state.push('last run ' + fmtClock(r.lastRunAt) +
+          (r.lastStatus && r.lastStatus !== 'ok' ? ' — ' + r.lastStatus : ''));
+      } else if (r.id != null) {
+        state.push('not run yet');
+      }
+      foot.appendChild(el('span', 'ask-sched-when', state.join(' · ')));
+      row.appendChild(head); row.appendChild(foot);
       list.appendChild(row);
     });
   };
+
+  const load = async () => {
+    fail(''); note('Loading…');
+    const out = await deskGetAskSchedule(pin);
+    if (!out || !out.ok) {
+      askSched = []; draw();
+      note('');
+      fail('Could not load the schedule. Unlock the desk and try again.');
+      return;
+    }
+    askSched = (out.rows || []).map(askSchedRow);
+    dirty = false; closeArmed = false;
+    draw(); note('');
+  };
+
+  const save = async () => {
+    fail(''); note('Saving…');
+    /* Blank rows are dropped rather than rejected — the RPC skips them too, and
+       failing the whole save over a row the owner has not filled in yet would
+       throw away the edits they did make. `id` goes back UNCHANGED so the
+       server updates in place and each row keeps its own timer. */
+    const payload = askSched
+      .filter(r => r.prompt.trim())
+      .slice(0, ASK_SCHED_MAX)
+      .map(r => ({
+        id: r.id, prompt: r.prompt.trim().slice(0, 500), cadence: r.cadence,
+        everyHours: r.everyHours, atHour: r.atHour, atMin: r.atMin,
+        marketOnly: r.marketOnly, enabled: r.enabled,
+      }));
+    const out = await deskSetAskSchedule(pin, payload);
+    if (!out || !out.ok) {
+      note('');
+      fail('Could not save the schedule — nothing was changed. Check the desk is unlocked and try again.');
+      return;
+    }
+    await load();                 /* re-read: new rows come back with their ids */
+    note('Saved');
+  };
+
   const add = document.getElementById('askSchedAdd');
-  if (add && !add.dataset.wired) {
-    add.dataset.wired = '1';
-    add.addEventListener('click', () => {
-      if (askSched.length >= 10) return;
-      askSched.push({ prompt: '', mins: 60, marketOnly: true, enabled: true, last: 0 });
-      saveAskSched(); scheduleAskTick(); draw();
-    });
-  }
+  const saveBtn = document.getElementById('askSchedSave');
   const close = document.getElementById('askSchedCloseBtn');
-  if (close && !close.dataset.wired) {
-    close.dataset.wired = '1';
-    close.addEventListener('click', () => { back.hidden = true; scheduleAskTick(); });
+  /* Assigned, not addEventListener'd: the modal reopens with a fresh `pin` and
+     a fresh draft each time, and a second listener would run against the first
+     open's closure. */
+  if (add) {
+    add.onclick = () => {
+      if (askSched.length >= ASK_SCHED_MAX) { fail(`Ten scheduled questions is the limit — each firing costs real quota.`); return; }
+      fail('');
+      askSched.push(askSchedRow({ cadence: 'daily', atHour: 8, atMin: 0, enabled: true }));
+      touch(); draw();
+      const inputs = list.querySelectorAll('.ask-sched-q');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    };
   }
-  draw();
+  if (saveBtn) saveBtn.onclick = () => save();
+  if (close) {
+    /* Two-stage rather than a discard-confirm dialog: the roster is small and
+       the cost of losing an edit is retyping it, but losing it SILENTLY is the
+       part that reads as a bug. */
+    close.onclick = () => {
+      if (dirty && !closeArmed) {
+        closeArmed = true;
+        note('Unsaved changes — press Save, or ✕ again to discard', true);
+        return;
+      }
+      back.hidden = true;
+    };
+  }
+
   back.hidden = false;
+  load();
 }
 
 function renderAsk() {
@@ -2769,8 +2924,8 @@ function renderAsk() {
   /* ⏱ beside ⚙ — same idiom, same place. Opens the schedule roster. */
   const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
-  schedBtn.title = 'Questions the desk asks itself on a timer';
-  schedBtn.addEventListener('click', () => openAskSched());
+  schedBtn.title = 'Questions the desk asks itself on a schedule — it runs with this page shut';
+  schedBtn.addEventListener('click', () => openAskSched(pin));
   const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin));
@@ -2890,7 +3045,6 @@ function renderAsk() {
     await runAsk(q);
     input.focus();
   });
-  scheduleAskTick();
 }
 
 /* Ask-the-desk system prompt (desk_009) — an on-demand modal (owner request

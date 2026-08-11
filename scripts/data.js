@@ -487,6 +487,21 @@ async function deskSetSystemPrompt(pin, content) {
   catch { return { ok: false }; }
 }
 
+/* desk_017: the scheduled-ask roster. It lives in the DATABASE, not
+   localStorage, because pg_cron — not this page — is what fires it: the desk
+   has to wake ITSELF at 8am, which a setInterval in a closed tab cannot do.
+   The write is an upsert-by-id, so each row's `lastRunAt` timer survives an
+   unrelated edit; `id` is therefore load-bearing and must be sent back
+   unchanged for every row that already exists. */
+async function deskGetAskSchedule(pin) {
+  try { const out = await deskRpc('desk_get_ask_schedule', pin); return out && out.ok ? out : { ok: false }; }
+  catch { return { ok: false }; }
+}
+async function deskSetAskSchedule(pin, rows) {
+  try { const out = await deskRpc('desk_set_ask_schedule', pin, { new_rows: rows }); return out && out.ok ? out : { ok: false }; }
+  catch { return { ok: false }; }
+}
+
 /* Ask-the-desk: PIN-gated agentic Claude assistant (memory replay + web research
    + live get_quote). The Anthropic key lives only in the edge function's
    secrets (FR-D1); the answer carries a sources[] array of web citations. */

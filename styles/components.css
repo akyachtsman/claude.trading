@@ -544,11 +544,25 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
-/* ── scheduled asks (owner request 2026-07-31) ─────────────────────────────── */
-.ask-sched-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
-.ask-sched-row .input { flex: 1 1 160px; min-width: 0; min-height: 36px; font-size: 13px; }
-.ask-sched-mins { flex: 0 0 72px; }
+/* ── scheduled asks (owner request 2026-07-31; server-side desk_017) ───────── */
+/* Two lines per row, not one: the question is free text and wants the full
+   width, while the cadence controls are small and fixed. Packed onto one line
+   they competed, and the question — the part that is actually read — was the
+   one that lost. */
+.ask-sched-row { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 8px; margin-bottom: 8px; }
+.ask-sched-head { display: flex; align-items: center; gap: 8px; }
+.ask-sched-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.ask-sched-row .input { min-height: 34px; font-size: 13px; }
+.ask-sched-q { flex: 1 1 auto; min-width: 0; }
+.ask-sched-cad { flex: 0 0 130px; }
+.ask-sched-min, .ask-sched-time { flex: 0 0 92px; }
+.ask-sched-row .btn { min-height: 30px; padding: 4px 10px; font-size: var(--font-xs); box-shadow: none; }
 .ask-sched-lbl { font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); white-space: nowrap; }
+/* The schedule in words plus whether it has actually run — the answer to "is
+   this thing on?", which the controls above it cannot give. */
+.ask-sched-when { flex: 1 1 100%; font: 400 11px/1.4 var(--font-sans); color: var(--color-text-secondary); }
+.ask-sched-note { font: 400 12px/1 var(--font-sans); color: var(--color-text-secondary); align-self: center; }
+.ask-sched-note--warn { color: var(--color-accent-bright); }
 /* A scheduled question is marked so it never reads as one the owner forgot
    writing. Border, not colour: gain/loss colour on this desk means P&L. */
 .ask-q--sched { border-left: 2px solid var(--color-accent-bright); padding-left: 6px; }

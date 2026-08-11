@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260807c">
-<link rel="stylesheet" href="styles/components.css?v=20260807c">
+<link rel="stylesheet" href="styles/tokens.css?v=20260811a">
+<link rel="stylesheet" href="styles/components.css?v=20260811a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -891,10 +891,11 @@
        THAT list, so the dialog only needs the symbols. Free text for the same
        reason the full editor uses it — the owner's source is a pasted broker
        table — and the RPC re-validates whatever arrives. -->
-  <!-- Scheduled asks (owner request 2026-07-31): questions the desk asks itself
-       on a timer, answered into the Ask-the-desk thread. Client-side by design
-       — see the note on ASK_SCHED_KEY in app.js — so it fires only while the
-       dashboard is open. Rows are built by openAskSched(). -->
+  <!-- Scheduled asks (owner request 2026-07-31; moved server-side 2026-08-11):
+       questions the desk asks ITSELF on a timer, answered into the
+       Ask-the-desk thread. The roster lives in desk_ask_schedule (desk_017) and
+       pg_cron fires it, so it runs with the dashboard shut — the whole point of
+       an 8am summary. Rows are built by openAskSched(). -->
   <div class="modal-backdrop" id="askSchedBackdrop" hidden>
     <section class="panel modal-panel" id="askSchedPanel" aria-labelledby="askSchedTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
@@ -902,10 +903,13 @@
         <button type="button" class="btn btn-secondary ml-auto" id="askSchedCloseBtn" aria-label="Close">✕</button>
       </div>
       <div class="panel-body">
-        <p class="lock-explain">The desk asks these itself and answers into the thread. They run only while this page is open, at most one per minute, and no more often than every 15 minutes each.</p>
+        <p class="lock-explain">The desk asks these itself on the schedule you set and answers into the thread — it does not need this page open. All times are Pacific. Up to 10 questions; each firing spends real Claude quota.</p>
         <div id="askSchedList"></div>
+        <p class="lock-error" id="askSchedErr" hidden></p>
         <div class="wl-edit-actions">
           <button type="button" class="btn btn-secondary" id="askSchedAdd">+ Add question</button>
+          <button type="button" class="btn" id="askSchedSave">Save</button>
+          <span class="ask-sched-note" id="askSchedNote"></span>
         </div>
       </div>
     </section>
@@ -1184,8 +1188,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260807c"></script>
-<script src="scripts/data.js?v=20260807c"></script>
-<script src="scripts/app.js?v=20260807c"></script>
+<script src="scripts/config.js?v=20260811a"></script>
+<script src="scripts/data.js?v=20260811a"></script>
+<script src="scripts/app.js?v=20260811a"></script>
 </body>
 </html>
