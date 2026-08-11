@@ -4,8 +4,7 @@
       "/opt/node22/bin/node",
       "/home/user/claude.trading/.github/scripts/ui-tests/node_modules/.bin/playwright",
       "test",
-      "--list",
-      "--project=iphone"
+      "--list"
     ],
     "configFile": "/home/user/claude.trading/.github/scripts/ui-tests/playwright.config.js",
     "rootDir": "/home/user/claude.trading/.github/scripts/ui-tests/tests",
@@ -91,6 +90,706 @@
               "timeout": 30000,
               "annotations": [],
               "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-a7a8556a291f47ea1510",
+          "file": "app.spec.js",
+          "line": 271,
+          "column": 1
+        },
+        {
+          "title": "S2: auth gate discovered and credential accepted",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-829af591ae0e202d211f",
+          "file": "app.spec.js",
+          "line": 316,
+          "column": 1
+        },
+        {
+          "title": "S3: interactive elements discovered and exercised without errors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-d97f57502a9c5a3e9198",
+          "file": "app.spec.js",
+          "line": 386,
+          "column": 1
+        },
+        {
+          "title": "S4: no horizontal overflow at 390px mobile viewport",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-46c621fbadafca3d0f80",
+          "file": "app.spec.js",
+          "line": 567,
+          "column": 1
+        },
+        {
+          "title": "NAV: back navigation strictly unwinds (no loop)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-0cc4d1bb9ed211801580",
+          "file": "app.spec.js",
+          "line": 685,
+          "column": 1
+        },
+        {
+          "title": "CTRL: no duplicated primary action control",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-41dddd7f2eefb08a76a9",
+          "file": "app.spec.js",
+          "line": 775,
+          "column": 1
+        },
+        {
+          "title": "S5: demo mode shows DEMO lamps on every panel",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-2cd80d26035ff0365133",
+          "file": "app.spec.js",
+          "line": 804,
+          "column": 1
+        },
+        {
+          "title": "S6: positions table sorts on header click",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-31aa713c1cc0dac52805",
+          "file": "app.spec.js",
+          "line": 813,
+          "column": 1
+        },
+        {
+          "title": "S10: valid PIN unlocks accounts (live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-91cf62df581a885d80c3",
+          "file": "app.spec.js",
+          "line": 849,
+          "column": 1
+        },
+        {
+          "title": "S11: invalid PIN shows an error and stays locked (live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-73083885132bf3a3e253",
+          "file": "app.spec.js",
+          "line": 861,
+          "column": 1
+        },
+        {
+          "title": "S14: desk lamp reads LIVE/EOD off the market feed (live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-66f55790bad3f8f9da88",
+          "file": "app.spec.js",
+          "line": 885,
+          "column": 1
+        },
+        {
+          "title": "S12: charts workbench renders panes and controls respond",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-4ff730dea4bd6e4885e5",
+          "file": "app.spec.js",
+          "line": 895,
+          "column": 1
+        },
+        {
+          "title": "S13: heatmap map-filter cuts and period select respond",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-872f25d2e0910d26d0ac",
+          "file": "app.spec.js",
+          "line": 962,
+          "column": 1
+        },
+        {
+          "title": "S20: watchlist timeframe control redraws the tile sparklines",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-64222898555fea3fa947",
+          "file": "app.spec.js",
+          "line": 1042,
+          "column": 1
+        },
+        {
+          "title": "S31: create and delete a list; delete is behind the lock",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-91585e60680aadb58dd2",
+          "file": "app.spec.js",
+          "line": 1078,
+          "column": 1
+        },
+        {
+          "title": "S21: watchlist edits need no unlock; removal needs a double-click",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-86eb6fdfb8dce94256eb",
+          "file": "app.spec.js",
+          "line": 1180,
+          "column": 1
+        },
+        {
+          "title": "S26: tiles drag to arrange; sort snaps to Manual; the tray persists",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-a34472fc7cb48a8fa8f0",
+          "file": "app.spec.js",
+          "line": 1299,
+          "column": 1
+        },
+        {
+          "title": "S22: quick edits resolve the right band when two lists share a title",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-7e5971241f474b0d6ffe",
+          "file": "app.spec.js",
+          "line": 1388,
+          "column": 1
+        },
+        {
+          "title": "S24: a failed accounts load keeps the desk authenticated",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-290cabf8743b89d3bd7c",
+          "file": "app.spec.js",
+          "line": 1416,
+          "column": 1
+        },
+        {
+          "title": "S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-c08d5e276426b223fc6b",
+          "file": "app.spec.js",
+          "line": 1469,
+          "column": 1
+        },
+        {
+          "title": "S23: post-market prints render, and only where the instrument trades",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-9973402234b4241eebce",
+          "file": "app.spec.js",
+          "line": 1567,
+          "column": 1
+        },
+        {
+          "title": "S15: assistant remembers across a reload (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-ca5fa96fb97d1c045a45",
+          "file": "app.spec.js",
+          "line": 1652,
+          "column": 1
+        },
+        {
+          "title": "S16: a research question renders an answer (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-a9c363a3da12df9ae62e",
+          "file": "app.spec.js",
+          "line": 1661,
+          "column": 1
+        },
+        {
+          "title": "S17: an off-page ticker returns an answer via live data (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-34e802af546baeb2fc73",
+          "file": "app.spec.js",
+          "line": 1669,
+          "column": 1
+        },
+        {
+          "title": "S18: gives a directional view, not a refusal; disclaimer stays (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-f9909bb3bf2b66d86c2b",
+          "file": "app.spec.js",
+          "line": 1677,
+          "column": 1
+        },
+        {
+          "title": "S19: clear empties the conversation (opt-in, live only)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-3baddde696a64ee8c67c",
+          "file": "app.spec.js",
+          "line": 1686,
+          "column": 1
+        },
+        {
+          "title": "S27: watchlist tiles are half-width, stacked, and never clip a value",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-64cded663db713721721",
+          "file": "app.spec.js",
+          "line": 1705,
+          "column": 1
+        },
+        {
+          "title": "S28: the charts quote cache is timestamped and its TTL is session-aware",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-7a4c3ff1860a94081d24",
+          "file": "app.spec.js",
+          "line": 1756,
+          "column": 1
+        },
+        {
+          "title": "S29: the scheduled-ask roster round-trips by id, and the row cap holds",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-f38e85f7656b783f1b9f",
+          "file": "app.spec.js",
+          "line": 1789,
+          "column": 1
+        },
+        {
+          "title": "S30: watchlist writes carry the roster version they read",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-aecc42de46d85862c6cc",
+          "file": "app.spec.js",
+          "line": 1899,
+          "column": 1
+        },
+        {
+          "title": "S32: a question can be interrupted, and the stop is not silent",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-cbf2c7de87e67e990b64",
+          "file": "app.spec.js",
+          "line": 1968,
+          "column": 1
+        },
+        {
+          "title": "S33: verify is armed per question and disarms itself after an answer",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-eaf3f1faa31840765477",
+          "file": "app.spec.js",
+          "line": 2023,
+          "column": 1
+        },
+        {
+          "title": "S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-a245cd9f10032a8cc044",
+          "file": "app.spec.js",
+          "line": 2096,
+          "column": 1
+        },
+        {
+          "title": "S35: a tile opens a detail window; double-click still removes",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-cbd219191369f6934e9a",
+          "file": "app.spec.js",
+          "line": 2195,
+          "column": 1
+        },
+        {
+          "title": "S36: the Pro 1 and Pro 2 spans survive a reload, and a bad one falls back",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chrome",
+              "projectName": "mobile-chrome",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-12c78914bdc4c5ea1d1c",
+          "file": "app.spec.js",
+          "line": 2277,
+          "column": 1
+        },
+        {
+          "title": "S1: page loads without JS errors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
               "projectId": "iphone",
               "projectName": "iphone",
               "results": [],
@@ -99,7 +798,7 @@
           ],
           "id": "a510cc93a867214a2ea0-ae2441856adffb5aacb4",
           "file": "app.spec.js",
-          "line": 219,
+          "line": 271,
           "column": 1
         },
         {
@@ -119,7 +818,7 @@
           ],
           "id": "a510cc93a867214a2ea0-fdde49acf8da1ea450ef",
           "file": "app.spec.js",
-          "line": 271,
+          "line": 316,
           "column": 1
         },
         {
@@ -139,7 +838,7 @@
           ],
           "id": "a510cc93a867214a2ea0-61184dfc09872d7b2b3c",
           "file": "app.spec.js",
-          "line": 341,
+          "line": 386,
           "column": 1
         },
         {
@@ -159,7 +858,7 @@
           ],
           "id": "a510cc93a867214a2ea0-66a509a0252a5bef41d7",
           "file": "app.spec.js",
-          "line": 545,
+          "line": 567,
           "column": 1
         },
         {
@@ -179,7 +878,7 @@
           ],
           "id": "a510cc93a867214a2ea0-172cf251b2335b292e74",
           "file": "app.spec.js",
-          "line": 663,
+          "line": 685,
           "column": 1
         },
         {
@@ -199,7 +898,7 @@
           ],
           "id": "a510cc93a867214a2ea0-4003b273dc3a36b94525",
           "file": "app.spec.js",
-          "line": 753,
+          "line": 775,
           "column": 1
         },
         {
@@ -219,7 +918,7 @@
           ],
           "id": "a510cc93a867214a2ea0-21ac24758bf880f28f16",
           "file": "app.spec.js",
-          "line": 782,
+          "line": 804,
           "column": 1
         },
         {
@@ -239,7 +938,7 @@
           ],
           "id": "a510cc93a867214a2ea0-87e248c918adf8056408",
           "file": "app.spec.js",
-          "line": 791,
+          "line": 813,
           "column": 1
         },
         {
@@ -259,7 +958,7 @@
           ],
           "id": "a510cc93a867214a2ea0-7acf17178a7ee7aefb2b",
           "file": "app.spec.js",
-          "line": 817,
+          "line": 849,
           "column": 1
         },
         {
@@ -279,7 +978,7 @@
           ],
           "id": "a510cc93a867214a2ea0-24e4156e3c978349e514",
           "file": "app.spec.js",
-          "line": 829,
+          "line": 861,
           "column": 1
         },
         {
@@ -299,7 +998,7 @@
           ],
           "id": "a510cc93a867214a2ea0-c47c3cd5d96e86f49438",
           "file": "app.spec.js",
-          "line": 853,
+          "line": 885,
           "column": 1
         },
         {
@@ -319,7 +1018,7 @@
           ],
           "id": "a510cc93a867214a2ea0-430584ab5751035fecc4",
           "file": "app.spec.js",
-          "line": 863,
+          "line": 895,
           "column": 1
         },
         {
@@ -339,7 +1038,7 @@
           ],
           "id": "a510cc93a867214a2ea0-f9ecb3f5ee38e6ec6751",
           "file": "app.spec.js",
-          "line": 921,
+          "line": 962,
           "column": 1
         },
         {
@@ -359,7 +1058,27 @@
           ],
           "id": "a510cc93a867214a2ea0-5020c74840df4ffcc7a7",
           "file": "app.spec.js",
-          "line": 972,
+          "line": 1042,
+          "column": 1
+        },
+        {
+          "title": "S31: create and delete a list; delete is behind the lock",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-153c73d5cdeefd0f4a27",
+          "file": "app.spec.js",
+          "line": 1078,
           "column": 1
         },
         {
@@ -379,7 +1098,7 @@
           ],
           "id": "a510cc93a867214a2ea0-f7dc42da852f4dc7a6c6",
           "file": "app.spec.js",
-          "line": 1008,
+          "line": 1180,
           "column": 1
         },
         {
@@ -399,7 +1118,7 @@
           ],
           "id": "a510cc93a867214a2ea0-71962c8c639f3804b0ab",
           "file": "app.spec.js",
-          "line": 1118,
+          "line": 1299,
           "column": 1
         },
         {
@@ -419,7 +1138,7 @@
           ],
           "id": "a510cc93a867214a2ea0-18faad557bbc488efc0a",
           "file": "app.spec.js",
-          "line": 1207,
+          "line": 1388,
           "column": 1
         },
         {
@@ -439,7 +1158,7 @@
           ],
           "id": "a510cc93a867214a2ea0-5c1ceacb1a5218b8d89f",
           "file": "app.spec.js",
-          "line": 1235,
+          "line": 1416,
           "column": 1
         },
         {
@@ -459,7 +1178,7 @@
           ],
           "id": "a510cc93a867214a2ea0-4473c22e11aa4c044a4d",
           "file": "app.spec.js",
-          "line": 1288,
+          "line": 1469,
           "column": 1
         },
         {
@@ -479,7 +1198,7 @@
           ],
           "id": "a510cc93a867214a2ea0-b020b9bd22041e274956",
           "file": "app.spec.js",
-          "line": 1386,
+          "line": 1567,
           "column": 1
         },
         {
@@ -499,7 +1218,7 @@
           ],
           "id": "a510cc93a867214a2ea0-5fdd5454354421b757c5",
           "file": "app.spec.js",
-          "line": 1454,
+          "line": 1652,
           "column": 1
         },
         {
@@ -519,7 +1238,7 @@
           ],
           "id": "a510cc93a867214a2ea0-49cc327028760a7deaf0",
           "file": "app.spec.js",
-          "line": 1463,
+          "line": 1661,
           "column": 1
         },
         {
@@ -539,7 +1258,7 @@
           ],
           "id": "a510cc93a867214a2ea0-4f4b707914ec38aeaf41",
           "file": "app.spec.js",
-          "line": 1471,
+          "line": 1669,
           "column": 1
         },
         {
@@ -559,7 +1278,7 @@
           ],
           "id": "a510cc93a867214a2ea0-d112629404a56fa2360c",
           "file": "app.spec.js",
-          "line": 1479,
+          "line": 1677,
           "column": 1
         },
         {
@@ -579,7 +1298,7 @@
           ],
           "id": "a510cc93a867214a2ea0-a0619eeacf0c17d75cef",
           "file": "app.spec.js",
-          "line": 1488,
+          "line": 1686,
           "column": 1
         },
         {
@@ -599,7 +1318,7 @@
           ],
           "id": "a510cc93a867214a2ea0-842d54ae06441bb183ac",
           "file": "app.spec.js",
-          "line": 1507,
+          "line": 1705,
           "column": 1
         },
         {
@@ -619,11 +1338,11 @@
           ],
           "id": "a510cc93a867214a2ea0-974e7b6f66a302782594",
           "file": "app.spec.js",
-          "line": 1558,
+          "line": 1756,
           "column": 1
         },
         {
-          "title": "S29: scheduled asks persist, and the cost guards hold at the save boundary",
+          "title": "S29: the scheduled-ask roster round-trips by id, and the row cap holds",
           "ok": true,
           "tags": [],
           "tests": [
@@ -637,9 +1356,129 @@
               "status": "skipped"
             }
           ],
-          "id": "a510cc93a867214a2ea0-fa54927ddbd0fbde179e",
+          "id": "a510cc93a867214a2ea0-e8c88b2fa45061cef815",
           "file": "app.spec.js",
-          "line": 1586,
+          "line": 1789,
+          "column": 1
+        },
+        {
+          "title": "S30: watchlist writes carry the roster version they read",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-1a1976a6b81c1f678f21",
+          "file": "app.spec.js",
+          "line": 1899,
+          "column": 1
+        },
+        {
+          "title": "S32: a question can be interrupted, and the stop is not silent",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-26ac429370f1e6119d4e",
+          "file": "app.spec.js",
+          "line": 1968,
+          "column": 1
+        },
+        {
+          "title": "S33: verify is armed per question and disarms itself after an answer",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-e6ef2288bf0cc64c4a0d",
+          "file": "app.spec.js",
+          "line": 2023,
+          "column": 1
+        },
+        {
+          "title": "S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-3cd84e89cd58d975bc3a",
+          "file": "app.spec.js",
+          "line": 2096,
+          "column": 1
+        },
+        {
+          "title": "S35: a tile opens a detail window; double-click still removes",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-0fcb3728d49f121b688b",
+          "file": "app.spec.js",
+          "line": 2195,
+          "column": 1
+        },
+        {
+          "title": "S36: the Pro 1 and Pro 2 spans survive a reload, and a bad one falls back",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "iphone",
+              "projectName": "iphone",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "a510cc93a867214a2ea0-ff01b0d73918a96852f1",
+          "file": "app.spec.js",
+          "line": 2277,
           "column": 1
         }
       ]
@@ -647,10 +1486,10 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-08-01T00:27:27.111Z",
-    "duration": 368.952,
+    "startTime": "2026-08-11T16:17:16.535Z",
+    "duration": 275.99799999999993,
     "expected": 0,
-    "skipped": 28,
+    "skipped": 70,
     "unexpected": 0,
     "flaky": 0
   }
