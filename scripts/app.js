@@ -2505,6 +2505,60 @@ function buildAskContext() {
        2026-07-23: it was echoing UTC straight from the feed). */
     marketAsOf: DESK.mode === 'demo' ? lastLabel() : (DESK.liveStamp ? fmtStampDateTime(DESK.liveStamp.generatedAt) : null),
     headlines: (d.news || []).slice(0, 10).map(n => n.h),
+    /* ── the rest of the desk (owner ruling 2026-08-10) ──────────────────────
+       "The desk AI has to be aware of my entire dashboard — that's the whole
+       purpose, so I can control which stocks it can focus on." Until now the
+       assistant saw accounts, the Markets tiles and headlines, so a question
+       about "my watchlist" had nothing to answer from — it did not know what
+       was on it.
+       The WATCHLIST goes in FULL: it is the owner's focus list, and a summary
+       would defeat the point of curating it. Names only where a quote is
+       missing, so an unresolved ticker is visible as such rather than silently
+       dropped.
+       The HEATMAP goes in SUMMARY: the sp500 cut alone is ~500 tiles and r2k is
+       2000, which would dominate the payload of every question for a panel the
+       owner reads as a picture. Sector aggregates plus the strongest movers
+       carry the shape of the tape; anything more specific the assistant can
+       pull itself with get_quote / get_technicals, which reach any symbol and
+       return the SAME stochastics the Pro panes draw. */
+    watchlist: (wlState.payload && Array.isArray(wlState.payload.lists))
+      ? wlState.payload.lists.map(l => ({
+        title: l.title,
+        symbols: (l.rows || []).map(r => ({ sym: r.sym, last: r.last, dayChgPct: r.pct })),
+        ...(Array.isArray(l.missing) && l.missing.length ? { unresolved: l.missing } : {}),
+      }))
+      : null,
+    watchlistRange: wlState.range || null,
+    heatmap: buildHeatmapContext(),
+    /* the Pro panes as rendered — same numbers the owner is looking at */
+    charts: wbReadings,
+  };
+}
+
+/* Sector aggregates + the sharpest movers from whichever cut is on screen —
+   never the whole tile set (see buildAskContext). `cut` is named so the model
+   says "in the S&P 500 cut" rather than implying it looked at everything. */
+function buildHeatmapContext() {
+  const hm = heatState && heatState.hm;
+  if (!hm || !Array.isArray(hm.sectors)) return null;
+  const tiles = [];
+  const sectors = [];
+  for (const sec of hm.sectors) {
+    const list = (sec.tiles || []).filter(t => Number.isFinite(t.pct));
+    if (!list.length) continue;
+    const avg = list.reduce((a, t) => a + t.pct, 0) / list.length;
+    sectors.push({ name: sec.name, avgDayChgPct: Number(avg.toFixed(2)), names: list.length });
+    for (const t of list) tiles.push({ sym: t.sym, dayChgPct: t.pct, sector: sec.name });
+  }
+  if (!sectors.length) return null;
+  const byMove = [...tiles].sort((a, b) => b.dayChgPct - a.dayChgPct);
+  return {
+    cut: mapView.label || mapView.key || null,
+    asOf: hm.asOf || null,
+    names: tiles.length,
+    sectors: sectors.sort((a, b) => b.avgDayChgPct - a.avgDayChgPct),
+    topGainers: byMove.slice(0, 10),
+    topLosers: byMove.slice(-10).reverse(),
   };
 }
 
@@ -5107,8 +5161,50 @@ function renderCharts(data, lamp) {
     const liveIso = liveAt.replace(' ', 'T') + ':00Z';
     applyStamp(document.getElementById('chartsStamp'), liveIso, liveAt.slice(0, 10), 'age');
   }
+  captureWbReadings(panes);
   syncZoomPressed();
   syncLockPressed();
+}
+
+/* ── what the CHART PANES currently show, for the assistant ──────────────────
+   Owner ruling 2026-08-10: "I want to make sure the stochastic is also visible
+   to the desk." The assistant already has `get_technicals`, which recomputes
+   these for any symbol on demand — but that answers about a symbol it chose,
+   not about the pane the owner is looking at. This captures the READ VALUES
+   from the panes as rendered, so "what does my stochastic say" and what is on
+   screen are the same numbers.
+   Taken from the assembled pane list rather than recomputed: `daily()` is a
+   closure inside renderCharts, and a second computation could drift from the
+   drawn one — which is the whole failure this is meant to avoid. */
+let wbReadings = null;
+function captureWbReadings(panes) {
+  const last = arr => {
+    if (!Array.isArray(arr)) return null;
+    for (let i = arr.length - 1; i >= 0; i--) if (Number.isFinite(arr[i])) return Number(arr[i].toFixed(2));
+    return null;
+  };
+  const out = [];
+  for (const [bars, st, , title, opts] of panes) {
+    if (!opts || !opts.tier) continue;
+    /* Pro 2's SIGNAL strip is the weekly one — it is what colours the candles —
+       so report that as the pane's stochastic and label it. Pro 1 and Pro 3
+       report their own native strip. */
+    const signal = opts.stW || st;
+    out.push({
+      pane: opts.tier,
+      sym: opts.sym,
+      caption: title,
+      lastClose: bars && bars.c ? last(bars.c) : null,
+      stochK: signal ? last(signal.k) : null,
+      stochD: signal ? last(signal.d) : null,
+      /* the pane's OWN caption, not a guess from the tier: Pro 3 falls back to
+         EOD daily bars when the intraday feed is absent, and labelling that
+         "intraday 10-3-3" would name a scale the pane is not showing */
+      stochScale: (opts.stW ? opts.stochWCaption : opts.stochCaption) || null,
+      rsi14: opts.rsi ? last(opts.rsi.v || opts.rsi) : null,
+    });
+  }
+  wbReadings = out.length ? out : null;
 }
 
 /* the per-pane settings popover (their platform's gear menu, in our idiom):
