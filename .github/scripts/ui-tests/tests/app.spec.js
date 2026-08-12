@@ -2236,3 +2236,55 @@ test('S36: the Pro 1 and Pro 2 spans survive a reload, and a bad one falls back'
   await page.waitForTimeout(800);
   expect(await pressed(), 'an unrecognised span falls back to the default').toEqual({ p1: '3M', p2: '6M' });
 });
+
+test('S37: every pane pins a last-price tab, and panning does not restate it', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(800);
+
+  // The tab is a filled pentagon + its inverted label; read both so a flag
+  // drawn with no number (or a number with no flag) fails rather than passes.
+  const tabs = async () => page.evaluate(() => {
+    const svg = document.getElementById('wbChart');
+    const flags = [...svg.querySelectorAll('path')]
+      .filter(e => e.getAttribute('fill') === 'var(--color-text-primary)');
+    const labels = [...svg.querySelectorAll('text')]
+      .filter(e => e.getAttribute('fill') === 'var(--color-bg)');
+    return {
+      flags: flags.length,
+      labels: labels.map(e => e.textContent),
+      // y of each flag's tip, to confirm it is inside its own pane
+      ys: flags.map(e => Number(/M[\d.]+ ([\d.]+)/.exec(e.getAttribute('d'))[1])),
+      height: svg.viewBox.baseVal.height,
+    };
+  });
+
+  const before = await tabs();
+  expect(before.flags, 'one tab per pane — Pro 1, Pro 2, Pro 3').toBe(3);
+  expect(before.labels).toHaveLength(3);
+  // all three panes chart the same symbol, so they must agree on its price;
+  // a per-pane number would mean the tab is reading the visible window
+  expect(new Set(before.labels).size, 'all three panes show the same price').toBe(1);
+  expect(before.labels[0]).toMatch(/^[\d,]+\.\d\d$/);
+  for (const y of before.ys) {
+    expect(y).toBeGreaterThan(0);
+    expect(y).toBeLessThan(before.height);
+  }
+
+  // Pan Pro 1 back through history. The newest bar leaves the viewport, but
+  // "the last price" is a fact about now, not about the right edge — if the
+  // tab were drawn from the last VISIBLE bar it would now label an old close
+  // as the current price.
+  const box = await page.locator('#wbChart').boundingBox();
+  await page.mouse.move(box.x + box.width * 0.15, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.30, box.y + box.height * 0.2, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+
+  const after = await tabs();
+  expect(after.flags, 'the tab survives a pan').toBe(3);
+  expect(after.labels[0], 'the price is the newest close, not the last visible bar')
+    .toBe(before.labels[0]);
+});
