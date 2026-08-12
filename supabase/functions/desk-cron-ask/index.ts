@@ -328,7 +328,17 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
         .map((p: Any) => ({ sym: p.sym, dayPct: p.dayPct })),
     })),
     market: (market?.tiles || []).map((t: Any) => ({ name: t.name, last: t.last, dayChgPct: t.chg })),
-    headlines: (news?.items || []).slice(0, 12).map((n: Any) => ({ headline: n.h, source: n.src ?? null, sym: n.sym ?? null })),
+    // Ticker association comes from `chips` — desk-news emits
+    // { t, src, h, url, chips: [[sym, dayPct], ...] } and has NO `sym` field.
+    // Reading one silently produced `sym: null` on every headline, stripping
+    // exactly the link that lets the model tie news to a holding or a
+    // watchlist name (Codex review, PR #241).
+    headlines: (news?.items || []).slice(0, 12).map((n: Any) => ({
+      headline: n.h,
+      source: n.src ?? null,
+      at: n.t ?? null,
+      symbols: (Array.isArray(n.chips) ? n.chips : []).map((c: Any) => ({ sym: c[0], dayPct: c[1] ?? null })),
+    })),
     // The watchlist goes in FULL — it is the curated focus list, and summarising
     // it would defeat the point of curating it (the PR #241 ruling).
     watchlist: (watchlist?.lists || []).map((l: Any) => ({
@@ -378,23 +388,45 @@ Deno.serve(async (req) => {
     if (!users?.length) throw new Error('no owner row in desk_users');
     const userId = users[0].id;
 
-    const stamp = async (id: number, status: string) => {
-      await fetch(`${url}/rest/v1/desk_ask_schedule?id=eq.${id}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ last_run_at: new Date().toISOString(), last_status: status.slice(0, 200) }),
-      }).catch(() => {});
+    /* Returns whether the write actually landed. This is NOT defensive
+       tidiness: PostgREST answers a rejected PATCH with a 4xx/5xx, which
+       `fetch` RESOLVES rather than throwing, so the old bare `.catch(() => {})`
+       could not see a failure at all. The pre-run stamp is what claims the
+       slot, so a silently-lost one leaves the row still due and it re-fires on
+       every tick for the whole CATCHUP_MIN window — up to 18 duplicate briefs,
+       emails and Claude tool loops from a single failed write (Codex review,
+       PR #241). */
+    const stamp = async (id: number, status: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`${url}/rest/v1/desk_ask_schedule?id=eq.${id}`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ last_run_at: new Date().toISOString(), last_status: status.slice(0, 200) }),
+        });
+        return res.ok;
+      } catch { return false; }
     };
 
     const context = await buildContext(userId, headers);
     const out: Any[] = [];
 
     for (const { r } of due) {
-      // Stamp BEFORE the call. desk-ask runs a bounded tool loop that can take
-      // a minute or more; without this, a run that outlives the next 5-minute
-      // tick would be started again, and a run that throws would be retried on
-      // every tick inside the catch-up window — both spend real Claude quota.
-      await stamp(r.id, 'running');
+      // Stamp BEFORE the call, and treat it as CLAIMING the slot. desk-ask runs
+      // a bounded tool loop that can take a minute or more; without this, a run
+      // that outlives the next 5-minute tick would be started again, and a run
+      // that throws would be retried on every tick inside the catch-up window —
+      // both spend real Claude quota.
+      //
+      // If the claim does not land we must NOT proceed: the whole protection
+      // above rests on last_run_at having been written, so running anyway would
+      // send the brief AND leave the row due to send it again five minutes
+      // later. Skipping costs one delayed brief; proceeding costs up to 18
+      // duplicates. The next tick retries the claim, so a transient PostgREST
+      // blip self-heals well inside the catch-up window.
+      if (!await stamp(r.id, 'running')) {
+        out.push({ id: r.id, status: 'skipped: could not claim the slot' });
+        continue;
+      }
       let status = 'ok';
       try {
         const ar = await fetch(`${url}/functions/v1/desk-ask`, {
@@ -412,8 +444,13 @@ Deno.serve(async (req) => {
       } catch (e) {
         status = 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
       }
-      await stamp(r.id, status);
-      out.push({ id: r.id, status });
+      /* The post-run stamp is best-effort, unlike the claim above: last_run_at
+         was already written, so a failure here cannot re-fire the row — it only
+         loses the status text. Said out loud in the response rather than
+         swallowed, because the editor's status line is how the owner sees the
+         scheduler is healthy, and a stale one should not read as a clean run. */
+      const recorded = await stamp(r.id, status);
+      out.push(recorded ? { id: r.id, status } : { id: r.id, status, statusNotRecorded: true });
     }
 
     return reply(200, { ok: true, status: 'ran', ran: out });
