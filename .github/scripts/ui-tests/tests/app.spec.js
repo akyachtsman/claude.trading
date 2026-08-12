@@ -2288,3 +2288,70 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
   expect(after.labels[0], 'the price is the newest close, not the last visible bar')
     .toBe(before.labels[0]);
 });
+
+test('S38: the news ticker filter starts clear, cuts the list, and says why it is empty', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('./?demo=1');
+  const box = page.locator('#newsFilter');
+  await expect(box).toBeVisible({ timeout: 20000 });
+  await expect(page.locator('#newsList .news-row').first()).toBeVisible();
+
+  const rows = () => page.locator('#newsList .news-row').count();
+  // The owner's rule: clear by default, so all important news comes through.
+  await expect(box).toHaveValue('');
+  const all = await rows();
+  expect(all).toBeGreaterThan(1);
+
+  // filter on a ticker the feed actually carries
+  const sym = await page.evaluate(() => document.querySelector('#newsList .chip span')?.textContent);
+  await box.fill(sym);
+  const cut = await rows();
+  expect(cut, 'the filter actually narrows the list').toBeLessThan(all);
+  expect(cut).toBeGreaterThan(0);
+  // and narrows it HONESTLY — every surviving row really references the ticker
+  expect(await page.evaluate(s => [...document.querySelectorAll('#newsList .news-row')]
+    .every(r => r.textContent.toLowerCase().includes(s.toLowerCase())), sym)).toBe(true);
+
+  // a miss must explain itself: an empty RESULT is not an empty FEED, and the
+  // message echoes what was typed (in its original case) so a typo is visible
+  await box.fill('ZZZQQQ');
+  expect(await rows()).toBe(0);
+  await expect(page.locator('.news-filter-empty')).toContainText('ZZZQQQ');
+
+  // Escape is the keyboard route back to "all news"
+  await box.press('Escape');
+  await expect(box).toHaveValue('');
+  expect(await rows()).toBe(all);
+
+  // not persisted — a reload must come back clear, never filtered by a ticker
+  // typed days ago (that would hide the market behind a stale query)
+  await box.fill(sym);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#newsFilter')).toHaveValue('');
+});
+
+test('S39: every pane draws a volume average, spanning the full window', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(800);
+
+  const ma = await page.evaluate(() => {
+    const svg = document.getElementById('wbChart');
+    const paths = [...svg.querySelectorAll('path[data-volma]')];
+    return paths.map(e => {
+      const d = e.getAttribute('d') || '';
+      return { pts: (d.match(/L/g) || []).length + 1, nan: d.includes('NaN'), stroke: e.getAttribute('stroke') };
+    });
+  });
+  expect(ma.length, 'one volume average per pane').toBe(3);
+  expect(ma.every(m => !m.nan), 'no NaN coordinates').toBe(true);
+  // yellow, matching the reference platform and the %D signal line
+  expect(ma.every(m => m.stroke === '#f5c518')).toBe(true);
+
+  // Pro 1 opens on 3M = 63 bars. The average must cover ALL of them: it is
+  // computed from the whole series, so the leading visible bars have a real
+  // 20-period value. Computed from the visible window instead, the line would
+  // start 20 bars in (44 points) and the left edge of the strip would be bare.
+  expect(ma[0].pts, 'the average spans the full visible window, not window-minus-20').toBe(63);
+});

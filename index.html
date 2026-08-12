@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260812a">
-<link rel="stylesheet" href="styles/components.css?v=20260812a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260812b">
+<link rel="stylesheet" href="styles/components.css?v=20260812b">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -364,6 +364,12 @@
   /* News is halved to a fixed reel with its own scrollbar (owner ruling
      2026-07-16): the holdings-first list scrolls in place instead of running
      the full page height. */
+  /* Filter sits between the header and the list, outside #newsList's own
+     scroll box so it stays put while the headlines scroll under it. 16px font
+     is not a style choice: below it, iOS zooms the page on focus. */
+  .news-filter { padding: var(--space-3) var(--space-4) 0; }
+  .news-filter-input { width: 100%; min-height: 36px; padding: 6px 10px; font-size: 16px; }
+  .news-filter-empty { color: var(--color-text-secondary); }
   #newsList { max-height: 460px; overflow-y: auto; }
   #newsList:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
@@ -848,6 +854,15 @@
           <span class="lamp lamp--demo" id="newsLamp">Demo</span>
           <span class="stamp ml-auto" id="newsStamp">—</span>
         </div>
+        <!-- Ticker filter. Deliberately NOT persisted: the owner's rule is
+             "by default it is clear, so all important news comes through", so
+             every load starts unfiltered. type=search gives the native clear
+             (×) affordance, which is the fastest way back to that default. -->
+        <div class="news-filter">
+          <input id="newsFilter" class="input news-filter-input" type="search"
+                 placeholder="Filter by ticker…" aria-label="Filter news by stock ticker"
+                 autocomplete="off" spellcheck="false">
+        </div>
         <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
       </section>
     </aside>
@@ -1184,8 +1199,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260812a"></script>
-<script src="scripts/data.js?v=20260812a"></script>
-<script src="scripts/app.js?v=20260812a"></script>
+<script src="scripts/config.js?v=20260812b"></script>
+<script src="scripts/data.js?v=20260812b"></script>
+<script src="scripts/app.js?v=20260812b"></script>
 </body>
 </html>

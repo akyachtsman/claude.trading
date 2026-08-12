@@ -2408,7 +2408,43 @@ function wireWatchlistEditor() {
   if (save) save.addEventListener('click', saveWlEditor);
 }
 
+/* Ticker filter for the news panel (owner request 2026-08-12). Held in memory
+   only — never localStorage: the owner's rule is that it starts CLEAR on every
+   load so all important news comes through by default, and a persisted filter
+   would silently hide the market behind a ticker typed days ago.
+
+   It filters the LOADED feed rather than fetching that ticker's news upstream,
+   so it can only surface what the current snapshot carries. `lastNews`/
+   `lastNewsLamp` let a keystroke re-render without a refetch, and they are
+   what the poller's next render overwrites. */
+let newsFilter = '';      /* lower-cased, for matching */
+let newsFilterRaw = '';   /* as typed, for echoing back in the empty state */
+let lastNews = null, lastNewsLamp = null;
+/* A row matches on its CHIP SYMBOLS or its headline text. Chips alone are not
+   enough — a feed item about a company is often untagged, and a filter that
+   silently dropped those would look like "no news" on a day the stock moved. */
+function newsRowMatches(n, q) {
+  if (!q) return true;
+  if ((n.chips || []).some(([sym]) => String(sym).toLowerCase().includes(q))) return true;
+  return String(n.h || '').toLowerCase().includes(q);
+}
+function wireNewsFilter() {
+  const box = document.getElementById('newsFilter');
+  if (!box) return;
+  /* `input` (not `change`) so it filters as you type, and it also catches the
+     native ✕ on type=search, which fires input but never change. */
+  box.addEventListener('input', () => {
+    newsFilterRaw = box.value.trim();
+    newsFilter = newsFilterRaw.toLowerCase();
+    if (lastNews) renderNews(lastNews, lastNewsLamp);
+  });
+  /* Escape clears without reaching for the mouse — the way back to "all news". */
+  box.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape' && box.value) { ev.stopPropagation(); box.value = ''; box.dispatchEvent(new Event('input')); }
+  });
+}
 function renderNews(news, lamp) {
+  lastNews = news; lastNewsLamp = lamp;
   const list = document.getElementById('newsList');
   while (list.firstChild) list.removeChild(list.firstChild);
   const lampEl = document.getElementById('newsLamp');
@@ -2422,7 +2458,16 @@ function renderNews(news, lamp) {
     list.appendChild(el('p', 'stamp', 'No headlines in the latest snapshot — check back after the next refresh.'));
     return;
   }
-  for (const n of news) {
+  const shown = news.filter(n => newsRowMatches(n, newsFilter));
+  /* An empty RESULT is a different fact from an empty FEED, and says so: the
+     feed is healthy and the filter is why the panel is bare. Naming the ticker
+     back is what stops a typo reading as "no news about my stock". */
+  if (!shown.length) {
+    list.appendChild(el('p', 'stamp news-filter-empty',
+      'No headlines matching “' + newsFilterRaw + '” in the latest snapshot. Clear the filter to see all news.'));
+    return;
+  }
+  for (const n of shown) {
     const row = el('div', 'news-row');
     row.appendChild(el('span', 'news-time', n.t));
     const main = el('div', 'news-main');
@@ -2462,9 +2507,23 @@ function buildAskContext() {
   return {
     mode: DESK.mode,
     asOf: DESK.mode === 'demo' ? lastLabel() : (DESK.privateAsOf || null),
+    /* HOLDINGS ARE TICKERS ONLY — no money reaches the assistant (owner ruling
+       2026-08-12: "I don't want this guy concerned about my liquidity or
+       looking at my account balance — just cold, hard fact on buy or sell").
+       nav, cash, dayPnl, totalUnrealized and the per-position qty/mkt/unrl are
+       all withheld. This is the enforcement point, NOT the system prompt: a
+       prompt rule asks the model not to dwell on a number it can still see,
+       whereas withholding it means there is nothing to weigh. It is why the
+       assistant used to answer "your position is the largest thing in the
+       account going in" — it was handed the sizes and reasoned from them.
+
+       The SYMBOLS stay, so "should I sell my GDX" still knows GDX is held and
+       judges the stock on its merits. dayPct stays with them because it is the
+       ticker's own market move — public data about the stock, not a fact about
+       the account. Anything derived from balance or share count is gone. */
     accounts: (d.accounts || []).map(a => ({
-      label: a.label, nav: a.nav, dayPnl: a.day, totalUnrealized: a.total, cash: a.cash,
-      positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: p.dayPct, unrl: p.unrl })),
+      label: a.label,
+      positions: (a.positions || []).map(p => ({ sym: p.sym, dayPct: p.dayPct })),
     })),
     /* The extended print rides along when there is one (Codex review, PR #199).
        Without it the assistant answers "how did the market close" with the
@@ -4672,6 +4731,38 @@ function renderCharts(data, lamp) {
     }
     /* line style draws closes in gain-green, like the reference platform */
     if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
+
+    /* VOLUME AVERAGE — the reference platform's yellow line over the histogram
+       (owner request 2026-08-12). 20-period, the standard volume MA: it is what
+       makes a bar readable as heavy or light, since "big volume" only means
+       anything against the recent norm.
+
+       Three things are deliberate. It is drawn from the WHOLE series, not the
+       visible window, so the leading visible bars carry a real average instead
+       of the line starting 20 bars into the pane — the same rule the Pro 2
+       colour state machine follows, and for the same reason: a line that
+       changes as you zoom is not trustworthy. It uses a ROLLING sum rather
+       than re-summing 20 bars per point, because the 'All' span is ~9,000 bars
+       across three panes and the per-bar form is the shape of work that cost
+       this project a 2.6s render once already. And it CLAMPS to the strip top:
+       vMax is the max of the visible window, while the average reaches back
+       before it, so an average above everything on screen would otherwise draw
+       up into the price pane. */
+    const VOL_MA = 20;
+    if (vMax && bars.v.length >= VOL_MA) {
+      let vd = '', run = 0;
+      const first = Math.max(i0, VOL_MA - 1);
+      for (let j = first - VOL_MA + 1; j <= first; j++) run += bars.v[j];
+      for (let i = first; i < end; i++) {
+        if (i > first) run += bars.v[i] - bars.v[i - VOL_MA];
+        const yv = Math.max(vY, vY + vH - (run / VOL_MA / vMax) * vH);
+        vd += (vd ? 'L' : 'M') + x(i).toFixed(1) + ' ' + yv.toFixed(1);
+      }
+      /* data-volma marks it apart from the stochastic %D lines, which share
+         this yellow — otherwise neither a test nor a reader can tell which
+         yellow path is which. */
+      if (vd) svg.appendChild(svgEl('path', { d: vd, fill: 'none', stroke: WB.dLine, 'stroke-width': 1.2, 'stroke-linejoin': 'round', 'data-volma': '1' }));
+    }
     if (opts.cfg.vol) text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
     /* volume numbering ruler (owner request 2026-07-23) — 2-3 nice-rounded
        levels (1.2M/800K-style via fmtVol) with the same tick-mark style as
@@ -5982,7 +6073,8 @@ async function boot() {
   DESK.data.market = [];
   DESK.data.news = [];
   /* ACCOUNTS too (Codex review, PR #201). The rule above always covered these —
-     buildAskContext() sends nav, cash and every position — but only market and
+     buildAskContext() sends the held tickers (it stopped sending nav, cash and
+     position sizes on 2026-08-12) — but only market and
      news were actually blanked, so buildDemoData()'s fabricated holdings sat in
      memory through a live boot. Harmless only while a dashboard failure also
      revoked auth and locked the assistant; the moment that stopped being true,
@@ -6009,6 +6101,7 @@ async function boot() {
 
 wireCharts();
 wireMapFilter();
+wireNewsFilter();
 wireWatchlistEditor();
 wireWatchlistQuickEdits();
 wireWatchlistDetail();

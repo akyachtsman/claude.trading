@@ -74,7 +74,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   weekly strip caption reads `· CANDLE COLOUR` rather than leaving it to look
   like a rendering bug; and **volume bars stay price-coloured**, since a volume
   bar is a fact about one day and tinting it by a regime would make the
-  histogram claim something it does not measure. Bars before the stochastic
+  histogram claim something it does not measure. A **20-period VOLUME AVERAGE** rides over the
+  histogram on every pane (`data-volma`, yellow `WB.dLine`, owner request
+  2026-08-12, from a reference platform) — a bar only reads as heavy or light
+  against the recent norm. It is computed from the **WHOLE series, not the
+  visible window**, so the leading visible bars carry a real average instead of
+  the line starting 20 bars into the pane (S39 pins this by point count: Pro 1's
+  3M window must give 63 points, not 44); it uses a **rolling sum**, since the
+  'All' span is ~9,000 bars across three panes and the re-sum-per-bar form is the
+  shape of work that cost this project the 546s; and it **clamps to the strip
+  top**, because `vMax` is the visible window's max while the average reaches
+  back before it, so an average above everything on screen would draw up into
+  the price pane. Bars before the stochastic
   warms up fall back to open/close rather than defaulting to one colour.
   **A per-pane "Steady" toggle confines colour changes to the 30–80 BAND**
   (`cfg.p2.stochSteady` / `STEADY_BAND`, owner ruling 2026-08-05, from a
@@ -195,6 +206,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   `quote-proxy kind:'info'` gained `extPrice`/`extPct`/`extAt`, which reaches the
   charts quote readout AND the assistant at once — `desk-ask`'s `get_quote`
   forwards `info` verbatim, so it needed no change.
+- **News ticker filter** (`#newsFilter` / `wireNewsFilter()`, owner request
+  2026-08-12) — a one-line box above the headline list; typing a ticker cuts the
+  list to it, empty shows everything. **Never persisted** (no `localStorage`):
+  the owner's rule is that it starts CLEAR so all important news comes through
+  by default, and a filter typed days ago would silently hide the market. It
+  matches a row's chip symbols **OR its headline text**, since a feed item about
+  a company is often untagged and dropping those would read as "no news" on a
+  day the stock moved. It filters the LOADED snapshot rather than fetching that
+  ticker's news upstream, so it can only surface what the feed already carries.
+  An empty RESULT renders its own message naming the query back — an empty
+  result is not an empty FEED, and saying so is what stops a typo reading as
+  "nothing happened".
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
@@ -683,7 +706,14 @@ This project's look is its own — established at kickoff via `/design-intake`
   server-side port of `app.js`'s `graftTodayBar()`, so a live-session reading
   matches the charts — and computes RSI(14, Wilder) + the Pro 1 SWING
   Stochastic 14-3-3 + the Pro 2 LONG-TERM weekly-scale Stochastic 92-15-15, all
-  from one fetch), gives **directional** views on the owner's positions (owner
+  from one fetch), gives **directional** views on the owner's positions — from the
+  TICKERS ONLY: `buildAskContext()` stopped sending `nav`, `cash`, `dayPnl`,
+  `totalUnrealized` and the per-position `qty`/`mkt`/`unrl` on 2026-08-12 (owner
+  ruling: "I don't want this guy concerned about my liquidity or looking at my
+  account balance — just cold, hard fact on buy or sell"). Withholding the
+  numbers is the enforcement point, NOT a system-prompt rule: a rule asks the
+  model not to dwell on a figure it can still see. Symbols and their `dayPct`
+  stay, so "should I sell my GDX" still knows GDX is held (owner
   opt-in 2026-07-21; the "not financial advice" label stays), attributes
   provenance, and appends each exchange back to memory. The system prompt
   itself is **owner-editable at runtime**: `desk_system_prompt` (`desk_009`,
@@ -922,6 +952,8 @@ run for real against the dedicated project on every PR.
 | S34 | Pro 2 steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
+| S38 | News ticker filter | With `?demo=1`, `#newsFilter` starts EMPTY (the owner's rule: clear by default so all news comes through); typing a ticker the feed carries narrows the list and EVERY surviving row really references it; junk renders `.news-filter-empty` echoing the query **in the case typed**; Escape restores the full list; and a reload comes back clear — it is deliberately not persisted | A filter that survives a reload (a ticker typed days ago then hides the market), rows that don't match, or a miss rendering as a blank panel — indistinguishable from a dead feed |
+| S39 | Volume average | With `?demo=1`, all three panes carry one `path[data-volma]` in the %D yellow with no NaN, and Pro 1's spans its FULL 3M window — 63 points, not 44 | A missing line, NaN coordinates, or a 44-point path — computed from the visible window instead of the whole series, leaving the left edge of the strip bare |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
 | S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop; Escape cancels; the tray round-trips through `localStorage` across a reload; double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, a tray tile lost on reload, the trash replacing double-click, or any page error during a drag |
 | S31 | Create + delete a whole list | With `?demo=1` NO `#wlNewListBtn` and no `.wl-del` render. Forced live+authed against a stateful fake roster: the created list PERSISTS to the store, a case-insensitive duplicate name is refused without writing and without discarding the typed name, **under `wlLocked` the `×` is disabled AND `openWlDelList` refuses even when called directly while `+ list` stays available**, the delete confirm names the list and its symbol count and opens focus on "Keep it", and the deleted list is gone from the store | A write control in demo, a duplicate accepted (it makes both lists unaddressable via `wlPick`), a delete reachable under the lock (the button guard alone is not the rule), a confirm that doesn't say what is being destroyed, or a delete that only repaints |
