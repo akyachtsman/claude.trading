@@ -10,14 +10,17 @@
 // desk_ask_schedule is due (Pacific wall clock — see dueSlot below), assembles
 // the WHOLE dashboard as context server-side, and hands it to desk-ask. The
 // answer is appended to desk_chat_memory by desk-ask itself, which is the same
-// table the Ask thread replays from — so the 8am summary is simply sitting
-// there when the desk is opened, with no new panel and no delivery channel.
+// table the Ask thread replays from — so the 8am summary is sitting there when
+// the desk is opened. It is ALSO emailed (see sendBrief), which is what reaches
+// the owner when they are not at the desk.
 //
 // NOT public surface: requires the x-cron-secret header (CRON_SECRET env), the
 // same gate desk-ibkr-sync and desk-brief use.
 //
 // Secrets (function env): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-// SUPABASE_ANON_KEY, CRON_SECRET.
+// SUPABASE_ANON_KEY, CRON_SECRET, and — for delivery — RESEND_API_KEY +
+// DESK_EMAIL_TO (DESK_EMAIL_FROM optional, defaults to onboarding@resend.dev).
+// The address lives in env, never in this repo: the repo is public.
 
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -242,6 +245,46 @@ function heatmapFrom(hm: Any): Any {
   };
 }
 
+// ── delivery ────────────────────────────────────────────────────────────────
+// The answer also goes out by email (owner request 2026-08-12). A scheduled ask
+// whose only output is a row in the dashboard's own thread still requires the
+// owner to open the dashboard, which defeats the point of scheduling it.
+//
+// Resend rather than SMTP because Supabase/Deno Deploy BLOCK outbound ports 25
+// and 587 (465 is inconsistent), so "just use Gmail's SMTP" is closed off at the
+// platform level — an edge function's only wire out is HTTPS.
+//
+// Returns the status string to stamp, so "answered but the email failed" is a
+// DISTINCT outcome from both success and a failed ask. Collapsing it into `ok`
+// would stamp a brief that never arrived as healthy, which is the one state the
+// owner cannot detect from the inbox.
+async function sendBrief(prompt: string, answer: string, pt: Any): Promise<string> {
+  const key = Deno.env.get('RESEND_API_KEY');
+  const to = Deno.env.get('DESK_EMAIL_TO');
+  const from = Deno.env.get('DESK_EMAIL_FROM') || 'onboarding@resend.dev';
+  // Not configured is not an error: the scheduler predates email and must keep
+  // working (thread-only) if the secrets are absent.
+  if (!key || !to) return 'ok (no email configured)';
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        from, to: [to],
+        subject: `Desk · ${prompt.slice(0, 80)} · ${pt.date}`,
+        // TEXT, not html: the system prompt already bans markdown, so answers
+        // arrive clean with no conversion — and no conversion means no escaping
+        // bug turning a price into markup.
+        text: answer,
+      }),
+    });
+    if (!res.ok) return `ok, email failed: HTTP ${res.status} ${(await res.text()).slice(0, 90)}`;
+    return 'ok (emailed)';
+  } catch (e) {
+    return 'ok, email failed: ' + String((e as Any)?.message ?? e).slice(0, 90);
+  }
+}
+
 async function buildContext(userId: string, headers: Record<string, string>): Promise<Any> {
   const url = Deno.env.get('SUPABASE_URL')!;
 
@@ -271,14 +314,18 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
     generatedAt: new Date().toISOString(),
     // Said out loud so the model never claims the owner "just asked" this.
     origin: 'scheduled run — the owner is not at the desk; write it to be read later',
+    // HOLDINGS ARE TICKERS ONLY (owner ruling 2026-08-12) — the same rule the
+    // dashboard's buildAskContext() follows. nav, day_pnl, total_unrl, cash and
+    // the per-position mkt/unrl are all withheld: the owner wants a call on the
+    // stock, not a read on their liquidity, and withholding the numbers is the
+    // enforcement point rather than a line in the system prompt. dayPct stays
+    // because it is the ticker's own market move, not a fact about the account.
     accounts: (accounts || []).map((s: Any) => ({
       account: 'Account ' + s.account_key,
       label: s.label ?? null,
       asOf: s.as_of,
-      nav: Number(s.nav), dayPnl: Number(s.day_pnl),
-      totalUnrealized: Number(s.total_unrl), cash: Number(s.cash),
       positions: (Array.isArray(s.positions) ? s.positions : [])
-        .map((p: Any) => ({ sym: p.sym, mkt: p.mkt, unrl: p.unrl, dayPct: p.dayPct })),
+        .map((p: Any) => ({ sym: p.sym, dayPct: p.dayPct })),
     })),
     market: (market?.tiles || []).map((t: Any) => ({ name: t.name, last: t.last, dayChgPct: t.chg })),
     headlines: (news?.items || []).slice(0, 12).map((n: Any) => ({ headline: n.h, source: n.src ?? null, sym: n.sym ?? null })),
@@ -357,6 +404,11 @@ Deno.serve(async (req) => {
         });
         const aj = await ar.json().catch(() => null);
         if (!ar.ok || !aj?.ok) status = `failed: ${String(aj?.error ?? `HTTP ${ar.status}`).slice(0, 160)}`;
+        // Deliver it. The thread copy is the archive; the email is what reaches
+        // the owner when they are not at the desk — which is the whole point of
+        // a scheduled ask. Only on a real answer: mailing a blank on a failed
+        // run would train the owner to ignore the 8am message.
+        else if (aj.answer) status = await sendBrief(r.prompt, aj.answer, pt);
       } catch (e) {
         status = 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
       }
