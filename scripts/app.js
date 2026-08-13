@@ -2505,146 +2505,374 @@ function buildAskContext() {
        2026-07-23: it was echoing UTC straight from the feed). */
     marketAsOf: DESK.mode === 'demo' ? lastLabel() : (DESK.liveStamp ? fmtStampDateTime(DESK.liveStamp.generatedAt) : null),
     headlines: (d.news || []).slice(0, 10).map(n => n.h),
+    /* ── the rest of the desk (owner ruling 2026-08-10) ──────────────────────
+       "The desk AI has to be aware of my entire dashboard — that's the whole
+       purpose, so I can control which stocks it can focus on." Until now the
+       assistant saw accounts, the Markets tiles and headlines, so a question
+       about "my watchlist" had nothing to answer from — it did not know what
+       was on it.
+       The WATCHLIST goes in FULL: it is the owner's focus list, and a summary
+       would defeat the point of curating it. Names only where a quote is
+       missing, so an unresolved ticker is visible as such rather than silently
+       dropped.
+       The HEATMAP goes in SUMMARY: the sp500 cut alone is ~500 tiles and r2k is
+       2000, which would dominate the payload of every question for a panel the
+       owner reads as a picture. Sector aggregates plus the strongest movers
+       carry the shape of the tape; anything more specific the assistant can
+       pull itself with get_quote / get_technicals, which reach any symbol and
+       return the SAME stochastics the Pro panes draw. */
+    watchlist: (wlState.payload && Array.isArray(wlState.payload.lists))
+      ? wlState.payload.lists.map(l => ({
+        title: l.title,
+        symbols: (l.rows || []).map(r => ({ sym: r.sym, last: r.last, dayChgPct: r.pct })),
+        ...(Array.isArray(l.missing) && l.missing.length ? { unresolved: l.missing } : {}),
+      }))
+      : null,
+    watchlistRange: wlState.range || null,
+    heatmap: buildHeatmapContext(),
+    /* the Pro panes as rendered — same numbers the owner is looking at */
+    charts: wbReadings,
   };
 }
 
-/* ── scheduled asks (owner request 2026-07-31) ────────────────────────────────
-   A question the desk asks ITSELF on a timer, answered into the same thread a
-   typed question lands in. Deliberately CLIENT-SIDE: desk-ask already appends
-   every exchange to desk_chat_memory, so a scheduled answer persists and
-   replays on reload for free — no table, no panel, no cron, no timezone or DST
-   handling. The trade, stated plainly because it is the whole limitation: it
-   only fires while the dashboard is OPEN. A 6:30am question on a closed tab
-   runs when you next open the desk, not before you sit down. If that ever
-   matters more than the simplicity, pg_cron can write into this same thread
-   later without redoing any of this UI. */
-const ASK_SCHED_KEY = 'ask_sched_v1';
-let askSched = [];
-try {
-  const raw = JSON.parse(localStorage.getItem(ASK_SCHED_KEY) || '[]');
-  if (Array.isArray(raw)) {
-    askSched = raw.filter(r => r && typeof r.prompt === 'string' && r.prompt.trim())
-      .slice(0, 10)   /* a cap: each firing is a real Claude tool-loop call */
-      .map(r => ({
-        prompt: String(r.prompt).slice(0, 500),
-        mins: Math.max(15, Math.min(1440, Number(r.mins) || 60)),
-        marketOnly: r.marketOnly !== false,
-        enabled: r.enabled !== false,
-        last: Number(r.last) || 0,
-      }));
+/* Sector aggregates + the sharpest movers from whichever cut is on screen —
+   never the whole tile set (see buildAskContext). `cut` is named so the model
+   says "in the S&P 500 cut" rather than implying it looked at everything. */
+function buildHeatmapContext() {
+  const hm = heatState && heatState.hm;
+  if (!hm || !Array.isArray(hm.sectors)) return null;
+  const tiles = [];
+  const sectors = [];
+  for (const sec of hm.sectors) {
+    const list = (sec.tiles || []).filter(t => Number.isFinite(t.pct));
+    if (!list.length) continue;
+    const avg = list.reduce((a, t) => a + t.pct, 0) / list.length;
+    sectors.push({ name: sec.name, avgChgPct: Number(avg.toFixed(2)), names: list.length });
+    for (const t of list) tiles.push({ sym: t.sym, chgPct: t.pct, sector: sec.name });
   }
-} catch { /* private mode */ }
-/* The 15-minute floor is enforced HERE, at the write boundary, not only in the
-   number input's change handler. Every firing spends real Claude quota, so the
-   cap has to hold however the object was mutated — a direct assignment, a
-   restored payload, a future caller — not just when it came from that one
-   field. Same for the 10-row cap. */
-const saveAskSched = () => {
-  askSched = askSched.slice(0, 10).map(r => ({
-    ...r,
-    prompt: String(r.prompt || '').slice(0, 500),
-    mins: Math.max(15, Math.min(1440, Number(r.mins) || 60)),
-  }));
-  try { localStorage.setItem(ASK_SCHED_KEY, JSON.stringify(askSched)); } catch { /* private mode */ }
-};
+  if (!sectors.length) return null;
+  const byMove = [...tiles].sort((a, b) => b.chgPct - a.chgPct);
+  /* `pct` is NOT always a day move: recolorForPeriod() rewrites it to the
+     selected period's return (pctW/pctM/pctYtd) before renderHeatmap() stores
+     the dataset here, so on 1W/1M/YTD these are weekly, monthly or
+     year-to-date figures. They were being labelled avgDayChgPct/dayChgPct
+     regardless, which told the model a monthly move was a daily one — wrong
+     analysis stated confidently, with nothing in the answer to reveal it
+     (Codex review, PR #241). The fields are therefore period-NEUTRAL and the
+     period is named alongside them; a period-specific key would have to be
+     read correctly to be safe, whereas a neutral one cannot be misread at
+     all. `periodLabel` carries the panel's own wording so the model can say
+     "1-Month Performance" in the owner's terms rather than inventing a
+     phrasing for the token. */
+  const period = (mapView && mapView.period) || '1d';
+  const label = (MAP_PERIODS.find(p => p[0] === period) || [])[1] || null;
+  return {
+    cut: mapView.label || mapView.key || null,
+    period,
+    periodLabel: label,
+    measures: period === '1d'
+      ? 'chgPct is each name\'s move on the day'
+      : `chgPct is each name's return over ${label}, NOT a daily move`,
+    asOf: hm.asOf || null,
+    names: tiles.length,
+    sectors: sectors.sort((a, b) => b.avgChgPct - a.avgChgPct),
+    topGainers: byMove.slice(0, 10),
+    topLosers: byMove.slice(-10).reverse(),
+  };
+}
+
+/* ── scheduled asks (owner request 2026-07-31; moved SERVER-side 2026-08-11) ──
+   Questions the desk asks ITSELF on a timer, answered into the same thread a
+   typed question lands in.
+
+   The first version was a setInterval right here, which meant it only fired
+   while the dashboard was OPEN — exactly the case where the owner is already at
+   the desk and could just type the question. The owner's ruling: "the only
+   value a cron task has for me is to be able to wake ITSELF up at a certain
+   time each day and give me a market summary. Otherwise it's of no use."
+
+   So the roster moved into desk_ask_schedule (desk_017 — RLS deny-all + PIN
+   RPCs, same shape as the system prompt and the watchlists), pg_cron ticks
+   every 5 minutes, and desk-cron-ask fires whatever is due: it assembles the
+   whole dashboard server-side (there is no browser to read it from) and hands
+   it to desk-ask, which appends the exchange to desk_chat_memory as usual. That
+   is the table this thread already replays from, so the 8am summary is simply
+   sitting there when the desk is opened.
+
+   NOTHING on this page is required for any of that to happen. What follows is
+   only the editor for the roster — no timer, no firing, no local state. */
+const ASK_CADENCES = [
+  /* key         label              cadence          everyHours */
+  ['hourly',    'Every hour',      'hourly',        null],
+  ['h2',        'Every 2 hours',   'every_n_hours', 2],
+  ['h3',        'Every 3 hours',   'every_n_hours', 3],
+  ['h4',        'Every 4 hours',   'every_n_hours', 4],
+  ['h6',        'Every 6 hours',   'every_n_hours', 6],
+  ['h8',        'Every 8 hours',   'every_n_hours', 8],
+  ['h12',       'Every 12 hours',  'every_n_hours', 12],
+  ['daily',     'Every day at',    'daily',         null],
+  ['weekdays',  'Weekdays at',     'weekdays',      null],
+];
+/* The two cadence families need DIFFERENT time controls, and conflating them is
+   how a scheduler starts lying: an "every 4 hours" row has no meaningful hour
+   (it fires at 00/04/08/12/16/20 PT), only a minute past the hour, so offering
+   it a full clock would let the owner set 8:00 and watch it fire at midnight. */
+const askAtTheHour = r => r.cadence === 'hourly' || r.cadence === 'every_n_hours';
+const askCadenceKey = r => (r.cadence === 'every_n_hours' ? 'h' + r.everyHours : r.cadence);
+const ASK_SCHED_MAX = 10;   /* each firing is a real Claude tool-loop call */
+
+let askSched = [];          /* the server's roster, as last read */
 
 let askBusy = false;      /* a scheduled run must never collide with a typed one */
 /* The in-flight question's AbortController, or null when idle. Module-scoped
    because Stop lives in renderAsk's form while runAsk owns the request. */
 let askAbort = null;
 let askRun = null;        /* set by renderAsk() — the shared send path */
-let askSchedTimer = 0;
 
-/* MINIMUM 15 minutes, and market-day gating on by default. Both are cost and
-   noise guards: every firing spends real quota, and an answer about "today's
-   indicators" generated on a Sunday is worse than no answer because it looks
-   current. */
-const ASK_SCHED_TICK_MS = 60000;
 
-function askSchedDue(r, now) {
-  if (!r.enabled) return false;
-  if (r.marketOnly && !(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return false;
-  return now - (r.last || 0) >= r.mins * 60000;
+/* A row as the RPC returns it, clamped to what the table will accept. Clamping
+   on the way IN as well as on the way out matters: the cron writes last_run_at
+   to these same rows, and a value this editor could not represent would be
+   quietly rewritten by the next Save. */
+function askSchedRow(raw) {
+  const cadence = ['hourly', 'every_n_hours', 'daily', 'weekdays'].includes(raw && raw.cadence)
+    ? raw.cadence : 'daily';
+  const every = [2, 3, 4, 6, 8, 12].includes(Number(raw && raw.everyHours)) ? Number(raw.everyHours) : 4;
+  const min = Math.min(55, Math.max(0, Number(raw && raw.atMin) || 0));
+  return {
+    id: raw && raw.id != null ? raw.id : null,
+    prompt: String((raw && raw.prompt) || '').slice(0, 500),
+    cadence, everyHours: every,
+    atHour: Math.min(23, Math.max(0, Number(raw && raw.atHour) || 0)),
+    atMin: min - (min % 5),                       /* the cron ticks on 5s */
+    marketOnly: !!(raw && raw.marketOnly),
+    enabled: !(raw && raw.enabled === false),
+    lastRunAt: (raw && raw.lastRunAt) || null,
+    lastStatus: (raw && raw.lastStatus) || null,
+  };
 }
 
-async function askSchedTick() {
-  if (document.hidden || askBusy || !askRun) return;
-  if (DESK.mode === 'demo' || !DESK.authed) return;   /* nothing to ask against */
-  const now = Date.now();
-  /* ONE per tick, never a burst: two scheduled questions coming due together
-     would otherwise fire back-to-back tool loops and read as a wall of text. */
-  const due = askSched.find(r => askSchedDue(r, now));
-  if (!due) return;
-  due.last = now;
-  saveAskSched();          /* stamp BEFORE the call, so a failure cannot loop */
-  await askRun(due.prompt, { scheduled: true });
+/* When a cadence actually fires, spelled out. The "every N hours" family fires
+   at the hours DIVISIBLE by N in Pacific — which is not what "every 4 hours"
+   reads like on its own, so it is stated rather than left for the owner to
+   discover at midnight. */
+function askSchedWhen(r) {
+  const mm = String(r.atMin).padStart(2, '0');
+  if (r.cadence === 'hourly') return `fires every hour at :${mm} PT`;
+  if (r.cadence === 'every_n_hours') {
+    const hrs = [];
+    for (let h = 0; h < 24; h += r.everyHours) hrs.push(String(h).padStart(2, '0') + ':' + mm);
+    return 'fires at ' + hrs.join(', ') + ' PT';
+  }
+  return 'fires at ' + String(r.atHour).padStart(2, '0') + ':' + mm + ' PT, ' +
+    (r.cadence === 'weekdays' ? 'Mon–Fri' : 'every day');
 }
 
-function scheduleAskTick() {
-  clearInterval(askSchedTimer);
-  if (!askSched.some(r => r.enabled)) return;
-  askSchedTimer = setInterval(askSchedTick, ASK_SCHED_TICK_MS);
-}
-
-
-/* Roster editor for scheduled asks. Built in JS like the rest of this panel
-   rather than as static markup, because the row count is data. */
-function openAskSched() {
+/* Roster editor for scheduled asks (desk_017). Built in JS like the rest of
+   this panel rather than as static markup, because the row count is data.
+   The draft is local until Save: a write REPLACES the whole roster, so saving
+   on every field would mean a round trip per keystroke. */
+function openAskSched(pin) {
   const back = document.getElementById('askSchedBackdrop');
   const list = document.getElementById('askSchedList');
   if (!back || !list) return;
+  const noteEl = document.getElementById('askSchedNote');
+  const errEl = document.getElementById('askSchedErr');
+  let dirty = false;
+  let closeArmed = false;
+
+  const note = (msg, warn) => {
+    if (!noteEl) return;
+    noteEl.textContent = msg || '';
+    noteEl.classList.toggle('ask-sched-note--warn', !!warn);
+  };
+  const fail = (msg) => {
+    if (!errEl) return;
+    errEl.textContent = msg || '';
+    errEl.hidden = !msg;
+  };
+  const touch = () => { dirty = true; closeArmed = false; note('Unsaved changes', true); };
+
   const draw = () => {
     list.textContent = '';
     if (!askSched.length) list.appendChild(el('p', 'lock-explain', 'Nothing scheduled yet.'));
     askSched.forEach((r, i) => {
       const row = el('div', 'ask-sched-row');
+
       const on = document.createElement('input');
       on.type = 'checkbox'; on.checked = r.enabled;
       on.setAttribute('aria-label', 'Enabled');
-      on.addEventListener('change', () => { r.enabled = on.checked; saveAskSched(); scheduleAskTick(); });
+      on.addEventListener('change', () => { r.enabled = on.checked; touch(); });
+
       const q = document.createElement('input');
-      q.type = 'text'; q.className = 'input'; q.value = r.prompt; q.maxLength = 500;
+      q.type = 'text'; q.className = 'input ask-sched-q'; q.value = r.prompt; q.maxLength = 500;
+      q.placeholder = 'e.g. Summarise the market and my watchlist, and name the best setups';
       q.setAttribute('aria-label', 'Question');
-      q.addEventListener('change', () => { r.prompt = q.value.trim().slice(0, 500); saveAskSched(); });
-      const every = document.createElement('input');
-      every.type = 'number'; every.className = 'input ask-sched-mins';
-      every.min = '15'; every.max = '1440'; every.step = '15'; every.value = String(r.mins);
-      every.setAttribute('aria-label', 'Every N minutes');
-      every.addEventListener('change', () => {
-        r.mins = Math.max(15, Math.min(1440, Number(every.value) || 60));
-        every.value = String(r.mins); saveAskSched();
+      q.addEventListener('input', () => { r.prompt = q.value.slice(0, 500); touch(); });
+
+      const cad = document.createElement('select');
+      cad.className = 'input ask-sched-cad';
+      cad.setAttribute('aria-label', 'How often');
+      for (const [key, label] of ASK_CADENCES) {
+        const o = document.createElement('option');
+        o.value = key; o.textContent = label;
+        cad.appendChild(o);
+      }
+      cad.value = askCadenceKey(r);
+      cad.addEventListener('change', () => {
+        const spec = ASK_CADENCES.find(c => c[0] === cad.value);
+        if (!spec) return;
+        r.cadence = spec[2];
+        if (spec[3]) r.everyHours = spec[3];
+        touch();
+        draw();          /* the time control itself changes shape — see askAtTheHour */
       });
+
+      /* Two different controls, deliberately: an at-the-hour cadence has only a
+         minute to set, and a clock face there would invite an hour it ignores. */
+      let when;
+      if (askAtTheHour(r)) {
+        when = document.createElement('select');
+        when.className = 'input ask-sched-min';
+        when.setAttribute('aria-label', 'Minutes past the hour');
+        for (let m = 0; m < 60; m += 5) {
+          const o = document.createElement('option');
+          o.value = String(m); o.textContent = ':' + String(m).padStart(2, '0');
+          when.appendChild(o);
+        }
+        when.value = String(r.atMin);
+        when.addEventListener('change', () => { r.atMin = Number(when.value) || 0; touch(); draw(); });
+      } else {
+        when = document.createElement('input');
+        when.type = 'time'; when.step = '300'; when.className = 'input ask-sched-time';
+        when.setAttribute('aria-label', 'Time (Pacific)');
+        when.value = String(r.atHour).padStart(2, '0') + ':' + String(r.atMin).padStart(2, '0');
+        when.addEventListener('change', () => {
+          const m = /^(\d{2}):(\d{2})$/.exec(when.value || '');
+          if (!m) { when.value = String(r.atHour).padStart(2, '0') + ':' + String(r.atMin).padStart(2, '0'); return; }
+          r.atHour = Math.min(23, Number(m[1]));
+          const mins = Math.min(55, Number(m[2]));
+          r.atMin = mins - (mins % 5);            /* snap to the grid the cron ticks on */
+          touch(); draw();
+        });
+      }
+
       const mkt = document.createElement('input');
       mkt.type = 'checkbox'; mkt.checked = r.marketOnly;
-      mkt.setAttribute('aria-label', 'Market hours only');
-      mkt.addEventListener('change', () => { r.marketOnly = mkt.checked; saveAskSched(); });
+      mkt.id = 'askSchedMkt' + i;
+      mkt.addEventListener('change', () => { r.marketOnly = mkt.checked; touch(); });
+      const mktLbl = el('label', 'ask-sched-lbl', 'market hrs only');
+      mktLbl.htmlFor = mkt.id;
+      mktLbl.title = 'Skip the firing unless the US market is in session (pre-market through after-hours, weekdays). Exchange holidays are not excluded.';
+
+      /* Run now uses the DRAFT prompt and does not save — it is how you find out
+         what the 8am answer will look like without waiting until 8am. */
+      const now = el('button', 'btn btn-secondary', 'Run now'); now.type = 'button';
+      now.disabled = !r.prompt.trim() || !askRun || askBusy;
+      now.title = 'Ask this question right now, in the thread. Does not save the schedule.';
+      now.addEventListener('click', () => {
+        if (!askRun || !r.prompt.trim()) return;
+        back.hidden = true;
+        askRun(r.prompt.trim(), { scheduled: true });
+      });
+
       const del = el('button', 'btn btn-secondary', '✕'); del.type = 'button';
-      del.setAttribute('aria-label', 'Remove');
-      del.addEventListener('click', () => { askSched.splice(i, 1); saveAskSched(); scheduleAskTick(); draw(); });
-      row.appendChild(on); row.appendChild(q);
-      row.appendChild(el('span', 'ask-sched-lbl', 'every'));
-      row.appendChild(every);
-      row.appendChild(el('span', 'ask-sched-lbl', 'min · market hrs'));
-      row.appendChild(mkt); row.appendChild(del);
+      del.setAttribute('aria-label', 'Remove this question');
+      del.addEventListener('click', () => { askSched.splice(i, 1); touch(); draw(); });
+
+      const head = el('div', 'ask-sched-head');
+      head.appendChild(on); head.appendChild(q); head.appendChild(del);
+      const foot = el('div', 'ask-sched-foot');
+      foot.appendChild(cad); foot.appendChild(when);
+      foot.appendChild(mkt); foot.appendChild(mktLbl);
+      foot.appendChild(now);
+      /* The schedule in words, and whether it has actually run. A roster that
+         showed only what was CONFIGURED could not tell a working row from one
+         that has been failing quietly since it was written. */
+      const state = [askSchedWhen(r)];
+      if (r.lastRunAt) {
+        state.push('last run ' + fmtClock(r.lastRunAt) +
+          (r.lastStatus && r.lastStatus !== 'ok' ? ' — ' + r.lastStatus : ''));
+      } else if (r.id != null) {
+        state.push('not run yet');
+      }
+      foot.appendChild(el('span', 'ask-sched-when', state.join(' · ')));
+      row.appendChild(head); row.appendChild(foot);
       list.appendChild(row);
     });
   };
+
+  const load = async () => {
+    fail(''); note('Loading…');
+    const out = await deskGetAskSchedule(pin);
+    if (!out || !out.ok) {
+      askSched = []; draw();
+      note('');
+      fail('Could not load the schedule. Unlock the desk and try again.');
+      return;
+    }
+    askSched = (out.rows || []).map(askSchedRow);
+    dirty = false; closeArmed = false;
+    draw(); note('');
+  };
+
+  const save = async () => {
+    fail(''); note('Saving…');
+    /* Blank rows are dropped rather than rejected — the RPC skips them too, and
+       failing the whole save over a row the owner has not filled in yet would
+       throw away the edits they did make. `id` goes back UNCHANGED so the
+       server updates in place and each row keeps its own timer. */
+    const payload = askSched
+      .filter(r => r.prompt.trim())
+      .slice(0, ASK_SCHED_MAX)
+      .map(r => ({
+        id: r.id, prompt: r.prompt.trim().slice(0, 500), cadence: r.cadence,
+        everyHours: r.everyHours, atHour: r.atHour, atMin: r.atMin,
+        marketOnly: r.marketOnly, enabled: r.enabled,
+      }));
+    const out = await deskSetAskSchedule(pin, payload);
+    if (!out || !out.ok) {
+      note('');
+      fail('Could not save the schedule — nothing was changed. Check the desk is unlocked and try again.');
+      return;
+    }
+    await load();                 /* re-read: new rows come back with their ids */
+    note('Saved');
+  };
+
   const add = document.getElementById('askSchedAdd');
-  if (add && !add.dataset.wired) {
-    add.dataset.wired = '1';
-    add.addEventListener('click', () => {
-      if (askSched.length >= 10) return;
-      askSched.push({ prompt: '', mins: 60, marketOnly: true, enabled: true, last: 0 });
-      saveAskSched(); scheduleAskTick(); draw();
-    });
-  }
+  const saveBtn = document.getElementById('askSchedSave');
   const close = document.getElementById('askSchedCloseBtn');
-  if (close && !close.dataset.wired) {
-    close.dataset.wired = '1';
-    close.addEventListener('click', () => { back.hidden = true; scheduleAskTick(); });
+  /* Assigned, not addEventListener'd: the modal reopens with a fresh `pin` and
+     a fresh draft each time, and a second listener would run against the first
+     open's closure. */
+  if (add) {
+    add.onclick = () => {
+      if (askSched.length >= ASK_SCHED_MAX) { fail(`Ten scheduled questions is the limit — each firing costs real quota.`); return; }
+      fail('');
+      askSched.push(askSchedRow({ cadence: 'daily', atHour: 8, atMin: 0, enabled: true }));
+      touch(); draw();
+      const inputs = list.querySelectorAll('.ask-sched-q');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    };
   }
-  draw();
+  if (saveBtn) saveBtn.onclick = () => save();
+  if (close) {
+    /* Two-stage rather than a discard-confirm dialog: the roster is small and
+       the cost of losing an edit is retyping it, but losing it SILENTLY is the
+       part that reads as a bug. */
+    close.onclick = () => {
+      if (dirty && !closeArmed) {
+        closeArmed = true;
+        note('Unsaved changes — press Save, or ✕ again to discard', true);
+        return;
+      }
+      back.hidden = true;
+    };
+  }
+
   back.hidden = false;
+  load();
 }
 
 function renderAsk() {
@@ -2715,8 +2943,8 @@ function renderAsk() {
   /* ⏱ beside ⚙ — same idiom, same place. Opens the schedule roster. */
   const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
-  schedBtn.title = 'Questions the desk asks itself on a timer';
-  schedBtn.addEventListener('click', () => openAskSched());
+  schedBtn.title = 'Questions the desk asks itself on a schedule — it runs with this page shut';
+  schedBtn.addEventListener('click', () => openAskSched(pin));
   const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin));
@@ -2836,7 +3064,6 @@ function renderAsk() {
     await runAsk(q);
     input.focus();
   });
-  scheduleAskTick();
 }
 
 /* Ask-the-desk system prompt (desk_009) — an on-demand modal (owner request
@@ -3753,7 +3980,12 @@ window.addEventListener('resize', () => {
    indicator-palette hexes, NOT the P&L --color-loss/gain tokens — the red here is
    a chart-series color, not a P&L signal; red-vs-yellow stays CVD-distinguishable
    by lightness. */
-const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
+/* res/sup/piv are chart-native hexes, NOT page tokens, for the same reason
+   kLine/dLine are: the page palette is tuned for dark ink on cream, and this
+   pane's canvas is black, so --color-accent (#96610F) and --color-gain
+   (#177C4B) render muddy on it. They are also deliberately not the gain/loss
+   tokens — support/resistance is a charting semantic, not P&L. */
+const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)', res: '#FF9F0A', sup: '#32D74B', piv: '#FFD60A' };
 /* Strip captions derived from the live STOCH/WSTOCH/ISTOCH settings so the
    label can never disagree with the math (e.g. "STOCH 14-3-3"). All are
    defined in data.js, which loads first; these run at render time. */
@@ -4016,18 +4248,51 @@ function syncLockPressed() {
 
 const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.round(v / 1e3) + 'K';
 
-/* Classic pivots from the prior calendar month's H/L/C of the daily series. */
-function monthlyPivots(s) {
-  const lastMonth = s.t[s.t.length - 1].slice(0, 7);
-  let hi = -Infinity, lo = Infinity, close = null, seen = false;
-  for (let i = s.t.length - 1; i >= 0; i--) {
-    const m = s.t[i].slice(0, 7);
-    if (m === lastMonth) continue;
-    if (!seen) { seen = true; close = s.c[i]; }
-    else if (s.t[i].slice(0, 7) !== s.t[i + 1].slice(0, 7)) break; /* left prior month */
+/* Classic (floor-trader) pivots from a PRIOR PERIOD's H/L/C of the daily
+   series. Period is per pane (owner ruling 2026-08-13): a pane's levels should
+   be drawn over the horizon that pane trades. Every pane used to get the
+   prior-CALENDAR-MONTH set, which on a fast mover strands them far from price —
+   SPCX on 2026-08-12 put R3 at 212.80 with the stock at 146.15, because July
+   contained a 171 -> 107 collapse. The day-trading pane in particular was
+   reading month-old levels.
+
+   NOT the reference terminal's model. That was investigated at length the same
+   day against four of its symbols (SPCX/SPY/EEM/GLD): its levels are EVENLY
+   spaced about the prior day's CLOSE — P +/- n*D — whereas classic pivot gaps
+   alternate (P-L, H-P) and coincide only when the close sits exactly at the
+   range midpoint. Its step D could not be reproduced by ATR (any length or
+   smoothing), realised volatility, Camarilla on any fixed lookback, or a
+   constant times any prior day/week/month range; and D does not sit on past
+   swing highs/lows either (levels miss the nearest peak/trough by 1.31% on
+   average against 1.46% for randomly drawn prices — i.e. no better than
+   chance). The method is proprietary to Phil's Gang / Team Traders Pro and is
+   not published. This function is therefore our OWN standard model, chosen
+   deliberately, not an approximation of theirs. If the real method ever
+   surfaces, only the level maths below changes — the drawing code is agnostic.
+
+   `period`: 'day' | 'week' | 'month'. Week is Mon-Sun by ISO date so a holiday
+   or a half week still resolves to one calendar week rather than "5 bars", and
+   month is calendar, both matching how the levels are quoted. */
+function priorPeriodKey(iso, period) {
+  if (period === 'day') return iso;
+  if (period === 'month') return iso.slice(0, 7);
+  const d = new Date(iso + 'T00:00:00Z');          /* ISO week: shift to its Monday */
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+function periodPivots(s, period) {
+  const n = s.t.length;
+  if (!n) return [];
+  const current = priorPeriodKey(s.t[n - 1], period);
+  let hi = -Infinity, lo = Infinity, close = null, key = null;
+  for (let i = n - 1; i >= 0; i--) {
+    const k = priorPeriodKey(s.t[i], period);
+    if (k === current) continue;                    /* still inside the in-progress period */
+    if (key === null) { key = k; close = s.c[i]; }  /* first bar of the prior one = its close */
+    else if (k !== key) break;                      /* walked off the front of it */
     hi = Math.max(hi, s.h[i]); lo = Math.min(lo, s.l[i]);
   }
-  if (!seen || !Number.isFinite(hi)) return [];
+  if (key === null || !Number.isFinite(hi)) return [];
   const p = (hi + lo + close) / 3;
   return [
     ['R3', hi + 2 * (p - lo)], ['R2', p + (hi - lo)], ['R1', 2 * p - lo],
@@ -4418,8 +4683,38 @@ function renderCharts(data, lamp) {
 
   /* one pane = caption · price (+SMA/pivots) · volume · stochastic strip */
   const drawPane = (x0, w, bars, st, marks, caption, opts) => {
-    const padR = 46;
+    /* Right gutter widened 46 → 64 to carry the larger ladder below. It is the
+       ladder that sets this number: tick + gap is 11px, leaving ~53px, which
+       fits "1,280.00" at 11px IBM Plex Mono (~6.6px/char). A five-figure price
+       would still clip — as it did at 46 — but nothing in this workbench's
+       roster reaches one, and buying for it would cost every pane real plot
+       width every day to cover a case that does not occur. */
+    const padR = 64;
     const plotW = w - padR - 6;
+
+    /* ── axis ladders ───────────────────────────────────────────────────────
+       Owner request 2026-08-13, against a reference-terminal screenshot: "a
+       line scale of the pricing, bright, nice, great font". The three ladders
+       had drifted to 8px, 9px and 9px in --color-text-secondary, which reads
+       as a faint annotation rather than the ruler the eye actually navigates
+       by — and the stochastic ladder carried no tick at all, so its numbers
+       floated free of the column the other two formed.
+       ONE spec now drives all three, because the thing being copied is not a
+       font size but a single continuous edge running the height of the pane;
+       three independently-tuned sizes cannot produce that however carefully
+       each is chosen. Volume stays deliberately subordinate in secondary ink:
+       it is a supporting histogram, and giving it the same weight as price
+       would flatten the hierarchy the brightness exists to create.
+       tabular-nums is stated even though IBM Plex Mono is already
+       fixed-advance — it costs nothing and keeps the column true if the stack
+       ever falls back to a proportional face. */
+    const AX = { tick: 7, gap: 4, big: 11, small: 9 };
+    const axisRow = (str, ty, size, fill) => {
+      line(x0 + 6 + plotW, ty, x0 + 6 + plotW + AX.tick, ty, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
+      text(str, x0 + 6 + plotW + AX.tick + AX.gap, ty + size / 3, {
+        'font-size': size, fill, 'font-variant-numeric': 'tabular-nums', 'font-weight': 500,
+      });
+    };
     const n = Math.min(opts.window, bars.c.length);
     /* pan offset = bars hidden off the right edge (0 = latest bar visible) */
     const off = Math.max(0, Math.min(opts.offset || 0, bars.c.length - n));
@@ -4535,16 +4830,24 @@ function renderCharts(data, lamp) {
     for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
     const tick = nice * mag;
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
-      /* short tick mark beside each price label (owner request 2026-07-22) —
-         a ruler notch at the axis edge, NOT a gridline crossing the chart */
-      line(x0 + 6 + plotW, py(v), x0 + 6 + plotW + 4, py(v), { stroke: 'var(--color-border-hover)', 'stroke-width': 1 });
-      text(fmtPrice(v), x0 + 6 + plotW + 7, py(v) + 3, { 'font-size': 9 });
+      /* a ruler notch at the axis edge, NOT a gridline crossing the chart */
+      axisRow(fmtPrice(v), py(v), AX.big, 'var(--color-text-primary)');
     }
     for (const [name, v] of pivots) {
-      /* R levels orange, S levels green, pivot yellow — the reference scheme */
-      const pcol = name === 'P' ? 'var(--color-accent-bright)' : name[0] === 'R' ? 'var(--color-accent)' : 'var(--color-gain)';
-      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: pcol, 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
-      text(name + ' ' + fmtPrice(v), x0 + 8, py(v) - 3, { fill: pcol, 'font-size': 9 });
+      /* SOLID, at full strength, in chart-native colour (owner request
+         2026-08-13 with a reference screenshot: "displayed as such. Solid and
+         look at the color").
+         These were dashed at 0.7 opacity in --color-accent / --color-gain, and
+         the colour was the real fault: those tokens are the page's LIGHT-theme
+         values, picked to be text-safe on cream (#96610F, #177C4B). Painted on
+         this pane's black canvas they go muddy — the amber reads brown and the
+         green reads bottle. The workbench already solves this for %K/%D with
+         chart-native hexes rather than page tokens, and pivots now do the same.
+         A second benefit: support no longer borrows --color-gain, so the
+         P&L-only colour rule is not bent to mean "support" here. */
+      const pcol = name === 'P' ? WB.piv : name[0] === 'R' ? WB.res : WB.sup;
+      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: pcol, 'stroke-width': 1 });
+      text(name + ': ' + fmtPrice(v), x0 + 8, py(v) - 4, { fill: pcol, 'font-size': 10, 'font-weight': 600 });
     }
 
     /* Bollinger envelope — dashed, neutral, like the reference Pro 3 */
@@ -4685,8 +4988,7 @@ function renderCharts(data, lamp) {
       const vTick = vNice * vMag;
       for (let v = vTick; v <= vMax; v += vTick) {
         const yv = vY + vH - (v / vMax) * vH;
-        line(x0 + 6 + plotW, yv, x0 + 6 + plotW + 4, yv, { stroke: 'var(--color-border-hover)', 'stroke-width': 1 });
-        text(fmtVol(v), x0 + 6 + plotW + 7, yv + 3, { 'font-size': 8 });
+        axisRow(fmtVol(v), yv, AX.small, 'var(--color-text-secondary)');
       }
     }
 
@@ -4700,7 +5002,7 @@ function renderCharts(data, lamp) {
          were removed 2026-07-22 to match the terminal's clean panels — number
          label only at each level, no line across the strip. */
       for (const g of [0, 20, 40, 60, 80]) {
-        text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
+        axisRow(String(g), sy(g), AX.small, 'var(--color-text-primary)');
       }
       /* Oversold/overbought bands in red on top of the ladder: the WEEKLY strip
          uses 30/80 to match the reference terminal (owner request 2026-07-20);
@@ -4799,7 +5101,12 @@ function renderCharts(data, lamp) {
     const lastPx = Number.isFinite(liveQuote) ? liveQuote : bars.c[bars.c.length - 1];
     if (Number.isFinite(lastPx)) {
       const lpY = py(Math.min(hi, Math.max(lo, lastPx)));
-      const tagX = x0 + 6 + plotW + 2, tagW = padR - 10, tagH = 6.5, notch = 4;
+      /* tagH/font raised with the ladder (2026-08-13). The tag was 8px beside a
+         9px ladder — near-equal, so the flag still read as the dominant mark.
+         Once the ladder went to 11px that inverted: the CURRENT price, the one
+         number the eye should find first, became the smallest thing on the
+         axis. Sized to sit above the ladder again rather than merely match it. */
+      const tagX = x0 + 6 + plotW + 2, tagW = padR - 10, tagH = 8, notch = 4;
       /* Pentagon, not a rect: the notch points at the axis so the flag reads as
          marking a level rather than floating beside one. */
       svg.appendChild(svgEl('path', {
@@ -4809,8 +5116,9 @@ function renderCharts(data, lamp) {
       }));
       /* Neutral white/dark, never gain-red or loss-green: those colours are
          P&L-only on this desk, and a price level is not a P&L. */
-      text(fmtPrice(lastPx), tagX + 3, lpY + 3, {
-        fill: 'var(--color-bg)', 'font-size': 8, 'font-weight': 600,
+      text(fmtPrice(lastPx), tagX + 3, lpY + 3.5, {
+        fill: 'var(--color-bg)', 'font-size': 11, 'font-weight': 700,
+        'font-variant-numeric': 'tabular-nums',
       });
     }
 
@@ -4944,18 +5252,14 @@ function renderCharts(data, lamp) {
       const winW = Math.max(6, n * pxPerBar);
 
       svg.appendChild(svgEl('rect', { x: navX, y: navTop, width: navW, height: navH, rx: 3, fill: 'var(--color-surface-2)', stroke: 'var(--color-border)', 'stroke-width': 1 }));
-      /* faint full-range close sparkline for context (downsampled) */
-      let sHi = -Infinity, sLo = Infinity;
-      for (let i = 0; i < len; i++) { sHi = Math.max(sHi, bars.c[i]); sLo = Math.min(sLo, bars.c[i]); }
-      const sRange = sHi - sLo || 1;
-      const stepN = Math.max(1, Math.ceil(len / 240));
-      let spark = '';
-      for (let i = 0; i < len; i += stepN) {
-        const sx = navX + i * pxPerBar;
-        const syv = navTop + 2 + (sHi - bars.c[i]) / sRange * (navH - 4);
-        spark += (spark ? 'L' : 'M') + sx.toFixed(1) + ' ' + syv.toFixed(1);
-      }
-      if (spark) svg.appendChild(svgEl('path', { d: spark, fill: 'none', stroke: 'var(--color-text-secondary)', 'stroke-width': 1, 'stroke-opacity': 0.5 }));
+      /* The track stays EMPTY. It used to carry a faint downsampled close
+         sparkline "for context"; owner ruling 2026-08-13, against the
+         reference terminal: "Do not draw any graphs there. It's just blank."
+         Do not re-add it. The navigator's job is to say which slice of history
+         is on screen and let you move it — a second, squashed rendering of the
+         same prices answers a question the panes above already answer at full
+         size, and at 13px tall it can only misrepresent them. The lit window,
+         its grip and the end handles are the whole content. */
 
       const winRect = svgEl('rect', { x: winX, y: navTop, width: winW, height: navH, rx: 3, fill: '#FFFFFF', 'fill-opacity': 0.22, stroke: '#FFFFFF', 'stroke-width': 1, style: 'cursor: grab' });
       svg.appendChild(winRect);
@@ -5024,7 +5328,11 @@ function renderCharts(data, lamp) {
     const intra = wbSymLive(sym) && wbState.intraday ? wbState.intraday[sym] : null;
     const g = intra ? graftTodayBar(data.symbols[sym], intra) : null;
     const bars = g ? g.bars : data.symbols[sym];
-    return { bars, st: stochSeries(bars), rsi: rsiSeries(bars), piv: monthlyPivots(bars), live: g ? g.at : null };
+    /* All three periods computed once here; each pane picks its own below.
+       Cheap (one pass each over the same daily series) and keeps the pane code
+       a straight lookup rather than three call sites re-deriving bars. */
+    const piv = { day: periodPivots(bars, 'day'), week: periodPivots(bars, 'week'), month: periodPivots(bars, 'month') };
+    return { bars, st: stochSeries(bars), rsi: rsiSeries(bars), piv, live: g ? g.at : null };
   })());
   /* the daily panes need today's intraday bars too (not just Pro 3), so pull
      intraday for every visible pane's symbol — the graft above then lands on
@@ -5039,7 +5347,7 @@ function renderCharts(data, lamp) {
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · SWING · ' + sym, {
       window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
-      pivots: d.piv, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
+      pivots: d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
       stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
       stochCaption: stochTag() + ' · DAILY',
     }]);
@@ -5072,7 +5380,7 @@ function renderCharts(data, lamp) {
          landed between them, so the lower bound is chosen for consistency
          with the drawn band, not for effect. */
       colorSt: wbState.cfg.p2.stochSteady ? { ...wk2, band: STEADY_BAND } : wk2,
-      pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
+      pivots: d.piv.month, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
       marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
@@ -5109,7 +5417,7 @@ function renderCharts(data, lamp) {
            anywhere within the ~5-day intraday feed */
         window: paneWindow(wbState.days3, intra15), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
-        pivots: d.piv, smas: smaList(wbState.cfg.p3), rsi: rsiSeries(intra15),
+        pivots: d.piv.day, smas: smaList(wbState.cfg.p3), rsi: rsiSeries(intra15),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCfgNative: ISTOCH,
         stochCaption: stochTagOf(ISTOCH) + ' · 15-MIN',
@@ -5119,7 +5427,7 @@ function renderCharts(data, lamp) {
       panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
         window: paneWindow(wbState.days3d, d.bars), offset: wbState.off3d, panKey: 'off3d', daysKey: 'days3d', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
-        pivots: d.piv, smas: smaList(wbState.cfg.p3), rsi: d.rsi,
+        pivots: d.piv.day, smas: smaList(wbState.cfg.p3), rsi: d.rsi,
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCaption: stochTag() + ' · DAILY (INTRADAY PENDING)',
       }]);
@@ -5147,8 +5455,50 @@ function renderCharts(data, lamp) {
     const liveIso = liveAt.replace(' ', 'T') + ':00Z';
     applyStamp(document.getElementById('chartsStamp'), liveIso, liveAt.slice(0, 10), 'age');
   }
+  captureWbReadings(panes);
   syncZoomPressed();
   syncLockPressed();
+}
+
+/* ── what the CHART PANES currently show, for the assistant ──────────────────
+   Owner ruling 2026-08-10: "I want to make sure the stochastic is also visible
+   to the desk." The assistant already has `get_technicals`, which recomputes
+   these for any symbol on demand — but that answers about a symbol it chose,
+   not about the pane the owner is looking at. This captures the READ VALUES
+   from the panes as rendered, so "what does my stochastic say" and what is on
+   screen are the same numbers.
+   Taken from the assembled pane list rather than recomputed: `daily()` is a
+   closure inside renderCharts, and a second computation could drift from the
+   drawn one — which is the whole failure this is meant to avoid. */
+let wbReadings = null;
+function captureWbReadings(panes) {
+  const last = arr => {
+    if (!Array.isArray(arr)) return null;
+    for (let i = arr.length - 1; i >= 0; i--) if (Number.isFinite(arr[i])) return Number(arr[i].toFixed(2));
+    return null;
+  };
+  const out = [];
+  for (const [bars, st, , title, opts] of panes) {
+    if (!opts || !opts.tier) continue;
+    /* Pro 2's SIGNAL strip is the weekly one — it is what colours the candles —
+       so report that as the pane's stochastic and label it. Pro 1 and Pro 3
+       report their own native strip. */
+    const signal = opts.stW || st;
+    out.push({
+      pane: opts.tier,
+      sym: opts.sym,
+      caption: title,
+      lastClose: bars && bars.c ? last(bars.c) : null,
+      stochK: signal ? last(signal.k) : null,
+      stochD: signal ? last(signal.d) : null,
+      /* the pane's OWN caption, not a guess from the tier: Pro 3 falls back to
+         EOD daily bars when the intraday feed is absent, and labelling that
+         "intraday 10-3-3" would name a scale the pane is not showing */
+      stochScale: (opts.stW ? opts.stochWCaption : opts.stochCaption) || null,
+      rsi14: opts.rsi ? last(opts.rsi.v || opts.rsi) : null,
+    });
+  }
+  wbReadings = out.length ? out : null;
 }
 
 /* the per-pane settings popover (their platform's gear menu, in our idiom):

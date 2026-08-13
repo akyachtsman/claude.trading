@@ -1775,44 +1775,116 @@ test('S28: the charts quote cache is timestamped and its TTL is session-aware', 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCENARIO 29 — Scheduled asks: the roster, and the guards that bound cost.
-// Every firing is a real Claude tool-loop call, so the 15-minute floor and the
-// 10-row cap are not UI polish — they are what stops a stray edit turning the
-// panel into a billing incident. Asserted at the WRITE boundary (saveAskSched),
-// not through the number input, because that is where they actually hold.
+// SCENARIO 29 — Scheduled asks: the roster round-trips to the SERVER, and the
+// guards that bound cost hold at the write boundary.
+//
+// The roster moved out of localStorage into desk_ask_schedule (desk_017) so
+// pg_cron could fire it with the page shut — which makes `id` load-bearing in
+// exactly the way the watchlist's `version` is (S30). The write is an
+// upsert-by-id and the cron stamps `last_run_at` on those same rows, so a save
+// that dropped the id would INSERT a duplicate and reset the timer, re-firing
+// whatever was already answered today. Exercised against a stateful fake store,
+// since the real refusal lives in the RPC.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S29: scheduled asks persist, and the cost guards hold at the save boundary', async ({ page }) => {
+test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
-  await page.evaluate(() => { localStorage.clear(); DESK.mode = 'live'; DESK.authed = true; renderAsk(); });
 
-  await expect(page.locator('.ask-sched-btn'), 'the ⏱ opens the roster').toHaveCount(1);
-  await page.locator('.ask-sched-btn').click();
-  await expect(page.locator('#askSchedBackdrop')).toBeVisible();
-  await page.locator('#askSchedAdd').click();
-  await expect(page.locator('.ask-sched-row')).toHaveCount(1);
+  // Demo has no backend to write to, so no roster control is offered at all.
+  await expect(page.locator('.ask-sched-btn'), 'no ⏱ in demo').toHaveCount(0);
 
-  const g = await page.evaluate(() => {
-    askSched[0].prompt = 'SMH indicators?';
-    askSched[0].mins = 1;                       // below the floor, set directly
-    for (let i = 0; i < 30; i++) askSched.push({ prompt: 'x', mins: 60, enabled: true, last: 0 });
-    saveAskSched();
-    const stored = JSON.parse(localStorage.getItem('ask_sched_v1'));
-    const now = Date.now();
-    return {
-      mins: stored[0].mins, rows: stored.length, prompt: stored[0].prompt,
-      due: askSchedDue({ enabled: true, marketOnly: false, mins: 15, last: 0 }, now),
-      notYet: askSchedDue({ enabled: true, marketOnly: false, mins: 15, last: now }, now),
-      off: askSchedDue({ enabled: false, marketOnly: false, mins: 15, last: 0 }, now),
+  await page.evaluate(() => {
+    let seq = 1;
+    window.__store = [];
+    window.__writes = [];
+    window.deskGetAskSchedule = async () => ({ ok: true, rows: window.__store.map(r => ({ ...r })) });
+    window.deskSetAskSchedule = async (_pin, rows) => {
+      window.__writes.push(JSON.parse(JSON.stringify(rows)));
+      const next = [];
+      for (const r of rows.slice(0, 10)) {
+        if (!String(r.prompt || '').trim()) continue;
+        const known = r.id != null && window.__store.some(s => s.id === r.id);
+        const id = known ? r.id : seq++;
+        const prev = window.__store.find(s => s.id === id);
+        // The real RPC updates in place and never touches the timer.
+        next.push({ ...r, id, lastRunAt: prev ? prev.lastRunAt : null, lastStatus: prev ? prev.lastStatus : null });
+      }
+      window.__store = next;
+      return { ok: true, rows: next.length };
     };
+    DESK.mode = 'live'; DESK.authed = true; renderAsk();
   });
 
-  expect(g.prompt, 'the question survives a save').toBe('SMH indicators?');
-  expect(g.mins, '15-minute floor holds even on a direct assignment').toBe(15);
-  expect(g.rows, 'row cap holds').toBeLessThanOrEqual(10);
-  expect(g.due, 'fires once the interval has elapsed').toBe(true);
-  expect(g.notYet, 'does not fire before it is due').toBe(false);
-  expect(g.off, 'a disabled row never fires').toBe(false);
+  await expect(page.locator('.ask-sched-btn'), 'the ⏱ opens the roster in live mode').toHaveCount(1);
+  await page.locator('.ask-sched-btn').click();
+  await expect(page.locator('#askSchedBackdrop')).toBeVisible();
+  await expect(page.locator('#askSchedList .lock-explain'), 'an empty roster says so').toHaveText(/Nothing scheduled/);
+
+  await page.locator('#askSchedAdd').click();
+  await expect(page.locator('.ask-sched-row')).toHaveCount(1);
+  await page.locator('.ask-sched-q').fill('Summarise the market and my watchlist');
+
+  // A daily row offers a clock; an at-the-hour cadence offers minutes only —
+  // a clock there would let you set 08:00 and watch it fire at midnight.
+  await expect(page.locator('.ask-sched-time'), 'daily gets a clock').toHaveCount(1);
+  await page.locator('.ask-sched-cad').selectOption('h4');
+  await expect(page.locator('.ask-sched-time'), 'every-4-hours has no meaningful hour').toHaveCount(0);
+  await expect(page.locator('.ask-sched-min'), 'it gets a minutes-past-the-hour picker').toHaveCount(1);
+  await page.locator('.ask-sched-cad').selectOption('daily');
+  await page.locator('.ask-sched-time').fill('08:00');
+
+  await page.locator('#askSchedSave').click();
+  await expect(page.locator('#askSchedNote')).toHaveText('Saved');
+
+  const first = await page.evaluate(() => ({
+    stored: window.__store.length,
+    id: window.__store[0].id,
+    prompt: window.__store[0].prompt,
+    cadence: window.__store[0].cadence,
+    atHour: window.__store[0].atHour,
+    sentId: window.__writes[0][0].id,
+    drawn: askSched[0].id,
+  }));
+  expect(first.stored, 'the row reached the store').toBe(1);
+  expect(first.prompt).toBe('Summarise the market and my watchlist');
+  expect(first.cadence).toBe('daily');
+  expect(first.atHour, '08:00 PT is what was set').toBe(8);
+  expect(first.sentId, 'a brand-new row has no id to send').toBeNull();
+  expect(first.drawn, 'the saved id is read back, or the next save inserts a twin').toBe(first.id);
+
+  // A second save of the SAME row must carry its id back, not mint another.
+  await page.locator('.ask-sched-q').fill('Summarise the market, my watchlist and the heatmap');
+  await page.locator('#askSchedSave').click();
+  await expect(page.locator('#askSchedNote')).toHaveText('Saved');
+  const second = await page.evaluate(() => ({
+    stored: window.__store.length,
+    id: window.__store[0].id,
+    sentId: window.__writes[1][0].id,
+  }));
+  expect(second.sentId, 'an existing row sends its id').toBe(first.id);
+  expect(second.stored, 'an edit updates in place').toBe(1);
+  expect(second.id, 'and keeps its identity, so its timer survives').toBe(first.id);
+
+  // The 10-row cap is a cost guard: every firing is a real Claude tool loop.
+  // Asserted on a DIRECT assignment, because that is where it has to hold —
+  // not only when the rows came through the + button.
+  await page.evaluate(() => {
+    for (let i = 0; i < 30; i++) askSched.push(askSchedRow({ prompt: 'row ' + i, cadence: 'daily' }));
+  });
+  await page.locator('#askSchedSave').click();
+  await expect(page.locator('#askSchedNote')).toHaveText('Saved');
+  const capped = await page.evaluate(() => ({ sent: window.__writes[2].length, stored: window.__store.length }));
+  expect(capped.sent, 'the cap holds on the wire, not just server-side').toBeLessThanOrEqual(10);
+  expect(capped.stored, 'and in the store').toBeLessThanOrEqual(10);
+
+  // Closing with unsaved edits must not discard them silently — the first ✕
+  // warns, the second obeys.
+  await page.locator('.ask-sched-q').first().fill('an unsaved edit');
+  await page.locator('#askSchedCloseBtn').click();
+  await expect(page.locator('#askSchedBackdrop'), 'the first ✕ warns instead of discarding').toBeVisible();
+  await expect(page.locator('#askSchedNote')).toHaveText(/Unsaved changes/);
+  await page.locator('#askSchedCloseBtn').click();
+  await expect(page.locator('#askSchedBackdrop')).toBeHidden();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

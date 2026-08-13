@@ -744,7 +744,38 @@ This project's look is its own — established at kickoff via `/design-intake`
   at-close and the Markets chart keeps fetching regular-session only.
   Cron-secret-gated: `desk-ibkr-sync` (Flex → tables). Scheduled by pg_cron
   (`desk_005` migration): sync 22:35/09:35 UTC — dual-slot because IBKR
-  statements roll overnight. (The scheduled twice-daily AI brief — `desk-brief`,
+  statements roll overnight. Also cron-secret-gated: **`desk-cron-ask`**
+  (`desk_018`, owner ruling 2026-08-11) — **the desk waking ITSELF up.** The
+  scheduled-ask roster used to be a `setInterval` in `app.js`, so it only fired
+  while the dashboard was open, which is exactly when the owner is already at
+  the desk and could type the question; the ruling was that a cron task's only
+  value is waking itself at a set time and delivering a market summary. It ticks
+  **every 5 minutes** and the FUNCTION decides what is due, because pg_cron's
+  clock is UTC and the roster's is **Pacific** — a fixed UTC line would drift an
+  hour at every DST change and deliver the 8am summary at 7am for half the year.
+  Due-ness is wall-clock, not elapsed-time, arithmetic (has the PT clock passed
+  the slot, and was the last run at or after it on this PT date), which is exact
+  on the two DST days that elapsed-time comparison gets wrong; `CATCHUP_MIN` (90)
+  both lets a missed tick still deliver and stops a row added at 10am from
+  back-firing an 8am slot. It stamps `last_run_at` **before** calling `desk-ask`,
+  so a run that outlives the next tick or throws cannot be started twice, and it
+  fires **one row per tick** — two rows due together would be back-to-back tool
+  loops. It assembles the whole dashboard server-side (accounts from tables, the
+  five public feeds, plus **Pro 1 / Pro 2 stochastics and RSI computed here** off
+  the `desk-charts` bars — the model's own `get_technicals` is capped at 12 tool
+  calls against a 25-symbol roster, so a question about "the watchlist" would
+  otherwise get readings for the first few names and silence for the rest), then
+  hands it to `desk-ask`, which appends the exchange to `desk_chat_memory` as
+  usual — the table the Ask thread already replays from, so the summary is simply
+  there when the desk is opened. **`desk-ask` therefore takes TWO auth paths**:
+  the browser's PIN, or `x-cron-secret` resolving to the single owner row. The
+  PIN is never stored server-side (only its salted hash), so a scheduled run has
+  nothing to replay; the secret lives in function env + Vault and never reaches
+  the client, so this widens nothing the browser can reach. The context cap in
+  `desk-ask` went 30k → **80k characters** at the same time: PR #241's watchlist
+  + heatmap + stochastics had quietly outgrown it, and the slice was cutting the
+  snapshot off mid-string with the last sections (heatmap, chart readings) the
+  first to vanish. (The scheduled twice-daily AI brief — `desk-brief`,
   its `desk-brief-evening`/`desk-brief-morning` cron jobs, and the dashboard
   panel that rendered it — was retired 2026-07-23, owner request: Ask-the-desk
   already covers the same ground on demand. The edge function and
@@ -845,7 +876,14 @@ This project's look is its own — established at kickoff via `/design-intake`
   token/query-id, `CRON_SECRET`) live only in edge-function secrets;
   `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —
   never client-side, never committed. GitHub keeps only `KEEPALIVE_PAT` +
-  `TEST_AUTH_CREDENTIAL`.
+  `TEST_AUTH_CREDENTIAL`. **`CRON_SECRET` became an ALTERNATIVE AUTH for
+  `desk-ask` on 2026-08-11** (`desk-cron-ask` — see the functions map): a
+  scheduled run has nobody present to type the PIN, and the PIN cannot be
+  replayed server-side because only its salted hash is stored. The secret is
+  function-env + Vault only, so nothing the browser can reach gained a second
+  door; but it does mean `CRON_SECRET` now unlocks the assistant as the owner,
+  not just the sync jobs — treat it as a credential of the same weight as the
+  PIN, and never expose it to a client or a repo.
 - **Supabase free-tier auto-pause runbook:** if live panels lamp STALE and
   login fails, the project likely auto-paused — restore it from the Supabase
   dashboard. Early-warning signals: the S14 canary failing in CI and
@@ -931,7 +969,7 @@ run for real against the dedicated project on every PR.
 | S35 | Symbol detail window | With `?demo=1` a single click opens `#wlDetailBackdrop` on the clicked ticker, the chart draws candles + volume, the span control opens on the panel's own `wlTf` and switching it redraws the chart WITHOUT retiming `wlTf`, and Escape closes. Then forced live (`DESK.authed` left **false** — opening a window READS a symbol and must not need an unlock): a **double-click reaches the removal dialog and leaves the detail window shut** (waited past `WL_CLICK_MS`, so a leaked timer would have fired), a single click still opens it without reaching removal, and a **drag/drop opens nothing** | The window opening under a removal (the deferred-open cancel is broken, and the modal then swallows the second click — removal dies outright), a modal control retiming the whole panel, a drop opening a window on every arrange, or an empty `<svg>` |
 | S28 | Charts quote expires by age | With `?demo=1`, `wbInfoTtlMs()` returns one of the two session cadences (60s / 15 min) and a `wbInfoCache` entry carries both `at` and `info`. Guards the CONTRACT, not the bug: reproducing it needs a tab held open across a session boundary, which CI cannot do | A cache keyed on presence again (the 2026-07-31 SMH report: the prior session's close and move shown under a "delayed by 1 minute" stamp) |
 | S32 | Interrupt a question | With `?demo=1` NO `.ask-stop` renders (nothing to stop). Forced live+authed with `deskAsk` stubbed to hang until aborted: Stop appears only while in flight, the COMPOSER STAYS ENABLED throughout, and after Stop the button returns to "Ask", `askBusy` clears, and a `.ask-a--stopped` note states the answer is still coming — with the red `.lock-error` line staying hidden | A Stop offered in demo, a composer disabled mid-flight, a wedged `askBusy` (the panel is then dead), a silent stop (the answer reappears on reload looking like a bug), or a deliberate stop rendered as an error |
-| S29 | Scheduled asks | With `?demo=1` forced live+authed, the ⏱ opens the roster and adds a row; `saveAskSched()` clamps to the 15-min floor and 10-row cap even on a DIRECT assignment (the guards live at the write boundary, not in the input handler), and `askSchedDue()` fires only when elapsed, never when disabled | A row firing under 15 min, an uncapped roster, or a disabled row running — each is real Claude quota |
+| S29 | Scheduled asks | With `?demo=1` NO ⏱ renders (no backend to write to). Forced live+authed against a stateful fake roster: the ⏱ opens it, a new row saves and is read BACK WITH ITS ID, a second save of the same row sends that id and updates in place, the cadence control swaps the time control (a clock for daily/weekdays, minutes-past-the-hour for hourly/every-N), the 10-row cap holds on a DIRECT assignment, and the first ✕ over unsaved edits warns instead of discarding | A ⏱ in demo, an id dropped on save (the write is an upsert-by-id and the cron stamps `last_run_at` on those rows — a lost id inserts a twin and re-fires today's summary), an hour offered for a cadence that ignores it, an uncapped roster (each firing is real Claude quota), or edits discarded silently |
 | S33 | Verify-answer toggle | With `?demo=1` NO `.ask-verify` renders. Forced live+authed with `deskAsk` stubbed to RECORD its `verify` argument: off by default, arming sends `true` **on the wire** (not just `aria-pressed`), it disarms itself once an answer lands so the next question sends `false`, and a FAILED question keeps the arm | A toggle that stays on (every follow-up silently bills the check), a reset that's only cosmetic, or an error that disarms — the owner re-sends and their choice is gone |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S30 | Watchlist write conflict | With `?demo=1`, `deskSetWatchlists` forwards a version it is handed, `wlMutate` echoes back the version its own read returned, and an omitted version serializes as an explicit `null` — `undefined` would be dropped by `JSON.stringify` and silently bind the RPC's no-check default. The refusal itself is server-side (`desk_014`), exercised against the live table rather than in CI | A write with no `expected_version`, a version invented at write time rather than read, or `undefined` on the wire |

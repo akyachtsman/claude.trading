@@ -128,24 +128,43 @@ Deno.serve(async (req) => {
   const askedToVerify = payload.verify === true || VERIFY_MARK.test(rawQuestion);
   const question = rawQuestion.replace(VERIFY_MARK, ' ').replace(/\s+/g, ' ').trim();
   const verifyThisTurn = VERIFY_ALWAYS || askedToVerify;
-  if (!pin || !question) return reply(400, { ok: false, error: 'pin and question are required' });
 
   const supaUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const svc = { apikey: serviceKey, authorization: `Bearer ${serviceKey}` };
 
-  // PIN check — same salted-hash scheme as desk_login; capture the matched user id.
-  const usersRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=id,salt,pin_hash`, { headers: svc });
-  if (!usersRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
-  const users: { id: string; salt: string; pin_hash: string }[] = await usersRes.json();
-  const enc = new TextEncoder();
+  // Two ways in. The browser sends the PIN. desk-cron-ask (pg_cron, owner ruling
+  // 2026-08-11) sends the x-cron-secret instead, because a scheduled run has no
+  // one present to unlock the desk and the PIN is never stored server-side —
+  // only its salted hash, which cannot be replayed. The secret lives in
+  // function env + Vault and never reaches the client, so this widens nothing
+  // the browser can reach; it is the same gate desk-ibkr-sync and desk-brief use.
+  const cronSecret = Deno.env.get('CRON_SECRET');
+  const viaCron = !!cronSecret && req.headers.get('x-cron-secret') === cronSecret;
+  if (!question) return reply(400, { ok: false, error: 'question is required' });
+  if (!viaCron && !pin) return reply(400, { ok: false, error: 'pin and question are required' });
+
   let userId: string | null = null;
-  for (const u of users) {
-    const digest = await crypto.subtle.digest('SHA-256', enc.encode(u.salt + pin));
-    const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-    if (hex === u.pin_hash) userId = u.id; // check every row — no early exit
+  if (viaCron) {
+    // The desk has exactly one owner row; a scheduled run answers as them.
+    const ownerRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers: svc });
+    if (!ownerRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
+    const owners: { id: string }[] = await ownerRes.json();
+    userId = owners[0]?.id ?? null;
+    if (!userId) return reply(500, { ok: false, error: 'no owner row in desk_users' });
+  } else {
+    // PIN check — same salted-hash scheme as desk_login; capture the matched user id.
+    const usersRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=id,salt,pin_hash`, { headers: svc });
+    if (!usersRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
+    const users: { id: string; salt: string; pin_hash: string }[] = await usersRes.json();
+    const enc = new TextEncoder();
+    for (const u of users) {
+      const digest = await crypto.subtle.digest('SHA-256', enc.encode(u.salt + pin));
+      const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+      if (hex === u.pin_hash) userId = u.id; // check every row — no early exit
+    }
+    if (!userId) return reply(401, { ok: false, error: 'PIN not recognized.' });
   }
-  if (!userId) return reply(401, { ok: false, error: 'PIN not recognized.' });
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) {
@@ -338,11 +357,19 @@ Deno.serve(async (req) => {
     }
   }
 
-  const contextJson = JSON.stringify(payload.context ?? {}).slice(0, 30000);
+  // 80k characters ≈ 20k tokens. It was 30k, which the dashboard snapshot had
+  // quietly outgrown: PR #241 added the watchlist, heatmap and stochastics, and
+  // the live roster (12 lists, ~250 symbols) lands around 30k on its own — so
+  // the slice had started cutting the context off MID-STRING, silently, with
+  // the sections at the end (heatmap, chart readings) the first to go. The
+  // scheduled run (desk-cron-ask) carries the same payload plus server-computed
+  // technicals for the whole charted roster. This is a runaway guard, not a
+  // budget: it should never be the thing that shapes what the model sees.
+  const contextJson = JSON.stringify(payload.context ?? {}).slice(0, 80000);
   // Second cache breakpoint. Everything up to and including this turn is fixed
   // for the whole tool loop — system, tools, the replayed memory, the snapshot
   // and the question — while only the assistant/tool_result pairs appended
-  // below it grow. The snapshot alone can be 30k characters, so this is the
+  // below it grow. The snapshot is the largest single block, so this is the
   // larger of the two savings.
   messages.push({
     role: 'user',
