@@ -5125,13 +5125,26 @@ function renderCharts(data, lamp) {
     /* per-pane crosshair + readout — full cross like the reference: the
        horizontal line tracks the pointer through the price area with a
        live price tag pinned to the axis */
-    const cross = svgEl('line', { y1: pY, y2: chartBot, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    /* SOLID and in primary ink, matched to the reference terminal (owner
+       request 2026-08-13, "copy pixel to pixel"). They were dotted 2-3 in
+       --color-text-secondary, which on this black canvas reads as a faint
+       suggestion; the reference draws a clean unbroken rule you can sight
+       along. Honest limit: line weight and colour are matched by eye from a
+       screenshot crop — the geometry (solid, 1px, full span) is exact, the
+       exact grey value is not measurable from a lossy image. */
+    const cross = svgEl('line', { y1: pY, y2: chartBot, stroke: 'var(--color-text-primary)', 'stroke-width': 1, visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(cross);
-    const crossH = svgEl('line', { x1: x0 + 6, x2: x0 + 6 + plotW, stroke: WB.label, 'stroke-width': 1, 'stroke-dasharray': '2 3', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    const crossH = svgEl('line', { x1: x0 + 6, x2: x0 + 6 + plotW, stroke: 'var(--color-text-primary)', 'stroke-width': 1, visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossH);
-    const crossTagBg = svgEl('rect', { x: x0 + 6 + plotW + 2, width: padR - 10, height: 13, rx: 2, fill: 'var(--color-surface-2)', stroke: 'var(--color-border-hover)', 'stroke-width': 1, visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    /* Pentagon notched at the axis, identical in shape to the last-price flag
+       above — the reference uses one tag idiom for both, and inventing a second
+       here would imply a distinction the chart does not make. They never read
+       as ambiguous because this one only exists while the pointer is down the
+       chart, and it is appended AFTER the price flag so it wins the row when
+       both land together. */
+    const crossTagBg = svgEl('path', { fill: 'var(--color-text-primary)', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTagBg);
-    const crossTag = svgEl('text', { x: x0 + 6 + plotW + 5, 'font-size': 8, 'font-weight': 600, fill: 'var(--color-text-primary)', 'font-family': 'var(--font-mono)', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    const crossTag = svgEl('text', { x: x0 + 6 + plotW + 5, 'font-size': 11, 'font-weight': 700, fill: 'var(--color-bg)', 'font-family': 'var(--font-mono)', 'font-variant-numeric': 'tabular-nums', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTag);
     const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: chartBot - pY, fill: 'transparent', style: 'cursor: grab' });
     svg.appendChild(overlay);
@@ -5195,9 +5208,13 @@ function renderCharts(data, lamp) {
       if (my >= pY && my <= pY + pH) {
         crossH.setAttribute('y1', my); crossH.setAttribute('y2', my);
         crossH.setAttribute('visibility', 'visible');
-        crossTagBg.setAttribute('y', my - 6.5);
+        /* Same pentagon geometry as the last-price flag, recomputed at the
+           pointer's row rather than a rect's y, so the notch keeps pointing at
+           the axis wherever it sits. */
+        const cx = x0 + 6 + plotW + 2, cw = padR - 10, ch = 8, cn = 4;
+        crossTagBg.setAttribute('d', `M${cx - cn} ${my}L${cx} ${my - ch}H${cx + cw}V${my + ch}H${cx}Z`);
         crossTagBg.setAttribute('visibility', 'visible');
-        crossTag.setAttribute('y', my + 3);
+        crossTag.setAttribute('y', my + 3.5);
         crossTag.textContent = fmtPrice(hi - (my - pY) / pH * (hi - lo));
         crossTag.setAttribute('visibility', 'visible');
       }
