@@ -5076,6 +5076,52 @@ function renderCharts(data, lamp) {
       }
     }
 
+    /* LAST-PRICE TAB — the reference terminal's white flag pinned to the price
+       axis (owner request 2026-08-12). Painted BEFORE the crosshair so that
+       when the pointer's own tag lands on the same row the crosshair wins:
+       both live in the same 36px gutter, and the one tracking the pointer is
+       the one being read at that moment.
+
+       The price is the LIVE QUOTE, not the last bar's close, which is what
+       makes it move on the tape's cadence rather than the chart's: the market
+       poller refreshes the quote every 60s while prints are arriving and
+       re-renders the workbench, so this tab follows it with no clock of its
+       own. It falls back to the newest close when there is no quote — demo
+       (no backend to quote from) and a live pane whose quote fetch failed.
+       That fallback is real data either way, never a fabricated price.
+
+       `bars.c.length - 1`, NOT `end - 1`: `end` is the last VISIBLE bar, so
+       panning back through history would otherwise pin the tab to whatever
+       old bar happened to be at the right edge and label a 2024 close as the
+       current price. Price now is price now regardless of where the window
+       sits, so the tab is clamped into the pane instead of scrolling out of
+       it — matching the reference, which keeps the flag against the top or
+       bottom edge once the tape leaves the drawn range. */
+    const liveQuote = (wbState && wbInfoCache[wbState.sym] && wbInfoCache[wbState.sym].info || {}).last;
+    const lastPx = Number.isFinite(liveQuote) ? liveQuote : bars.c[bars.c.length - 1];
+    if (Number.isFinite(lastPx)) {
+      const lpY = py(Math.min(hi, Math.max(lo, lastPx)));
+      /* tagH/font raised with the ladder (2026-08-13). The tag was 8px beside a
+         9px ladder — near-equal, so the flag still read as the dominant mark.
+         Once the ladder went to 11px that inverted: the CURRENT price, the one
+         number the eye should find first, became the smallest thing on the
+         axis. Sized to sit above the ladder again rather than merely match it. */
+      const tagX = x0 + 6 + plotW + 2, tagW = padR - 10, tagH = 8, notch = 4;
+      /* Pentagon, not a rect: the notch points at the axis so the flag reads as
+         marking a level rather than floating beside one. */
+      svg.appendChild(svgEl('path', {
+        d: `M${tagX - notch} ${lpY}L${tagX} ${lpY - tagH}H${tagX + tagW}V${lpY + tagH}H${tagX}Z`,
+        fill: 'var(--color-text-primary)',
+        'pointer-events': 'none',
+      }));
+      /* Neutral white/dark, never gain-red or loss-green: those colours are
+         P&L-only on this desk, and a price level is not a P&L. */
+      text(fmtPrice(lastPx), tagX + 3, lpY + 3.5, {
+        fill: 'var(--color-bg)', 'font-size': 11, 'font-weight': 700,
+        'font-variant-numeric': 'tabular-nums',
+      });
+    }
+
     /* per-pane crosshair + readout — full cross like the reference: the
        horizontal line tracks the pointer through the price area with a
        live price tag pinned to the axis */

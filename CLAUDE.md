@@ -542,6 +542,25 @@ This project's look is its own — established at kickoff via `/design-intake`
   The **SMA price display** (a right-edge price tag at each enabled SMA) was
   removed from Pro 1/2/3 the same day, owner request — the config, the popover
   group and the drawing code all went; the SMA lines themselves are untouched.
+  **A LAST-PRICE TAB is a different thing and IS on all three panes** (owner
+  request 2026-08-12, from a reference terminal's white flag): a pentagon
+  notched at the price axis, `--color-text-primary` on `--color-bg` — which
+  inside `.chart-wrap` resolve to near-white on near-black, so it inverts with
+  the pane instead of being a hardcoded white that would vanish if the
+  workbench ever went light. Neutral by rule, never gain/loss coloured: those
+  are P&L-only, and a price level is not a P&L. Four things are load-bearing.
+  It reads the **LIVE QUOTE** (`wbInfoCache`), not the last bar's close, which
+  is what makes it "move as often as our prices" — `scheduleMarketPoll` already
+  refreshes that every 60s while prints arrive and `maybeFetchWbInfo` already
+  re-renders the workbench on completion, so the tab needed NO clock of its own.
+  It falls back to the newest close when there is no quote (demo, or a failed
+  live fetch) — real data either way, never fabricated. It indexes
+  `bars.c.length - 1`, **NOT `end - 1`**: `end` is the last VISIBLE bar, so
+  panning back through history would otherwise label a years-old close as the
+  current price; it is clamped into `[lo, hi]` and rides the pane edge instead,
+  as the reference does. And it is painted **BEFORE** the crosshair, so when the
+  pointer's own tag lands on the same row the crosshair wins — both share the
+  same 36px gutter, and the one tracking the pointer is the one being read.
   The chart is a **self-contained renderer**, deliberately NOT the
   workbench's `drawPane`: that is a closure inside `renderCharts()` guarded by
   S12/S25/S34, and prising it out to serve a modal would risk a heavily-ruled
@@ -940,6 +959,7 @@ run for real against the dedicated project on every PR.
 | S25 | Pro 2 stochastic candles | With `?demo=1`, EVERY Pro 2 candle's colour matches the **weekly** `%K` vs `%D` (read off the rendered SVG, pane-scoped by title, volume bars excluded — they stay price-coloured). TWO negative controls must both fail the same comparison: the pane's own daily strip, and Pro 1 against its stochastic. Sampling tolerance scales with bar spacing, so it holds at phone width | Any Pro 2 candle disagreeing with the weekly crossover (a silent fallback to open/close), the daily strip also matching (the wrong series drives the colour), or Pro 1 agreeing everywhere (the rule leaked into the wrong pane) |
 | S34 | Pro 2 steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
+| S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
 | S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop; Escape cancels; the tray round-trips through `localStorage` across a reload; double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, a tray tile lost on reload, the trash replacing double-click, or any page error during a drag |
 | S31 | Create + delete a whole list | With `?demo=1` NO `#wlNewListBtn` and no `.wl-del` render. Forced live+authed against a stateful fake roster: the created list PERSISTS to the store, a case-insensitive duplicate name is refused without writing and without discarding the typed name, **under `wlLocked` the `×` is disabled AND `openWlDelList` refuses even when called directly while `+ list` stays available**, the delete confirm names the list and its symbol count and opens focus on "Keep it", and the deleted list is gone from the store | A write control in demo, a duplicate accepted (it makes both lists unaddressable via `wlPick`), a delete reachable under the lock (the button guard alone is not the rule), a confirm that doesn't say what is being destroyed, or a delete that only repaints |
