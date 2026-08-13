@@ -4645,8 +4645,38 @@ function renderCharts(data, lamp) {
 
   /* one pane = caption · price (+SMA/pivots) · volume · stochastic strip */
   const drawPane = (x0, w, bars, st, marks, caption, opts) => {
-    const padR = 46;
+    /* Right gutter widened 46 → 64 to carry the larger ladder below. It is the
+       ladder that sets this number: tick + gap is 11px, leaving ~53px, which
+       fits "1,280.00" at 11px IBM Plex Mono (~6.6px/char). A five-figure price
+       would still clip — as it did at 46 — but nothing in this workbench's
+       roster reaches one, and buying for it would cost every pane real plot
+       width every day to cover a case that does not occur. */
+    const padR = 64;
     const plotW = w - padR - 6;
+
+    /* ── axis ladders ───────────────────────────────────────────────────────
+       Owner request 2026-08-13, against a reference-terminal screenshot: "a
+       line scale of the pricing, bright, nice, great font". The three ladders
+       had drifted to 8px, 9px and 9px in --color-text-secondary, which reads
+       as a faint annotation rather than the ruler the eye actually navigates
+       by — and the stochastic ladder carried no tick at all, so its numbers
+       floated free of the column the other two formed.
+       ONE spec now drives all three, because the thing being copied is not a
+       font size but a single continuous edge running the height of the pane;
+       three independently-tuned sizes cannot produce that however carefully
+       each is chosen. Volume stays deliberately subordinate in secondary ink:
+       it is a supporting histogram, and giving it the same weight as price
+       would flatten the hierarchy the brightness exists to create.
+       tabular-nums is stated even though IBM Plex Mono is already
+       fixed-advance — it costs nothing and keeps the column true if the stack
+       ever falls back to a proportional face. */
+    const AX = { tick: 7, gap: 4, big: 11, small: 9 };
+    const axisRow = (str, ty, size, fill) => {
+      line(x0 + 6 + plotW, ty, x0 + 6 + plotW + AX.tick, ty, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
+      text(str, x0 + 6 + plotW + AX.tick + AX.gap, ty + size / 3, {
+        'font-size': size, fill, 'font-variant-numeric': 'tabular-nums', 'font-weight': 500,
+      });
+    };
     const n = Math.min(opts.window, bars.c.length);
     /* pan offset = bars hidden off the right edge (0 = latest bar visible) */
     const off = Math.max(0, Math.min(opts.offset || 0, bars.c.length - n));
@@ -4762,10 +4792,8 @@ function renderCharts(data, lamp) {
     for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
     const tick = nice * mag;
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
-      /* short tick mark beside each price label (owner request 2026-07-22) —
-         a ruler notch at the axis edge, NOT a gridline crossing the chart */
-      line(x0 + 6 + plotW, py(v), x0 + 6 + plotW + 4, py(v), { stroke: 'var(--color-border-hover)', 'stroke-width': 1 });
-      text(fmtPrice(v), x0 + 6 + plotW + 7, py(v) + 3, { 'font-size': 9 });
+      /* a ruler notch at the axis edge, NOT a gridline crossing the chart */
+      axisRow(fmtPrice(v), py(v), AX.big, 'var(--color-text-primary)');
     }
     for (const [name, v] of pivots) {
       /* R levels orange, S levels green, pivot yellow — the reference scheme */
@@ -4912,8 +4940,7 @@ function renderCharts(data, lamp) {
       const vTick = vNice * vMag;
       for (let v = vTick; v <= vMax; v += vTick) {
         const yv = vY + vH - (v / vMax) * vH;
-        line(x0 + 6 + plotW, yv, x0 + 6 + plotW + 4, yv, { stroke: 'var(--color-border-hover)', 'stroke-width': 1 });
-        text(fmtVol(v), x0 + 6 + plotW + 7, yv + 3, { 'font-size': 8 });
+        axisRow(fmtVol(v), yv, AX.small, 'var(--color-text-secondary)');
       }
     }
 
@@ -4927,7 +4954,7 @@ function renderCharts(data, lamp) {
          were removed 2026-07-22 to match the terminal's clean panels — number
          label only at each level, no line across the strip. */
       for (const g of [0, 20, 40, 60, 80]) {
-        text(String(g), x0 + 6 + plotW + 4, sy(g) + 3, { 'font-size': 9 });
+        axisRow(String(g), sy(g), AX.small, 'var(--color-text-primary)');
       }
       /* Oversold/overbought bands in red on top of the ladder: the WEEKLY strip
          uses 30/80 to match the reference terminal (owner request 2026-07-20);
