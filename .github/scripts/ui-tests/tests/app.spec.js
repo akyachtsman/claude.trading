@@ -2317,11 +2317,20 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
 
   // The tab is a filled pentagon + its inverted label; read both so a flag
   // drawn with no number (or a number with no flag) fails rather than passes.
+  //
+  // :not([data-cross]) is load-bearing. The CROSSHAIR tag is deliberately the
+  // same pentagon in the same ink (2026-08-13, matching the reference terminal,
+  // which uses one tag idiom for both), so a bare fill filter now collects it
+  // too — and it carries no `d` and no text until the pointer is over a pane,
+  // which made this read null and throw rather than fail with a useful message.
+  // data-cross is the marker the crosshair parts already carry for hide/show,
+  // so it is the honest discriminator: this scenario is about the LAST-PRICE
+  // tab, not about every pentagon on the axis.
   const tabs = async () => page.evaluate(() => {
     const svg = document.getElementById('wbChart');
-    const flags = [...svg.querySelectorAll('path')]
+    const flags = [...svg.querySelectorAll('path:not([data-cross])')]
       .filter(e => e.getAttribute('fill') === 'var(--color-text-primary)');
-    const labels = [...svg.querySelectorAll('text')]
+    const labels = [...svg.querySelectorAll('text:not([data-cross])')]
       .filter(e => e.getAttribute('fill') === 'var(--color-bg)');
     return {
       flags: flags.length,
