@@ -4248,18 +4248,51 @@ function syncLockPressed() {
 
 const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : Math.round(v / 1e3) + 'K';
 
-/* Classic pivots from the prior calendar month's H/L/C of the daily series. */
-function monthlyPivots(s) {
-  const lastMonth = s.t[s.t.length - 1].slice(0, 7);
-  let hi = -Infinity, lo = Infinity, close = null, seen = false;
-  for (let i = s.t.length - 1; i >= 0; i--) {
-    const m = s.t[i].slice(0, 7);
-    if (m === lastMonth) continue;
-    if (!seen) { seen = true; close = s.c[i]; }
-    else if (s.t[i].slice(0, 7) !== s.t[i + 1].slice(0, 7)) break; /* left prior month */
+/* Classic (floor-trader) pivots from a PRIOR PERIOD's H/L/C of the daily
+   series. Period is per pane (owner ruling 2026-08-13): a pane's levels should
+   be drawn over the horizon that pane trades. Every pane used to get the
+   prior-CALENDAR-MONTH set, which on a fast mover strands them far from price —
+   SPCX on 2026-08-12 put R3 at 212.80 with the stock at 146.15, because July
+   contained a 171 -> 107 collapse. The day-trading pane in particular was
+   reading month-old levels.
+
+   NOT the reference terminal's model. That was investigated at length the same
+   day against four of its symbols (SPCX/SPY/EEM/GLD): its levels are EVENLY
+   spaced about the prior day's CLOSE — P +/- n*D — whereas classic pivot gaps
+   alternate (P-L, H-P) and coincide only when the close sits exactly at the
+   range midpoint. Its step D could not be reproduced by ATR (any length or
+   smoothing), realised volatility, Camarilla on any fixed lookback, or a
+   constant times any prior day/week/month range; and D does not sit on past
+   swing highs/lows either (levels miss the nearest peak/trough by 1.31% on
+   average against 1.46% for randomly drawn prices — i.e. no better than
+   chance). The method is proprietary to Phil's Gang / Team Traders Pro and is
+   not published. This function is therefore our OWN standard model, chosen
+   deliberately, not an approximation of theirs. If the real method ever
+   surfaces, only the level maths below changes — the drawing code is agnostic.
+
+   `period`: 'day' | 'week' | 'month'. Week is Mon-Sun by ISO date so a holiday
+   or a half week still resolves to one calendar week rather than "5 bars", and
+   month is calendar, both matching how the levels are quoted. */
+function priorPeriodKey(iso, period) {
+  if (period === 'day') return iso;
+  if (period === 'month') return iso.slice(0, 7);
+  const d = new Date(iso + 'T00:00:00Z');          /* ISO week: shift to its Monday */
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+function periodPivots(s, period) {
+  const n = s.t.length;
+  if (!n) return [];
+  const current = priorPeriodKey(s.t[n - 1], period);
+  let hi = -Infinity, lo = Infinity, close = null, key = null;
+  for (let i = n - 1; i >= 0; i--) {
+    const k = priorPeriodKey(s.t[i], period);
+    if (k === current) continue;                    /* still inside the in-progress period */
+    if (key === null) { key = k; close = s.c[i]; }  /* first bar of the prior one = its close */
+    else if (k !== key) break;                      /* walked off the front of it */
     hi = Math.max(hi, s.h[i]); lo = Math.min(lo, s.l[i]);
   }
-  if (!seen || !Number.isFinite(hi)) return [];
+  if (key === null || !Number.isFinite(hi)) return [];
   const p = (hi + lo + close) / 3;
   return [
     ['R3', hi + 2 * (p - lo)], ['R2', p + (hi - lo)], ['R1', 2 * p - lo],
@@ -5249,7 +5282,11 @@ function renderCharts(data, lamp) {
     const intra = wbSymLive(sym) && wbState.intraday ? wbState.intraday[sym] : null;
     const g = intra ? graftTodayBar(data.symbols[sym], intra) : null;
     const bars = g ? g.bars : data.symbols[sym];
-    return { bars, st: stochSeries(bars), rsi: rsiSeries(bars), piv: monthlyPivots(bars), live: g ? g.at : null };
+    /* All three periods computed once here; each pane picks its own below.
+       Cheap (one pass each over the same daily series) and keeps the pane code
+       a straight lookup rather than three call sites re-deriving bars. */
+    const piv = { day: periodPivots(bars, 'day'), week: periodPivots(bars, 'week'), month: periodPivots(bars, 'month') };
+    return { bars, st: stochSeries(bars), rsi: rsiSeries(bars), piv, live: g ? g.at : null };
   })());
   /* the daily panes need today's intraday bars too (not just Pro 3), so pull
      intraday for every visible pane's symbol — the graft above then lands on
@@ -5264,7 +5301,7 @@ function renderCharts(data, lamp) {
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · SWING · ' + sym, {
       window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
-      pivots: d.piv, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
+      pivots: d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
       stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
       stochCaption: stochTag() + ' · DAILY',
     }]);
@@ -5297,7 +5334,7 @@ function renderCharts(data, lamp) {
          landed between them, so the lower bound is chosen for consistency
          with the drawn band, not for effect. */
       colorSt: wbState.cfg.p2.stochSteady ? { ...wk2, band: STEADY_BAND } : wk2,
-      pivots: d.piv, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
+      pivots: d.piv.month, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
       marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
@@ -5334,7 +5371,7 @@ function renderCharts(data, lamp) {
            anywhere within the ~5-day intraday feed */
         window: paneWindow(wbState.days3, intra15), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
-        pivots: d.piv, smas: smaList(wbState.cfg.p3), rsi: rsiSeries(intra15),
+        pivots: d.piv.day, smas: smaList(wbState.cfg.p3), rsi: rsiSeries(intra15),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCfgNative: ISTOCH,
         stochCaption: stochTagOf(ISTOCH) + ' · 15-MIN',
@@ -5344,7 +5381,7 @@ function renderCharts(data, lamp) {
       panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
         window: paneWindow(wbState.days3d, d.bars), offset: wbState.off3d, panKey: 'off3d', daysKey: 'days3d', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
-        pivots: d.piv, smas: smaList(wbState.cfg.p3), rsi: d.rsi,
+        pivots: d.piv.day, smas: smaList(wbState.cfg.p3), rsi: d.rsi,
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCaption: stochTag() + ' · DAILY (INTRADAY PENDING)',
       }]);
