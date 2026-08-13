@@ -3980,7 +3980,12 @@ window.addEventListener('resize', () => {
    indicator-palette hexes, NOT the P&L --color-loss/gain tokens — the red here is
    a chart-series color, not a P&L signal; red-vs-yellow stays CVD-distinguishable
    by lightness. */
-const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)' };
+/* res/sup/piv are chart-native hexes, NOT page tokens, for the same reason
+   kLine/dLine are: the page palette is tuned for dark ink on cream, and this
+   pane's canvas is black, so --color-accent (#96610F) and --color-gain
+   (#177C4B) render muddy on it. They are also deliberately not the gain/loss
+   tokens — support/resistance is a charting semantic, not P&L. */
+const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)', res: '#FF9F0A', sup: '#32D74B', piv: '#FFD60A' };
 /* Strip captions derived from the live STOCH/WSTOCH/ISTOCH settings so the
    label can never disagree with the math (e.g. "STOCH 14-3-3"). All are
    defined in data.js, which loads first; these run at render time. */
@@ -4796,10 +4801,20 @@ function renderCharts(data, lamp) {
       axisRow(fmtPrice(v), py(v), AX.big, 'var(--color-text-primary)');
     }
     for (const [name, v] of pivots) {
-      /* R levels orange, S levels green, pivot yellow — the reference scheme */
-      const pcol = name === 'P' ? 'var(--color-accent-bright)' : name[0] === 'R' ? 'var(--color-accent)' : 'var(--color-gain)';
-      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: pcol, 'stroke-width': 1, 'stroke-dasharray': '5 4', 'stroke-opacity': 0.7 });
-      text(name + ' ' + fmtPrice(v), x0 + 8, py(v) - 3, { fill: pcol, 'font-size': 9 });
+      /* SOLID, at full strength, in chart-native colour (owner request
+         2026-08-13 with a reference screenshot: "displayed as such. Solid and
+         look at the color").
+         These were dashed at 0.7 opacity in --color-accent / --color-gain, and
+         the colour was the real fault: those tokens are the page's LIGHT-theme
+         values, picked to be text-safe on cream (#96610F, #177C4B). Painted on
+         this pane's black canvas they go muddy — the amber reads brown and the
+         green reads bottle. The workbench already solves this for %K/%D with
+         chart-native hexes rather than page tokens, and pivots now do the same.
+         A second benefit: support no longer borrows --color-gain, so the
+         P&L-only colour rule is not bent to mean "support" here. */
+      const pcol = name === 'P' ? WB.piv : name[0] === 'R' ? WB.res : WB.sup;
+      line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: pcol, 'stroke-width': 1 });
+      text(name + ': ' + fmtPrice(v), x0 + 8, py(v) - 4, { fill: pcol, 'font-size': 10, 'font-weight': 600 });
     }
 
     /* Bollinger envelope — dashed, neutral, like the reference Pro 3 */
