@@ -2547,16 +2547,35 @@ function buildHeatmapContext() {
     const list = (sec.tiles || []).filter(t => Number.isFinite(t.pct));
     if (!list.length) continue;
     const avg = list.reduce((a, t) => a + t.pct, 0) / list.length;
-    sectors.push({ name: sec.name, avgDayChgPct: Number(avg.toFixed(2)), names: list.length });
-    for (const t of list) tiles.push({ sym: t.sym, dayChgPct: t.pct, sector: sec.name });
+    sectors.push({ name: sec.name, avgChgPct: Number(avg.toFixed(2)), names: list.length });
+    for (const t of list) tiles.push({ sym: t.sym, chgPct: t.pct, sector: sec.name });
   }
   if (!sectors.length) return null;
-  const byMove = [...tiles].sort((a, b) => b.dayChgPct - a.dayChgPct);
+  const byMove = [...tiles].sort((a, b) => b.chgPct - a.chgPct);
+  /* `pct` is NOT always a day move: recolorForPeriod() rewrites it to the
+     selected period's return (pctW/pctM/pctYtd) before renderHeatmap() stores
+     the dataset here, so on 1W/1M/YTD these are weekly, monthly or
+     year-to-date figures. They were being labelled avgDayChgPct/dayChgPct
+     regardless, which told the model a monthly move was a daily one — wrong
+     analysis stated confidently, with nothing in the answer to reveal it
+     (Codex review, PR #241). The fields are therefore period-NEUTRAL and the
+     period is named alongside them; a period-specific key would have to be
+     read correctly to be safe, whereas a neutral one cannot be misread at
+     all. `periodLabel` carries the panel's own wording so the model can say
+     "1-Month Performance" in the owner's terms rather than inventing a
+     phrasing for the token. */
+  const period = (mapView && mapView.period) || '1d';
+  const label = (MAP_PERIODS.find(p => p[0] === period) || [])[1] || null;
   return {
     cut: mapView.label || mapView.key || null,
+    period,
+    periodLabel: label,
+    measures: period === '1d'
+      ? 'chgPct is each name\'s move on the day'
+      : `chgPct is each name's return over ${label}, NOT a daily move`,
     asOf: hm.asOf || null,
     names: tiles.length,
-    sectors: sectors.sort((a, b) => b.avgDayChgPct - a.avgDayChgPct),
+    sectors: sectors.sort((a, b) => b.avgChgPct - a.avgChgPct),
     topGainers: byMove.slice(0, 10),
     topLosers: byMove.slice(-10).reverse(),
   };

@@ -228,18 +228,28 @@ function heatmapFrom(hm: Any): Any {
     const list = (sec.tiles || []).filter((t: Any) => Number.isFinite(t.pct));
     if (!list.length) continue;
     const avg = list.reduce((a: number, t: Any) => a + t.pct, 0) / list.length;
-    sectors.push({ name: sec.name, avgDayChgPct: Number(avg.toFixed(2)), names: list.length });
-    for (const t of list) tiles.push({ sym: t.sym, dayChgPct: t.pct, sector: sec.name });
+    sectors.push({ name: sec.name, avgChgPct: Number(avg.toFixed(2)), names: list.length });
+    for (const t of list) tiles.push({ sym: t.sym, chgPct: t.pct, sector: sec.name });
   }
   if (!sectors.length) return null;
-  const byMove = [...tiles].sort((a, b) => b.dayChgPct - a.dayChgPct);
+  const byMove = [...tiles].sort((a, b) => b.chgPct - a.chgPct);
   return {
     // The cron has no on-screen cut to mirror, so it always reads the default
     // S&P 500 universe — named, so the model never implies it looked wider.
     cut: 'S&P 500',
+    /* Period is stated even though this path can only ever be daily: it reads
+       the raw desk-heatmap payload and never applies the dashboard's
+       recolorForPeriod(), so `pct` really is a day move here. The FIELD NAMES
+       nonetheless match the browser's buildHeatmapContext() exactly — two
+       shapes for one panel would be a worse trap than the mislabelling this
+       replaces, since the model would have to know which path built the
+       snapshot to read either correctly. */
+    period: '1d',
+    periodLabel: '1-Day Performance',
+    measures: 'chgPct is each name\'s move on the day',
     asOf: hm.asOf ?? null,
     names: tiles.length,
-    sectors: sectors.sort((a, b) => b.avgDayChgPct - a.avgDayChgPct),
+    sectors: sectors.sort((a, b) => b.avgChgPct - a.avgChgPct),
     topGainers: byMove.slice(0, 10),
     topLosers: byMove.slice(-10).reverse(),
   };
