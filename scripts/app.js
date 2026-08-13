@@ -5158,18 +5158,14 @@ function renderCharts(data, lamp) {
       const winW = Math.max(6, n * pxPerBar);
 
       svg.appendChild(svgEl('rect', { x: navX, y: navTop, width: navW, height: navH, rx: 3, fill: 'var(--color-surface-2)', stroke: 'var(--color-border)', 'stroke-width': 1 }));
-      /* faint full-range close sparkline for context (downsampled) */
-      let sHi = -Infinity, sLo = Infinity;
-      for (let i = 0; i < len; i++) { sHi = Math.max(sHi, bars.c[i]); sLo = Math.min(sLo, bars.c[i]); }
-      const sRange = sHi - sLo || 1;
-      const stepN = Math.max(1, Math.ceil(len / 240));
-      let spark = '';
-      for (let i = 0; i < len; i += stepN) {
-        const sx = navX + i * pxPerBar;
-        const syv = navTop + 2 + (sHi - bars.c[i]) / sRange * (navH - 4);
-        spark += (spark ? 'L' : 'M') + sx.toFixed(1) + ' ' + syv.toFixed(1);
-      }
-      if (spark) svg.appendChild(svgEl('path', { d: spark, fill: 'none', stroke: 'var(--color-text-secondary)', 'stroke-width': 1, 'stroke-opacity': 0.5 }));
+      /* The track stays EMPTY. It used to carry a faint downsampled close
+         sparkline "for context"; owner ruling 2026-08-13, against the
+         reference terminal: "Do not draw any graphs there. It's just blank."
+         Do not re-add it. The navigator's job is to say which slice of history
+         is on screen and let you move it — a second, squashed rendering of the
+         same prices answers a question the panes above already answer at full
+         size, and at 13px tall it can only misrepresent them. The lit window,
+         its grip and the end handles are the whole content. */
 
       const winRect = svgEl('rect', { x: winX, y: navTop, width: winW, height: navH, rx: 3, fill: '#FFFFFF', 'fill-opacity': 0.22, stroke: '#FFFFFF', 'stroke-width': 1, style: 'cursor: grab' });
       svg.appendChild(winRect);
