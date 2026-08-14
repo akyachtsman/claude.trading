@@ -598,7 +598,12 @@ Deno.serve(async (req) => {
     await fetch(`${supaUrl}/rest/v1/desk_chat_memory`, {
       method: 'POST',
       headers: { ...svc, 'content-type': 'application/json', prefer: 'return=minimal' },
-      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources, usage, checked }),
+      /* origin (desk_019): the Ask thread replays scheduled briefs through the
+         same path as typed questions, so without this the owner sees questions
+         they never asked and cannot tell which. `viaCron` is already the
+         authoritative answer here — it is what let this request in without a
+         PIN — so the provenance is recorded rather than guessed downstream. */
+      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources, usage, checked, origin: viaCron ? 'scheduled' : 'typed' }),
     });
   } catch (_e) { /* append is best-effort */ }
 

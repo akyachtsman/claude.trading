@@ -2656,6 +2656,20 @@ function askSchedRow(raw) {
    at the hours DIVISIBLE by N in Pacific — which is not what "every 4 hours"
    reads like on its own, so it is stated rather than left for the owner to
    discover at midnight. */
+/* "08:00 PDT" for a run earlier today, "Aug 12, 08:00 PDT" for anything older.
+   Both compared on the PACIFIC calendar day, not the viewer's and not UTC —
+   every clock on this desk is Pacific, and a UTC comparison would call this
+   morning's 5pm-UTC run "yesterday" for half the day. */
+function fmtSchedRun(iso) {
+  const clock = fmtClock(iso);
+  const day = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: DESK_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  const t = new Date(iso);
+  if (!Number.isFinite(t.getTime())) return clock;
+  if (day(t) === day(new Date())) return clock;
+  const md = new Intl.DateTimeFormat('en-US', { timeZone: DESK_TZ, month: 'short', day: 'numeric' }).format(t);
+  return md + ', ' + clock;
+}
+
 function askSchedWhen(r) {
   const mm = String(r.atMin).padStart(2, '0');
   if (r.cadence === 'hourly') return `fires every hour at :${mm} PT`;
@@ -2791,7 +2805,13 @@ function openAskSched(pin) {
          that has been failing quietly since it was written. */
       const state = [askSchedWhen(r)];
       if (r.lastRunAt) {
-        state.push('last run ' + fmtClock(r.lastRunAt) +
+        /* DATE as well as clock (Codex review, PR #241). A daily row prints the
+           same plausible "last run 08:00" whether it fired this morning or
+           stopped a week ago, and this line is the only place the roster says
+           whether cron is alive at all — a stale row that reads healthy is
+           worse than one that reads blank. Today stays clock-only, so the
+           common case is not made noisier to cover the rare one. */
+        state.push('last run ' + fmtSchedRun(r.lastRunAt) +
           (r.lastStatus && r.lastStatus !== 'ok' ? ' — ' + r.lastStatus : ''));
       } else if (r.id != null) {
         state.push('not run yet');
@@ -2979,7 +2999,16 @@ function renderAsk() {
   input.disabled = true; btn.disabled = true;
   deskChatHistory(pin).then(rows => {
     (rows || []).forEach(r => {
-      thread.appendChild(el('p', 'ask-q', r.question));
+      /* Replay the scheduled marker the live path already draws (desk_019).
+         The styling and the intent predate this — what was missing is that
+         REPLAYED rows had no way to know, so every brief the desk asked itself
+         came back looking like a question the owner had typed and forgotten.
+         Rows written before desk_019 have no origin and render unmarked, which
+         is honest: nothing recorded where they came from. */
+      const sched = r.origin === 'scheduled';
+      const qEl = el('p', 'ask-q' + (sched ? ' ask-q--sched' : ''), r.question);
+      if (sched) qEl.title = 'Asked automatically on a schedule';
+      thread.appendChild(qEl);
       thread.appendChild(el('p', 'ask-a', r.answer));
       appendSources(r.sources);
     });
