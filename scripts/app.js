@@ -4014,7 +4014,7 @@ window.addEventListener('resize', () => {
    pane's canvas is black, so --color-accent (#96610F) and --color-gain
    (#177C4B) render muddy on it. They are also deliberately not the gain/loss
    tokens — support/resistance is a charting semantic, not P&L. */
-const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)', res: '#FF9F0A', sup: '#32D74B', piv: '#FFD60A' };
+const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)', res: '#FF9F0A', sup: '#32D74B' };
 /* Strip captions derived from the live STOCH/WSTOCH/ISTOCH settings so the
    label can never disagree with the math (e.g. "STOCH 14-3-3"). All are
    defined in data.js, which loads first; these run at render time. */
@@ -4325,7 +4325,12 @@ function periodPivots(s, period) {
   const p = (hi + lo + close) / 3;
   return [
     ['R3', hi + 2 * (p - lo)], ['R2', p + (hi - lo)], ['R1', 2 * p - lo],
-    ['P', p], ['S1', 2 * p - hi], ['S2', p - (hi - lo)], ['S3', lo - 2 * (hi - p)],
+    /* P is NOT returned (owner request 2026-08-14: "remove P"). It remains the
+       anchor every level above and below is measured from — `p` is used in all
+       six expressions here — it simply is not drawn. Dropped at the source
+       rather than filtered at draw time so there is one place it can come
+       back from, and no dead branch downstream implying it still might. */
+    ['S1', 2 * p - hi], ['S2', p - (hi - lo)], ['S3', lo - 2 * (hi - p)],
   ];
 }
 
@@ -4840,7 +4845,7 @@ function renderCharts(data, lamp) {
     }
     const srOn = opts.cfg.sr;
     const pivots = (opts.pivots || [])
-      .filter(([name]) => name === 'P' ? (srOn[1] || srOn[2] || srOn[3]) : srOn[Number(name.slice(1))])
+      .filter(([name]) => srOn[Number(name.slice(1))])
       .filter(([, v]) => v > lo * 0.95 && v < hi * 1.05);
     for (const [, v] of pivots) { hi = Math.max(hi, v); lo = Math.min(lo, v); }
     const pad = (hi - lo) * 0.05 || 1;
@@ -4874,7 +4879,7 @@ function renderCharts(data, lamp) {
          chart-native hexes rather than page tokens, and pivots now do the same.
          A second benefit: support no longer borrows --color-gain, so the
          P&L-only colour rule is not bent to mean "support" here. */
-      const pcol = name === 'P' ? WB.piv : name[0] === 'R' ? WB.res : WB.sup;
+      const pcol = name[0] === 'R' ? WB.res : WB.sup;
       line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: pcol, 'stroke-width': 1 });
       text(name + ': ' + fmtPrice(v), x0 + 8, py(v) - 4, { fill: pcol, 'font-size': 10, 'font-weight': 600 });
     }
