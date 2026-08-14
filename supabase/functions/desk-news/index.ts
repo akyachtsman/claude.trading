@@ -213,17 +213,49 @@ function nyTodayIso(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
-let cache: { at: number; body: unknown } | null = null;
-let inflight: Promise<unknown> | null = null; // single-flight: one refresh per burst
+/* Owner-typed topic (owner request 2026-08-14): narrows the sweep itself
+   rather than filtering what already came back — a filter over 20 fetched rows
+   can only ever hide, never find.
 
-async function refresh(): Promise<unknown> {
+   SANITISED, not trusted. This function is anon-callable and the value reaches
+   an upstream URL, so it is bounded on BOTH length and character set before
+   encodeURIComponent, rather than relying on encoding alone: encoding makes a
+   string safe to place in a URL, it does not stop a 4KB query being forwarded
+   to Google on every cold call. Letters, digits, space and a few separators
+   cover every real topic ("fed rate cut", "AI chips", "oil & gas") while
+   leaving nothing that can restructure the query. */
+const TOPIC_MAX = 60;
+function cleanTopic(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[^A-Za-z0-9 &.,'+-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, TOPIC_MAX);
+}
+
+/* Cache and single-flight are keyed BY TOPIC — two topics are two different
+   payloads, and a shared slot would serve one owner's search to the next
+   caller. Bounded at MAX_SLOTS because the key is user-typed: an unbounded map
+   keyed on free text is a memory leak with a stranger's hand on the tap.
+   Oldest-inserted is evicted, which is enough here — the common case is one
+   topic plus the empty default. */
+const MAX_SLOTS = 8;
+const cache = new Map<string, { at: number; body: unknown }>();
+const inflight = new Map<string, Promise<unknown>>();
+
+async function refresh(topic: string): Promise<unknown> {
   {
     const cfgRes = await fetch(CONFIG_URL, { headers: UA }).catch(() => null);
     const cfg = mergeFeedConfig(cfgRes && cfgRes.ok ? await cfgRes.json().catch(() => null) : null);
     const held = cfg.perTicker.enabled ? await heldTickers() : [];
 
+    /* With a topic set, the GENERAL feeds are replaced by a search on it — the
+       broad market wire is exactly the part the owner is narrowing. Per-ticker
+       lookups below are deliberately left alone: holdings are the desk's own
+       subject, and silently dropping news about a position because an unrelated
+       topic is typed would be a worse surprise than a slightly wider list. */
     const items: Item[] = [];
-    const generalResults = await Promise.allSettled(cfg.general.map((f) => fetchFeed(f.url, f.src)));
+    const general = topic
+      ? [{ src: `Topic · ${topic}`, url: `https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&hl=en-US&gl=US&ceid=US:en` }]
+      : cfg.general;
+    const generalResults = await Promise.allSettled(general.map((f) => fetchFeed(f.url, f.src)));
     for (const r of generalResults) if (r.status === 'fulfilled') items.push(...r.value.slice(0, 15));
 
     const tickerResults = await Promise.allSettled(held.map(async (sym) => {
@@ -249,6 +281,11 @@ async function refresh(): Promise<unknown> {
       ok: true,
       asOf: nyTodayIso(),
       generatedAt: new Date().toISOString(),
+      /* Echoed so a slow reply for an abandoned topic cannot repaint the panel
+         after the owner has typed a different one — the same rule the watchlist
+         timeframe follows. Also lets the panel say WHICH topic it is showing
+         rather than the client assuming its own last input was honoured. */
+      topic,
       items: ranked.map((it) => ({
         t: it.at ? it.at.toISOString().slice(11, 16) : '—',
         src: it.src,
@@ -257,7 +294,10 @@ async function refresh(): Promise<unknown> {
         chips: it.chips!.map((sym) => [sym, pct[sym] ?? null]),
       })),
     };
-    cache = { at: Date.now(), body };
+    /* The caller stores this under its topic key — refresh() no longer writes
+       the cache itself, because it does not know which slot it is filling and
+       a bare assignment here would have overwritten whichever topic was last
+       requested with whichever finished last. */
     return body;
   }
 }
@@ -268,19 +308,31 @@ Deno.serve(async (req) => {
 
   // force (owner request 2026-07-27): the dashboard's manual "Refresh now"
   // button bypasses this cache so a click guarantees a fresh upstream pull.
-  let force = false;
+  let force = false, topic = '';
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
     force = body?.force === true;
+    topic = cleanTopic(body?.topic);
   }
 
-  if (!force && cache && Date.now() - cache.at < ttlMs()) return reply(200, cache.body);
+  const hit = cache.get(topic);
+  if (!force && hit && Date.now() - hit.at < ttlMs()) return reply(200, hit.body);
 
   try {
-    inflight ??= refresh().finally(() => { inflight = null; });
-    return reply(200, await inflight);
+    let run = inflight.get(topic);
+    if (!run) {
+      run = refresh(topic).finally(() => inflight.delete(topic));
+      inflight.set(topic, run);
+    }
+    const body = await run;
+    cache.set(topic, { at: Date.now(), body });
+    /* Evict oldest-inserted once over the cap. Map preserves insertion order,
+       so the first key is the oldest — re-set on write would make this LRU, but
+       the roster here is one or two topics and the extra churn buys nothing. */
+    while (cache.size > MAX_SLOTS) cache.delete(cache.keys().next().value as string);
+    return reply(200, body);
   } catch (e) {
-    if (cache) return reply(200, cache.body); // stale-but-honest
+    if (hit) return reply(200, hit.body); // stale-but-honest, for THIS topic
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });
   }
 });

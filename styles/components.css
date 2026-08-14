@@ -643,3 +643,25 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 @media (max-width: 720px) {
   .wl-detail-chart { height: 260px; }
 }
+
+/* ── News topic box ──────────────────────────────────────────────────────────
+   Its own row under the News header (owner request 2026-08-14). The rail is
+   311px and the header already carries title + lamp + stamp, so a fourth item
+   there would crush the stamp to an ellipsis. Sized down from the form-input
+   default: .input is 44px for a form's primary field, which is far too heavy
+   for a filter that sits above a list — the same reasoning that put the
+   accounts header buttons at 26px. */
+.news-topic { display: flex; align-items: center; gap: 6px; padding: 6px 10px 0; }
+/* min-height, not height: .input sets min-height 48px for a form's primary
+   field, and a plain `height` loses to it. 34 is as short as this can go while
+   keeping .input's 16px font — that size is deliberate ("no iOS zoom"), and
+   shrinking it would make Safari zoom the page on every tap of this box, which
+   is a worse bug than a slightly tall filter. */
+.news-topic-in { flex: 1 1 auto; min-width: 0; min-height: 34px; height: 34px; padding: 0 8px; }
+.news-topic-x {
+  flex: 0 0 auto; width: 22px; height: 22px; line-height: 1; padding: 0;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm, 4px);
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font-size: 11px; cursor: pointer;
+}
+.news-topic-x:hover { border-color: var(--color-border-hover); color: var(--color-text-primary); }

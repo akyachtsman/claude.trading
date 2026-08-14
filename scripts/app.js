@@ -5987,9 +5987,63 @@ async function refreshMarket(force) {
   }
 }
 
+/* Owner-typed topic that narrows the SWEEP, not the rendered list (owner
+   request 2026-08-14). Persisted because it is a standing reading preference,
+   like the watchlist timeframe — a topic that vanished on reload would have to
+   be retyped every morning. */
+const NEWS_TOPIC_KEY = 'news_topic_v1';
+function readNewsTopic() {
+  try { return (localStorage.getItem(NEWS_TOPIC_KEY) || '').slice(0, 60); } catch { return ''; }
+}
+function writeNewsTopic(v) {
+  try { v ? localStorage.setItem(NEWS_TOPIC_KEY, v) : localStorage.removeItem(NEWS_TOPIC_KEY); } catch { /* private mode */ }
+}
+
+/* Commit on ENTER or blur, never per keystroke: each submit is a live upstream
+   search, so firing one on every letter of "fed rate cut" would be twelve
+   sweeps to answer one question. The ✕ is a separate control rather than
+   "clear the box and press enter", since emptying a field is not obviously a
+   submit and the owner would be left wondering whether it took. */
+function wireNewsTopic() {
+  const box = document.getElementById('newsTopic');
+  const clear = document.getElementById('newsTopicClear');
+  if (!box || !clear) return;
+  box.value = readNewsTopic();
+  const paint = () => { clear.hidden = !box.value.trim(); };
+  paint();
+
+  const commit = () => {
+    const next = box.value.trim().slice(0, 60);
+    if (next === readNewsTopic()) { paint(); return; }   /* nothing changed — don't re-sweep */
+    writeNewsTopic(next);
+    paint();
+    /* force:true so the change is answered NOW. Without it a topic typed while
+       the market is shut would sit behind the 60-minute cache and look dead. */
+    refreshNews(true);
+  };
+
+  box.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); box.blur(); }
+    if (ev.key === 'Escape') { box.value = readNewsTopic(); paint(); box.blur(); }
+  });
+  box.addEventListener('blur', commit);
+  box.addEventListener('input', paint);
+  clear.addEventListener('click', () => { box.value = ''; commit(); box.focus(); });
+}
+
 async function refreshNews(force) {
+  const topic = readNewsTopic();
   try {
-    const news = await deskFeed('desk-news', force ? { force: true } : undefined);
+    const body = {};
+    if (force) body.force = true;
+    if (topic) body.topic = topic;
+    const news = await deskFeed('desk-news', Object.keys(body).length ? body : undefined);
+    /* Drop a reply whose topic is not the one currently asked for: a slow
+       search can otherwise land after the owner has retyped and repaint the
+       panel with the abandoned query's headlines. The server echoes `topic`
+       for exactly this. Demo has no server echo, so an undefined topic is
+       treated as agreeing rather than as a mismatch. */
+    if (news.topic !== undefined && (news.topic || '') !== topic) return;
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
     DESK.data.news = (news.items || []).map(it => ({ ...it, t: utcHmToPt(it.t) }));
@@ -6376,6 +6430,7 @@ async function boot() {
 
 wireCharts();
 wireMapFilter();
+wireNewsTopic();
 wireWatchlistEditor();
 wireWatchlistQuickEdits();
 wireWatchlistDetail();
