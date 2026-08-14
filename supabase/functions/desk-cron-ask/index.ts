@@ -198,6 +198,16 @@ function rsiLatest(c: number[], len = 14): number | null {
   return Number(rsi.toFixed(2));
 }
 
+/* NO intraday graft here, and that is not an oversight — Codex raised it as a
+   P1 on PR #241 ("scheduled summaries receive yesterday's oscillator readings")
+   and the claim was MEASURED FALSE on 2026-08-14 at 09:26 PT, mid-session:
+   desk-charts returned today's date as the last bar for 25 of 25 symbols.
+   Yahoo's daily range already carries the in-progress session, so these
+   readings move through the day exactly like the Pro panes.
+   The graft in app.js and desk-ask's get_technicals exists because THOSE paths
+   can be handed a completed-session series from a different source; this one
+   reads desk-charts, which is already current. Adding one here would mean 25
+   extra upstream fetches per brief to duplicate a bar the payload already has. */
 function technicalsFrom(charts: Any): Any {
   const syms = charts?.symbols;
   if (!syms) return null;
