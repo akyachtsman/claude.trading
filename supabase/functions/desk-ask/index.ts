@@ -481,7 +481,26 @@ Deno.serve(async (req) => {
         output_config: { effort: 'high' },
       }),
     });
-    if (!apiRes.ok) return reply(502, { ok: false, error: `model call failed (HTTP ${apiRes.status})` });
+    if (!apiRes.ok) {
+      /* Read the API's own explanation instead of throwing it away. The old
+         line reported the status alone, so a 400 — the one class of failure
+         that is ALWAYS our request's fault and always has a specific cause
+         (prompt too long, bad parameter combination, unknown model) — surfaced
+         as "model call failed (HTTP 400)" and left nothing to diagnose from,
+         in the logs or on screen. Owner hit exactly that on 2026-08-14.
+         Logged in full for the dashboard, and the message is passed to the
+         browser too: this panel is PIN-gated and single-user, so there is no
+         third party to leak a provider error to, and a desk that says "prompt
+         is too long" can be acted on while one that says 400 cannot. */
+      const detail = await apiRes.text().catch(() => '');
+      let msg = '';
+      try { msg = JSON.parse(detail)?.error?.message || ''; } catch { /* not JSON */ }
+      console.error('desk-ask model call failed', apiRes.status, detail.slice(0, 800));
+      return reply(502, {
+        ok: false,
+        error: `model call failed (HTTP ${apiRes.status})${msg ? ' — ' + msg.slice(0, 300) : ''}`,
+      });
+    }
     const msg = await apiRes.json();
     addUsage(msg.usage);
     finalMsg = msg;   // always track the latest response for text extraction
@@ -598,7 +617,12 @@ Deno.serve(async (req) => {
     await fetch(`${supaUrl}/rest/v1/desk_chat_memory`, {
       method: 'POST',
       headers: { ...svc, 'content-type': 'application/json', prefer: 'return=minimal' },
-      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources, usage, checked }),
+      /* origin (desk_019): the Ask thread replays scheduled briefs through the
+         same path as typed questions, so without this the owner sees questions
+         they never asked and cannot tell which. `viaCron` is already the
+         authoritative answer here — it is what let this request in without a
+         PIN — so the provenance is recorded rather than guessed downstream. */
+      body: JSON.stringify({ user_id: userId, question, answer, model: finalMsg?.model ?? model, sources, usage, checked, origin: viaCron ? 'scheduled' : 'typed' }),
     });
   } catch (_e) { /* append is best-effort */ }
 

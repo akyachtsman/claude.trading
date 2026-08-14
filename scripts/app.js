@@ -2656,6 +2656,20 @@ function askSchedRow(raw) {
    at the hours DIVISIBLE by N in Pacific — which is not what "every 4 hours"
    reads like on its own, so it is stated rather than left for the owner to
    discover at midnight. */
+/* "08:00 PDT" for a run earlier today, "Aug 12, 08:00 PDT" for anything older.
+   Both compared on the PACIFIC calendar day, not the viewer's and not UTC —
+   every clock on this desk is Pacific, and a UTC comparison would call this
+   morning's 5pm-UTC run "yesterday" for half the day. */
+function fmtSchedRun(iso) {
+  const clock = fmtClock(iso);
+  const day = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: DESK_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  const t = new Date(iso);
+  if (!Number.isFinite(t.getTime())) return clock;
+  if (day(t) === day(new Date())) return clock;
+  const md = new Intl.DateTimeFormat('en-US', { timeZone: DESK_TZ, month: 'short', day: 'numeric' }).format(t);
+  return md + ', ' + clock;
+}
+
 function askSchedWhen(r) {
   const mm = String(r.atMin).padStart(2, '0');
   if (r.cadence === 'hourly') return `fires every hour at :${mm} PT`;
@@ -2791,7 +2805,13 @@ function openAskSched(pin) {
          that has been failing quietly since it was written. */
       const state = [askSchedWhen(r)];
       if (r.lastRunAt) {
-        state.push('last run ' + fmtClock(r.lastRunAt) +
+        /* DATE as well as clock (Codex review, PR #241). A daily row prints the
+           same plausible "last run 08:00" whether it fired this morning or
+           stopped a week ago, and this line is the only place the roster says
+           whether cron is alive at all — a stale row that reads healthy is
+           worse than one that reads blank. Today stays clock-only, so the
+           common case is not made noisier to cover the rare one. */
+        state.push('last run ' + fmtSchedRun(r.lastRunAt) +
           (r.lastStatus && r.lastStatus !== 'ok' ? ' — ' + r.lastStatus : ''));
       } else if (r.id != null) {
         state.push('not run yet');
@@ -2979,7 +2999,16 @@ function renderAsk() {
   input.disabled = true; btn.disabled = true;
   deskChatHistory(pin).then(rows => {
     (rows || []).forEach(r => {
-      thread.appendChild(el('p', 'ask-q', r.question));
+      /* Replay the scheduled marker the live path already draws (desk_019).
+         The styling and the intent predate this — what was missing is that
+         REPLAYED rows had no way to know, so every brief the desk asked itself
+         came back looking like a question the owner had typed and forgotten.
+         Rows written before desk_019 have no origin and render unmarked, which
+         is honest: nothing recorded where they came from. */
+      const sched = r.origin === 'scheduled';
+      const qEl = el('p', 'ask-q' + (sched ? ' ask-q--sched' : ''), r.question);
+      if (sched) qEl.title = 'Asked automatically on a schedule';
+      thread.appendChild(qEl);
       thread.appendChild(el('p', 'ask-a', r.answer));
       appendSources(r.sources);
     });
@@ -3985,7 +4014,7 @@ window.addEventListener('resize', () => {
    pane's canvas is black, so --color-accent (#96610F) and --color-gain
    (#177C4B) render muddy on it. They are also deliberately not the gain/loss
    tokens — support/resistance is a charting semantic, not P&L. */
-const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)', res: '#FF9F0A', sup: '#32D74B', piv: '#FFD60A' };
+const WB = { up: 'var(--color-gain)', down: 'var(--color-loss)', kLine: '#e23b3b', dLine: '#f5c518', grid: 'var(--color-border)', label: 'var(--color-text-secondary)', canvas: 'var(--color-bg)', band: 'var(--color-loss)', res: '#FF9F0A', sup: '#32D74B' };
 /* Strip captions derived from the live STOCH/WSTOCH/ISTOCH settings so the
    label can never disagree with the math (e.g. "STOCH 14-3-3"). All are
    defined in data.js, which loads first; these run at render time. */
@@ -4296,7 +4325,12 @@ function periodPivots(s, period) {
   const p = (hi + lo + close) / 3;
   return [
     ['R3', hi + 2 * (p - lo)], ['R2', p + (hi - lo)], ['R1', 2 * p - lo],
-    ['P', p], ['S1', 2 * p - hi], ['S2', p - (hi - lo)], ['S3', lo - 2 * (hi - p)],
+    /* P is NOT returned (owner request 2026-08-14: "remove P"). It remains the
+       anchor every level above and below is measured from — `p` is used in all
+       six expressions here — it simply is not drawn. Dropped at the source
+       rather than filtered at draw time so there is one place it can come
+       back from, and no dead branch downstream implying it still might. */
+    ['S1', 2 * p - hi], ['S2', p - (hi - lo)], ['S3', lo - 2 * (hi - p)],
   ];
 }
 
@@ -4811,7 +4845,7 @@ function renderCharts(data, lamp) {
     }
     const srOn = opts.cfg.sr;
     const pivots = (opts.pivots || [])
-      .filter(([name]) => name === 'P' ? (srOn[1] || srOn[2] || srOn[3]) : srOn[Number(name.slice(1))])
+      .filter(([name]) => srOn[Number(name.slice(1))])
       .filter(([, v]) => v > lo * 0.95 && v < hi * 1.05);
     for (const [, v] of pivots) { hi = Math.max(hi, v); lo = Math.min(lo, v); }
     const pad = (hi - lo) * 0.05 || 1;
@@ -4845,7 +4879,7 @@ function renderCharts(data, lamp) {
          chart-native hexes rather than page tokens, and pivots now do the same.
          A second benefit: support no longer borrows --color-gain, so the
          P&L-only colour rule is not bent to mean "support" here. */
-      const pcol = name === 'P' ? WB.piv : name[0] === 'R' ? WB.res : WB.sup;
+      const pcol = name[0] === 'R' ? WB.res : WB.sup;
       line(x0 + 6, py(v), x0 + 6 + plotW, py(v), { stroke: pcol, 'stroke-width': 1 });
       text(name + ': ' + fmtPrice(v), x0 + 8, py(v) - 4, { fill: pcol, 'font-size': 10, 'font-weight': 600 });
     }
@@ -5987,9 +6021,63 @@ async function refreshMarket(force) {
   }
 }
 
+/* Owner-typed topic that narrows the SWEEP, not the rendered list (owner
+   request 2026-08-14). Persisted because it is a standing reading preference,
+   like the watchlist timeframe — a topic that vanished on reload would have to
+   be retyped every morning. */
+const NEWS_TOPIC_KEY = 'news_topic_v1';
+function readNewsTopic() {
+  try { return (localStorage.getItem(NEWS_TOPIC_KEY) || '').slice(0, 60); } catch { return ''; }
+}
+function writeNewsTopic(v) {
+  try { v ? localStorage.setItem(NEWS_TOPIC_KEY, v) : localStorage.removeItem(NEWS_TOPIC_KEY); } catch { /* private mode */ }
+}
+
+/* Commit on ENTER or blur, never per keystroke: each submit is a live upstream
+   search, so firing one on every letter of "fed rate cut" would be twelve
+   sweeps to answer one question. The ✕ is a separate control rather than
+   "clear the box and press enter", since emptying a field is not obviously a
+   submit and the owner would be left wondering whether it took. */
+function wireNewsTopic() {
+  const box = document.getElementById('newsTopic');
+  const clear = document.getElementById('newsTopicClear');
+  if (!box || !clear) return;
+  box.value = readNewsTopic();
+  const paint = () => { clear.hidden = !box.value.trim(); };
+  paint();
+
+  const commit = () => {
+    const next = box.value.trim().slice(0, 60);
+    if (next === readNewsTopic()) { paint(); return; }   /* nothing changed — don't re-sweep */
+    writeNewsTopic(next);
+    paint();
+    /* force:true so the change is answered NOW. Without it a topic typed while
+       the market is shut would sit behind the 60-minute cache and look dead. */
+    refreshNews(true);
+  };
+
+  box.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); box.blur(); }
+    if (ev.key === 'Escape') { box.value = readNewsTopic(); paint(); box.blur(); }
+  });
+  box.addEventListener('blur', commit);
+  box.addEventListener('input', paint);
+  clear.addEventListener('click', () => { box.value = ''; commit(); box.focus(); });
+}
+
 async function refreshNews(force) {
+  const topic = readNewsTopic();
   try {
-    const news = await deskFeed('desk-news', force ? { force: true } : undefined);
+    const body = {};
+    if (force) body.force = true;
+    if (topic) body.topic = topic;
+    const news = await deskFeed('desk-news', Object.keys(body).length ? body : undefined);
+    /* Drop a reply whose topic is not the one currently asked for: a slow
+       search can otherwise land after the owner has retyped and repaint the
+       panel with the abandoned query's headlines. The server echoes `topic`
+       for exactly this. Demo has no server echo, so an undefined topic is
+       treated as agreeing rather than as a mismatch. */
+    if (news.topic !== undefined && (news.topic || '') !== topic) return;
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
     DESK.data.news = (news.items || []).map(it => ({ ...it, t: utcHmToPt(it.t) }));
@@ -6376,6 +6464,7 @@ async function boot() {
 
 wireCharts();
 wireMapFilter();
+wireNewsTopic();
 wireWatchlistEditor();
 wireWatchlistQuickEdits();
 wireWatchlistDetail();

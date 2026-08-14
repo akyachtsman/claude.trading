@@ -198,6 +198,16 @@ function rsiLatest(c: number[], len = 14): number | null {
   return Number(rsi.toFixed(2));
 }
 
+/* NO intraday graft here, and that is not an oversight — Codex raised it as a
+   P1 on PR #241 ("scheduled summaries receive yesterday's oscillator readings")
+   and the claim was MEASURED FALSE on 2026-08-14 at 09:26 PT, mid-session:
+   desk-charts returned today's date as the last bar for 25 of 25 symbols.
+   Yahoo's daily range already carries the in-progress session, so these
+   readings move through the day exactly like the Pro panes.
+   The graft in app.js and desk-ask's get_technicals exists because THOSE paths
+   can be handed a completed-session series from a different source; this one
+   reads desk-charts, which is already current. Adding one here would mean 25
+   extra upstream fetches per brief to duplicate a bar the payload already has. */
 function technicalsFrom(charts: Any): Any {
   const syms = charts?.symbols;
   if (!syms) return null;
@@ -337,7 +347,28 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
       positions: (Array.isArray(s.positions) ? s.positions : [])
         .map((p: Any) => ({ sym: p.sym, dayPct: p.dayPct })),
     })),
-    market: (market?.tiles || []).map((t: Any) => ({ name: t.name, last: t.last, dayChgPct: t.chg })),
+    /* Extended-hours prints carried through (Codex review, PR #241). desk-market
+       puts the later price in `ext` (the instrument's own after-hours trade) or
+       `extProxy` (an index naming the ETF that stands in for it, since indices
+       have no extended session), while `last`/`chg` stay the regular-session
+       figures. Keeping only the regular pair meant an evening brief would
+       analyse the close while the dashboard beside it showed a newer price.
+       They stay SEPARATE fields rather than being folded into last/dayChgPct:
+       an index's proxy move is a fact about SPY, not about the S&P, and the
+       desk-wide rule is that a proxy is always named rather than silently
+       substituted. Absent means "did not trade after hours" — never 0. */
+    market: (market?.tiles || []).map((t: Any) => {
+      const row: Any = { name: t.name, last: t.last, dayChgPct: t.chg };
+      if (t.ext) row.afterHours = { last: t.ext.last, chgPctFromPriorClose: t.ext.chg, session: t.ext.kind };
+      if (t.extProxy) {
+        row.afterHoursProxy = {
+          sym: t.extProxy.sym, last: t.extProxy.last,
+          chgPctFromPriorClose: t.extProxy.chg, session: t.extProxy.kind,
+          note: 'this index has no extended session; the figure is its named ETF proxy',
+        };
+      }
+      return row;
+    }),
     // Ticker association comes from `chips` — desk-news emits
     // { t, src, h, url, chips: [[sym, dayPct], ...] } and has NO `sym` field.
     // Reading one silently produced `sym: null` on every headline, stripping
