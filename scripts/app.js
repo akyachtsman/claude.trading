@@ -4299,24 +4299,36 @@ const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6)
    deliberately, not an approximation of theirs. If the real method ever
    surfaces, only the level maths below changes — the drawing code is agnostic.
 
-   AND THE CHOICE OF MODEL BARELY MATTERS — measured 2026-08-15 rather than
-   argued, across 11 symbols and ~3 years of daily bars. A level is "touched"
-   when the day's range contains it and "held" when price does not close
-   through it within N sessions. Against random levels drawn from the SAME
-   day's range (so the baseline faces identical volatility and only the line's
-   position differs):
+   THESE LEVELS BEAT CHANCE, AND SWING HIGHS/LOWS DO NOT — measured rather than
+   argued (2026-08-15, 10 symbols, ~3 years of daily bars). A level is "touched"
+   when the day's range contains it, and "held" when price never closes THROUGH
+   IT IN THE DIRECTION THAT WOULD FALSIFY IT — resistance breaks upward, support
+   downward. The null draws one random level per real touch, inside that same
+   day's range and carrying the same role, so it shares the day, the volatility,
+   the direction and the sample count. Edge over that null, across 9
+   horizon/tolerance combinations (1/3/5 sessions x 0.10/0.25/0.50 ATR):
 
-     classic pivots  53.8–54.9% held      random  53.0%
-     swing hi/lo     53.6% held
+     pivots daily    +2.5 to +3.7 pts   positive in all 9
+     pivots weekly   +2.0 to +3.4 pts   positive in all 9
+     pivots monthly  -0.3 to +3.1 pts   noisier — a fifth of the touches
+     swing hi/lo     -0.3 to +1.4 pts   indistinguishable from chance
 
-   and across 9 horizon/tolerance combinations (1/3/5 days x 0.10/0.25/0.50
-   ATR) the pivot edge over random was +1.0 to +1.6 points — always positive,
-   never large. So do NOT rebuild this around swing highs and lows: measured,
-   that is slightly WORSE (+0.6 vs +0.8), and it would trade a heavily-commented
-   deterministic function for one with a fractal-detection parameter to tune.
-   The consistent sign says these lines are worth drawing as a frame; the size
-   says no S/R model here is worth reaching for on its own, whoever's it is —
-   which is also the honest reply to "should we copy Phil's".
+   So do NOT rebuild this around swing highs and lows, which is the obvious
+   alternative and reportedly what the reference terminal describes: measured,
+   it is the one construction here with no edge at all, and it would trade a
+   deterministic function for one carrying a fractal-detection parameter to
+   tune. It also tempers the case for chasing any other S/R formula — a few
+   points of edge is worth drawing as a frame, and is not worth trading off
+   alone whoever built it.
+
+   An earlier version of this note claimed ~1 point for everything and a near
+   tie between the two models. That measurement was WRONG in two ways Codex
+   caught on PR #246: it assigned each level's role from the touch day's close
+   rather than preserving it, so breakouts scored as holds; and its null always
+   touched, comparing a selected subset of days against all of them. Both are
+   fixed in .agent-reports/sr-level-backtest.mjs, which fetches its own bars
+   and reproduces the whole table — re-run it rather than trusting these
+   numbers.
 
    `period`: 'day' | 'week' | 'month'. Week is Mon-Sun by ISO date so a holiday
    or a half week still resolves to one calendar week rather than "5 bars", and

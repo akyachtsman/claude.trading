@@ -1,87 +1,136 @@
-import { readFileSync } from 'fs';
-const SP='/tmp/claude-0/-home-user-claude-trading/f45495e6-7cc2-5923-bddf-957cb672bc25/scratchpad';
-const FILES=[['SHY','shy.json'],['SLV','SLV.json'],['QQQ','QQQ.json'],['SMH','SMH.json'],
-             ['TLT','TLT.json'],['XLE','XLE.json'],['SPY','spy.json'],['EEM','EEM.json'],
-             ['GLD','GLD.json'],['VXX','VXX.json'],['SPCX','spcx.json']];
+/* Do the desk's S/R levels actually hold? — re-runnable evidence.
+ *
+ *   node .agent-reports/sr-level-backtest.mjs
+ *
+ * Fetches its own daily bars from the public quote-proxy, so it needs no
+ * local fixtures and no session-specific paths (Codex review, PR #246 — the
+ * first cut read from a scratchpad directory nobody else had).
+ *
+ * Two things this measures carefully, both of which the first cut got wrong:
+ *
+ * DIRECTION IS PART OF THE LEVEL. R levels are resistance and S levels are
+ * support; each is tested only against the break that would falsify it. The
+ * first cut assigned the role retroactively from the touch day's close, so a
+ * breakout ABOVE R1 followed by more strength scored as "resistance held" —
+ * counting the model's failures as successes.
+ *
+ * THE NULL IS MATCHED EVENT FOR EVENT. For every real touch we draw one random
+ * level inside that same day's range and give it the same role, so the
+ * baseline shares the day, the volatility, the direction and the sample count.
+ * The first cut drew randoms that always touched, comparing a selected subset
+ * of days against all of them.
+ */
+const SYMBOLS = ['SHY','SLV','QQQ','SMH','TLT','XLE','SPY','EEM','GLD','VXX'];
+const PROXY = 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/quote-proxy';
+const ANON = 'sb_publishable_5SCxDQzd0D7aEbbgG3C_3w_4cvGNP0E';
 
-const key=(iso,p)=>p==='month'?iso.slice(0,7):p==='week'
-  ?(d=>{d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7));return d.toISOString().slice(0,10);})(new Date(iso+'T00:00:00Z'))
-  :iso;
+async function bars(sym) {
+  const r = await fetch(PROXY, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: ANON,
+               authorization: `Bearer ${ANON}`, origin: 'https://akyachtsman.github.io' },
+    body: JSON.stringify({ symbol: sym, kind: 'daily' }),
+  });
+  const j = await r.json();
+  if (!j.ok) throw new Error(`${sym}: ${j.error || 'fetch failed'}`);
+  return j.series;
+}
 
-// classic floor-trader pivots from the prior period, as shipped
-function pivotsAt(s,i,period){
-  const cur=key(s.t[i],period);
-  let hi=-1e9,lo=1e9,close=null,k=null;
-  for(let j=i;j>=0;j--){
-    const kk=key(s.t[j],period);
-    if(kk===cur) continue;
-    if(k===null){k=kk;close=s.c[j];}
-    else if(kk!==k) break;
-    hi=Math.max(hi,s.h[j]); lo=Math.min(lo,s.l[j]);
+const periodKey = (iso, p) => p === 'month' ? iso.slice(0, 7)
+  : p === 'week' ? (d => { d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); })(new Date(iso + 'T00:00:00Z'))
+  : iso;
+
+/* Classic floor-trader pivots off the prior period — the shipped model.
+   Returned WITH their role so the test can never lose it. */
+function pivots(s, i, period) {
+  const cur = periodKey(s.t[i], period);
+  let hi = -Infinity, lo = Infinity, close = null, k = null;
+  for (let j = i; j >= 0; j--) {
+    const kk = periodKey(s.t[j], period);
+    if (kk === cur) continue;
+    if (k === null) { k = kk; close = s.c[j]; } else if (kk !== k) break;
+    hi = Math.max(hi, s.h[j]); lo = Math.min(lo, s.l[j]);
   }
-  if(k===null||hi<-1e8) return null;
-  const p=(hi+lo+close)/3;
-  return [2*p-lo, p+(hi-lo), hi+2*(p-lo), 2*p-hi, p-(hi-lo), lo-2*(hi-p)];
+  if (k === null || !Number.isFinite(hi)) return null;
+  const p = (hi + lo + close) / 3;
+  return [
+    { v: 2 * p - lo, role: 'R' }, { v: p + (hi - lo), role: 'R' }, { v: hi + 2 * (p - lo), role: 'R' },
+    { v: 2 * p - hi, role: 'S' }, { v: p - (hi - lo), role: 'S' }, { v: lo - 2 * (hi - p), role: 'S' },
+  ];
 }
 
-// swing highs/lows: a bar whose high (low) is the extreme of +/-k bars
-function swingsAt(s,i,k=3,want=6){
-  const out=[];
-  for(let j=i-k-1;j>=Math.max(k,i-260);j--){
-    let isH=true,isL=true;
-    for(let d=-k;d<=k;d++){ if(d===0)continue;
-      if(s.h[j+d]>=s.h[j])isH=false; if(s.l[j+d]<=s.l[j])isL=false; }
-    if(isH) out.push(s.h[j]);
-    if(isL) out.push(s.l[j]);
-    if(out.length>=want) break;
+/* Prior swing highs / lows — the obvious alternative. A swing high is a bar
+   whose high tops its k neighbours each side; it acts as resistance. */
+function swings(s, i, k = 3, want = 6) {
+  const out = [];
+  for (let j = i - k - 1; j >= Math.max(k, i - 260); j--) {
+    let isH = true, isL = true;
+    for (let d = -k; d <= k; d++) {
+      if (!d) continue;
+      if (s.h[j + d] >= s.h[j]) isH = false;
+      if (s.l[j + d] <= s.l[j]) isL = false;
+    }
+    if (isH) out.push({ v: s.h[j], role: 'R' });
+    if (isL) out.push({ v: s.l[j], role: 'S' });
+    if (out.length >= want) break;
   }
-  return out.length?out:null;
+  return out.length ? out : null;
 }
 
-// ATR for the tolerance band
-function atrAt(s,i,len=14){
-  let a=0;
-  for(let j=i-len+1;j<=i;j++)
-    a+=Math.max(s.h[j]-s.l[j],Math.abs(s.h[j]-s.c[j-1]),Math.abs(s.l[j]-s.c[j-1]));
-  return a/len;
+const atr = (s, i, len = 14) => {
+  let a = 0;
+  for (let j = i - len + 1; j <= i; j++)
+    a += Math.max(s.h[j] - s.l[j], Math.abs(s.h[j] - s.c[j - 1]), Math.abs(s.l[j] - s.c[j - 1]));
+  return a / len;
+};
+
+/* Held = price never closed through the level in the direction that would
+   falsify it. Resistance breaks upward, support breaks downward. */
+function held(s, i, lv, horizon, tol, a) {
+  for (let d = 1; d <= horizon; d++) {
+    if (lv.role === 'R' ? s.c[i + d] > lv.v + tol * a : s.c[i + d] < lv.v - tol * a) return false;
+  }
+  return true;
 }
 
-/* A level is TOUCHED when the day's range contains it. It HELD if, over the
-   next 3 sessions, price never closed through it by more than 0.25 ATR.
-   Random levels are drawn from the same day's plausible band, so the baseline
-   faces identical volatility — the only difference is where the line sits. */
-function run(pick,label){
-  let touched=0, held=0;
-  let seed=11; const rnd=()=>{seed=(seed*1103515245+12345)%2147483648;return seed/2147483648;};
-  for(const [sym,f] of FILES){
-    const s=JSON.parse(readFileSync(`${SP}/${f}`,'utf8')).series;
-    const n=s.c.length;
-    for(let i=300;i<n-4;i++){
-      const lv=pick(s,i,rnd); if(!lv) continue;
-      const atr=atrAt(s,i); if(!(atr>0)) continue;
-      for(const L of lv){
-        if(!(s.l[i]<=L&&L<=s.h[i])) continue;
-        touched++;
-        const above=s.c[i]>=L;
-        let broke=false;
-        for(let d=1;d<=3;d++){
-          if(above ? s.c[i+d] < L-0.25*atr : s.c[i+d] > L+0.25*atr){broke=true;break;}
-        }
-        if(!broke) held++;
+let seed = 11;
+const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+
+function score(data, pick, horizon, tol) {
+  let n = 0, ok = 0, nullN = 0, nullOk = 0;
+  for (const s of data) {
+    for (let i = 300; i < s.c.length - horizon - 1; i++) {
+      const lv = pick(s, i); if (!lv) continue;
+      const a = atr(s, i); if (!(a > 0)) continue;
+      for (const L of lv) {
+        if (!(s.l[i] <= L.v && L.v <= s.h[i])) continue;   // touched today
+        n++; if (held(s, i, L, horizon, tol, a)) ok++;
+        // matched null: same day, same role, random position inside the range
+        const r = { v: s.l[i] + rnd() * (s.h[i] - s.l[i]), role: L.role };
+        nullN++; if (held(s, i, r, horizon, tol, a)) nullOk++;
       }
     }
   }
-  console.log(label.padEnd(26),'touches',String(touched).padStart(6),' held',(100*held/touched).toFixed(1)+'%');
-  return held/touched;
+  return { n, rate: ok / n, nullRate: nullOk / nullN };
 }
 
-console.log('Does price respect these levels? held = did NOT close through within 3 days');
-console.log('');
-const pv = run((s,i)=>pivotsAt(s,i,'month'),'classic pivots (monthly)');
-run((s,i)=>pivotsAt(s,i,'week'),'classic pivots (weekly)');
-run((s,i)=>pivotsAt(s,i,'day'),'classic pivots (daily)');
-const sw = run((s,i)=>swingsAt(s,i),'prior swing highs/lows');
-const rd = run((s,i,rnd)=>{ const lo=s.l[i],hi=s.h[i]; return [0,1,2,3,4,5].map(()=>lo+rnd()*(hi-lo)); },'RANDOM baseline');
-console.log('');
-console.log('swing vs random :', ((sw-rd)*100).toFixed(1)+' pts');
-console.log('pivots vs random:', ((pv-rd)*100).toFixed(1)+' pts');
+const data = [];
+for (const sym of SYMBOLS) { try { data.push(await bars(sym)); } catch (e) { console.error(String(e.message)); } }
+console.log(`loaded ${data.length}/${SYMBOLS.length} symbols\n`);
+
+const MODELS = [
+  ['pivots monthly', (s, i) => pivots(s, i, 'month')],
+  ['pivots weekly',  (s, i) => pivots(s, i, 'week')],
+  ['pivots daily',   (s, i) => pivots(s, i, 'day')],
+  ['swing hi/lo',    (s, i) => swings(s, i)],
+];
+console.log('model            horiz  tol   touches   held   matched-null    edge');
+for (const [name, pick] of MODELS) {
+  for (const h of [1, 3, 5]) for (const t of [0.10, 0.25, 0.50]) {
+    const r = score(data, pick, h, t);
+    console.log(name.padEnd(16), String(h).padStart(3), t.toFixed(2).padStart(6),
+      String(r.n).padStart(8), (100 * r.rate).toFixed(1).padStart(7) + '%',
+      (100 * r.nullRate).toFixed(1).padStart(12) + '%',
+      ((r.rate - r.nullRate) * 100).toFixed(1).padStart(8) + ' pts');
+  }
+}
