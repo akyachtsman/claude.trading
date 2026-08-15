@@ -4299,6 +4299,25 @@ const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6)
    deliberately, not an approximation of theirs. If the real method ever
    surfaces, only the level maths below changes — the drawing code is agnostic.
 
+   AND THE CHOICE OF MODEL BARELY MATTERS — measured 2026-08-15 rather than
+   argued, across 11 symbols and ~3 years of daily bars. A level is "touched"
+   when the day's range contains it and "held" when price does not close
+   through it within N sessions. Against random levels drawn from the SAME
+   day's range (so the baseline faces identical volatility and only the line's
+   position differs):
+
+     classic pivots  53.8–54.9% held      random  53.0%
+     swing hi/lo     53.6% held
+
+   and across 9 horizon/tolerance combinations (1/3/5 days x 0.10/0.25/0.50
+   ATR) the pivot edge over random was +1.0 to +1.6 points — always positive,
+   never large. So do NOT rebuild this around swing highs and lows: measured,
+   that is slightly WORSE (+0.6 vs +0.8), and it would trade a heavily-commented
+   deterministic function for one with a fractal-detection parameter to tune.
+   The consistent sign says these lines are worth drawing as a frame; the size
+   says no S/R model here is worth reaching for on its own, whoever's it is —
+   which is also the honest reply to "should we copy Phil's".
+
    `period`: 'day' | 'week' | 'month'. Week is Mon-Sun by ISO date so a holiday
    or a half week still resolves to one calendar week rather than "5 bars", and
    month is calendar, both matching how the levels are quoted. */
