@@ -35,8 +35,15 @@ function cluster(list,tol,minTouch,a){
   }
   return out.filter(o=>o.n>=minTouch);
 }
-/* keep the levels NEAREST current price — the ones that can actually be hit */
-const nearest=(list,px,want)=>list.slice().sort((x,y)=>Math.abs(x.v-px)-Math.abs(y.v-px)).slice(0,want);
+/* EXACTLY what swingLevels() in scripts/app.js ships: resistances above price
+   and supports below it, nearest first, three a side. Codex review on PR #247
+   caught the first cut taking the six nearest clusters globally regardless of
+   side — that scored a level set the UI never draws, so its ranking could not
+   validate the shipped construction. */
+const production=(list,px)=>[
+  ...list.filter(g=>g.role==='R'&&g.v>px).sort((a,b)=>a.v-b.v).slice(0,3),
+  ...list.filter(g=>g.role==='S'&&g.v<px).sort((a,b)=>b.v-a.v).slice(0,3),
+];
 
 const periodKey=(iso,p)=>p==='month'?iso.slice(0,7):iso;
 function pivots(s,i,period){
@@ -75,11 +82,22 @@ function score(data,pick){
 const data=[]; for(const s of SYMBOLS){try{data.push(await bars(s));}catch{}}
 console.log(`loaded ${data.length} symbols — edge is averaged over all 9 horizon/tolerance cells\n`);
 const rows=[];
-rows.push(['pivots daily (shipped)',score(data,(s,i)=>pivots(s,i,'day'))]);
-rows.push(['pivots monthly',score(data,(s,i)=>pivots(s,i,'month'))]);
+/* Pivots BOTH ways. The shipped pivot model draws all six regardless of where
+   price sits, while swingLevels() keeps only levels still ahead of the market.
+   Comparing them directly would measure that filter rather than the level
+   source — a "resistance" already below price breaks on contact by
+   definition. The side-filtered pivot row isolates the variable. */
+const sideFilter=(list,px)=>[
+  ...list.filter(g=>g.role==='R'&&g.v>px).sort((a,b)=>a.v-b.v),
+  ...list.filter(g=>g.role==='S'&&g.v<px).sort((a,b)=>b.v-a.v),
+];
+rows.push(['pivots daily (shipped, all 6)',score(data,(s,i)=>pivots(s,i,'day'))]);
+rows.push(['pivots daily SIDE-FILTERED',score(data,(s,i)=>sideFilter(pivots(s,i,'day')||[],s.c[i]))]);
+rows.push(['pivots monthly SIDE-FILTERED',score(data,(s,i)=>sideFilter(pivots(s,i,'month')||[],s.c[i]))]);
+rows.push(['pivots monthly (all 6)',score(data,(s,i)=>pivots(s,i,'month'))]);
 for(const k of [2,3,5,8]) for(const [tol,mt] of [[0,1],[0.25,1],[0.5,1],[0.25,2],[0.5,2]]){
   const label=`swing k=${k} cluster=${tol||'none'}${mt>1?' min'+mt:''}`;
-  rows.push([label,score(data,(s,i,a)=>nearest(cluster(rawSwings(s,i,k,260),tol,mt,a),s.c[i],6))]);
+  rows.push([label,score(data,(s,i,a)=>production(cluster(rawSwings(s,i,k,260),tol,mt,a),s.c[i]))]);
 }
 rows.sort((a,b)=>b[1].edge-a[1].edge);
 console.log('construction                        touches     edge');

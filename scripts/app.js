@@ -4371,13 +4371,26 @@ function periodPivots(s, period) {
    they measure better (+3.09 pts vs +0.70 against a matched null — see the
    note on periodPivots, and .agent-reports/sr-level-backtest.mjs to re-run it).
 
-   These parameters are not taste. A 20-variant sweep over the same 10 symbols
-   and the same null picked them: swing depth k=3, cluster within 0.25 ATR,
-   and — the one choice that actually mattered — require TWO separate turns to
-   confirm a level. Confluence roughly doubled the edge (0.43 -> 0.70) while
-   every deeper swing depth (k=5, k=8) made it worse, several going negative.
-   A price the market turned at once is an accident of one session; a price it
-   turned at twice is the thing traders mean by a level.
+   These parameters come from a 20-variant sweep against the same matched null
+   (.agent-reports/sr-swing-variants.mjs): swing depth k=3, cluster within
+   0.25 ATR, and require TWO separate turns to confirm a level. A price the
+   market turned at once is an accident of one session; a price it turned at
+   twice is the thing traders mean by a level.
+
+   Measured like-for-like — BOTH models side-filtered, since this one only ever
+   draws levels still ahead of the market and the pivots draw all six — the
+   ranking is: pivots daily +8.34, best swing (k=8, 2 touches) +7.80, pivots
+   monthly +6.69, this construction +6.58. k=8 scores higher but on 2232
+   touches against 9633, and needs 17 clear bars around every turn, so it draws
+   a far sparser chart; k=3 is the better trade of edge against how much it
+   actually puts on screen.
+
+   An earlier note here claimed +0.70 for this family. That number came from a
+   sweep that picked the six clusters nearest price REGARDLESS OF SIDE — a set
+   this function never draws — so it scored levels already behind the market
+   that break on contact by definition. Codex caught it on PR #247. Corrected,
+   the family is far stronger than that figure suggested, and still second to
+   the pivots.
 
    Labelled R1..R3 / S1..S3 by DISTANCE FROM PRICE rather than by age, so the
    numbering means the same thing it does on the pivot model: R1 is the first
@@ -4388,7 +4401,15 @@ function periodPivots(s, period) {
 const SWING_K = 3, SWING_LOOK = 260, SWING_CLUSTER_ATR = 0.25, SWING_MIN_TOUCH = 2;
 function swingLevels(s) {
   const n = s.c.length;
-  if (n < 40) return [];
+  /* Derived from what the maths actually needs, not a round number: ATR(14)
+     reads 14 ranges plus one prior close, and a k=3 swing needs k bars either
+     side plus the k+2 the scan starts back from. Codex review, PR #247 — a
+     flat 40 was STRICTER than the 30-bar floor wireCharts() and
+     restoreStickySymbols() accept a manual symbol at, so a recent IPO with 30
+     sessions would load, chart, and then show no S/R at all on this source
+     despite having ample data for both. */
+  const MIN_BARS = Math.max(15, 2 * SWING_K + 3);
+  if (n < MIN_BARS) return [];
   let a = 0;                                        /* ATR(14) sets the cluster width */
   for (let j = n - 14; j < n; j++) a += Math.max(s.h[j] - s.l[j], Math.abs(s.h[j] - s.c[j - 1]), Math.abs(s.l[j] - s.c[j - 1]));
   a /= 14;
