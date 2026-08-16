@@ -939,7 +939,17 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await page.locator('#wbGear-p1').click();
   await expect(page.locator('#wbSettings-p1')).toBeVisible();
   expect(await page.locator('#wbSettings-p1 input[type=radio]').count()).toBe(2);
-  expect(await page.locator('#wbSettings-p1 input[type=checkbox]').count()).toBe(11);
+  expect(await page.locator('#wbSettings-p1 input[type=checkbox]').count()).toBe(12);
+  /* 12 rather than 11 since "S/R from → Prior peaks & troughs" was added. The
+     count alone is a magic number nobody reads, so the control is also
+     asserted BY NAME and by default state: it must be OFF, because pivots
+     measure better (+8.34 vs +6.58 like-for-like) and this is an opt-in for
+     reading the chart the way the reference terminal frames it. A default
+     flipped by accident would silently change what every S/R line means. */
+  const srSrc = page.locator('#wbSettings-p1 label', { hasText: 'Prior peaks & troughs' });
+  await expect(srSrc).toBeVisible();
+  expect(await srSrc.locator('input[type=checkbox]').isChecked(),
+    'prior-peaks S/R is opt-in — pivots remain the default').toBe(false);
   // the SMA LINES stay — only their price tags went
   await expect(page.locator('#wbSettings-p1', { hasText: 'Moving averages' })).toBeVisible();
   expect(await page.locator('#wbSettings-p1 .wb-set-group', { hasText: 'SMA price display' }).count(),
