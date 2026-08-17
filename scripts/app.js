@@ -2419,7 +2419,14 @@ function renderNews(news, lamp) {
     else applyLampStamp(stampEl, lamp);
   }
   if (!news || !news.length) {
-    list.appendChild(el('p', 'stamp', 'No headlines in the latest snapshot — check back after the next refresh.'));
+    /* An empty TOPIC search is an answer, not a fault — say which topic drew a
+       blank rather than blaming the refresh, or the owner retries a sweep that
+       is working. Read from the payload's echoed topic, never the input box:
+       the box holds what they are typing now, the panel shows what came back. */
+    const t = DESK.data.newsTopic;
+    list.appendChild(el('p', 'stamp', t
+      ? `No headlines for “${t}” — try a broader phrase, or clear the topic for the full sweep.`
+      : 'No headlines in the latest snapshot — check back after the next refresh.'));
     return;
   }
   for (const n of news) {
@@ -4032,17 +4039,17 @@ const WB_CFG_KEY = 'wb_cfg_v3';   /* v3: dual-timeframe stochastic on by default
    Pro 3 = intraday stoch ONLY. The overlay now lives on Pro 2 alone (weekly);
    Pro 1/Pro 3 render no overlay regardless of this flag. */
 const WB_CFG_DEFAULT = () => ({
-  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, scrollLock: false },
+  p1: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, smas: { 1: false, 25: true, 50: true, 100: false, 200: false }, sr: { 1: true, 2: false, 3: true }, srSwing: false, scrollLock: false },
   /* stochSteady: confine candle-colour changes to STEADY_BAND — a crossover
      inside 30–80 turns the colour, one out in the extremes does not (owner
      ruling 2026-08-05). Off by default — see the gear popover and the drawPane
      comment, which also records why a separation threshold was rejected. */
-  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, stochSteady: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, scrollLock: false },
+  p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, stochSteady: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, srSwing: false, scrollLock: false },
   /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling).
      ext = show the 4:00am–8:00pm ET extended session (owner request 2026-07-29).
      On by default; turning it off restores the exact regular-session bar set the
      ISTOCH 10-3-3 fit was established against, for terminal parity. */
-  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, scrollLock: false },
+  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, srSwing: false, scrollLock: false },
 });
 function loadWbCfg() {
   try {
@@ -4362,6 +4369,81 @@ function periodPivots(s, period) {
        rather than filtered at draw time so there is one place it can come
        back from, and no dead branch downstream implying it still might. */
     ['S1', 2 * p - hi], ['S2', p - (hi - lo)], ['S3', lo - 2 * (hi - p)],
+  ];
+}
+
+/* Support and resistance drawn at PRIOR PEAKS AND TROUGHS — the owner's
+   preferred framing (2026-08-15), and what the reference terminal says its own
+   levels are "based on". Opt-in per pane; pivots remain the default because
+   they measure better (+3.09 pts vs +0.70 against a matched null — see the
+   note on periodPivots, and .agent-reports/sr-level-backtest.mjs to re-run it).
+
+   These parameters come from a 20-variant sweep against the same matched null
+   (.agent-reports/sr-swing-variants.mjs): swing depth k=3, cluster within
+   0.25 ATR, and require TWO separate turns to confirm a level. A price the
+   market turned at once is an accident of one session; a price it turned at
+   twice is the thing traders mean by a level.
+
+   Measured like-for-like — BOTH models side-filtered, since this one only ever
+   draws levels still ahead of the market and the pivots draw all six — the
+   ranking is: pivots daily +8.34, best swing (k=8, 2 touches) +7.80, pivots
+   monthly +6.69, this construction +6.58. k=8 scores higher but on 2232
+   touches against 9633, and needs 17 clear bars around every turn, so it draws
+   a far sparser chart; k=3 is the better trade of edge against how much it
+   actually puts on screen.
+
+   An earlier note here claimed +0.70 for this family. That number came from a
+   sweep that picked the six clusters nearest price REGARDLESS OF SIDE — a set
+   this function never draws — so it scored levels already behind the market
+   that break on contact by definition. Codex caught it on PR #247. Corrected,
+   the family is far stronger than that figure suggested, and still second to
+   the pivots.
+
+   Labelled R1..R3 / S1..S3 by DISTANCE FROM PRICE rather than by age, so the
+   numbering means the same thing it does on the pivot model: R1 is the first
+   resistance above you. Levels the price has already passed are dropped —
+   naming a resistance that sits below the market would be worse than drawing
+   nothing. Fewer than six is normal and honest: a quiet range simply has not
+   produced six confirmed turns. */
+const SWING_K = 3, SWING_LOOK = 260, SWING_CLUSTER_ATR = 0.25, SWING_MIN_TOUCH = 2;
+function swingLevels(s) {
+  const n = s.c.length;
+  /* Derived from what the maths actually needs, not a round number: ATR(14)
+     reads 14 ranges plus one prior close, and a k=3 swing needs k bars either
+     side plus the k+2 the scan starts back from. Codex review, PR #247 — a
+     flat 40 was STRICTER than the 30-bar floor wireCharts() and
+     restoreStickySymbols() accept a manual symbol at, so a recent IPO with 30
+     sessions would load, chart, and then show no S/R at all on this source
+     despite having ample data for both. */
+  const MIN_BARS = Math.max(15, 2 * SWING_K + 3);
+  if (n < MIN_BARS) return [];
+  let a = 0;                                        /* ATR(14) sets the cluster width */
+  for (let j = n - 14; j < n; j++) a += Math.max(s.h[j] - s.l[j], Math.abs(s.h[j] - s.c[j - 1]), Math.abs(s.l[j] - s.c[j - 1]));
+  a /= 14;
+  if (!(a > 0)) return [];
+
+  const raw = [];
+  for (let j = n - SWING_K - 2; j >= Math.max(SWING_K, n - SWING_LOOK); j--) {
+    let isH = true, isL = true;
+    for (let d = -SWING_K; d <= SWING_K; d++) {
+      if (!d) continue;
+      if (s.h[j + d] >= s.h[j]) isH = false;
+      if (s.l[j + d] <= s.l[j]) isL = false;
+    }
+    if (isH) raw.push({ v: s.h[j], role: 'R' });
+    if (isL) raw.push({ v: s.l[j], role: 'S' });
+  }
+  const groups = [];
+  for (const p of raw) {
+    const hit = groups.find((g) => g.role === p.role && Math.abs(g.v - p.v) <= SWING_CLUSTER_ATR * a);
+    if (hit) { hit.n++; hit.v = (hit.v * (hit.n - 1) + p.v) / hit.n; } else groups.push({ ...p, n: 1 });
+  }
+  const px = s.c[n - 1];
+  const res = groups.filter((g) => g.n >= SWING_MIN_TOUCH && g.role === 'R' && g.v > px).sort((x, y) => x.v - y.v).slice(0, 3);
+  const sup = groups.filter((g) => g.n >= SWING_MIN_TOUCH && g.role === 'S' && g.v < px).sort((x, y) => y.v - x.v).slice(0, 3);
+  return [
+    ...res.map((g, i) => ['R' + (i + 1), g.v]),
+    ...sup.map((g, i) => ['S' + (i + 1), g.v]),
   ];
 }
 
@@ -4941,7 +5023,15 @@ function renderCharts(data, lamp) {
         if (v > lo && v < hi) d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + py(v).toFixed(1);
         else d = d && d + 'M' + x(i).toFixed(1) + ' ' + py(Math.min(hi, Math.max(lo, v))).toFixed(1);
       }
-      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 1, 'stroke-opacity': 0.8 }));
+      /* 2px at FULL opacity (owner report 2026-08-17: "I can barely see the
+         ave. lines"). They were a 1px hairline at 0.8 — thin enough that a
+         dense candle field simply swallowed them, and the 20% wash took the
+         rest. The colours themselves are already the dark sub-theme's bright
+         purple/yellow/white, so weight and opacity are what was missing, not
+         hue. Deliberately still THINNER than the S/R rules and the crosshair:
+         an average is a trailing reference, not a level, and matching their
+         weight would flatten the pane's hierarchy. */
+      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 2 }));
     }
 
     /* The SMA price display — a right-edge price tag at each enabled SMA — was
@@ -5413,7 +5503,7 @@ function renderCharts(data, lamp) {
     /* All three periods computed once here; each pane picks its own below.
        Cheap (one pass each over the same daily series) and keeps the pane code
        a straight lookup rather than three call sites re-deriving bars. */
-    const piv = { day: periodPivots(bars, 'day'), week: periodPivots(bars, 'week'), month: periodPivots(bars, 'month') };
+    const piv = { day: periodPivots(bars, 'day'), week: periodPivots(bars, 'week'), month: periodPivots(bars, 'month'), swing: swingLevels(bars) };
     return { bars, st: stochSeries(bars), rsi: rsiSeries(bars), piv, live: g ? g.at : null };
   })());
   /* the daily panes need today's intraday bars too (not just Pro 3), so pull
@@ -5429,7 +5519,7 @@ function renderCharts(data, lamp) {
     panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · SWING · ' + sym, {
       window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
       tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
-      pivots: d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
+      pivots: wbState.cfg.p1.srSwing ? d.piv.swing : d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
       stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
       stochCaption: stochTag() + ' · DAILY',
     }]);
@@ -5462,7 +5552,7 @@ function renderCharts(data, lamp) {
          landed between them, so the lower bound is chosen for consistency
          with the drawn band, not for effect. */
       colorSt: wbState.cfg.p2.stochSteady ? { ...wk2, band: STEADY_BAND } : wk2,
-      pivots: d.piv.month, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
+      pivots: wbState.cfg.p2.srSwing ? d.piv.swing : d.piv.month, smas: smaList(wbState.cfg.p2), rsi: d.rsi,
       stW: stW2,
       hideNativeMarks: true,
       marksW: stW2 ? stochMarks(stW2, 30, 80) : null,
@@ -5499,7 +5589,7 @@ function renderCharts(data, lamp) {
            anywhere within the ~5-day intraday feed */
         window: paneWindow(wbState.days3, intra15), offset: wbState.off3, panKey: 'off3', daysKey: 'days3', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3, intraday: true,
-        pivots: d.piv.day, smas: smaList(wbState.cfg.p3), rsi: rsiSeries(intra15),
+        pivots: wbState.cfg.p3.srSwing ? d.piv.swing : d.piv.day, smas: smaList(wbState.cfg.p3), rsi: rsiSeries(intra15),
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCfgNative: ISTOCH,
         stochCaption: stochTagOf(ISTOCH) + ' · 15-MIN',
@@ -5509,7 +5599,7 @@ function renderCharts(data, lamp) {
       panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 3 · DAY TRADING · ' + sym + ' EOD', {
         window: paneWindow(wbState.days3d, d.bars), offset: wbState.off3d, panKey: 'off3d', daysKey: 'days3d', nav: true,
         tier: 'Pro 3', sym, cfg: wbState.cfg.p3,
-        pivots: d.piv.day, smas: smaList(wbState.cfg.p3), rsi: d.rsi,
+        pivots: wbState.cfg.p3.srSwing ? d.piv.swing : d.piv.day, smas: smaList(wbState.cfg.p3), rsi: d.rsi,
         stW: null,   /* Pro 3 = intraday stoch only (owner ruling 2026-07-17, no daily overlay) */
         stochCaption: stochTag() + ' · DAILY (INTRADAY PENDING)',
       }]);
@@ -5685,6 +5775,14 @@ function buildWbSettings() {
         ['SMA (' + n + ')', () => cfg.smas[n], v => { cfg.smas[n] = v; }]));
       group('Support / resistance', [1, 2, 3].map(n =>
         ['S' + n + ' / R' + n, () => cfg.sr[n], v => { cfg.sr[n] = v; }]));
+      /* Where the six levels COME FROM, separate from which are shown. Off by
+         default: pivots measure +3.09 pts against a matched null and the best
+         swing construction +0.70 (see periodPivots), so the stronger model
+         stays the default and this is an opt-in for reading the chart the way
+         the reference terminal frames it. */
+      group('S/R from', [
+        ['Prior peaks & troughs', () => cfg.srSwing, v => { cfg.srSwing = v; }],
+      ]);
     }
     cols.appendChild(col);
   }
@@ -6112,6 +6210,8 @@ async function refreshNews(force) {
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
     DESK.data.news = (news.items || []).map(it => ({ ...it, t: utcHmToPt(it.t) }));
+    /* the topic THESE rows came back for — what the empty state names */
+    DESK.data.newsTopic = news.topic || topic;
     renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
     newsLive = true;
     return;

@@ -153,7 +153,13 @@ async function heldTickers(): Promise<string[]> {
 }
 
 // ── ranking (verbatim port of dedupeRank) ───────────────────────────────────
-export function dedupeRank(items: Item[], held: string[], maxItems = 20): Item[] {
+/* `heldFirst` (owner report 2026-08-17) — chips and RANKING are two different
+   jobs and only one of them belongs to a topic search. `held` still labels a
+   row that names a position, because that is context the owner wants either
+   way; but sorting holdings above everything else is the default sweep's rule,
+   and applying it to a typed topic pushes whatever happens to mention a held
+   ticker above the thing that was actually asked for. */
+export function dedupeRank(items: Item[], held: string[], maxItems = 20, heldFirst = true): Item[] {
   const seen = new Set<string>();
   const uniq: Item[] = [];
   for (const it of items) {
@@ -165,8 +171,10 @@ export function dedupeRank(items: Item[], held: string[], maxItems = 20): Item[]
     uniq.push({ ...it, chips });
   }
   uniq.sort((a, b) => {
-    const ha = a.chips!.length ? 1 : 0, hb = b.chips!.length ? 1 : 0;
-    if (ha !== hb) return hb - ha;
+    if (heldFirst) {
+      const ha = a.chips!.length ? 1 : 0, hb = b.chips!.length ? 1 : 0;
+      if (ha !== hb) return hb - ha;
+    }
     return (b.at?.getTime() || 0) - (a.at?.getTime() || 0);
   });
   return uniq.slice(0, maxItems);
@@ -246,19 +254,28 @@ async function refresh(topic: string): Promise<unknown> {
     const cfg = mergeFeedConfig(cfgRes && cfgRes.ok ? await cfgRes.json().catch(() => null) : null);
     const held = cfg.perTicker.enabled ? await heldTickers() : [];
 
-    /* With a topic set, the GENERAL feeds are replaced by a search on it — the
-       broad market wire is exactly the part the owner is narrowing. Per-ticker
-       lookups below are deliberately left alone: holdings are the desk's own
-       subject, and silently dropping news about a position because an unrelated
-       topic is typed would be a worse surprise than a slightly wider list. */
+    /* A TOPIC REPLACES THE WHOLE SWEEP, not just the broad wire (owner report
+       2026-08-17: typed "avav", still saw FRMI headlines above it). The first
+       cut left the per-ticker holdings lookups running on the reasoning that
+       dropping news about a position would be the worse surprise. In practice
+       it is the other way round — those rows are ranked holdings-first, so
+       naming a symbol put three headlines about something else at the TOP of
+       the panel, and the panel then does not show what the box says it shows.
+       Narrowing is the whole point of the control; the holdings sweep is one
+       empty box away. */
     const items: Item[] = [];
     const general = topic
       ? [{ src: `Topic · ${topic}`, url: `https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&hl=en-US&gl=US&ceid=US:en` }]
       : cfg.general;
     const generalResults = await Promise.allSettled(general.map((f) => fetchFeed(f.url, f.src)));
-    for (const r of generalResults) if (r.status === 'fulfilled') items.push(...r.value.slice(0, 15));
+    let generalOk = false;
+    for (const r of generalResults) {
+      if (r.status !== 'fulfilled') continue;
+      generalOk = true;
+      items.push(...r.value.slice(0, 15));
+    }
 
-    const tickerResults = await Promise.allSettled(held.map(async (sym) => {
+    const tickerResults = await Promise.allSettled((topic ? [] : held).map(async (sym) => {
       let got: Item[] = [];
       try { got = await fetchFeed(`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${sym}&region=US&lang=en-US`, 'Yahoo Finance'); }
       catch { /* fall through */ }
@@ -270,9 +287,15 @@ async function refresh(topic: string): Promise<unknown> {
     }));
     for (const r of tickerResults) if (r.status === 'fulfilled') items.push(...r.value);
 
-    if (!items.length) throw new Error('every news source failed');
+    /* "Nothing matched" and "the fetch failed" are different answers and must
+       not share one. Throwing lamps the panel STALE and keeps the LAST GOOD
+       render on screen, so a topic nobody has written about would leave the
+       previous topic's headlines sitting under the new topic's name — the exact
+       misreport this control was added to fix. A search that ran and returned
+       nothing is a successful empty result. */
+    if (!items.length && !(topic && generalOk)) throw new Error('every news source failed');
 
-    const ranked = dedupeRank(items, held, cfg.maxItems);
+    const ranked = dedupeRank(items, held, cfg.maxItems, !topic);
     const chipSyms = [...new Set(ranked.flatMap((it) => it.chips!))];
     const pctEntries = await Promise.all(chipSyms.map(async (s) => [s, await dayPctFor(s)] as const));
     const pct = Object.fromEntries(pctEntries);
