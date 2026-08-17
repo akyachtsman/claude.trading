@@ -5023,7 +5023,15 @@ function renderCharts(data, lamp) {
         if (v > lo && v < hi) d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + py(v).toFixed(1);
         else d = d && d + 'M' + x(i).toFixed(1) + ' ' + py(Math.min(hi, Math.max(lo, v))).toFixed(1);
       }
-      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 1, 'stroke-opacity': 0.8 }));
+      /* 2px at FULL opacity (owner report 2026-08-17: "I can barely see the
+         ave. lines"). They were a 1px hairline at 0.8 — thin enough that a
+         dense candle field simply swallowed them, and the 20% wash took the
+         rest. The colours themselves are already the dark sub-theme's bright
+         purple/yellow/white, so weight and opacity are what was missing, not
+         hue. Deliberately still THINNER than the S/R rules and the crosshair:
+         an average is a trailing reference, not a level, and matching their
+         weight would flatten the pane's hierarchy. */
+      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 2 }));
     }
 
     /* The SMA price display — a right-edge price tag at each enabled SMA — was
