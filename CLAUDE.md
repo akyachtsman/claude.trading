@@ -599,6 +599,24 @@ This project's look is its own — established at kickoff via `/design-intake`
   screener→Yahoo), `desk-charts` (watchlist OHLC), `desk-news`
   (holdings-first RSS), `desk-maps` (Crypto/Futures/World cuts) — all
   session-aware cached + single-flight.
+  **`desk-news` takes an owner-typed `topic`** (the box above the News panel,
+  owner request 2026-08-14), and **a topic REPLACES THE WHOLE SWEEP** — general
+  wire AND the per-ticker holdings lookups — rather than only the general feeds.
+  The first cut kept the holdings lookups running, reasoning that dropping news
+  about a position was the worse surprise; the owner's report (2026-08-17,
+  typed "avav" and saw three FRMI headlines above it) settled it the other way,
+  because those rows are ranked holdings-first and so land at the TOP, leaving
+  the panel not showing what its own box says it shows. Held tickers are still
+  read, but only to CHIP a row that names one — `dedupeRank`'s `heldFirst` is
+  false under a topic, so ordering is pure recency. Two things follow. A topic
+  that matches nothing is a **successful empty result**, not a thrown error:
+  throwing lamps the panel STALE and keeps the last good render, which would
+  leave the PREVIOUS topic's headlines sitting under the new topic's name. And
+  the empty state names the topic, read from the payload's echoed `topic`
+  (`DESK.data.newsTopic`) rather than the input box, which holds what is being
+  typed now. The topic is sanitised server-side (`cleanTopic`, 60 chars,
+  bounded character set) before it reaches an upstream URL, and cache +
+  single-flight are keyed by it, capped at 8 slots.
   **`desk-heatmap` serves THREE universes** — `sp500` (default), `r2k`, and
   **`etf`** (added 2026-08-06). The ETF cut used to be assembled CLIENT-side by
   `buildEtfHeatmap()` out of the `desk-charts` payload, which meant an ETF got a

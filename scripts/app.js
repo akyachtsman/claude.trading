@@ -2419,7 +2419,14 @@ function renderNews(news, lamp) {
     else applyLampStamp(stampEl, lamp);
   }
   if (!news || !news.length) {
-    list.appendChild(el('p', 'stamp', 'No headlines in the latest snapshot — check back after the next refresh.'));
+    /* An empty TOPIC search is an answer, not a fault — say which topic drew a
+       blank rather than blaming the refresh, or the owner retries a sweep that
+       is working. Read from the payload's echoed topic, never the input box:
+       the box holds what they are typing now, the panel shows what came back. */
+    const t = DESK.data.newsTopic;
+    list.appendChild(el('p', 'stamp', t
+      ? `No headlines for “${t}” — try a broader phrase, or clear the topic for the full sweep.`
+      : 'No headlines in the latest snapshot — check back after the next refresh.'));
     return;
   }
   for (const n of news) {
@@ -6195,6 +6202,8 @@ async function refreshNews(force) {
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
     DESK.data.news = (news.items || []).map(it => ({ ...it, t: utcHmToPt(it.t) }));
+    /* the topic THESE rows came back for — what the empty state names */
+    DESK.data.newsTopic = news.topic || topic;
     renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
     newsLive = true;
     return;
