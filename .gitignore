@@ -5,3 +5,10 @@ node_modules/
 
 # refresh pipeline runtime status files (read by write-meta.js, never committed)
 .github/scripts/refresh/.status/
+
+# Playwright's live trace scratch dirs. Created inside outputDir while a run is
+# in flight and normally removed when it ends — but a run that is still going
+# (or was killed) leaves them behind, and they are pure transient binary. The
+# per-test failure screenshots/traces beside them ARE tracked on purpose: those
+# are the evidence a failing run is supposed to leave.
+.agent-reports/screenshots/.playwright-artifacts-*/
