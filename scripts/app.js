@@ -4836,7 +4836,12 @@ function renderCharts(data, lamp) {
        would still clip — as it did at 46 — but nothing in this workbench's
        roster reaches one, and buying for it would cost every pane real plot
        width every day to cover a case that does not occur. */
-    const padR = 64;
+    /* 64 → 70 (owner request 2026-08-17). The extra 6px buys two things that
+       both live in this gutter: the AX.pad hairline that lifts the axis off the
+       candles, and the rail line the ticks now hang from. Without widening,
+       both would be paid for out of the label column, and "1,280.00" needs
+       every pixel of the ~53px it already has. */
+    const padR = 70;
     const plotW = w - padR - 6;
 
     /* ── axis ladders ───────────────────────────────────────────────────────
@@ -4855,13 +4860,33 @@ function renderCharts(data, lamp) {
        tabular-nums is stated even though IBM Plex Mono is already
        fixed-advance — it costs nothing and keeps the column true if the stack
        ever falls back to a proportional face. */
-    const AX = { tick: 7, gap: 4, big: 11, small: 9 };
+    /* AX.pad — the hairline between the plot and the axis (owner request
+       2026-08-17: "put a hairline distance between the candle and the price
+       arrow… ours is, like, touching the candle right now", explicitly MUCH
+       less than the reference screenshot's gap). It was zero: ticks began
+       exactly at the plot edge and the price flag's notch tip actually crossed
+       2px INTO the plot, so on a bar sitting at the right edge the flag and the
+       candle were one shape. Everything in the gutter now measures from railX,
+       so the gap is set once and the ladder, the rail and both price flags move
+       together — three separate offsets is how the notch came to overlap in the
+       first place. */
+    const AX = { tick: 7, gap: 4, pad: 4, big: 11, small: 9 };
+    const railX = x0 + 6 + plotW + AX.pad;
     const axisRow = (str, ty, size, fill) => {
-      line(x0 + 6 + plotW, ty, x0 + 6 + plotW + AX.tick, ty, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
-      text(str, x0 + 6 + plotW + AX.tick + AX.gap, ty + size / 3, {
+      line(railX, ty, railX + AX.tick, ty, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
+      text(str, railX + AX.tick + AX.gap, ty + size / 3, {
         'font-size': size, fill, 'font-variant-numeric': 'tabular-nums', 'font-weight': 500,
       });
     };
+    /* The bar the ticks hang from (owner request 2026-08-17, same reference
+       terminal). Drawn PER LADDER rather than as one line down the pane: the
+       reference breaks it at each scale boundary, and that break is what says
+       the 0–100 below is a different scale from the prices above rather than a
+       continuation of them. Same secondary ink as the ticks — it is the ruler's
+       spine, not a mark, and giving it label weight would pull the eye off the
+       numbers it exists to organise. */
+    const axisRail = (y1, y2) =>
+      line(railX, y1, railX, y2, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
     const n = Math.min(opts.window, bars.c.length);
     /* pan offset = bars hidden off the right edge (0 = latest bar visible) */
     const off = Math.max(0, Math.min(opts.offset || 0, bars.c.length - n));
@@ -4976,6 +5001,7 @@ function renderCharts(data, lamp) {
     let nice = 1;
     for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
     const tick = nice * mag;
+    axisRail(pY, pY + pH);
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
       /* a ruler notch at the axis edge, NOT a gridline crossing the chart */
       axisRow(fmtPrice(v), py(v), AX.big, 'var(--color-text-primary)');
@@ -5141,6 +5167,7 @@ function renderCharts(data, lamp) {
       let vNice = 1;
       for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - vNorm) < Math.abs(vNice - vNorm)) vNice = c;
       const vTick = vNice * vMag;
+      axisRail(vY, vY + vH);
       for (let v = vTick; v <= vMax; v += vTick) {
         const yv = vY + vH - (v / vMax) * vH;
         axisRow(fmtVol(v), yv, AX.small, 'var(--color-text-secondary)');
@@ -5156,6 +5183,7 @@ function renderCharts(data, lamp) {
          numbers on the stochastic strips like the reference). The faint gridlines
          were removed 2026-07-22 to match the terminal's clean panels — number
          label only at each level, no line across the strip. */
+      axisRail(yTop, yTop + hS);
       for (const g of [0, 20, 40, 60, 80]) {
         axisRow(String(g), sy(g), AX.small, 'var(--color-text-primary)');
       }
@@ -5171,7 +5199,7 @@ function renderCharts(data, lamp) {
          the reference terminal's weekly level (owner request 2026-07-20). */
       if (which === 'weekly') {
         line(x0 + 6, sy(65), x0 + 6 + plotW, sy(65), { stroke: '#eef2f7', 'stroke-width': 1, 'stroke-opacity': 0.75, 'stroke-dasharray': '5 3 1 3', 'stroke-linecap': 'round' });
-        text('65', x0 + 6 + plotW + 4, sy(65) + 3, { 'font-size': 9, fill: '#eef2f7' });
+        text('65', railX + AX.tick + AX.gap, sy(65) + 3, { 'font-size': 9, fill: '#eef2f7' });
       }
       for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
         let d = '';
@@ -5261,7 +5289,11 @@ function renderCharts(data, lamp) {
          Once the ladder went to 11px that inverted: the CURRENT price, the one
          number the eye should find first, became the smallest thing on the
          axis. Sized to sit above the ladder again rather than merely match it. */
-      const tagX = x0 + 6 + plotW + 2, tagW = padR - 10, tagH = 8, notch = 4;
+      /* Body starts AT the rail, so the notch tip lands on the rail rather than
+         in the plot — the reference does exactly this, letting the flag cover
+         the ladder numbers it sits across while never touching the tape. */
+      const notch = 4;
+      const tagX = railX + notch, tagW = padR - AX.pad - notch - 8, tagH = 8;
       /* Pentagon, not a rect: the notch points at the axis so the flag reads as
          marking a level rather than floating beside one. */
       svg.appendChild(svgEl('path', {
@@ -5299,7 +5331,7 @@ function renderCharts(data, lamp) {
        both land together. */
     const crossTagBg = svgEl('path', { fill: 'var(--color-text-primary)', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTagBg);
-    const crossTag = svgEl('text', { x: x0 + 6 + plotW + 5, 'font-size': 11, 'font-weight': 700, fill: 'var(--color-bg)', 'font-family': 'var(--font-mono)', 'font-variant-numeric': 'tabular-nums', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    const crossTag = svgEl('text', { x: railX + 7, 'font-size': 11, 'font-weight': 700, fill: 'var(--color-bg)', 'font-family': 'var(--font-mono)', 'font-variant-numeric': 'tabular-nums', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTag);
     const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: chartBot - pY, fill: 'transparent', style: 'cursor: grab' });
     svg.appendChild(overlay);
@@ -5366,7 +5398,7 @@ function renderCharts(data, lamp) {
         /* Same pentagon geometry as the last-price flag, recomputed at the
            pointer's row rather than a rect's y, so the notch keeps pointing at
            the axis wherever it sits. */
-        const cx = x0 + 6 + plotW + 2, cw = padR - 10, ch = 8, cn = 4;
+        const cn = 4, cx = railX + cn, cw = padR - AX.pad - cn - 8, ch = 8;
         crossTagBg.setAttribute('d', `M${cx - cn} ${my}L${cx} ${my - ch}H${cx + cw}V${my + ch}H${cx}Z`);
         crossTagBg.setAttribute('visibility', 'visible');
         crossTag.setAttribute('y', my + 3.5);
