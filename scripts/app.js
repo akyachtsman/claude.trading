@@ -2734,14 +2734,55 @@ function openAskSched(pin) {
 
   const draw = () => {
     list.textContent = '';
+    /* Says outright whether anything is going to fire. Counting the rows is not
+       the same question as counting the ACTIVE ones, and a roster of two paused
+       questions looks identical to a working one until you read every checkbox
+       — which is how a desk goes quiet without anybody noticing.
+       Updated in place by the toggles rather than by redrawing: a redraw
+       rebuilds every input and would take the focus off the control that was
+       just clicked. */
+    let summaryEl = null;
+    const syncSummary = () => {
+      if (!summaryEl) return;
+      const live = askSched.filter(r => r.enabled).length;
+      summaryEl.className = 'ask-sched-summary' + (live ? '' : ' ask-sched-summary--off');
+      summaryEl.textContent = live === 0
+        ? 'All paused — the desk will not send anything.'
+        : live === askSched.length
+          ? (live === 1 ? '1 question is active.' : `All ${live} questions are active.`)
+          : `${live} of ${askSched.length} active — the rest are paused.`;
+    };
     if (!askSched.length) list.appendChild(el('p', 'lock-explain', 'Nothing scheduled yet.'));
+    else {
+      summaryEl = el('p', 'ask-sched-summary');
+      list.appendChild(summaryEl);
+      syncSummary();
+    }
     askSched.forEach((r, i) => {
       const row = el('div', 'ask-sched-row');
 
+      /* The on/off switch, LABELLED and stating which state it is in (owner
+         request 2026-08-18: "provide a way for me to turn on and off the daily
+         reports"). The capability was already here, but as a bare checkbox
+         carrying only an aria-label — on screen it was an unmarked box at the
+         head of the row, so the one control that stops the desk emailing you
+         was the least findable thing in the dialog. It now says On or Paused
+         beside itself, and a paused row dims so the roster shows at a glance
+         which questions are actually going to fire. */
       const on = document.createElement('input');
       on.type = 'checkbox'; on.checked = r.enabled;
-      on.setAttribute('aria-label', 'Enabled');
-      on.addEventListener('change', () => { r.enabled = on.checked; touch(); });
+      on.id = 'askSchedOn' + i;
+      const onLbl = el('label', 'ask-sched-lbl ask-sched-on', r.enabled ? 'On' : 'Paused');
+      onLbl.htmlFor = on.id;
+      onLbl.title = 'Turn this scheduled question on or off. A paused question stays in the roster and fires nothing.';
+      on.addEventListener('change', () => {
+        r.enabled = on.checked;
+        onLbl.textContent = r.enabled ? 'On' : 'Paused';
+        row.classList.toggle('ask-sched-row--off', !r.enabled);
+        syncSummary();
+        touch();
+      });
+      if (!r.enabled) row.classList.add('ask-sched-row--off');
 
       const q = document.createElement('input');
       q.type = 'text'; q.className = 'input ask-sched-q'; q.value = r.prompt; q.maxLength = 500;
@@ -2820,7 +2861,7 @@ function openAskSched(pin) {
       del.addEventListener('click', () => { askSched.splice(i, 1); touch(); draw(); });
 
       const head = el('div', 'ask-sched-head');
-      head.appendChild(on); head.appendChild(q); head.appendChild(del);
+      head.appendChild(on); head.appendChild(onLbl); head.appendChild(q); head.appendChild(del);
       const foot = el('div', 'ask-sched-foot');
       foot.appendChild(cad); foot.appendChild(when);
       foot.appendChild(mkt); foot.appendChild(mktLbl);
