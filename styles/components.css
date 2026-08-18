@@ -593,6 +593,16 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 .ask-sched-min, .ask-sched-time { flex: 0 0 92px; }
 .ask-sched-row .btn { min-height: 30px; padding: 4px 10px; font-size: var(--font-xs); box-shadow: none; }
 .ask-sched-lbl { font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); white-space: nowrap; }
+/* The on/off label sits at the head of the row, so it carries a little more
+   weight than the secondary "market hrs only" label beside the footer. Fixed
+   width so "On" and "Paused" do not shift the question box as it is toggled. */
+.ask-sched-on { flex: 0 0 42px; font-weight: 600; cursor: pointer; }
+/* A paused row stays fully legible — it is still editable and its text must be
+   readable — but reads as inactive at a glance. Opacity alone, no colour: the
+   gain/loss palette is P&L-only and "paused" is not a loss. */
+.ask-sched-row--off { opacity: .58; }
+.ask-sched-summary { margin: 0 0 8px; font: 500 12px/1.4 var(--font-sans); color: var(--color-text-secondary); }
+.ask-sched-summary--off { color: var(--color-accent-bright); }
 /* The schedule in words plus whether it has actually run — the answer to "is
    this thing on?", which the controls above it cannot give. */
 .ask-sched-when { flex: 1 1 100%; font: 400 11px/1.4 var(--font-sans); color: var(--color-text-secondary); }
