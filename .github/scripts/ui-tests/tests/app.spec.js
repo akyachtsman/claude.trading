@@ -916,7 +916,20 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   const symBox = page.locator('#wbSymInput');
   await symBox.fill('QQQ');
   await symBox.press('Enter');
-  await expect(page.locator(`#wbSidebar button[aria-current="true"]`)).toContainText('QQQ');
+  // The rail is TWO columns since 2026-08-17, and a typed roster ticker lands in
+  // BOTH — the manual stack it was typed into and the roster it already belongs
+  // to. Two current markers is correct here rather than a bug: they are separate
+  // sets, and each marks its own current item. So assert what actually matters —
+  // at least one marker exists and EVERY one of them names the picked symbol.
+  // That is strictly stronger than the single-rail assertion it replaces, which
+  // could not have caught a stale marker left on another symbol.
+  const railCurrent = page.locator('#wbSidebar button[aria-current="true"]');
+  await expect(railCurrent.first()).toContainText('QQQ');
+  const currentLabels = await railCurrent.allTextContents();
+  expect(currentLabels.length, 'the picked symbol is marked in the rail').toBeGreaterThan(0);
+  for (const label of currentLabels) {
+    expect(label, 'no stale current marker on another symbol').toContain('QQQ');
+  }
 
   // pane layout seg maximizes a single tier and returns to split
   await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();
