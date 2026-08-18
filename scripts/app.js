@@ -1136,12 +1136,16 @@ function renderWatchlist(payload, lamp) {
        DISABLED at the ends and when locked, never hidden — a control that
        vanishes reads as a bug, one that greys out reads as unavailable. */
     if (wlCanEdit()) {
-      /* ←/→, not ↑/↓ (owner request 2026-08-17). These move a list among its
-         siblings, and the siblings are now COLUMNS running left to right — an
-         up arrow that slides a column leftward names the wrong axis. The
-         wording follows: "earlier"/"later" describes a position in the order
-         without committing to a direction, which stays true on a narrow screen
-         where the columns wrap. `wlMoveBand` itself is unchanged. */
+      /* «/», not ↑/↓ and NOT a bare ←/→ (2026-08-17). The axis changed — these
+         move a list among siblings that now sit side by side, so an up arrow
+         names the wrong one — but a bare ← on a button is universally read as
+         BACK, by people and by machines alike: the UI crawler's back-control
+         selector is literally `button:text-is("←")`, and it grabbed this
+         control the moment it shipped. Guillemets carry the same left/right
+         sense without claiming to be navigation. The wording follows:
+         "earlier"/"later" describes a position in the order without committing
+         to a direction, which stays true on a narrow screen where the columns
+         wrap. `wlMoveBand` itself is unchanged. */
       const mk = (glyph, delta, off) => {
         const b = el('button', 'wl-move', glyph);
         b.type = 'button';
@@ -1150,8 +1154,8 @@ function renderWatchlist(payload, lamp) {
         b.addEventListener('click', () => wlMoveBand(li, delta));
         return b;
       };
-      head.appendChild(mk('←', -1, li === 0));
-      head.appendChild(mk('→', 1, li === lists.length - 1));
+      head.appendChild(mk('«', -1, li === 0));
+      head.appendChild(mk('»', 1, li === lists.length - 1));
       /* Delete the WHOLE list (owner request 2026-08-01), GATED ON THE LOCK
          (owner ruling the same day, revising the first cut). The lock had been
          read as position-only — "adding and removing stay available" — and
@@ -1235,6 +1239,14 @@ function renderWatchlist(payload, lamp) {
       : '';
     missEl.hidden = !miss.length;
   }
+
+  /* Repaint the charts rail: its roster picker lists these lists, and the two
+     feeds land independently — desk-charts usually first, so the rail's first
+     render sees no watchlists at all and offers "Charts roster" alone. Without
+     this the picker stayed a one-entry dropdown for the whole session unless
+     something else happened to redraw the workbench. Guarded on wbState because
+     the watchlist feed can also arrive before the charts one. */
+  if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
 }
 
 /* ── watchlist editor ──────────────────────────────────────────────────────
@@ -4085,6 +4097,14 @@ function saveWbCfg() {
    workbench reopens on the same chart. syms is re-fetched on boot and merged
    into the watchlist feed; sel restores the selection. */
 const WB_STICKY_KEY = 'wb_sticky_v1';
+/* The manual column's depth. 40 rather than unbounded: it is a localStorage
+   value re-fetched one quote-proxy call at a time on boot, so an unbounded list
+   is an unbounded cold start. */
+const WB_MANUAL_MAX = 40;
+/* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
+   deliberately not a plausible watchlist title, since the picker's values are
+   otherwise list titles the owner types. */
+const WB_ROSTER_CHARTS = ' charts';
 const wbFeedRoster = new Set();  /* symbols served by the desk-charts feed; anything else is a manual entry */
 let wbStickyRestored = false;    /* one-shot: restore runs on the first LIVE feed, even after a demo-fallback reload */
 let wbUserPicked = false;        /* the user has chosen a symbol → a slow background restore must not override it */
@@ -4094,8 +4114,18 @@ function readWbSticky() {
     const raw = JSON.parse(localStorage.getItem(WB_STICKY_KEY) || 'null');
     if (raw && typeof raw === 'object') {
       return {
-        syms: Array.isArray(raw.syms) ? raw.syms.filter((s) => typeof s === 'string' && s).slice(0, 12) : [],
+        /* 12 → WB_MANUAL_MAX (owner request 2026-08-17): this list is no longer
+           an invisible re-fetch aid, it is the rail's MANUAL COLUMN and the
+           owner watches it accumulate. A cap of 12 that silently drops the
+           oldest entry is not something you want happening to a column you can
+           see. */
+        syms: Array.isArray(raw.syms) ? raw.syms.filter((s) => typeof s === 'string' && s).slice(0, WB_MANUAL_MAX) : [],
         sel: typeof raw.sel === 'string' ? raw.sel : '',
+        /* Which roster the rail's second column is showing. A watchlist TITLE
+           or the WB_ROSTER_CHARTS sentinel; validated at render against the
+           lists that actually exist, since a saved name can be renamed or
+           deleted from the Watchlists panel between sessions. */
+        roster: typeof raw.roster === 'string' ? raw.roster : '',
         /* Per-pane SPAN, sticky across reloads (owner request 2026-08-09: the
            panes reset to 3M/6M on every refresh). Validated against the pane's
            own preset list rather than trusted: this is localStorage, and an
@@ -4108,15 +4138,62 @@ function readWbSticky() {
       };
     }
   } catch { /* corrupt or absent */ }
-  return { syms: [], sel: '' };
+  return { syms: [], sel: '', roster: '' };
 }
 function writeWbSticky(patch) {
   const next = { ...readWbSticky(), ...patch };
   try { localStorage.setItem(WB_STICKY_KEY, JSON.stringify(next)); } catch { /* storage unavailable — session-only */ }
 }
+/* Newest FIRST — the owner's words were "it'll push down like a stack", so a
+   symbol entered again rises back to the top rather than appearing twice. */
 function addWbStickySym(sym) {
-  const syms = [sym, ...readWbSticky().syms.filter((s) => s !== sym)].slice(0, 12);
+  const syms = [sym, ...readWbSticky().syms.filter((s) => s !== sym)].slice(0, WB_MANUAL_MAX);
   writeWbSticky({ syms });
+}
+function removeWbStickySym(sym) {
+  writeWbSticky({ syms: readWbSticky().syms.filter((s) => s !== sym) });
+}
+/* Chart a symbol, fetching its bars first if the desk-charts feed doesn't carry
+   it. Extracted from the Load box's submit handler (2026-08-17) so the rail's
+   roster column can chart a watchlist name through the SAME path — a watchlist
+   is full of tickers the 25-name charts sweep never fetched, and a second copy
+   of this call is a second place for the demo gate and the failure notes to
+   drift. `pin` adds the symbol to the manual column and is set ONLY by the Load
+   box; a roster click charts without claiming the owner typed it. */
+async function wbLoadSymbol(sym, opts) {
+  if (!wbState) return false;
+  const note = document.getElementById('wbInfo');
+  const say = msg => { if (note) note.textContent = msg; };
+  /* PIN ONLY WHAT CAN ACTUALLY BE CHARTED, and pin on BOTH success paths.
+     Typing a ticker is the manual gesture whether or not its bars are already
+     in the charts payload, so the already-loaded branch must pin too — pinning
+     only after a fetch meant a roster name typed by hand never stacked. But
+     pinning before the outcome is known is worse: a typo would take a
+     permanent seat in a column that persists across sessions and can only be
+     cleared by hand. So each branch pins once it knows the symbol is real.
+     wbPick re-renders the rail via renderCharts, which is what shows it. */
+  const pin = () => { if (opts && opts.pin) addWbStickySym(sym); };
+  if (wbState.data.symbols[sym]) { say(''); pin(); wbPick(sym); return true; }
+  if (DESK.mode === 'demo' || !DESK_DB.url) {
+    say('Live ticker lookups are off in demo mode');
+    return false;
+  }
+  say('Loading ' + sym + '…');
+  try {
+    const out = await deskQuote(sym, 'daily');
+    if (!out.ok || !out.series || out.series.c.length < 30) {
+      say(out.error || 'No data found for ' + sym);
+      return false;
+    }
+    wbState.data.symbols[sym] = out.series;
+    wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
+    pin();
+    wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
+    return true;
+  } catch {
+    say('Quote service unreachable — try again');
+    return false;
+  }
 }
 /* single choke point for switching the active symbol: resets pan, remembers
    the selection so it sticks across reloads, and repaints */
@@ -4124,9 +4201,14 @@ function wbPick(sym) {
   wbUserPicked = true;
   wbState.sym = sym;
   wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
-  /* re-pin any non-watchlist pick so an evicted manual ticker is refetched on
-     the next reload (also bumps it to the front of the capped list) */
-  if (wbFeedRoster.size && !wbFeedRoster.has(sym)) addWbStickySym(sym);
+  /* NO addWbStickySym here any more (2026-08-17). It used to re-pin every
+     non-roster pick so an evicted ad-hoc ticker would be refetched on the next
+     reload — harmless while the list was invisible plumbing. Now that list IS
+     the rail's manual column, and the owner's rule is that it holds what they
+     TYPED: clicking a watchlist name would otherwise push it into a column they
+     never put it in. Pinning moved to the Load box, its only honest caller.
+     Re-fetch on boot no longer depends on this, because restoreStickySymbols
+     also re-hydrates `sel` — see the note there. */
   writeWbSticky({ sel: sym });
   renderCharts(wbState.data, wbState.lamp);
 }
@@ -4655,21 +4737,120 @@ function renderWbInfo() {
   if (!box.childNodes.length) muted('Fundamentals unavailable for ' + sym);
 }
 
+/* ── the symbol rail: two columns (owner request 2026-08-17) ─────────────────
+   It was one flat list that mixed the fixed 25-name charts roster with every
+   ad-hoc ticker the owner had typed, so there was no way to see "the names I
+   pulled up myself" apart from "the roster somebody configured".
+
+   MANUAL (left) starts empty and holds only what was typed into the Load box,
+   newest on top, persisted per browser. ROSTER (right) is headed by a picker
+   listing the owner's watchlists plus the charts roster, so a whole list can be
+   clicked down one name at a time — which is the workflow this rail exists for
+   and previously required reading a ticker off the Watchlists panel and
+   retyping it. */
+
+/* Day-% for one rail row, in preference order: the charted bars (exact, and
+   what the old rail used), then the watchlist feed's own quote (already
+   fetched — a symbol can be in a list without ever having been charted), then
+   nothing. NEVER a zero placeholder: 0.00% is a claim that the name was flat,
+   which is a different statement from "not known yet". */
+function wbRailPct(sym, data, wlRows) {
+  const s = data.symbols[sym];
+  if (s && s.c.length > 1) return (s.c[s.c.length - 1] / s.c[s.c.length - 2] - 1) * 100;
+  const row = wlRows.get(sym);
+  return row && row.pct != null ? row.pct : null;
+}
+
+function wbRailBtn(sym, data, wlRows) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'wb-side-btn';
+  b.setAttribute('aria-current', String(sym === wbState.sym));
+  b.appendChild(el('span', 'wb-side-sym', sym));
+  const pct = wbRailPct(sym, data, wlRows);
+  if (pct != null) b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
+  /* A roster name the charts sweep never fetched loads on demand through the
+     same path the Load box uses — and is NOT pinned into the manual column,
+     since clicking a list is not typing a ticker. */
+  b.addEventListener('click', () => { wbLoadSymbol(sym, { pin: false }); });
+  return b;
+}
+
 function renderWbSidebar(data) {
   const nav = document.getElementById('wbSidebar');
   while (nav.firstChild) nav.removeChild(nav.firstChild);
-  for (const sym of Object.keys(data.symbols)) {
-    const s = data.symbols[sym];
-    const n = s.c.length;
-    const pct = n > 1 ? (s.c[n - 1] / s.c[n - 2] - 1) * 100 : 0;
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'wb-side-btn';
-    b.setAttribute('aria-current', String(sym === wbState.sym));
-    b.appendChild(el('span', '', sym));
-    b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
-    b.addEventListener('click', () => wbPick(sym));
-    nav.appendChild(b);
+
+  /* the watchlist feed's rows, by symbol — the source of a day-% for names the
+     charts sweep does not carry */
+  const lists = (wlState.payload && wlState.payload.lists) || [];
+  const wlRows = new Map();
+  for (const l of lists) for (const r of (l.rows || [])) if (r && r.sym) wlRows.set(r.sym, r);
+
+  const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); nav.appendChild(c); return c; };
+
+  /* ── column A — manual ─────────────────────────────────────────────────── */
+  const manual = column('wb-rail-manual');
+  const mHead = el('div', 'wb-rail-head');
+  mHead.appendChild(el('span', 'wb-rail-title', 'MANUAL'));
+  manual.appendChild(mHead);
+  const typed = readWbSticky().syms;
+  if (!typed.length) {
+    /* Says what fills the column rather than just that it is empty — this is
+       the one column that starts blank BY DESIGN, so "nothing here" alone would
+       read as a feed that failed. */
+    manual.appendChild(el('p', 'wb-rail-empty', 'Type a ticker above to stack it here.'));
   }
+  for (const sym of typed) {
+    const row = el('div', 'wb-rail-row');
+    row.appendChild(wbRailBtn(sym, data, wlRows));
+    const x = el('button', 'wb-rail-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Remove ' + sym + ' from the manual list');
+    x.addEventListener('click', ev => {
+      ev.stopPropagation();       /* the row's own button must not also fire */
+      removeWbStickySym(sym);
+      renderWbSidebar(data);      /* the rail only — the chart is unaffected */
+    });
+    row.appendChild(x);
+    manual.appendChild(row);
+  }
+
+  /* ── column B — roster ─────────────────────────────────────────────────── */
+  const roster = column('wb-rail-roster');
+  const rHead = el('div', 'wb-rail-head');
+  const sel = document.createElement('select');
+  sel.className = 'wb-rail-pick';
+  sel.setAttribute('aria-label', 'Symbol list to show');
+  const opt = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; sel.appendChild(o); };
+  opt(WB_ROSTER_CHARTS, 'Charts roster');
+  for (const l of lists) opt(l.title, l.title);
+  /* Validated against the lists that EXIST, not trusted: a saved title can be
+     renamed or deleted from the Watchlists panel between sessions, and an
+     unmatched value would leave the picker showing nothing selected above an
+     empty column with no way to tell why. */
+  const savedRoster = readWbSticky().roster;
+  const valid = savedRoster === WB_ROSTER_CHARTS || lists.some(l => l.title === savedRoster);
+  sel.value = valid ? savedRoster : WB_ROSTER_CHARTS;
+  sel.addEventListener('change', () => {
+    writeWbSticky({ roster: sel.value });
+    renderWbSidebar(data);
+  });
+  rHead.appendChild(sel);
+  roster.appendChild(rHead);
+
+  let syms;
+  if (sel.value === WB_ROSTER_CHARTS) {
+    /* the desk-charts payload itself — these have 800 bars already loaded, so
+       they chart instantly, which is why this roster was kept (owner ruling) */
+    syms = Object.keys(data.symbols);
+  } else {
+    const list = lists.find(l => l.title === sel.value);
+    /* SAVED symbols, not drawn rows: a list holds tickers the quote feed could
+       not resolve, and hiding them here would silently disagree with the
+       Watchlists panel, which names them in its own warning line. */
+    syms = (list && (list.symbols || (list.rows || []).map(r => r.sym))) || [];
+  }
+  if (!syms.length) roster.appendChild(el('p', 'wb-rail-empty', 'This list has no symbols.'));
+  for (const sym of syms) roster.appendChild(wbRailBtn(sym, data, wlRows));
 }
 
 /* Graft TODAY's still-forming daily candle onto the EOD daily series so Pro 1
@@ -5995,30 +6176,15 @@ function wireCharts() {
       symForm.requestSubmit();
     }
   });
-  symForm.addEventListener('submit', async ev => {
+  symForm.addEventListener('submit', ev => {
     ev.preventDefault();
     if (!wbState) return;
     const sym = symInput.value.trim().toUpperCase();
     if (!/^[A-Z0-9.^=-]{1,10}$/.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    if (wbState.data.symbols[sym]) { symNote.textContent = ''; wbPick(sym); return; }
-    if (DESK.mode === 'demo' || !DESK_DB.url) {
-      symNote.textContent = 'Live ticker lookups are off in demo mode';
-      return;
-    }
-    symNote.textContent = 'Loading ' + sym + '…';
-    try {
-      const out = await deskQuote(sym, 'daily');
-      if (!out.ok || !out.series || out.series.c.length < 30) {
-        symNote.textContent = out.error || 'No data found for ' + sym;
-        return;
-      }
-      wbState.data.symbols[sym] = out.series;
-      wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
-      addWbStickySym(sym);
-      wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
-    } catch {
-      symNote.textContent = 'Quote service unreachable — try again';
-    }
+    /* `pin: true` — the Load box is the ONE place a symbol enters the manual
+       column, because typing it here is what "manual" means. The rail's own
+       roster clicks call this with pin off. */
+    wbLoadSymbol(sym, { pin: true });
   });
 
   /* one header bar per chart — its gear opens that pane's own popover,
@@ -6114,7 +6280,15 @@ async function restoreStickySymbols() {
     wbState.sym = saved.sel;
     renderCharts(wbState.data, wbState.lamp);
   }
-  for (const sym of saved.syms) {
+  /* `sel` is re-hydrated ALONGSIDE the manual column, not just from it. wbPick
+     no longer pins every pick into `syms` (that column is typed-only now), so a
+     watchlist symbol left selected at reload would otherwise come back with no
+     bars and no way to get them — the rail would open on a blank chart. Fetched
+     first so the chart the owner left is the chart they return to. */
+  const wanted = saved.sel && !saved.syms.includes(saved.sel)
+    ? [saved.sel, ...saved.syms]
+    : saved.syms;
+  for (const sym of wanted) {
     /* skip only if it's already REAL — a demo-fallback may hold SYNTHETIC bars
        for a sticky ticker that collides with the demo roster (e.g. GLD); those
        must still be re-fetched so real bars + fundamentals replace the fakes */

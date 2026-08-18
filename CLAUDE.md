@@ -58,6 +58,29 @@ This project's look is its own — established at kickoff via `/design-intake`
 - `scripts/app.js` — all rendering + interactions (accounts with per-card
   equity sparklines, news, ask-the-desk panel, the Markets window, stochastic
   charts workbench, PIN lock/unlock flow) + the
+  **charts SYMBOL RAIL is TWO COLUMNS** (`renderWbSidebar()`, owner request
+  2026-08-17), replacing one flat list that mixed the fixed 25-name roster with
+  every ad-hoc ticker typed, so there was no way to separate "names I pulled up"
+  from "the roster someone configured". **MANUAL** (left) starts empty, holds
+  only what was typed into the Load box, newest on top, `wb_sticky_v1.syms`
+  capped at `WB_MANUAL_MAX` 40, with a `×` per row. **ROSTER** (right) is headed
+  by a `<select>` of the owner's watchlists plus a `WB_ROSTER_CHARTS` entry for
+  the 25-name charts roster — kept, not retired (owner ruling), because its 800
+  bars are already loaded so those names chart instantly. Four rules are
+  load-bearing. `wbPick` **no longer** calls `addWbStickySym`: it used to pin
+  every non-roster pick, which was invisible plumbing before and would now push
+  every watchlist name the owner clicks into a column they never typed into —
+  pinning moved to `wbLoadSymbol({pin:true})`, which the Load box alone passes.
+  Pinning happens on BOTH success branches (already-loaded and post-fetch) but
+  **never before the outcome is known**, or a typo takes a permanent seat in a
+  column that persists across sessions. `restoreStickySymbols` therefore
+  re-hydrates **`sel` as well as `syms`**, since a watchlist symbol left
+  selected is no longer in `syms` and would return with no bars. And
+  `renderWatchlist` ends by repainting the rail: the two feeds land
+  independently and desk-charts usually wins, so the picker's first render sees
+  no lists and would otherwise stay a one-entry dropdown all session. Day-% per
+  row falls back charts-bars → watchlist quote → **nothing** (never 0.00%,
+  which claims the name was flat). `.wb-grid` went 96 → 200px.
   **Pro 2 candle colouring follows the WEEKLY STOCHASTIC CROSSOVER, not
   open/close** (owner ruling 2026-07-30): `%K` (red) above `%D` (yellow) ⇒ green
   candle, below ⇒ red — "red over yellow is a buy sign", and on the long-term
@@ -258,11 +281,36 @@ This project's look is its own — established at kickoff via `/design-intake`
 - **Watchlists panel** (`renderWatchlist()` + `wlTile()` + the editor, owner
   request 2026-07-29) — multiple named lists, unbounded symbols each.
   **Rendered as TILES, not a table** (owner request the same day, after seeing
-  the table): each list is a labelled band — list name in the left gutter, its
-  symbols as `.mkt-tile` boxes packed left-to-right. The band/tile chrome is the
-  shared `.mkt-group`/`.mkt-tile` CSS in `index.html`; `.wl-strip` widens it for
-  a full-page panel — ~11 tiles per row at 1600px.
-  Every list renders at once, so **the bands ARE the navigation** and there are
+  the table). The band/tile chrome is the shared `.mkt-group`/`.mkt-tile` CSS in
+  `index.html`; `.wl-strip` widens it for a full-page panel.
+  **EACH CATEGORY IS A COLUMN** (owner request 2026-08-17, replacing the
+  full-width horizontal band it had been): list name on top, its tiles stacked
+  downward, columns left to right, wrapping onto another row when they outgrow
+  the panel. The **markup is unchanged** — `.mkt-group` > `.wl-band-head` +
+  `.mkt-group-tiles` — because drag-to-arrange, quick add, double-click removal,
+  the detail window and create/delete all hang off it; only the CSS axis flips.
+  One trap is load-bearing: `.wl-tile` carried `flex: 0 0 66px`, and inside a
+  COLUMN parent `flex-basis` governs HEIGHT, so every tile would have rendered
+  as a 66px-tall box — it is `0 0 auto` now, with width from the 92px column
+  (66px tile + padding + gutters). The same reasoning retired the per-band
+  horizontal scrollbar (nothing scrolls sideways any more) and let the
+  empty-list placeholder wrap instead of running out of a 92px column. Short
+  columns simply END — never stretched to match the tallest, which would make a
+  3-symbol list look like a 12-symbol one.
+  The reorder controls are **`«`/`»`, NOT a bare `←`/`→`** (2026-08-17). The
+  axis genuinely changed, but a bare `←` on a button is read as BACK by people
+  and machines alike: the UI crawler's back-control selector is literally
+  `button:text-is("←")`, and it grabbed this control the moment it shipped,
+  failing the NAV scenario on a disabled first-list arrow. `‹` is in that
+  selector too. Labels are "Move X earlier/later", which stays true when the
+  columns wrap.
+  **The panel sits FULL-WIDTH DIRECTLY ABOVE the Stochastic charts panel**
+  (owner request 2026-08-17) — it was previously a column inside `.top-band`.
+  It full-bleeds like `.area-charts` and joins the shell cap's opt-out list,
+  since a capped, centred panel sitting on a full-bleed one reads as a
+  misalignment rather than a margin. That move also **deleted** the top band's
+  out-of-flow arrangement (see below) rather than porting it.
+  Every list renders at once, so **the columns ARE the navigation** and there are
   no tabs. A tile shows ticker / last / day-% pill; bid, ask, volume and the long
   name move to its `title` tooltip rather than being dropped. A long price wraps
   its pill to a second line.
@@ -346,6 +394,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   180px of dead margin each side. Narrower screens keep exactly the layout they
   had: `order:-1` + a 100% basis puts Watchlists back on its own full-width row
   ABOVE Markets and Ask.
+  **SUPERSEDED 2026-08-17 — the paragraph below is history, not current
+  behaviour.** Watchlists left `.top-band` for its own full-width block above
+  the charts, so the band is now TWO columns (Markets | News) and the
+  out-of-flow arrangement was **deleted rather than ported**: it existed for
+  exactly one reason — to let the shorter watchlist column drive the row's
+  height — and with no third column to defer to, plain `align-items: stretch`
+  is correct again. The inner `overflow-y: auto` went with it, since neither
+  panel is cropped any more and a scroll container with nothing to scroll is
+  the dead-wheel trap. News is now the FLUID column (Markets keeps its pinned
+  345 basis), or the row would strand ~800px of empty band at 1512. Kept below
+  because the reasoning explains why no future layout should reach for the
+  same device without the same cause.
   **No column is height-pinned, and WATCHLISTS is what sets the row height**
   (owner request 2026-08-07, revising the same day's first cut). Watchlists runs
   at its FULL length — the old 600px cap hid whole lists behind an inner
@@ -978,6 +1038,8 @@ run for real against the dedicated project on every PR.
 | S34 | Pro 2 steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
+| S40 | Charts rail — manual + roster | With `?demo=1`, `#wbSidebar` renders TWO columns side by side; the manual one starts empty and says what fills it; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed); typing stacks newest-first and re-typing lifts rather than duplicates; an UNCHARTABLE ticker is not pinned; clicking a ROSTER name charts it without entering the manual column; both the stack and the chosen roster survive a reload; the `×` removes one | A rail that quietly collects every symbol looked at, a typo taking a permanent seat in a persisted column, a picker stuck on one entry, or either half lost on reload |
+| S41 | Watchlists are vertical columns | With `?demo=1`, tiles STACK downward inside a category and the categories sit SIDE BY SIDE; no `role=tab` exists (the columns are the navigation); the panel sits above `.area-charts` and shares its left edge; no sideways page scroll and no inner crop on `.wl-strip`; and in live NO reorder control is a bare `←`/`‹` | Tiles rendering as fixed-height boxes (a row's `flex-basis` governs HEIGHT in a column — it still looks plausible), a panel inset from the chart below it, or a reorder arrow impersonating a back button, which is what the UI crawler's back selector grabs |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
 | S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop; Escape cancels; the tray round-trips through `localStorage` across a reload; double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, a tray tile lost on reload, the trash replacing double-click, or any page error during a drag |
 | S31 | Create + delete a whole list | With `?demo=1` NO `#wlNewListBtn` and no `.wl-del` render. Forced live+authed against a stateful fake roster: the created list PERSISTS to the store, a case-insensitive duplicate name is refused without writing and without discarding the typed name, **under `wlLocked` the `×` is disabled AND `openWlDelList` refuses even when called directly while `+ list` stays available**, the delete confirm names the list and its symbol count and opens focus on "Keep it", and the deleted list is gone from the store | A write control in demo, a duplicate accepted (it makes both lists unaddressable via `wlPick`), a delete reachable under the lock (the button guard alone is not the rule), a confirm that doesn't say what is being destroyed, or a delete that only repaints |
