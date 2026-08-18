@@ -2532,3 +2532,32 @@ test('S41: watchlists are vertical columns above the charts', async ({ page }) =
   expect(glyphs.length, 'the reorder controls render in live').toBeGreaterThan(0);
   expect(glyphs.some(g => g === '←' || g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
 });
+
+/* S39 — the volume average. The failure it guards is quiet: an average computed
+   from the VISIBLE window instead of the whole series still draws a plausible
+   line, it just starts 20 bars in and leaves the left edge of the strip bare —
+   and it shifts every time you zoom, which is what makes it untrustworthy. */
+test('S39: every pane draws a volume average, spanning the full window', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(800);
+
+  const ma = await page.evaluate(() => {
+    const svg = document.getElementById('wbChart');
+    return [...svg.querySelectorAll('path[data-volma]')].map(e => {
+      const d = e.getAttribute('d') || '';
+      return { pts: (d.match(/L/g) || []).length + 1, nan: d.includes('NaN'), stroke: e.getAttribute('stroke') };
+    });
+  });
+  expect(ma.length, 'one volume average per pane').toBe(3);
+  expect(ma.every(m => !m.nan), 'no NaN coordinates').toBe(true);
+  // yellow, matching the reference platform and the %D signal line
+  expect(ma.every(m => m.stroke === '#f5c518')).toBe(true);
+
+  // Pro 1 opens on 3M = 63 bars. The average must cover ALL of them: it is
+  // computed from the whole series, so the leading visible bars have a real
+  // 20-period value. Computed from the visible window instead, the line would
+  // start 20 bars in (44 points) and the left edge of the strip would be bare.
+  expect(ma[0].pts, 'the average spans the full visible window, not window-minus-20').toBe(63);
+});
