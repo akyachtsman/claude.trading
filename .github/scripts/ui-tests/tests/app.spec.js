@@ -2500,6 +2500,14 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
    so the tiles would all render as fixed-height boxes and the panel would still
    look plausible. */
 test('S41: watchlists are vertical columns above the charts', async ({ page }) => {
+  // Sized to a DESK, not a phone. Columns-side-by-side is the wide-screen
+  // design; at 393px a long list legitimately spreads its own sub-columns
+  // across the full width and pushes the next list onto a row below, which is
+  // the readable arrangement there and not a failure of this rule. Asserting it
+  // at phone width tested the breakpoint, not the layout. The narrow behaviour
+  // that actually matters — no sideways page scroll — is checked separately
+  // below, at the project's own viewport.
+  await page.setViewportSize({ width: 1512, height: 1000 });
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
 
@@ -2540,6 +2548,19 @@ test('S41: watchlists are vertical columns above the charts', async ({ page }) =
     [...document.querySelectorAll('.wl-move')].map(b => b.textContent));
   expect(glyphs.length, 'the reorder controls render in live').toBeGreaterThan(0);
   expect(glyphs.some(g => g === '←' || g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
+
+  // Narrow width: the columns may wrap onto more than one row, but the PAGE
+  // must never scroll sideways and the panel must never be cropped.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const narrow = await page.evaluate(() => ({
+    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    innerScroll: (() => { const s = document.querySelector('.wl-strip'); return s.scrollHeight > s.clientHeight + 2; })(),
+    tiles: document.querySelectorAll('.wl-strip .wl-tile').length,
+  }));
+  expect(narrow.sideways, 'no sideways page scroll at phone width').toBe(false);
+  expect(narrow.innerScroll, 'the panel is not cropped at phone width').toBe(false);
+  expect(narrow.tiles, 'every tile still renders at phone width').toBeGreaterThan(0);
 });
 
 /* S39 — the volume average. The failure it guards is quiet: an average computed
