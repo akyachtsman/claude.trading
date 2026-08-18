@@ -1369,14 +1369,23 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   await page.mouse.up();
 
   // ── a real drag, now that Manual is active ──────────────────────────────
-  const src = page.locator('.mkt-group-tiles[data-band] .wl-tile').first();
+  // Drag ACROSS AN ADJACENT BOUNDARY: from the second band's first tile up into
+  // the first band. Since lists became vertical columns, a band can be taller
+  // than the viewport, so grabbing band 0's first tile and aiming at band 1
+  // left the target hundreds of pixels off-screen — elementFromPoint returned
+  // null, no drop zone was found, and the marker assertion failed for a reason
+  // unrelated to what it tests. A real user cannot make that gesture either.
+  // Both ends are on screen together here, which is what a drag actually is.
+  const src = page.locator('.mkt-group-tiles[data-band]').nth(1).locator('.wl-tile').first();
   await src.scrollIntoViewIfNeeded();
   r = await src.boundingBox();
-  const zone = await page.locator('.mkt-group-tiles[data-band]').nth(1).boundingBox();
+  const zone = await page.locator('.mkt-group-tiles[data-band]').first().boundingBox();
+  // near the destination band's BOTTOM edge — the part adjacent to the source
+  const ty = Math.min(zone.y + zone.height - 20, r.y - 10);
   await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
   await page.mouse.down();
   await page.mouse.move(r.x + 40, r.y + 20, { steps: 5 });
-  await page.mouse.move(zone.x + 30, zone.y + zone.height / 2, { steps: 8 });
+  await page.mouse.move(zone.x + 30, ty, { steps: 8 });
   // the ghost follows the pointer and the insertion point is shown, so a drop
   // is never a guess about where the tile will land
   expect(await page.locator('.wl-ghost').count(), 'a ghost follows the pointer').toBe(1);

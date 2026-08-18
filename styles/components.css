@@ -311,6 +311,14 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    so the label would reserve ~104px of empty vertical space. The shared rule
    resets it to auto, but this two-class selector outranks it, so the reset has
    to be repeated at equal specificity (Codex review, PR #189). */
+/* Narrow screens wrap much sooner. The 1330px cap suits a wide desk, but on a
+   phone it still leaves a 41-symbol list ~1400px tall — taller than the
+   viewport, so its neighbour sits off-screen and a drag between two lists
+   cannot be made in one gesture at all. ~11 tiles per stack keeps a list about
+   a screen tall and lets it wrap across the width instead. */
+@media (max-width: 900px) {
+  .wl-strip .mkt-group-tiles { max-height: 700px; }
+}
 @media (max-width: 640px) {
   .wl-strip .mkt-group-label { flex-basis: auto; }
   /* .mkt-group turns into a COLUMN here, so `flex: 1 1 0` below would set a
