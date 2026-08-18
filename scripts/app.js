@@ -1136,16 +1136,22 @@ function renderWatchlist(payload, lamp) {
        DISABLED at the ends and when locked, never hidden — a control that
        vanishes reads as a bug, one that greys out reads as unavailable. */
     if (wlCanEdit()) {
+      /* ←/→, not ↑/↓ (owner request 2026-08-17). These move a list among its
+         siblings, and the siblings are now COLUMNS running left to right — an
+         up arrow that slides a column leftward names the wrong axis. The
+         wording follows: "earlier"/"later" describes a position in the order
+         without committing to a direction, which stays true on a narrow screen
+         where the columns wrap. `wlMoveBand` itself is unchanged. */
       const mk = (glyph, delta, off) => {
         const b = el('button', 'wl-move', glyph);
         b.type = 'button';
-        b.setAttribute('aria-label', (delta < 0 ? 'Move ' : 'Move ') + l.title + (delta < 0 ? ' up' : ' down'));
+        b.setAttribute('aria-label', 'Move ' + l.title + (delta < 0 ? ' earlier' : ' later'));
         b.disabled = off || wlLocked;
         b.addEventListener('click', () => wlMoveBand(li, delta));
         return b;
       };
-      head.appendChild(mk('↑', -1, li === 0));
-      head.appendChild(mk('↓', 1, li === lists.length - 1));
+      head.appendChild(mk('←', -1, li === 0));
+      head.appendChild(mk('→', 1, li === lists.length - 1));
       /* Delete the WHOLE list (owner request 2026-08-01), GATED ON THE LOCK
          (owner ruling the same day, revising the first cut). The lock had been
          read as position-only — "adding and removing stay available" — and
