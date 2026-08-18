@@ -4782,6 +4782,42 @@ function renderCharts(data, lamp) {
   renderWbInfo();
   maybeFetchWbInfo(wbState.sym);
 
+  /* ONE current price for all three price flags (owner request 2026-08-17: the
+     white arrow on Pro 1 and Pro 2 should update as often as Pro 3's).
+
+     The live quote was already shared, so whenever it is present the three
+     panes agreed. The divergence lived in the FALLBACK: with no quote each
+     pane used its own newest close, and Pro 3's series is 15-minute intraday
+     while Pro 1 and Pro 2 are daily — so Pro 3's flag walked the tape all
+     session while the other two sat on the prior close. That is one price
+     wearing three different values on one screen, and the flag is the number
+     the eye goes to first.
+
+     The fallback is now the newest INTRADAY close, which is the same tape Pro 3
+     draws, so all three move together whenever anything is moving. It is
+     resolved here rather than inside drawPane precisely because "the current
+     price" is a property of the symbol, not of a pane.
+
+     regularOnly() unconditionally, NOT Pro 3's `ext` bar set: that toggle is a
+     per-pane display choice, and letting it decide what Pro 1 and Pro 2 call
+     the current price would make a control in one pane silently change a
+     number in two others. It also keeps the flag on the same session basis as
+     the daily panes' own scale.
+
+     Null falls through to the pane's own newest close — real data in every
+     branch, never a fabricated price. */
+  const wbCurPx = (() => {
+    const q = (wbInfoCache[wbState.sym] && wbInfoCache[wbState.sym].info || {}).last;
+    if (Number.isFinite(q)) return q;
+    const intra = wbState.intraday && wbState.intraday[wbState.sym];
+    if (intra && intra.c && intra.c.length) {
+      const reg = regularOnly(intra);
+      const c = reg.c[reg.c.length - 1];
+      if (Number.isFinite(c)) return c;
+    }
+    return null;
+  })();
+
   const svg = document.getElementById('wbChart');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const tip = document.getElementById('wbTip');
@@ -4840,8 +4876,11 @@ function renderCharts(data, lamp) {
        both live in this gutter: the AX.pad hairline that lifts the axis off the
        candles, and the rail line the ticks now hang from. Without widening,
        both would be paid for out of the label column, and "1,280.00" needs
-       every pixel of the ~53px it already has. */
-    const padR = 70;
+       every pixel of the ~53px it already has. 70 → 73 when the flag's point
+       was sharpened: the longer notch comes out of the flag's own body, so
+       without the extra 3px sharpening the arrow would have quietly shortened
+       how long a price can be before it clips. */
+    const padR = 73;
     const plotW = w - padR - 6;
 
     /* ── axis ladders ───────────────────────────────────────────────────────
@@ -5280,8 +5319,7 @@ function renderCharts(data, lamp) {
        sits, so the tab is clamped into the pane instead of scrolling out of
        it — matching the reference, which keeps the flag against the top or
        bottom edge once the tape leaves the drawn range. */
-    const liveQuote = (wbState && wbInfoCache[wbState.sym] && wbInfoCache[wbState.sym].info || {}).last;
-    const lastPx = Number.isFinite(liveQuote) ? liveQuote : bars.c[bars.c.length - 1];
+    const lastPx = Number.isFinite(wbCurPx) ? wbCurPx : bars.c[bars.c.length - 1];
     if (Number.isFinite(lastPx)) {
       const lpY = py(Math.min(hi, Math.max(lo, lastPx)));
       /* tagH/font raised with the ladder (2026-08-13). The tag was 8px beside a
@@ -5292,8 +5330,14 @@ function renderCharts(data, lamp) {
       /* Body starts AT the rail, so the notch tip lands on the rail rather than
          in the plot — the reference does exactly this, letting the flag cover
          the ladder numbers it sits across while never touching the tape. */
-      const notch = 4;
-      const tagX = railX + notch, tagW = padR - AX.pad - notch - 8, tagH = 8;
+      /* Sharper point (owner request 2026-08-17). It was a 4px notch on a 16px
+         body — a ~127° wedge, which reads as a bevelled corner rather than an
+         arrow. 7 on 14 is 90°: an unmistakable point, still blunt enough that
+         the 1px tip doesn't disappear into the rail at this size. The body is
+         SHORTENED to sharpen rather than the tip lengthened leftward, because
+         lengthening it is what put the old tip inside the plot. */
+      const notch = 7;
+      const tagX = railX + notch, tagW = padR - AX.pad - notch - 8, tagH = 7;
       /* Pentagon, not a rect: the notch points at the axis so the flag reads as
          marking a level rather than floating beside one. */
       svg.appendChild(svgEl('path', {
@@ -5331,7 +5375,9 @@ function renderCharts(data, lamp) {
        both land together. */
     const crossTagBg = svgEl('path', { fill: 'var(--color-text-primary)', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTagBg);
-    const crossTag = svgEl('text', { x: railX + 7, 'font-size': 11, 'font-weight': 700, fill: 'var(--color-bg)', 'font-family': 'var(--font-mono)', 'font-variant-numeric': 'tabular-nums', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    /* railX + notch + 3 — the body starts at the notch's base, and the 3px is
+       the same left inset the last-price flag's own text uses. */
+    const crossTag = svgEl('text', { x: railX + 10, 'font-size': 11, 'font-weight': 700, fill: 'var(--color-bg)', 'font-family': 'var(--font-mono)', 'font-variant-numeric': 'tabular-nums', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTag);
     const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: chartBot - pY, fill: 'transparent', style: 'cursor: grab' });
     svg.appendChild(overlay);
@@ -5398,7 +5444,7 @@ function renderCharts(data, lamp) {
         /* Same pentagon geometry as the last-price flag, recomputed at the
            pointer's row rather than a rect's y, so the notch keeps pointing at
            the axis wherever it sits. */
-        const cn = 4, cx = railX + cn, cw = padR - AX.pad - cn - 8, ch = 8;
+        const cn = 7, cx = railX + cn, cw = padR - AX.pad - cn - 8, ch = 7;
         crossTagBg.setAttribute('d', `M${cx - cn} ${my}L${cx} ${my - ch}H${cx + cw}V${my + ch}H${cx}Z`);
         crossTagBg.setAttribute('visibility', 'visible');
         crossTag.setAttribute('y', my + 3.5);
