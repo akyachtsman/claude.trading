@@ -81,6 +81,22 @@ This project's look is its own — established at kickoff via `/design-intake`
   no lists and would otherwise stay a one-entry dropdown all session. Day-% per
   row falls back charts-bars → watchlist quote → **nothing** (never 0.00%,
   which claims the name was flat). `.wb-grid` went 96 → 200px.
+  **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
+  (`VOL_MA`, `data-volma`, owner request 2026-08-12, shipped 2026-08-18) — the
+  reference platform's yellow line, and what makes a bar readable as heavy or
+  light, since "big volume" only means anything against the recent norm. Three
+  things are load-bearing: it is computed from the **WHOLE series, not the
+  visible window**, so the leading visible bars carry a real average instead of
+  the line starting 20 bars into the pane (the same rule the Pro 2 colour state
+  machine follows, for the same reason — a line that moves when you zoom is not
+  trustworthy); it uses a **rolling sum** rather than re-summing 20 bars per
+  point, because the `All` span is ~9,000 bars across three panes and the
+  per-bar form is the shape of work that cost this project the 546s; and it
+  **clamps to the strip top**, since `vMax` is the VISIBLE window's max while
+  the average reaches back before it, so an average above everything on screen
+  would otherwise draw up into the price pane. It carries `data-volma` because
+  it shares its yellow with the stochastic `%D` lines and neither a test nor a
+  reader could otherwise tell which yellow path is which.
   **Pro 2 candle colouring follows the WEEKLY STOCHASTIC CROSSOVER, not
   open/close** (owner ruling 2026-07-30): `%K` (red) above `%D` (yellow) ⇒ green
   candle, below ⇒ red — "red over yellow is a buy sign", and on the long-term
@@ -782,6 +798,25 @@ This project's look is its own — established at kickoff via `/design-intake`
   the owner's live customizations on a future replay. Web-query privacy
   (never sending real position sizes to search) is system-prompt-enforced,
   not hard-filtered.
+  **THE ASSISTANT IS HANDED TICKERS, NEVER MONEY** (owner ruling 2026-08-12,
+  shipped 2026-08-18): `buildAskContext()` sends `label` plus
+  `positions:[{sym, dayPct}]` and nothing else — `nav`, `cash`, `dayPnl`,
+  `totalUnrealized` and the per-position `qty`/`mkt`/`unrl` are all withheld.
+  The ruling was "I don't want this guy to be concerned about my liquidity or
+  look at my account balance. Just give me cold, hard fact regarding buy or
+  sell the stock." **Withholding is the enforcement point, NOT a system-prompt
+  rule** — a prompt asks the model not to dwell on a number it can still read,
+  whereas removing it leaves nothing to weigh; this is why the assistant used
+  to answer "your position is the largest thing in the account going in", which
+  was correct reasoning over data it should never have had. Symbols stay, so
+  "should I sell my GDX" still knows GDX is held; `dayPct` stays with them
+  because it is the ticker's own market move, public data about the stock
+  rather than a fact about the account. The four stored `desk_chat_memory` rows
+  carrying portfolio-aware phrasing were edited IN PLACE on 2026-08-12 (not
+  deleted — they also hold the GDX/META/SPCX/FRMI analysis), and a broad scan
+  that flagged 7 of 11 rows was **all false positives**: "balance sheet" and
+  "cash flow" about COMPANIES, and `$145` as a META price target. Deleting on
+  that scan would have destroyed the analysis the ruling exists to keep.
   **Interrupting a question** (`.ask-stop` + `askAbort`, owner request
   2026-08-01) — the tool loop can reach 12 calls, so a stalled question had no
   exit but waiting. Stop aborts the fetch via an `AbortController` threaded into
@@ -1040,6 +1075,7 @@ run for real against the dedicated project on every PR.
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
 | S40 | Charts rail — manual + roster | With `?demo=1`, `#wbSidebar` renders TWO columns side by side; the manual one starts empty and says what fills it; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed); typing stacks newest-first and re-typing lifts rather than duplicates; an UNCHARTABLE ticker is not pinned; clicking a ROSTER name charts it without entering the manual column; both the stack and the chosen roster survive a reload; the `×` removes one | A rail that quietly collects every symbol looked at, a typo taking a permanent seat in a persisted column, a picker stuck on one entry, or either half lost on reload |
 | S41 | Watchlists are vertical columns | With `?demo=1`, tiles STACK downward inside a category and the categories sit SIDE BY SIDE; no `role=tab` exists (the columns are the navigation); the panel sits above `.area-charts` and shares its left edge; no sideways page scroll and no inner crop on `.wl-strip`; and in live NO reorder control is a bare `←`/`‹` | Tiles rendering as fixed-height boxes (a row's `flex-basis` governs HEIGHT in a column — it still looks plausible), a panel inset from the chart below it, or a reorder arrow impersonating a back button, which is what the UI crawler's back selector grabs |
+| S39 | Volume average | With `?demo=1`, all THREE panes carry a `path[data-volma]` in the %D yellow with no NaN coordinates, and Pro 1's spans its FULL 63-bar 3M window rather than 63−20 | A missing line, or one that starts 20 bars in — that is an average computed from the visible window, which also shifts every time you zoom |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
 | S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop; Escape cancels; the tray round-trips through `localStorage` across a reload; double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, a tray tile lost on reload, the trash replacing double-click, or any page error during a drag |
 | S31 | Create + delete a whole list | With `?demo=1` NO `#wlNewListBtn` and no `.wl-del` render. Forced live+authed against a stateful fake roster: the created list PERSISTS to the store, a case-insensitive duplicate name is refused without writing and without discarding the typed name, **under `wlLocked` the `×` is disabled AND `openWlDelList` refuses even when called directly while `+ list` stays available**, the delete confirm names the list and its symbol count and opens focus on "Keep it", and the deleted list is gone from the store | A write control in demo, a duplicate accepted (it makes both lists unaddressable via `wlPick`), a delete reachable under the lock (the button guard alone is not the rule), a confirm that doesn't say what is being destroyed, or a delete that only repaints |

@@ -2487,9 +2487,25 @@ function buildAskContext() {
   return {
     mode: DESK.mode,
     asOf: DESK.mode === 'demo' ? lastLabel() : (DESK.privateAsOf || null),
+    /* HOLDINGS ARE TICKERS ONLY — no money reaches the assistant (owner ruling
+       2026-08-12: "I don't want this guy to be concerned about my liquidity or
+       look at my account balance. Just give me cold, hard fact regarding buy or
+       sell the stock"). nav, cash, dayPnl, totalUnrealized and the per-position
+       qty/mkt/unrl are all withheld.
+
+       WITHHOLDING IS THE ENFORCEMENT POINT, NOT THE SYSTEM PROMPT. A prompt rule
+       asks the model not to dwell on a number it can still read; removing the
+       number means there is nothing to weigh. This is why the assistant used to
+       answer "your position is the largest thing in the account going in" — it
+       was handed the sizes and reasoned from them, exactly as it should have.
+
+       The SYMBOLS stay, so "should I sell my GDX" still knows GDX is held and
+       judges the stock on its merits. dayPct stays with them because it is the
+       ticker's own market move — public data about the stock, not a fact about
+       the account. Anything derived from a balance or a share count is gone. */
     accounts: (d.accounts || []).map(a => ({
-      label: a.label, nav: a.nav, dayPnl: a.day, totalUnrealized: a.total, cash: a.cash,
-      positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: p.dayPct, unrl: p.unrl })),
+      label: a.label,
+      positions: (a.positions || []).map(p => ({ sym: p.sym, dayPct: p.dayPct })),
     })),
     /* The extended print rides along when there is one (Codex review, PR #199).
        Without it the assistant answers "how did the market close" with the
@@ -5423,6 +5439,38 @@ function renderCharts(data, lamp) {
     }
     /* line style draws closes in gain-green, like the reference platform */
     if (closeD) svg.appendChild(svgEl('path', { d: closeD, fill: 'none', stroke: WB.up, 'stroke-width': 1.5 }));
+
+    /* VOLUME AVERAGE — the reference platform's yellow line over the histogram
+       (owner request 2026-08-12). 20-period, the standard: it is what makes a
+       bar readable as heavy or light, since "big volume" only means anything
+       against the recent norm.
+
+       Three things are deliberate. It is drawn from the WHOLE series, not the
+       visible window, so the leading visible bars carry a real average instead
+       of the line starting 20 bars into the pane — the same rule the Pro 2
+       colour state machine follows, and for the same reason: a line that
+       changes as you zoom is not trustworthy. It uses a ROLLING sum rather than
+       re-summing 20 bars per point, because the 'All' span is ~9,000 bars
+       across three panes and the per-bar form is the shape of work that cost
+       this project a 2.6s render once already. And it CLAMPS to the strip top:
+       vMax is the max of the VISIBLE window while the average reaches back
+       before it, so an average above everything on screen would otherwise draw
+       up into the price pane. */
+    const VOL_MA = 20;
+    if (vMax && bars.v && bars.v.length >= VOL_MA) {
+      let vd = '', run = 0;
+      const first = Math.max(i0, VOL_MA - 1);
+      for (let j = first - VOL_MA + 1; j <= first; j++) run += bars.v[j];
+      for (let i = first; i < end; i++) {
+        if (i > first) run += bars.v[i] - bars.v[i - VOL_MA];
+        const yv = Math.max(vY, vY + vH - (run / VOL_MA / vMax) * vH);
+        vd += (vd ? 'L' : 'M') + x(i).toFixed(1) + ' ' + yv.toFixed(1);
+      }
+      /* data-volma marks it apart from the stochastic %D lines, which share
+         this yellow — otherwise neither a test nor a reader can tell which
+         yellow path is which. */
+      if (vd) svg.appendChild(svgEl('path', { d: vd, fill: 'none', stroke: WB.dLine, 'stroke-width': 1.2, 'stroke-linejoin': 'round', 'data-volma': '1' }));
+    }
     if (opts.cfg.vol) text('VOL', x0 + 6, vY + 8, { 'font-size': 8, 'letter-spacing': '.08em' });
     /* volume numbering ruler (owner request 2026-07-23) — 2-3 nice-rounded
        levels (1.2M/800K-style via fmtVol) with the same tick-mark style as
@@ -6867,7 +6915,8 @@ async function boot() {
   DESK.data.market = [];
   DESK.data.news = [];
   /* ACCOUNTS too (Codex review, PR #201). The rule above always covered these —
-     buildAskContext() sends nav, cash and every position — but only market and
+     buildAskContext() sends the held TICKERS (it stopped sending nav, cash and
+     position sizes on 2026-08-12) — but only market and
      news were actually blanked, so buildDemoData()'s fabricated holdings sat in
      memory through a live boot. Harmless only while a dashboard failure also
      revoked auth and locked the assistant; the moment that stopped being true,
