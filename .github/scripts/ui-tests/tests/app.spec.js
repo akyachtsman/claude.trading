@@ -916,7 +916,20 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   const symBox = page.locator('#wbSymInput');
   await symBox.fill('QQQ');
   await symBox.press('Enter');
-  await expect(page.locator(`#wbSidebar button[aria-current="true"]`)).toContainText('QQQ');
+  // The rail is TWO columns since 2026-08-17, and a typed roster ticker lands in
+  // BOTH — the manual stack it was typed into and the roster it already belongs
+  // to. Two current markers is correct here rather than a bug: they are separate
+  // sets, and each marks its own current item. So assert what actually matters —
+  // at least one marker exists and EVERY one of them names the picked symbol.
+  // That is strictly stronger than the single-rail assertion it replaces, which
+  // could not have caught a stale marker left on another symbol.
+  const railCurrent = page.locator('#wbSidebar button[aria-current="true"]');
+  await expect(railCurrent.first()).toContainText('QQQ');
+  const currentLabels = await railCurrent.allTextContents();
+  expect(currentLabels.length, 'the picked symbol is marked in the rail').toBeGreaterThan(0);
+  for (const label of currentLabels) {
+    expect(label, 'no stale current marker on another symbol').toContain('QQQ');
+  }
 
   // pane layout seg maximizes a single tier and returns to split
   await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();
@@ -1332,10 +1345,24 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   // itself switching to Manual and says so, rather than leaving a dead control.
   await page.evaluate(() => { wlSort = { key: 'pct', dir: -1 }; renderWatchlist(); });
   const tile = page.locator('.mkt-group-tiles[data-band] .wl-tile').first();
+  // Scroll it into view before taking coordinates. boundingBox() is
+  // VIEWPORT-relative, and the Watchlists panel moved from the top of the page
+  // to just above the charts (2026-08-17) — on a phone viewport its tiles now
+  // sit thousands of pixels down, so page.mouse.move() to those coordinates
+  // lands nowhere and no drag ever starts. toBeVisible() does not catch this:
+  // an element below the fold is still "visible" to Playwright.
+  await tile.scrollIntoViewIfNeeded();
   let r = await tile.boundingBox();
   await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
   await page.mouse.down();
-  await page.mouse.move(r.x + 40, r.y + 30, { steps: 6 });
+  // Relative to the CENTRE the pointer is actually on, not to the tile's
+  // corner. `r.x + 40, r.y + 30` was a 7.6px move away from a 66px tile's
+  // centre — barely over the 6px WL_DRAG_SLOP — so when the tile grew to 74px
+  // for the column layout the same target became a 3.4px move and the drag
+  // never began. The assertion then failed for a reason that had nothing to do
+  // with what it was testing. An offset from the grab point says "drag it a
+  // clear distance" and stays true whatever the tile measures.
+  await page.mouse.move(r.x + r.width / 2 + 40, r.y + r.height / 2 + 30, { steps: 6 });
   expect(await page.locator('.wl-ghost').count(), 'no drag begins under a sort key').toBe(0);
   expect(await page.evaluate(() => wlSort.key), 'the drag snapped the sort to Manual').toBe('manual');
   await expect(page.locator('#wlNote')).toContainText(/Manual/i);
@@ -1343,6 +1370,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
 
   // ── a real drag, now that Manual is active ──────────────────────────────
   const src = page.locator('.mkt-group-tiles[data-band] .wl-tile').first();
+  await src.scrollIntoViewIfNeeded();
   r = await src.boundingBox();
   const zone = await page.locator('.mkt-group-tiles[data-band]').nth(1).boundingBox();
   await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
@@ -1360,6 +1388,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   expect(await page.locator('.wl-drop-marker').count(), 'the marker is cleaned up').toBe(0);
 
   // Escape abandons a drag rather than committing it somewhere unintended
+  await page.locator('.mkt-group-tiles[data-band] .wl-tile').first().scrollIntoViewIfNeeded();
   r = await page.locator('.mkt-group-tiles[data-band] .wl-tile').first().boundingBox();
   await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
   await page.mouse.down();
@@ -2378,4 +2407,128 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
   expect(after.flags, 'the tab survives a pan').toBe(3);
   expect(after.labels[0], 'the price is the newest close, not the last visible bar')
     .toBe(before.labels[0]);
+});
+
+/* S40 — the charts rail is two columns: a manual stack the owner types into and
+   a picker-headed roster column. Guards the RULES, not the pixels: what may
+   enter the manual column, in what order, and that both halves survive a
+   reload. The pinning rules are where this can silently go wrong — a rail that
+   quietly collects every symbol you look at, or one that keeps a typo forever,
+   both still "work" on screen. */
+test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
+  // Four submits, a roster switch, a full reload and a removal — the 30s
+  // default is spent before the reload lands, and the reload is where the
+  // persistence claim is actually tested.
+  test.setTimeout(90_000);
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbSidebar .wb-rail-col').first()).toBeVisible({ timeout: 15000 });
+
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+  const manual = () => page.evaluate(() =>
+    [...document.querySelectorAll('.wb-rail-manual .wb-side-sym')].map(e => e.textContent));
+
+  // two columns, side by side, manual empty to start
+  expect(await page.locator('#wbSidebar .wb-rail-col').count(), 'two rail columns').toBe(2);
+  const [a, b] = await page.evaluate(() =>
+    [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.getBoundingClientRect().left));
+  expect(b, 'the columns sit side by side, not stacked').toBeGreaterThan(a);
+  expect(await manual(), 'the manual column starts empty').toEqual([]);
+  await expect(page.locator('.wb-rail-manual .wb-rail-empty'), 'and says what fills it').toBeVisible();
+
+  // the picker offers the charts roster AND every watchlist. The watchlist feed
+  // lands after the charts one, so a picker with a single entry means the rail
+  // never repainted when the lists arrived.
+  const opts = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.textContent));
+  expect(opts[0], 'the charts roster is kept, per the owner ruling').toBe('Charts roster');
+  expect(opts.length, 'the watchlists join the picker once they load').toBeGreaterThan(1);
+
+  // typing stacks newest-first and never duplicates
+  for (const t of ['SPY', 'QQQ']) {
+    await page.fill('#wbSymInput', t);
+    await page.click('#wbSymForm button[type=submit]');
+    await page.waitForTimeout(350);
+  }
+  expect(await manual(), 'newest on top').toEqual(['QQQ', 'SPY']);
+  await page.fill('#wbSymInput', 'SPY');
+  await page.click('#wbSymForm button[type=submit]');
+  await page.waitForTimeout(350);
+  expect(await manual(), 're-typing lifts it back to the top rather than duplicating').toEqual(['SPY', 'QQQ']);
+
+  // a ticker that cannot be charted must NOT take a permanent seat
+  await page.fill('#wbSymInput', 'ZZZQ');
+  await page.click('#wbSymForm button[type=submit]');
+  await page.waitForTimeout(400);
+  expect(await manual(), 'an unchartable ticker is not pinned').toEqual(['SPY', 'QQQ']);
+
+  // switching the roster re-lists, and clicking a roster name charts it WITHOUT
+  // claiming the owner typed it — that column is typed-only by rule.
+  const vals = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.value));
+  await page.selectOption('.wb-rail-pick', vals[1]);
+  await page.waitForTimeout(400);
+  expect(await page.locator('.wb-rail-roster .wb-side-btn').count(), 'the chosen list is listed').toBeGreaterThan(0);
+  await page.locator('.wb-rail-roster .wb-side-btn').first().click();
+  await page.waitForTimeout(500);
+  expect(await manual(), 'a roster click does not enter the manual column').toEqual(['SPY', 'QQQ']);
+
+  // both halves persist
+  await page.reload();
+  await expect(page.locator('#wbSidebar .wb-rail-col').first()).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(1200);
+  expect(await manual(), 'the manual stack survives a reload').toEqual(['SPY', 'QQQ']);
+  expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').value),
+    'and so does the chosen roster').toBe(vals[1]);
+
+  // removal
+  await page.locator('.wb-rail-manual .wb-rail-x').first().click();
+  await page.waitForTimeout(300);
+  expect(await manual(), 'the × removes one entry').toEqual(['QQQ']);
+  expect(errs, 'no page errors').toEqual([]);
+});
+
+/* S41 — watchlist categories run as COLUMNS, above the charts. The failure this
+   guards is silent: a `flex-basis` meant for a row governs HEIGHT in a column,
+   so the tiles would all render as fixed-height boxes and the panel would still
+   look plausible. */
+test('S41: watchlists are vertical columns above the charts', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+
+  const shape = await page.evaluate(() => {
+    const groups = [...document.querySelectorAll('.wl-strip .mkt-group')];
+    const tiles = [...groups[0].querySelectorAll('.wl-tile')];
+    const wl = document.querySelector('.wl-area').getBoundingClientRect();
+    const ch = document.querySelector('.area-charts').getBoundingClientRect();
+    return {
+      groups: groups.length,
+      // a column: its own tiles stack downward
+      tilesStack: tiles.length > 1 && tiles[1].getBoundingClientRect().top > tiles[0].getBoundingClientRect().top + 5,
+      // and the lists sit beside each other
+      sideBySide: groups.length > 1
+        && groups[1].getBoundingClientRect().left > groups[0].getBoundingClientRect().left + 5,
+      wlBottom: Math.round(wl.bottom), chartsTop: Math.round(ch.top),
+      wlLeft: Math.round(wl.left), chartsLeft: Math.round(ch.left),
+      sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      innerScroll: (() => { const s = document.querySelector('.wl-strip'); return s.scrollHeight > s.clientHeight + 2; })(),
+      // no tab strip: every list is on screen at once
+      tabs: document.querySelectorAll('.wl-strip [role="tab"]').length,
+    };
+  });
+
+  expect(shape.groups, 'every list renders').toBeGreaterThan(1);
+  expect(shape.tilesStack, 'tiles stack downward inside a category').toBe(true);
+  expect(shape.sideBySide, 'categories sit side by side as columns').toBe(true);
+  expect(shape.tabs, 'the columns ARE the navigation — no tabs').toBe(0);
+  expect(shape.wlBottom, 'watchlists sit above the charts panel').toBeLessThanOrEqual(shape.chartsTop);
+  expect(shape.wlLeft, 'and share its left edge, both full-bleed').toBe(shape.chartsLeft);
+  expect(shape.sideways, 'the page never scrolls sideways').toBe(false);
+  expect(shape.innerScroll, 'the panel runs at full length, no inner crop').toBe(false);
+
+  // The reorder control must not impersonate a back button — a bare ← on a
+  // button reads as navigation to people and to crawlers alike.
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  const glyphs = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-move')].map(b => b.textContent));
+  expect(glyphs.length, 'the reorder controls render in live').toBeGreaterThan(0);
+  expect(glyphs.some(g => g === '←' || g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
 });

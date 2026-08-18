@@ -1136,16 +1136,26 @@ function renderWatchlist(payload, lamp) {
        DISABLED at the ends and when locked, never hidden — a control that
        vanishes reads as a bug, one that greys out reads as unavailable. */
     if (wlCanEdit()) {
+      /* «/», not ↑/↓ and NOT a bare ←/→ (2026-08-17). The axis changed — these
+         move a list among siblings that now sit side by side, so an up arrow
+         names the wrong one — but a bare ← on a button is universally read as
+         BACK, by people and by machines alike: the UI crawler's back-control
+         selector is literally `button:text-is("←")`, and it grabbed this
+         control the moment it shipped. Guillemets carry the same left/right
+         sense without claiming to be navigation. The wording follows:
+         "earlier"/"later" describes a position in the order without committing
+         to a direction, which stays true on a narrow screen where the columns
+         wrap. `wlMoveBand` itself is unchanged. */
       const mk = (glyph, delta, off) => {
         const b = el('button', 'wl-move', glyph);
         b.type = 'button';
-        b.setAttribute('aria-label', (delta < 0 ? 'Move ' : 'Move ') + l.title + (delta < 0 ? ' up' : ' down'));
+        b.setAttribute('aria-label', 'Move ' + l.title + (delta < 0 ? ' earlier' : ' later'));
         b.disabled = off || wlLocked;
         b.addEventListener('click', () => wlMoveBand(li, delta));
         return b;
       };
-      head.appendChild(mk('↑', -1, li === 0));
-      head.appendChild(mk('↓', 1, li === lists.length - 1));
+      head.appendChild(mk('«', -1, li === 0));
+      head.appendChild(mk('»', 1, li === lists.length - 1));
       /* Delete the WHOLE list (owner request 2026-08-01), GATED ON THE LOCK
          (owner ruling the same day, revising the first cut). The lock had been
          read as position-only — "adding and removing stay available" — and
@@ -1229,6 +1239,14 @@ function renderWatchlist(payload, lamp) {
       : '';
     missEl.hidden = !miss.length;
   }
+
+  /* Repaint the charts rail: its roster picker lists these lists, and the two
+     feeds land independently — desk-charts usually first, so the rail's first
+     render sees no watchlists at all and offers "Charts roster" alone. Without
+     this the picker stayed a one-entry dropdown for the whole session unless
+     something else happened to redraw the workbench. Guarded on wbState because
+     the watchlist feed can also arrive before the charts one. */
+  if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
 }
 
 /* ── watchlist editor ──────────────────────────────────────────────────────
@@ -4079,6 +4097,14 @@ function saveWbCfg() {
    workbench reopens on the same chart. syms is re-fetched on boot and merged
    into the watchlist feed; sel restores the selection. */
 const WB_STICKY_KEY = 'wb_sticky_v1';
+/* The manual column's depth. 40 rather than unbounded: it is a localStorage
+   value re-fetched one quote-proxy call at a time on boot, so an unbounded list
+   is an unbounded cold start. */
+const WB_MANUAL_MAX = 40;
+/* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
+   deliberately not a plausible watchlist title, since the picker's values are
+   otherwise list titles the owner types. */
+const WB_ROSTER_CHARTS = ' charts';
 const wbFeedRoster = new Set();  /* symbols served by the desk-charts feed; anything else is a manual entry */
 let wbStickyRestored = false;    /* one-shot: restore runs on the first LIVE feed, even after a demo-fallback reload */
 let wbUserPicked = false;        /* the user has chosen a symbol → a slow background restore must not override it */
@@ -4088,8 +4114,18 @@ function readWbSticky() {
     const raw = JSON.parse(localStorage.getItem(WB_STICKY_KEY) || 'null');
     if (raw && typeof raw === 'object') {
       return {
-        syms: Array.isArray(raw.syms) ? raw.syms.filter((s) => typeof s === 'string' && s).slice(0, 12) : [],
+        /* 12 → WB_MANUAL_MAX (owner request 2026-08-17): this list is no longer
+           an invisible re-fetch aid, it is the rail's MANUAL COLUMN and the
+           owner watches it accumulate. A cap of 12 that silently drops the
+           oldest entry is not something you want happening to a column you can
+           see. */
+        syms: Array.isArray(raw.syms) ? raw.syms.filter((s) => typeof s === 'string' && s).slice(0, WB_MANUAL_MAX) : [],
         sel: typeof raw.sel === 'string' ? raw.sel : '',
+        /* Which roster the rail's second column is showing. A watchlist TITLE
+           or the WB_ROSTER_CHARTS sentinel; validated at render against the
+           lists that actually exist, since a saved name can be renamed or
+           deleted from the Watchlists panel between sessions. */
+        roster: typeof raw.roster === 'string' ? raw.roster : '',
         /* Per-pane SPAN, sticky across reloads (owner request 2026-08-09: the
            panes reset to 3M/6M on every refresh). Validated against the pane's
            own preset list rather than trusted: this is localStorage, and an
@@ -4102,15 +4138,62 @@ function readWbSticky() {
       };
     }
   } catch { /* corrupt or absent */ }
-  return { syms: [], sel: '' };
+  return { syms: [], sel: '', roster: '' };
 }
 function writeWbSticky(patch) {
   const next = { ...readWbSticky(), ...patch };
   try { localStorage.setItem(WB_STICKY_KEY, JSON.stringify(next)); } catch { /* storage unavailable — session-only */ }
 }
+/* Newest FIRST — the owner's words were "it'll push down like a stack", so a
+   symbol entered again rises back to the top rather than appearing twice. */
 function addWbStickySym(sym) {
-  const syms = [sym, ...readWbSticky().syms.filter((s) => s !== sym)].slice(0, 12);
+  const syms = [sym, ...readWbSticky().syms.filter((s) => s !== sym)].slice(0, WB_MANUAL_MAX);
   writeWbSticky({ syms });
+}
+function removeWbStickySym(sym) {
+  writeWbSticky({ syms: readWbSticky().syms.filter((s) => s !== sym) });
+}
+/* Chart a symbol, fetching its bars first if the desk-charts feed doesn't carry
+   it. Extracted from the Load box's submit handler (2026-08-17) so the rail's
+   roster column can chart a watchlist name through the SAME path — a watchlist
+   is full of tickers the 25-name charts sweep never fetched, and a second copy
+   of this call is a second place for the demo gate and the failure notes to
+   drift. `pin` adds the symbol to the manual column and is set ONLY by the Load
+   box; a roster click charts without claiming the owner typed it. */
+async function wbLoadSymbol(sym, opts) {
+  if (!wbState) return false;
+  const note = document.getElementById('wbInfo');
+  const say = msg => { if (note) note.textContent = msg; };
+  /* PIN ONLY WHAT CAN ACTUALLY BE CHARTED, and pin on BOTH success paths.
+     Typing a ticker is the manual gesture whether or not its bars are already
+     in the charts payload, so the already-loaded branch must pin too — pinning
+     only after a fetch meant a roster name typed by hand never stacked. But
+     pinning before the outcome is known is worse: a typo would take a
+     permanent seat in a column that persists across sessions and can only be
+     cleared by hand. So each branch pins once it knows the symbol is real.
+     wbPick re-renders the rail via renderCharts, which is what shows it. */
+  const pin = () => { if (opts && opts.pin) addWbStickySym(sym); };
+  if (wbState.data.symbols[sym]) { say(''); pin(); wbPick(sym); return true; }
+  if (DESK.mode === 'demo' || !DESK_DB.url) {
+    say('Live ticker lookups are off in demo mode');
+    return false;
+  }
+  say('Loading ' + sym + '…');
+  try {
+    const out = await deskQuote(sym, 'daily');
+    if (!out.ok || !out.series || out.series.c.length < 30) {
+      say(out.error || 'No data found for ' + sym);
+      return false;
+    }
+    wbState.data.symbols[sym] = out.series;
+    wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
+    pin();
+    wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
+    return true;
+  } catch {
+    say('Quote service unreachable — try again');
+    return false;
+  }
 }
 /* single choke point for switching the active symbol: resets pan, remembers
    the selection so it sticks across reloads, and repaints */
@@ -4118,9 +4201,14 @@ function wbPick(sym) {
   wbUserPicked = true;
   wbState.sym = sym;
   wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
-  /* re-pin any non-watchlist pick so an evicted manual ticker is refetched on
-     the next reload (also bumps it to the front of the capped list) */
-  if (wbFeedRoster.size && !wbFeedRoster.has(sym)) addWbStickySym(sym);
+  /* NO addWbStickySym here any more (2026-08-17). It used to re-pin every
+     non-roster pick so an evicted ad-hoc ticker would be refetched on the next
+     reload — harmless while the list was invisible plumbing. Now that list IS
+     the rail's manual column, and the owner's rule is that it holds what they
+     TYPED: clicking a watchlist name would otherwise push it into a column they
+     never put it in. Pinning moved to the Load box, its only honest caller.
+     Re-fetch on boot no longer depends on this, because restoreStickySymbols
+     also re-hydrates `sel` — see the note there. */
   writeWbSticky({ sel: sym });
   renderCharts(wbState.data, wbState.lamp);
 }
@@ -4649,21 +4737,120 @@ function renderWbInfo() {
   if (!box.childNodes.length) muted('Fundamentals unavailable for ' + sym);
 }
 
+/* ── the symbol rail: two columns (owner request 2026-08-17) ─────────────────
+   It was one flat list that mixed the fixed 25-name charts roster with every
+   ad-hoc ticker the owner had typed, so there was no way to see "the names I
+   pulled up myself" apart from "the roster somebody configured".
+
+   MANUAL (left) starts empty and holds only what was typed into the Load box,
+   newest on top, persisted per browser. ROSTER (right) is headed by a picker
+   listing the owner's watchlists plus the charts roster, so a whole list can be
+   clicked down one name at a time — which is the workflow this rail exists for
+   and previously required reading a ticker off the Watchlists panel and
+   retyping it. */
+
+/* Day-% for one rail row, in preference order: the charted bars (exact, and
+   what the old rail used), then the watchlist feed's own quote (already
+   fetched — a symbol can be in a list without ever having been charted), then
+   nothing. NEVER a zero placeholder: 0.00% is a claim that the name was flat,
+   which is a different statement from "not known yet". */
+function wbRailPct(sym, data, wlRows) {
+  const s = data.symbols[sym];
+  if (s && s.c.length > 1) return (s.c[s.c.length - 1] / s.c[s.c.length - 2] - 1) * 100;
+  const row = wlRows.get(sym);
+  return row && row.pct != null ? row.pct : null;
+}
+
+function wbRailBtn(sym, data, wlRows) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'wb-side-btn';
+  b.setAttribute('aria-current', String(sym === wbState.sym));
+  b.appendChild(el('span', 'wb-side-sym', sym));
+  const pct = wbRailPct(sym, data, wlRows);
+  if (pct != null) b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
+  /* A roster name the charts sweep never fetched loads on demand through the
+     same path the Load box uses — and is NOT pinned into the manual column,
+     since clicking a list is not typing a ticker. */
+  b.addEventListener('click', () => { wbLoadSymbol(sym, { pin: false }); });
+  return b;
+}
+
 function renderWbSidebar(data) {
   const nav = document.getElementById('wbSidebar');
   while (nav.firstChild) nav.removeChild(nav.firstChild);
-  for (const sym of Object.keys(data.symbols)) {
-    const s = data.symbols[sym];
-    const n = s.c.length;
-    const pct = n > 1 ? (s.c[n - 1] / s.c[n - 2] - 1) * 100 : 0;
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'wb-side-btn';
-    b.setAttribute('aria-current', String(sym === wbState.sym));
-    b.appendChild(el('span', '', sym));
-    b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
-    b.addEventListener('click', () => wbPick(sym));
-    nav.appendChild(b);
+
+  /* the watchlist feed's rows, by symbol — the source of a day-% for names the
+     charts sweep does not carry */
+  const lists = (wlState.payload && wlState.payload.lists) || [];
+  const wlRows = new Map();
+  for (const l of lists) for (const r of (l.rows || [])) if (r && r.sym) wlRows.set(r.sym, r);
+
+  const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); nav.appendChild(c); return c; };
+
+  /* ── column A — manual ─────────────────────────────────────────────────── */
+  const manual = column('wb-rail-manual');
+  const mHead = el('div', 'wb-rail-head');
+  mHead.appendChild(el('span', 'wb-rail-title', 'MANUAL'));
+  manual.appendChild(mHead);
+  const typed = readWbSticky().syms;
+  if (!typed.length) {
+    /* Says what fills the column rather than just that it is empty — this is
+       the one column that starts blank BY DESIGN, so "nothing here" alone would
+       read as a feed that failed. */
+    manual.appendChild(el('p', 'wb-rail-empty', 'Type a ticker above to stack it here.'));
   }
+  for (const sym of typed) {
+    const row = el('div', 'wb-rail-row');
+    row.appendChild(wbRailBtn(sym, data, wlRows));
+    const x = el('button', 'wb-rail-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Remove ' + sym + ' from the manual list');
+    x.addEventListener('click', ev => {
+      ev.stopPropagation();       /* the row's own button must not also fire */
+      removeWbStickySym(sym);
+      renderWbSidebar(data);      /* the rail only — the chart is unaffected */
+    });
+    row.appendChild(x);
+    manual.appendChild(row);
+  }
+
+  /* ── column B — roster ─────────────────────────────────────────────────── */
+  const roster = column('wb-rail-roster');
+  const rHead = el('div', 'wb-rail-head');
+  const sel = document.createElement('select');
+  sel.className = 'wb-rail-pick';
+  sel.setAttribute('aria-label', 'Symbol list to show');
+  const opt = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; sel.appendChild(o); };
+  opt(WB_ROSTER_CHARTS, 'Charts roster');
+  for (const l of lists) opt(l.title, l.title);
+  /* Validated against the lists that EXIST, not trusted: a saved title can be
+     renamed or deleted from the Watchlists panel between sessions, and an
+     unmatched value would leave the picker showing nothing selected above an
+     empty column with no way to tell why. */
+  const savedRoster = readWbSticky().roster;
+  const valid = savedRoster === WB_ROSTER_CHARTS || lists.some(l => l.title === savedRoster);
+  sel.value = valid ? savedRoster : WB_ROSTER_CHARTS;
+  sel.addEventListener('change', () => {
+    writeWbSticky({ roster: sel.value });
+    renderWbSidebar(data);
+  });
+  rHead.appendChild(sel);
+  roster.appendChild(rHead);
+
+  let syms;
+  if (sel.value === WB_ROSTER_CHARTS) {
+    /* the desk-charts payload itself — these have 800 bars already loaded, so
+       they chart instantly, which is why this roster was kept (owner ruling) */
+    syms = Object.keys(data.symbols);
+  } else {
+    const list = lists.find(l => l.title === sel.value);
+    /* SAVED symbols, not drawn rows: a list holds tickers the quote feed could
+       not resolve, and hiding them here would silently disagree with the
+       Watchlists panel, which names them in its own warning line. */
+    syms = (list && (list.symbols || (list.rows || []).map(r => r.sym))) || [];
+  }
+  if (!syms.length) roster.appendChild(el('p', 'wb-rail-empty', 'This list has no symbols.'));
+  for (const sym of syms) roster.appendChild(wbRailBtn(sym, data, wlRows));
 }
 
 /* Graft TODAY's still-forming daily candle onto the EOD daily series so Pro 1
@@ -4782,6 +4969,42 @@ function renderCharts(data, lamp) {
   renderWbInfo();
   maybeFetchWbInfo(wbState.sym);
 
+  /* ONE current price for all three price flags (owner request 2026-08-17: the
+     white arrow on Pro 1 and Pro 2 should update as often as Pro 3's).
+
+     The live quote was already shared, so whenever it is present the three
+     panes agreed. The divergence lived in the FALLBACK: with no quote each
+     pane used its own newest close, and Pro 3's series is 15-minute intraday
+     while Pro 1 and Pro 2 are daily — so Pro 3's flag walked the tape all
+     session while the other two sat on the prior close. That is one price
+     wearing three different values on one screen, and the flag is the number
+     the eye goes to first.
+
+     The fallback is now the newest INTRADAY close, which is the same tape Pro 3
+     draws, so all three move together whenever anything is moving. It is
+     resolved here rather than inside drawPane precisely because "the current
+     price" is a property of the symbol, not of a pane.
+
+     regularOnly() unconditionally, NOT Pro 3's `ext` bar set: that toggle is a
+     per-pane display choice, and letting it decide what Pro 1 and Pro 2 call
+     the current price would make a control in one pane silently change a
+     number in two others. It also keeps the flag on the same session basis as
+     the daily panes' own scale.
+
+     Null falls through to the pane's own newest close — real data in every
+     branch, never a fabricated price. */
+  const wbCurPx = (() => {
+    const q = (wbInfoCache[wbState.sym] && wbInfoCache[wbState.sym].info || {}).last;
+    if (Number.isFinite(q)) return q;
+    const intra = wbState.intraday && wbState.intraday[wbState.sym];
+    if (intra && intra.c && intra.c.length) {
+      const reg = regularOnly(intra);
+      const c = reg.c[reg.c.length - 1];
+      if (Number.isFinite(c)) return c;
+    }
+    return null;
+  })();
+
   const svg = document.getElementById('wbChart');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const tip = document.getElementById('wbTip');
@@ -4836,7 +5059,15 @@ function renderCharts(data, lamp) {
        would still clip — as it did at 46 — but nothing in this workbench's
        roster reaches one, and buying for it would cost every pane real plot
        width every day to cover a case that does not occur. */
-    const padR = 64;
+    /* 64 → 70 (owner request 2026-08-17). The extra 6px buys two things that
+       both live in this gutter: the AX.pad hairline that lifts the axis off the
+       candles, and the rail line the ticks now hang from. Without widening,
+       both would be paid for out of the label column, and "1,280.00" needs
+       every pixel of the ~53px it already has. 70 → 73 when the flag's point
+       was sharpened: the longer notch comes out of the flag's own body, so
+       without the extra 3px sharpening the arrow would have quietly shortened
+       how long a price can be before it clips. */
+    const padR = 73;
     const plotW = w - padR - 6;
 
     /* ── axis ladders ───────────────────────────────────────────────────────
@@ -4855,13 +5086,33 @@ function renderCharts(data, lamp) {
        tabular-nums is stated even though IBM Plex Mono is already
        fixed-advance — it costs nothing and keeps the column true if the stack
        ever falls back to a proportional face. */
-    const AX = { tick: 7, gap: 4, big: 11, small: 9 };
+    /* AX.pad — the hairline between the plot and the axis (owner request
+       2026-08-17: "put a hairline distance between the candle and the price
+       arrow… ours is, like, touching the candle right now", explicitly MUCH
+       less than the reference screenshot's gap). It was zero: ticks began
+       exactly at the plot edge and the price flag's notch tip actually crossed
+       2px INTO the plot, so on a bar sitting at the right edge the flag and the
+       candle were one shape. Everything in the gutter now measures from railX,
+       so the gap is set once and the ladder, the rail and both price flags move
+       together — three separate offsets is how the notch came to overlap in the
+       first place. */
+    const AX = { tick: 7, gap: 4, pad: 4, big: 11, small: 9 };
+    const railX = x0 + 6 + plotW + AX.pad;
     const axisRow = (str, ty, size, fill) => {
-      line(x0 + 6 + plotW, ty, x0 + 6 + plotW + AX.tick, ty, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
-      text(str, x0 + 6 + plotW + AX.tick + AX.gap, ty + size / 3, {
+      line(railX, ty, railX + AX.tick, ty, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
+      text(str, railX + AX.tick + AX.gap, ty + size / 3, {
         'font-size': size, fill, 'font-variant-numeric': 'tabular-nums', 'font-weight': 500,
       });
     };
+    /* The bar the ticks hang from (owner request 2026-08-17, same reference
+       terminal). Drawn PER LADDER rather than as one line down the pane: the
+       reference breaks it at each scale boundary, and that break is what says
+       the 0–100 below is a different scale from the prices above rather than a
+       continuation of them. Same secondary ink as the ticks — it is the ruler's
+       spine, not a mark, and giving it label weight would pull the eye off the
+       numbers it exists to organise. */
+    const axisRail = (y1, y2) =>
+      line(railX, y1, railX, y2, { stroke: 'var(--color-text-secondary)', 'stroke-width': 1 });
     const n = Math.min(opts.window, bars.c.length);
     /* pan offset = bars hidden off the right edge (0 = latest bar visible) */
     const off = Math.max(0, Math.min(opts.offset || 0, bars.c.length - n));
@@ -4976,6 +5227,7 @@ function renderCharts(data, lamp) {
     let nice = 1;
     for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
     const tick = nice * mag;
+    axisRail(pY, pY + pH);
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
       /* a ruler notch at the axis edge, NOT a gridline crossing the chart */
       axisRow(fmtPrice(v), py(v), AX.big, 'var(--color-text-primary)');
@@ -5141,6 +5393,7 @@ function renderCharts(data, lamp) {
       let vNice = 1;
       for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - vNorm) < Math.abs(vNice - vNorm)) vNice = c;
       const vTick = vNice * vMag;
+      axisRail(vY, vY + vH);
       for (let v = vTick; v <= vMax; v += vTick) {
         const yv = vY + vH - (v / vMax) * vH;
         axisRow(fmtVol(v), yv, AX.small, 'var(--color-text-secondary)');
@@ -5156,6 +5409,7 @@ function renderCharts(data, lamp) {
          numbers on the stochastic strips like the reference). The faint gridlines
          were removed 2026-07-22 to match the terminal's clean panels — number
          label only at each level, no line across the strip. */
+      axisRail(yTop, yTop + hS);
       for (const g of [0, 20, 40, 60, 80]) {
         axisRow(String(g), sy(g), AX.small, 'var(--color-text-primary)');
       }
@@ -5171,7 +5425,7 @@ function renderCharts(data, lamp) {
          the reference terminal's weekly level (owner request 2026-07-20). */
       if (which === 'weekly') {
         line(x0 + 6, sy(65), x0 + 6 + plotW, sy(65), { stroke: '#eef2f7', 'stroke-width': 1, 'stroke-opacity': 0.75, 'stroke-dasharray': '5 3 1 3', 'stroke-linecap': 'round' });
-        text('65', x0 + 6 + plotW + 4, sy(65) + 3, { 'font-size': 9, fill: '#eef2f7' });
+        text('65', railX + AX.tick + AX.gap, sy(65) + 3, { 'font-size': 9, fill: '#eef2f7' });
       }
       for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
         let d = '';
@@ -5252,8 +5506,7 @@ function renderCharts(data, lamp) {
        sits, so the tab is clamped into the pane instead of scrolling out of
        it — matching the reference, which keeps the flag against the top or
        bottom edge once the tape leaves the drawn range. */
-    const liveQuote = (wbState && wbInfoCache[wbState.sym] && wbInfoCache[wbState.sym].info || {}).last;
-    const lastPx = Number.isFinite(liveQuote) ? liveQuote : bars.c[bars.c.length - 1];
+    const lastPx = Number.isFinite(wbCurPx) ? wbCurPx : bars.c[bars.c.length - 1];
     if (Number.isFinite(lastPx)) {
       const lpY = py(Math.min(hi, Math.max(lo, lastPx)));
       /* tagH/font raised with the ladder (2026-08-13). The tag was 8px beside a
@@ -5261,7 +5514,17 @@ function renderCharts(data, lamp) {
          Once the ladder went to 11px that inverted: the CURRENT price, the one
          number the eye should find first, became the smallest thing on the
          axis. Sized to sit above the ladder again rather than merely match it. */
-      const tagX = x0 + 6 + plotW + 2, tagW = padR - 10, tagH = 8, notch = 4;
+      /* Body starts AT the rail, so the notch tip lands on the rail rather than
+         in the plot — the reference does exactly this, letting the flag cover
+         the ladder numbers it sits across while never touching the tape. */
+      /* Sharper point (owner request 2026-08-17). It was a 4px notch on a 16px
+         body — a ~127° wedge, which reads as a bevelled corner rather than an
+         arrow. 7 on 14 is 90°: an unmistakable point, still blunt enough that
+         the 1px tip doesn't disappear into the rail at this size. The body is
+         SHORTENED to sharpen rather than the tip lengthened leftward, because
+         lengthening it is what put the old tip inside the plot. */
+      const notch = 7;
+      const tagX = railX + notch, tagW = padR - AX.pad - notch - 8, tagH = 7;
       /* Pentagon, not a rect: the notch points at the axis so the flag reads as
          marking a level rather than floating beside one. */
       svg.appendChild(svgEl('path', {
@@ -5299,7 +5562,9 @@ function renderCharts(data, lamp) {
        both land together. */
     const crossTagBg = svgEl('path', { fill: 'var(--color-text-primary)', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTagBg);
-    const crossTag = svgEl('text', { x: x0 + 6 + plotW + 5, 'font-size': 11, 'font-weight': 700, fill: 'var(--color-bg)', 'font-family': 'var(--font-mono)', 'font-variant-numeric': 'tabular-nums', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
+    /* railX + notch + 3 — the body starts at the notch's base, and the 3px is
+       the same left inset the last-price flag's own text uses. */
+    const crossTag = svgEl('text', { x: railX + 10, 'font-size': 11, 'font-weight': 700, fill: 'var(--color-bg)', 'font-family': 'var(--font-mono)', 'font-variant-numeric': 'tabular-nums', visibility: 'hidden', 'pointer-events': 'none', 'data-cross': '1' });
     svg.appendChild(crossTag);
     const overlay = svgEl('rect', { x: x0 + 6, y: pY, width: plotW, height: chartBot - pY, fill: 'transparent', style: 'cursor: grab' });
     svg.appendChild(overlay);
@@ -5366,7 +5631,7 @@ function renderCharts(data, lamp) {
         /* Same pentagon geometry as the last-price flag, recomputed at the
            pointer's row rather than a rect's y, so the notch keeps pointing at
            the axis wherever it sits. */
-        const cx = x0 + 6 + plotW + 2, cw = padR - 10, ch = 8, cn = 4;
+        const cn = 7, cx = railX + cn, cw = padR - AX.pad - cn - 8, ch = 7;
         crossTagBg.setAttribute('d', `M${cx - cn} ${my}L${cx} ${my - ch}H${cx + cw}V${my + ch}H${cx}Z`);
         crossTagBg.setAttribute('visibility', 'visible');
         crossTag.setAttribute('y', my + 3.5);
@@ -5911,30 +6176,15 @@ function wireCharts() {
       symForm.requestSubmit();
     }
   });
-  symForm.addEventListener('submit', async ev => {
+  symForm.addEventListener('submit', ev => {
     ev.preventDefault();
     if (!wbState) return;
     const sym = symInput.value.trim().toUpperCase();
     if (!/^[A-Z0-9.^=-]{1,10}$/.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    if (wbState.data.symbols[sym]) { symNote.textContent = ''; wbPick(sym); return; }
-    if (DESK.mode === 'demo' || !DESK_DB.url) {
-      symNote.textContent = 'Live ticker lookups are off in demo mode';
-      return;
-    }
-    symNote.textContent = 'Loading ' + sym + '…';
-    try {
-      const out = await deskQuote(sym, 'daily');
-      if (!out.ok || !out.series || out.series.c.length < 30) {
-        symNote.textContent = out.error || 'No data found for ' + sym;
-        return;
-      }
-      wbState.data.symbols[sym] = out.series;
-      wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
-      addWbStickySym(sym);
-      wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
-    } catch {
-      symNote.textContent = 'Quote service unreachable — try again';
-    }
+    /* `pin: true` — the Load box is the ONE place a symbol enters the manual
+       column, because typing it here is what "manual" means. The rail's own
+       roster clicks call this with pin off. */
+    wbLoadSymbol(sym, { pin: true });
   });
 
   /* one header bar per chart — its gear opens that pane's own popover,
@@ -6030,7 +6280,15 @@ async function restoreStickySymbols() {
     wbState.sym = saved.sel;
     renderCharts(wbState.data, wbState.lamp);
   }
-  for (const sym of saved.syms) {
+  /* `sel` is re-hydrated ALONGSIDE the manual column, not just from it. wbPick
+     no longer pins every pick into `syms` (that column is typed-only now), so a
+     watchlist symbol left selected at reload would otherwise come back with no
+     bars and no way to get them — the rail would open on a blank chart. Fetched
+     first so the chart the owner left is the chart they return to. */
+  const wanted = saved.sel && !saved.syms.includes(saved.sel)
+    ? [saved.sel, ...saved.syms]
+    : saved.syms;
+  for (const sym of wanted) {
     /* skip only if it's already REAL — a demo-fallback may hold SYNTHETIC bars
        for a sticky ticker that collides with the demo roster (e.g. GLD); those
        must still be re-fetched so real bars + fundamentals replace the fakes */

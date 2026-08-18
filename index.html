@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260817a">
-<link rel="stylesheet" href="styles/components.css?v=20260817a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260817f">
+<link rel="stylesheet" href="styles/components.css?v=20260817f">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -35,7 +35,10 @@
      1728 logical) is below it — so the three-across layout is opted into by a
      min-width query rather than imposed, and everything narrower keeps exactly
      the layout it had. */
-  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead) { max-width: 1880px; margin-inline: auto; }
+  /* `.wl-area` joined the opt-out 2026-08-17: it now sits directly on top of
+     `.area-charts`, and a capped-and-centred panel above a full-bleed one would
+     be visibly inset from the chart it is meant to feed. */
+  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -62,12 +65,15 @@
   /* wrap rather than overflow: the desk must never scroll sideways, so when the
      three columns don't fit they stack instead of spilling. */
   .top-band { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-4); }
-  /* Watchlists moved INSIDE the band (owner request 2026-08-07) to sit between
-     Markets and Ask. Below the three-across breakpoint it takes a full row and
-     `order:-1` puts it back ABOVE the other two — which is exactly the layout it
-     had before, so a narrow screen loses nothing by this move. */
-  .top-band > .col-watchlist { flex: 1 1 100%; order: -1; min-width: 0; }
-  .top-band > .col-watchlist > .area-watchlist { margin-bottom: 0; }
+  /* Watchlists LEFT the band (owner request 2026-08-17) and now sits full-width
+     directly above the charts panel — the two panels it pairs with in use are
+     the two it sits between, so choosing what to look at and looking at it are
+     one eye movement. It full-bleeds like `.area-charts` (see the shell cap
+     above): the panel it is stacked on opts out of the 1880 cap, and a
+     watchlist stopping 180px short of the chart below it would read as a
+     misalignment rather than a margin. */
+  .wl-area { min-width: 0; margin-block: 0.5in 0; margin-inline: calc(0.5in - var(--space-4)); }
+  .wl-area > .area-watchlist { margin-bottom: 0; }
   /* Top row: Markets | Ask-the-desk. Was strip | Markets | Ask until the strip
      came out 2026-07-29. Markets renders at 90% — a genuine 10% shrink via
      `zoom`, which reflows the box (unlike transform:scale, which would leave a
@@ -119,20 +125,14 @@
        need a 3-up rule and a 9px label here too; both went when the grid became
        a stacked strip, which gives every name its full width at full size. */
     .top-band > .col-markets .mk-tiles { grid-template-columns: repeat(2, 1fr); }
-    /* Watchlists is the FLUID column, not a pinned 1040 (owner's browser
-       measured 1152 — a 1512 laptop with DevTools docked — so a fixed 1040 put
-       the row at 1844px and three-across never engaged on the machine it was
-       built for). Markets and Ask keep their exact widths at every size and
-       Watchlists absorbs the remainder — now ~932 at 1512 and ~1340 at 1920,
-       since the two rails gave back ~256px between them. That also makes the
-       breakpoint honest — the row fits by construction rather than at one
-       screen size. */
-    .top-band > .col-watchlist { flex: 1 1 auto; order: 0; min-width: 0; }
-    /* Matched to the rendered Markets width, not to its basis: Markets carries
-       the 0.9 zoom and News does not, so 345 × 0.9 ≈ 311. The two rails have
-       been kept equal since the owner asked for it, so widening one widens
-       both. */
-    .top-band > .col-news { flex: 0 0 311px; }
+    /* NEWS IS NOW THE FLUID COLUMN. With Watchlists gone (2026-08-17) the row
+       is two panels, and leaving News pinned at its old 311px rail width would
+       strand ~800px of empty band at 1512. Markets keeps its exact width — its
+       grids are sized against it — and News absorbs whatever is left, which is
+       the same rule Watchlists used to follow: one pinned column, one that
+       takes the remainder, so the row fits by construction at every width
+       rather than at one screen size. */
+    .top-band > .col-news { flex: 1 1 auto; min-width: 0; }
     /* News took Ask's slot (owner request 2026-08-07) and inherits its width.
        `#newsList` carries a 460px max-height for the stacked layout; here the
        column is stretch-sized, so the cap would leave the list ending well
@@ -158,24 +158,17 @@
        below, and .ask-thread) — never blanket-applied to every panel. */
     .top-band > aside > .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
     .top-band > aside > .panel > .panel-body { flex: 1 1 auto; min-height: 0; }
-    /* WATCHLISTS SETS THE ROW HEIGHT (owner request 2026-08-07). Under plain
-       `align-items: stretch` the tallest column wins, and once Markets was cut
-       to 258px it became the tallest — so the row ran on past the last
-       watchlist band and left it standing in dead space.
-       Markets and News are taken OUT OF FLOW to fix that: an absolutely
-       positioned panel contributes nothing to the line's cross size, so the
-       only column still measuring its own content is Watchlists, and the other
-       two resolve `inset: 0` against whatever height it lands on. This is what
-       lets a SHORTER column drive a taller one, which no amount of flex
-       alignment can express.
-       They then genuinely need to scroll, since their content is taller than
-       the row. That is NOT a return of the trap fixed earlier the same day:
-       these can actually scroll, and they leave `overscroll-behavior` at
-       `auto`, so reaching the end chains on to the page instead of dead-ending
-       under the cursor. */
-    .top-band > .col-markets, .top-band > .col-news { position: relative; }
-    .top-band > .col-markets > .panel,
-    .top-band > .col-news > .panel { position: absolute; inset: 0; overflow-y: auto; }
+    /* The out-of-flow treatment of Markets and News is GONE (2026-08-17), and
+       deleted rather than ported. It existed for exactly one reason: to let the
+       SHORTER watchlist column drive the row's height while the other two
+       resolved `inset: 0` against it — something no flex alignment can express.
+       With Watchlists out of the band there is no third column to defer to, so
+       the row is two panels and plain `align-items: stretch` is correct again:
+       the taller of the pair sets the height and the other fills it.
+       That also retires the inner `overflow-y: auto` those two carried. Neither
+       panel is cropped any more, so nothing needs to scroll inside it — and an
+       element that is a scroll container without having anything to scroll is
+       precisely the shape that ate the mouse wheel on 2026-08-07. */
   }
   /* Ask-the-desk: scroll the conversation INSIDE instead of letting the panel
      grow with the thread (owner request 2026-07-21). The panel fills its
@@ -549,8 +542,47 @@
   }
 
   /* watchlist charts (two-pane workbench + symbol rail) */
-  .wb-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3); }
-  #wbSidebar { display: flex; flex-direction: column; gap: 2px; max-height: 600px; overflow-y: auto; }
+  /* 96 → 200px: the rail is TWO columns now (owner request 2026-08-17) — a
+     manual stack the owner types into and a picker-headed roster column. Two
+     96px columns plus their gap is what 200 buys; the chart gives up ~104px,
+     which is the price of not having to retype a ticker to chart it. */
+  .wb-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-3); }
+  /* Below 860px the rail goes ABOVE the chart instead of beside it. At a 393px
+     phone width a 200px rail leaves the canvas ~150px — the three pane bars
+     then wrap so far that #wbBar-p3 overlaps Pro 1's gear and swallows clicks
+     meant for it. One flat rail cost 96px and survived that; two columns do
+     not, so the split has to stop being a side rail on a narrow screen. Its own
+     two columns stay side by side — they are the point — and the chart gets the
+     full width back. */
+  @media (max-width: 860px) {
+    .wb-grid { grid-template-columns: minmax(0, 1fr); }
+    #wbSidebar { max-height: 220px; }
+  }
+  /* The rail is a ROW of two columns; each column scrolls on its own so a
+     40-name watchlist cannot push the manual stack off the bottom. The
+     max-height is overwritten per render to match the chart's height (see the
+     note in renderCharts), so this value is only the pre-measure default. */
+  #wbSidebar { display: flex; flex-direction: row; align-items: stretch; gap: var(--space-2); max-height: 600px; }
+  /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
+     scroll both columns together and defeat the split. `auto`, never `contain`:
+     reaching the end of a column must carry on scrolling the page. */
+  .wb-rail-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
+  .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
+  /* The picker inherits the dark charts scope, so it is styled here rather than
+     left to the browser's own light-on-white select chrome. */
+  .wb-rail-pick { width: 100%; padding: 2px 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 600 9px/1.6 var(--font-sans); text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
+  .wb-rail-pick:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
+  .wb-rail-empty { margin: 4px 2px 0; font: 400 9px/1.4 var(--font-sans); font-style: italic; color: var(--color-text-secondary); }
+  /* The × rides ALONGSIDE the symbol button rather than inside it — nesting a
+     button in a button is invalid, and a click target inside a click target is
+     how a remove gets fired by someone aiming at the chart. */
+  .wb-rail-row { display: flex; align-items: stretch; gap: 0; }
+  .wb-rail-row .wb-side-btn { flex: 1 1 auto; min-width: 0; }
+  .wb-rail-x { flex: 0 0 auto; padding: 0 4px; border: 0; background: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: 400 11px/1 var(--font-sans); cursor: pointer; }
+  .wb-rail-x:hover { background: var(--color-surface-2); color: var(--color-text-primary); }
+  .wb-rail-x:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -1px; }
+  .wb-side-sym { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wb-side-btn { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; width: 100%; padding: 4px 6px; border: 0; background: none; border-radius: var(--radius-sm); font: 500 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
   .wb-side-btn:hover { background: var(--color-surface-2); }
   .wb-side-btn[aria-current="true"] { background: var(--color-surface-2); font-weight: 700; }
@@ -712,7 +744,7 @@
     .top-band { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
     /* stacked: drop the 10% shrink and let Markets/Ask span the full width */
     .top-band > .col-markets { zoom: 1; }
-    .top-band > .col-markets, .top-band > .col-news, .top-band > .col-watchlist { flex-basis: auto; }
+    .top-band > .col-markets, .top-band > .col-news { flex-basis: auto; }
     .top-boxes { flex-wrap: wrap; }
     .top-boxes > .area-accounts { flex: 2 1 320px; }
     .top-boxes > .col-rail { flex: 1 1 240px; }
@@ -779,74 +811,6 @@
       </section>
     </aside>
 
-    <aside class="col-watchlist" aria-label="Watchlists">
-    <section class="panel area-watchlist" aria-labelledby="wlTitle">
-      <div class="panel-header">
-        <h2 class="panel-title" id="wlTitle">Watchlists</h2>
-        <span class="lamp lamp--demo" id="wlLamp">Demo</span>
-        <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
-        <!-- Sort is a VIEW, not an edit (owner request 2026-07-29): it reorders
-             what is drawn and never touches the saved order, so switching back to
-             Manual restores the arrangement dragged earlier. Built by
-             renderWlSort(); drag-to-reorder is only offered in Manual, where a
-             drag isn't fighting a sort key. -->
-        <div class="seg wl-sort" id="wlSort" role="group" aria-label="Sort watchlist symbols"></div>
-        <!-- Chart timeframe (owner request 2026-07-30): the window each tile's
-             sparkline draws, 1D through 5Y. Panel-wide, because the bands are one
-             surface and per-list spans would make two tiles incomparable. The
-             Change % pill does NOT follow it — that stays the prior-close move
-             per the 2026-07-29 ruling. Built by renderWlTf(). -->
-        <div class="seg wl-tf" id="wlTf" role="group" aria-label="Chart timeframe"></div>
-        <!-- + and 🗑 sit IN the header beside the timeframe (owner ruling
-             2026-07-31). They were introduced on their own second row, which
-             stood permanently under the header whether or not anything was
-             staged — a full-width band of chrome to hold two buttons. Both are
-             still a drop target and a source: the trash accepts a dragged tile
-             from here exactly as it did from the tray row. -->
-        <button type="button" class="wl-add wl-add--tray" id="wlTrayAdd"
-                aria-label="New symbol tile" title="New symbol tile — drag it into a list">+</button>
-        <button type="button" class="wl-trash" id="wlTrash"
-                aria-label="Remove the focused symbol, or drag one here">🗑</button>
-        <!-- NEW LIST (owner request 2026-08-01): creating and deleting a whole
-             list used to be reachable only inside the ✎ editor, so the two
-             commonest roster edits meant opening a modal, editing a draft, and
-             saving it. This mints an empty list directly; the × on each band
-             deletes one. It is LABELLED rather than a bare + because the + beside
-             it already means "new SYMBOL tile" — two identical glyphs doing
-             different jobs is how a control gets pressed by mistake. -->
-        <button type="button" class="wl-add wl-newlist" id="wlNewListBtn"
-                aria-label="New watchlist" title="New watchlist">+ list</button>
-        <!-- ARRANGEMENT lock (owner request 2026-07-31): freezes row order, tile
-             order, and tile moves between rows — plus DELETING A WHOLE LIST
-             (owner ruling 2026-08-01). Adding a symbol, adding a list, and
-             removing a single tile stay available; the lock covers arrangement
-             and the one irreversible act. Enforced in wlCommitMove/wlMoveBand/
-             openWlDelList, not just on the controls. -->
-        <button type="button" class="wl-lock" id="wlLock" aria-pressed="false"
-                aria-label="Lock the arrangement">🔓</button>
-        <!-- Transient feedback for a drag that could not be committed. The
-             staging row that used to carry it is gone (owner ruling 2026-07-31),
-             and a failed move needs to say so somewhere the eye already is.
-             aria-live so it is announced rather than only seen. -->
-        <span class="wl-note" id="wlNote" role="status" aria-live="polite" hidden></span>
-        <span class="stamp ml-auto" id="wlStamp">—</span>
-      </div>
-      <div class="panel-body">
-        <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
-             labelled band in the market strip's own idiom — list name on the
-             left, its symbols as tiles packed left-to-right across the full
-             panel width. Built by renderWatchlist(); every band and tile reuses
-             .mkt-group / .mkt-tile so the two surfaces stay one visual system. -->
-        <div class="wl-strip" id="wlStrip"></div>
-        <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
-        <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
-             splitting a pasted broker table on whitespace can turn "BRK B" into
-             BRK + B, and both look like valid tickers, so the only honest signal
-             is which ones came back unknown. -->
-        <p class="wl-missing" id="wlMissing" hidden></p>
-      </div>
-    </section>
-    </aside>
 
     <aside class="col-news" aria-label="Market news">
       <section class="panel" aria-labelledby="newsTitle">
@@ -1104,6 +1068,78 @@
 
   </div>
 
+  <!-- Layout wrapper only, deliberately unlabelled: the panel inside already
+       carries aria-labelledby="wlTitle", and a plain div cannot take an
+       aria-label anyway (it has no role to name). -->
+  <div class="wl-area">
+    <section class="panel area-watchlist" aria-labelledby="wlTitle">
+      <div class="panel-header">
+        <h2 class="panel-title" id="wlTitle">Watchlists</h2>
+        <span class="lamp lamp--demo" id="wlLamp">Demo</span>
+        <button type="button" class="wl-edit" id="wlEditBtn" aria-label="Edit watchlists" title="Edit watchlists">✎</button>
+        <!-- Sort is a VIEW, not an edit (owner request 2026-07-29): it reorders
+             what is drawn and never touches the saved order, so switching back to
+             Manual restores the arrangement dragged earlier. Built by
+             renderWlSort(); drag-to-reorder is only offered in Manual, where a
+             drag isn't fighting a sort key. -->
+        <div class="seg wl-sort" id="wlSort" role="group" aria-label="Sort watchlist symbols"></div>
+        <!-- Chart timeframe (owner request 2026-07-30): the window each tile's
+             sparkline draws, 1D through 5Y. Panel-wide, because the bands are one
+             surface and per-list spans would make two tiles incomparable. The
+             Change % pill does NOT follow it — that stays the prior-close move
+             per the 2026-07-29 ruling. Built by renderWlTf(). -->
+        <div class="seg wl-tf" id="wlTf" role="group" aria-label="Chart timeframe"></div>
+        <!-- + and 🗑 sit IN the header beside the timeframe (owner ruling
+             2026-07-31). They were introduced on their own second row, which
+             stood permanently under the header whether or not anything was
+             staged — a full-width band of chrome to hold two buttons. Both are
+             still a drop target and a source: the trash accepts a dragged tile
+             from here exactly as it did from the tray row. -->
+        <button type="button" class="wl-add wl-add--tray" id="wlTrayAdd"
+                aria-label="New symbol tile" title="New symbol tile — drag it into a list">+</button>
+        <button type="button" class="wl-trash" id="wlTrash"
+                aria-label="Remove the focused symbol, or drag one here">🗑</button>
+        <!-- NEW LIST (owner request 2026-08-01): creating and deleting a whole
+             list used to be reachable only inside the ✎ editor, so the two
+             commonest roster edits meant opening a modal, editing a draft, and
+             saving it. This mints an empty list directly; the × on each band
+             deletes one. It is LABELLED rather than a bare + because the + beside
+             it already means "new SYMBOL tile" — two identical glyphs doing
+             different jobs is how a control gets pressed by mistake. -->
+        <button type="button" class="wl-add wl-newlist" id="wlNewListBtn"
+                aria-label="New watchlist" title="New watchlist">+ list</button>
+        <!-- ARRANGEMENT lock (owner request 2026-07-31): freezes row order, tile
+             order, and tile moves between rows — plus DELETING A WHOLE LIST
+             (owner ruling 2026-08-01). Adding a symbol, adding a list, and
+             removing a single tile stay available; the lock covers arrangement
+             and the one irreversible act. Enforced in wlCommitMove/wlMoveBand/
+             openWlDelList, not just on the controls. -->
+        <button type="button" class="wl-lock" id="wlLock" aria-pressed="false"
+                aria-label="Lock the arrangement">🔓</button>
+        <!-- Transient feedback for a drag that could not be committed. The
+             staging row that used to carry it is gone (owner ruling 2026-07-31),
+             and a failed move needs to say so somewhere the eye already is.
+             aria-live so it is announced rather than only seen. -->
+        <span class="wl-note" id="wlNote" role="status" aria-live="polite" hidden></span>
+        <span class="stamp ml-auto" id="wlStamp">—</span>
+      </div>
+      <div class="panel-body">
+        <!-- Tiles, not a table (owner request 2026-07-29): each list renders as a
+             labelled band in the market strip's own idiom — list name on the
+             left, its symbols as tiles packed left-to-right across the full
+             panel width. Built by renderWatchlist(); every band and tile reuses
+             .mkt-group / .mkt-tile so the two surfaces stay one visual system. -->
+        <div class="wl-strip" id="wlStrip"></div>
+        <p class="wl-empty" id="wlEmpty" hidden>This list has no symbols yet.</p>
+        <!-- Symbols the quote feed could not resolve. Shown rather than dropped:
+             splitting a pasted broker table on whitespace can turn "BRK B" into
+             BRK + B, and both look like valid tickers, so the only honest signal
+             is which ones came back unknown. -->
+        <p class="wl-missing" id="wlMissing" hidden></p>
+      </div>
+    </section>
+  </div>
+
   <section class="panel area-charts" aria-labelledby="chartsTitle">
     <div class="panel-header wb-panel-header">
       <h2 class="panel-title" id="chartsTitle">Stochastic charts</h2>
@@ -1208,8 +1244,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260817a"></script>
-<script src="scripts/data.js?v=20260817a"></script>
-<script src="scripts/app.js?v=20260817a"></script>
+<script src="scripts/config.js?v=20260817f"></script>
+<script src="scripts/data.js?v=20260817f"></script>
+<script src="scripts/app.js?v=20260817f"></script>
 </body>
 </html>

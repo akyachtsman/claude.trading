@@ -229,7 +229,15 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    .mkt-group in index.html and these rules only widen it for a full-width
    panel. Class-plus-class beats those single-class rules on specificity, so
    source order is irrelevant. */
-.wl-strip { display: flex; flex-direction: column; gap: 0; }
+/* EACH CATEGORY IS A COLUMN (owner request 2026-08-17), not a full-width band.
+   The list's name sits on top and its tiles stack downward; the columns run
+   left to right and wrap onto another row when they outgrow the panel. Every
+   list is still on screen at once, so the columns remain the navigation and
+   there are still no tabs.
+   The band MARKUP is untouched — .mkt-group > .wl-band-head + .mkt-group-tiles
+   — because drag-to-arrange, quick add, double-click removal, the detail window
+   and the create/delete controls all hang off it. Only the axis flips. */
+.wl-strip { display: flex; flex-direction: row; flex-wrap: wrap; align-items: flex-start; gap: 0; }
 /* ONE row per list (owner request 2026-07-29): tiles never wrap, the row scrolls
    sideways instead, and the scrollbar is always visible so it is obvious there
    is more list off-screen. `overflow-x: scroll` (not auto) keeps the track
@@ -241,27 +249,50 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    instead of the overlay one macOS/Chrome fade out by default. Setting both
    cancels the always-visible behaviour the owner asked for. Firefox has no
    equivalent override and keeps its own overlay bar. */
+/* Tiles now stack DOWNWARD and nothing scrolls sideways, so the always-visible
+   horizontal scrollbar that used to sit under every band is gone with the row
+   it belonged to — a persistent 8px track under each COLUMN would be chrome
+   marking an overflow that can no longer happen. The list is as long as it is
+   and the column simply runs to its end (FR-19: no inner height cap).
+   No `overscroll-behavior` of any kind here: there is nothing to scroll, and a
+   container that cannot scroll is exactly where `contain` eats the wheel. */
 .wl-strip .mkt-group-tiles {
-  max-width: none; flex-wrap: nowrap; overflow-x: scroll; overflow-y: hidden;
-  overscroll-behavior-x: contain; padding-bottom: 2px;
+  max-width: none; flex-direction: column; flex-wrap: nowrap;
+  overflow: visible; padding-bottom: 0;
 }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar { height: 8px; }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar-track { background: var(--color-bg); border-radius: 4px; }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb { background: var(--color-border-hover); border-radius: 4px; }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
 /* Placeholder for a list with no symbols. Height is a tile's height so the
    band keeps its shape and stays a drop target; muted and italic so it never
    reads as a ticker. */
+/* `white-space: normal`, not the row layout's `nowrap`: the placeholder now
+   sits in a 92px column, where a single unbroken line would run straight out of
+   the panel. It keeps a tile's height so an empty list still holds its shape
+   and stays a drop target (FR-18). */
 .wl-band-empty {
   display: flex; align-items: center;
-  min-height: 66px; padding: 0 var(--space-3);
+  min-height: 66px; padding: var(--space-2) var(--space-2);
   font-size: var(--font-size-xs); font-style: italic;
-  color: var(--color-text-secondary); white-space: nowrap;
+  color: var(--color-text-secondary); white-space: normal;
 }
-/* the band must be free to shrink, or a 41-tile row would stretch it instead */
-.wl-strip .mkt-group { align-items: stretch; }
-.wl-strip .mkt-group-tiles { flex: 1 1 0; min-width: 0; }
-.wl-strip .mkt-group-label { flex-basis: 104px; }
+/* One column per list. 92px = a 66px tile + its 5px side padding either side +
+   the group's own var(--space-2) gutters, so a tile fills the column exactly
+   and the collapsed borders line up down the whole panel. */
+.wl-strip .mkt-group {
+  flex: 0 0 92px; flex-direction: column; align-items: stretch;
+  /* borders collapse SIDEWAYS now that the bands sit side by side; the -1px
+     top margin the stacked layout used would fuse the wrong pair of edges */
+  margin-top: 0; margin-left: -1px;
+}
+.wl-strip .mkt-group-tiles { flex: 0 0 auto; min-width: 0; }
+/* flex-basis governs HEIGHT inside a column, so the 104px the row layout used
+   for the label gutter would reserve 104px of empty vertical space above every
+   list — the same trap the ≤640px block below already documents for the tile
+   row. The head is sized by min-height instead. */
+.wl-strip .mkt-group-label { flex-basis: auto; }
+/* Every column's tiles start on the same line, so the panel reads as a grid
+   rather than a ragged set of stacks. Two lines of the 9px uppercase label,
+   which is what the longest names ("Industry & metals") wrap to at 92px. */
+.wl-strip .wl-band-head { min-height: 32px; align-items: flex-start; }
+/* (the tile's own flex is reset where it is declared, further down) */
 /* Under 640px .mkt-group turns into a COLUMN, where flex-basis governs height —
    so the label would reserve ~104px of empty vertical space. The shared rule
    resets it to auto, but this two-class selector outranks it, so the reset has
@@ -332,7 +363,11 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    ordered below the pill — which is a SIBLING of the wrapper — while the
    wrapper generated a box. Dissolving it promotes both to direct flex children
    of the tile, and `order` can then place all four. */
-.wl-strip .wl-tile { flex: 0 0 66px; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
+/* `flex: 0 0 auto`, NOT the old `0 0 66px`: the tile row is a COLUMN now, so a
+   66px basis would set the tile's HEIGHT rather than its width and every tile
+   would render as a 66px-tall box regardless of its contents. Width comes from
+   the column (FR-17 — a short list ends rather than stretching). */
+.wl-strip .wl-tile { flex: 0 0 auto; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
 .wl-strip .wl-vals { display: contents; }
 .wl-strip .mkt-name { order: 1; font-size: 9px; }
 .wl-strip .mkt-last { order: 2; font-size: 12px; line-height: 1.15; }
