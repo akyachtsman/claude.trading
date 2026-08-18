@@ -277,12 +277,26 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    the group's own var(--space-2) gutters, so a tile fills the column exactly
    and the collapsed borders line up down the whole panel. */
 .wl-strip .mkt-group {
-  flex: 0 0 92px; flex-direction: column; align-items: stretch;
+  /* `auto`, not a fixed 92px: a long list now wraps into a SECOND sub-column
+     (see .mkt-group-tiles below), and the band has to be free to widen for it. */
+  flex: 0 0 auto; flex-direction: column; align-items: stretch;
   /* borders collapse SIDEWAYS now that the bands sit side by side; the -1px
      top margin the stacked layout used would fuse the wrong pair of edges */
   margin-top: 0; margin-left: -1px;
 }
-.wl-strip .mkt-group-tiles { flex: 0 0 auto; min-width: 0; }
+/* HEIGHT HALVED (owner request 2026-08-18). The panel ran to 2791px because
+   one list holds 41 symbols and a column of 41 tiles is 2583px on its own.
+   The fix caps how far a single stack may run and lets the overflow WRAP into
+   another stack beside it — a 41-tile list becomes two ~21-tile columns, which
+   halves the panel without shrinking a tile or hiding anything.
+   Deliberately NOT an inner scrollbar: this panel's whole point is that every
+   list is visible at once, and the old 600px cap that hid lists behind one was
+   removed for exactly that reason. And deliberately NOT a shorter tile — the
+   16px sparkline is the only trend a tile carries, so halving 63px would have
+   meant deleting it.
+   Column-wrap spilling into extra columns is the same CSS behaviour the ≤640px
+   note below warns about; here it is the mechanism rather than the bug. */
+.wl-strip .mkt-group-tiles { flex: 0 0 auto; min-width: 0; flex-wrap: wrap; max-height: 1330px; align-content: flex-start; }
 /* flex-basis governs HEIGHT inside a column, so the 104px the row layout used
    for the label gutter would reserve 104px of empty vertical space above every
    list — the same trap the ≤640px block below already documents for the tile
