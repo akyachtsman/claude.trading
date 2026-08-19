@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260818b">
-<link rel="stylesheet" href="styles/components.css?v=20260818b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260818e">
+<link rel="stylesheet" href="styles/components.css?v=20260818e">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -38,7 +38,7 @@
   /* `.wl-area` joined the opt-out 2026-08-17: it now sits directly on top of
      `.area-charts`, and a capped-and-centred panel above a full-bleed one would
      be visibly inset from the chart it is meant to feed. */
-  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
+  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area):not(.heat-row) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -64,6 +64,11 @@
   .area-watchlist { margin-bottom: var(--space-4); }
   /* wrap rather than overflow: the desk must never scroll sideways, so when the
      three columns don't fit they stack instead of spilling. */
+  /* ONE DESK ROW (owner request 2026-08-18): Markets | News | Ask | Accounts on
+     a single line. Below the wide gate it is a plain block, so the two inner
+     rows stack exactly as they did before and nothing narrower changes. */
+  .desk-row { min-width: 0; }
+  .desk-row > .top-band, .desk-row > .top-boxes { min-width: 0; }
   .top-band { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-4); }
   /* Watchlists LEFT the band (owner request 2026-08-17) and now sits full-width
      directly above the charts panel — the two panels it pairs with in use are
@@ -105,6 +110,25 @@
      and `align-items: stretch` makes the other two match whichever column is
      tallest, which is what "same height as watchlist" asks for. Pinning Markets
      to a number instead would re-break the moment a list is added or removed. */
+  /* The four-across gate is its OWN breakpoint, deliberately higher than the
+     1400 the inner rows use. Markets (311) + News (420 min) + the two 200px
+     Markets (311) + News (380) + gaps is ~730, leaving Ask a real column from
+     1400 up — the same gate the inner rows already use. It was set higher while
+     the accounts still sat in this row; once they moved beside the heatmap the
+     row lost ~580px of demand and the higher gate was just holding the layout
+     back. Below 1400 the two rows stack exactly as before. */
+  @media (min-width: 1400px) {
+    .desk-row { display: flex; align-items: flex-start; gap: var(--space-4); }
+    /* Markets + News keep their intrinsic widths; the accounts half takes the
+       remainder, because Ask is the panel that actually benefits from slack —
+       it holds a conversation, while the other three hold fixed-shape data. */
+    .desk-row > .top-band { flex: 0 1 auto; margin-bottom: 0; }
+    .desk-row > .top-boxes { flex: 1 1 0; margin-bottom: 0; }
+    /* Both inner rows already carry their own bottom margin; the row supplies
+       one for the pair so the spacing below matches every other block. */
+  }
+  @media (min-width: 1400px) { .desk-row { margin-bottom: var(--space-4); } }
+
   @media (min-width: 1400px) {
     .top-band { flex-wrap: nowrap; align-items: stretch; }
     /* 345 pre-zoom = 311 rendered (owner request 2026-08-07: "expand it a
@@ -125,14 +149,14 @@
        need a 3-up rule and a 9px label here too; both went when the grid became
        a stacked strip, which gives every name its full width at full size. */
     .top-band > .col-markets .mk-tiles { grid-template-columns: repeat(2, 1fr); }
-    /* NEWS IS NOW THE FLUID COLUMN. With Watchlists gone (2026-08-17) the row
-       is two panels, and leaving News pinned at its old 311px rail width would
-       strand ~800px of empty band at 1512. Markets keeps its exact width — its
-       grids are sized against it — and News absorbs whatever is left, which is
-       the same rule Watchlists used to follow: one pinned column, one that
-       takes the remainder, so the row fits by construction at every width
-       rather than at one screen size. */
-    .top-band > .col-news { flex: 1 1 auto; min-width: 0; }
+    /* NEWS IS BOUNDED, not merely fluid (owner request 2026-08-18: resize the
+       news so the others fit). Making it the fluid column when Watchlists left
+       the band was right at 1512 and wrong on a wide monitor: "take whatever is
+       left" meant ~2000px of headlines beside a 311px Markets, so Markets read
+       as an afterthought next to a wall of text. It still absorbs slack, but
+       within a range — past 560px extra column width buys nothing, since a
+       headline is one line either way. */
+    .top-band > .col-news { flex: 0 1 380px; min-width: 0; max-width: 420px; }
     /* News took Ask's slot (owner request 2026-08-07) and inherits its width.
        `#newsList` carries a 460px max-height for the stacked layout; here the
        column is stretch-sized, so the cap would leave the list ending well
@@ -365,6 +389,27 @@
      true 0.5in, and the 0.5in top margin collapses with the chart's 0.5in
      bottom margin into one half-inch seam between the two panels. */
   .heat-panel { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
+  /* HEATMAP + ACCOUNTS ON ONE LINE (owner request 2026-08-18). The heatmap is
+     the elastic half — a treemap re-tiles to whatever box it is given, whereas
+     an account card has a fixed set of figures and a width below which they
+     clip. So the cards keep their size and the map absorbs the difference,
+     which is also why the map is the one told to "fit the screen". */
+  .heat-row { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
+  .heat-row > .heat-panel { margin: 0; }
+  .heat-row > .area-accounts { margin: 0; }
+  @media (min-width: 1100px) {
+    .heat-row { display: flex; align-items: flex-start; gap: var(--space-4); }
+    .heat-row > .heat-panel { flex: 1 1 0; min-width: 0; }
+    /* 232 = one 200px card + the grid gutters. STACKED, one per row: the pair
+       reads as a column beside the map rather than a second mini-row. */
+    .heat-row > .area-accounts { flex: 0 0 232px; display: block; }
+    .heat-row .account-grid { grid-template-columns: 1fr; margin-top: var(--space-3); }
+    /* The cards are `zoom`ed to .62 in the desk row to fit a 158px line. Here
+       they have a column to themselves and no height to match, so they render
+       at full size — the scale existed to solve a constraint that is gone. */
+    .heat-row .account { zoom: 1; height: auto; width: auto; }
+    .heat-row .accounts-side { width: auto; }
+  }
   /* News is halved to a fixed reel with its own scrollbar (owner ruling
      2026-07-16): the holdings-first list scrolls in place instead of running
      the full page height. */
@@ -790,6 +835,14 @@
        in place from here via the PIN RPCs — the ✎ trigger flips the panel into
        edit mode. Quotes arrive batched from desk-watchlist (one upstream call
        per 50 symbols). Tabs are built by renderWatchlist(). -->
+  <!-- ONE DESK ROW (owner request 2026-08-18): Markets | News | Ask |
+       Accounts side by side instead of two stacked rows. The two inner
+       rows keep their own markup and their own internal rules — nesting
+       them as two children of this row is what puts all four panels on one
+       line without reordering the DOM, which matters because the accounts
+       section carries the masthead state and the Refresh/Lock controls that
+       keyboard and screen-reader users reach in reading order. -->
+  <div class="desk-row">
   <div class="top-band">
     <aside class="col-markets" aria-label="Markets">
       <section class="panel markets-panel" aria-labelledby="mktTitle">
@@ -835,6 +888,19 @@
         <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
       </section>
     </aside>
+  </div>
+  <div class="top-boxes">
+
+    <aside class="col-rail" aria-label="Desk tools">
+      <section class="panel" aria-labelledby="askTitle">
+        <div class="panel-header">
+          <h2 class="panel-title" id="askTitle">Ask the desk</h2>
+          <span class="lamp lamp--demo" id="askLamp">Demo</span>
+        </div>
+        <div class="panel-body" id="askBody"></div>
+      </section>
+    </aside>
+  </div>
   </div>
 
   <!-- Ask-the-desk's own system prompt, self-editable (owner request 2026-07-23,
@@ -1028,34 +1094,6 @@
     </section>
   </div>
 
-  <div class="top-boxes">
-    <section class="area-accounts" aria-labelledby="accountsTitle">
-      <!-- Title, desk lamp, Refresh/Lock and the synced stamp are grouped so
-           they can sit BESIDE the cards on a wide screen instead of stacking
-           above them. Stacked, they pushed the cards ~75px below the Ask panel
-           and the three windows no longer lined up (owner report 2026-08-08).
-           The grouping is inert below the breakpoint — the column layout there
-           is exactly what it was. -->
-      <div class="accounts-side">
-        <div class="accounts-head">
-          <h2 id="accountsTitle">Accounts</h2>
-          <div class="masthead-state" id="mastheadState"></div>
-        </div>
-        <p class="stamp" id="accountsStamp"></p>
-      </div>
-      <div class="account-grid" id="accountGrid"></div>
-    </section>
-
-    <aside class="col-rail" aria-label="Desk tools">
-      <section class="panel" aria-labelledby="askTitle">
-        <div class="panel-header">
-          <h2 class="panel-title" id="askTitle">Ask the desk</h2>
-          <span class="lamp lamp--demo" id="askLamp">Demo</span>
-        </div>
-        <div class="panel-body" id="askBody"></div>
-      </section>
-    </aside>
-  </div>
 
   <div class="layout">
 
@@ -1201,6 +1239,14 @@
 
   <!-- Heatmap moved below the charts and expanded to the charts' full width
        (owner request 2026-07-18). -->
+  <!-- ACCOUNTS SIT BESIDE THE HEATMAP (owner request 2026-08-18), cards
+       stacked on the right. Moving the markup rather than reordering with CSS
+       is the only way to pair two blocks this far apart in the document — and
+       it has a cost worth naming: this section carries the desk lamp and the
+       Refresh/Lock controls, so those now come late in the reading order that
+       keyboard and screen-reader users follow. Accepted on the owner's
+       explicit instruction; the controls are unchanged and still reachable. -->
+  <div class="heat-row">
   <section class="panel heat-panel" aria-labelledby="heatTitle">
     <div class="panel-header">
       <h2 class="panel-title" id="heatTitle">Heatmap — S&amp;P 500</h2>
@@ -1236,6 +1282,23 @@
       <p class="stamp" id="heatSource">Sized by market cap · colored by day % change</p>
     </div>
   </section>
+    <section class="area-accounts" aria-labelledby="accountsTitle">
+      <!-- Title, desk lamp, Refresh/Lock and the synced stamp are grouped so
+           they can sit BESIDE the cards on a wide screen instead of stacking
+           above them. Stacked, they pushed the cards ~75px below the Ask panel
+           and the three windows no longer lined up (owner report 2026-08-08).
+           The grouping is inert below the breakpoint — the column layout there
+           is exactly what it was. -->
+      <div class="accounts-side">
+        <div class="accounts-head">
+          <h2 id="accountsTitle">Accounts</h2>
+          <div class="masthead-state" id="mastheadState"></div>
+        </div>
+        <p class="stamp" id="accountsStamp"></p>
+      </div>
+      <div class="account-grid" id="accountGrid"></div>
+    </section>
+  </div>
 
   <footer class="site-footer">
     <p>Data: IBKR Flex reports (accounts) · market and news snapshots committed by scheduled jobs. Every panel shows its own as-of stamp — this dashboard renders snapshots, not live quotes.</p>
@@ -1244,8 +1307,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260818b"></script>
-<script src="scripts/data.js?v=20260818b"></script>
-<script src="scripts/app.js?v=20260818b"></script>
+<script src="scripts/config.js?v=20260818e"></script>
+<script src="scripts/data.js?v=20260818e"></script>
+<script src="scripts/app.js?v=20260818e"></script>
 </body>
 </html>

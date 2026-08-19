@@ -1369,14 +1369,68 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   await page.mouse.up();
 
   // ── a real drag, now that Manual is active ──────────────────────────────
-  const src = page.locator('.mkt-group-tiles[data-band] .wl-tile').first();
-  await src.scrollIntoViewIfNeeded();
-  r = await src.boundingBox();
-  const zone = await page.locator('.mkt-group-tiles[data-band]').nth(1).boundingBox();
-  await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
+  // The drop target is CHOSEN IN THE PAGE, not computed from bounding boxes.
+  // Since lists became vertical columns a band can be taller than the viewport,
+  // so a fixed offset into "the next band" lands off-screen — elementFromPoint
+  // returns null, no drop zone is found, and the marker assertion fails for a
+  // reason unrelated to what it tests. That is also true of the real gesture:
+  // you cannot drag to somewhere you cannot see.
+  // Picking the point by asking the DOM what is actually under it makes this
+  // independent of viewport height, which matters because the two mobile
+  // projects differ by ~60px and a hand-tuned offset passes on one and fails on
+  // the other. The point returned is guaranteed to hit a band that is not the
+  // source's, or the test says so plainly instead of failing downstream.
+  // Scroll to the BOUNDARY between two bands first. On a phone a single list can
+  // be ~700px tall in a 664px viewport — that is the content, not the styling:
+  // at 390px only about four sub-columns fit across, so a 41-symbol list cannot
+  // be shorter without overflowing sideways. So no two whole bands are ever on
+  // screen together there, and the drag has to happen where they meet: the last
+  // tile of one band into the top of the next.
+  await page.locator('.mkt-group-tiles[data-band]').nth(1).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
+  // BOTH ENDS are chosen by hit-testing the page, not from bounding boxes.
+  // Two reasons, both learned the hard way. A band can now be taller than the
+  // viewport — on a phone a single list runs ~700px in a 664px window, which is
+  // the content rather than the styling, since at 390px only about four
+  // sub-columns fit across and a 41-symbol list cannot be shorter without
+  // overflowing sideways. And because the tiles WRAP into sub-columns, the last
+  // tile in DOM order sits at the foot of the last sub-column, which is not the
+  // lowest point on screen — picking it by index put the grab off-screen and no
+  // drag began at all. Asking the DOM what is actually under a point is the only
+  // form that holds on both mobile projects, whose viewports differ by ~60px.
+  const pts = await page.evaluate(() => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const visible = (el) => {
+      const b = el.getBoundingClientRect();
+      const x = b.left + b.width / 2, y = b.top + b.height / 2;
+      if (x < 0 || x > vw || y < 0 || y > vh) return null;
+      const hit = document.elementFromPoint(x, y);
+      return hit && el.contains(hit) ? { x, y } : null;
+    };
+    const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
+    for (const z of zones) {
+      const tile = [...z.querySelectorAll('.wl-tile')].map(visible).find(Boolean);
+      if (!tile) continue;
+      for (const other of zones) {
+        if (other === z) continue;
+        const b = other.getBoundingClientRect();
+        for (const fy of [0.5, 0.2, 0.8, 0.05, 0.95]) {
+          const y = b.top + b.height * fy, x = b.left + Math.min(30, b.width / 2);
+          if (x < 0 || x > vw || y < 0 || y > vh) continue;
+          const hit = document.elementFromPoint(x, y);
+          if (hit && hit.closest('.mkt-group-tiles[data-band]') === other) {
+            return { from: tile, to: { x, y } };
+          }
+        }
+      }
+    }
+    return null;
+  });
+  expect(pts, 'a tile and a different band are both on screen for the drag').not.toBeNull();
+  await page.mouse.move(pts.from.x, pts.from.y);
   await page.mouse.down();
-  await page.mouse.move(r.x + 40, r.y + 20, { steps: 5 });
-  await page.mouse.move(zone.x + 30, zone.y + zone.height / 2, { steps: 8 });
+  await page.mouse.move(pts.from.x + 40, pts.from.y + 20, { steps: 5 });
+  await page.mouse.move(pts.to.x, pts.to.y, { steps: 8 });
   // the ghost follows the pointer and the insertion point is shown, so a drop
   // is never a guess about where the tile will land
   expect(await page.locator('.wl-ghost').count(), 'a ghost follows the pointer').toBe(1);
@@ -2491,6 +2545,14 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
    so the tiles would all render as fixed-height boxes and the panel would still
    look plausible. */
 test('S41: watchlists are vertical columns above the charts', async ({ page }) => {
+  // Sized to a DESK, not a phone. Columns-side-by-side is the wide-screen
+  // design; at 393px a long list legitimately spreads its own sub-columns
+  // across the full width and pushes the next list onto a row below, which is
+  // the readable arrangement there and not a failure of this rule. Asserting it
+  // at phone width tested the breakpoint, not the layout. The narrow behaviour
+  // that actually matters — no sideways page scroll — is checked separately
+  // below, at the project's own viewport.
+  await page.setViewportSize({ width: 1512, height: 1000 });
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
 
@@ -2531,6 +2593,19 @@ test('S41: watchlists are vertical columns above the charts', async ({ page }) =
     [...document.querySelectorAll('.wl-move')].map(b => b.textContent));
   expect(glyphs.length, 'the reorder controls render in live').toBeGreaterThan(0);
   expect(glyphs.some(g => g === '←' || g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
+
+  // Narrow width: the columns may wrap onto more than one row, but the PAGE
+  // must never scroll sideways and the panel must never be cropped.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const narrow = await page.evaluate(() => ({
+    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    innerScroll: (() => { const s = document.querySelector('.wl-strip'); return s.scrollHeight > s.clientHeight + 2; })(),
+    tiles: document.querySelectorAll('.wl-strip .wl-tile').length,
+  }));
+  expect(narrow.sideways, 'no sideways page scroll at phone width').toBe(false);
+  expect(narrow.innerScroll, 'the panel is not cropped at phone width').toBe(false);
+  expect(narrow.tiles, 'every tile still renders at phone width').toBeGreaterThan(0);
 });
 
 /* S39 — the volume average. The failure it guards is quiet: an average computed
