@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260818e">
-<link rel="stylesheet" href="styles/components.css?v=20260818e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260819a">
+<link rel="stylesheet" href="styles/components.css?v=20260819a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -112,12 +112,15 @@
      to a number instead would re-break the moment a list is added or removed. */
   /* The four-across gate is its OWN breakpoint, deliberately higher than the
      1400 the inner rows use. Markets (311) + News (420 min) + the two 200px
-     Markets (311) + News (380) + gaps is ~730, leaving Ask a real column from
-     1400 up — the same gate the inner rows already use. It was set higher while
+     Markets (311) + News (300) + gaps is ~650, so Ask still clears 470px at a
+     1152 browser — which is the width the owner's own window measures, and the
+     reason this gate is 1120 rather than the 1400 the inner rows use. News was
+     narrowed again to buy that room (owner request 2026-08-19: put Ask to the
+     right of News and narrow News to fit it). It was set higher while
      the accounts still sat in this row; once they moved beside the heatmap the
      row lost ~580px of demand and the higher gate was just holding the layout
      back. Below 1400 the two rows stack exactly as before. */
-  @media (min-width: 1400px) {
+  @media (min-width: 1120px) {
     .desk-row { display: flex; align-items: flex-start; gap: var(--space-4); }
     /* Markets + News keep their intrinsic widths; the accounts half takes the
        remainder, because Ask is the panel that actually benefits from slack —
@@ -127,9 +130,9 @@
     /* Both inner rows already carry their own bottom margin; the row supplies
        one for the pair so the spacing below matches every other block. */
   }
-  @media (min-width: 1400px) { .desk-row { margin-bottom: var(--space-4); } }
+  @media (min-width: 1120px) { .desk-row { margin-bottom: var(--space-4); } }
 
-  @media (min-width: 1400px) {
+  @media (min-width: 1120px) {
     .top-band { flex-wrap: nowrap; align-items: stretch; }
     /* 345 pre-zoom = 311 rendered (owner request 2026-08-07: "expand it a
        little and make both visible"). A sector row needs its label + price +
@@ -156,7 +159,7 @@
        as an afterthought next to a wall of text. It still absorbs slack, but
        within a range — past 560px extra column width buys nothing, since a
        headline is one line either way. */
-    .top-band > .col-news { flex: 0 1 380px; min-width: 0; max-width: 420px; }
+    .top-band > .col-news { flex: 0 1 300px; min-width: 0; max-width: 340px; }
     /* News took Ask's slot (owner request 2026-08-07) and inherits its width.
        `#newsList` carries a 460px max-height for the stacked layout; here the
        column is stretch-sized, so the cap would leave the list ending well
@@ -778,9 +781,15 @@
   .site-footer { margin-top: var(--space-8); border-top: 1px solid var(--color-border); padding-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
   .site-footer p { margin: 0; font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); }
 
-  @media (max-width: 1280px) {
-    /* below wide desktop the four top-right boxes are too cramped beside the
-       strip, so stack the top band (strip full-width above, boxes wrap below)
+  /* 1280 -> 1119 (owner request 2026-08-19). The band stacked below 1280 back
+     when it carried three wide columns; it is Markets + News now, and Markets
+     is 311 against News's 300, so the pair fits comfortably from ~1120 — which
+     matters because the owner's own browser measures 1152 and was getting the
+     stacked layout. The boundary is set one pixel under the .desk-row gate so
+     the two never disagree about which arrangement is in force. */
+  @media (max-width: 1119px) {
+    /* below this the top boxes are too cramped beside the band, so stack it
+       (band full-width above, boxes wrap below)
        — also fixes phone-width horizontal overflow (Codex #128 P1) */
     /* nowrap is load-bearing next to flex-direction:column — a column-wrap
        container spills into EXTRA COLUMNS when its content is taller than the
@@ -1307,8 +1316,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260818e"></script>
-<script src="scripts/data.js?v=20260818e"></script>
-<script src="scripts/app.js?v=20260818e"></script>
+<script src="scripts/config.js?v=20260819a"></script>
+<script src="scripts/data.js?v=20260819a"></script>
+<script src="scripts/app.js?v=20260819a"></script>
 </body>
 </html>
