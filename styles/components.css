@@ -277,26 +277,40 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    the group's own var(--space-2) gutters, so a tile fills the column exactly
    and the collapsed borders line up down the whole panel. */
 .wl-strip .mkt-group {
-  /* `auto`, not a fixed 92px: a long list now wraps into a SECOND sub-column
-     (see .mkt-group-tiles below), and the band has to be free to widen for it. */
-  flex: 0 0 auto; flex-direction: column; align-items: stretch;
+  /* ONE column per list. A fixed width again — the wrap-into-sub-columns
+     experiment is gone (see .mkt-group-tiles). 100px rather than 92: the tile
+     box now carries a thin scrollbar, and the extra 8px keeps it off the
+     tiles instead of crowding a 74px tile. */
+  flex: 0 0 100px; flex-direction: column; align-items: stretch;
   /* borders collapse SIDEWAYS now that the bands sit side by side; the -1px
      top margin the stacked layout used would fuse the wrong pair of edges */
   margin-top: 0; margin-left: -1px;
 }
-/* HEIGHT HALVED (owner request 2026-08-18). The panel ran to 2791px because
-   one list holds 41 symbols and a column of 41 tiles is 2583px on its own.
-   The fix caps how far a single stack may run and lets the overflow WRAP into
-   another stack beside it — a 41-tile list becomes two ~21-tile columns, which
-   halves the panel without shrinking a tile or hiding anything.
-   Deliberately NOT an inner scrollbar: this panel's whole point is that every
-   list is visible at once, and the old 600px cap that hid lists behind one was
-   removed for exactly that reason. And deliberately NOT a shorter tile — the
-   16px sparkline is the only trend a tile carries, so halving 63px would have
-   meant deleting it.
-   Column-wrap spilling into extra columns is the same CSS behaviour the ≤640px
-   note below warns about; here it is the mechanism rather than the bug. */
-.wl-strip .mkt-group-tiles { flex: 0 0 auto; min-width: 0; flex-wrap: wrap; max-height: 660px; align-content: flex-start; }
+/* EACH LIST SCROLLS; the height is capped, not the list (owner ruling
+   2026-08-19: "All I wanted you to do was to cut the height in half instead of
+   splitting it. And since the lists have a scroll bar, I can always go through
+   all the list. I do not need to see the entire list of stocks at once.")
+
+   THIS SUPERSEDES the older rule that every list must be visible at once,
+   which is why the first attempt wrapped a long list into extra sub-columns
+   rather than scrolling it. That rule came from the days of a 600px cap on the
+   WHOLE panel, where a scrollbar hid entire lists behind it; a per-list scroll
+   hides nothing but the tail of one list, and the owner has said outright that
+   is what they want. The split was honouring an obsolete constraint over a
+   stated request.
+
+   No `overscroll-behavior` of any kind: these genuinely scroll, and reaching
+   the end must carry on scrolling the page. `contain` here is the exact shape
+   that ate the mouse wheel on 2026-08-07. */
+.wl-strip .mkt-group-tiles {
+  flex: 0 0 auto; min-width: 0; flex-wrap: nowrap;
+  max-height: 700px; overflow-y: auto; scrollbar-width: thin;
+  /* Reserve the scrollbar's space in EVERY column, scrolling or not, so a list
+     that happens to be short does not render wider tiles than one that
+     scrolls. Without it the tile width tells you whether the list overflowed,
+     which is not a fact a tile should encode. */
+  scrollbar-gutter: stable;
+}
 /* flex-basis governs HEIGHT inside a column, so the 104px the row layout used
    for the label gutter would reserve 104px of empty vertical space above every
    list — the same trap the ≤640px block below already documents for the tile
@@ -319,13 +333,11 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    so the label would reserve ~104px of empty vertical space. The shared rule
    resets it to auto, but this two-class selector outranks it, so the reset has
    to be repeated at equal specificity (Codex review, PR #189). */
-/* Narrow screens wrap much sooner. The 1330px cap suits a wide desk, but on a
-   phone it still leaves a 41-symbol list ~1400px tall — taller than the
-   viewport, so its neighbour sits off-screen and a drag between two lists
-   cannot be made in one gesture at all. ~11 tiles per stack keeps a list about
-   a screen tall and lets it wrap across the width instead. */
+/* Shorter still on a phone, so a list is not taller than the window and its
+   neighbour is reachable — a drag between two lists has to be makeable in one
+   gesture, which needs both ends on screen. The list scrolls; nothing is lost. */
 @media (max-width: 900px) {
-  .wl-strip .mkt-group-tiles { max-height: 700px; }
+  .wl-strip .mkt-group-tiles { max-height: 420px; }
 }
 @media (max-width: 640px) {
   .wl-strip .mkt-group-label { flex-basis: auto; }
@@ -397,7 +409,13 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    66px basis would set the tile's HEIGHT rather than its width and every tile
    would render as a 66px-tall box regardless of its contents. Width comes from
    the column (FR-17 — a short list ends rather than stretching). */
-.wl-strip .wl-tile { flex: 0 0 auto; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
+/* The tile is PINNED at its half-width, not left to take whatever the column
+   gives it. Widening the column to 100px for the scrollbar pushed the tile to
+   82px and broke the half-width rule S27 guards — and `scrollbar-gutter` is not
+   universal, so relying on it alone would make the width engine-dependent. A
+   max-width holds the contract on every engine; any slack lands in the gutter,
+   which is where it belongs. */
+.wl-strip .wl-tile { flex: 0 0 auto; max-width: 76px; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
 .wl-strip .wl-vals { display: contents; }
 .wl-strip .mkt-name { order: 1; font-size: 9px; }
 .wl-strip .mkt-last { order: 2; font-size: 12px; line-height: 1.15; }
