@@ -970,13 +970,20 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   await page.locator('#wbGear-p3').click();
   await expect(page.locator('#wbSettings-p1')).toBeHidden();
   expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(4);
-  // the extended-hours control is present, on by default, and actually toggles
+  // The extended-hours control is present, OFF by default, and actually toggles.
+  // Off since 2026-08-20 — owner: "remove the off market candles, I just wanna
+  // see open sessions candles in pro three". It was on from 2026-07-29 until
+  // then, and this assertion carried that default; it is the default that
+  // changed, not the control. Asserting the state in BOTH directions is what
+  // makes this a test of the toggle rather than of whichever default is current.
   const ext = page.locator('#wbSettings-p3 label', { hasText: 'Extended hours' });
   await expect(ext).toBeVisible();
   const extBox = ext.locator('input[type=checkbox]');
-  await expect(extBox).toBeChecked();
+  await expect(extBox, 'extended hours is off by default').not.toBeChecked();
+  await extBox.check();
+  await expect(extBox, 'and the toggle turns it on').toBeChecked();
   await extBox.uncheck();
-  await expect(extBox).not.toBeChecked();
+  await expect(extBox, 'and off again').not.toBeChecked();
 });
 
 // S13 — Heatmap MAP FILTER rail: index cuts re-render the treemap, the ETF cut
