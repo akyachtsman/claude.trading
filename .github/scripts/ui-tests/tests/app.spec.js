@@ -225,6 +225,10 @@ async function detectAuthGate(page) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function discoverElements(page) {
   return page.evaluate(() => {
+    /* Counted, not silently dropped: a sweep that quietly stops covering 30
+       controls per list reads as "everything passed" when it is not what
+       passed. S3 attaches this alongside the element map. */
+    window.__clippedSkipped = 0;
     const selectors = ['button', 'a[href]', 'input:not([type=hidden])', 'select', 'textarea',
                        '[role=button]', '[onclick]'];
     return selectors.flatMap(sel =>
@@ -234,7 +238,33 @@ async function discoverElements(page) {
         .map((el, index) => ({ el, index }))
         .filter(({ el }) => {
           const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
+          if (!(r.width > 0 && r.height > 0)) return false;
+          /* Also drop anything CLIPPED OUT of an `overflow: hidden` ancestor.
+             Such an element still reports a real rect — it is laid out, just
+             not on screen — so the size test above passes and the sweep
+             faithfully tries to click something no pointer can reach. Since
+             the watchlist columns became paged rather than scrolled
+             (2026-08-20) that is ~30 tiles per long list, and against the LIVE
+             roster of 12 lists it took S3 from ~2 minutes to past its 480s
+             timeout on both projects, which then blew the job's own 20-minute
+             budget. Each one costs a full action timeout, and Playwright's
+             scroll-into-view shifts the column under every other queued handle
+             while it tries.
+             Deliberately `hidden`/`clip` ONLY. An `auto`/`scroll` ancestor —
+             the news reel, the ask thread — CAN be scrolled to the element, and
+             those have always swept fine; excluding them too would quietly drop
+             real coverage. */
+          for (let p = el.parentElement; p; p = p.parentElement) {
+            const o = getComputedStyle(p);
+            const hides = /hidden|clip/.test(o.overflowY) || /hidden|clip/.test(o.overflowX);
+            if (!hides) continue;
+            const b = p.getBoundingClientRect();
+            if (r.bottom <= b.top || r.top >= b.bottom || r.right <= b.left || r.left >= b.right) {
+              window.__clippedSkipped++;
+              return false;
+            }
+          }
+          return true;
         })
         .map(({ el, index }) => ({
           selector: sel,
@@ -456,10 +486,15 @@ test('S3: interactive elements discovered and exercised without errors', async (
   }
 
   const elements = await discoverElements(page);
+  const clippedSkipped = await page.evaluate(() => window.__clippedSkipped || 0);
   test.info().attach('element-map', {
-    body: JSON.stringify(elements, null, 2),
+    body: JSON.stringify({ swept: elements.length, clippedSkipped, elements }, null, 2),
     contentType: 'application/json',
   });
+  // Named out loud rather than left in the attachment alone — these are real
+  // controls the sweep did not exercise, and the number moving is the signal
+  // that a panel started hiding things.
+  if (clippedSkipped) console.log(`S3: ${clippedSkipped} control(s) clipped out of an overflow:hidden box — not swept`);
 
   const findings = [];
 
