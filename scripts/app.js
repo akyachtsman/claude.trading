@@ -4121,10 +4121,13 @@ const WB_CFG_DEFAULT = () => ({
      comment, which also records why a separation threshold was rejected. */
   p2: { type: 'candle', bb: false, vol: true, stoch: true, stochW: true, stochSteady: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, srSwing: false, scrollLock: false },
   /* Pro 3 = day trading: Bollinger Bands on by default, slim settings (owner ruling).
-     ext = show the 4:00am–8:00pm ET extended session (owner request 2026-07-29).
-     On by default; turning it off restores the exact regular-session bar set the
-     ISTOCH 10-3-3 fit was established against, for terminal parity. */
-  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: true, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, srSwing: false, scrollLock: false },
+     ext = show the 4:00am-8:00pm ET extended session (owner request 2026-07-29).
+     OFF by default since 2026-08-20 — owner: "remove the off market candles, I
+     just wanna see open sessions candles in pro three". The toggle stays in the
+     Session group, so this is a change of default rather than a removal; off is
+     also the bar set the ISTOCH 10-3-3 fit was established against, so terminal
+     parity and the owner's preference now agree. */
+  p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, srSwing: false, scrollLock: false },
 });
 function loadWbCfg() {
   try {
@@ -4139,6 +4142,21 @@ function loadWbCfg() {
           smas: { ...d.smas, ...(r.smas || {}) },
           sr: { ...d.sr, ...(r.sr || {}) },
         };
+      }
+      /* ONE-TIME: clear a stored `p3.ext: true` from before the default flipped
+         (2026-08-20). A default change alone does not reach anyone who already
+         has a saved config — which is everyone who has ever opened the gear —
+         so without this the owner would be told extended hours were off while
+         still looking at pre-market candles.
+         Done with a marker rather than by bumping WB_CFG_KEY, which is how this
+         file has changed defaults before: that discards the WHOLE stored config,
+         and the owner has SMAs, S/R levels and chart styles tuned per pane. One
+         wrong flag is not worth resetting all of it. The marker is set even when
+         ext was already false, so this runs exactly once either way, and the
+         toggle works normally afterwards. */
+      if (!raw.extDefaultOff2026_08_20) {
+        raw.p3.ext = false;
+        raw.extDefaultOff2026_08_20 = true;
       }
       return raw;
     }

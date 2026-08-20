@@ -153,9 +153,17 @@ This project's look is its own — established at kickoff via `/design-intake`
   may NOT go.** The workbench fetches intraday with `prepost:true`, so
   `wbState.intraday[sym]` holds the full 4am–8pm set; what consumes it differs
   ON PURPOSE. **Pro 3 only** displays extended bars, gated on its per-pane
-  `cfg.p3.ext` toggle (Session group in the gear popover, ON by default; OFF
-  restores the exact regular-session bar set the ISTOCH 10-3-3 fit was
-  established against). Extended runs render behind a tinted backdrop rect so a
+  `cfg.p3.ext` toggle (Session group in the gear popover, **OFF by default since
+  2026-08-20** — owner: "remove the off market candles, I just wanna see open
+  sessions candles in pro three"; the toggle stays, so this is a default change
+  rather than a removal, and off is also the exact regular-session bar set the
+  ISTOCH 10-3-3 fit was established against, so parity and preference now
+  agree). Flipping the default alone reaches nobody who has ever opened the
+  gear, since `wb_cfg_v3` is already saved for them — a **one-time marker**
+  (`extDefaultOff2026_08_20`) clears a stored `p3.ext: true` on next load. It is
+  a marker rather than a `WB_CFG_KEY` bump, which is how this file changed
+  defaults before: a bump discards the WHOLE stored config, and per-pane SMAs,
+  S/R levels and chart styles are not worth resetting to correct one flag. Extended runs render behind a tinted backdrop rect so a
   thin 4am print never reads as regular-hours conviction, and the caption gains
   `· EXT`. **`graftTodayBar()` is regular-session ONLY** — it pipes its input
   through `regularOnly()` (`scripts/data.js`) first, because a daily candle's
