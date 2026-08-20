@@ -2587,7 +2587,7 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
    panel, which is why the fix is `overflow: hidden` and not `overscroll-
    behavior: contain` — the property this project has banned outright after it
    ate the mouse wheel three times. */
-test('S42: watchlist columns page instead of scrolling', async ({ page }) => {
+test('S42: watchlist columns page instead of scrolling', async ({ page, browserName }) => {
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
@@ -2603,16 +2603,29 @@ test('S42: watchlist columns page instead of scrolling', async ({ page }) => {
       return { y: cs.overflowY, x: cs.overflowX, os: cs.overscrollBehaviorY + '/' + cs.overscrollBehaviorX };
     }));
   expect(rules.every(r => r.y === 'hidden' && r.x === 'hidden'), 'no column scrolls under the wheel').toBe(true);
-  expect(rules.every(r => r.os === 'auto/auto'), 'and none carries overscroll-behavior').toBe(true);
+  // Phrased as "not contain", not "=== auto". A browser that does not implement
+  // the property reports an empty string, which is not a failure — it cannot be
+  // containing anything — and asserting the positive value would fail on the
+  // engine rather than on the page.
+  expect(rules.filter(r => /contain|none/.test(r.os)), 'no column carries overscroll-behavior').toEqual([]);
 
   // The wheel over a column moves the PAGE. This is the owner's actual
-  // complaint, so it is asserted on the gesture, not on the CSS above.
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.locator('.wl-strip .mkt-group-tiles').first().hover();
-  await page.mouse.wheel(0, 400);
-  await page.waitForTimeout(300);
-  expect(await page.evaluate(() => window.scrollY), 'the wheel scrolls the page, not the list')
-    .toBeGreaterThan(100);
+  // complaint, so where it can be driven it is asserted on the GESTURE, not on
+  // the CSS above.
+  // Chromium only: the other project is Mobile Safari, and a mobile WebKit
+  // context has no mouse wheel to dispatch — page.mouse.wheel there does not
+  // scroll, so the assertion would be measuring the emulated input device
+  // rather than the panel. The CSS check above is what carries the rule on that
+  // project, and it is the stronger half anyway: `overflow: hidden` cannot
+  // chain on any engine.
+  if (browserName === 'chromium') {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator('.wl-strip .mkt-group-tiles').first().hover();
+    await page.mouse.wheel(0, 400);
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => window.scrollY), 'the wheel scrolls the page, not the list')
+      .toBeGreaterThan(100);
+  }
 
   // Controls appear ONLY where a column overflows. A pair on every column would
   // be the clutter the owner asked to avoid, and one on a column that fits
@@ -2639,19 +2652,37 @@ test('S42: watchlist columns page instead of scrolling', async ({ page }) => {
   // rather than what is hidden.
   const col = page.locator('.wl-strip .mkt-group').nth(paged);
   const up = col.locator('.wl-page').nth(0), down = col.locator('.wl-page').nth(1);
-  await expect(up, 'nothing above at the top').toBeDisabled();
-  const first = Number((await down.textContent()).replace(/\D/g, ''));
-  expect(first, 'the ▼ names how many are still below').toBeGreaterThan(0);
+  /* Read the pair's state in one shot rather than through `expect(locator)
+     .toBeDisabled()`. Those retry for the full expect timeout before reporting,
+     so one wrong state costs 5s per assertion and the message names only the
+     selector — whereas this fails instantly and prints the scroll position and
+     both labels, which is what a diagnosis actually needs. */
+  const pager = () => page.evaluate(i => {
+    const g = [...document.querySelectorAll('.wl-strip .mkt-group')][i];
+    const [u, d] = g.querySelectorAll('.wl-page');
+    return {
+      up: u.disabled, down: d.disabled, label: d.textContent,
+      below: Number((d.textContent || '').replace(/\D/g, '') || 0),
+      top: Math.round(g.querySelector('.mkt-group-tiles').scrollTop),
+    };
+  }, paged);
+
+  const atTop = await pager();
+  expect(atTop, 'the ▲ is dead at the top and the ▼ names how many are below')
+    .toMatchObject({ up: true, down: false });
+  expect(atTop.below, 'the ▼ names how many are still below').toBeGreaterThan(0);
+
   await down.click();
   await page.waitForTimeout(200);
-  const second = Number((await down.textContent()).replace(/\D/g, ''));
-  expect(second, 'and the count falls as you step').toBeLessThan(first);
-  await expect(up, 'the ▲ comes alive once there is something above').toBeEnabled();
+  const stepped = await pager();
+  expect(stepped.below, `the count falls as you step (was ${atTop.below})`).toBeLessThan(atTop.below);
+  expect(stepped.up, 'the ▲ comes alive once there is something above').toBe(false);
 
   // The end is reachable and terminal in both directions.
-  for (let i = 0; i < 12 && await down.isEnabled(); i++) { await down.click(); await page.waitForTimeout(120); }
-  await expect(down, 'the ▼ dies at the bottom').toBeDisabled();
-  expect((await down.textContent()).replace(/\D/g, ''), 'and claims nothing is left below').toBe('');
+  for (let i = 0; i < 12 && !(await pager()).down; i++) { await down.click(); await page.waitForTimeout(120); }
+  const atEnd = await pager();
+  expect(atEnd, 'the ▼ dies at the bottom and claims nothing is left below')
+    .toMatchObject({ down: true, label: '▼' });
   const tiles = await col.locator('.wl-tile').count();
   const seen = await page.evaluate(i => {
     const b = [...document.querySelectorAll('.wl-strip .mkt-group')][i].querySelector('.mkt-group-tiles');
