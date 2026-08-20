@@ -828,6 +828,12 @@ function wlEnsureManual() {
 
 const wlDropZones = () => [...document.querySelectorAll('.mkt-group-tiles[data-band], #wlTrash')];
 
+/* How often a drag resting on a ▲/▼ steps that column. 300ms is a step you can
+   stop on; the alternative is a list that scrolls past the row you were aiming
+   for before you can lift the pointer. */
+const WL_DRAG_STEP_MS = 300;
+let wlDragStepAt = 0;
+
 /* Which slot the pointer is over, in reading order: a tile counts as "already
    passed" when the pointer is below its row, or on its row and past its middle.
    Tiles wrap, so an x-only comparison would put a drop on row 3 at the end of
@@ -854,6 +860,17 @@ function wlDragMove(ev) {
   wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
   wlClearMarker();
   const under = document.elementFromPoint(ev.clientX, ev.clientY);
+  /* Resting over a column's ▲/▼ steps it, so a tile can be dropped anywhere in
+     a list longer than its own box — the columns do not scroll under the wheel
+     any more (owner request 2026-08-20), so this is the only way to reach the
+     part of a list that is off-box mid-drag. Throttled: a pointer sitting still
+     still emits moves, and an unthrottled step would fly to the end of the
+     list. */
+  const pager = under && under.closest('.wl-page');
+  if (pager && pager._wlStep && !pager.disabled && Date.now() - wlDragStepAt > WL_DRAG_STEP_MS) {
+    wlDragStepAt = Date.now();
+    pager._wlStep();
+  }
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
   if (!zone) return;
   zone.classList.add('wl-drop-over');
@@ -1074,6 +1091,108 @@ function wlSyncWriteControls() {
   }
 }
 
+/* ── column paging (owner request 2026-08-20) ──────────────────────────────
+   The columns used to scroll under the wheel, and reaching the end of one
+   chained straight on into the page: "as soon as the scroll ends, it scrolls up
+   the screen … maybe we need a different mechanism to move the symbols up and
+   down in the watch list, and need to scroll to move the entire screen up and
+   down." So the wheel is out of this panel entirely (`overflow: hidden` on the
+   column, see components.css) and a long list is stepped by these buttons.
+
+   Rendered only where a column ACTUALLY overflows — measured, not guessed from
+   the symbol count, since tile height varies with a wrapped long name. In demo
+   that is 1 column of 7, which is the whole reason this can sit in a header the
+   owner asked to keep compact.
+
+   The ▼ carries the number still below the fold. That count is the honest part:
+   with no scrollbar there is otherwise NOTHING on screen saying a list
+   continues, and a silently cropped list is a list the owner will read as
+   complete. The ▲ needs no count — an enabled ▲ already means "there is more
+   above", and the header has no room for a figure that says the same thing. */
+function wlSyncPaging() {
+  document.querySelectorAll('#wlStrip .mkt-group').forEach((group) => {
+    const box = group.querySelector('.mkt-group-tiles');
+    if (!box) return;
+    /* renderWatchlist rebuilds the whole strip, so there is nothing stale to
+       clear on a normal repaint — but wlSyncPaging also runs on resize, where
+       the group persists and a second bar would otherwise accumulate. */
+    group.querySelectorAll('.wl-page-bar').forEach((n) => n.remove());
+    const over = box.scrollHeight - box.clientHeight;
+    if (over <= 2) { box.scrollTop = 0; return; }
+    const name = group.getAttribute('aria-label') || 'this list';
+
+    const up = el('button', 'wl-page', '▲');
+    const down = el('button', 'wl-page', '▼');
+    const count = el('span', '', '');
+    down.appendChild(count);
+    up.type = down.type = 'button';
+
+    /* A step is a whole number of tiles, never a raw pixel height: landing
+       mid-tile leaves a sliver of a symbol at each edge, which reads as a
+       rendering fault rather than as more list. One tile of overlap keeps a
+       row of context across the step, the way a page-down does. */
+    const tile = box.querySelector('.wl-tile');
+    const th = tile ? tile.offsetHeight + 4 : 67;
+    const step = Math.max(th, (Math.max(1, Math.floor(box.clientHeight / th)) - 1) * th);
+
+    const sync = () => {
+      const top = box.scrollTop;
+      up.disabled = top <= 1;
+      down.disabled = top >= over - 1;
+      /* Counted from the laid-out tiles rather than from `over / th`, which
+         would be wrong for any column holding a tile taller than the rest.
+         Compared in VIEWPORT coordinates, not via offsetTop: the column is
+         statically positioned, so offsetTop is measured from some ancestor
+         further up and the sum lands nowhere near the box's own scroll frame —
+         which reported all 41 tiles as below the fold on a list showing 10. */
+      const edge = box.getBoundingClientRect().bottom;
+      const below = [...box.querySelectorAll('.wl-tile')]
+        .filter((t) => t.getBoundingClientRect().bottom > edge + 1).length;
+      count.textContent = below ? String(below) : '';
+      up.setAttribute('aria-label', 'Show earlier symbols in ' + name);
+      down.setAttribute('aria-label', below
+        ? 'Show ' + below + ' more symbol' + (below === 1 ? '' : 's') + ' in ' + name
+        : 'Show later symbols in ' + name);
+    };
+    const go = (dir) => { box.scrollTop += dir * step; sync(); };
+    up.addEventListener('click', () => go(-1));
+    down.addEventListener('click', () => go(1));
+    /* Stepping DURING a drag: with no wheel and no scrollbar, a tile could
+       otherwise only ever be dropped among the rows that happen to be on
+       screen. Holding the pointer over the button with a tile in hand steps the
+       column, so the whole list stays reachable.
+       Driven from wlDragMove rather than from a `pointerenter` here, which was
+       tried and never fired once: a drag in progress owns the pointer, so the
+       button receives no pointer events of its own at all. wlDragMove already
+       resolves what is under the pointer on every move, so it is the only place
+       that can see this. */
+    up._wlStep = () => go(-1);
+    down._wlStep = () => go(1);
+
+    /* BELOW the tiles, not in the band head. The head is where the «/»/× live,
+       and a fourth and fifth control wrapped it onto another line — which is
+       not just clutter: every column's tiles start on the same line by rule, so
+       one taller head pushed the tiles of ALL SEVEN columns down 19px to pay
+       for a control on one of them. A footer costs its own column 18px and
+       nobody else anything, and it sits where the eye already is when the list
+       runs out. */
+    const bar = el('div', 'wl-page-bar');
+    bar.appendChild(up);
+    bar.appendChild(down);
+    group.appendChild(bar);
+    sync();
+  });
+}
+
+/* The columns are capped in pixels, so how many tiles fit — and therefore
+   whether a list overflows at all — changes with the window. Debounced because
+   a drag-resize fires this continuously and each pass measures every column. */
+let wlPageResizeT = null;
+addEventListener('resize', () => {
+  clearTimeout(wlPageResizeT);
+  wlPageResizeT = setTimeout(wlSyncPaging, 150);
+});
+
 function renderWatchlist(payload, lamp) {
   const lampEl = document.getElementById('wlLamp');
   const stripEl = document.getElementById('wlStrip');
@@ -1226,6 +1345,10 @@ function renderWatchlist(payload, lamp) {
     stripEl.appendChild(group);
   });
   if (emptyEl) emptyEl.hidden = total > 0;
+  /* AFTER the columns are in the document — it measures them, and a detached
+     node reports every height as zero, so a pre-insert call would decide that
+     nothing overflows and render no controls at all. */
+  wlSyncPaging();
   wlSyncWriteControls();
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn

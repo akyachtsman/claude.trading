@@ -299,17 +299,22 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    is what they want. The split was honouring an obsolete constraint over a
    stated request.
 
-   No `overscroll-behavior` of any kind: these genuinely scroll, and reaching
-   the end must carry on scrolling the page. `contain` here is the exact shape
-   that ate the mouse wheel on 2026-08-07. */
+   A column is NOT wheel-scrollable (owner request 2026-08-20: "as soon as the
+   scroll ends, it scrolls up the screen … maybe we need a different mechanism
+   to move the symbols up and down"). `overflow: hidden` leaves the wheel with
+   nothing to grab anywhere on this panel, so it always moves the PAGE, and the
+   long columns are paged by the ▲/▼ in their header instead (wlSyncPaging).
+   That is the reason this is `hidden` rather than `overscroll-behavior:
+   contain`, which stops the chaining but is the exact rule that ate the mouse
+   wheel three times in August: it applies just as hard over a column with
+   nothing to scroll, and six of the seven columns here are that column.
+   Programmatic `scrollTop` still works on an `overflow: hidden` box, which is
+   what the paging drives — nothing is unreachable, only un-wheelable. No
+   scrollbar reservation is needed any more either: with no bar in any column,
+   the tiles are the same width whether the list overflows or not. */
 .wl-strip .mkt-group-tiles {
   flex: 0 0 auto; min-width: 0; flex-wrap: nowrap;
-  max-height: 700px; overflow-y: auto; scrollbar-width: thin;
-  /* Reserve the scrollbar's space in EVERY column, scrolling or not, so a list
-     that happens to be short does not render wider tiles than one that
-     scrolls. Without it the tile width tells you whether the list overflowed,
-     which is not a fact a tile should encode. */
-  scrollbar-gutter: stable;
+  max-height: 700px; overflow: hidden;
 }
 /* flex-basis governs HEIGHT inside a column, so the 104px the row layout used
    for the label gutter would reserve 104px of empty vertical space above every
@@ -693,6 +698,20 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   font: 500 10px/1 var(--font-sans); cursor: pointer;
 }
 .wl-move:disabled { opacity: .35; cursor: default; }
+/* Column paging (owner request 2026-08-20). A right-aligned strip UNDER the
+   tiles of a column that overflows — six of seven lists render nothing at all,
+   which is what keeps a compacted panel compact. Shaped like .wl-move so the
+   two read as one family, but wider: the ▼ carries the count of what is still
+   below it, so "▼30" must not be squeezed. */
+.wl-page-bar { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 2px; padding-top: 2px; }
+.wl-page {
+  height: 18px; min-width: 18px; flex: 0 0 auto; padding: 0 3px; margin-left: 2px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid var(--color-border); border-radius: 4px;
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font: 500 10px/1 var(--font-sans); font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.wl-page:disabled { opacity: .35; cursor: default; }
 .wl-lock { width: 26px; height: 26px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px dashed var(--color-border); border-radius: 6px;

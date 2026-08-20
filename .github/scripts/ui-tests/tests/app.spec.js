@@ -2581,6 +2581,129 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
    guards is silent: a `flex-basis` meant for a row governs HEIGHT in a column,
    so the tiles would all render as fixed-height boxes and the panel would still
    look plausible. */
+/* S42 — the watchlist columns are PAGED, not scrolled (owner request
+   2026-08-20: reaching the end of a list carried straight on into the page).
+   The rule this guards is that the wheel belongs to the PAGE everywhere on this
+   panel, which is why the fix is `overflow: hidden` and not `overscroll-
+   behavior: contain` — the property this project has banned outright after it
+   ate the mouse wheel three times. */
+test('S42: watchlist columns page instead of scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1512, height: 1000 });
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+
+  // No column may be wheel-scrollable, and none may carry overscroll-behavior
+  // in ANY form — the axis-scoped variants included, since a future edit that
+  // reaches for the vertical one re-creates the dead-wheel fault exactly.
+  const rules = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-strip .mkt-group-tiles')].map(b => {
+      const cs = getComputedStyle(b);
+      return { y: cs.overflowY, x: cs.overflowX, os: cs.overscrollBehaviorY + '/' + cs.overscrollBehaviorX };
+    }));
+  expect(rules.every(r => r.y === 'hidden' && r.x === 'hidden'), 'no column scrolls under the wheel').toBe(true);
+  expect(rules.every(r => r.os === 'auto/auto'), 'and none carries overscroll-behavior').toBe(true);
+
+  // The wheel over a column moves the PAGE. This is the owner's actual
+  // complaint, so it is asserted on the gesture, not on the CSS above.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.locator('.wl-strip .mkt-group-tiles').first().hover();
+  await page.mouse.wheel(0, 400);
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.scrollY), 'the wheel scrolls the page, not the list')
+    .toBeGreaterThan(100);
+
+  // Controls appear ONLY where a column overflows. A pair on every column would
+  // be the clutter the owner asked to avoid, and one on a column that fits
+  // would be a control that does nothing.
+  const state = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-strip .mkt-group')].map(g => {
+      const b = g.querySelector('.mkt-group-tiles');
+      return { over: b.scrollHeight - b.clientHeight > 2, bars: g.querySelectorAll('.wl-page-bar').length };
+    }));
+  expect(state.some(s => s.over), 'demo has a list long enough to page').toBe(true);
+  expect(state.every(s => s.bars === (s.over ? 1 : 0)), 'a bar exactly where one is needed').toBe(true);
+
+  // A paged column must not push the other columns' tiles down — every column's
+  // tiles start on the same line, so a control that grew the band head would
+  // cost all seven of them for the sake of one. That is why the bar is a footer.
+  const heads = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-strip .wl-band-head')].map(h => Math.round(h.getBoundingClientRect().height)));
+  const paged = state.findIndex(s => s.over);
+  expect(heads[paged], 'the paged column\'s head is no taller than its neighbours')
+    .toBeLessThanOrEqual(Math.max(...heads));
+
+  // Stepping: ▲ dead at the top, the ▼ states how many are still below, and the
+  // count FALLS as you step — a static number would mean it counts the list
+  // rather than what is hidden.
+  const col = page.locator('.wl-strip .mkt-group').nth(paged);
+  const up = col.locator('.wl-page').nth(0), down = col.locator('.wl-page').nth(1);
+  await expect(up, 'nothing above at the top').toBeDisabled();
+  const first = Number((await down.textContent()).replace(/\D/g, ''));
+  expect(first, 'the ▼ names how many are still below').toBeGreaterThan(0);
+  await down.click();
+  await page.waitForTimeout(200);
+  const second = Number((await down.textContent()).replace(/\D/g, ''));
+  expect(second, 'and the count falls as you step').toBeLessThan(first);
+  await expect(up, 'the ▲ comes alive once there is something above').toBeEnabled();
+
+  // The end is reachable and terminal in both directions.
+  for (let i = 0; i < 12 && await down.isEnabled(); i++) { await down.click(); await page.waitForTimeout(120); }
+  await expect(down, 'the ▼ dies at the bottom').toBeDisabled();
+  expect((await down.textContent()).replace(/\D/g, ''), 'and claims nothing is left below').toBe('');
+  const tiles = await col.locator('.wl-tile').count();
+  const seen = await page.evaluate(i => {
+    const b = [...document.querySelectorAll('.wl-strip .mkt-group')][i].querySelector('.mkt-group-tiles');
+    const r = b.getBoundingClientRect();
+    return [...b.querySelectorAll('.wl-tile')].filter(t => {
+      const q = t.getBoundingClientRect();
+      return q.bottom > r.top + 1 && q.top < r.bottom - 1;
+    }).map(t => t.textContent);
+  }, paged);
+  expect(seen.length, 'the last tiles are on screen at the bottom').toBeGreaterThan(0);
+  expect(tiles, 'and nothing was removed to get there').toBeGreaterThan(seen.length);
+
+  // A DRAG must be able to reach the part of a list that is off-box. With no
+  // wheel and no scrollbar this is the only way, so a tile could otherwise only
+  // ever be dropped among the rows that happen to be showing. Driven from
+  // wlDragMove, not from a listener on the button: a drag owns the pointer, so
+  // the button gets no pointer events of its own — a `pointerenter` handler was
+  // tried here and fired exactly never.
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; wlSort = { key: 'manual', dir: 1 }; renderWatchlist(); });
+  await page.waitForTimeout(400);
+  // The bar and a tile must be on screen TOGETHER: elementFromPoint returns
+  // null outside the viewport, so a below-the-fold button reports no hover and
+  // the check passes or fails on where the page happens to be scrolled.
+  await page.locator('.wl-page-bar').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
+  const bar = await page.locator('.wl-page-bar .wl-page').nth(1).boundingBox();
+  const grab = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.wl-strip .mkt-group .wl-tile')]
+      .find(e => { const r = e.getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; });
+    if (!t) return null;
+    const r = t.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  expect(grab, 'a tile and the pager are both on screen').not.toBeNull();
+  const startTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(grab.x + 30, grab.y + 30, { steps: 6 });
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => wlDrag.on), 'the drag started').toBe(true);
+  for (let i = 0; i < 6; i++) {
+    await page.mouse.move(bar.x + bar.width / 2 + (i % 2), bar.y + bar.height / 2, { steps: 2 });
+    await page.waitForTimeout(170);
+  }
+  const dragTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  expect(dragTop, 'resting on the ▼ mid-drag steps the column').toBeGreaterThan(startTop);
+
+  expect(errs, 'no page errors').toEqual([]);
+});
+
 test('S41: watchlists are vertical columns above the charts', async ({ page }) => {
   // Sized to a DESK, not a phone. Columns-side-by-side is the wide-screen
   // design; at 393px a long list legitimately spreads its own sub-columns

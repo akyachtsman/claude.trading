@@ -1064,9 +1064,37 @@ This project's look is its own — established at kickoff via `/design-intake`
   invisible to every scan — it needs a live AUTHED session to exist at all.
   A scan is only meaningful if it checks both axes and every mode: an earlier
   one tested `overflowY` alone and reported zero traps while `overflow-x`
-  scrollers went unexamined. The axis-scoped `overscroll-behavior-x: contain`
-  on `.wl-strip .mkt-group-tiles` is FINE and stays — it never touched the
-  vertical wheel; only the shorthand is banned.
+  scrollers went unexamined. The page now carries the property in NO form: the
+  axis-scoped `overscroll-behavior-x` went with the horizontal watchlist bands
+  it belonged to, and the watchlist columns answer chaining a different way (see
+  below). Only the shorthand was ever banned, but there is nothing left using
+  either.
+- **The watchlist columns are PAGED, not scrolled** (owner request 2026-08-20:
+  "as soon as the scroll ends, it scrolls up the screen … maybe we need a
+  different mechanism to move the symbols up and down in the watch list, and
+  need to scroll to move the entire screen up and down"). `.wl-strip
+  .mkt-group-tiles` is `overflow: hidden`, so the wheel has nothing to grab
+  anywhere on this panel and always moves the PAGE; `wlSyncPaging()` gives a
+  column that ACTUALLY overflows a ▲/▼ footer that steps it by whole tiles.
+  `contain` would have stopped the chaining in one line and is the obvious
+  reach — it is also the exact rule banned above, and six of the seven columns
+  here are the short container it kills the wheel over. Four things are
+  load-bearing. Overflow is **measured, never inferred from the symbol count**
+  (a wrapped long name changes tile height). The **▼ carries the count still
+  below it**, because with no scrollbar nothing else on screen says a list
+  continues, and a silently cropped list reads as a complete one; the count is
+  read from `getBoundingClientRect`, NOT `offsetTop` — the column is statically
+  positioned, so offsetTop is measured from an ancestor further up and reported
+  all 41 tiles as hidden on a list showing 10. The bar is a **footer, not a
+  header control**: every column's tiles start on the same line, so the two
+  extra buttons wrapping the band head pushed the tiles of ALL SEVEN columns
+  down 19px to pay for a control on one. And a **drag steps the column by
+  resting on the ▼**, wired from `wlDragMove` rather than a `pointerenter` on
+  the button — a drag in progress owns the pointer, so the button receives no
+  pointer events of its own and the listener fired exactly never. S42 guards
+  all of it; note that its hover check must put the bar and a tile on screen
+  TOGETHER, since `elementFromPoint` returns null outside the viewport and a
+  below-the-fold button silently reports no hover at all.
 
 ## Agent Workflow
 1. Use a `claude/<name>` feature branch
@@ -1108,6 +1136,7 @@ run for real against the dedicated project on every PR.
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
 | S40 | Charts rail — manual + roster | With `?demo=1`, `#wbSidebar` renders TWO columns side by side; the manual one starts empty and says what fills it; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed); typing stacks newest-first and re-typing lifts rather than duplicates; an UNCHARTABLE ticker is not pinned; clicking a ROSTER name charts it without entering the manual column; both the stack and the chosen roster survive a reload; the `×` removes one | A rail that quietly collects every symbol looked at, a typo taking a permanent seat in a persisted column, a picker stuck on one entry, or either half lost on reload |
+| S42 | Watchlist column paging | With `?demo=1`, NO column is wheel-scrollable (`overflow` hidden on both axes) and none carries `overscroll-behavior` in any form; the wheel over a column moves the PAGE; a ▲/▼ footer renders on exactly the columns that overflow and nowhere else; the paged column's band head is no taller than its neighbours; the ▲ is dead at the top, the ▼ names how many are still below and that count FALLS as you step, and the ▼ dies at the bottom with the last tiles on screen. Then forced live: resting a DRAG on the ▼ steps the column | A column that still eats the wheel, a pager on a list that fits (or missing from one that does not), a control that grows the band head — which pushes every column's tiles down, not just its own — a count that never changes (it is counting the list, not what is hidden), or a drag that cannot reach past the visible rows, leaving most of a long list undroppable |
 | S41 | Watchlists are vertical columns | With `?demo=1`, tiles STACK downward inside a category and the categories sit SIDE BY SIDE; no `role=tab` exists (the columns are the navigation); the panel sits above `.area-charts` and shares its left edge; no sideways page scroll and no inner crop on `.wl-strip`; and in live NO reorder control is a bare `←`/`‹` | Tiles rendering as fixed-height boxes (a row's `flex-basis` governs HEIGHT in a column — it still looks plausible), a panel inset from the chart below it, or a reorder arrow impersonating a back button, which is what the UI crawler's back selector grabs |
 | S39 | Volume average | With `?demo=1`, all THREE panes carry a `path[data-volma]` in the %D yellow with no NaN coordinates, and Pro 1's spans its FULL 63-bar 3M window rather than 63−20 | A missing line, or one that starts 20 bars in — that is an average computed from the visible window, which also shifts every time you zoom |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |

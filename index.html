@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260820a">
-<link rel="stylesheet" href="styles/components.css?v=20260820a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260820b">
+<link rel="stylesheet" href="styles/components.css?v=20260820b">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -243,8 +243,10 @@
      safe on something GUARANTEED to overflow, and nothing here is. The cost of
      dropping it is that reaching the bottom of a long thread carries on
      scrolling the page — ordinary web behaviour, and far better than a dead
-     wheel. `overscroll-behavior-x` on the watchlist bands is untouched: it is
-     axis-scoped, so it never blocked the vertical wheel. */
+     wheel. (The watchlist's old axis-scoped `overscroll-behavior-x` went with
+     the horizontal bands themselves; nothing on the page carries the property
+     now. Its columns answer the chaining a different way — they do not scroll
+     under the wheel AT ALL, and are paged by a button instead, 2026-08-20.) */
   .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   /* accounts / news shifted DOWN into their own band under the top row */
   .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
@@ -1336,8 +1338,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260820a"></script>
-<script src="scripts/data.js?v=20260820a"></script>
-<script src="scripts/app.js?v=20260820a"></script>
+<script src="scripts/config.js?v=20260820b"></script>
+<script src="scripts/data.js?v=20260820b"></script>
+<script src="scripts/app.js?v=20260820b"></script>
 </body>
 </html>
