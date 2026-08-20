@@ -305,6 +305,11 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip .mkt-group-tiles {
   flex: 0 0 auto; min-width: 0; flex-wrap: nowrap;
   max-height: 700px; overflow-y: auto; scrollbar-width: thin;
+  /* Reserve the scrollbar's space in EVERY column, scrolling or not, so a list
+     that happens to be short does not render wider tiles than one that
+     scrolls. Without it the tile width tells you whether the list overflowed,
+     which is not a fact a tile should encode. */
+  scrollbar-gutter: stable;
 }
 /* flex-basis governs HEIGHT inside a column, so the 104px the row layout used
    for the label gutter would reserve 104px of empty vertical space above every
@@ -404,7 +409,13 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    66px basis would set the tile's HEIGHT rather than its width and every tile
    would render as a 66px-tall box regardless of its contents. Width comes from
    the column (FR-17 — a short list ends rather than stretching). */
-.wl-strip .wl-tile { flex: 0 0 auto; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
+/* The tile is PINNED at its half-width, not left to take whatever the column
+   gives it. Widening the column to 100px for the scrollbar pushed the tile to
+   82px and broke the half-width rule S27 guards — and `scrollbar-gutter` is not
+   universal, so relying on it alone would make the width engine-dependent. A
+   max-width holds the contract on every engine; any slack lands in the gutter,
+   which is where it belongs. */
+.wl-strip .wl-tile { flex: 0 0 auto; max-width: 76px; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
 .wl-strip .wl-vals { display: contents; }
 .wl-strip .mkt-name { order: 1; font-size: 9px; }
 .wl-strip .mkt-last { order: 2; font-size: 12px; line-height: 1.15; }
