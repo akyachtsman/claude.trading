@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260819a">
-<link rel="stylesheet" href="styles/components.css?v=20260819a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260820a">
+<link rel="stylesheet" href="styles/components.css?v=20260820a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -594,7 +594,14 @@
      manual stack the owner types into and a picker-headed roster column. Two
      96px columns plus their gap is what 200 buys; the chart gives up ~104px,
      which is the price of not having to retype a ticker to chart it. */
-  .wb-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-3); }
+  /* 240, not 200 (owner request 2026-08-20: "I would like to see all four
+     letters of the symbol here"). At 200 a column was 96px, and after the
+     row's own padding, the ×, the gap and a ~42px day-% there were ~21px left
+     for the ticker — so every 4-letter name rendered as `AV…`, which is not a
+     ticker. The extra 40px is what makes the widest realistic row (a 5-char
+     symbol beside -12.34%) fit with room to spare; see the measured budget on
+     .wb-rail-col below. */
+  .wb-grid { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: var(--space-3); }
   /* Below 860px the rail goes ABOVE the chart instead of beside it. At a 393px
      phone width a 200px rail leaves the canvas ~150px — the three pane bars
      then wrap so far that #wbBar-p3 overlaps Pro 1's gear and swallows clicks
@@ -614,7 +621,12 @@
   /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
      scroll both columns together and defeat the split. `auto`, never `contain`:
      reaching the end of a column must carry on scrolling the page. */
-  .wb-rail-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  /* `scrollbar-width: thin` is part of the width budget, not decoration: a
+     classic 15px scrollbar on each column is 30px off a 240px rail, which is
+     most of what the widening just bought. Column = (240-8)/2 = 116, less ~8
+     for the bar = ~108 usable, against a worst-case row of 8 (padding) + 36
+     (5-char symbol) + 4 (gap) + 42 (-12.34%) + 13 (×) = 103. */
+  .wb-rail-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; scrollbar-width: thin; }
   .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
   .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
   /* The picker inherits the dark charts scope, so it is styled here rather than
@@ -627,14 +639,18 @@
      how a remove gets fired by someone aiming at the chart. */
   .wb-rail-row { display: flex; align-items: stretch; gap: 0; }
   .wb-rail-row .wb-side-btn { flex: 1 1 auto; min-width: 0; }
-  .wb-rail-x { flex: 0 0 auto; padding: 0 4px; border: 0; background: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: 400 11px/1 var(--font-sans); cursor: pointer; }
+  .wb-rail-x { flex: 0 0 auto; padding: 0 3px; border: 0; background: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: 400 11px/1 var(--font-sans); cursor: pointer; }
   .wb-rail-x:hover { background: var(--color-surface-2); color: var(--color-text-primary); }
   .wb-rail-x:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -1px; }
-  .wb-side-sym { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wb-side-btn { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; width: 100%; padding: 4px 6px; border: 0; background: none; border-radius: var(--radius-sm); font: 500 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
+  /* The SYMBOL is the one thing in this row that must never be abbreviated —
+     `AV…` names no instrument, and this rail exists to be clicked by ticker.
+     So it is the non-shrinking half and the day-% is the half that yields;
+     with the 240px rail above neither actually gives ground. */
+  .wb-side-sym { flex: 0 0 auto; white-space: nowrap; }
+  .wb-side-btn { display: flex; justify-content: space-between; gap: 4px; align-items: baseline; width: 100%; padding: 4px 4px; border: 0; background: none; border-radius: var(--radius-sm); font: 500 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
   .wb-side-btn:hover { background: var(--color-surface-2); }
   .wb-side-btn[aria-current="true"] { background: var(--color-surface-2); font-weight: 700; }
-  .wb-side-btn .wb-side-pct { font-size: 10px; }
+  .wb-side-btn .wb-side-pct { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
   .wb-side-btn .up { color: var(--color-gain); }
   .wb-side-btn .down { color: var(--color-loss); }
   #wbChart { display: block; width: 100%; height: 600px; }
@@ -644,7 +660,11 @@
   .wb-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
   /* per-symbol fundamentals strip (earnings + key stats, live mode) — sits on
      its own full-width line inside the toolbar, in place of the old load note */
-  .wb-info { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 0; font: 500 var(--font-xs)/1.5 var(--font-mono); font-variant-numeric: tabular-nums; min-height: 18px; }
+  /* One step up from --font-xs (owner request 2026-08-20). This strip carries
+     the last, the day move and the fundamentals — the numbers read off the
+     workbench most often — and at 12px mono they sat below the pane captions
+     around them. The label caps move with it so the pair keeps its ratio. */
+  .wb-info { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 0; font: 500 var(--font-sm)/1.5 var(--font-mono); font-variant-numeric: tabular-nums; min-height: 20px; }
   .wb-info:empty { display: none; }
   .wb-info-item { color: var(--color-text-primary); white-space: nowrap; }
   .wb-info-item b { color: var(--color-text-secondary); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 10px; margin-right: 4px; }
@@ -1316,8 +1336,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260819a"></script>
-<script src="scripts/data.js?v=20260819a"></script>
-<script src="scripts/app.js?v=20260819a"></script>
+<script src="scripts/config.js?v=20260820a"></script>
+<script src="scripts/data.js?v=20260820a"></script>
+<script src="scripts/app.js?v=20260820a"></script>
 </body>
 </html>

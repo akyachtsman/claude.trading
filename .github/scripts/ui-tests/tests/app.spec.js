@@ -2540,6 +2540,36 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
   expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').value),
     'and so does the chosen roster').toBe(vals[1]);
 
+  // Every ticker renders IN FULL. `AV…` names no instrument, and this rail is
+  // clicked by ticker, so an abbreviated symbol is the one truncation here
+  // that is a wrong value rather than a tight fit (owner report 2026-08-20).
+  //
+  // Measured as a WIDTH BUDGET, not as "nothing is currently ellipsised".
+  // Demo cannot reproduce the fault by itself: only 10 symbols carry demo
+  // bars, all three letters, and a roster name with no series renders no
+  // day-% at all — so the squeeze that clipped OKLO and AVAV on the owner's
+  // live desk simply does not occur here, and a clipping check would pass on
+  // the broken CSS too (verified: at the old 200px rail every demo row still
+  // fitted). So take a row that HAS a day-% and ask whether the leftover space
+  // could seat a longer ticker, using the row's own rendered font rather than
+  // an assumed character width.
+  await page.setViewportSize({ width: 1512, height: 1000 });
+  await page.waitForTimeout(400);
+  const fit = await page.evaluate(() => {
+    const pct = document.querySelector('#wbSidebar .wb-side-pct');
+    if (!pct) return null;
+    const btn = pct.closest('.wb-side-btn');
+    const sym = btn.querySelector('.wb-side-sym');
+    const cs = getComputedStyle(btn), cx = document.createElement('canvas').getContext('2d');
+    cx.font = getComputedStyle(sym).font;
+    const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const free = btn.clientWidth - pad - parseFloat(cs.columnGap || 0) - sym.offsetWidth - pct.offsetWidth;
+    return { ticker: sym.textContent, free, need: cx.measureText('WWWWW').width - cx.measureText(sym.textContent).width };
+  });
+  expect(fit, 'a rail row carrying a day-% exists to measure').not.toBeNull();
+  expect(fit.free, `a 5-char ticker fits beside the day-% (row shows ${fit.ticker})`)
+    .toBeGreaterThanOrEqual(fit.need);
+
   // removal
   await page.locator('.wb-rail-manual .wb-rail-x').first().click();
   await page.waitForTimeout(300);
