@@ -319,15 +319,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* Every column's tiles start on the same line, so the panel reads as a grid
    rather than a ragged set of stacks. Two lines of the 9px uppercase label,
    which is what the longest names ("Industry & metals") wrap to at 92px. */
-/* The NAME gets its own line, the controls wrap beneath it. In a 92px column
-   the head cannot hold a list name and three buttons side by side — the label
-   was being crushed to a few characters, so "Sectors" rendered as "SE" and
-   "Industry & metals" as "IN" (owner report 2026-08-19). Wrapping costs one
-   short row and gives the name the full column width. */
-.wl-strip .wl-band-head { min-height: 32px; align-items: flex-start; flex-wrap: wrap; row-gap: 2px; }
-.wl-strip .wl-band-head .mkt-group-label {
-  flex: 1 0 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere;
-}
+/* the band head's layout is defined once, further down under .wl-strip */
 /* (the tile's own flex is reset where it is declared, further down) */
 /* Under 640px .mkt-group turns into a COLUMN, where flex-basis governs height —
    so the label would reserve ~104px of empty vertical space. The shared rule
@@ -472,8 +464,33 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    Scoped under .wl-strip because .mkt-group-label lives in index.html's inline
    <style>, which loads after this sheet and would otherwise win on source
    order. */
-.wl-strip .wl-band-head { flex: 0 0 96px; display: flex; align-items: center; gap: 4px; min-width: 0; }
-.wl-strip .wl-band-head .mkt-group-label { flex: 1 1 auto; min-width: 0; }
+/* CONTROLS ON TOP, NAME BENEATH, packed tight (owner report 2026-08-20: "a lot
+   of wasted space in the heading of watchlist — put the name below the little
+   icons and compact it as much as possible").
+
+   The head had become three stacked rows: the name shared line one with the
+   arrows, the × wrapped to line two, and the min-height reserved more than
+   either needed. In a 100px column three 18px buttons and a name cannot share a
+   line, so something wraps whatever the order; putting the CONTROLS first means
+   what wraps is the name, which is the item that reads fine on its own line and
+   is the only one that can use the full width.
+
+   `order` rather than moving the markup: the label is the group's accessible
+   name via aria-label on .mkt-group, and the buttons' labels reference the list
+   by title — reordering the DOM would put the controls before the thing they
+   are named after, for anyone reading it linearly.
+
+   No min-height: the head is exactly as tall as one button row plus the name,
+   which is the compaction asked for. */
+.wl-strip .wl-band-head {
+  flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center;
+  gap: 1px 2px; min-width: 0; padding-bottom: 2px;
+}
+.wl-strip .wl-band-head .wl-move, .wl-strip .wl-band-head .wl-del { order: 1; }
+.wl-strip .wl-band-head .mkt-group-label {
+  order: 2; flex: 1 0 100%; min-width: 0;
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.2;
+}
 /* Sized for DISCOVERABILITY, not daintiness (owner report 2026-07-30: "not
    seeing the way to add symbols"). The first cut was 17px in the secondary text
    colour beside a 9px label — present, but easy to miss even when looked for.
