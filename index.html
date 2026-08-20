@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260820a">
-<link rel="stylesheet" href="styles/components.css?v=20260820a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260820d">
+<link rel="stylesheet" href="styles/components.css?v=20260820d">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -38,7 +38,7 @@
   /* `.wl-area` joined the opt-out 2026-08-17: it now sits directly on top of
      `.area-charts`, and a capped-and-centred panel above a full-bleed one would
      be visibly inset from the chart it is meant to feed. */
-  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area):not(.heat-row) { max-width: 1880px; margin-inline: auto; }
+  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -243,8 +243,10 @@
      safe on something GUARANTEED to overflow, and nothing here is. The cost of
      dropping it is that reaching the bottom of a long thread carries on
      scrolling the page — ordinary web behaviour, and far better than a dead
-     wheel. `overscroll-behavior-x` on the watchlist bands is untouched: it is
-     axis-scoped, so it never blocked the vertical wheel. */
+     wheel. (The watchlist's old axis-scoped `overscroll-behavior-x` went with
+     the horizontal bands themselves; nothing on the page carries the property
+     now. Its columns answer the chaining a different way — they do not scroll
+     under the wheel AT ALL, and are paged by a button instead, 2026-08-20.) */
   .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   /* accounts / news shifted DOWN into their own band under the top row */
   .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
@@ -295,37 +297,34 @@
      asymmetry, which is easy to get wrong: the width comes from the grid track
      and so is already in rendered pixels, while `height` is set inside the
      zoomed box and must be divided by the scale to render at 158. */
-  @media (min-width: 1400px) {
-    .top-boxes { --acct-z: .62; }
-    .top-boxes > .col-rail { order: -1; flex: 1 1 auto; }
-    .top-boxes > .area-accounts { order: 0; flex: 0 0 auto; align-self: start; }
-    .top-boxes .account-grid { grid-template-columns: repeat(2, 200px); justify-content: start; }
-    /* min-height, NOT height (owner report 2026-08-14: "can't see the
-       positions"). A hard height pinned the card at 158px rendered while
-       expanded positions need ~270, so the table was cut off a row below its
-       own header — and because .account is overflow:visible it spilled 11px
-       and then simply stopped, which reads as a broken render rather than as
-       content that does not fit. The row still sits at 158 at rest, since
-       collapsed content is shorter than that; it grows only while a disclosure
-       is open, which is what a disclosure is for. Deliberately not an inner
-       scroller: 158px is roughly two rows, so scrolling four positions inside
-       it would answer "can't see the positions" with "now see them one and a
-       half at a time". */
-    .top-boxes .account { zoom: var(--acct-z); min-height: calc(158px / var(--acct-z)); }
-    /* Header BESIDE the cards, not above them, so Ask / Account A / Account B
-       all start on the same line (owner report 2026-08-08: stacked, the header
-       pushed the cards 75px down and the row read as staggered). A fixed 150px
-       side column keeps the cards' left edge stable as the lamp text changes
-       between LIVE / EOD / STALE. */
-    .top-boxes > .area-accounts { display: flex; gap: var(--space-3); align-items: flex-start; }
-    .accounts-side { flex: 0 0 150px; min-width: 0; }
-    .accounts-side .accounts-head { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
-    .accounts-side .masthead-state { gap: var(--space-2); }
-    .accounts-side .stamp { margin: var(--space-2) 0 0; }
-    /* the grid's 12px top margin exists to separate it from the header ABOVE
-       it; beside the header there is nothing to clear, and it was the last
-       12px keeping the cards off the Ask panel's line */
-    .top-boxes .account-grid { margin-top: 0; }
+  /* Gated at 1120, the SAME breakpoint the desk row itself uses. The two must
+     agree: the row's gate was lowered to 1120 precisely because the accounts
+     had moved out of it, and now that they are back a higher gate here would
+     leave 1120–1400 running the old share-the-row rules — measured, that put
+     Ask at 198px at a 1280 viewport, which is not a panel you can hold a
+     conversation in. It also matters that the owner's browser reports
+     innerWidth 1152 (a 1512 laptop with DevTools docked), so a 1400 gate would
+     never engage on the machine this was built for — the same trap the
+     watchlist column layout hit at 1900. */
+  @media (min-width: 1120px) {
+    .top-boxes > .col-rail { order: -1; flex: 1 1 auto; min-width: 0; }
+    /* Accounts return to this row, SQUEEZED to the right of Ask (owner request
+       2026-08-20), and the heatmap gets the full width back. 232 = one 200px
+       card plus the grid gutters, STACKED one per row: a column beside Ask
+       rather than a second mini-row of cards. Ask is the elastic half and
+       simply takes what is left — which is what "reducing the width of that
+       guy" buys the cards. */
+    .top-boxes > .area-accounts { order: 0; flex: 0 0 232px; align-self: start; }
+    .top-boxes .account-grid { grid-template-columns: 1fr; justify-content: stretch; }
+    /* Full size, and the header sits ABOVE the cards again. Both of the rules
+       that used to be here — `zoom: .62` and a 150px header column beside the
+       grid — existed for one constraint: Ask / Account A / Account B all had to
+       start on the same 158px line. The cards are a COLUMN now, with no line to
+       match and a width of their own, so the scale and the side header were
+       solving a problem that no longer exists. */
+    .top-boxes .account { zoom: 1; min-height: 0; height: auto; width: auto; }
+    .accounts-side { width: auto; }
+    .top-boxes .account-grid { margin-top: var(--space-3); }
     /* LOCKED state must keep the row's shape (owner report 2026-08-08: the row
        grew from 158 to 247 the moment the desk locked). The lock panel replaces
        BOTH cards in the grid, so it spans both tracks and takes the same 158px
@@ -392,27 +391,6 @@
      true 0.5in, and the 0.5in top margin collapses with the chart's 0.5in
      bottom margin into one half-inch seam between the two panels. */
   .heat-panel { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
-  /* HEATMAP + ACCOUNTS ON ONE LINE (owner request 2026-08-18). The heatmap is
-     the elastic half — a treemap re-tiles to whatever box it is given, whereas
-     an account card has a fixed set of figures and a width below which they
-     clip. So the cards keep their size and the map absorbs the difference,
-     which is also why the map is the one told to "fit the screen". */
-  .heat-row { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
-  .heat-row > .heat-panel { margin: 0; }
-  .heat-row > .area-accounts { margin: 0; }
-  @media (min-width: 1100px) {
-    .heat-row { display: flex; align-items: flex-start; gap: var(--space-4); }
-    .heat-row > .heat-panel { flex: 1 1 0; min-width: 0; }
-    /* 232 = one 200px card + the grid gutters. STACKED, one per row: the pair
-       reads as a column beside the map rather than a second mini-row. */
-    .heat-row > .area-accounts { flex: 0 0 232px; display: block; }
-    .heat-row .account-grid { grid-template-columns: 1fr; margin-top: var(--space-3); }
-    /* The cards are `zoom`ed to .62 in the desk row to fit a 158px line. Here
-       they have a column to themselves and no height to match, so they render
-       at full size — the scale existed to solve a constraint that is gone. */
-    .heat-row .account { zoom: 1; height: auto; width: auto; }
-    .heat-row .accounts-side { width: auto; }
-  }
   /* News is halved to a fixed reel with its own scrollbar (owner ruling
      2026-07-16): the holdings-first list scrolls in place instead of running
      the full page height. */
@@ -450,7 +428,17 @@
   .acct-nav { padding: var(--space-3) var(--space-4) 0; }
   .acct-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-4); }
   .acct-spark { display: block; width: 100%; height: 56px; }
-  .acct-positions { padding: 0 var(--space-4) var(--space-3); overflow-x: auto; }
+  /* Capped so an account with 30 holdings does not make its card 30 rows tall
+     (owner request 2026-08-20) — three rows plus the header, with the rest
+     reached by the ▲/▼ that wlSyncPaging appends to the card. Three rather
+     than a roomier six because the owner's own account holds five and their
+     screenshot already showed the panel outrunning the block beside it: a cap
+     that only bites at seven would have changed nothing they can see. `hidden` on
+     the y axis, never `auto`: the wheel belongs to the page here for exactly
+     the reason set out at the top of this file. The x axis keeps its scroller,
+     which predates this and is how a wide table stays readable in a narrow
+     card. */
+  .acct-positions { padding: 0 var(--space-4) var(--space-3); overflow-x: auto; overflow-y: hidden; max-height: 120px; }
 
   /* shared chart chrome — crosshair tip + wrap, used by the heatmap and the
      stochastic-charts workbench (the equity-curves panel that also used these
@@ -776,6 +764,18 @@
   #heatmapSvg { display: block; width: 100%; min-height: 240px; }
   /* Reserve the legend row's height even before it's populated, so the panel's
      below-canvas chrome is measured correctly on the very first render. */
+  /* The footer is ONE row: legend on the left, the movers disclosure on the
+     right (owner request 2026-08-20). `min-height` on the legend reserves its
+     height before it is populated, so the panel's below-canvas chrome measures
+     correctly on the very first render. */
+  .heat-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+  .heat-foot .chart-data { flex: 0 0 auto; }
+  /* 44px is the standalone-control touch target; inside a row beside the
+     legend the whole line is the target's height, and 44 was most of the space
+     the owner was pointing at. */
+  .heat-foot .chart-data summary { min-height: 24px; }
+  .heat-note:empty { display: none; }
+  .heat-note { margin: var(--space-1) 0 0; }
   .heat-legend { min-height: 20px; }
   #heatmapSvg text { pointer-events: none; }
   .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
@@ -929,6 +929,22 @@
         <div class="panel-body" id="askBody"></div>
       </section>
     </aside>
+    <section class="area-accounts" aria-labelledby="accountsTitle">
+      <!-- Title, desk lamp, Refresh/Lock and the synced stamp are grouped so
+           they can sit BESIDE the cards on a wide screen instead of stacking
+           above them. Stacked, they pushed the cards ~75px below the Ask panel
+           and the three windows no longer lined up (owner report 2026-08-08).
+           The grouping is inert below the breakpoint — the column layout there
+           is exactly what it was. -->
+      <div class="accounts-side">
+        <div class="accounts-head">
+          <h2 id="accountsTitle">Accounts</h2>
+          <div class="masthead-state" id="mastheadState"></div>
+        </div>
+        <p class="stamp" id="accountsStamp"></p>
+      </div>
+      <div class="account-grid" id="accountGrid"></div>
+    </section>
   </div>
   </div>
 
@@ -1275,7 +1291,6 @@
        Refresh/Lock controls, so those now come late in the reading order that
        keyboard and screen-reader users follow. Accepted on the owner's
        explicit instruction; the controls are unchanged and still reachable. -->
-  <div class="heat-row">
   <section class="panel heat-panel" aria-labelledby="heatTitle">
     <div class="panel-header">
       <h2 class="panel-title" id="heatTitle">Heatmap — S&amp;P 500</h2>
@@ -1303,31 +1318,30 @@
           <div class="chart-tip" id="heatTip"></div>
         </div>
       </div>
-      <div class="heat-legend" id="heatLegend"></div>
-      <details class="chart-data">
-        <summary>View movers table</summary>
-        <table class="data-table" id="heatTable"></table>
-      </details>
-      <p class="stamp" id="heatSource">Sized by market cap · colored by day % change</p>
+      <!-- One compact footer line (owner request 2026-08-20: "much more
+           condensed and not waste so much space"). The legend, the movers
+           disclosure and the caption were three stacked blocks — and the
+           caption was saying what the legend's own "tile size = market cap ·
+           colored by day % change" label already says, so it is gone rather
+           than shrunk: the cheapest line to condense is the one that repeats
+           its neighbour. The remaining two sit on one row, and the 44px
+           summary target that was sized for a standalone control drops to the
+           legend's own height. -->
+      <div class="heat-foot">
+        <div class="heat-legend" id="heatLegend"></div>
+        <details class="chart-data">
+          <summary>Movers table</summary>
+          <table class="data-table" id="heatTable"></table>
+        </details>
+      </div>
+      <!-- Kept, though the standing caption it used to carry is gone: this is
+           where the empty-state line lands ("No heatmap in the latest
+           snapshot…"). `:empty` hides it, so it costs nothing until it has
+           something to say — dropping the element outright would have made
+           that message throw on a null node. -->
+      <p class="stamp heat-note" id="heatSource"></p>
     </div>
   </section>
-    <section class="area-accounts" aria-labelledby="accountsTitle">
-      <!-- Title, desk lamp, Refresh/Lock and the synced stamp are grouped so
-           they can sit BESIDE the cards on a wide screen instead of stacking
-           above them. Stacked, they pushed the cards ~75px below the Ask panel
-           and the three windows no longer lined up (owner report 2026-08-08).
-           The grouping is inert below the breakpoint — the column layout there
-           is exactly what it was. -->
-      <div class="accounts-side">
-        <div class="accounts-head">
-          <h2 id="accountsTitle">Accounts</h2>
-          <div class="masthead-state" id="mastheadState"></div>
-        </div>
-        <p class="stamp" id="accountsStamp"></p>
-      </div>
-      <div class="account-grid" id="accountGrid"></div>
-    </section>
-  </div>
 
   <footer class="site-footer">
     <p>Data: IBKR Flex reports (accounts) · market and news snapshots committed by scheduled jobs. Every panel shows its own as-of stamp — this dashboard renders snapshots, not live quotes.</p>
@@ -1336,8 +1350,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260820a"></script>
-<script src="scripts/data.js?v=20260820a"></script>
-<script src="scripts/app.js?v=20260820a"></script>
+<script src="scripts/config.js?v=20260820d"></script>
+<script src="scripts/data.js?v=20260820d"></script>
+<script src="scripts/app.js?v=20260820d"></script>
 </body>
 </html>

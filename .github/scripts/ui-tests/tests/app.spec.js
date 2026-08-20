@@ -225,6 +225,10 @@ async function detectAuthGate(page) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function discoverElements(page) {
   return page.evaluate(() => {
+    /* Counted, not silently dropped: a sweep that quietly stops covering 30
+       controls per list reads as "everything passed" when it is not what
+       passed. S3 attaches this alongside the element map. */
+    window.__clippedSkipped = 0;
     const selectors = ['button', 'a[href]', 'input:not([type=hidden])', 'select', 'textarea',
                        '[role=button]', '[onclick]'];
     return selectors.flatMap(sel =>
@@ -234,7 +238,33 @@ async function discoverElements(page) {
         .map((el, index) => ({ el, index }))
         .filter(({ el }) => {
           const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
+          if (!(r.width > 0 && r.height > 0)) return false;
+          /* Also drop anything CLIPPED OUT of an `overflow: hidden` ancestor.
+             Such an element still reports a real rect — it is laid out, just
+             not on screen — so the size test above passes and the sweep
+             faithfully tries to click something no pointer can reach. Since
+             the watchlist columns became paged rather than scrolled
+             (2026-08-20) that is ~30 tiles per long list, and against the LIVE
+             roster of 12 lists it took S3 from ~2 minutes to past its 480s
+             timeout on both projects, which then blew the job's own 20-minute
+             budget. Each one costs a full action timeout, and Playwright's
+             scroll-into-view shifts the column under every other queued handle
+             while it tries.
+             Deliberately `hidden`/`clip` ONLY. An `auto`/`scroll` ancestor —
+             the news reel, the ask thread — CAN be scrolled to the element, and
+             those have always swept fine; excluding them too would quietly drop
+             real coverage. */
+          for (let p = el.parentElement; p; p = p.parentElement) {
+            const o = getComputedStyle(p);
+            const hides = /hidden|clip/.test(o.overflowY) || /hidden|clip/.test(o.overflowX);
+            if (!hides) continue;
+            const b = p.getBoundingClientRect();
+            if (r.bottom <= b.top || r.top >= b.bottom || r.right <= b.left || r.left >= b.right) {
+              window.__clippedSkipped++;
+              return false;
+            }
+          }
+          return true;
         })
         .map(({ el, index }) => ({
           selector: sel,
@@ -456,10 +486,15 @@ test('S3: interactive elements discovered and exercised without errors', async (
   }
 
   const elements = await discoverElements(page);
+  const clippedSkipped = await page.evaluate(() => window.__clippedSkipped || 0);
   test.info().attach('element-map', {
-    body: JSON.stringify(elements, null, 2),
+    body: JSON.stringify({ swept: elements.length, clippedSkipped, elements }, null, 2),
     contentType: 'application/json',
   });
+  // Named out loud rather than left in the attachment alone — these are real
+  // controls the sweep did not exercise, and the number moving is the signal
+  // that a panel started hiding things.
+  if (clippedSkipped) console.log(`S3: ${clippedSkipped} control(s) clipped out of an overflow:hidden box — not swept`);
 
   const findings = [];
 
@@ -2581,6 +2616,160 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
    guards is silent: a `flex-basis` meant for a row governs HEIGHT in a column,
    so the tiles would all render as fixed-height boxes and the panel would still
    look plausible. */
+/* S42 — the watchlist columns are PAGED, not scrolled (owner request
+   2026-08-20: reaching the end of a list carried straight on into the page).
+   The rule this guards is that the wheel belongs to the PAGE everywhere on this
+   panel, which is why the fix is `overflow: hidden` and not `overscroll-
+   behavior: contain` — the property this project has banned outright after it
+   ate the mouse wheel three times. */
+test('S42: watchlist columns page instead of scrolling', async ({ page, browserName }) => {
+  await page.setViewportSize({ width: 1512, height: 1000 });
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+
+  // No column may be wheel-scrollable, and none may carry overscroll-behavior
+  // in ANY form — the axis-scoped variants included, since a future edit that
+  // reaches for the vertical one re-creates the dead-wheel fault exactly.
+  const rules = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-strip .mkt-group-tiles')].map(b => {
+      const cs = getComputedStyle(b);
+      return { y: cs.overflowY, x: cs.overflowX, os: cs.overscrollBehaviorY + '/' + cs.overscrollBehaviorX };
+    }));
+  expect(rules.every(r => r.y === 'hidden' && r.x === 'hidden'), 'no column scrolls under the wheel').toBe(true);
+  // Phrased as "not contain", not "=== auto". A browser that does not implement
+  // the property reports an empty string, which is not a failure — it cannot be
+  // containing anything — and asserting the positive value would fail on the
+  // engine rather than on the page.
+  expect(rules.filter(r => /contain|none/.test(r.os)), 'no column carries overscroll-behavior').toEqual([]);
+
+  // The wheel over a column moves the PAGE. This is the owner's actual
+  // complaint, so where it can be driven it is asserted on the GESTURE, not on
+  // the CSS above.
+  // Chromium only: the other project is Mobile Safari, and a mobile WebKit
+  // context has no mouse wheel to dispatch — page.mouse.wheel there does not
+  // scroll, so the assertion would be measuring the emulated input device
+  // rather than the panel. The CSS check above is what carries the rule on that
+  // project, and it is the stronger half anyway: `overflow: hidden` cannot
+  // chain on any engine.
+  if (browserName === 'chromium') {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator('.wl-strip .mkt-group-tiles').first().hover();
+    await page.mouse.wheel(0, 400);
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => window.scrollY), 'the wheel scrolls the page, not the list')
+      .toBeGreaterThan(100);
+  }
+
+  // Controls appear ONLY where a column overflows. A pair on every column would
+  // be the clutter the owner asked to avoid, and one on a column that fits
+  // would be a control that does nothing.
+  const state = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-strip .mkt-group')].map(g => {
+      const b = g.querySelector('.mkt-group-tiles');
+      return { over: b.scrollHeight - b.clientHeight > 2, bars: g.querySelectorAll('.wl-page-bar').length };
+    }));
+  expect(state.some(s => s.over), 'demo has a list long enough to page').toBe(true);
+  expect(state.every(s => s.bars === (s.over ? 1 : 0)), 'a bar exactly where one is needed').toBe(true);
+
+  // A paged column must not push the other columns' tiles down — every column's
+  // tiles start on the same line, so a control that grew the band head would
+  // cost all seven of them for the sake of one. That is why the bar is a footer.
+  const heads = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-strip .wl-band-head')].map(h => Math.round(h.getBoundingClientRect().height)));
+  const paged = state.findIndex(s => s.over);
+  expect(heads[paged], 'the paged column\'s head is no taller than its neighbours')
+    .toBeLessThanOrEqual(Math.max(...heads));
+
+  // Stepping: ▲ dead at the top, the ▼ states how many are still below, and the
+  // count FALLS as you step — a static number would mean it counts the list
+  // rather than what is hidden.
+  const col = page.locator('.wl-strip .mkt-group').nth(paged);
+  const up = col.locator('.wl-page').nth(0), down = col.locator('.wl-page').nth(1);
+  /* Read the pair's state in one shot rather than through `expect(locator)
+     .toBeDisabled()`. Those retry for the full expect timeout before reporting,
+     so one wrong state costs 5s per assertion and the message names only the
+     selector — whereas this fails instantly and prints the scroll position and
+     both labels, which is what a diagnosis actually needs. */
+  const pager = () => page.evaluate(i => {
+    const g = [...document.querySelectorAll('.wl-strip .mkt-group')][i];
+    const [u, d] = g.querySelectorAll('.wl-page');
+    return {
+      up: u.disabled, down: d.disabled, label: d.textContent,
+      below: Number((d.textContent || '').replace(/\D/g, '') || 0),
+      top: Math.round(g.querySelector('.mkt-group-tiles').scrollTop),
+    };
+  }, paged);
+
+  const atTop = await pager();
+  expect(atTop, 'the ▲ is dead at the top and the ▼ names how many are below')
+    .toMatchObject({ up: true, down: false });
+  expect(atTop.below, 'the ▼ names how many are still below').toBeGreaterThan(0);
+
+  await down.click();
+  await page.waitForTimeout(200);
+  const stepped = await pager();
+  expect(stepped.below, `the count falls as you step (was ${atTop.below})`).toBeLessThan(atTop.below);
+  expect(stepped.up, 'the ▲ comes alive once there is something above').toBe(false);
+
+  // The end is reachable and terminal in both directions.
+  for (let i = 0; i < 12 && !(await pager()).down; i++) { await down.click(); await page.waitForTimeout(120); }
+  const atEnd = await pager();
+  expect(atEnd, 'the ▼ dies at the bottom and claims nothing is left below')
+    .toMatchObject({ down: true, label: '▼' });
+  const tiles = await col.locator('.wl-tile').count();
+  const seen = await page.evaluate(i => {
+    const b = [...document.querySelectorAll('.wl-strip .mkt-group')][i].querySelector('.mkt-group-tiles');
+    const r = b.getBoundingClientRect();
+    return [...b.querySelectorAll('.wl-tile')].filter(t => {
+      const q = t.getBoundingClientRect();
+      return q.bottom > r.top + 1 && q.top < r.bottom - 1;
+    }).map(t => t.textContent);
+  }, paged);
+  expect(seen.length, 'the last tiles are on screen at the bottom').toBeGreaterThan(0);
+  expect(tiles, 'and nothing was removed to get there').toBeGreaterThan(seen.length);
+
+  // A DRAG must be able to reach the part of a list that is off-box. With no
+  // wheel and no scrollbar this is the only way, so a tile could otherwise only
+  // ever be dropped among the rows that happen to be showing. Driven from
+  // wlDragMove, not from a listener on the button: a drag owns the pointer, so
+  // the button gets no pointer events of its own — a `pointerenter` handler was
+  // tried here and fired exactly never.
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; wlSort = { key: 'manual', dir: 1 }; renderWatchlist(); });
+  await page.waitForTimeout(400);
+  // The bar and a tile must be on screen TOGETHER: elementFromPoint returns
+  // null outside the viewport, so a below-the-fold button reports no hover and
+  // the check passes or fails on where the page happens to be scrolled.
+  await page.locator('.wl-page-bar').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
+  const bar = await page.locator('.wl-page-bar .wl-page').nth(1).boundingBox();
+  const grab = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.wl-strip .mkt-group .wl-tile')]
+      .find(e => { const r = e.getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; });
+    if (!t) return null;
+    const r = t.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  expect(grab, 'a tile and the pager are both on screen').not.toBeNull();
+  const startTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(grab.x + 30, grab.y + 30, { steps: 6 });
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => wlDrag.on), 'the drag started').toBe(true);
+  for (let i = 0; i < 6; i++) {
+    await page.mouse.move(bar.x + bar.width / 2 + (i % 2), bar.y + bar.height / 2, { steps: 2 });
+    await page.waitForTimeout(170);
+  }
+  const dragTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  expect(dragTop, 'resting on the ▼ mid-drag steps the column').toBeGreaterThan(startTop);
+
+  expect(errs, 'no page errors').toEqual([]);
+});
+
 test('S41: watchlists are vertical columns above the charts', async ({ page }) => {
   // Sized to a DESK, not a phone. Columns-side-by-side is the wide-screen
   // design; at 393px a long list legitimately spreads its own sub-columns
