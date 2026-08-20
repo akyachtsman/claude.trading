@@ -523,6 +523,7 @@ function renderAccounts(accounts, lamp) {
       posOpen = !posOpen;
       try { localStorage.setItem(posOpenKey, posOpen ? '1' : '0'); } catch { /* private mode */ }
       paintPos();
+      wlSyncPaging();
     });
     paintPos();
     panel.appendChild(posBtn);
@@ -530,6 +531,10 @@ function renderAccounts(accounts, lamp) {
     makeSortable(table);
     grid.appendChild(panel);
   }
+  /* The column is capped, so re-page it whenever the cards change — and again
+     whenever a positions disclosure opens or closes, which is the one thing
+     that changes this box's height without a re-render (see paintPos). */
+  wlSyncPaging();
 }
 
 /* ── news ──────────────────────────────────────────────────────────────── */
@@ -1109,78 +1114,101 @@ function wlSyncWriteControls() {
    continues, and a silently cropped list is a list the owner will read as
    complete. The ▲ needs no count — an enabled ▲ already means "there is more
    above", and the header has no room for a figure that says the same thing. */
+/* One paging implementation, two callers: a watchlist column and the accounts
+   column. Both are boxes with `overflow: hidden` whose content can outrun them,
+   and both must leave the wheel to the page. `box` is what scrolls, `host` is
+   what the ▲/▼ bar is appended to, and `unit` names the rows so a step lands on
+   a whole one. */
+function attachPaging(box, host, name, unit, noun) {
+  /* A full repaint rebuilds these anyway, but this also runs on resize, where
+     the host persists and a second bar would otherwise accumulate. */
+  host.querySelectorAll('.wl-page-bar').forEach((n) => n.remove());
+  const over = box.scrollHeight - box.clientHeight;
+  if (over <= 2) { box.scrollTop = 0; return; }
+
+  const up = el('button', 'wl-page', '▲');
+  const down = el('button', 'wl-page', '▼');
+  const count = el('span', '', '');
+  down.appendChild(count);
+  up.type = down.type = 'button';
+
+  /* A step is a whole number of rows, never a raw pixel height: landing
+     mid-row leaves a sliver at each edge, which reads as a rendering fault
+     rather than as more list. One row of overlap keeps some context across the
+     step, the way a page-down does. */
+  const first = box.querySelector(unit);
+  const th = first ? first.offsetHeight + 4 : 67;
+  const step = Math.max(th, (Math.max(1, Math.floor(box.clientHeight / th)) - 1) * th);
+
+  const sync = () => {
+    const top = box.scrollTop;
+    up.disabled = top <= 1;
+    down.disabled = top >= over - 1;
+    /* Counted from the laid-out rows rather than from `over / th`, which would
+       be wrong for any box holding a row taller than the rest. Compared in
+       VIEWPORT coordinates, not via offsetTop: the box is statically
+       positioned, so offsetTop is measured from some ancestor further up and
+       the sum lands nowhere near the box's own scroll frame — which reported
+       all 41 tiles as below the fold on a list showing 10. */
+    const edge = box.getBoundingClientRect().bottom;
+    const below = [...box.querySelectorAll(unit)]
+      .filter((t) => t.getBoundingClientRect().bottom > edge + 1).length;
+    count.textContent = below ? String(below) : '';
+    up.setAttribute('aria-label', 'Show earlier ' + noun + 's in ' + name);
+    down.setAttribute('aria-label', below
+      ? 'Show ' + below + ' more ' + noun + (below === 1 ? '' : 's') + ' in ' + name
+      : 'Show later ' + noun + 's in ' + name);
+  };
+  const go = (dir) => { box.scrollTop += dir * step; sync(); };
+  up.addEventListener('click', () => go(-1));
+  down.addEventListener('click', () => go(1));
+  /* Stepping DURING a drag: with no wheel and no scrollbar, a tile could
+     otherwise only ever be dropped among the rows that happen to be on screen.
+     Holding the pointer over the button with a tile in hand steps the box.
+     Driven from wlDragMove rather than from a `pointerenter` here, which was
+     tried and never fired once: a drag in progress owns the pointer, so the
+     button receives no pointer events of its own at all. */
+  up._wlStep = () => go(-1);
+  down._wlStep = () => go(1);
+
+  /* BELOW the rows, never in the panel head. In the watchlist the head is where
+     the «/»/× live, and a fourth and fifth control wrapped it onto another line
+     — which is not just clutter: every column's tiles start on the same line by
+     rule, so one taller head pushed the tiles of ALL SEVEN columns down 19px to
+     pay for a control on one of them. A footer costs its own column 18px and
+     nobody else anything, and it sits where the eye already is when the list
+     runs out. */
+  const bar = el('div', 'wl-page-bar');
+  bar.appendChild(up);
+  bar.appendChild(down);
+  host.appendChild(bar);
+  sync();
+}
+
 function wlSyncPaging() {
   document.querySelectorAll('#wlStrip .mkt-group').forEach((group) => {
     const box = group.querySelector('.mkt-group-tiles');
-    if (!box) return;
-    /* renderWatchlist rebuilds the whole strip, so there is nothing stale to
-       clear on a normal repaint — but wlSyncPaging also runs on resize, where
-       the group persists and a second bar would otherwise accumulate. */
-    group.querySelectorAll('.wl-page-bar').forEach((n) => n.remove());
-    const over = box.scrollHeight - box.clientHeight;
-    if (over <= 2) { box.scrollTop = 0; return; }
-    const name = group.getAttribute('aria-label') || 'this list';
-
-    const up = el('button', 'wl-page', '▲');
-    const down = el('button', 'wl-page', '▼');
-    const count = el('span', '', '');
-    down.appendChild(count);
-    up.type = down.type = 'button';
-
-    /* A step is a whole number of tiles, never a raw pixel height: landing
-       mid-tile leaves a sliver of a symbol at each edge, which reads as a
-       rendering fault rather than as more list. One tile of overlap keeps a
-       row of context across the step, the way a page-down does. */
-    const tile = box.querySelector('.wl-tile');
-    const th = tile ? tile.offsetHeight + 4 : 67;
-    const step = Math.max(th, (Math.max(1, Math.floor(box.clientHeight / th)) - 1) * th);
-
-    const sync = () => {
-      const top = box.scrollTop;
-      up.disabled = top <= 1;
-      down.disabled = top >= over - 1;
-      /* Counted from the laid-out tiles rather than from `over / th`, which
-         would be wrong for any column holding a tile taller than the rest.
-         Compared in VIEWPORT coordinates, not via offsetTop: the column is
-         statically positioned, so offsetTop is measured from some ancestor
-         further up and the sum lands nowhere near the box's own scroll frame —
-         which reported all 41 tiles as below the fold on a list showing 10. */
-      const edge = box.getBoundingClientRect().bottom;
-      const below = [...box.querySelectorAll('.wl-tile')]
-        .filter((t) => t.getBoundingClientRect().bottom > edge + 1).length;
-      count.textContent = below ? String(below) : '';
-      up.setAttribute('aria-label', 'Show earlier symbols in ' + name);
-      down.setAttribute('aria-label', below
-        ? 'Show ' + below + ' more symbol' + (below === 1 ? '' : 's') + ' in ' + name
-        : 'Show later symbols in ' + name);
-    };
-    const go = (dir) => { box.scrollTop += dir * step; sync(); };
-    up.addEventListener('click', () => go(-1));
-    down.addEventListener('click', () => go(1));
-    /* Stepping DURING a drag: with no wheel and no scrollbar, a tile could
-       otherwise only ever be dropped among the rows that happen to be on
-       screen. Holding the pointer over the button with a tile in hand steps the
-       column, so the whole list stays reachable.
-       Driven from wlDragMove rather than from a `pointerenter` here, which was
-       tried and never fired once: a drag in progress owns the pointer, so the
-       button receives no pointer events of its own at all. wlDragMove already
-       resolves what is under the pointer on every move, so it is the only place
-       that can see this. */
-    up._wlStep = () => go(-1);
-    down._wlStep = () => go(1);
-
-    /* BELOW the tiles, not in the band head. The head is where the «/»/× live,
-       and a fourth and fifth control wrapped it onto another line — which is
-       not just clutter: every column's tiles start on the same line by rule, so
-       one taller head pushed the tiles of ALL SEVEN columns down 19px to pay
-       for a control on one of them. A footer costs its own column 18px and
-       nobody else anything, and it sits where the eye already is when the list
-       runs out. */
-    const bar = el('div', 'wl-page-bar');
-    bar.appendChild(up);
-    bar.appendChild(down);
-    group.appendChild(bar);
-    sync();
+    if (box) attachPaging(box, group, group.getAttribute('aria-label') || 'this list', '.wl-tile', 'symbol');
+  });
+  /* The accounts column is capped so it cannot grow with the positions list
+     (owner request 2026-08-20), so it pages by the same control. Its rows are
+     whole account cards — a card is what a step should land on, not a position
+     row inside one, which would leave a card cut in half. */
+  /* The POSITIONS TABLE is what grows, so it is what is capped (owner request
+     2026-08-20: "don't allow the accounts to grow with positions. Use a scroll
+     button."). Capping the whole accounts column was tried first and is wrong:
+     the header takes most of a short column, which left the cards themselves a
+     31px sliver — it stopped the growth by hiding the thing the panel is for.
+     Capping the table keeps every headline figure on screen always, and only
+     the rows page. The unit is a `tr`, so a step lands on a whole position. */
+  document.querySelectorAll('#accountGrid .account').forEach((card) => {
+    const wrap = card.querySelector('.acct-positions');
+    if (!wrap || wrap.hidden) {
+      card.querySelectorAll('.wl-page-bar').forEach((n) => n.remove());
+      return;
+    }
+    const name = (card.getAttribute('aria-label') || 'this account').replace(/ account$/, '');
+    attachPaging(wrap, card, name, 'tbody tr', 'position');
   });
 }
 

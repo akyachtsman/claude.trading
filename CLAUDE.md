@@ -362,8 +362,44 @@ This project's look is its own — established at kickoff via `/design-intake`
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
-  **The desk row (`.top-boxes`) reads Ask | Account A | Account B at ≥1400px**
-  (owner request 2026-08-08). **Ask is height-ELASTIC, not pinned**: 192px while
+  **The desk row (`.top-boxes`) reads Ask | Accounts at ≥1120px** — Ask on the
+  left taking whatever is left, the accounts as a fixed **232px column** on its
+  right with the cards **stacked one per row** (owner request 2026-08-20:
+  "move the accounts back on top and squeeze it on the right side of the desk
+  AI, reducing the width of that guy, and you could re-expand the heat map to
+  the full screen"). This REPLACES the 2026-08-18 `.heat-row`, where the
+  accounts sat beside the heatmap; that wrapper and its CSS are deleted, not
+  disabled, and the heat panel is full-bleed again. Two rules from the old
+  three-across arrangement went with it and must not be reinstated without
+  their cause: `zoom: .62` on the card and the 150px header column BESIDE the
+  grid both existed so Ask / Account A / Account B could start on one 158px
+  line. The cards are a COLUMN now, with no line to match, so the scale and the
+  side header were solving a problem that no longer exists.
+  The gate is **1120, the same breakpoint `.desk-row` itself uses**, and the two
+  must agree: that gate was lowered to 1120 precisely because the accounts had
+  left this row, so a higher one here leaves 1120–1400 running the old
+  share-the-row rules — measured, that put Ask at **198px** at a 1280 viewport.
+  It also matters that the owner's browser reports `innerWidth` 1152, the same
+  trap the watchlist column layout hit at 1900.
+  **What is capped is the POSITIONS TABLE, not the column** (`.acct-positions`,
+  `max-height: 120px` ≈ three rows, paged by the shared ▲/▼): "don't allow the
+  accounts to grow with positions. Use a scroll button." Capping the whole
+  accounts column was built first and is WRONG — the header takes most of a
+  short column, so the cards themselves were left a **31px sliver**, which stops
+  the growth by hiding the thing the panel exists for. Three rows rather than a
+  roomier six because the owner's own account holds five and their screenshot
+  already showed the panel outrunning its neighbour: a cap that only bit at
+  seven would have changed nothing they can see. Opening the disclosure now
+  costs a card 140px instead of an unbounded amount, and the bar is removed
+  entirely while the table is collapsed.
+  **The heatmap footer is ONE row** (`.heat-foot`: legend left, movers
+  disclosure right) — "much more condensed and not waste so much space". The
+  standing "Sized by market cap · colored by day % change" caption was DELETED
+  rather than shrunk, because the legend's own label already said it; the 44px
+  summary target, sized for a standalone control, drops to 24 inside a row. The
+  `#heatSource` node stays (now `:empty`-hidden) because it is where the
+  empty-state line lands — removing it would make that message throw on a null.
+  (owner request 2026-08-08 for the original three-across form). **Ask is height-ELASTIC, not pinned**: 192px while
   its thread is empty, growing with the conversation to a 420px cap past which
   the thread scrolls. It was briefly a fixed 158 — and at that height the
   header, composer and disclaimer consume the whole panel, so `.ask-thread`
