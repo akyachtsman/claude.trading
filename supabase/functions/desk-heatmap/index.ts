@@ -155,6 +155,14 @@ const ttlMs = () =>
    the core payload is never held past its own latency budget. */
 const EXT_QUOTE_TIMEOUT_MS = 4000;
 
+/* The day-% merge gets a larger budget than the extended sweep, because it is
+   no longer optional garnish — it is where the day-% comes from. ~500 names in
+   batches of 150 is four sequential upstream calls plus a possible cold crumb
+   handshake, and 4s was sized for a best-effort extra that could be dropped.
+   Still bounded: a stalled Yahoo must cost freshness, never the invocation —
+   that is the 546s lesson. */
+const QUOTE_MERGE_TIMEOUT_MS = 9000;
+
 // extPct/extLast: the post-market print, prior-close basis (owner request
 // 2026-07-30). Null whenever the symbol has no extended session or none has
 // printed yet — never silently 0, which would read as "flat after hours".
@@ -735,40 +743,58 @@ async function refreshSp500(): Promise<unknown> {
   try {
     quotes = await nasdaqScreener();
     if (hits(quotes) < 300) throw new Error(`screener coverage too thin (${hits(quotes)})`);
-    /* The screener carries no after-hours print, and it is the path this
-       function actually takes — extPct was only ever computed in the Yahoo
-       FALLBACK below, so the heatmap's post-market tooltips never appeared in
-       practice (Codex review, PR #199). Merge one Yahoo pass over the roster on
-       top of the screener's regular quotes.
+    /* THE SCREENER'S QUOTE IS A FULL SESSION BEHIND — Yahoo supplies the
+       day-%, the screener supplies the metadata (owner report 2026-08-20).
 
-       Cost, stated correctly (the first version of this comment was wrong).
-       It claimed a "60-min TTL when the session is shut ... about four batched
-       calls an hour". But the same commit put withinPostMarket() into ttlMs(),
-       so throughout 16:00-20:00 ET the TTL is 300_000 — FIVE minutes. The real
-       ceiling is up to 12 refreshes an hour during that window, each a full
-       screener download plus this Yahoo sweep, on an anon-callable function
-       whose 546s came from exactly this kind of per-refresh upstream work.
-       That is a deliberate trade (a stale after-hours number is the thing this
-       feature exists to fix), but it should be recorded as what it is.
+       Walmart read -0.78% on the desk while it was actually down 8.7% on
+       earnings. Traced against the tape: the screener's `last` was 114.30,
+       which is Aug 19's CLOSE, and -0.78% is Aug 19's change (114.30 from Aug
+       18's 115.20). It was serving the previous session, labelled as today.
 
-       Bounded like desk-market's identical call. A REJECTING Yahoo was already
-       handled; a STALLING one was not, and that is the shape that kills the
-       invocation after the screener has already succeeded — the documented
-       546 → blank map + STALE lamp path. Promise.race resolves an empty map
-       instead, so a hung upstream costs the extended lines and nothing else. */
-    if (withinPostMarket()) {
-      try {
-        const ext = await Promise.race([
-          quoteBatch(constituents.map((c) => c.sym), await getCrumb()),
-          new Promise<Map<string, Quote>>((resolve) =>
-            setTimeout(() => resolve(new Map()), EXT_QUOTE_TIMEOUT_MS)),
-        ]);
-        for (const [sym, q] of ext) {
-          const base = quotes.get(sym);
-          if (base && q.extPct != null) { base.extPct = q.extPct; base.extLast = q.extLast ?? null; }
-        }
-      } catch { /* extended lines only — the core payload stands */ }
+       The tile was already contradicting itself and nobody could see it: its
+       pctW read -9.79% — essentially the real one-day move — because the
+       week/month/YTD figures come from the Yahoo daily sweep, which HAS today's
+       bar, while pct came from the screener, which does not. Two sources, one
+       tile, disagreeing.
+
+       It hid because on an ordinary day yesterday's close is a fraction of a
+       percent from today's price, so a stale day-% looks entirely plausible. It
+       only shows on a gap day — the day it matters. And the freshness lamp
+       measures when we FETCHED, not how old the data is, so it reported LIVE
+       over a day-old number.
+
+       So the merge is now unconditional and it overwrites `pct`/`last`, rather
+       than running only in post-market to add an after-hours line. The screener
+       is still the right source for what it is good at — one call gives the
+       roster, market cap, sector and industry for ~500 names, and none of those
+       go stale intraday. It is simply not a quote feed.
+
+       Bounded, and it says so when it fails. A REJECTING Yahoo was already
+       handled; a STALLING one is the shape that kills the invocation after the
+       screener has already succeeded — the documented 546 -> blank map + STALE
+       lamp path. Promise.race resolves an empty map instead. But a thin merge
+       must not pass silently as fresh: `source` records which numbers the
+       payload is actually carrying, so a lagging day-% is visible in the
+       response rather than only on a chart. */
+    const fresh: Map<string, Quote> = await Promise.race([
+      quoteBatch(constituents.map((c) => c.sym), await getCrumb()),
+      new Promise<Map<string, Quote>>((resolve) =>
+        setTimeout(() => resolve(new Map()), QUOTE_MERGE_TIMEOUT_MS)),
+    ]).catch(() => new Map<string, Quote>());
+
+    /* Keyed off the CONSTITUENT, not by iterating `fresh`: the two maps use
+       different ticker spellings (BRK.B vs BRK-B) and each registers under its
+       own, so matching by one side's keys alone drops the multi-class names. */
+    let merged = 0;
+    for (const c of constituents) {
+      const q = fresh.get(yahooTicker(c.sym)) || fresh.get(c.sym);
+      const base = quotes.get(yahooTicker(c.sym)) || quotes.get(c.sym);
+      if (!q || !base) continue;
+      if (Number.isFinite(q.pct)) { base.pct = q.pct; merged++; }
+      if (q.last != null && Number.isFinite(q.last)) base.last = q.last;
+      if (q.extPct != null) { base.extPct = q.extPct; base.extLast = q.extLast ?? null; }
     }
+    source = merged >= 300 ? 'nasdaq-screener+yahoo-quote' : `nasdaq-screener (day% may lag, ${merged} refreshed)`;
   } catch {
     try {
       quotes = await quoteBatch(constituents.map((c) => c.sym), await getCrumb());
