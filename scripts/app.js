@@ -523,7 +523,6 @@ function renderAccounts(accounts, lamp) {
       posOpen = !posOpen;
       try { localStorage.setItem(posOpenKey, posOpen ? '1' : '0'); } catch { /* private mode */ }
       paintPos();
-      wlSyncPaging();
     });
     paintPos();
     panel.appendChild(posBtn);
@@ -531,10 +530,6 @@ function renderAccounts(accounts, lamp) {
     makeSortable(table);
     grid.appendChild(panel);
   }
-  /* The column is capped, so re-page it whenever the cards change — and again
-     whenever a positions disclosure opens or closes, which is the one thing
-     that changes this box's height without a re-render (see paintPos). */
-  wlSyncPaging();
 }
 
 /* ── news ──────────────────────────────────────────────────────────────── */
@@ -1190,26 +1185,9 @@ function wlSyncPaging() {
     const box = group.querySelector('.mkt-group-tiles');
     if (box) attachPaging(box, group, group.getAttribute('aria-label') || 'this list', '.wl-tile', 'symbol');
   });
-  /* The accounts column is capped so it cannot grow with the positions list
-     (owner request 2026-08-20), so it pages by the same control. Its rows are
-     whole account cards — a card is what a step should land on, not a position
-     row inside one, which would leave a card cut in half. */
-  /* The POSITIONS TABLE is what grows, so it is what is capped (owner request
-     2026-08-20: "don't allow the accounts to grow with positions. Use a scroll
-     button."). Capping the whole accounts column was tried first and is wrong:
-     the header takes most of a short column, which left the cards themselves a
-     31px sliver — it stopped the growth by hiding the thing the panel is for.
-     Capping the table keeps every headline figure on screen always, and only
-     the rows page. The unit is a `tr`, so a step lands on a whole position. */
-  document.querySelectorAll('#accountGrid .account').forEach((card) => {
-    const wrap = card.querySelector('.acct-positions');
-    if (!wrap || wrap.hidden) {
-      card.querySelectorAll('.wl-page-bar').forEach((n) => n.remove());
-      return;
-    }
-    const name = (card.getAttribute('aria-label') || 'this account').replace(/ account$/, '');
-    attachPaging(wrap, card, name, 'tbody tr', 'position');
-  });
+  /* Watchlist columns only. The accounts positions table was paged by this same
+     helper for a few hours on 2026-08-20; it now carries an ordinary scrollbar
+     instead (owner request 2026-08-21) — see the `.acct-positions` rule. */
 }
 
 /* The columns are capped in pixels, so how many tiles fit — and therefore

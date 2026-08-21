@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260821b">
-<link rel="stylesheet" href="styles/components.css?v=20260821b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260821c">
+<link rel="stylesheet" href="styles/components.css?v=20260821c">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -500,7 +500,23 @@
      the reason set out at the top of this file. The x axis keeps its scroller,
      which predates this and is how a wide table stays readable in a narrow
      card. */
-  .acct-positions { padding: 0 var(--space-4) var(--space-3); overflow-x: auto; overflow-y: hidden; max-height: 120px; }
+  /* A REAL SCROLLBAR, not the ▲/▼ pager this first shipped with (owner request
+     2026-08-21: "need scroll bar inside so I can look at the rest of the
+     positions"). The cap is the part that was actually asked for — the card
+     must not grow with the holdings — and it stays; only the mechanism for
+     reaching the rest changes. The pager rendered correctly (measured: ▲▼2,
+     three of five rows shown) but a 20px button bar under a row sliced in half
+     is not how anyone expects to read a table.
+     `overflow-y: auto` with NO `overscroll-behavior`, so reaching the last
+     position carries on scrolling the page — the same configuration #newsList
+     uses, and the one that avoids the wheel-eating fault documented at the top
+     of this file. `scrollbar-gutter: stable` reserves the track so the columns
+     do not shift the moment an account gains a sixth holding. */
+  .acct-positions {
+    padding: 0 var(--space-4) var(--space-3);
+    overflow-x: auto; overflow-y: auto; max-height: 120px;
+    scrollbar-width: thin; scrollbar-gutter: stable;
+  }
 
   /* shared chart chrome — crosshair tip + wrap, used by the heatmap and the
      stochastic-charts workbench (the equity-curves panel that also used these
@@ -1412,8 +1428,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260821b"></script>
-<script src="scripts/data.js?v=20260821b"></script>
-<script src="scripts/app.js?v=20260821b"></script>
+<script src="scripts/config.js?v=20260821c"></script>
+<script src="scripts/data.js?v=20260821c"></script>
+<script src="scripts/app.js?v=20260821c"></script>
 </body>
 </html>
