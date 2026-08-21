@@ -136,16 +136,53 @@ export function accountKeyMap(accountIds: string[]): (id: string) => number | nu
 // once Stooq began serving its HTML JS-challenge page as HTTP 200 every synced
 // position chip silently lost its day-% — the sync still "succeeded", the
 // number just quietly went missing. Stooq stays as the backstop.
+/* The baseline is the SECOND-TO-LAST DAILY BAR, never `meta.chartPreviousClose`
+   (owner-facing fault found 2026-08-21). That field is the close preceding the
+   REQUESTED RANGE, so on this 5-day call it reads five sessions back and the
+   "day" percentage is really a WEEK's move — measured on KO the same minute:
+   0.17% against this range's 3.52%. desk-market already documents this exact
+   trap and takes the prior bar for the same reason; this helper and its twin in
+   desk-ibkr-sync were the two places that still trusted the field. They are
+   separate deployments with no shared module, so the fix is duplicated by
+   necessity — keep the two in step.
+   Which bar is "prior" depends on whether the last one is TODAY: mid-session it
+   is today's still-forming bar and the prior session is the one before it, but
+   before today's bar exists the last bar IS the prior session. Decided on the
+   bar's own ET date rather than on a clock, so half-days and holidays need no
+   special case.
+   One bounded difference is known and accepted: on an EX-DIVIDEND date the raw
+   prior close and Yahoo's own adjusted `chartPreviousClose` disagree by the
+   dividend (measured on MSFT 2026-08-20: 484.31 raw against 483.40 adjusted,
+   a $0.91 payout, moving the reading 0.18pt). The raw close is taken, because
+   that is what desk-market already uses and a desk whose panels disagree with
+   each other by a dividend is worse than one that differs from Yahoo's own
+   adjusted figure on the handful of days a year a name goes ex. */
 async function yahooDayPct(symbol: string): Promise<number | null> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
   const res = await fetch(url, { headers: UA });
   if (!res.ok) return null;
   const j = await res.json().catch(() => null);
   // deno-lint-ignore no-explicit-any
-  const m = (j as any)?.chart?.result?.[0]?.meta;
-  const price = Number(m?.regularMarketPrice);
-  const prev = Number(m?.chartPreviousClose ?? m?.previousClose);
-  if (!Number.isFinite(price) || !Number.isFinite(prev) || prev <= 0) return null;
+  const r = (j as any)?.chart?.result?.[0];
+  const price = Number(r?.meta?.regularMarketPrice);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const closes: number[] = [], stamps: number[] = [];
+  const rawC = r?.indicators?.quote?.[0]?.close || [];
+  const rawT = r?.timestamp || [];
+  for (let i = 0; i < rawC.length; i++) {
+    const c = Number(rawC[i]);
+    if (!Number.isFinite(c) || c <= 0) continue;
+    closes.push(c);
+    stamps.push(Number(rawT[i]));
+  }
+  if (!closes.length) return null;
+  const etDate = (sec: number) =>
+    new Date(sec * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const lastIsToday = Number.isFinite(stamps[stamps.length - 1]) &&
+    etDate(stamps[stamps.length - 1]) === today;
+  const prev = lastIsToday ? closes[closes.length - 2] : closes[closes.length - 1];
+  if (!Number.isFinite(prev) || prev <= 0) return null;
   return Number(((price / prev - 1) * 100).toFixed(2));
 }
 async function stooqDayPct(symbol: string): Promise<number | null> {
