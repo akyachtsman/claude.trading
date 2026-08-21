@@ -213,7 +213,19 @@ async function stooqDayPct(symbol: string): Promise<number | null> {
   if (closes.length < 2) return null;
   return Number(((closes[closes.length - 1] / closes[closes.length - 2] - 1) * 100).toFixed(2));
 }
-async function dayPctFor(symbol: string): Promise<number | null> {
+/* IBKR's Flex feed pads an OCC option symbol to fixed width — "AVAV
+   261002C00180000" with two spaces — and Yahoo 404s on that. Stripping the
+   internal whitespace resolves all four of the owner's option positions
+   (verified 2026-08-21: AVAV, LULU, NFLX and SPCX all priced), so these stop
+   being unquotable and start carrying a real day-%. The underlying ticker is
+   never guessed from the option symbol: an option's move is its own, and
+   reporting the stock's percentage against a contract would be a wrong number
+   wearing a plausible face. */
+function upstreamSymbol(symbol: string): string {
+  return symbol.replace(/\s+/g, '');
+}
+async function dayPctFor(raw: string): Promise<number | null> {
+  const symbol = upstreamSymbol(raw);
   try {
     const via = await yahooDayPct(symbol).catch(() => null);
     if (via !== null) return via;
@@ -351,7 +363,12 @@ Deno.serve(async (req) => {
       total_unrl: a.totalUnrl,
       cash: a.cash,
       // deno-lint-ignore no-explicit-any
-      positions: a.positions.map((p: any) => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: pct[p.sym] ?? 0, unrl: p.unrl })),
+      /* `?? null`, NOT `?? 0`. A symbol the feeds could not price is UNKNOWN,
+         and storing 0 made the dashboard state that the position finished flat
+         — which is exactly what it did for four option positions, one of them
+         down 38% (owner check 2026-08-21). The client renders a null as an em
+         dash; the same rule the watchlist rail already follows. */
+      positions: a.positions.map((p: any) => ({ sym: p.sym, qty: p.qty, mkt: p.mkt, dayPct: pct[p.sym] ?? null, unrl: p.unrl })),
       // deno-lint-ignore no-explicit-any
     })).filter((s: any) => s.account_key);
     // deno-lint-ignore no-explicit-any

@@ -488,7 +488,16 @@ function renderAccounts(accounts, lamp) {
       const cells = [
         [p.sym + ' × ' + p.qty, p.sym, ''],
         [fmtUsd0(p.mkt), p.mkt, ''],
-        [fmtPct(p.dayPct), p.dayPct, p.dayPct > 0 ? 'up' : p.dayPct < 0 ? 'down' : ''],
+        /* A missing day-% renders as an em dash, NEVER as 0.00%. `fmtPct(null)`
+           returns "+0.00%" — null >= 0 is true — so an unresolved symbol was
+           claiming the position finished flat. That is the same rule the
+           watchlist rail already follows, and it mattered here: four option
+           positions were reading 0.00% while one of them was down 38%. Sorted
+           to the bottom rather than treated as zero, so an unknown never ranks
+           between a loser and a winner. */
+        [Number.isFinite(p.dayPct) ? fmtPct(p.dayPct) : '—',
+         Number.isFinite(p.dayPct) ? p.dayPct : -Infinity,
+         p.dayPct > 0 ? 'up' : p.dayPct < 0 ? 'down' : ''],
         [fmtSigned(p.unrl), p.unrl, p.unrl > 0 ? 'up' : p.unrl < 0 ? 'down' : ''],
       ];
       for (const [text, sort, cls] of cells) {
