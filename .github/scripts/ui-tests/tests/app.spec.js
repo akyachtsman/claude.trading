@@ -2606,6 +2606,19 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
     .toBeGreaterThanOrEqual(fit.need);
 
   // removal
+  /* Wait for the rail to STOP repainting before clicking. renderWatchlist ends
+     by repainting this rail, and the watchlist feed lands independently of the
+     charts feed, so on a slow mobile-emulated run the × can be detached and
+     rebuilt underneath the click — Playwright reports "element is not stable",
+     then "element was detached from the DOM". That is a race in the harness,
+     not a dead control, so it is waited out rather than forced: a `force`
+     click would skip the actionability check and stop this step proving the
+     button is genuinely clickable. */
+  await expect(async () => {
+    const before = await page.locator('.wb-rail-manual').innerHTML();
+    await page.waitForTimeout(250);
+    expect(await page.locator('.wb-rail-manual').innerHTML()).toBe(before);
+  }).toPass({ timeout: 10000 });
   await page.locator('.wb-rail-manual .wb-rail-x').first().click();
   await page.waitForTimeout(300);
   expect(await manual(), 'the × removes one entry').toEqual(['QQQ']);
@@ -2741,9 +2754,13 @@ test('S42: watchlist columns page instead of scrolling', async ({ page, browserN
   // The bar and a tile must be on screen TOGETHER: elementFromPoint returns
   // null outside the viewport, so a below-the-fold button reports no hover and
   // the check passes or fails on where the page happens to be scrolled.
-  await page.locator('.wl-page-bar').scrollIntoViewIfNeeded();
+  /* SCOPED to the watchlist strip. `.wl-page-bar` is no longer unique to this
+     panel: the accounts positions table pages with the same shared control, so
+     a bare selector resolves to two elements and strict mode rejects it. This
+     scenario is about the watchlist columns, so it must say so. */
+  await page.locator('.wl-strip .wl-page-bar').first().scrollIntoViewIfNeeded();
   await page.waitForTimeout(200);
-  const bar = await page.locator('.wl-page-bar .wl-page').nth(1).boundingBox();
+  const bar = await page.locator('.wl-strip .wl-page-bar .wl-page').nth(1).boundingBox();
   const grab = await page.evaluate(() => {
     const t = [...document.querySelectorAll('.wl-strip .mkt-group .wl-tile')]
       .find(e => { const r = e.getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; });

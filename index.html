@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260820d">
-<link rel="stylesheet" href="styles/components.css?v=20260820d">
+<link rel="stylesheet" href="styles/tokens.css?v=20260821a">
+<link rel="stylesheet" href="styles/components.css?v=20260821a">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -121,7 +121,13 @@
      row lost ~580px of demand and the higher gate was just holding the layout
      back. Below 1400 the two rows stack exactly as before. */
   @media (min-width: 1120px) {
-    .desk-row { display: flex; align-items: flex-start; gap: var(--space-4); }
+    /* STRETCH, not flex-start (owner request 2026-08-21: "I want all of these
+       windows to be as tall as the bottom of the Real Estate XLRE box"). The
+       band is the taller half — Markets runs to its last sector row — and with
+       flex-start the boxes half stopped at its own content and left ~690px of
+       empty page beside the news. Stretching hands that height to Ask instead
+       of to nothing. */
+    .desk-row { display: flex; align-items: stretch; gap: var(--space-4); }
     /* Markets + News keep their intrinsic widths; the accounts half takes the
        remainder, because Ask is the panel that actually benefits from slack —
        it holds a conversation, while the other three hold fixed-shape data. */
@@ -131,6 +137,31 @@
        one for the pair so the spacing below matches every other block. */
   }
   @media (min-width: 1120px) { .desk-row { margin-bottom: var(--space-4); } }
+
+  /* ── ONE BOTTOM LINE FOR THE WHOLE ROW ────────────────────────────────────
+     Owner request 2026-08-21: "I want all of these windows to be as tall as
+     the bottom of the Real Estate XLRE box." MARKETS is the measuring column —
+     its content is fixed (four index tiles, a chart, eleven sector rows), so it
+     is the one panel whose height is a property of the desk rather than of
+     whatever the feeds returned today. Everything else is fitted to it.
+
+     NEWS is taken OUT OF FLOW to achieve that. An absolutely-positioned panel
+     contributes nothing to the line's cross size, so the only column still
+     measuring its own content is Markets, and News resolves against whatever
+     height that lands on. No flex alignment can express "let the SHORTER column
+     drive the taller one" — `stretch` gives the row to the tallest, which is
+     the wrong way round here: demo carries 8 headlines and the owner's live
+     feed 20, so News is the column that runs past XLRE.
+     Its list keeps `overflow-y: auto` and, deliberately, NO `overscroll-behavior`
+     — reaching the end of the headlines carries on scrolling the page. That is
+     the one body on this row that genuinely has more content than column. */
+  @media (min-width: 1120px) {
+    .top-band > .col-news { position: relative; align-self: stretch; }
+    .top-band > .col-news > .panel { position: absolute; inset: 0; display: flex; flex-direction: column; margin: 0; }
+    .top-band > .col-news > .panel > .panel-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .top-band > .col-news #newsList { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+
+  }
 
   @media (min-width: 1120px) {
     .top-band { flex-wrap: nowrap; align-items: stretch; }
@@ -220,8 +251,10 @@
      is empty and grows with the conversation up to 420, past which the thread
      scrolls inside. That keeps the compact idle panel that was asked for
      without making the assistant unusable the moment it replies.
-     `align-self: start` stops it being stretched to the accounts row beside
-     it. */
+     Both the 420 cap and the `align-self: start` that went with it are LIFTED
+     at the desk-row breakpoint (owner request 2026-08-21) — see the override
+     below. They still apply on a narrow screen, where the panels are stacked
+     and there is no row height to fill. */
   .top-boxes > .col-rail { align-self: start; }
   .top-boxes > .col-rail > .panel { min-height: 158px; max-height: 420px; flex: 0 0 auto; display: flex; flex-direction: column; }
   /* `.top-boxes .panel-body` caps its children at 320px and scrolls them — right
@@ -346,6 +379,24 @@
        without losing a word of the copy */
     .top-boxes .panel-lock .lock-explain { font-size: var(--font-sm); line-height: 1.35; margin: 0 0 var(--space-2); }
     .top-boxes .panel-lock .panel-body { padding-top: var(--space-2); }
+  }
+
+  /* Placed AFTER the block above on purpose: these lift that block's own
+     `align-self: start` and the 420px cap set further up the file, and a rule
+     of equal specificity only wins by coming later. */
+  @media (min-width: 1120px) {
+    /* Ask fills the row instead of stopping at 420 and leaving ~690px of empty
+       page beside the news. The cap and the `align-self: start` that went with
+       it were written when this panel sat above open space; with a row height
+       to fill, the extra goes to the thread, which is the part that was
+       reported unreadable when it was starved. */
+    .top-boxes > .col-rail { align-self: stretch; }
+    .top-boxes > .col-rail > .panel { max-height: none; flex: 1 1 auto; }
+
+    /* The account cards stretch to the same line rather than stopping 204px
+       short. The grid rows share the height, so two cards split it. */
+    .top-boxes > .area-accounts { align-self: stretch; }
+    .top-boxes .account-grid { flex: 1 1 auto; min-height: 0; align-content: stretch; }
   }
   /* the label column is 78px (long names wrap to 2 lines) and the band padding
      is trimmed, so a band stays one tile-height tall. */
@@ -1350,8 +1401,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260820d"></script>
-<script src="scripts/data.js?v=20260820d"></script>
-<script src="scripts/app.js?v=20260820d"></script>
+<script src="scripts/config.js?v=20260821a"></script>
+<script src="scripts/data.js?v=20260821a"></script>
+<script src="scripts/app.js?v=20260821a"></script>
 </body>
 </html>
