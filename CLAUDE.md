@@ -453,8 +453,20 @@ This project's look is its own — established at kickoff via `/design-intake`
   It also matters that the owner's browser reports `innerWidth` 1152, the same
   trap the watchlist column layout hit at 1900.
   **What is capped is the POSITIONS TABLE, not the column** (`.acct-positions`,
-  `max-height: 120px` ≈ three rows, paged by the shared ▲/▼): "don't allow the
-  accounts to grow with positions. Use a scroll button." Capping the whole
+  `max-height: 120px` ≈ three rows): "don't allow the accounts to grow with
+  positions. Use a scroll button." It carries an **ordinary scrollbar**
+  (`overflow-y: auto`, `scrollbar-width: thin`, `scrollbar-gutter: stable`) —
+  it was paged by the shared ▲/▼ for a few hours on 2026-08-20 and the owner
+  asked for a scrollbar instead the next morning ("need scroll bar inside so I
+  can look at the rest of the positions"). The pager was not broken (measured:
+  `▲▼2`, three of five rows shown); a 20px button bar under a row sliced in
+  half is simply not how anyone expects to read a table. **The cap is the part
+  that was asked for** and it stays; only the mechanism for reaching the rest
+  changed. NO `overscroll-behavior` here, so the last position chains on to
+  scrolling the page — the same configuration `#newsList` uses, and the one
+  that avoids the wheel-eating fault. This is the one place a scrollbar beat
+  the paging idiom: the watchlist columns keep theirs, because there the wheel
+  had nowhere to chain from six short containers. Capping the whole
   accounts column was built first and is WRONG — the header takes most of a
   short column, so the cards themselves were left a **31px sliver**, which stops
   the growth by hiding the thing the panel exists for. Three rows rather than a
