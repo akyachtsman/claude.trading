@@ -400,6 +400,16 @@ This project's look is its own — established at kickoff via `/design-intake`
   leave **~690px of empty page** beside the news), Ask loses its 420px cap and
   its `align-self: start` so the slack goes to the thread, and the account
   cards stretch to the same line instead of stopping 204px short.
+  **ASK is taken out of flow inside its own column too**, for the same reason
+  and after the same fault reached the owner: with the 420px cap lifted, a long
+  answer dragged the whole row down past Markets and the panel ran on down the
+  page ("anything below the real estate should be cut off", 2026-08-21). A flex
+  line's height is the MAX of its items, so `stretch` alone cannot express "fill
+  this row but never set it". **Demo cannot show this** — `.ask-thread:empty` is
+  `display: none`, so with no conversation there is nothing to overflow; it
+  needs a forced live+authed session with answers in the thread, which is how
+  it was finally measured (3,129px of answer, row held at 927, thread scrolling
+  internally).
   **NEWS is taken OUT OF FLOW to make that possible** — the documented device,
   and this is the case that justifies it: an absolutely-positioned panel
   contributes nothing to the line's cross size, so Markets stays the only

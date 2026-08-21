@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260821a">
-<link rel="stylesheet" href="styles/components.css?v=20260821a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260821b">
+<link rel="stylesheet" href="styles/components.css?v=20260821b">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -390,8 +390,19 @@
        it were written when this panel sat above open space; with a row height
        to fill, the extra goes to the thread, which is the part that was
        reported unreadable when it was starved. */
-    .top-boxes > .col-rail { align-self: stretch; }
-    .top-boxes > .col-rail > .panel { max-height: none; flex: 1 1 auto; }
+    /* Ask is taken OUT OF FLOW inside its column, exactly as News is in the
+       band beside it, and for the same reason: a flex line's height is the MAX
+       of its items, so a long answer would drag the whole row down past the
+       Markets column and the panel would run on down the page (owner report
+       2026-08-21: "anything below the real estate should be cut off"). Stretch
+       alone cannot express "fill this row but never set it" — an
+       absolutely-positioned panel contributes nothing to the line's cross size,
+       so Markets stays the ruler and Ask resolves against it.
+       Demo never showed this: `.ask-thread:empty` is `display: none`, so with
+       no conversation there is nothing to overflow. It needs a live authed
+       session with a real answer in the thread. */
+    .top-boxes > .col-rail { align-self: stretch; position: relative; min-height: 0; }
+    .top-boxes > .col-rail > .panel { position: absolute; inset: 0; max-height: none; min-height: 0; margin: 0; }
 
     /* The account cards stretch to the same line rather than stopping 204px
        short. The grid rows share the height, so two cards split it. */
@@ -1401,8 +1412,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260821a"></script>
-<script src="scripts/data.js?v=20260821a"></script>
-<script src="scripts/app.js?v=20260821a"></script>
+<script src="scripts/config.js?v=20260821b"></script>
+<script src="scripts/data.js?v=20260821b"></script>
+<script src="scripts/app.js?v=20260821b"></script>
 </body>
 </html>
