@@ -254,6 +254,22 @@ This project's look is its own — established at kickoff via `/design-intake`
   `quote-proxy kind:'info'` gained `extPrice`/`extPct`/`extAt`, which reaches the
   charts quote readout AND the assistant at once — `desk-ask`'s `get_quote`
   forwards `info` verbatim, so it needed no change.
+  **A position's day-% is NULL when unknown, never 0** (`desk-ibkr-sync`, owner
+  check 2026-08-21). The write was `pct[p.sym] ?? 0`, so any symbol the feeds
+  could not price was stored as FLAT — and the client made it worse, because
+  `fmtPct(null)` returns `+0.00%` (`null >= 0` is true). Four option positions
+  read 0.00% on the dashboard while **AVAV was down 38.4% and SPCX 19.5%**: the
+  largest moves in the account were the ones claiming they had not moved. The
+  row now renders an **em dash** with no gain/loss class and sorts to the
+  bottom (`-Infinity`), so an unknown never ranks between a loser and a winner —
+  the same rule the watchlist rail already followed.
+  **OCC option symbols are stripped of IBKR's padding before the upstream
+  call** (`upstreamSymbol`). Flex pads to fixed width — `AVAV  261002C00180000`
+  — and Yahoo 404s on that; without the spaces all four resolve, so these
+  positions carry a real day-% instead of nothing. The underlying ticker is
+  never substituted: an option's move is its own, and reporting the stock's
+  percentage against a contract would be a wrong number wearing a plausible
+  face.
   **Day-% is measured against the SECOND-TO-LAST DAILY BAR, never
   `meta.chartPreviousClose`** (owner-facing fault found 2026-08-21). That field
   is the close preceding the REQUESTED RANGE, so on a 5-day call it reads five
