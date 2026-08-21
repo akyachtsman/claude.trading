@@ -390,6 +390,39 @@ This project's look is its own — established at kickoff via `/design-intake`
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
+  **EVERY COLUMN IN THE DESK ROW ENDS ON ONE LINE at ≥1120px** (owner request
+  2026-08-21: "I want all of these windows to be as tall as the bottom of the
+  Real Estate XLRE box"). **MARKETS is the measuring column** — four index
+  tiles, a chart and eleven sector rows is content fixed by the desk rather
+  than by whatever the feeds returned today, so it is the only honest ruler.
+  Everything else is fitted to it: `.desk-row` goes `align-items: stretch`
+  (it was `flex-start`, which let the boxes half stop at its own content and
+  leave **~690px of empty page** beside the news), Ask loses its 420px cap and
+  its `align-self: start` so the slack goes to the thread, and the account
+  cards stretch to the same line instead of stopping 204px short.
+  **NEWS is taken OUT OF FLOW to make that possible** — the documented device,
+  and this is the case that justifies it: an absolutely-positioned panel
+  contributes nothing to the line's cross size, so Markets stays the only
+  column measuring itself and News resolves against whatever height it lands
+  on. No flex alignment can express "let the SHORTER column drive the taller
+  one" — `stretch` gives the row to the tallest, which is backwards here, since
+  demo carries 8 headlines and the live feed 20 and News is the column that
+  runs past XLRE. `#newsList` keeps `overflow-y: auto` and deliberately NO
+  `overscroll-behavior`, so reaching the last headline carries on scrolling the
+  page; it is the one body on this row with genuinely more content than column.
+  One ordering trap: the Ask and accounts overrides must sit **later in the
+  stylesheet** than the base `align-self: start` and `max-height: 420px` they
+  lift — equal specificity, so source order is the whole mechanism, and placed
+  earlier they silently did nothing (measured: Ask stayed at 158 while News and
+  Markets moved). Measured at 1512/1280/1152: all four panels end at 927 with
+  XLRE at 912. Below 1120 the row stacks and every one of these rules is inert.
+  **The watchlist change pill reads at the PRICE's size** (`.wl-pct`, 9 → 12px,
+  owner request 2026-08-21: "bigger, but try to not resize the boxes"). It was
+  the smallest thing on a tile whose whole job is to show a move. The tile is
+  held at 76 × 63 by paying for the type out of the pill's own leading and side
+  padding — 9px at 1.3 is 11.7px tall, 12px at 1.05 is 12.6 — so the row grows
+  by **one pixel**, not four, and the widest real value still sits inside the
+  66px of usable width with nothing clipped (S27 guards exactly this).
   **The desk row (`.top-boxes`) reads Ask | Accounts at ≥1120px** — Ask on the
   left taking whatever is left, the accounts as a fixed **232px column** on its
   right with the cards **stacked one per row** (owner request 2026-08-20:
