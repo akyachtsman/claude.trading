@@ -265,7 +265,18 @@ This project's look is its own — established at kickoff via `/design-intake`
   13.12% on a 2.59% day, META −8.26% on a −0.04% day — and the new one matches
   to 0.00 on 15. Which bar counts as "prior" depends on whether the last one is
   TODAY, decided on the bar's own ET date so half-days and holidays need no
-  special case. The two helpers are separate deployments with no shared module,
+  special case — and read off the QUOTE'S OWN TIMESTAMP
+  (`meta.regularMarketTime`), **never the wall clock**. That distinction is the
+  whole rule: the first cut compared the last bar's date against `new Date()`
+  and shipped, and at 00:48 ET the clock had rolled to the new date while both
+  the newest bar and the quote were still the prior session — so it concluded
+  the last bar was not today, took that same bar as the baseline, and measured
+  its close against itself. **Every symbol read 0.00%** (caught on FRMI against
+  a real +3.65% move), and 09:35 UTC — when the sync cron runs — is squarely
+  inside that window, so it would have written a zero for every position in the
+  account. Comparing the quote's ET date with the last bar's ET date holds at
+  every hour. Do not "simplify" this back to a clock comparison.
+  The two helpers are separate deployments with no shared module,
   so the fix is duplicated by necessity — keep them in step. One accepted
   difference: on an EX-DIVIDEND date the raw prior close and Yahoo's adjusted
   one differ by the payout (MSFT 2026-08-20: 484.31 vs 483.40, 0.18pt). The raw
