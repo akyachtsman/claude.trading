@@ -254,6 +254,23 @@ This project's look is its own — established at kickoff via `/design-intake`
   `quote-proxy kind:'info'` gained `extPrice`/`extPct`/`extAt`, which reaches the
   charts quote readout AND the assistant at once — `desk-ask`'s `get_quote`
   forwards `info` verbatim, so it needed no change.
+  **Day-% is measured against the SECOND-TO-LAST DAILY BAR, never
+  `meta.chartPreviousClose`** (owner-facing fault found 2026-08-21). That field
+  is the close preceding the REQUESTED RANGE, so on a 5-day call it reads five
+  sessions back and a "day" percentage is really a WEEK's move. `desk-market`
+  already documented the trap and took the prior bar; `desk-news` (news chip
+  day-%) and `desk-ibkr-sync` (**the day-% stored for every position in the
+  owner's accounts**) both still trusted the field. Measured against Yahoo's own
+  1-day baseline on 16 names, the old form was wrong on **all 16** — GDX read
+  13.12% on a 2.59% day, META −8.26% on a −0.04% day — and the new one matches
+  to 0.00 on 15. Which bar counts as "prior" depends on whether the last one is
+  TODAY, decided on the bar's own ET date so half-days and holidays need no
+  special case. The two helpers are separate deployments with no shared module,
+  so the fix is duplicated by necessity — keep them in step. One accepted
+  difference: on an EX-DIVIDEND date the raw prior close and Yahoo's adjusted
+  one differ by the payout (MSFT 2026-08-20: 484.31 vs 483.40, 0.18pt). The raw
+  close is taken, because desk-market uses it and panels disagreeing with each
+  other by a dividend is worse than differing from Yahoo's adjusted figure.
 - `config/news-feeds.json` / `config/chart-watchlist.json` /
   `config/map-filters.json` — owner-editable rosters read by the edge
   functions at runtime (watchlist NEVER derived from holdings — public repo).
