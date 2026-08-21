@@ -1,7 +1,6 @@
 {
   "upstream": {
-    "sha": null,
-    "synced": "2026-07-17",
-    "note": "Rules re-read and all 5 directive references validated (HTTP 200). Upstream SHA unavailable this session: claude.directives is outside the GitHub MCP/api scope; only raw file URLs were reachable, which do not expose a commit SHA. A session scoped with read access to claude.directives can backfill upstream.sha to enable the Phase-2 delta."
+    "sha": "5e2510e3f4bc73ff815bee795454c0e1978e0962",
+    "synced": "2026-08-21"
   }
 }
