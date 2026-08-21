@@ -227,12 +227,30 @@ async function yahooDayPct(symbol: string): Promise<number | null> {
     stamps.push(Number(rawT[i]));
   }
   if (!closes.length) return null;
+  /* Which session the PRICE belongs to is read off the quote's own timestamp,
+     NEVER off the wall clock (fixed 2026-08-21, hours after the first cut
+     shipped with the clock version). The two differ for most of the day: at
+     00:48 ET the clock says "today" is the new date while the newest bar and
+     the quote are both still the previous session, so a clock comparison
+     concluded the last bar was not today, took that same bar as the baseline,
+     and measured its close against itself — every symbol read 0.00%, verified
+     on FRMI against a real +3.65% move. Overnight is precisely when the sync
+     cron runs (09:35 UTC), so this would have written a zero for every
+     position in the account.
+     Comparing the quote's ET date with the last bar's ET date is true at every
+     hour: mid-session both are today, after the close both are still today,
+     and before the next session's bar exists both are still the prior day. */
   const etDate = (sec: number) =>
     new Date(sec * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-  const lastIsToday = Number.isFinite(stamps[stamps.length - 1]) &&
-    etDate(stamps[stamps.length - 1]) === today;
-  const prev = lastIsToday ? closes[closes.length - 2] : closes[closes.length - 1];
+  const quoteTs = Number(r?.meta?.regularMarketTime);
+  const lastTs = stamps[stamps.length - 1];
+  /* No usable timestamp on either side falls back to a VALUE test, which
+     answers the same question: a price equal to the last bar's close IS that
+     bar, so the baseline is the one before it. */
+  const priceIsLastBar = Number.isFinite(quoteTs) && Number.isFinite(lastTs)
+    ? etDate(quoteTs) === etDate(lastTs)
+    : Math.abs(price - closes[closes.length - 1]) < 1e-6;
+  const prev = priceIsLastBar ? closes[closes.length - 2] : closes[closes.length - 1];
   if (!Number.isFinite(prev) || prev <= 0) return null;
   return Number(((price / prev - 1) * 100).toFixed(2));
 }
