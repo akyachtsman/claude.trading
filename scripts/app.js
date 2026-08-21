@@ -2209,7 +2209,17 @@ function drawWlDetailChart(bars) {
   const pad = span * 0.05;
   const yTop = hi + pad, yBot = lo - pad;
   const y = v => PAD_T + (yTop - v) / (yTop - yBot) * priceH;
-  const step = plotW / n;
+  /* A GAP between the newest candle and the price scale (owner report
+     2026-08-19: today's jump was "really hard to see… on the right"). The
+     series used to run the full plot width, so the last bar's centre landed at
+     plotW - step/2 and on a dense span that is a pixel or two — today's candle,
+     which is the one being looked at, sat welded to the frame and the axis.
+     The GAP is taken out of the SERIES width only, not out of plotW: the
+     gridlines, the price labels and the end date all still measure the full
+     box, so the frame is unchanged and only the candles step back from it. */
+  const GAP_R = 18;
+  const seriesW = Math.max(1, plotW - GAP_R);
+  const step = seriesW / n;
   const bw = Math.max(1, Math.min(14, step * 0.66));
 
   /* Horizontal price grid + right-hand scale. Five lines is enough to read a
