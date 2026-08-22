@@ -1,5 +1,6 @@
 # qa-response.yml — Event-driven QA triggered by repository_dispatch.
-# Copy to .github/workflows/qa-response.yml in your project.
+# Copy to .github/workflows/qa-response.yml in your project, along with the
+# composite actions from templates/actions/ into .github/actions/.
 # Triggers on qa-email-received, test-failure-reported, or manual-qa-trigger events.
 # Active sessions receive results and act autonomously without human intervention.
 #
@@ -9,7 +10,12 @@
 #     -d '{"event_type":"manual-qa-trigger"}'
 #
 # Required setup:
-#   - Add TEST_AUTH_CREDENTIAL as a repository secret (value from CLAUDE.md)
+#   - ⚠️ RULE W1 — this workflow is part of the standard set, and ci-monitor.yml
+#     and ci-notify.yml ship watching it. If you OMIT it, remove
+#     'QA — Event-Driven Response' from both lists in the same edit.
+#     Why: docs/standards/automations.md -> Watcher Rules (W1).
+#   - Add TEST_AUTH_CREDENTIAL as a repository secret — skip if the project
+#     has no auth; the empty secret makes auth tests self-skip
 #   - Add APP_URL as a repository variable (live URL)
 #   - Set UI_TESTS_DIR below to the path of your Playwright test directory
 
@@ -59,59 +65,44 @@ jobs:
           echo "Event type: $EVENT_ACTION"
           echo "Payload: $CLIENT_PAYLOAD"
 
-      - name: Secret scan
-        run: |
-          # Canonical secret-scan pattern — keep identical to global.md and qa.yml.
-          if grep -rE \
-            'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb-' \
-            --include="*.js" --include="*.html" --include="*.css" --include="*.json" \
-            --exclude-dir=node_modules --exclude-dir=.git .; then
-            echo "ERROR: potential API token found in source files"
-            exit 1
-          fi
+      # Secret scan (composite — single source of truth for the pattern)
+      - uses: ./.github/actions/secret-scan
 
   ui-tests:
     needs: static-checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # ⚠️ 40, NOT 20. This job runs ui-suite, whose COLD-cache path is
+    # `playwright install --with-deps chromium webkit` — measured at 21m25s
+    # (apfp.claude, run 32267163505). A 20-minute bound therefore killed every
+    # cold run before the tests began, and because `actions/cache` saves at job
+    # END the kill also skipped the save, leaving the next run equally cold. A
+    # bound below the work it bounds does not protect anything; it fails on a
+    # schedule. Warm runs finish in ~5 minutes, so this ceiling only ever applies
+    # to the cold path it exists to survive.
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      # Without APP_URL there is nothing to test against: the suite would run
+      # every scenario against the placeholder and fail for a config gap rather
+      # than a defect. Say so once and stop.
+      - name: Require APP_URL
+        if: ${{ vars.APP_URL == '' }}
+        run: |
+          echo "::error::APP_URL repository variable is not set — cannot run the live suite."
+          exit 1
+
+      # Blocking, against the live URL.
+      - uses: ./.github/actions/ui-suite
+        if: ${{ vars.APP_URL != '' }}
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: ${{ env.UI_TESTS_DIR }}/package-lock.json
-
-      - name: Install test dependencies
-        run: npm install
-        working-directory: ${{ env.UI_TESTS_DIR }}
-
-      - name: Install Playwright browsers
-        # Both browsers: playwright.config.js defines a webkit project (iPhone 12)
-        # alongside chromium (Pixel 5). Installing chromium alone fails that project.
-        run: npx playwright install --with-deps chromium webkit
-        working-directory: ${{ env.UI_TESTS_DIR }}
-
-      - name: Run Playwright tests
-        env:
-          APP_URL: ${{ vars.APP_URL }}
-          TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
-        run: npx playwright test --reporter=list
-        working-directory: ${{ env.UI_TESTS_DIR }}
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-results-response-${{ github.run_id }}
-          path: |
-            .agent-reports/screenshots/
-            .agent-reports/playwright-results.json
-          retention-days: 7
+          tests-dir: ${{ env.UI_TESTS_DIR }}
+          app-url: ${{ vars.APP_URL }}
+          test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+          artifact-name: playwright-results-response-${{ github.run_id }}
+          app-pages: ${{ vars.APP_PAGES }}
 
       # Results are available in the Actions tab for the active session to read
       # and act on via the GitHub MCP tools (pull_request_read, get_job_logs, etc.)

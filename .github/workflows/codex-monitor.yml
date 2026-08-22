@@ -7,42 +7,183 @@ name: Codex Monitor
 # comments. Approving / empty reviews are ignored. Flagged PRs get a
 # `codex-flagged` label (Codex already posted suggestions inline, so no duplicate
 # comment). Uses only GITHUB_TOKEN.
+#
+# ⚠️ THE LABEL IS TWO-WAY, and the second direction needs a second trigger.
+# The merge gate consumes this label by testing for its ABSENCE, so a label
+# that is only ever added converts "Codex has concerns" into "Codex once had
+# concerns" — permanently red until someone clears it by hand, which both PRs
+# merged on 2026-08-19 needed. And the all-clear does NOT arrive as a review:
+# Codex posts flagged rounds as pull_request_review events but posts clean
+# verdicts ("Didn't find any major issues") as plain ISSUE COMMENTS — observed
+# on #237 and #238, 2026-08-19. A monitor listening only on pull_request_review
+# can hear the complaint but never the all-clear. That is why issue_comment is
+# a trigger here: not scope creep, the only path the all-clear travels.
 on:
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created]
 permissions:
   pull-requests: write
   issues: write   # labels are an issues-API scope
+
+# ⚠️ NO concurrency group here, and that is a decision, not an omission. A
+# group looked like the fix for out-of-order runs, but GitHub keeps AT MOST ONE
+# pending run per group and EVICTS the older pending run when another arrives —
+# even without cancel-in-progress. A pending FLAG run evicted by a later
+# comment event means the merge blocker is never added, which is the one
+# direction this monitor must never fail in. Ordering safety comes from the
+# newer-verdict holds in the script instead: their failure direction is a stale
+# label that costs a manual clear, never a missing one (Codex, #239).
 jobs:
   flag:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: ${{ github.event.review.user.login == 'chatgpt-codex-connector[bot]' }}
+    if: >-
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
     steps:
-      - name: Flag PR when Codex raised concerns
+      - name: Flag on concerns, clear on the all-clear
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event_name == 'pull_request_review' && github.event.pull_request.number || github.event.issue.number }}
           REVIEW_ID: ${{ github.event.review.id }}
           REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEW_COMMIT: ${{ github.event.review.commit_id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_AT: ${{ github.event.comment.created_at }}
+          REVIEW_AT: ${{ github.event.review.submitted_at }}
           FLAG_LABEL: 'codex-flagged'
         run: |
           set -euo pipefail
+          # Count Codex verdicts on the current head NEWER than this event's.
+          # Same-SHA races are real: a re-requested review means an earlier
+          # all-clear and a later flagged review can name the SAME commit, and
+          # the two runs are independent — the delayed clean one must not
+          # outvote the newer flagged one. Newest verdict wins; if ANYTHING
+          # from Codex postdates this event, hold and let that event's own run
+          # decide. Holding is the conservative direction: it costs a manual
+          # clear, never a wrongly unblocked merge. Fails loudly (assignment):
+          # an unreadable review list must not read as "no newer verdict".
+          newer_codex_verdicts() { # $1 = this verdict's timestamp (RFC3339)
+            gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate \
+              --jq "[.[] | select(.user.login==\"chatgpt-codex-connector[bot]\")
+                         | select(.commit_id==\"$head_sha\")
+                         | select(.submitted_at > \"$1\")] | length" \
+              | awk '{s+=$1} END {print s+0}'
+          }
+
+          clear_flag() {
+            # DELETE on an absent label 404s, so check first — but the check
+            # itself must fail loudly: absence-because-the-API-died reads
+            # exactly like absence-because-it-was-never-set. The fetch is a
+            # SEPARATE assignment for that reason: inside an `if` condition,
+            # `set -e` is suspended and a dead API would take the quiet branch
+            # (Codex, #239). As an assignment, a gh failure kills the step red.
+            labels=$(gh api "repos/$REPO/issues/$PR_NUMBER/labels" --paginate --jq '.[].name')
+            if printf '%s\n' "$labels" | grep -qxF "$FLAG_LABEL"; then
+              echo "Clearing stale $FLAG_LABEL from PR #$PR_NUMBER"
+              gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/$FLAG_LABEL"
+            else
+              echo "No $FLAG_LABEL on PR #$PR_NUMBER — nothing to clear."
+            fi
+          }
+
+          if [ "$EVENT" = "issue_comment" ]; then
+            # Clean verdicts travel ONLY this path (see header). Match on the
+            # stable prefix; the trailing flourish varies ("Hooray!", "Breezy!").
+            # The body is untrusted text: it is compared, never executed.
+            case "$COMMENT_BODY" in
+              "Codex Review: Didn't find any major issues"*)
+                # The verdict names its commit ("Reviewed commit: `<sha>`") and
+                # the label is a MERGE BLOCKER, so the SHA is load-bearing: a
+                # delayed all-clear for an older commit, arriving after a newer
+                # push or a flagged round, must not unblock a head Codex never
+                # cleared (Codex, #239; the rule is git.md's "match by SHA, not
+                # by clock"). Both fetches fail loudly — an unreadable head or
+                # an all-clear with no SHA holds the label rather than clearing.
+                # Bare backticks, deliberately: in GNU ERE a backslash-backtick
+                # is the start-of-buffer anchor, not an escaped backtick — the
+                # escaped form silently matches nothing (caught by the stub test
+                # for this very change, not by reading).
+                verdict_sha=$(printf '%s' "$COMMENT_BODY" \
+                  | grep -oE '`[0-9a-f]{7,40}`' | head -1 | tr -d '`' || true)
+                head_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+                if [ -z "$verdict_sha" ]; then
+                  echo "All-clear comment names no commit SHA — NOT clearing on it."
+                elif case "$head_sha" in "$verdict_sha"*) false;; *) true;; esac; then
+                  echo "All-clear is for $verdict_sha but head is $head_sha — stale verdict, NOT clearing."
+                else
+                  newer=$(newer_codex_verdicts "$COMMENT_AT")
+                  if [ "$newer" -gt 0 ]; then
+                    echo "$newer newer Codex verdict(s) postdate this all-clear — NOT clearing on it."
+                  else
+                    echo "Codex all-clear for the current head ($verdict_sha) on PR #$PR_NUMBER"
+                    clear_flag
+                  fi
+                fi
+                ;;
+              *)
+                echo "Codex comment is not an all-clear — no action."
+                ;;
+            esac
+            exit 0
+          fi
+
           echo "Codex review $REVIEW_ID on PR #$PR_NUMBER — state=$REVIEW_STATE"
-          # No fallback here on purpose: a transient API failure must fail the
-          # step (and get retried) rather than read as "0 inline comments" and
-          # silently skip the flag.
-          inline=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews/$REVIEW_ID/comments" \
-            --jq 'length')
-          echo "Inline comments on this review: $inline"
           state_lc=$(echo "$REVIEW_STATE" | tr '[:upper:]' '[:lower:]')
-          if [ "$state_lc" = "changes_requested" ] || \
-             { [ "$state_lc" = "commented" ] && [ "$inline" -gt 0 ]; }; then
+          # State FIRST, and the comments API only in the branch that needs it.
+          # Fetching the count up front meant a transient API failure aborted the
+          # step under `set -e` before changes_requested was ever examined — a
+          # state that needs no count at all. The failed run is visible enough
+          # (it goes red), but what CONSUMES this step is a merge gate testing
+          # for the ABSENCE of the label, and absence-because-the-labeller-died
+          # reads exactly like absence-because-Codex-was-happy.
+          flag=0
+          if [ "$state_lc" = "changes_requested" ]; then
+            flag=1                       # actionable on its own; count irrelevant
+          elif [ "$state_lc" = "commented" ]; then
+            # No fallback here on purpose. A `|| echo 0` would let a transient
+            # API failure read as "0 inline comments": the step SUCCEEDS, the run
+            # stays green, and the flag is skipped with nothing anywhere saying
+            # so. Failing is the lesser evil — but nothing re-runs this workflow
+            # automatically, so a red run has to be re-run by hand before the
+            # PR's flag state means anything either way.
+            inline=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews/$REVIEW_ID/comments" \
+              --jq 'length')
+            echo "Inline comments on this review: $inline"
+            if [ "$inline" -gt 0 ]; then flag=1; fi
+          fi
+          if [ "$flag" = 1 ]; then
             echo "Codex raised concerns — flagging PR #$PR_NUMBER"
             gh label create "$FLAG_LABEL" --repo "$REPO" --color D93F0B \
               --description "Codex reviewer raised concerns — review before merge" 2>/dev/null || true
             gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$FLAG_LABEL"
           else
-            echo "No actionable Codex concerns (clean/approving review). Skipping."
+            # An approving or empty review is also an all-clear — Codex does not
+            # send these today (see header), but if it ever does, hear it. Same
+            # SHA rule as the comment path: a review of an older commit must not
+            # clear the label a newer round earned.
+            head_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+            if [ -n "$REVIEW_COMMIT" ] && [ "$REVIEW_COMMIT" != "$head_sha" ]; then
+              echo "Clean review is for $REVIEW_COMMIT but head is $head_sha — stale, NOT clearing."
+            else
+              # Plain assignment, NOT inside the condition: set -e is suspended
+              # in an if/elif list, so an assignment there lets a dead reviews
+              # API fall through to the CLEAR branch — the exact class the
+              # label-fetch fix in this same file exists for, reintroduced one
+              # function away and caught by the stub suite, not by reading.
+              newer=$(newer_codex_verdicts "$REVIEW_AT")
+              if [ "$newer" -gt 0 ]; then
+                echo "$newer newer Codex verdict(s) postdate this clean review — NOT clearing on it."
+              else
+                echo "No actionable Codex concerns in this review."
+                clear_flag
+              fi
+            fi
           fi

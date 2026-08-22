@@ -1,0 +1,173 @@
+# Copy to .github/actions/ui-suite/action.yml in your project (the qa
+# workflows reference it as `uses: ./.github/actions/ui-suite`).
+#
+# Caveats baked into this design:
+# - Composite steps cannot carry per-step `timeout-minutes` — bound the run with
+#   the CALLING job's `timeout-minutes`. The qa workflows set 40, and that number
+#   is not arbitrary: the cold-cache install below was measured at 21m25s, so the
+#   20 they used to carry killed every cold run before a single test executed.
+#   If you lower it, measure the cold path first — the browser install is the
+#   whole cost, and a kill during it also skips the cache save that would have
+#   made the next run cheap.
+# - `advisory-run` flips ONLY the Playwright run step to continue-on-error;
+#   setup/install/server/upload always stay blocking, so a broken install can
+#   never pass green.
+name: 'UI test suite'
+description: >
+  Install deps + Playwright, optionally start a bundled local server, run the
+  suite, upload results. Single source of truth for the run block shared by
+  qa.yml, qa-live.yml and qa-response.yml.
+inputs:
+  tests-dir:
+    description: 'Directory containing playwright.config.js and package.json'
+    required: true
+  app-url:
+    description: 'URL the suite targets (local server or live deploy)'
+    required: true
+  test-auth-credential:
+    description: 'Seeded test credential; empty makes auth tests self-skip'
+    required: false
+    default: ''
+  artifact-name:
+    description: 'Name for the uploaded results artifact'
+    required: true
+  start-local-server:
+    description: "Set 'true' to serve server-root on :8080 via the bundled http-server"
+    required: false
+    default: 'false'
+  server-root:
+    description: 'Directory the local server serves'
+    required: false
+    default: '.'
+  app-pages:
+    description: >
+      Comma-separated extra HTML entry points (beyond the app root) that the
+      ENTRY scenario load-gates, e.g. 'admin.html,vendor/console.html'. Empty
+      means the app ships a single page. test.md makes a deployed page with zero
+      tests a release blocker, so leaving this empty is a claim, not a default.
+    required: false
+    default: ''
+  advisory-run:
+    description: "Set 'true' to make ONLY the run step advisory; setup/install/server/upload stay blocking."
+    required: false
+    default: 'false'
+  grep-invert:
+    description: >
+      ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
+      Playwright --grep-invert pattern excluding scenarios by title. Empty (the
+      default) runs everything, so an unset caller behaves exactly as upstream.
+      qa.yml passes 'live only' because this project's live-gated scenarios do
+      NOT self-skip against a local server: they gate on liveBackendConfigured(),
+      which reads the COMMITTED scripts/config.js, and this desk is live — so the
+      check returns true even on localhost and S14 then asserts the market lamp
+      reads LIVE/EOD within 20s against a CI runner that cannot reach Supabase.
+      Without this input the local UI job goes red, since it runs blocking
+      (advisory-run 'false'). qa-live.yml leaves it unset — it is the live gate
+      and must run those scenarios for real.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        # Requires a committed package-lock.json at this path — generate it
+        # once (`npm install` in tests-dir) and COMMIT it.
+        cache-dependency-path: ${{ inputs.tests-dir }}/package-lock.json
+
+    - name: Install test dependencies
+      shell: bash
+      run: npm install
+      working-directory: ${{ inputs.tests-dir }}
+
+    # Browsers are ~400MB and were re-downloaded on EVERY run. This is a BUDGET
+    # fix, not a hang fix, and the distinction was measured rather than assumed:
+    # downstream the install step SUCCEEDED in 21m25s, and the job then hit its
+    # 30-minute ceiling during the tests. Nothing was stuck; the setup simply ate
+    # the budget the tests needed (apfp.claude, 2026-08-19, run 32267163505).
+    # Caching removes a 21-minute step from a 30-minute job, which is decisive
+    # rather than probabilistic.
+    #
+    # ⚠️ Actions caches are scoped to the branch that SAVED them, so the first run
+    # on a new default branch still misses even when a PR branch populated one.
+    # Expect one more slow run after adopting this, then hits.
+    - name: Cache Playwright browsers
+      id: pw-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: pw-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.tests-dir)) }}
+
+    - name: Install Playwright browsers
+      # Both browsers: playwright.config.js defines a webkit project (iPhone 12)
+      # alongside chromium (Pixel 5). Installing chromium alone fails that project.
+      # On a cache hit the binaries are already present, so only the SYSTEM
+      # libraries need installing — those live in /usr/lib and are never cached.
+      #
+      # ⚠️ "only the system libraries" is NOT the same as "cheap", and reading it
+      # that way has already cost a downstream repo a broken run. Chromium's deps
+      # are largely preinstalled on the runner image, so `install-deps chromium`
+      # finishes in ~30s and invites the conclusion that the step is incidental.
+      # Webkit's are not: gstreamer, wayland, hyphen, enchant and flite come to
+      # roughly sixty packages and minutes, not seconds (apfp.claude, 2026-08-19).
+      # Do NOT bound this step on the chromium figure, and do NOT make it
+      # warn-and-continue — a partial install does not fail here, it fails later
+      # as every webkit test dying on a missing `libwayland-server.so.0`, which
+      # turns one clear message into fifty confusing ones.
+      shell: bash
+      run: |
+        if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+          npx playwright install-deps chromium webkit
+        else
+          npx playwright install --with-deps chromium webkit
+        fi
+      working-directory: ${{ inputs.tests-dir }}
+
+    # http-server is a pinned devDependency installed in tests-dir. Invoke its
+    # binary by path while staying at the repo root, so server-root still serves
+    # the app root AND nothing is fetched at runtime (works under locked egress).
+    - name: Start local server
+      if: ${{ inputs.start-local-server == 'true' }}
+      shell: bash
+      env:
+        TESTS_DIR: ${{ inputs.tests-dir }}
+        SERVER_ROOT: ${{ inputs.server-root }}
+      run: |
+        "./$TESTS_DIR/node_modules/.bin/http-server" "$SERVER_ROOT" -p 8080 --silent &
+        sleep 2
+
+    - name: Run Playwright tests
+      shell: bash
+      continue-on-error: ${{ inputs.advisory-run == 'true' }}
+      env:
+        APP_URL: ${{ inputs.app-url }}
+        TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
+        APP_PAGES: ${{ inputs.app-pages }}
+        GREP_INVERT: ${{ inputs.grep-invert }}
+      # No --reporter flag: a CLI reporter REPLACES the config's list, which
+      # would drop the json reporter and leave playwright-results.json unwritten
+      # while the upload step below still claims to publish it.
+      #
+      # The pattern goes through an env var and is quoted at the point of use —
+      # never interpolated into the command line — so a title containing spaces
+      # or shell metacharacters stays one argument.
+      run: |
+        if [ -n "$GREP_INVERT" ]; then
+          npx playwright test --grep-invert "$GREP_INVERT"
+        else
+          npx playwright test
+        fi
+      working-directory: ${{ inputs.tests-dir }}
+
+    - name: Upload test results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          .agent-reports/screenshots/
+          .agent-reports/playwright-results.json
+        retention-days: 7

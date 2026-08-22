@@ -1,0 +1,38 @@
+# Copy to .github/actions/secret-scan/action.yml in your project (the qa
+# workflows reference it as `uses: ./.github/actions/secret-scan`).
+name: 'Secret scan'
+description: Canonical repo secret scan — single source of truth for the token pattern.
+runs:
+  using: composite
+  steps:
+    - name: Secret scan
+      shell: bash
+      run: |
+        # Canonical secret-scan pattern — keep identical to global.md → Security
+        # (upstream's check-secret-scan.js enforces the byte-identical pairing).
+        # The last alternative wraps its trailing hyphen in a character class. Every
+        # other alternative is regex-shaped and so cannot match its own source text,
+        # but a bare literal prefix CAN — and once this scan covers *.md and *.yml it
+        # finds the pattern where the pattern is DEFINED and fails on every clean run.
+        # A character class matches real tokens identically while not matching the
+        # definition, which beats excluding the definition files: an exclusion would
+        # also hide a genuine secret pasted into them.
+        # (Like check-secret-scan.js, this comment names no token literally — writing
+        # one out here would re-create exactly the self-match it describes.)
+        # `|| rc=$?` is required: the step runs under `bash -eo pipefail`, where a
+        # bare grep exiting 1 (clean — no match) would abort the step.
+        rc=0
+        grep -rE \
+          'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb[-]' \
+          --include="*.js" --include="*.ts" --include="*.tsx" --include="*.mjs" --include="*.html" --include="*.css" --include="*.json" --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" \
+          --exclude-dir=node_modules --exclude-dir=.git . || rc=$?
+        # 0 = a match (a secret), 1 = clean, >=2 = grep itself failed. Folding
+        # the error case into "clean" is how a scan reports green after failing
+        # to run at all.
+        if [ "$rc" -eq 0 ]; then
+          echo "ERROR: potential API token found in source files"
+          exit 1
+        elif [ "$rc" -ge 2 ]; then
+          echo "ERROR: secret scan did not run (grep exit $rc)"
+          exit 1
+        fi

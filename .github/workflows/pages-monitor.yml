@@ -1,14 +1,42 @@
 name: Pages Monitor
-# Zero-model GitHub Pages deploy monitor. Fires on every Pages build (page_build),
+# Zero-model GitHub Pages deploy monitor. Fires on every Pages deploy,
 # verifies the deploy is healthy and the live URL is serving, and on a problem
 # opens/updates a single deduplicated tracking issue (which notifies the owner).
 # Success is reported in the job summary only — no inbox noise. Uses only
 # GITHUB_TOKEN — no external services. workflow_dispatch allows a manual liveness
 # re-check. The live URL comes from the Pages API (so user-site repos and custom
 # domains work), with a generic derivation as fallback — portable as-is.
+#
+# ⚠️ RULE W2 — `page_build` fires only for the MANAGED branch build. If your
+# Pages source is "GitHub Actions" it never fires and this monitor never runs.
+# ACTION: add a workflow_run trigger naming your own deploy workflow:
+#
+#   workflow_run:
+#     workflows: ['<your deploy workflow name>']
+#     types: [completed]
+#
+# The job below already handles that event — it normalises the two status
+# vocabularies. Do not pre-fill a guessed name.
+# Why: docs/standards/automations.md -> Watcher Rules (W2, W3 — a monitor may watch either source; a retry may not).
 on:
   page_build:
   workflow_dispatch:
+
+# ⚠️ RACE FIX. Two Pages deploys completing close together previously launched
+# independent monitors with no ordering, each mutating the same
+# `pages-deploy-failure` issue from its own event. The liveness check retries for
+# up to ~135s, so an OLDER run still inside that loop could `gh issue reopen`
+# after a NEWER successful run had already closed it — a red alarm on a healthy
+# site, and one that reads as a real outage. Serialising on a single group with
+# cancel-in-progress removes the race rather than narrowing it: the newest deploy
+# is the one whose liveness matters, and it probes the same URL the cancelled run
+# was probing, so nothing is lost by cancelling. Pre-dates the workflow_run
+# trigger — two `page_build` events could always collide; adding the second
+# source made it likelier, not possible.
+# (Confirmed downstream on apfp.claude, 2026-08-19.)
+concurrency:
+  group: pages-monitor
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -28,6 +56,10 @@ jobs:
           BUILD_STATUS: ${{ github.event.build.status }}
           BUILD_ERROR: ${{ github.event.build.error.message }}
           BUILD_COMMIT: ${{ github.event.build.commit }}
+          # Actions-sourced deploys populate these instead; both sets are empty
+          # on workflow_dispatch, which the "manual" default below covers.
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_COMMIT: ${{ github.event.workflow_run.head_sha }}
           ISSUE_LABEL: 'pages-deploy-failure'
         run: |
           set -euo pipefail
@@ -39,9 +71,23 @@ jobs:
             url="https://${OWNER}.github.io/${repo_name}/"
           fi
           case "$url" in */) ;; *) url="${url}/" ;; esac
-          status="${BUILD_STATUS:-manual}"
-          short="${BUILD_COMMIT:0:7}"
-          echo "page_build status: $status (commit ${short:-n/a}) — target $url"
+          # Normalise the two event vocabularies to one. page_build reports
+          # built/errored; a workflow_run reports success/failure. Mapping here
+          # keeps the single decision below unchanged — and note a non-success
+          # conclusion includes 'cancelled' and 'timed_out', which leave the site
+          # on its previous build just as surely as a failure does.
+          status="${BUILD_STATUS:-}"
+          commit="${BUILD_COMMIT:-}"
+          if [ -z "$status" ] && [ -n "${RUN_CONCLUSION:-}" ]; then
+            case "$RUN_CONCLUSION" in
+              success) status="built" ;;
+              *)       status="errored" ;;
+            esac
+            commit="${RUN_COMMIT:-}"
+          fi
+          status="${status:-manual}"
+          short="${commit:0:7}"
+          echo "Pages deploy status: $status (commit ${short:-n/a}) — target $url"
 
           problems=""
 
@@ -79,10 +125,7 @@ jobs:
               gh issue create --repo "$REPO" \
                 --title "Pages deploy failing" \
                 --label "$ISSUE_LABEL" \
-                --body "$body
-
-          ---
-          Auto-managed by \`.github/workflows/pages-monitor.yml\`. It closes automatically on the next healthy deploy."
+                --body "$(printf '%s\n\n---\nAuto-managed by \`.github/workflows/pages-monitor.yml\`. It closes automatically on the next healthy deploy.' "$body")"
             fi
             {
               echo "## ❌ Pages deploy problem"
