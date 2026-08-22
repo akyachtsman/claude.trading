@@ -16,6 +16,12 @@ on:
     # "pages-build-deployment" (verified via the Actions API), not the prose
     # title shown in the UI — the prose form never matches, so the retry
     # would never fire.
+    # ⚠️ RULE W3 — BRANCH-SOURCE ONLY. Do NOT add your own deploy workflow here:
+    # this re-runs the whole watched run, so pointing it at a project-owned
+    # deploy replays that workflow's entire build. Actions-source projects build
+    # retry into their own deploy workflow instead (Automation 4b).
+    # Why, and the narrow exception for a provably idempotent deploy:
+    # docs/standards/automations.md -> Watcher Rules (W3).
     workflows: [pages-build-deployment]
     types: [completed]
 permissions:
@@ -28,7 +34,9 @@ jobs:
       github.event.workflow_run.conclusion == 'failure' &&
       github.event.workflow_run.run_attempt < 4
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Raised 5 -> 10 with the backoff below: worst case is ~90s of initial wait plus
+    # 20+40+80+160s of call retries ≈ 5.2 min, which would have been killed at 5.
+    timeout-minutes: 10
     steps:
       - name: Re-run the failed Pages deployment
         env:
@@ -41,9 +49,51 @@ jobs:
           set -euo pipefail
           echo "Pages deploy run ${RUN_ID} (commit ${SHA:0:7}) failed on attempt ${ATTEMPT}."
           echo "Re-running — transient 'try again later' publish failures clear on retry."
-          # Give the Pages backend a moment before asking again.
-          sleep 20
+
+          # ⚠️ THE RE-RUN CALL ITSELF MUST BE RETRIED, and this is the whole point of the
+          # change (2026-08-17). This workflow is a CHAIN: each link exists because the
+          # previous attempt's failure fired a workflow_run event. So if `gh run rerun`
+          # fails, NO new attempt is created, no event fires, and the chain is dead —
+          # silently, forever, with nothing but a red X on a job nobody watches.
+          #
+          # That is not hypothetical. On 2026-08-17 the Pages deployment API returned 503
+          # for commit 2e81e18; this workflow fired correctly three seconds later and its
+          # own `gh run rerun` came back:
+          #     failed to rerun: HTTP 503: No server is currently available...
+          # The job exited 1, attempt 2 was never created, and the site stayed on the
+          # previous build until a human re-triggered it by hand.
+          #
+          # The failure is CORRELATED by construction: the call goes to the same service
+          # that just 503'd, so the moment it is most likely to fail is precisely the
+          # outage this workflow exists for. A single-shot call cannot survive its own
+          # use case.
+          #
+          # ⚠️ AND THE OLD 20s WAS TOO FAST TO HELP. Attempts were 20s apart with a
+          # ceiling of 4, so the entire retry budget was spent inside about a minute —
+          # against an outage that ran for several. On that same commit the deploy 503'd
+          # on attempts 1, 2 AND 3 and only succeeded on the 4th, roughly six minutes
+          # later, and only because the attempts were being spaced by hand. Scaling the
+          # initial wait by attempt number is what makes four attempts span minutes
+          # instead of seconds; it costs nothing, since a deploy nobody is waiting on
+          # synchronously does not care about 90 seconds.
+          sleep $(( 30 * ATTEMPT ))
+
           # Full re-run (not just failed jobs): re-running the whole run is what
           # reliably clears the transient publish error.
-          gh run rerun "${RUN_ID}" --repo "${REPO}"
+          ok=0
+          for wait in 0 20 40 80 160; do
+            [ "$wait" -gt 0 ] && { echo "re-run request failed; waiting ${wait}s"; sleep "$wait"; }
+            # A failing command in an `if` CONDITION does not trip `set -e`, which is what
+            # lets the loop keep going — this call is expected to fail sometimes; that is
+            # the entire reason the loop exists.
+            if gh run rerun "${RUN_ID}" --repo "${REPO}"; then ok=1; break; fi
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            # Fail LOUDLY rather than exiting 0 on a deploy that never got re-triggered.
+            # pages-monitor.yml opens the tracking issue; this annotation is what tells a
+            # human the automation gave up rather than that it was never needed.
+            echo "::error::Could not re-trigger Pages deploy ${RUN_ID} after 5 attempts — the deploy API is still refusing. The site is serving the PREVIOUS build; re-run it by hand once githubstatus.com is clear."
+            exit 1
+          fi
           echo "Requested re-run of Pages deploy ${RUN_ID}."

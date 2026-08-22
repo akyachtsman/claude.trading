@@ -1,19 +1,22 @@
 # qa.yml — Static checks + Playwright against a local server.
-# Copy to .github/workflows/qa.yml in your project.
+# Copy to .github/workflows/qa.yml in your project, along with the composite
+# actions from templates/actions/ into .github/actions/ (secret-scan, ui-suite).
 #
 # Jobs:
-#   static-checks — secret scan; the blocking gate, runs on every trigger.
+#   static-checks — secret scan (composite) + contrast guardrail; the blocking
+#                   gate, runs on every trigger.
 #   ui-changes    — diffs the PR against its base and decides whether the
 #                   browser job is needed. Non-PR events (push to main)
 #                   always run UI tests.
-#   ui-tests      — Playwright against a local server; runs only when an
-#                   index.html exists and UI-relevant paths changed (so the
-#                   scaffold/bootstrap PR stays clean). Non-blocking here (the
-#                   backend is unreachable on CI runners); qa-live.yml is
-#                   the authoritative UI gate.
+#   ui-tests      — Playwright against a local server via the ui-suite
+#                   composite. BLOCKING by default for the static/no-backend
+#                   tier (the suite runs fully against the bundled http-server);
+#                   set advisory-run: 'true' only as an explicit, temporary
+#                   opt-out — and flip it back once the blocking issue is fixed.
 #
 # Required setup:
-#   - Add TEST_AUTH_CREDENTIAL as a repository secret (value from CLAUDE.md)
+#   - Add TEST_AUTH_CREDENTIAL as a repository secret — skip if the project has
+#     no auth; the empty secret makes auth tests self-skip
 #   - Set UI_TESTS_DIR below to the path of your Playwright test directory
 #   - Adjust the UI_PATHS regex in the ui-changes job to your project layout
 
@@ -29,6 +32,11 @@ on:
   # makes that window moments.
   push:
     branches: [main]
+  # Manual escape hatch: pull_request event delivery can die provider-side
+  # (observed 2026-07-19) — this lets a session or the Actions tab run the
+  # gate by hand on any ref. A dispatch run on the PR's head SHA satisfies
+  # the merge gate. See docs/standards/ci-triage.md → "CI never registered".
+  workflow_dispatch:
 
 # Least privilege: these jobs only read the repo and run tests.
 permissions:
@@ -36,6 +44,8 @@ permissions:
 
 # Cancel a superseded run when a newer commit lands on the same PR/branch, so a
 # stale in-flight run can't post a green wake signal for an old SHA (Codex #125).
+# LOCAL HARDENING — the upstream template carries no concurrency block; this is
+# kept deliberately on every refresh, not drift.
 concurrency:
   group: qa-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -54,18 +64,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── Secret scan ────────────────────────────────────────────────────────
-      # Flags common API token patterns before any tests run.
-      - name: Secret scan
-        run: |
-          # Canonical secret-scan pattern — keep identical to global.md and qa-response.yml.
-          if grep -rE \
-            'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb-' \
-            --include="*.js" --include="*.html" --include="*.css" --include="*.json" \
-            --exclude-dir=node_modules --exclude-dir=.git .; then
-            echo "ERROR: potential API token found in source files"
-            exit 1
-          fi
+      # ── Secret scan (composite — single source of truth for the pattern) ────
+      - uses: ./.github/actions/secret-scan
 
       # ── Contrast guardrail ───────────────────────────────────────────────────
       # WCAG AA check against styles/tokens.css (this project's design tokens).
@@ -73,6 +73,11 @@ jobs:
       - name: Contrast guardrail (WCAG AA)
         run: node .github/scripts/check-contrast.js
 
+
+      - name: Workflow cross-reference guard
+        # Every `workflow_run.workflows:` entry must name a real workflow. GitHub
+        # raises no error when one does not — the watcher simply never fires.
+        run: python3 .github/scripts/workflow-ref-guard.py
   ui-changes:
     name: Detect UI-relevant changes
     runs-on: ubuntu-latest
@@ -93,21 +98,30 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           # Per-project: paths whose changes warrant a browser run.
           #
-          # Widened 2026-07-31 (owner ruling). This was the TEMPLATE DEFAULT —
-          # entry HTML plus the test directory — and the setup checklist at the
-          # top of this file says to adjust it to the project layout. That was
-          # never done, and `index.html` here is markup only: every behaviour
-          # lives in scripts/ and every appearance in styles/, so the browser
-          # job skipped on exactly the changes most likely to break the browser.
+          # ⚠️ THIS PROJECT USES scripts/, NOT js/. The upstream template ships
+          # `^js/`, which matches NOTHING here — adopting it verbatim would send
+          # every change to scripts/*.js past the browser job untested, which is
+          # precisely the regression the 2026-07-31 owner ruling fixed. Keep
+          # `^scripts/` (and `^config/`, read at runtime by the app) on every
+          # future template refresh.
           #
-          # It is not hypothetical. PRs #167, #188, #196 and #200 each added a
-          # modal reusing the `.lock-error` class and each touched app.js alone,
-          # so none ran a browser test; the selector count climbed 1 → 5 and S11
-          # was broken for six days before anyone saw it.
-          UI_PATHS: '^(index\.html$|scripts/|styles/|config/|\.github/scripts/ui-tests/|\.github/workflows/qa\.yml$)'
+          # History for that ruling: index.html here is markup only — every
+          # behaviour lives in scripts/ and every appearance in styles/ — so the
+          # old template-default matcher skipped the browser job on exactly the
+          # changes most likely to break the browser. PRs #167, #188, #196 and
+          # #200 each added a modal reusing the `.lock-error` class and each
+          # touched app.js alone, so none ran a browser test; the selector count
+          # climbed 1 → 5 and S11 was broken for six days before anyone saw it.
+          #
+          # Adopted FROM the template: `\.html$` (any deployed page is an entry
+          # point, nested ones included) and `^\.github/actions/` (so a change to
+          # the composites is exercised pre-merge).
+          UI_PATHS: '(\.html$|^scripts/|^styles/|^config/|^\.github/actions/|^\.github/scripts/ui-tests/|^\.github/workflows/qa\.yml$)'
         run: |
-          # No app yet (no index.html in the repo) → nothing to browser-test.
-          # Keeps the scaffold/bootstrap PR clean: skip until the app exists.
+          # This job gates the LOCAL suite, which serves the repo root as static
+          # files, so it needs a static entry point. Enabling it for a repo with
+          # no index.html would hand Playwright a directory listing to assert
+          # against — a green run that never loaded an application.
           if [ ! -f index.html ]; then
             echo "ui=false" >> "$GITHUB_OUTPUT"
             echo "No index.html yet — skipping browser job."
@@ -119,7 +133,17 @@ jobs:
             echo "Non-PR event — UI tests run unconditionally."
             exit 0
           fi
-          if git diff --name-only "$BASE_SHA"...HEAD | grep -qE "$UI_PATHS"; then
+          # Capture the diff FIRST and fail loudly if git could not produce it.
+          # Piping straight into grep hides the failure: `-e` is suspended inside
+          # an `if` condition and there is no pipefail here, so an unresolvable
+          # BASE_SHA (shallow fetch, force-push, fork PR) makes git error, grep
+          # see nothing, and the job report "No UI-relevant changes" — silently
+          # skipping the browser tests on a PR that may be entirely UI.
+          if ! files=$(git diff --name-only "$BASE_SHA"...HEAD); then
+            echo "::error::could not diff $BASE_SHA...HEAD — refusing to guess whether UI tests are needed."
+            exit 1
+          fi
+          if printf '%s\n' "$files" | grep -qE "$UI_PATHS"; then
             echo "ui=true" >> "$GITHUB_OUTPUT"
             echo "UI-relevant changes detected."
           else
@@ -132,79 +156,59 @@ jobs:
     needs: [static-checks, ui-changes]
     if: needs.ui-changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # ⚠️ 40, NOT 20. This job runs ui-suite, whose COLD-cache path is
+    # `playwright install --with-deps chromium webkit` — measured at 21m25s
+    # (apfp.claude, run 32267163505). A 20-minute bound therefore killed every
+    # cold run before the tests began, and because `actions/cache` saves at job
+    # END the kill also skipped the save, leaving the next run equally cold. A
+    # bound below the work it bounds does not protect anything; it fails on a
+    # schedule. Warm runs finish in ~5 minutes, so this ceiling only ever applies
+    # to the cold path it exists to survive.
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # `cache: npm` requires a committed package-lock.json at the path below.
-      # Generate it once (`npm install` in UI_TESTS_DIR) and COMMIT it, or this
-      # step fails with "Dependencies lock file is not found".
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      # advisory-run ships 'false': blocking is the default posture for the
+      # static/no-backend tier, where the suite runs fully against the bundled
+      # local server. A template that shipped 'true' handed every new project a
+      # UI suite whose failures show green. Set it 'true' ONLY in a project with
+      # a known open UI failure mid-fix, and flip it back as soon as that lands.
+      # Auth/backend-gated scenarios self-skip on an empty TEST_AUTH_CREDENTIAL,
+      # and qa-live.yml stays the live gate.
+      - uses: ./.github/actions/ui-suite
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: ${{ env.UI_TESTS_DIR }}/package-lock.json
-
-      - name: Install test dependencies
-        run: npm install
-        working-directory: ${{ env.UI_TESTS_DIR }}
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium webkit
-        working-directory: ${{ env.UI_TESTS_DIR }}
-
-      # ── Start local server ─────────────────────────────────────────────────
-      # http-server is a pinned devDependency installed in UI_TESTS_DIR (above). Invoke
-      # its binary by path while staying at the repo root, so '.' still serves the app
-      # root AND nothing is fetched at runtime (works under locked egress). `npx
-      # --no-install` from the root would fail — the bin lives under UI_TESTS_DIR, not root.
-      # Adjust '.' to your build output directory if needed (e.g. dist, public).
-      - name: Start local server
-        run: |
-          "./$UI_TESTS_DIR/node_modules/.bin/http-server" . -p 8080 --silent &
-          sleep 2
-
-      # BLOCKING as of 2026-07-31 (owner ruling). This and the UI_PATHS widening
-      # go together — either one alone is close to useless.
-      #
-      # It was `continue-on-error: true` because API-dependent scenarios cannot
-      # pass against a local server. That much was true, but the flag applied to
-      # the WHOLE run, so the demo scenarios could not fail a merge either. And
-      # a step-level continue-on-error still reports the JOB as success, so the
-      # "notify on green" step announced a green QA over a run in which 11 tests
-      # had failed — which is how PR #209 merged on a red suite.
-      #
-      # The exclusion now sits where it belongs: live-only scenarios are skipped
-      # by name and stay qa-live.yml's job; everything that CAN pass against a
-      # local server gates the merge.
-      - name: Run Playwright tests (demo scenarios — blocking)
-        env:
-          APP_URL: http://localhost:8080
-          TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
-        run: npx playwright test --reporter=list --grep-invert "live only"
-        working-directory: ${{ env.UI_TESTS_DIR }}
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-results-local
-          path: |
-            .agent-reports/screenshots/
-            .agent-reports/playwright-results.json
-          retention-days: 7
+          tests-dir: ${{ env.UI_TESTS_DIR }}
+          app-url: http://localhost:8080
+          test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+          artifact-name: playwright-results-local
+          app-pages: ${{ vars.APP_PAGES }}
+          start-local-server: 'true'
+          advisory-run: 'false'
+          # Live-gated scenarios stay qa-live.yml's job. They do NOT self-skip
+          # here: they gate on liveBackendConfigured(), which reads the committed
+          # scripts/config.js, and this desk is live — so against localhost S10,
+          # S11 and S14 would run for real and fail on a runner that cannot reach
+          # Supabase. Everything that CAN pass locally still gates the merge.
+          grep-invert: 'live only'
 
   # ── Green wake signal ────────────────────────────────────────────────────
+  # LOCAL HARDENING — the upstream template carries no notify job; this is kept
+  # deliberately on every refresh, not drift.
+  #
   # Comments on the PR when this run is green so a watching Claude session is
-  # woken via the PR-comment webhook and can auto-merge — the reliable path that
-  # ci-notify.yml's workflow_run trigger did not cover (it only fired on the
-  # post-merge main run, where no open PR exists). Runs only on pull_request,
-  # gated on the blocking static-checks job (ui-tests is non-blocking by design);
-  # the comment never fails the run (|| true). PR-context is read directly from
-  # the event, so no cross-workflow lookup is needed.
+  # woken via the PR-comment webhook and can auto-merge. PR context is read
+  # straight off the event, so no cross-workflow lookup is needed.
+  #
+  # Retained even though the refreshed ci-notify.yml now resolves the open PR by
+  # head SHA with a branch fallback, which is the gap this job was added for.
+  # The costs are asymmetric: keeping both risks a duplicate green comment
+  # (visible, harmless, trivially removed), while dropping this one risks PR
+  # wakes silently stopping if workflow_run does not deliver here — and a wake
+  # that never arrives is indistinguishable from a run still in progress. If the
+  # duplicate is confirmed on the first PRs after this lands, delete THIS job
+  # and keep ci-notify.yml.
   notify:
     name: Notify PR on green
     needs: [static-checks, ui-changes, ui-tests]

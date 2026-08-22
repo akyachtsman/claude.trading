@@ -1,0 +1,6 @@
+{
+  "qa-live.yml": ["pages-build-deployment"],
+  "pages-retry.yml": ["pages-build-deployment"],
+  "ci-monitor.yml": ["QA — Static + UI Tests", "QA — UI Tests (live)", "QA — Event-Driven Response"],
+  "ci-notify.yml": ["QA — Static + UI Tests", "QA — UI Tests (live)", "QA — Event-Driven Response"]
+}
