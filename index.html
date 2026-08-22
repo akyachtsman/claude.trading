@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260821e">
-<link rel="stylesheet" href="styles/components.css?v=20260821e">
+<link rel="stylesheet" href="styles/tokens.css?v=20260821f">
+<link rel="stylesheet" href="styles/components.css?v=20260821f">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -156,7 +156,19 @@
      — reaching the end of the headlines carries on scrolling the page. That is
      the one body on this row that genuinely has more content than column. */
   @media (min-width: 1120px) {
-    .top-band > .col-news { position: relative; align-self: stretch; }
+    /* The panel below goes OUT OF FLOW so Markets alone sets the row height —
+       but that leaves this column with no in-flow content, and the collapse
+       lands one level up from where it looks: `.top-band` is itself
+       `flex: 0 1 auto` inside the desk row, so it sizes to ITS content, which
+       is now Markets alone. Measured on main: the band shrank to 327px, this
+       column rendered 2px wide with a headline width of 0, and Ask grew to 894
+       to fill the gap — the news feed was effectively gone from the desk.
+       An explicit non-shrinking basis is not enough on its own (measured); the
+       zero-height in-flow child is what restores the width contribution, and it
+       adds nothing visible and no height for the out-of-flow panel to resolve
+       against. */
+    .top-band > .col-news { position: relative; align-self: stretch; flex: 0 0 300px; max-width: 340px; }
+    .top-band > .col-news::before { content: ''; display: block; width: 300px; height: 0; }
     .top-band > .col-news > .panel { position: absolute; inset: 0; display: flex; flex-direction: column; margin: 0; }
     .top-band > .col-news > .panel > .panel-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
     .top-band > .col-news #newsList { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
@@ -1428,8 +1440,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260821e"></script>
-<script src="scripts/data.js?v=20260821e"></script>
-<script src="scripts/app.js?v=20260821e"></script>
+<script src="scripts/config.js?v=20260821f"></script>
+<script src="scripts/data.js?v=20260821f"></script>
+<script src="scripts/app.js?v=20260821f"></script>
 </body>
 </html>
