@@ -4,6 +4,20 @@ name: Keepalive
 # A weekly empty commit resets that clock for EVERY scheduled workflow in the repo.
 # Pushed with a PAT (secrets.KEEPALIVE_PAT) — GITHUB_TOKEN commits don't reliably
 # count as the activity that resets the timer.
+#
+# DO NOT INSTALL THIS UNDER THE STANDARD. It pushes directly to the default
+# branch, and every repo on this standard carries a ruleset that requires a pull
+# request there with an empty bypass list — so this workflow would fail on every
+# run. It is also unnecessary: the 60 days count repository INACTIVITY, not
+# elapsed time, so a repo where PRs land is never at risk.
+#
+# Do NOT resolve the conflict by adding your own account to the bypass list. A
+# bypass entry exempts an ACTOR, not a workflow or a token, so it would exempt
+# every push that account makes — your sessions included — while the ruleset
+# still reads Active.
+#
+# This file is retained only for a repo outside the standard.
+# See MAINTAIN-REPO-USER-INSTRUCTIONS.md -> Branch Protection.
 
 on:
   schedule:

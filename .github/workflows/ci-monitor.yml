@@ -59,6 +59,9 @@ jobs:
           WR_URL: ${{ github.event.workflow_run.html_url }}
           WR_ID: ${{ github.event.workflow_run.id }}
           WR_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          # Used ONLY to tell a same-repo run from a fork run. The fork case is
+          # deliberately NOT handled — see the probe below for why.
+          WR_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           WR_UPDATED_AT: ${{ github.event.workflow_run.updated_at }}
           LOOKBACK: ${{ github.event.inputs.lookback_minutes || '1440' }}
           ISSUE_LABEL: 'ci-failure'
@@ -92,9 +95,29 @@ jobs:
               can_supersede=unknown
               wf_path=$(gh api "repos/$REPO/actions/workflows/${WR_WORKFLOW_ID}" --jq .path 2>/dev/null || true)
               if [ -n "$wf_path" ]; then
-                if gh api "repos/$REPO/contents/${wf_path}?ref=${WR_BRANCH}" \
+                # FORK RUNS ARE NOT CLASSIFIED — they report, and that is deliberate.
+                # Two things cannot be made sound from here, and both were found by
+                # review rather than reasoned out, so do not "improve" this without
+                # re-checking them:
+                #   1. A PRIVATE fork is outside this token's scope. contents: read
+                #      on the base repo grants nothing in a separate repository, so
+                #      the probe 404s and we would guess `no` — the same false alarm
+                #      this was meant to remove, now with a misleading cause.
+                #   2. The newer-run query below matches on workflow_id + head_branch
+                #      only. Two forks using the SAME branch name would let fork B's
+                #      run count as superseding fork A's cancelled one — silently
+                #      dropping a real failure. That is a false SILENCE, strictly
+                #      worse than the false alarm being fixed.
+                # So a fork run leaves can_supersede=unknown and is reported. Loud is
+                # the correct direction when a probe cannot answer.
+                if [ -n "${WR_HEAD_REPO:-}" ] && [ "$WR_HEAD_REPO" != "$REPO" ]; then
+                  echo "cancelled on a run from fork ${WR_HEAD_REPO} — not classifiable from the base repo; reporting."
+                elif gh api "repos/$REPO/contents/${wf_path}?ref=${WR_SHA}" \
                      -H "Accept: application/vnd.github.raw" 2>/dev/null \
                      | grep -qE '^[[:space:]]*cancel-in-progress:[[:space:]]*true[[:space:]]*$'; then
+                  # Same-repo: read at the run's head SHA rather than its branch name,
+                  # so the definition is the one AS OF that run, not whatever the
+                  # branch holds now.
                   can_supersede=yes
                 else
                   can_supersede=no
@@ -144,14 +167,45 @@ jobs:
             # window scan is a coarse backstop, and the newer-run test alone
             # only risks under-reporting a cancel that the event branch already
             # classified in real time.
-            runs=$(gh api "repos/$REPO/actions/runs?per_page=100&status=completed" \
-              --jq "[.workflow_runs[]
-                     | select(.updated_at >= \"$since\")
-                     | select(.name != \"CI Monitor\" and .name != \"Codex Monitor\" and .name != \"Pages Monitor\")
-                     | {name, id, sha: .head_sha[0:7], branch: .head_branch, url: .html_url,
-                        conclusion, workflow_id, head_branch, created_at, updated_at}]")
+            # TWO fetches, deliberately, and NOT one broadened query.
+            #
+            # The supersede test below asks whether a NEWER run of the same
+            # workflow+branch started before this one ended — so a scan dispatched
+            # while that superseding run is STILL RUNNING must be able to see it,
+            # or the cancelled predecessor sits alone in its group and opens a
+            # false tracking issue. That is issue #240's first case.
+            #
+            # But simply dropping status=completed is wrong: queued and in-progress
+            # runs would then consume slots in this single per_page=100 page, and a
+            # COMPLETED failure still inside the lookback could be pushed onto a page
+            # never fetched (no --paginate here) and silently dropped. Splitting the
+            # fetch keeps the completed page's budget exactly as it was, and adds the
+            # in-flight runs the discriminator needs without competing for slots.
+            project='{name, id, sha: .head_sha[0:7], branch: .head_branch, url: .html_url,
+                      conclusion, workflow_id, head_branch, created_at, updated_at,
+                      repo: (.head_repository.full_name // "")}'
+            fetch() {
+              gh api "repos/$REPO/actions/runs?per_page=100&status=$1" \
+                --jq "[.workflow_runs[]
+                       | select(.updated_at >= \"$since\")
+                       | select(.name != \"CI Monitor\" and .name != \"Codex Monitor\" and .name != \"Pages Monitor\")
+                       | $project]"
+            }
+            # Reported from `completed`; grouped WITH the in-flight ones so a genuine
+            # supersede is still recognised. In-flight runs carry a null conclusion,
+            # and the report filter names four concrete conclusions, so one is never
+            # itself reported.
+            runs=$(jq -n \
+              --argjson c "$(fetch completed)" \
+              --argjson p "$(fetch in_progress)" \
+              --argjson q "$(fetch queued)" \
+              '$c + $p + $q')
             runs=$(echo "$runs" | jq '[
-              ( group_by([.workflow_id, .head_branch]) | .[] ) as $g
+              # Grouped by REPO too. Without it, two forks using the same branch
+              # name share a group, and fork B's run can suppress fork A's cancelled
+              # one — silently dropping a real failure. The fork guard on the
+              # workflow_run path above does not reach this scan.
+              ( group_by([.workflow_id, .head_branch, .repo]) | .[] ) as $g
               | $g[] | . as $r
               | select(
                   (.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="startup_failure")
