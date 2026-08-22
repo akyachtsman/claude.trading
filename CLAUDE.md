@@ -1063,9 +1063,6 @@ This project's look is its own — established at kickoff via `/design-intake`
   already covers the same ground on demand. The edge function and
   `desk_ai_briefs` table are left in place, unscheduled, in case the feature
   returns.)
-- `.github/workflows/keepalive.yml` — monthly empty commit; **the only
-  writer resetting GitHub's 60-day Actions scheduler clock** now that the
-  nightly pipeline is retired (PRs #54/#55/#56, 2026-07-13).
 - `specs/multi-account-trading-dashboard/` — the SDD artifact chain
   (brief/spec/plan/tasks/design/analysis).
 
@@ -1157,8 +1154,14 @@ This project's look is its own — established at kickoff via `/design-intake`
 - Server-side keys (`SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, IBKR
   token/query-id, `CRON_SECRET`) live only in edge-function secrets;
   `cron_secret`/`anon_key` also sit in Vault for pg_cron header assembly —
-  never client-side, never committed. GitHub keeps only `KEEPALIVE_PAT` +
-  `TEST_AUTH_CREDENTIAL`. **`CRON_SECRET` became an ALTERNATIVE AUTH for
+  never client-side, never committed. GitHub keeps `TEST_AUTH_CREDENTIAL`,
+  plus **`KEEPALIVE_PAT` — PENDING MANUAL DELETION.** Its only consumer,
+  `keepalive.yml`, was removed 2026-08-22, but deleting a workflow cannot
+  delete a repository secret: the token still EXISTS, still carries
+  Contents-write, and is now unused. Until the owner removes it (Settings →
+  Secrets and variables → Actions) this line must keep naming it, or an audit
+  reads a live write-capable credential as already gone. Delete this clause,
+  not the token's name, once removal is confirmed. **`CRON_SECRET` became an ALTERNATIVE AUTH for
   `desk-ask` on 2026-08-11** (`desk-cron-ask` — see the functions map): a
   scheduled run has nobody present to type the PIN, and the PIN cannot be
   replayed server-side because only its salted hash is stored. The secret is
