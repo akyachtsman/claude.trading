@@ -129,8 +129,16 @@ jobs:
               elif [ "$can_supersede" = "unknown" ]; then
                 echo "cancelled, and the workflow definition could not be read — reporting rather than assuming a supersede."
               else
+                # The end bound is INCLUSIVE, deliberately. A supersede is ONE event:
+                # creating the replacement is what cancels this run, so the
+                # replacement's created_at and this run's updated_at land in the SAME
+                # second whenever the cancel is quick — which is the common case, not
+                # an edge one. These timestamps carry no sub-second precision, so a
+                # strict `<` drops exactly that case and alarms on a healthy
+                # supersede. Loosening is safe here only because `.id > WR_ID`, not
+                # the timestamp, is what establishes the run is newer.
                 newer=$(gh api "repos/$REPO/actions/workflows/${WR_WORKFLOW_ID}/runs?branch=${WR_BRANCH}&per_page=50" \
-                  --jq "[.workflow_runs[] | select(.id > ${WR_ID}) | select(.created_at < \"${WR_UPDATED_AT}\")] | length" 2>/dev/null || true)
+                  --jq "[.workflow_runs[] | select(.id > ${WR_ID}) | select(.created_at <= \"${WR_UPDATED_AT}\")] | length" 2>/dev/null || true)
                 if [ -z "$newer" ]; then
                   echo "cancelled, and the supersede probe failed — reporting rather than guessing."
                 elif [ "$newer" -gt 0 ]; then
@@ -160,9 +168,9 @@ jobs:
             # cancel-in-progress, every healthy supersede in the window is a
             # `cancelled` run — flagging them all makes a manual scan cry wolf
             # after any burst of pushes. A cancelled run is kept only when NO
-            # newer run of the same workflow+branch was created before it ended
-            # (created_at of a later run < updated_at of this one = it CAN have
-            # been superseded; nothing newer = a timeout or a human, report it).
+            # newer run of the same workflow+branch was created by the time it ended
+            # (a higher-id run created no later than this one's updated_at = it CAN
+            # have superseded it; nothing newer = a timeout or a human, report it).
             # The per-run cancel-in-progress file probe is skipped here — the
             # window scan is a coarse backstop, and the newer-run test alone
             # only risks under-reporting a cancel that the event branch already
@@ -210,7 +218,15 @@ jobs:
               | select(
                   (.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="startup_failure")
                   or (.conclusion=="cancelled" and
-                      ([$g[] | select(.created_at > $r.created_at and .created_at < $r.updated_at)] | length) == 0)
+                      # Ordered by run id with an inclusive end bound — the same tie
+                      # rule as the event branch above, and for the same reason.
+                      # Ordering by `.created_at >` instead cannot be fixed by
+                      # loosening it to `>=`: $g contains $r, so `>=` makes every
+                      # cancelled run match ITSELF and become its own superseder, and
+                      # nothing is ever reported again. That is a false SILENCE,
+                      # strictly worse than the false alarm being fixed. `.id > $r.id`
+                      # excludes $r for free and is the better ordering anyway.
+                      ([$g[] | select(.id > $r.id and .created_at <= $r.updated_at)] | length) == 0)
                 )
               | {name, id, sha, branch, url}
             ]')

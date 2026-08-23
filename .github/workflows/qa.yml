@@ -156,15 +156,18 @@ jobs:
     needs: [static-checks, ui-changes]
     if: needs.ui-changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
-    # ⚠️ 40, NOT 20. This job runs ui-suite, whose COLD-cache path is
-    # `playwright install --with-deps chromium webkit` — measured at 21m25s
-    # (apfp.claude, run 32267163505). A 20-minute bound therefore killed every
-    # cold run before the tests began, and because `actions/cache` saves at job
-    # END the kill also skipped the save, leaving the next run equally cold. A
-    # bound below the work it bounds does not protect anything; it fails on a
-    # schedule. Warm runs finish in ~5 minutes, so this ceiling only ever applies
-    # to the cold path it exists to survive.
-    timeout-minutes: 40
+    # ⚠️ 60, NOT 40 and NOT 20. This bound covers the WHOLE job in one sum:
+    # dependency install, the browser install, EVERY playwright project, retries
+    # and the artifact upload. The cold-cache install alone measures 21m25s and a
+    # complete warm job measured 16.6 min, so a healthy cold run is ~38 min — a
+    # 40-minute ceiling cancels it with nothing wrong. It got tighter still when
+    # the matrix went from two projects to four (desktop + tablet added), which
+    # is why the bound was raised in the SAME change.
+    #
+    # And a cancelled run is not a red one: it reads as INCONCLUSIVE, so nobody
+    # chases it. A bound below the work it bounds does not protect anything —
+    # it fails on a schedule and looks like flakiness.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
