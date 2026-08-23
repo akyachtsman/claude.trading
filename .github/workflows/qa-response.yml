@@ -18,6 +18,18 @@
 #     has no auth; the empty secret makes auth tests self-skip
 #   - Add APP_URL as a repository variable (live URL)
 #   - Set UI_TESTS_DIR below to the path of your Playwright test directory
+#
+# ⚠️ WHICH REVISION THIS TESTS. A repository_dispatch carries no revision, so the
+# checkout below resolves to the DEFAULT BRANCH — never the branch a session
+# dispatched from. (A workflow_dispatch is different: it resolves to the branch
+# chosen in the Actions tab, and the summary step below says so.) The suite that runs is main's; the app it runs against is
+# whatever APP_URL currently serves. Dispatching from a feature branch does NOT
+# test that branch's specs, and the run reports green having tested something
+# else. Use the PR's own qa.yml run for branch changes. The job below states the
+# tested SHA in its summary so this cannot pass unnoticed.
+# A ref is deliberately NOT taken from client_payload: that payload is
+# attacker-influenceable (see the injection note further down), and checking out
+# an arbitrary ref from it would run that ref's test code.
 
 name: QA — Event-Driven Response
 
@@ -71,15 +83,36 @@ jobs:
   ui-tests:
     needs: static-checks
     runs-on: ubuntu-latest
-    # ⚠️ 40, NOT 20. This job runs ui-suite, whose COLD-cache path is
-    # `playwright install --with-deps chromium webkit` — measured at 21m25s
-    # (apfp.claude, run 32267163505). A 20-minute bound therefore killed every
-    # cold run before the tests began, and because `actions/cache` saves at job
-    # END the kill also skipped the save, leaving the next run equally cold. A
-    # bound below the work it bounds does not protect anything; it fails on a
-    # schedule. Warm runs finish in ~5 minutes, so this ceiling only ever applies
-    # to the cold path it exists to survive.
-    timeout-minutes: 40
+    # 60, NOT 40. This job runs the ui-suite composite: dependency install + playwright
+    # install + EVERY project in playwright.config.js + retries + artifact
+    # upload, in one sum the composite cannot subdivide.
+    #
+    # Sized from two MEASURED numbers, not from one anchor:
+    #     cold-cache browser install   21m25s   (claude.directives
+    #                                            check-job-bounds.py, rule 3)
+    #   + complete job, warm cache     16.6min  (apfp.claude, qa-live on
+    #                                            c302827: 4 projects, 204 specs,
+    #                                            checkout + dependency install
+    #                                            + suite)
+    #
+    # NOTE the composite installs with `npm install`, not `npm ci` — an earlier
+    # version of this block said ci. They differ in resolution and speed, so
+    # treat the 16.6 as measuring THIS path, not a stricter one.
+    #     -------------------------------------
+    #     healthy COLD run            ~38min    → 60 leaves ~58% headroom
+    #
+    # The 57-minute figure in claude.directives' check-job-bounds.py header is NOT a sizing input,
+    # however tempting the arithmetic. Read it in context: that run "sat 57
+    # minutes on a browser install", cited under "an unbounded job that WEDGES".
+    # It is the pathology bounds exist to kill. Size to survive it and you have
+    # built a bound that cannot trip on its own purpose.
+    #
+    # 40 was wrong in the other direction, and the failure mode is why this
+    # comment is long: a cancelled run is NOT a red one. It reads as
+    # inconclusive, so nobody chases it — the same shape as a viewport never
+    # instantiated and a live gate nobody watched. Raise this BEFORE adding
+    # projects, never after.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -88,6 +121,35 @@ jobs:
       # Without APP_URL there is nothing to test against: the suite would run
       # every scenario against the placeholder and fail for a config gap rather
       # than a defect. Say so once and stop.
+      # Silence is the defect this names: a dispatch from a feature branch
+      # otherwise reports green while having run main's specs.
+      # Says SELECTED, never "ran" — this step precedes the APP_URL guard and the
+      # suite itself, so on an unset APP_URL nothing executes but the checkout and
+      # a "ran the specs" summary would be false on the failure path.
+      # The default-branch warning is conditional because it is only true for a
+      # repository_dispatch: a workflow_dispatch from a feature branch resolves
+      # github.sha/ref_name to THAT branch, and warning there would contradict the
+      # accurate ref printed one line above and invite discarding a valid run.
+      - name: State which revision was selected
+        env:
+          TESTED_SHA: ${{ github.sha }}
+          TESTED_REF: ${{ github.ref_name }}
+          IS_DISPATCH: ${{ github.event_name == 'repository_dispatch' }}
+        run: |
+          {
+            echo "### Suite revision"
+            echo ""
+            echo "Selected the specs at \`$TESTED_SHA\` on \`$TESTED_REF\`."
+            if [ "$IS_DISPATCH" = "true" ]; then
+              echo ""
+              echo "A \`repository_dispatch\` carries no revision, so this is the default"
+              echo "branch — **not** the branch any session dispatched from. If you expected"
+              echo "a feature branch's specs, they were not selected; use that PR's own"
+              echo "\`qa.yml\` run instead."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Suite revision selected: $TESTED_SHA ($TESTED_REF)"
+
       - name: Require APP_URL
         if: ${{ vars.APP_URL == '' }}
         run: |

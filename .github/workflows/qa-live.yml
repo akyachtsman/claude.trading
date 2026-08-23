@@ -61,15 +61,40 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    # ⚠️ 40, NOT 20. This job runs ui-suite, whose COLD-cache path is
-    # `playwright install --with-deps chromium webkit` — measured at 21m25s
-    # (apfp.claude, run 32267163505). A 20-minute bound therefore killed every
-    # cold run before the tests began, and because `actions/cache` saves at job
-    # END the kill also skipped the save, leaving the next run equally cold. A
-    # bound below the work it bounds does not protect anything; it fails on a
-    # schedule. Warm runs finish in ~5 minutes, so this ceiling only ever applies
-    # to the cold path it exists to survive.
-    timeout-minutes: 40
+    # 60, NOT 40. This job runs the ui-suite composite: dependency install + playwright
+    # install + EVERY project in playwright.config.js + retries + artifact
+    # upload, in one sum the composite cannot subdivide.
+    #
+    # Sized from two MEASURED numbers, not from one anchor:
+    #     cold-cache browser install   21m25s   (claude.directives
+    #                                            check-job-bounds.py, rule 3)
+    #   + complete job, warm cache     16.6min  (apfp.claude, qa-live on
+    #                                            c302827: 4 projects, 204 specs,
+    #                                            checkout + dependency install
+    #                                            + suite)
+    #
+    # NOTE the composite installs with `npm install`, not `npm ci` — an earlier
+    # version of this block said ci. They differ in resolution and speed, so
+    # treat the 16.6 as measuring THIS path, not a stricter one.
+    #     -------------------------------------
+    #     healthy COLD run            ~38min    → 60 leaves ~58% headroom
+    #
+    # The 57-minute figure in claude.directives' check-job-bounds.py header is NOT a sizing input,
+    # however tempting the arithmetic. Read it in context: that run "sat 57
+    # minutes on a browser install", cited under "an unbounded job that WEDGES".
+    # It is the pathology bounds exist to kill. Size to survive it and you have
+    # built a bound that cannot trip on its own purpose.
+    #
+    # 40 was wrong in the other direction, and the failure mode is why this
+    # comment is long: a cancelled run is NOT a red one. It reads as
+    # inconclusive, so nobody chases it — the same shape as a viewport never
+    # instantiated and a live gate nobody watched. Raise this BEFORE adding
+    # projects, never after.
+    #
+    # And a kill here COMPOUNDS: `actions/cache` saves at job END, so a run
+    # cancelled during the install also skips the save, leaving the next run
+    # equally cold. Too tight does not cost one run, it costs a streak.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout

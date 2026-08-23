@@ -21,16 +21,25 @@ runs:
         # one out here would re-create exactly the self-match it describes.)
         # `|| rc=$?` is required: the step runs under `bash -eo pipefail`, where a
         # bare grep exiting 1 (clean — no match) would abort the step.
+        # `-l` prints matching FILENAMES ONLY, and that is a security property,
+        # not a formatting choice. A token committed by accident is NOT a
+        # registered repo secret, so Actions does not mask it: a scan that echoes
+        # the matched line publishes the credential it just caught, into a log
+        # that outlives the commit and is readable by anyone with repo access.
+        # global.md → Security says "never echo secrets in workflow logs" one line
+        # above the command that used to do exactly that.
         rc=0
-        grep -rE \
+        hits=$(grep -rlE \
           'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb[-]' \
           --include="*.js" --include="*.ts" --include="*.tsx" --include="*.mjs" --include="*.html" --include="*.css" --include="*.json" --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" \
-          --exclude-dir=node_modules --exclude-dir=.git . || rc=$?
+          --exclude-dir=node_modules --exclude-dir=.git .) || rc=$?
         # 0 = a match (a secret), 1 = clean, >=2 = grep itself failed. Folding
         # the error case into "clean" is how a scan reports green after failing
         # to run at all.
         if [ "$rc" -eq 0 ]; then
-          echo "ERROR: potential API token found in source files"
+          echo "ERROR: potential API token found in these files:"
+          printf '%s\n' "$hits"
+          echo "The matching line is deliberately not printed — see the -l note above."
           exit 1
         elif [ "$rc" -ge 2 ]; then
           echo "ERROR: secret scan did not run (grep exit $rc)"
