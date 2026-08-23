@@ -414,12 +414,27 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
 // SCENARIO 3 — Element Mapping & Interaction Sweep
 // ─────────────────────────────────────────────────────────────────────────────
 test('S3: interactive elements discovered and exercised without errors', async ({ page }) => {
-  // The sweep scales with element count (settle + capped idle wait per
-  // element) and cannot fit the 30s global timeout on element-rich apps or
-  // mobile-emulated projects. 480s covers ~80 elements at the worst-case
-  // per-element cost; the idle wait below is capped so one slow-settling
-  // page can't eat the whole budget.
-  test.setTimeout(480_000);
+  // The sweep scales with ELEMENT COUNT (settle + capped idle wait per
+  // element), and element count scales with VIEWPORT WIDTH — a wider layout
+  // exposes more controls to discover and click. So this budget is driven by
+  // the widest project in the matrix, not by the app.
+  //
+  // ⚠️ 900s, and the margin is deliberate. At 480s this measured 7.8m on both
+  // phone projects — 97.5% of its own budget — and passed, while the tablet
+  // project crossed it and failed at 8.1m with "Test timeout of 480000ms
+  // exceeded" (CI run 32655955615, the first run after desktop+tablet were
+  // added). Nothing was wrong with the app: three of four projects passed the
+  // same assertions. The bound was simply sized against a two-phone matrix and
+  // never revisited when wider viewports arrived.
+  //
+  // Do NOT tune this back down to just-above-observed. A bound set at ~1.03x
+  // the work it bounds is what produced the failure above, and it fails on a
+  // schedule rather than on a defect — the same shape as the 40-minute job
+  // ceiling this suite also outgrew. 900s is ~1.9x the measured worst case.
+  //
+  // The projects run in parallel, so this does not multiply into wall-clock:
+  // the full 4-project run measured 29.5m against a 60-minute job bound.
+  test.setTimeout(900_000);
   // Public-first apps (knowledge hub, questionnaire) are swept even with no credential;
   // only auth-gated apps with no credential are skipped (decided after page load below).
   const consoleErrors = [];
