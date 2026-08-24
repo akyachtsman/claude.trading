@@ -2603,7 +2603,12 @@ function renderNews(news, lamp) {
        August feed reading "14:19", which is indistinguishable from this
        afternoon. The tooltip carries the exact instant either way. */
     const when = el('span', 'news-time');
-    if (n.d) when.appendChild(el('span', 'news-date', n.d));
+    /* RECOMPUTED here, not read off the mapped row: `d` is a comparison against
+       *now*, so one baked at 23:30 still says "today" after Pacific midnight.
+       Demo rows carry no `ts` and keep their literal `d`. */
+    const dLabel = n.ts ? newsDateLabel(n.ts) : n.d;
+    if (n.ts) when.dataset.newsTs = n.ts; /* so the rollover tick can repaint it */
+    if (dLabel) when.appendChild(el('span', 'news-date', dLabel));
     when.appendChild(el('span', '', n.t));
     if (n.full) when.title = n.full;
     row.appendChild(when);
@@ -6771,11 +6776,36 @@ function applyLampStamp(el, lamp, fallback) {
   if (!lamp || !(lamp.atIso || lamp.asOf)) { applyStamp(el, '', '', ''); el.textContent = fallback || '—'; return; }
   applyStamp(el, lamp.atIso, lamp.asOf, lamp.tail, lamp.stampSuffix);
 }
+/* A news row's date is relative to TODAY, so every row silently becomes wrong
+   at Pacific midnight — a 23:30 headline keeps rendering undated until the next
+   render. Nothing else re-renders in time: the off-hours feed poll is hourly and
+   midnight is always off-hours. Repainting on the date rollover bounds that to
+   one tick instead of an hour. It fires ONLY when the date actually changes, so
+   the normal case is a string compare every 30s and no DOM work at all. */
+let lastPtDate = ptDateKey(new Date());
+function retickNewsDate() {
+  const today = ptDateKey(new Date());
+  if (today === lastPtDate) return;
+  lastPtDate = today;
+  /* Patch the date spans IN PLACE rather than calling renderNews(): the lamp is
+     built fresh at each of its call sites out of feed state, so re-rendering
+     here would mean reconstructing it, and getting that wrong would light a
+     healthy feed STALE (or worse, LIVE when it is not) to fix a date. Same
+     reasoning — and the same data-attribute idiom — as retickStamps above. */
+  for (const when of document.querySelectorAll('.news-time[data-news-ts]')) {
+    const label = newsDateLabel(when.dataset.newsTs);
+    const existing = when.querySelector('.news-date');
+    if (label && existing) existing.textContent = label;
+    else if (label) when.insertBefore(el('span', 'news-date', label), when.firstChild);
+    else if (existing) existing.remove();
+  }
+}
 function retickStamps() {
   for (const el of document.querySelectorAll('[data-stamp-tail="age"]')) {
     el.textContent = fmtUpdated(el.dataset.stampAt || '', el.dataset.stampAsof || '', 'age')
       + (el.dataset.stampSuffix || '');
   }
+  retickNewsDate();
 }
 setInterval(retickStamps, STAMP_TICK_MS);
 

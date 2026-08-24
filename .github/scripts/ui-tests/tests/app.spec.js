@@ -2943,4 +2943,39 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
   for (const r of rows) {
     expect(r.clipped, `the when-column does not clip (${r.text})`).toBe(false);
   }
+
+  /* The date is a comparison against NOW, so it goes stale while the tab sits
+     open — a row mapped at 23:30 keeps saying "today" after Pacific midnight,
+     and the off-hours feed poll is hourly (Codex P2 on PR #276). The fix is to
+     recompute per paint rather than bake it at map time, and to repaint on the
+     rollover. This checks the recompute half and the wiring the tick needs.
+     NOT COVERED: the midnight flip itself, which needs clock control the demo
+     page cannot supply — newsDateLabel is exercised directly instead. */
+  const live = await page.evaluate(() => {
+    const iso = (daysAgo, h) => {
+      const d = new Date();
+      d.setDate(d.getDate() - daysAgo);
+      d.setHours(h, 30, 0, 0);
+      return d.toISOString();
+    };
+    window.renderNews([
+      { ts: iso(0, 9),  t: '09:30', src: 'Reuters', h: 'A headline from today', chips: [] },
+      { ts: iso(3, 14), t: '14:30', src: 'Reuters', h: 'A headline from three days ago', chips: [] },
+    ], { cls: 'lamp--demo', text: 'Demo' });
+    const cols = [...document.querySelectorAll('.news-row .news-time')];
+    return {
+      stamped: cols.filter((c) => c.dataset.newsTs).length,
+      dates: cols.map((c) => { const d = c.querySelector('.news-date'); return d ? d.textContent.trim() : ''; }),
+      todayLabel: window.newsDateLabel(iso(0, 9)),
+      oldLabel: window.newsDateLabel(iso(3, 14)),
+      retickSurvives: (() => { try { window.retickStamps(); return true; } catch { return false; } })(),
+    };
+  });
+
+  expect(live.stamped, 'every ts-bearing row exposes data-news-ts for the rollover tick').toBe(2);
+  expect(live.dates[0], "today's row renders no date").toBe('');
+  expect(live.dates[1], 'the three-day-old row renders one').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  expect(live.todayLabel, 'newsDateLabel is empty for today').toBe('');
+  expect(live.oldLabel, 'newsDateLabel dates an older instant').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  expect(live.retickSurvives, 'the stamp reticker drives the news rollover without throwing').toBe(true);
 });

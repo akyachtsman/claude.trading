@@ -967,14 +967,27 @@ function utcHmToPt(hm) {
    out here — 52px of column cannot carry it — so the tooltip holds the full
    instant and the "Mon D" alone still answers the question being asked, which
    is "is this from today". */
+function ptDateKey(x) { return x.toLocaleDateString('en-CA', { timeZone: DESK_TZ }); }
+/* The date half, ON ITS OWN, because it is the one part that GOES STALE WHILE
+   THE TAB SITS THERE. `t` and `full` describe the item and never change; `d` is
+   a comparison against *now*, so a row mapped at 23:30 keeps saying "today"
+   after Pacific midnight until something recomputes it. The off-hours poller is
+   on a 60-minute cadence and midnight is always off-hours, so that window is up
+   to an hour of exactly the ambiguity this whole change removes (Codex P2 on
+   PR #276). renderNews() therefore calls THIS per row on every paint, and the
+   30s stamp reticker re-renders the panel when the Pacific date rolls over. */
+function newsDateLabel(ts) {
+  const d = ts ? new Date(ts) : null;
+  if (!d || isNaN(d.getTime())) return '';
+  const key = ptDateKey(d);
+  return key === ptDateKey(new Date()) ? '' : fmtShortDate(key);
+}
 function newsWhen(ts, hm) {
   const d = ts ? new Date(ts) : null;
   if (!d || isNaN(d.getTime())) return { t: utcHmToPt(hm), d: '', full: '' };
-  const key = (x) => x.toLocaleDateString('en-CA', { timeZone: DESK_TZ });
-  const sameDay = key(d) === key(new Date());
   return {
     t: d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ }),
-    d: sameDay ? '' : fmtShortDate(key(d)),
+    d: newsDateLabel(ts),
     full: fmtStampDateTime(ts),
   };
 }
