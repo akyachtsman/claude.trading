@@ -2952,22 +2952,26 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
      NOT COVERED: the midnight flip itself, which needs clock control the demo
      page cannot supply — newsDateLabel is exercised directly instead. */
   const live = await page.evaluate(() => {
-    const iso = (daysAgo, h) => {
-      const d = new Date();
-      d.setDate(d.getDate() - daysAgo);
-      d.setHours(h, 30, 0, 0);
-      return d.toISOString();
-    };
+    /* Fixtures must be PACIFIC-safe. The first version built these with
+       setHours(), which works in the BROWSER's zone — UTC on CI — while
+       newsDateLabel decides "today" in America/Los_Angeles. Those calendars
+       disagree between 00:00 and 07:00 UTC, so the "today" fixture landed on
+       the NEXT Pacific date and this scenario failed against a correct app
+       (Codex P2, PR #276) — the same UTC-vs-Pacific confusion the scenario
+       exists to guard. The current instant is today in every zone, and a whole
+       number of days back is a different Pacific date in every zone. */
+    const nowIso = new Date().toISOString();
+    const oldIso = new Date(Date.now() - 3 * 86400000).toISOString();
     window.renderNews([
-      { ts: iso(0, 9),  t: '09:30', src: 'Reuters', h: 'A headline from today', chips: [] },
-      { ts: iso(3, 14), t: '14:30', src: 'Reuters', h: 'A headline from three days ago', chips: [] },
+      { ts: nowIso, t: '09:30', src: 'Reuters', h: 'A headline from today', chips: [] },
+      { ts: oldIso, t: '14:30', src: 'Reuters', h: 'A headline from three days ago', chips: [] },
     ], { cls: 'lamp--demo', text: 'Demo' });
     const cols = [...document.querySelectorAll('.news-row .news-time')];
     return {
       stamped: cols.filter((c) => c.dataset.newsTs).length,
       dates: cols.map((c) => { const d = c.querySelector('.news-date'); return d ? d.textContent.trim() : ''; }),
-      todayLabel: window.newsDateLabel(iso(0, 9)),
-      oldLabel: window.newsDateLabel(iso(3, 14)),
+      todayLabel: window.newsDateLabel(nowIso),
+      oldLabel: window.newsDateLabel(oldIso),
       retickSurvives: (() => { try { window.retickStamps(); return true; } catch { return false; } })(),
     };
   });
