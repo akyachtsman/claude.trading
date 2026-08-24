@@ -157,7 +157,15 @@
   padding: var(--space-2) 0; border-top: 1px solid var(--color-border);
 }
 .news-row:first-child { border-top: none; }
-.news-time { font: 400 var(--font-xs)/1.5 var(--font-mono); color: var(--color-text-secondary); flex: none; width: 52px; }
+.news-time { font: 400 var(--font-xs)/1.5 var(--font-mono); color: var(--color-text-secondary); flex: none; width: 52px;
+  display: flex; flex-direction: column; align-items: flex-start; }
+/* The date rides ABOVE the clock and only on rows that are not from today.
+   2xs (11px) rather than the row's 12px because "Jun 29" is 6 characters and
+   the column is 52px: at 12px mono that is ~48px before the column's own
+   rounding, which is close enough to clip on a longer month abbreviation.
+   The column width is deliberately NOT increased — it is shared with every
+   other row, so widening it for the rare dated one would indent all twenty. */
+.news-date { font-size: var(--font-2xs); line-height: 1.25; color: var(--color-text-secondary); white-space: nowrap; }
 .news-main { min-width: 0; }
 .news-headline { display: block; font: 500 var(--font-sm)/1.4 var(--font-sans); color: var(--color-text-primary); margin: 0; text-decoration: none; }
 a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underline; }

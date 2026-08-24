@@ -51,7 +51,34 @@ This project's look is its own — established at kickoff via `/design-intake`
   wrappers. **Every clock on the desk is pinned to Pacific** (`DESK_TZ`, owner
   ruling 2026-07-22):
   stamps via `fmtClock`, intraday bar times via `fmtBarT`, news row times via
-  `utcHmToPt` — never the viewer's locale, never raw UTC.
+  `newsWhen` — never the viewer's locale, never raw UTC.
+  **A news row DATES itself whenever it is not from today** (`newsWhen`,
+  `.news-date`, owner report 2026-08-24). `desk-news` used to emit only a bare
+  UTC `HH:mm` and discard the date, and the sweep applies NO maximum age — so a
+  quiet topic fills its 20 slots with whatever exists and a **Jun 29** story sat
+  **fourth** in an August feed reading `14:19`, which is indistinguishable from
+  this afternoon. Position made it worse, not better: the list is sorted by
+  recency, so a row near the top reads as fresh. The old `utcHmToPt` then pinned
+  that bare `HH:mm` onto **TODAY's** date to do the Pacific conversion, so the
+  date was not merely missing but overwritten — and the hour could land in the
+  wrong DST context too. The payload now carries `ts` (full ISO instant)
+  alongside `t`, and `newsWhen` renders `Mon D` above the clock, with the exact
+  instant in the row's `title`. Three things are load-bearing. The date is
+  **absent for today's rows on purpose** — dating all twenty would put an
+  identical `Aug 24` on every line and the one old row would stop standing out,
+  which is the entire signal. "Is this today" is decided on the **Pacific
+  calendar date** of both the item and now, never on elapsed hours, so an item
+  from 23:30 last night reads as yesterday's at 00:30 even though it is an hour
+  old. And `utcHmToPt` is KEPT as the fallback for a payload predating `ts`, so
+  the client is safe to ship before the function is redeployed — it simply keeps
+  the old behaviour until `ts` arrives rather than rendering blanks.
+  **The age itself is still unfiltered** — this change makes an old row legible,
+  it does not remove it. A maximum age was deliberately NOT added: a topic
+  search on a thin ticker legitimately has little recent news, and silently
+  emptying the panel would trade a misleading answer for no answer.
+  Demo seeds **both** states (two dated tail rows), because every demo row was
+  same-day before — which is exactly why nothing caught this: a bare clock
+  always looked right in demo while misdating live rows. S43 guards both.
   `buildDemoMarkets()` seeds the Markets window's normalized %-change series —
   a detrended random walk per index (S&P/Nasdaq/Russell/Dow) per timeframe,
   pinned to 0 at the start and the index's end-% at the right edge.
@@ -1286,6 +1313,7 @@ run for real against the dedicated project on every PR.
 | S33 | Verify-answer toggle | With `?demo=1` NO `.ask-verify` renders. Forced live+authed with `deskAsk` stubbed to RECORD its `verify` argument: off by default, arming sends `true` **on the wire** (not just `aria-pressed`), it disarms itself once an answer lands so the next question sends `false`, and a FAILED question keeps the arm | A toggle that stays on (every follow-up silently bills the check), a reset that's only cosmetic, or an error that disarms — the owner re-sends and their choice is gone |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S30 | Watchlist write conflict | With `?demo=1`, `deskSetWatchlists` forwards a version it is handed, `wlMutate` echoes back the version its own read returned, and an omitted version serializes as an explicit `null` — `undefined` would be dropped by `JSON.stringify` and silently bind the RPC's no-check default. The refusal itself is server-side (`desk_014`), exercised against the live table rather than in CI | A write with no `expected_version`, a version invented at write time rather than read, or `undefined` on the wire |
+| S43 | News row dating | With `?demo=1`, rows older than today render a `.news-date` reading `Mon D` ABOVE the clock, today's rows carry NO date, the clock survives alongside the date, the exact instant is in the row's `title`, and no when-column clips | Every row dated (twenty identical `Aug 24`s destroy the signal), no row dated (the Jun-29-reads-as-14:19 fault), a date replacing the clock, or a clipped date — a clipped date is a wrong date |
 | S13 | Heatmap map filter | With `?demo=1`, the panel starts COLLAPSED (`#heatBody` hidden, `aria-expanded=false`) and opens on `#heatToggle`; then the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. On the ETF cut, **every banded ETF gets a tile** — `tiles === Object.keys(etfCats).length`, with NO catch-all band and periods on every tile — read off the dataset via `page.evaluate`, NOT counted in the SVG (tiles are bare `rect`s with no class, sub-3px tiles are skipped by design, and the gloss overlay adds a second rect each, so a DOM count is both ambiguous and flaky at phone width). Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, disabled rows clickable, or a banded ETF with no tile — the 2026-08-06 regression, where the cut drew 25 of 40 because it was built from whatever the charts panel happened to carry |
 | S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly. That allowlist is now ONE shared block at the top of `app.spec.js` (`FEED_ORIGIN`/`FEED_CORS`/`BENIGN_CONSOLE`/`benignPageError`), not a copy per scenario: on 2026-08-01 the copies drifted and S3's `pageerror` listener had no filter at all, so `[iphone]` failed on exactly what `[mobile-chrome]` was already dropping — **WebKit raises a blocked cross-origin fetch as a pageerror, Chromium only logs it**. The SAME drift recurred one layer down hours later (the `0bfb372` post-merge run on `main`): the shared rule had been applied to the pageerror listener but not to S3's CONSOLE twin, which still demanded the FEED ORIGIN appear in the message text or location — and the first message of WebKit's CORS pair names only the refused origin, so `[iphone]` failed again. The rule is therefore ONE predicate, `benignCors(text, src)`, that every listener calls (`benignPageError` is now just its no-`src` alias) — restating it is the bug. It is deliberately stricter than a bare CORS match (pageerror is where real faults land): CORS-phrased AND naming either the feed origin or the run's own origin, and the own-origin half is enabled ONLY for a LOCAL test server (`localhost`/`127.0.0.1`) — not merely "any origin that isn't production", since `qa-live` takes an `app_url` override and a staging deploy would otherwise inherit the carve-out and swallow a real `quote-proxy` CORS break that S14 (which proves the MARKET feed) would not catch | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |
 | S15 | Assistant memory (opt-in, live) | With `RUN_ASSISTANT_TESTS=1` + live backend: ask, reload, prior exchange replays from `desk_chat_memory` (transcript contains the earlier text) | Transcript empty after reload despite a stored exchange |

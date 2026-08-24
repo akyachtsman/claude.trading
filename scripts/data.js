@@ -145,8 +145,16 @@ function buildDemoData() {
     { t: '14:02', src: 'Reuters',   h: 'Treasury yields edge up ahead of CPI report', chips: [['TLT', -0.65]] },
     { t: '13:20', src: 'Bloomberg', h: 'Apple services growth seen slowing this quarter, analysts say', chips: [['AAPL', -0.34]] },
     { t: '11:47', src: 'Reuters',   h: 'Small caps lag as rate-cut bets get pushed out', chips: [['IWM', -0.41]] },
+    /* The last two rows carry an explicit `d` so DEMO SHOWS BOTH STATES — an
+       undated row (today) and a dated one (older). Without them nothing in demo
+       exercises the date path and no scenario could guard it, which is how the
+       fault reached the owner in the first place: every demo row was same-day,
+       so a bare clock always looked correct here while misdating live rows.
+       They are literal rather than computed because demo is deterministic; the
+       live path builds these through newsWhen() from the feed's `ts`. */
     { t: '10:15', src: 'CNBC',      h: 'Amazon Prime Day sales tracking ahead of last year', chips: [['AMZN', 1.12]] },
-    { t: '09:36', src: 'Bloomberg', h: 'Volatility drifts lower; VIX under 15 for third session', chips: [['VIX', -4.20]] },
+    { t: '16:22', d: 'Aug 21', full: '2026-08-21 16:22 PT', src: 'Bloomberg', h: 'Volatility drifts lower; VIX under 15 for third session', chips: [['VIX', -4.20]] },
+    { t: '14:19', d: 'Jun 29', full: '2026-06-29 14:19 PT', src: 'Stocktwits', h: 'Defense drone maker jumps after Q4 earnings beat estimates', chips: [['AVAV', 2.31]] },
   ];
   return { accounts, market, news, labels, asOfDate, markets: buildDemoMarkets() };
 }
@@ -929,13 +937,59 @@ function fmtBarT(t) {
   return d.toLocaleDateString('en-CA', { timeZone: DESK_TZ }) + ' ' +
     d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ }) + ' PT';
 }
-/* news row clock: the feed sends UTC 'HH:mm' (headlines are all recent, so
-   today's date is a safe DST context) → Pacific 'HH:mm' */
+/* news row clock, FALLBACK ONLY: the feed's bare UTC 'HH:mm' → Pacific 'HH:mm'.
+   Its old comment claimed "headlines are all recent, so today's date is a safe
+   DST context". That was never checked and is false — the sweep applies no
+   maximum age, so a quiet topic fills its 20 slots with whatever exists and a
+   Jun 29 story can sit in an August feed. Pinning the bare HH:mm onto TODAY
+   then converts it in the wrong DST context as well, so the hour itself can be
+   off by an hour. Kept only for a payload predating `ts`; prefer newsWhen(). */
 function utcHmToPt(hm) {
   if (!/^\d\d:\d\d$/.test(hm || '')) return hm;
   const d = new Date(new Date().toISOString().slice(0, 10) + 'T' + hm + ':00Z');
   return isNaN(d.getTime()) ? hm
     : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ });
+}
+function ptDateKey(x) { return x.toLocaleDateString('en-CA', { timeZone: DESK_TZ }); }
+/* The date half, ON ITS OWN, because it is the one part that GOES STALE WHILE
+   THE TAB SITS THERE. `t` and `full` describe the item and never change; `d` is
+   a comparison against *now*, so a row mapped at 23:30 keeps saying "today"
+   after Pacific midnight until something recomputes it. The off-hours poller is
+   on a 60-minute cadence and midnight is always off-hours, so that window is up
+   to an hour of exactly the ambiguity this whole change removes (Codex P2 on
+   PR #276). renderNews() therefore calls THIS per row on every paint, and the
+   30s stamp reticker re-renders the panel when the Pacific date rolls over. */
+function newsDateLabel(ts) {
+  const d = ts ? new Date(ts) : null;
+  if (!d || isNaN(d.getTime())) return '';
+  const key = ptDateKey(d);
+  return key === ptDateKey(new Date()) ? '' : fmtShortDate(key);
+}
+/* A news row's when, in Pacific like every other clock on the desk (DESK_TZ).
+   Returns { t, d, full }: `t` is always the HH:mm, `d` is a "Mon D" date that
+   is EMPTY for today and set for anything older, and `full` is the exact
+   instant for the row's tooltip.
+
+   `d` is empty rather than always-present on purpose — dating every row would
+   put "Aug 24" on twenty identical lines and the one old row would stop
+   standing out, which is the whole point. Absence means today; presence means
+   it is not, and that is the signal.
+
+   The comparison is made on the PACIFIC calendar date of both the item and now,
+   never on elapsed hours: "is this today" is a question about the owner's own
+   clock, and an item from 23:30 last night is yesterday's news at 00:30 even
+   though it is an hour old. A year older than the current one is not spelled
+   out here — 52px of column cannot carry it — so the tooltip holds the full
+   instant and the "Mon D" alone still answers the question being asked, which
+   is "is this from today". */
+function newsWhen(ts, hm) {
+  const d = ts ? new Date(ts) : null;
+  if (!d || isNaN(d.getTime())) return { t: utcHmToPt(hm), d: '', full: '' };
+  return {
+    t: d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ }),
+    d: newsDateLabel(ts),
+    full: fmtStampDateTime(ts),
+  };
 }
 function fmtStampDateTime(iso) { /* Pacific "YYYY-MM-DD HH:mm TZ"; '' if unparseable */
   const d = new Date(iso);

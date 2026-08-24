@@ -2894,3 +2894,92 @@ test('S39: every pane draws a volume average, spanning the full window', async (
   // start 20 bars in (44 points) and the left edge of the strip would be bare.
   expect(ma[0].pts, 'the average spans the full visible window, not window-minus-20').toBe(63);
 });
+
+/* S43 — a news row says WHICH DAY when it is not today.
+ *
+ * The failure this guards is silent by construction. The feed applies no
+ * maximum age, so a quiet topic fills its 20 slots with whatever exists, and
+ * the payload used to carry a bare UTC "HH:mm" with the date discarded. A
+ * Jun 29 story therefore rendered as "14:19" — indistinguishable from this
+ * afternoon — and, being sorted by recency, sat fourth in an August feed where
+ * position itself implies freshness. The owner read it as current news.
+ *
+ * Asserting "a date is present" alone is not enough: dating EVERY row would
+ * satisfy that while destroying the signal, since twenty identical "Aug 24"
+ * labels make the one old row stop standing out. So this checks BOTH states —
+ * today's rows carry no date, older rows do. Demo seeds both deliberately. */
+test('S43: news rows date anything that is not from today', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('.news-row').first()).toBeVisible({ timeout: 20000 });
+
+  const rows = await page.evaluate(() => [...document.querySelectorAll('.news-row')].map((r) => {
+    const when = r.querySelector('.news-time');
+    const dateEl = when && when.querySelector('.news-date');
+    return {
+      date: dateEl ? dateEl.textContent.trim() : '',
+      // the clock must survive alongside the date, not be replaced by it
+      text: when ? when.textContent.trim() : '',
+      title: when ? (when.getAttribute('title') || '') : '',
+      // a clipped date is a wrong date: it must fit its own column
+      clipped: when ? when.scrollWidth > when.clientWidth + 1 : false,
+    };
+  }));
+
+  expect(rows.length, 'demo renders news rows').toBeGreaterThan(2);
+
+  const dated = rows.filter((r) => r.date);
+  const undated = rows.filter((r) => !r.date);
+
+  expect(dated.length, 'at least one row is older than today and says so').toBeGreaterThan(0);
+  expect(undated.length,
+    'today\'s rows stay undated — dating every row destroys the signal it exists to give')
+    .toBeGreaterThan(0);
+
+  for (const r of dated) {
+    expect(r.date, 'the date reads as "Mon D"').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+    expect(r.text, 'the clock is kept alongside the date').toMatch(/\d\d:\d\d/);
+    expect(r.title, 'the exact instant is recoverable from the tooltip').toMatch(/\d{4}-\d{2}-\d{2}/);
+  }
+  for (const r of rows) {
+    expect(r.clipped, `the when-column does not clip (${r.text})`).toBe(false);
+  }
+
+  /* The date is a comparison against NOW, so it goes stale while the tab sits
+     open — a row mapped at 23:30 keeps saying "today" after Pacific midnight,
+     and the off-hours feed poll is hourly (Codex P2 on PR #276). The fix is to
+     recompute per paint rather than bake it at map time, and to repaint on the
+     rollover. This checks the recompute half and the wiring the tick needs.
+     NOT COVERED: the midnight flip itself, which needs clock control the demo
+     page cannot supply — newsDateLabel is exercised directly instead. */
+  const live = await page.evaluate(() => {
+    /* Fixtures must be PACIFIC-safe. The first version built these with
+       setHours(), which works in the BROWSER's zone — UTC on CI — while
+       newsDateLabel decides "today" in America/Los_Angeles. Those calendars
+       disagree between 00:00 and 07:00 UTC, so the "today" fixture landed on
+       the NEXT Pacific date and this scenario failed against a correct app
+       (Codex P2, PR #276) — the same UTC-vs-Pacific confusion the scenario
+       exists to guard. The current instant is today in every zone, and a whole
+       number of days back is a different Pacific date in every zone. */
+    const nowIso = new Date().toISOString();
+    const oldIso = new Date(Date.now() - 3 * 86400000).toISOString();
+    window.renderNews([
+      { ts: nowIso, t: '09:30', src: 'Reuters', h: 'A headline from today', chips: [] },
+      { ts: oldIso, t: '14:30', src: 'Reuters', h: 'A headline from three days ago', chips: [] },
+    ], { cls: 'lamp--demo', text: 'Demo' });
+    const cols = [...document.querySelectorAll('.news-row .news-time')];
+    return {
+      stamped: cols.filter((c) => c.dataset.newsTs).length,
+      dates: cols.map((c) => { const d = c.querySelector('.news-date'); return d ? d.textContent.trim() : ''; }),
+      todayLabel: window.newsDateLabel(nowIso),
+      oldLabel: window.newsDateLabel(oldIso),
+      retickSurvives: (() => { try { window.retickStamps(); return true; } catch { return false; } })(),
+    };
+  });
+
+  expect(live.stamped, 'every ts-bearing row exposes data-news-ts for the rollover tick').toBe(2);
+  expect(live.dates[0], "today's row renders no date").toBe('');
+  expect(live.dates[1], 'the three-day-old row renders one').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  expect(live.todayLabel, 'newsDateLabel is empty for today').toBe('');
+  expect(live.oldLabel, 'newsDateLabel dates an older instant').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  expect(live.retickSurvives, 'the stamp reticker drives the news rollover without throwing').toBe(true);
+});

@@ -365,7 +365,17 @@ async function refresh(topic: string): Promise<unknown> {
          rather than the client assuming its own last input was honoured. */
       topic,
       items: ranked.map((it) => ({
+        /* `t` is UTC HH:mm and is kept ONLY so a client cached from before this
+           change keeps rendering a clock. It is not sufficient on its own: a
+           bare HH:mm cannot say WHICH DAY, so a two-month-old headline rendered
+           as "14:19" reads as today's — the owner hit exactly that on an AVAV
+           Q4 story from Jun 29 sitting fourth in an August feed, where position
+           in a recency-sorted list also implies freshness. Worse, the client's
+           utcHmToPt() pins the bare HH:mm onto TODAY's date to do the Pacific
+           conversion, so the real date is not merely absent, it is overwritten.
+           `ts` carries the full instant so the panel can date the row itself. */
         t: it.at ? it.at.toISOString().slice(11, 16) : '—',
+        ts: it.at ? it.at.toISOString() : null,
         src: it.src,
         h: it.title,
         url: it.link || null,
