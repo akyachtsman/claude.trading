@@ -2597,7 +2597,16 @@ function renderNews(news, lamp) {
   }
   for (const n of news) {
     const row = el('div', 'news-row');
-    row.appendChild(el('span', 'news-time', n.t));
+    /* The when-column stacks a DATE over the clock, and only when the row is
+       not from today (see newsWhen). A bare clock on an old headline is what
+       misled the owner: sorted by recency, a Jun 29 story sat fourth in an
+       August feed reading "14:19", which is indistinguishable from this
+       afternoon. The tooltip carries the exact instant either way. */
+    const when = el('span', 'news-time');
+    if (n.d) when.appendChild(el('span', 'news-date', n.d));
+    when.appendChild(el('span', '', n.t));
+    if (n.full) when.title = n.full;
+    row.appendChild(when);
     const main = el('div', 'news-main');
     /* headline links to the source article when the feed carried one; only
        http(s) — never a javascript:/data: URL from a tampered/odd feed item
@@ -6722,7 +6731,12 @@ async function refreshNews(force) {
     if (news.topic !== undefined && (news.topic || '') !== topic) return;
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
-    DESK.data.news = (news.items || []).map(it => ({ ...it, t: utcHmToPt(it.t) }));
+    /* newsWhen() overwrites `t` with the Pacific clock and adds `d`/`full`.
+       It reads it.ts (full instant) and falls back to the bare it.t when the
+       edge function has not been redeployed yet, so the client is safe to ship
+       ahead of the function — it simply keeps today's behaviour until `ts`
+       starts arriving, rather than rendering blanks. */
+    DESK.data.news = (news.items || []).map(it => ({ ...it, ...newsWhen(it.ts, it.t) }));
     /* the topic THESE rows came back for — what the empty state names */
     DESK.data.newsTopic = news.topic || topic;
     renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
