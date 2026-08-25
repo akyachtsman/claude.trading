@@ -147,6 +147,20 @@ This project's look is its own — established at kickoff via `/design-intake`
   default and were simply wrong once the two rows stopped being the same shape.
   `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
   decoration: two classic 15px bars would eat most of what the width buys.
+  **The ROSTER PICKER's collapsed label truncates at this width, and that is
+  accepted** (measured 2026-08-25): the `<select>` has ~**45px** of text room
+  (was ~73 at 200px) against the ~**82px** its own default "Charts roster"
+  label needs, and 6 of demo's 8 list names exceed it — `US sectors` and
+  `Treasuries` fit before and no longer do. Nothing becomes unreachable: the
+  OPEN menu renders at full width, so every name is still readable and
+  selectable, and `sel.title` was added so the full name is available on hover
+  without opening it. Buying the label its ~40px back would cost most of what
+  the narrowing won, which is the opposite of what was asked for. The title is
+  read from the **selected option's TEXT, never `sel.value`** — the charts
+  entry's value is the `WB_ROSTER_CHARTS` sentinel (a NUL-prefixed token), so
+  the obvious `sel.title = sel.value` would show the owner `\u0000charts`
+  instead of a list name; verified in the browser, where it renders
+  "Charts roster".
   **S40 budgets against the VALIDATOR, not against demo.** Demo carries ten
   three-letter symbols, so a five-character budget passed on a 160px rail that a
   real supported symbol would have broken — a budget that admits less than the

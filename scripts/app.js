@@ -5065,6 +5065,17 @@ function renderWbSidebar(data) {
   const savedRoster = readWbSticky().roster;
   const valid = savedRoster === WB_ROSTER_CHARTS || lists.some(l => l.title === savedRoster);
   sel.value = valid ? savedRoster : WB_ROSTER_CHARTS;
+  /* The COLLAPSED label is routinely truncated and the tooltip is how the full
+     name is read without opening the menu. The rail went to 154px on 2026-08-25
+     (owner: "reduce the width of these two columns to a min"), leaving the
+     picker ~45px of text room against the ~82px its own default "Charts roster"
+     needs — so this is the common case, not an edge one. Truncation itself is
+     accepted: the open menu renders at full width, so no name is unreachable,
+     and buying ~40px back for the label would cost most of what the narrowing
+     won. Set from the SELECTED OPTION's text, never from `sel.value`, because
+     the charts entry's value is the WB_ROSTER_CHARTS sentinel and would show
+     the owner an internal token instead of a list name. */
+  sel.title = (sel.selectedOptions[0] && sel.selectedOptions[0].textContent) || '';
   sel.addEventListener('change', () => {
     writeWbSticky({ roster: sel.value });
     renderWbSidebar(data);
