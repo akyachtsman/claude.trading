@@ -6042,19 +6042,24 @@ function renderCharts(data, lamp) {
      the next render once each fetch resolves */
   for (const p of ['p1', 'p2', 'p3']) if (show(p)) maybeFetchIntraday(effSym(wbState.cfg[p]));
   const panes = [];
-  if (show('p1')) {
-    const sym = effSym(wbState.cfg.p1);
-    const d = daily(sym);
-    /* Pro 1 = the SWING tier (owner naming 2026-07-22): daily bars, and the
-       doctrine circles live on ITS daily strip — that's the swing signal. */
-    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · SWING · ' + sym, {
-      window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
-      tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
-      pivots: wbState.cfg.p1.srSwing ? d.piv.swing : d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
-      stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
-      stochCaption: stochTag() + ' · DAILY',
-    }]);
-  }
+  /* DISPLAY ORDER: LONG-TERM, then SWING, then DAY TRADING (owner request
+     2026-08-25) — "if Pro 2 came first, then Pro 1, then Pro 3 ... rename them
+     to one, two, three from left to right".
+     So the on-screen NUMBER is POSITIONAL and the DOCTRINE NAME is the identity.
+     The config keys deliberately did NOT move: `cfg.p1` is still the SWING pane
+     and `cfg.p2` still the LONG-TERM one, they just render second and first.
+     That is what makes this change safe to ship — those keys are what the
+     owner's SAVED per-pane settings hang off (SMAs, S/R levels, chart style, the
+     Steady toggle, the extended-hours toggle), so renumbering them would have
+     silently moved the long-term pane's settings onto the swing pane. Keeping
+     them means no storage migration and nothing to lose.
+     Read the doctrine name, never the number: `cfg.p1` = SWING = displayed
+     "PRO 2". Everything that needs to follow the number is remapped at the edge
+     instead — the pane seg (wireCharts) and the settings popover title.
+     Reordering is otherwise free: nothing indexes `panes[]` for identity. Each
+     entry carries its own window/offset/cfg in its opts (`panKey`, `daysKey`,
+     `cfg`), and `idx` is used only to place the pane on the X axis and to draw
+     the dividers between them. */
   if (show('p2')) {
     /* Pro 2 = the LONG-TERM tier (owner naming 2026-07-22): daily candles
        carrying the daily stoch (native) + the WEEKLY stoch overlay (owner
@@ -6070,9 +6075,9 @@ function renderCharts(data, lamp) {
        change what every candle means. */
     const wk2 = weeklyStochOnDaily(d.bars);
     const stW2 = wbState.cfg.p2.stochW ? wk2 : null;
-    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · LONG-TERM · ' + sym, {
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · LONG-TERM · ' + sym, {
       window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
-      tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
+      tier: 'Pro 1', sym, cfg: wbState.cfg.p2,
       /* Candles by the WEEKLY stochastic crossover — Pro 2 ONLY (owner ruling
          2026-07-30). Pro 1 and Pro 3 keep open/close, where a day's direction
          is the point. */
@@ -6096,6 +6101,19 @@ function renderCharts(data, lamp) {
          regime, which is the deliberate lag and not a stale render. */
       stochWCaption: stochWTag() + ' · WEEKLY SCALE · CANDLE COLOUR'
         + (wbState.cfg.p2.stochSteady ? ' (STEADY)' : ''),
+    }]);
+  }
+  if (show('p1')) {
+    const sym = effSym(wbState.cfg.p1);
+    const d = daily(sym);
+    /* Pro 1 = the SWING tier (owner naming 2026-07-22): daily bars, and the
+       doctrine circles live on ITS daily strip — that's the swing signal. */
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · SWING · ' + sym, {
+      window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
+      tier: 'Pro 2', sym, cfg: wbState.cfg.p1,
+      pivots: wbState.cfg.p1.srSwing ? d.piv.swing : d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
+      stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
+      stochCaption: stochTag() + ' · DAILY',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
@@ -6214,7 +6232,7 @@ function buildWbSettings() {
   const cols = el('div', 'wb-set-cols');
   {
     const key = wbSetPane;
-    const title = { p1: 'PRO 1 · SWING', p2: 'PRO 2 · LONG-TERM', p3: 'PRO 3 · DAY TRADING' }[key];
+    const title = { p2: 'PRO 1 · LONG-TERM', p1: 'PRO 2 · SWING', p3: 'PRO 3 · DAY TRADING' }[key];
     const cfg = wbState.cfg[key];
     const col = el('div', 'wb-set-col');
     col.appendChild(el('h3', 'wb-set-title', title));
@@ -6356,7 +6374,11 @@ function wireCharts() {
      within the session (owner ruling 2026-07-14). */
 
   const layoutSeg = document.getElementById('chartLayout');
-  for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p1'], ['Pro 2', 'p2'], ['Pro 3', 'p3']]) {
+  /* label -> CFG KEY, and the two are deliberately crossed: the number is
+     positional (Pro 1 is the leftmost pane, which is LONG-TERM = cfg.p2)
+     while the key still names the doctrine. See the display-order note in
+     renderCharts. */
+  for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p2'], ['Pro 2', 'p1'], ['Pro 3', 'p3']]) {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = label;
     b.setAttribute('aria-pressed', String(mode === 'split'));

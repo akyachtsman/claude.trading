@@ -149,8 +149,29 @@ This project's look is its own — established at kickoff via `/design-intake`
   would otherwise draw up into the price pane. It carries `data-volma` because
   it shares its yellow with the stochastic `%D` lines and neither a test nor a
   reader could otherwise tell which yellow path is which.
-  **Pro 2 candle colouring follows the WEEKLY STOCHASTIC CROSSOVER, not
-  open/close** (owner ruling 2026-07-30): `%K` (red) above `%D` (yellow) ⇒ green
+  **PANE ORDER, and why the NUMBER is not the identity** (owner request
+  2026-08-25): the panes render **LONG-TERM, then SWING, then DAY TRADING**, and
+  are captioned `PRO 1` / `PRO 2` / `PRO 3` **left to right**. So the number is
+  POSITIONAL and the doctrine name is the identity — `PRO 1 · LONG-TERM`,
+  `PRO 2 · SWING`, `PRO 3 · DAY TRADING`.
+  **The config keys deliberately did NOT move**: `cfg.p1` is still the SWING pane
+  and `cfg.p2` still the LONG-TERM one; they simply render second and first. That
+  is what made the change safe to ship — those keys are what the owner's SAVED
+  per-pane settings hang off (SMAs, S/R levels, chart style, the Steady toggle,
+  the extended-hours toggle), so renumbering them would have silently moved the
+  long-term pane's settings onto the swing pane and needed a storage migration.
+  Keeping them means none was required. **Read the doctrine name, never the
+  number**: `cfg.p1` = SWING = displayed "PRO 2". Only two places cross the two,
+  both at the edge — the pane seg in `wireCharts` (label `Pro 1` → key `p2`) and
+  the settings-popover title map. Reordering was otherwise free because nothing
+  indexes `panes[]` for identity: each entry carries its own `panKey`, `daysKey`
+  and `cfg` in its opts, and `idx` only places the pane on the X axis and draws
+  the dividers. The tests locate panes by DOCTRINE NAME for the same reason —
+  S25, S34 and S39 all matched on the number and silently pointed at the wrong
+  pane the moment the order changed (S39's index-based check was measuring a
+  different window than its own message claimed).
+  **The LONG-TERM pane's candle colouring follows the WEEKLY STOCHASTIC
+  CROSSOVER, not open/close** (owner ruling 2026-07-30): `%K` (red) above `%D` (yellow) ⇒ green
   candle, below ⇒ red — "red over yellow is a buy sign", and on the long-term
   pane the decision is whether momentum is with you, not what one day did.
   `drawPane` colours by `opts.colorSt` when present; it is set on the **Pro 2

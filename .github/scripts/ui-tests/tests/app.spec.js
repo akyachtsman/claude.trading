@@ -1013,7 +1013,7 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
 
   // default split: all three pane captions (tier names per owner ruling
   // 2026-07-22: Pro 1 = swing, Pro 2 = long-term), candles, stoch paths (k+d ×3)
-  for (const cap of ['PRO 1 · SWING', 'PRO 2 · LONG-TERM', 'PRO 3 · DAY TRADING']) {
+  for (const cap of ['PRO 1 · LONG-TERM', 'PRO 2 · SWING', 'PRO 3 · DAY TRADING']) {
     await expect(chart, `missing pane caption ${cap}`).toContainText(cap);
   }
   expect(await chart.locator('rect').count(), 'candle/volume rects must render').toBeGreaterThan(30);
@@ -1046,11 +1046,15 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   }
 
   // pane layout seg maximizes a single tier and returns to split
+  /* The seg label is POSITIONAL, so "Pro 2" maximises the SWING pane — which
+     is cfg.p1. That crossing is deliberate and lives in wireCharts; asserting
+     it here is what proves the seg follows the on-screen numbering rather than
+     the config key. */
   await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();
-  await expect(chart).not.toContainText('PRO 1 · SWING');
-  await expect(chart).toContainText('PRO 2 · LONG-TERM');
+  await expect(chart).not.toContainText('PRO 1 · LONG-TERM');
+  await expect(chart).toContainText('PRO 2 · SWING');
   await page.locator('#chartLayout button', { hasText: 'Split' }).click();
-  await expect(chart).toContainText('PRO 1 · SWING');
+  await expect(chart).toContainText('PRO 1 · LONG-TERM');
 
   // per-pane header bars: each gear opens its own popover above its pane.
   // The weekly-stoch overlay toggle now lives on Pro 2 ALONE (owner ruling
@@ -1680,7 +1684,7 @@ test('S24: a failed accounts load keeps the desk authenticated', async ({ page }
 // daily strip and Pro 1 serve as negative controls: the rule must hold against
 // the weekly series and visibly FAIL against the other two, or the check isn't
 // distinguishing which stochastic is in play.
-test('S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close', async ({ page }) => {
+test('S25: long-term candles follow the weekly stochastic; swing follows open/close', async ({ page }) => {
   await page.goto('./?demo=1');
   await page.waitForSelector('#wbChart');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
@@ -1751,28 +1755,33 @@ test('S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close'
       return { agree, disagree };
     };
     return {
-      weekly: read(/^PRO 2/, /CANDLE COLOUR/),        // the rule
-      daily: read(/^PRO 2/, /· DAILY$/),              // must NOT be what drives it
-      p1: read(/^PRO 1/, /· DAILY$/),                 // must still follow price
+      /* Located by DOCTRINE NAME, never by the pane number. The number is
+         positional and the panes were reordered on 2026-08-25 (long-term first);
+         matching /^PRO 2/ silently pointed these probes at the wrong pane, which
+         is how a rule about the weekly stochastic came to be checked against the
+         swing pane. The doctrine name is the stable identity. */
+      weekly: read(/LONG-TERM/, /CANDLE COLOUR/),     // the rule
+      daily: read(/LONG-TERM/, /· DAILY$/),           // must NOT be what drives it
+      swing: read(/SWING/, /· DAILY$/),               // must still follow price
     };
   });
 
   for (const [key, r] of Object.entries(probe)) expect(r.err, `${key} located`).toBeUndefined();
-  expect(probe.weekly.agree, 'Pro 2 candles sampled').toBeGreaterThan(40);
-  expect(probe.p1.agree + probe.p1.disagree, 'Pro 1 candles sampled').toBeGreaterThan(20);
+  expect(probe.weekly.agree, 'long-term candles sampled').toBeGreaterThan(40);
+  expect(probe.swing.agree + probe.swing.disagree, 'swing candles sampled').toBeGreaterThan(20);
 
   // Pro 2: EVERY candle must match the WEEKLY crossover — no exceptions.
-  expect(probe.weekly.disagree, 'every Pro 2 candle matches the weekly %K vs %D').toBe(0);
+  expect(probe.weekly.disagree, 'every long-term candle matches the weekly %K vs %D').toBe(0);
 
   // ...and must NOT be explainable by the fast daily strip in the same pane —
   // otherwise this passes whichever series the code happens to use.
-  expect(probe.daily.disagree, 'Pro 2 colour is the weekly series, not the daily one')
+  expect(probe.daily.disagree, 'long-term colour is the weekly series, not the daily one')
     .toBeGreaterThan(probe.daily.agree * 0.2);
 
   // Pro 1 is the control: it follows open/close, so it must contradict its own
   // stochastic on a real share of bars. Zero here would mean the rule leaked.
-  expect(probe.p1.disagree, 'Pro 1 still follows open/close, not the stochastic')
-    .toBeGreaterThan(probe.p1.agree * 0.1);
+  expect(probe.swing.disagree, 'the swing pane still follows open/close, not the stochastic')
+    .toBeGreaterThan(probe.swing.agree * 0.1);
 });
 
 // S23 — Extended hours across the desk (owner request 2026-07-30). Demo-gated so
@@ -2307,7 +2316,7 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
 // must not depend on where the viewport happens to start. Seeded at the visible
 // window instead, the same candle would change colour as you zoom, which is the
 // kind of fault that quietly destroys trust in the pane.
-test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom', async ({ page }) => {
+test('S34: steady mode repaints the long-term pane, and a bar keeps its colour across a zoom', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
   await page.waitForTimeout(800);
@@ -2320,7 +2329,7 @@ test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom'
     const texts = [...svg.querySelectorAll('text')];
     const titles = texts.filter(t => /^PRO \d/.test(t.textContent))
       .map(t => ({ t: t.textContent, x: +t.getAttribute('x') })).sort((a, c) => a.x - c.x);
-    const ti = titles.findIndex(t => /^PRO 2/.test(t.t));
+    const ti = titles.findIndex(t => /LONG-TERM/.test(t.t));   // by doctrine, not by number
     if (ti < 0) return { err: 'no Pro 2 pane' };
     const x0 = titles[ti].x - 10;
     const x1 = ti + 1 < titles.length ? titles[ti + 1].x - 10 : svg.viewBox.baseVal.width;
@@ -2347,7 +2356,7 @@ test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom'
   const changes = a => a.reduce((n, v, i) => n + (i && v !== a[i - 1] ? 1 : 0), 0);
 
   const plain = await colours(60);
-  expect(plain.err, 'Pro 2 candles located').toBeUndefined();
+  expect(plain.err, 'long-term candles located').toBeUndefined();
   expect(plain.length, 'enough candles sampled').toBeGreaterThan(40);
   expect(await cap(), 'steady is off by default — it recolours ~23% of bars')
     .not.toContain('STEADY');
@@ -2488,7 +2497,7 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
 // which would leave every seg button unpressed and the pane at a width nothing
 // in the UI explains.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S36: the Pro 1 and Pro 2 spans survive a reload, and a bad one falls back', async ({ page }) => {
+test('S36: the swing and long-term spans survive a reload, and a bad one falls back', async ({ page }) => {
   // three page loads plus three chart renders do not fit the 30s default
   test.setTimeout(90_000);
   await page.goto('./?demo=1');
@@ -2954,11 +2963,16 @@ test('S39: every pane draws a volume average, spanning the full window', async (
   // yellow, matching the reference platform and the %D signal line
   expect(ma.every(m => m.stroke === '#f5c518')).toBe(true);
 
-  // Pro 1 opens on 3M = 63 bars. The average must cover ALL of them: it is
-  // computed from the whole series, so the leading visible bars have a real
-  // 20-period value. Computed from the visible window instead, the line would
-  // start 20 bars in (44 points) and the left edge of the strip would be bare.
-  expect(ma[0].pts, 'the average spans the full visible window, not window-minus-20').toBe(63);
+  // Each daily pane's average must cover its FULL window: it is computed from
+  // the whole series, so the leading visible bars carry a real 20-period value.
+  // Computed from the visible window instead, the lines would start 20 bars in
+  // (106 and 44 points) and the left edge of each strip would be bare.
+  // Asserted as a SET, not by index: the panes were reordered on 2026-08-25 and
+  // ma[0] silently became the long-term pane, so an index-based check was
+  // measuring a different window than its own message claimed.
+  expect(ma.map(m => m.pts),
+    'each daily pane spans its full window — long-term opens on 6M (126 bars), swing on 3M (63)')
+    .toEqual(expect.arrayContaining([126, 63]));
 });
 
 /* S43 — a news row says WHICH DAY when it is not today.
