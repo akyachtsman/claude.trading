@@ -169,9 +169,15 @@ This project's look is its own — established at kickoff via `/design-intake`
   the extended-hours toggle), so renumbering them would have silently moved the
   long-term pane's settings onto the swing pane and needed a storage migration.
   Keeping them means none was required. **Read the doctrine name, never the
-  number**: `cfg.p1` = SWING = displayed "PRO 2". Only two places cross the two,
-  both at the edge — the pane seg in `wireCharts` (label `Pro 1` → key `p2`) and
-  the settings-popover title map. Reordering was otherwise free because nothing
+  number**: `cfg.p1` = SWING = displayed "PRO 2". THREE places cross the two, and this
+  list is load-bearing — an earlier version of this entry named only the first
+  two, and following it through another reorder would leave the header bars
+  behind exactly as this PR did (Codex P2): the pane seg in `wireCharts` (label
+  `Pro 1` → key `p2`), the settings-popover title map, and **the header-bar DOM
+  in `index.html`**, where `wbBar-p2`/`chartZoom2` renders FIRST while displaying
+  `PRO 1`. The bars are not cosmetic — each one's zoom seg, lock and gear mutate
+  the config named by its id, so a bar above the wrong chart silently retimes the
+  wrong pane. If the order changes again, all three move together. Reordering was otherwise free because nothing
   indexes `panes[]` for identity: each entry carries its own `panKey`, `daysKey`
   and `cfg` in its opts, and `idx` only places the pane on the X axis and draws
   the dividers. The tests locate panes by DOCTRINE NAME for the same reason —
@@ -182,8 +188,8 @@ This project's look is its own — established at kickoff via `/design-intake`
   CROSSOVER, not open/close** (owner ruling 2026-07-30): `%K` (red) above `%D` (yellow) ⇒ green
   candle, below ⇒ red — "red over yellow is a buy sign", and on the long-term
   pane the decision is whether momentum is with you, not what one day did.
-  `drawPane` colours by `opts.colorSt` when present; it is set on the **Pro 2
-  pane only**, to the **weekly-scale 92-15-15** (`weeklyStochOnDaily`) — NOT the
+  `drawPane` colours by `opts.colorSt` when present; it is set on the **LONG-TERM pane
+  only** (config key `p2`, displayed `PRO 1`), to the **weekly-scale 92-15-15** (`weeklyStochOnDaily`) — NOT the
   fast daily 14-3-3, since on a long-term pane the regime that matters is the
   long-term one. That weekly series is computed **unconditionally**, independent
   of the `cfg.p2.stochW` overlay toggle: the toggle decides whether the strip is

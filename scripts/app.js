@@ -5013,12 +5013,13 @@ function renderWbSidebar(data) {
   const nav = document.getElementById('wbSidebar');
   while (nav.firstChild) nav.removeChild(nav.firstChild);
 
-  /* the watchlist feed's rows, by symbol — the source of a day-% for names the
-     charts sweep does not carry */
+  /* `lists` stays — the ROSTER picker below is built from it. What went is the
+     by-symbol Map of every watchlist ROW that used to sit beside it: it existed
+     solely to source a day-% for names the charts sweep does not carry, and the
+     day-% is gone. renderCharts rebuilds this rail on every animation frame of a
+     chart drag, so leaving it would have scanned every row of every list and
+     allocated a Map per frame for a feature that no longer renders (Codex P3). */
   const lists = (wlState.payload && wlState.payload.lists) || [];
-  const wlRows = new Map();
-  for (const l of lists) for (const r of (l.rows || [])) if (r && r.sym) wlRows.set(r.sym, r);
-
   const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); nav.appendChild(c); return c; };
 
   /* ── column A — manual ─────────────────────────────────────────────────── */
