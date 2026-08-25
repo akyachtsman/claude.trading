@@ -147,7 +147,7 @@ async function liveFeed(name: string, body: Record<string, unknown> = {}): Promi
   } catch { return null; }
 }
 
-// Stochastic 14-3-3 (Pro 1 SWING) and 92-15-15 (Pro 2 LONG-TERM weekly-scale),
+// Stochastic 14-3-3 (the SWING read) and 92-15-15 (the LONG-TERM weekly-scale read),
 // plus RSI(14) Wilder — the SAME algorithms as scripts/data.js's stochSeries /
 // rsiSeries and desk-ask's get_technicals, run over desk-charts' daily bars.
 // Computed here rather than left to the model's get_technicals tool because the
@@ -221,9 +221,15 @@ function technicalsFrom(charts: Any): Any {
       sym,
       lastClose: Number(s.c[s.c.length - 1].toFixed(2)),
       // Named for the panes the owner reads them on, so the model can say
-      // "Pro 2 is crossed down" rather than inventing its own vocabulary.
-      pro1SwingStochK: swing.k, pro1SwingStochD: swing.d, pro1Scale: 'STOCH 14-3-3 · DAILY',
-      pro2LongStochK: long.k, pro2LongStochD: long.d, pro2Scale: 'STOCH 92-15-15 · WEEKLY-SCALE',
+      // "the long-term stochastic is crossed down" rather than inventing its own
+      // vocabulary. Doctrine words, not pane numbers — the numbers are positional.
+      /* Keyed by DOCTRINE, never by pane number. The number is positional and
+         the panes were reordered on 2026-08-25 (long-term leftmost), so a field
+         called pro1Swing* would have told the model that the pane captioned
+         PRO 1 is the swing read when it is the long-term one — a wrong
+         oscillator reported against the chart the owner is looking at. */
+      swingStochK: swing.k, swingStochD: swing.d, swingScale: 'STOCH 14-3-3 · DAILY',
+      longStochK: long.k, longStochD: long.d, longScale: 'STOCH 92-15-15 · WEEKLY-SCALE',
       rsi14: rsiLatest(s.c),
     });
   }

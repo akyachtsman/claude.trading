@@ -33,7 +33,7 @@ const DEFAULT_SYSTEM = [
   'Ground every directional call in data you actually have this turn: the dashboard snapshot, a live quote you fetched with get_quote, or a web result. Never invent numbers — quote them as they appear. If you lack the data for a call, fetch it or say what you would need.',
   'Attribute provenance inline so the owner can weigh each claim: mark snapshot-derived facts, live-fetched figures (with the fetch time), and web facts (name the source).',
   "The snapshot's `market` array and `marketAsOf` are the LIVE, continuously-refreshing feed — treat that timestamp as the current moment. When asked for anything 'live', 'current', or 'today', answer from `market`/`marketAsOf` (or a fresh get_quote), and say so if it's not fresh enough to answer confidently.",
-  'Use get_quote(symbol) for a live price + fundamentals on any ticker, get_technicals(symbol) for real computed oscillator readings — RSI(14), the daily Stochastic 14-3-3 (Pro 1 SWING: stochK/stochD), and the weekly-scale Stochastic 92-15-15 (Pro 2 LONG-TERM: stochWK/stochWD) — never estimate, recall, or web-search for an RSI/stochastic/overbought/oversold number, always call get_technicals for it — and web_search / web_fetch for anything not on the page (earnings, news, current events). PRIVACY: never put the owner\'s real position sizes, share counts, dollar balances, or account identifiers into a web_search or web_fetch query — search by ticker or topic only.',
+  'Use get_quote(symbol) for a live price + fundamentals on any ticker, get_technicals(symbol) for real computed oscillator readings — RSI(14), the daily Stochastic 14-3-3 (the SWING read: stochK/stochD), and the weekly-scale Stochastic 92-15-15 (the LONG-TERM read: stochWK/stochWD). Name the panes by DOCTRINE, not by number: the on-screen number is POSITIONAL and the panes are ordered LONG-TERM, SWING, DAY TRADING left to right, so \'Pro 1\' means the LONG-TERM pane and \'Pro 2\' the SWING one. Each chart reading in the snapshot carries its own caption — trust that caption over any number in this prompt — never estimate, recall, or web-search for an RSI/stochastic/overbought/oversold number, always call get_technicals for it — and web_search / web_fetch for anything not on the page (earnings, news, current events). PRIVACY: never put the owner\'s real position sizes, share counts, dollar balances, or account identifiers into a web_search or web_fetch query — search by ticker or topic only.',
   "The dashboard already shows the owner everything visible on it — your value is what it CAN'T show: outside news, analyst commentary, catalysts, and context. For any directional or technical call, also run a web_search for relevant recent news or analyst commentary on that ticker BEFORE answering — don't wait to be asked.",
   "Keep answers short and direct — single-idea sentences, not long clauses stacked together with dashes or 'and'. When comparing or ranking several tickers, put each on its own line led by the plain ticker name (e.g. 'NVDA: ...'), followed by 1-2 tight sentences (the verdict, then the number backing it) — never markdown bold or asterisks, since answers render as plain text and asterisks would show up literally; a real line break between items is fine. The dashboard already shows an 'AI-generated · not financial advice' label; do not repeat disclaimers.",
 ].join(' ');
@@ -57,7 +57,7 @@ const TOOLS = [
   },
   {
     name: 'get_technicals',
-    description: 'Real computed technical-oscillator reading for one ticker: RSI(14, Wilder-smoothed), the slow Stochastic %K/%D (14-3-3 — Pro 1 SWING), and the weekly-scale Stochastic %K/%D (92-15-15, same bars — Pro 2 LONG-TERM). During market hours this folds in the still-forming session, same as the charts (reflectsLiveSession: true when it does; false means the last completed session only — say so if asked for a live/current read while false). Covers both the swing and long-term mechanical reads in one call. Use this whenever asked about RSI, stochastic, overbought, or oversold — never estimate or guess these from memory, the dashboard snapshot, or a web search; this computes them directly from live OHLC data.',
+    description: 'Real computed technical-oscillator reading for one ticker: RSI(14, Wilder-smoothed), the slow Stochastic %K/%D (14-3-3 — the SWING read, shown on the pane captioned PRO 2), and the weekly-scale Stochastic %K/%D (92-15-15, same bars — the LONG-TERM read, shown on the pane captioned PRO 1). During market hours this folds in the still-forming session, same as the charts (reflectsLiveSession: true when it does; false means the last completed session only — say so if asked for a live/current read while false). Covers both the swing and long-term mechanical reads in one call. Use this whenever asked about RSI, stochastic, overbought, or oversold — never estimate or guess these from memory, the dashboard snapshot, or a web search; this computes them directly from live OHLC data.',
     input_schema: {
       type: 'object',
       properties: { symbol: { type: 'string', description: 'Ticker, e.g. AAPL' } },
@@ -229,18 +229,19 @@ Deno.serve(async (req) => {
 
   // get_technicals: fetch DAILY OHLC via quote-proxy and compute RSI(14) +
   // TWO stochastic readings server-side, both on the same daily bars — the
-  // exact algorithms scripts/data.js's stochSeries() uses for Pro 1 (STOCH,
-  // 14-3-3) and Pro 2's weekly-scale overlay (WSTOCH, 92-15-15 — literally the
+  // exact algorithms scripts/data.js's stochSeries() uses for the SWING
+  // read (STOCH, 14-3-3) and the LONG-TERM weekly-scale overlay (WSTOCH,
+  // 92-15-15 — literally the
   // same stochSeries() call with a longer/heavier-smoothed config on the same
   // daily bars, per app.js's weeklyStochOnDaily), so one fetch covers both the
-  // SWING (Pro 1) and LONG-TERM (Pro 2) mechanical reads (owner report
-  // 2026-07-25: the tool only covered Pro 1's daily read; Pro 2's weekly-scale
+  // SWING and LONG-TERM mechanical reads (owner report
+  // 2026-07-25: the tool only covered the daily SWING read; the LONG-TERM weekly-scale
   // stoch needed no new data, just a second pass over the same bars).
   //
   // During market hours the charts don't compute on the completed-session
   // daily series alone — app.js's graftTodayBar() appends an aggregated
   // in-progress "today" bar (built from the intraday feed) before running
-  // stochSeries()/rsiSeries(), so the on-screen Pro 1/Pro 2 reads already
+  // stochSeries()/rsiSeries(), so the on-screen swing/long-term reads already
   // move through the live session. Ported the identical graft here (Codex
   // review on PR #180, 2026-07-25: without it, this tool's numbers could be
   // one bar stale and visibly disagree with the dashboard on a volatile
@@ -307,7 +308,7 @@ Deno.serve(async (req) => {
         // app.js's graftTodayBar() uses (which drops pre/post via regularOnly).
         // Turning extended hours on here would fold 4am prints into today's
         // high/low and silently walk this tool's Stochastic/RSI numbers off the
-        // Pro 1 / Pro 2 panes the owner reads them against.
+        // swing / long-term panes the owner reads them against.
         const ir = await fetch(`${supaUrl}/functions/v1/quote-proxy`, {
           method: 'POST',
           headers: { ...svc, 'content-type': 'application/json', origin: SITE_ORIGIN },
@@ -324,9 +325,9 @@ Deno.serve(async (req) => {
         return { ok: false, error: `not enough price history for ${symbol} to compute a reading` };
       }
 
-      // Stochastic 14-3-3 (Pro 1 SWING) — slow %K, then %D, over a 14-bar high/low window.
+      // Stochastic 14-3-3 (the SWING read) — slow %K, then %D, over a 14-bar high/low window.
       const { k: stochK, d: stochD } = stochLatest(s, n, STOCH_K, STOCH_K_SMOOTH, STOCH_D);
-      // Stochastic 92-15-15 (Pro 2 LONG-TERM weekly-scale) — same daily bars, longer/heavier
+      // Stochastic 92-15-15 (the LONG-TERM weekly-scale read) — same daily bars, longer/heavier
       // window; null (not an error) if the ticker has under ~120 bars of history.
       const { k: stochWK, d: stochWD } = stochLatest(s, n, WSTOCH_K, WSTOCH_K_SMOOTH, WSTOCH_D);
 
@@ -350,7 +351,7 @@ Deno.serve(async (req) => {
         stochK: round(stochK), stochD: round(stochD),
         stochWK: round(stochWK), stochWD: round(stochWD),
         rsi14: Number(rsi14.toFixed(2)),
-        note: 'stochK/stochD: slow Stochastic 14-3-3 on daily bars — the Pro 1 SWING read. stochWK/stochWD: the SAME daily bars run through a 92-15-15 config — the Pro 2 LONG-TERM weekly-scale read (null if the ticker has under ~120 bars of history). rsi14: standard 14-period RSI (Wilder), not otherwise charted on the dashboard. reflectsLiveSession: true if today\'s still-forming session was folded in (matching what the charts show live), false if this is the last completed session only. Conventional zones: stochastic <20 oversold / >80 overbought (weekly-scale strip draws its band at 30, not 20); RSI <30 oversold / >70 overbought.',
+        note: 'stochK/stochD: slow Stochastic 14-3-3 on daily bars — the SWING read (the pane captioned PRO 2). stochWK/stochWD: the SAME daily bars run through a 92-15-15 config — the LONG-TERM weekly-scale read (the pane captioned PRO 1) (null if the ticker has under ~120 bars of history). rsi14: standard 14-period RSI (Wilder), not otherwise charted on the dashboard. reflectsLiveSession: true if today\'s still-forming session was folded in (matching what the charts show live), false if this is the last completed session only. Conventional zones: stochastic <20 oversold / >80 overbought (weekly-scale strip draws its band at 30, not 20); RSI <30 oversold / >70 overbought.',
       };
     } catch (e) {
       return { ok: false, error: 'technicals fetch error: ' + (e instanceof Error ? e.message : String(e)) };
