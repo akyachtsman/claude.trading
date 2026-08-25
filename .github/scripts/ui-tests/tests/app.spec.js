@@ -2688,33 +2688,38 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
   // clicked by ticker, so an abbreviated symbol is the one truncation here
   // that is a wrong value rather than a tight fit (owner report 2026-08-20).
   //
-  // Measured as a WIDTH BUDGET, not as "nothing is currently ellipsised", and
-  // that still matters after the rail lost its day-% (owner request
-  // 2026-08-25) — the column was narrowed 240 -> 160px to hand the space to the
-  // Pro panes, so the budget got tighter even as the row got simpler. Demo
-  // cannot reproduce the original squeeze by itself: only 10 symbols carry demo
-  // bars and all are three letters, so a clipping check would pass on broken
-  // CSS too (verified: at the old 200px rail every demo row still fitted).
-  // Ask instead whether the leftover space could seat a longer ticker, using
-  // the row's own rendered font rather than an assumed character width.
+  // Budgeted against the VALIDATED LIMIT, not against what demo happens to
+  // hold. WL_SYM_RE accepts up to TEN characters and the roster already carries
+  // DX-Y.NYB and BTC-USD, so a five-character budget passed while a real
+  // supported symbol would have spilled under the × (Codex P2 — the 160px rail
+  // this replaced did exactly that). Measured in the MANUAL column because that
+  // is the tighter one: it carries the remove button as well as the ticker.
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.waitForTimeout(400);
   expect(await page.locator('#wbSidebar .wb-side-pct').count(),
     'the rail carries NO day-%: one number cannot contradict the header above it, '
     + 'which is what it did twice (PRs #277 and this one)').toBe(0);
   const fit = await page.evaluate(() => {
-    const sym = document.querySelector('#wbSidebar .wb-side-sym');
-    if (!sym) return null;
-    const btn = sym.closest('.wb-side-btn');
+    const row = document.querySelector('#wbSidebar .wb-rail-manual .wb-rail-row');
+    if (!row) return null;
+    const btn = row.querySelector('.wb-side-btn');
+    const sym = btn.querySelector('.wb-side-sym');
+    const x = row.querySelector('.wb-rail-x');
     const cs = getComputedStyle(btn), cx = document.createElement('canvas').getContext('2d');
     cx.font = getComputedStyle(sym).font;
     const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-    const free = btn.clientWidth - pad - sym.offsetWidth;
-    return { ticker: sym.textContent, free, need: cx.measureText('WWWWW').width - cx.measureText(sym.textContent).width };
+    return {
+      ticker: sym.textContent,
+      usable: btn.clientWidth - pad,
+      needTen: cx.measureText('WWWWWWWWWW').width,
+      xWidth: x ? x.offsetWidth : 0,
+      clipped: sym.scrollWidth > sym.clientWidth + 1,
+    };
   });
-  expect(fit, 'a rail row exists to measure').not.toBeNull();
-  expect(fit.free, `a 5-char ticker fits in the narrowed rail (row shows ${fit.ticker})`)
-    .toBeGreaterThanOrEqual(fit.need);
+  expect(fit, 'a manual rail row exists to measure').not.toBeNull();
+  expect(fit.clipped, `the rendered ticker is not clipped (row shows ${fit.ticker})`).toBe(false);
+  expect(fit.usable, 'the manual column seats a FULL 10-character symbol — the limit WL_SYM_RE '
+    + 'accepts, and DX-Y.NYB/BTC-USD are already in the roster').toBeGreaterThanOrEqual(fit.needTen);
 
   // removal
   /* Wait for the rail to STOP repainting before clicking. renderWatchlist ends

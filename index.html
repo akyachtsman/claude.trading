@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260825b">
-<link rel="stylesheet" href="styles/components.css?v=20260825b">
+<link rel="stylesheet" href="styles/tokens.css?v=20260825c">
+<link rel="stylesheet" href="styles/components.css?v=20260825c">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -679,7 +679,18 @@
      ticker. The extra 40px is what makes the widest realistic row (a 5-char
      symbol beside -12.34%) fit with room to spare; see the measured budget on
      .wb-rail-col below. */
-  .wb-grid { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: var(--space-3); }
+  /* 240 -> 200px, NOT 160 (owner request 2026-08-25 to hand rail width to the
+     panes, corrected in review). The ticker must never abbreviate — a clipped
+     symbol names no instrument on a rail whose whole purpose is being clicked by
+     ticker — and WL_SYM_RE accepts up to TEN characters, with DX-Y.NYB and
+     BTC-USD already in the roster. The font is 12px IBM Plex Mono at ~7.22px per
+     glyph, so ten characters need ~72px of ticker ALONE; two columns of that plus
+     row padding and the manual column's × cannot fit in 160 however the split is
+     weighted, which is arithmetic rather than a tuning question. 200 is the first
+     width that seats the full validated symbol length in BOTH columns. The panes
+     gain 40px instead of 80 — the smaller win is the price of never clipping a
+     ticker. */
+  .wb-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-3); }
   /* Below 860px the rail goes ABOVE the chart instead of beside it. At a 393px
      phone width a 200px rail leaves the canvas ~150px — the three pane bars
      then wrap so far that #wbBar-p3 overlaps Pro 1's gear and swallows clicks
@@ -1449,8 +1460,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260825b"></script>
-<script src="scripts/data.js?v=20260825b"></script>
-<script src="scripts/app.js?v=20260825b"></script>
+<script src="scripts/config.js?v=20260825c"></script>
+<script src="scripts/data.js?v=20260825c"></script>
+<script src="scripts/app.js?v=20260825c"></script>
 </body>
 </html>
