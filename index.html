@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260825d">
-<link rel="stylesheet" href="styles/components.css?v=20260825d">
+<link rel="stylesheet" href="styles/tokens.css?v=20260825e">
+<link rel="stylesheet" href="styles/components.css?v=20260825e">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -710,11 +710,19 @@
   /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
      scroll both columns together and defeat the split. `auto`, never `contain`:
      reaching the end of a column must carry on scrolling the page. */
-  /* `scrollbar-width: thin` is part of the width budget, not decoration: a
-     classic 15px scrollbar on each column is 30px off a 240px rail, which is
-     most of what the widening just bought. Column = (240-8)/2 = 116, less ~8
-     for the bar = ~108 usable, against a worst-case row of 8 (padding) + 36
-     (5-char symbol) + 4 (gap) + 42 (-12.34%) + 13 (×) = 103. */
+  /* `scrollbar-width: thin` is part of the width budget, not decoration — but
+     the budget here is the ticker-only 200px rail, NOT the old 240px one that
+     carried a day-%. Measured at 1512 with a 40-row manual column actually
+     overflowing: column = (200-8)/2 = 96, of which the × takes 12 and the
+     button's padding 8, leaving 76 usable against the 72.2 a ten-character
+     ticker needs (12px IBM Plex Mono, ~7.22px per glyph). 3.8px of headroom.
+     That headroom does NOT cover a scrollbar which takes layout width. This
+     sandbox's Chromium uses OVERLAY scrollbars and reserves 0, so it cannot
+     reproduce the case; where a thin bar takes ~11-12px a 9- or 10-character
+     symbol would clip, while 8 (DX-Y.NYB, the roster's longest) still fits.
+     That is an ACCEPTED, bounded residual — covering it needs ~224px, which
+     would cut the panes' gain to 16px of the 80. See CLAUDE.md for the owner's
+     ruling and the trigger to revisit it. */
   .wb-rail-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; scrollbar-width: thin; }
   .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
   .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
@@ -1460,8 +1468,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260825d"></script>
-<script src="scripts/data.js?v=20260825d"></script>
-<script src="scripts/app.js?v=20260825d"></script>
+<script src="scripts/config.js?v=20260825e"></script>
+<script src="scripts/data.js?v=20260825e"></script>
+<script src="scripts/app.js?v=20260825e"></script>
 </body>
 </html>
