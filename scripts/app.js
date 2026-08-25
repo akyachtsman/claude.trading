@@ -4986,11 +4986,15 @@ function renderWbInfo() {
    and previously required reading a ticker off the Watchlists panel and
    retyping it. */
 
-/* Day-% for one rail row, in preference order: the charted bars (exact, and
-   what the old rail used), then the watchlist feed's own quote (already
-   fetched — a symbol can be in a list without ever having been charted), then
-   nothing. NEVER a zero placeholder: 0.00% is a claim that the name was flat,
-   which is a different statement from "not known yet". */
+/* Day-% for one rail row, in preference order: in PRE-MARKET the watchlist row
+   (the only source carrying preMarketChangePercent); otherwise the live quote
+   for the ACTIVE symbol (so the row directly under the header cannot contradict
+   it); then the charted bars (exact, and what the old rail used); then the
+   watchlist feed's own quote (already fetched — a symbol can be in a list
+   without ever having been charted); then nothing. NEVER a zero placeholder:
+   0.00% is a claim that the name was flat, which is a different statement from
+   "not known yet". Both bounds on the quote branch are load-bearing and are set
+   out on the branch itself. */
 function wbRailPct(sym, data, wlRows, preOpen) {
   const row = wlRows.get(sym);
   /* THE ACTIVE SYMBOL READS THE LIVE QUOTE — the same wbInfoCache the header

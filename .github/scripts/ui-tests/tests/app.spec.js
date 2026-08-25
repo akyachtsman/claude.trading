@@ -2988,15 +2988,23 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
  *
  * Owner report 2026-08-24: the header read AVAV -0.19% while the rail row for
  * the same ticker read +1.03%. Nothing was miscomputed — they were different
- * VINTAGES. The header refreshes on wbInfoTtlMs (60s while open); the rail was
- * repainted ONLY when the watchlist feed landed, which rides the 5-minute
- * all-feeds poll and pauses while the tab is hidden. Two clocks, one screen,
- * with nothing on the row saying which was older.
+ * VINTAGES. The rail was ALREADY being repainted on every quote (renderCharts
+ * calls renderWbSidebar); the defect was that wbRailPct never READ the quote —
+ * it went straight to the bars, then fell through to the watchlist copy, which
+ * rides the 5-minute all-feeds poll and pauses while the tab is hidden. So the
+ * rail faithfully re-rendered a stale number every 60 seconds.
  *
- * Guards the source, not the pixels: the rail must prefer the same wbInfoCache
- * reading the header prints, and must repaint when a quote arrives. Both are
- * driven directly here because demo never fetches quotes — the same reason the
- * original fault could not surface in demo. */
+ * Guards SOURCE SELECTION only — which reading wbRailPct picks, and in what
+ * order. The cache is written and the rail repainted directly from the test,
+ * because demo never fetches quotes: the same reason the original fault could
+ * not surface in demo.
+ *
+ * What this does NOT cover, stated so the gap is not mistaken for coverage: the
+ * asynchronous quote-completion path (maybeFetchWbInfo -> renderCharts ->
+ * renderWbSidebar) is never exercised here. An earlier version of this comment
+ * claimed it was, on the round-1 premise above. Driving it would mean stubbing
+ * the network in demo; the repaint was never the broken half, so that machinery
+ * would guard a path that already worked. */
 test('S44: the charts rail reads the same quote as the header', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('#wbSidebar')).toBeVisible({ timeout: 20000 });

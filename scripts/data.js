@@ -883,8 +883,13 @@ function postMarketOpen(now) {
 
 /* ONE hoisted formatter, not one per call. Constructing an Intl.DateTimeFormat
    is the exact pattern that cost this project the 546s (see desk-charts'
-   NY_DATE): ~84us each, and the predicate below is called per rail row per
-   frame while a chart is dragged. Same output, built once. */
+   NY_DATE): ~84us each. The predicate below sits on the INTERACTIVE path —
+   renderCharts rebuilds the charts rail on every animation frame of a chart
+   drag — so the constructor cost is paid once at load rather than per call.
+   Same output, built once.
+   The rail separately evaluates the predicate ONCE PER RENDER and threads the
+   boolean through its rows (see renderWbSidebar); that is a different bound
+   from this one, and it is what keeps formatToParts off the per-row path. */
 const NY_PARTS = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/New_York', weekday: 'short',
   year: 'numeric', month: '2-digit', day: '2-digit',

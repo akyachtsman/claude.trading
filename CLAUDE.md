@@ -138,9 +138,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   P1) — skipping alone fell through to the BARS branch, so for any charted
   symbol the pre-market case was unchanged. The gate is evaluated ONCE per rail
   render and passed in, because `renderCharts` rebuilds the rail on every
-  animation frame of a chart drag and `preMarketOpen` builds an
-  `Intl.DateTimeFormat` — the 546s pattern; its formatter is hoisted for the
-  same reason. Otherwise `extPct` when an extended print exists and
+  animation frame of a chart drag: called per row it would multiply
+  `formatToParts` and its part scans by the rail length, every frame. That is a
+  separate bound from hoisting `NY_PARTS`, which is what stops `preMarketOpen`
+  CONSTRUCTING an `Intl.DateTimeFormat` per call — the 546s pattern proper. It
+  no longer builds one at all; do not re-document it as though it does. Otherwise `extPct` when an extended print exists and
   `changePct` otherwise — the desk-wide prior-close rule (2026-07-29) that
   `desk-watchlist` compounds too, so the rail agrees with the HEADER during
   regular hours and with the WATCHLISTS panel after them. S44 guards it,
