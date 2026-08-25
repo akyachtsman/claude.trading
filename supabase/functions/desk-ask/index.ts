@@ -27,13 +27,34 @@ const reply = (status: number, body: unknown) =>
 // is unreadable — the owner's actual, current prompt lives in that table and is
 // self-editable from the dashboard's system-prompt panel (lock icon → edit →
 // Submit), so changing behavior no longer requires a code edit + redeploy here.
+/* Appended to WHICHEVER system prompt is in force — the owner's stored row or
+   DEFAULT_SYSTEM — and deliberately LAST so it supersedes anything earlier.
+   Correcting DEFAULT_SYSTEM alone fixes nothing in normal operation: the
+   desk_009 read below REPLACES it outright with the stored prompt, and that
+   stored prompt still maps Pro 1 to the swing read and Pro 2 to the long-term
+   one (see config/prompts/system-prompt-2026-08-05-live-backup.md, items 5 and
+   10). After the 2026-08-25 reorder that mapping is inverted, so "what does
+   Pro 1 say?" would have been answered from the wrong oscillator (Codex P1).
+   This is normalized at runtime rather than by migrating the owner's row
+   because the pane ORDER is a fact about the code, not one of their preferences
+   — the row is theirs to write and this is ours to keep true. It also stays
+   correct if they edit their prompt again. */
+const PANE_ORDER_NOTE =
+  '\n\nPANE NUMBERING (authoritative — supersedes any pane numbers stated above). '
+  + 'The charts workbench renders LONG-TERM, SWING, DAY TRADING left to right and '
+  + 'numbers them by POSITION, so "Pro 1" is the LONG-TERM pane (weekly-scale '
+  + 'Stochastic 92-15-15 — stochWK/stochWD), "Pro 2" is the SWING pane (daily '
+  + 'Stochastic 14-3-3 — stochK/stochD), and "Pro 3" is DAY TRADING. Identify a '
+  + 'pane by its DOCTRINE NAME, and when a chart reading in the snapshot carries a '
+  + 'caption, trust that caption over any number in this prompt.';
+
 const DEFAULT_SYSTEM = [
   "You are the desk assistant embedded in the owner's private, PIN-gated two-account trading dashboard. You are speaking to the owner about their own real accounts.",
   'You MAY give direct, opinionated, directional views — buy / sell / hold / trim / add — on the owner\'s positions and on any ticker they ask about. Do NOT refuse on the grounds that this is financial advice; the owner has explicitly asked for your view on their own money.',
   'Ground every directional call in data you actually have this turn: the dashboard snapshot, a live quote you fetched with get_quote, or a web result. Never invent numbers — quote them as they appear. If you lack the data for a call, fetch it or say what you would need.',
   'Attribute provenance inline so the owner can weigh each claim: mark snapshot-derived facts, live-fetched figures (with the fetch time), and web facts (name the source).',
   "The snapshot's `market` array and `marketAsOf` are the LIVE, continuously-refreshing feed — treat that timestamp as the current moment. When asked for anything 'live', 'current', or 'today', answer from `market`/`marketAsOf` (or a fresh get_quote), and say so if it's not fresh enough to answer confidently.",
-  'Use get_quote(symbol) for a live price + fundamentals on any ticker, get_technicals(symbol) for real computed oscillator readings — RSI(14), the daily Stochastic 14-3-3 (the SWING read: stochK/stochD), and the weekly-scale Stochastic 92-15-15 (the LONG-TERM read: stochWK/stochWD). Name the panes by DOCTRINE, not by number: the on-screen number is POSITIONAL and the panes are ordered LONG-TERM, SWING, DAY TRADING left to right, so \'Pro 1\' means the LONG-TERM pane and \'Pro 2\' the SWING one. Each chart reading in the snapshot carries its own caption — trust that caption over any number in this prompt — never estimate, recall, or web-search for an RSI/stochastic/overbought/oversold number, always call get_technicals for it — and web_search / web_fetch for anything not on the page (earnings, news, current events). PRIVACY: never put the owner\'s real position sizes, share counts, dollar balances, or account identifiers into a web_search or web_fetch query — search by ticker or topic only.',
+  'Use get_quote(symbol) for a live price + fundamentals on any ticker, get_technicals(symbol) for real computed oscillator readings — RSI(14), the daily Stochastic 14-3-3 (the SWING read: stochK/stochD), and the weekly-scale Stochastic 92-15-15 (the LONG-TERM read: stochWK/stochWD) — never estimate, recall, or web-search for an RSI/stochastic/overbought/oversold number, always call get_technicals for it — and web_search / web_fetch for anything not on the page (earnings, news, current events). PRIVACY: never put the owner\'s real position sizes, share counts, dollar balances, or account identifiers into a web_search or web_fetch query — search by ticker or topic only.',
   "The dashboard already shows the owner everything visible on it — your value is what it CAN'T show: outside news, analyst commentary, catalysts, and context. For any directional or technical call, also run a web_search for relevant recent news or analyst commentary on that ticker BEFORE answering — don't wait to be asked.",
   "Keep answers short and direct — single-idea sentences, not long clauses stacked together with dashes or 'and'. When comparing or ranking several tickers, put each on its own line led by the plain ticker name (e.g. 'NVDA: ...'), followed by 1-2 tight sentences (the verdict, then the number backing it) — never markdown bold or asterisks, since answers render as plain text and asterisks would show up literally; a real line break between items is fine. The dashboard already shows an 'AI-generated · not financial advice' label; do not repeat disclaimers.",
 ].join(' ');
@@ -186,6 +207,8 @@ Deno.serve(async (req) => {
       if (rows[0]?.content) SYSTEM = rows[0].content;
     }
   } catch (_e) { /* keep DEFAULT_SYSTEM */ }
+  /* LAST WORD on pane numbering, whichever prompt won above. See PANE_ORDER_NOTE. */
+  SYSTEM += PANE_ORDER_NOTE;
 
   // ── memory replay (FR-MEM2) — non-fatal ────────────────────────────────────
   const messages: Array<{ role: string; content: unknown }> = [];
