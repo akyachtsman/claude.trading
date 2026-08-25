@@ -119,44 +119,62 @@ This project's look is its own — established at kickoff via `/design-intake`
   contradict itself. `wbRailPct`, the `preMarketOpen` gate it needed, that
   gate's hoisted `NY_PARTS` formatter and scenario **S44** all went with it —
   deleting S44 is not lost coverage, since the behaviour it guarded no longer
-  exists. **The rail is 200px and the ticker NEVER abbreviates** — the two are one
-  rule. `.wb-grid`'s first column went 96 → 200 → 240 (when it still carried a
-  day-%) → **200px** again once the day-% went. 160 was tried in that last pass
-  and is WRONG: `WL_SYM_RE` accepts **ten** characters and `DX-Y.NYB` and
-  `BTC-USD` are already in the roster, while the rail font is 12px IBM Plex Mono
-  at ~7.22px per glyph — so ten characters need ~72px of ticker alone and the
-  160px manual column offered **56**. Two columns of 72 plus row padding and the
-  manual column's `×` cannot fit in 160 however the split is weighted, so this is
-  arithmetic and no dynamic allocation rescues it. 200 is the first width that
-  seats the full validated length in BOTH columns; the panes gain 40px rather
-  than 80, and that smaller win is the price of never clipping a ticker — a
-  clipped symbol names no instrument on a rail whose whole purpose is being
-  clicked by ticker (owner report 2026-08-20, when 4-letter names rendered as
-  `AV…`). `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
+  exists. **The ticker NEVER abbreviates — that is the rule; the width is only ever
+  derived from it.** `.wb-grid`'s first column went 96 → 200 → 240 (when it
+  still carried a day-%) → 200 → **154px** (owner request 2026-08-25, "reduce
+  the width of these two columns to a min and give more space to the pro
+  charts"). Read the rule, never the number: a clipped symbol names no
+  instrument on a rail whose whole purpose is being clicked by ticker (owner
+  report 2026-08-20, when 4-letter names rendered as `AV…`), and `WL_SYM_RE`
+  accepts **ten** characters with `DX-Y.NYB` and `BTC-USD` already in the
+  roster. **160 was tried and REJECTED in review** on the same day 200 was set:
+  at 12px IBM Plex Mono (~7.22px/glyph) ten characters need ~72px of ticker
+  alone, and a 160px rail's manual column offered **56**.
+  154 reaches a narrower rail than that rejected 160 **without touching the
+  rule**, because it makes the glyphs and the chrome cheaper instead of the
+  budget tighter — which is the whole lesson: the earlier attempt tried to buy
+  width out of the ticker's own allowance, and there was none to take. Three
+  measured savings, in order of size: the row font goes **12px → 10px** mono, so
+  ten characters cost **60.2px** instead of 72.3; **the two columns stop being
+  equal** (`.wb-rail-manual` `flex: 0 0 78px`, `.wb-rail-roster` `flex: 1 1 0`),
+  since only the manual column carries a `×` and forcing the roster to match it
+  spent ~12px per rail on nothing; and row padding 4px → 2px a side with the `×`
+  3px → 2px. Measured at 1512: **rail 200 → 154, chart 1170 → 1216 (+46px)**,
+  with ~3.9px of headroom in BOTH columns — slightly MORE than the 3.3px the
+  200px rail had. The type drop is the biggest contributor and is the first
+  thing to give back if this ever needs to grow: it is a legibility cost, where
+  the unequal split and the padding were pure waste. Equal columns are the tidy
+  default and were simply wrong once the two rows stopped being the same shape.
+  `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
   decoration: two classic 15px bars would eat most of what the width buys.
   **S40 budgets against the VALIDATOR, not against demo.** Demo carries ten
   three-letter symbols, so a five-character budget passed on a 160px rail that a
   real supported symbol would have broken — a budget that admits less than the
   validator accepts is not a budget. It measures the MANUAL column (the tighter
   one, since it carries the `×`) against the full 10-character limit and also
-  asserts the rendered ticker is not clipped. Both halves were proved to bite by
-  setting the rail back to 160 and watching them fail.
-  **One residual is ACCEPTED and bounded** (owner ruling 2026-08-25): the budget
-  makes NO allowance for a scrollbar. `.wb-rail-col` is `overflow-y: auto` with
-  `scrollbar-width: thin`, and the manual column holds up to `WB_MANUAL_MAX` 40,
-  so it can overflow. Measured with 40 rows: the column offers **76px** against
-  the **72.2** a ten-character ticker needs — 3.8px of headroom, and this
+  asserts the rendered ticker is not clipped. Critically it reads the **computed
+  font off the live element** rather than hardcoding a pixel figure, which is
+  why the 12px → 10px change needed no test edit: at 154 it re-derived its own
+  expectation as 60.2 and still failed at **48** when the manual column was
+  narrowed to 62px to falsify it (proved, this pass — as it was proved at 200 by
+  setting the rail back to 160).
+  **One residual is ACCEPTED and bounded** (owner ruling 2026-08-25, re-affirmed
+  at 154): the budget makes NO allowance for a scrollbar. `.wb-rail-col` is
+  `overflow-y: auto` with `scrollbar-width: thin`, and the manual column holds up
+  to `WB_MANUAL_MAX` 40, so it can overflow. Measured with 40 rows the column
+  offers **64.2px** against the **60.2** a ten-character ticker needs, and this
   sandbox's Chromium uses OVERLAY scrollbars so it reserves nothing. On a
   platform that reserves ~11–12px for a thin scrollbar, a **9- or 10-character**
-  symbol could clip; **8** characters (`DX-Y.NYB`, the longest in the roster)
-  still fits. Covering it needs ~**224px**, which would leave the panes gaining
-  16px of the original 80 — so the owner chose the width over the edge case. The
-  TRIGGER to revisit is concrete: if a 9–10 character symbol enters the roster,
-  or the desk is used where scrollbars take layout width, go to 224 and add the
-  scrollbar to S40's budget. Note this is the same class as the
-  `overscroll-behavior` trap below — a Chromium harness cannot reproduce it, so
-  it must be reasoned about rather than tested here.
-  **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
+  symbol could clip; **8** (`DX-Y.NYB`, the longest in the roster) still fits.
+  Covering it costs ~**24px**, which would hand back half the cut — so the owner
+  has now TWICE chosen chart space over it, and their own machine (macOS,
+  overlay scrollbars) never renders the case. The TRIGGER to revisit is
+  concrete: if a 9–10 character symbol enters the roster, or the desk is used
+  where scrollbars take layout width, widen and add the scrollbar to S40's
+  budget. Note this is the same class as the `overscroll-behavior` trap below —
+  a Chromium harness cannot reproduce it, so it must be reasoned about rather
+  than tested here.
+    **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
   (`VOL_MA`, `data-volma`, owner request 2026-08-12, shipped 2026-08-18) — the
   reference platform's yellow line, and what makes a bar readable as heavy or
   light, since "big volume" only means anything against the recent norm. Three

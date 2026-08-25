@@ -668,29 +668,34 @@
   }
 
   /* watchlist charts (two-pane workbench + symbol rail) */
-  /* 96 → 200px: the rail is TWO columns now (owner request 2026-08-17) — a
-     manual stack the owner types into and a picker-headed roster column. Two
-     96px columns plus their gap is what 200 buys; the chart gives up ~104px,
-     which is the price of not having to retype a ticker to chart it. */
-  /* 240, not 200 (owner request 2026-08-20: "I would like to see all four
-     letters of the symbol here"). At 200 a column was 96px, and after the
-     row's own padding, the ×, the gap and a ~42px day-% there were ~21px left
-     for the ticker — so every 4-letter name rendered as `AV…`, which is not a
-     ticker. The extra 40px is what makes the widest realistic row (a 5-char
-     symbol beside -12.34%) fit with room to spare; see the measured budget on
-     .wb-rail-col below. */
-  /* 240 -> 200px, NOT 160 (owner request 2026-08-25 to hand rail width to the
-     panes, corrected in review). The ticker must never abbreviate — a clipped
-     symbol names no instrument on a rail whose whole purpose is being clicked by
-     ticker — and WL_SYM_RE accepts up to TEN characters, with DX-Y.NYB and
-     BTC-USD already in the roster. The font is 12px IBM Plex Mono at ~7.22px per
-     glyph, so ten characters need ~72px of ticker ALONE; two columns of that plus
-     row padding and the manual column's × cannot fit in 160 however the split is
-     weighted, which is arithmetic rather than a tuning question. 200 is the first
-     width that seats the full validated symbol length in BOTH columns. The panes
-     gain 40px instead of 80 — the smaller win is the price of never clipping a
-     ticker. */
-  .wb-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-3); }
+  /* 96 → 200 → 154px. The rail is TWO columns (owner request 2026-08-17) — a
+     manual stack the owner types into and a picker-headed roster column — and
+     its width has been re-cut three times. History matters here because the
+     SAME mistake is available every time: 240 came from the owner seeing
+     4-letter names render as `AV…` (2026-08-20), and 160 was tried and rejected
+     in review on 2026-08-25 for re-creating that clip.
+
+     THE RULE IS NOT A NUMBER, IT IS: the ticker must never abbreviate, at the
+     FULL length WL_SYM_RE accepts (TEN characters — DX-Y.NYB and BTC-USD are
+     already in the roster). A clipped symbol names no instrument on a rail
+     whose whole purpose is being clicked by ticker. Every width below is
+     derived from that, never chosen.
+
+     154 (owner request 2026-08-25, "reduce the width of these two columns to a
+     min and give more space to the pro charts") is reached WITHOUT touching the
+     rule, by making the glyphs and the chrome cheaper rather than the budget
+     tighter. Three savings, all measured, none of them a squeeze on the ticker:
+       · the two columns are NO LONGER EQUAL. They never needed to be — only the
+         manual column carries a `×`, so forcing the roster to match it spent
+         ~12px per rail on nothing. See .wb-rail-manual / .wb-rail-roster below.
+       · the row font goes 12px → 10px mono, so ten characters cost 60.2px
+         instead of 72.3.
+       · row padding 4px → 2px a side and the `×` 3px → 2px.
+     Measured at 1512: rail 200 → 154, chart 1170 → 1216 (+46px). The type drop
+     is the biggest single contributor and is the part to reconsider FIRST if
+     this ever needs to grow back — it is a legibility cost, where the unequal
+     split and the padding are pure waste removed. */
+  .wb-grid { display: grid; grid-template-columns: 154px minmax(0, 1fr); gap: var(--space-3); }
   /* Below 860px the rail goes ABOVE the chart instead of beside it. At a 393px
      phone width a 200px rail leaves the canvas ~150px — the three pane bars
      then wrap so far that #wbBar-p3 overlaps Pro 1's gear and swallows clicks
@@ -701,6 +706,13 @@
   @media (max-width: 860px) {
     .wb-grid { grid-template-columns: minmax(0, 1fr); }
     #wbSidebar { max-height: 220px; }
+    /* The unequal split is a SIDE-RAIL rule and must not survive the stack.
+       `.wb-rail-manual` is pinned to 78px so a 154px side rail seats a ten
+       character ticker; once the rail spans the full width that 78 stops being
+       a floor and becomes a cap, leaving a narrow manual column beside a
+       roster three times its size. Widths are only scarce when the rail is
+       154px wide, so here they go back to sharing evenly. */
+    .wb-rail-manual { flex: 1 1 0; }
   }
   /* The rail is a ROW of two columns; each column scrolls on its own so a
      40-name watchlist cannot push the manual stack off the bottom. The
@@ -710,20 +722,36 @@
   /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
      scroll both columns together and defeat the split. `auto`, never `contain`:
      reaching the end of a column must carry on scrolling the page. */
-  /* `scrollbar-width: thin` is part of the width budget, not decoration — but
-     the budget here is the ticker-only 200px rail, NOT the old 240px one that
-     carried a day-%. Measured at 1512 with a 40-row manual column actually
-     overflowing: column = (200-8)/2 = 96, of which the × takes 12 and the
-     button's padding 8, leaving 76 usable against the 72.2 a ten-character
-     ticker needs (12px IBM Plex Mono, ~7.22px per glyph). 3.8px of headroom.
-     That headroom does NOT cover a scrollbar which takes layout width. This
-     sandbox's Chromium uses OVERLAY scrollbars and reserves 0, so it cannot
-     reproduce the case; where a thin bar takes ~11-12px a 9- or 10-character
+  /* THE WIDTH BUDGET, measured at 1512 with a 40-row manual column actually
+     overflowing. Ten characters of 10px IBM Plex Mono cost 60.2px (12px cost
+     72.3 — that drop is what paid for most of the 200 → 154 cut).
+
+       manual  = 60.2 ticker + 9.8 `×` + 4 padding = 74.0 needed, 78 given
+       roster  = 60.2 ticker            + 4 padding = 64.2 needed, 68 given
+       rail    = 78 + 68 + 8 gap = 154
+
+     THE COLUMNS ARE DELIBERATELY UNEQUAL, and that is the one structural idea
+     here: `flex: 1 1 0` on both made the roster carry a ~10px allowance for a
+     `×` IT DOES NOT HAVE. Equal columns look like the tidy default and are
+     simply wrong when the two rows are not the same shape.
+
+     `scrollbar-width: thin` is part of this budget, not decoration. The ~4px of
+     headroom above does NOT cover a scrollbar that takes layout width. This
+     sandbox's Chromium uses OVERLAY scrollbars and reserves 0, so it CANNOT
+     reproduce the case — where a thin bar takes ~11-12px a 9- or 10-character
      symbol would clip, while 8 (DX-Y.NYB, the roster's longest) still fits.
-     That is an ACCEPTED, bounded residual — covering it needs ~224px, which
-     would cut the panes' gain to 16px of the 80. See CLAUDE.md for the owner's
-     ruling and the trigger to revisit it. */
-  .wb-rail-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; scrollbar-width: thin; }
+     That remains an ACCEPTED, bounded residual, re-affirmed at this width: the
+     owner has now twice chosen chart space over it, and their own machine
+     (macOS, overlay scrollbars) never sees it. Covering it costs ~24px, which
+     would give back half the cut. Trigger to revisit: a 9-10 character symbol
+     entering the roster, or the desk being used where scrollbars take layout
+     width. S40 budgets against the VALIDATOR's ten characters, never against
+     demo's short names. */
+  .wb-rail-col { min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; scrollbar-width: thin; }
+  /* Sized to what each column actually holds — see the budget above. The manual
+     column is the wider one because it alone carries the `×`. */
+  .wb-rail-manual { flex: 0 0 78px; }
+  .wb-rail-roster { flex: 1 1 0; }
   .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
   .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
   /* The picker inherits the dark charts scope, so it is styled here rather than
@@ -736,7 +764,7 @@
      how a remove gets fired by someone aiming at the chart. */
   .wb-rail-row { display: flex; align-items: stretch; gap: 0; }
   .wb-rail-row .wb-side-btn { flex: 1 1 auto; min-width: 0; }
-  .wb-rail-x { flex: 0 0 auto; padding: 0 3px; border: 0; background: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: 400 11px/1 var(--font-sans); cursor: pointer; }
+  .wb-rail-x { flex: 0 0 auto; padding: 0 2px; border: 0; background: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: 400 10px/1 var(--font-sans); cursor: pointer; }
   .wb-rail-x:hover { background: var(--color-surface-2); color: var(--color-text-primary); }
   .wb-rail-x:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -1px; }
   /* The SYMBOL is the one thing in this row that must never be abbreviated —
@@ -744,7 +772,12 @@
      So it is the non-shrinking half and the day-% is the half that yields;
      with the 240px rail above neither actually gives ground. */
   .wb-side-sym { flex: 0 0 auto; white-space: nowrap; }
-  .wb-side-btn { display: flex; justify-content: space-between; gap: 4px; align-items: baseline; width: 100%; padding: 4px 4px; border: 0; background: none; border-radius: var(--radius-sm); font: 500 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
+  /* 10px, not the --font-xs 12px it was: ten characters at 12px cost 72.3px
+     of ticker alone, which is what pinned the rail at 200. Sized literally
+     rather than via a token because no token is 10px and inventing one for a
+     single rail would imply a scale that does not exist. Side padding 4 → 2:
+     it insets the hover highlight and nothing else. */
+  .wb-side-btn { display: flex; justify-content: space-between; gap: 4px; align-items: baseline; width: 100%; padding: 4px 2px; border: 0; background: none; border-radius: var(--radius-sm); font: 500 10px/1.4 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
   .wb-side-btn:hover { background: var(--color-surface-2); }
   .wb-side-btn[aria-current="true"] { background: var(--color-surface-2); font-weight: 700; }
   .wb-side-btn .up { color: var(--color-gain); }
