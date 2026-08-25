@@ -128,9 +128,19 @@ This project's look is its own — established at kickoff via `/design-intake`
   IN PRE-MARKET**: `quote-proxy`'s `info` has no pre-market fields at all
   (`extInfo` keys off `postMarketPrice`), so between 04:00 and 09:30 ET its
   `changePct` is the PRIOR regular session's move while `desk-watchlist`
-  deliberately puts `preMarketChangePercent` in `row.pct`; `row.ext` marks both
-  pre and post prints, so "extended but `postMarketOpen()` is false" IS the
-  pre-market case. Otherwise `extPct` when an extended print exists and
+  deliberately puts `preMarketChangePercent` in `row.pct`. The test is
+  `preMarketOpen()` — the ACTUAL 04:00–09:30 ET window, mirroring
+  `postMarketOpen` — and **not** "extended and not post-market", which was a
+  third Codex P1: after 20:00 ET and all weekend a retained row still carries
+  `ext === true` from a valid POST print while `postMarketOpen()` has gone
+  false, so that reading misclassifies it and drops back to the bar percentage.
+  It must also RETURN `row.pct` rather than merely skip the quote (a fourth
+  P1) — skipping alone fell through to the BARS branch, so for any charted
+  symbol the pre-market case was unchanged. The gate is evaluated ONCE per rail
+  render and passed in, because `renderCharts` rebuilds the rail on every
+  animation frame of a chart drag and `preMarketOpen` builds an
+  `Intl.DateTimeFormat` — the 546s pattern; its formatter is hoisted for the
+  same reason. Otherwise `extPct` when an extended print exists and
   `changePct` otherwise — the desk-wide prior-close rule (2026-07-29) that
   `desk-watchlist` compounds too, so the rail agrees with the HEADER during
   regular hours and with the WATCHLISTS panel after them. S44 guards it,

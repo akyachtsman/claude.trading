@@ -881,21 +881,21 @@ function postMarketOpen(now) {
   return minutes >= 16 * 60 && minutes < 20 * 60;
 }
 
+/* ONE hoisted formatter, not one per call. Constructing an Intl.DateTimeFormat
+   is the exact pattern that cost this project the 546s (see desk-charts'
+   NY_DATE): ~84us each, and the predicate below is called per rail row per
+   frame while a chart is dragged. Same output, built once. */
+const NY_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', weekday: 'short',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
 /* PRE-market only, 04:00–09:30 ET. The mirror of postMarketOpen above, and it
    exists because "not post-market" is NOT the same as "pre-market": after 20:00
    ET and all weekend, a retained desk-watchlist row can still carry ext === true
    from a perfectly valid POST-market print while postMarketOpen() has gone
    false. Testing the actual pre-market window classifies that correctly instead
    of misreading a stale post print as a pre one (Codex P1, PR #277). */
-/* ONE hoisted formatter, not one per call. Constructing an Intl.DateTimeFormat
-   is the exact pattern that cost this project the 546s (see desk-charts'
-   NY_DATE): ~84us each, and this predicate is called per rail row per frame
-   while a chart is dragged. Same output, built once. */
-const NY_PARTS = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/New_York', weekday: 'short',
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-});
 function preMarketOpen(now) {
   const parts = NY_PARTS.formatToParts(now || new Date());
   const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
