@@ -25,6 +25,16 @@ panes in the source platform are not just layouts, they are the tiers
 | **Pro 2** | middle | **Long-term trading** | Daily candles over a longer window, volume + stochastic strips |
 | **Pro 3** | right | **Day trading** | Intraday bars with Bollinger-style bands, volume |
 
+> **This table describes the SOURCE platform, and our desk no longer matches its
+> left-to-right order.** Since 2026-08-25 the workbench renders **long-term,
+> swing, day trading** and numbers the panes by POSITION, so on our screen
+> `PRO 1` is the LONG-TERM pane and `PRO 2` the swing/short-term one — the
+> inverse of the rows above (owner request; the panes were reordered, the tiers
+> were not). The tier names here are the course's own and stay as written; it is
+> only the pane column that has moved. Identify a tier by its DOCTRINE NAME, and
+> read `CLAUDE.md` for how the config keys (`cfg.p1` is still SWING) deliberately
+> did not move with the numbering.
+
 Workbench coverage: our panel serves the Pro 1/Pro 2 tiers today (EOD daily
 + weekly data); the Pro 3 day-trading tier requires intraday data — the
 quote-proxy backend, which is its own approval-gated phase.

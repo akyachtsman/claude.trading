@@ -105,69 +105,64 @@ This project's look is its own — established at kickoff via `/design-intake`
   selected is no longer in `syms` and would return with no bars. And
   `renderWatchlist` ends by repainting the rail: the two feeds land
   independently and desk-charts usually wins, so the picker's first render sees
-  no lists and would otherwise stay a one-entry dropdown all session. Day-% per
-  row falls back **live quote → charts-bars → watchlist quote → nothing**
-  (never 0.00%, which claims the name was flat). The **live quote is FIRST, but only for
-  the ACTIVE symbol and never in pre-market** (`wbInfoCache`, owner report
-  2026-08-24): the header read AVAV −0.19% while the rail row directly under it
-  read **+1.03%**. Nothing was miscomputed — they were different VINTAGES.
-  **The rail was already being repainted on every quote** (`renderCharts` calls
-  `renderWbSidebar`); the bug was that `wbRailPct` never READ the quote — it
-  went straight to bars, then to the watchlist copy, which rides the 5-minute
-  all-feeds poll and pauses while the tab is hidden. So the rail faithfully
-  re-rendered a stale number every 60s. AVAV is not in the charts roster, so it
-  fell all the way through to that watchlist value. (An earlier cut of this
-  entry claimed `renderCharts` does NOT paint the rail and added a second
-  repaint — both wrong, caught by Codex; the call is at the end of
-  `renderCharts`.)
-  Two bounds are load-bearing, both Codex P1s. **ACTIVE SYMBOL ONLY**:
-  `refreshWbQuote()` refreshes `wbState.sym` and nothing else, so a cached entry
-  for a ticker visited earlier is never updated again — preferring it everywhere
-  would let an hour-old quote outrank the 5-minute watchlist value on every row
-  the owner had ever clicked, strictly worse than the bug being fixed. **NEVER
-  IN PRE-MARKET**: `quote-proxy`'s `info` has no pre-market fields at all
-  (`extInfo` keys off `postMarketPrice`), so between 04:00 and 09:30 ET its
-  `changePct` is the PRIOR regular session's move while `desk-watchlist`
-  deliberately puts `preMarketChangePercent` in `row.pct`. The test is
-  `preMarketOpen()` — the ACTUAL 04:00–09:30 ET window, mirroring
-  `postMarketOpen` — and **not** "extended and not post-market", which was a
-  third Codex P1: after 20:00 ET and all weekend a retained row still carries
-  `ext === true` from a valid POST print while `postMarketOpen()` has gone
-  false, so that reading misclassifies it and drops back to the bar percentage.
-  It must also RETURN `row.pct` rather than merely skip the quote (a fourth
-  P1) — skipping alone fell through to the BARS branch, so for any charted
-  symbol the pre-market case was unchanged. The gate is evaluated ONCE per rail
-  render and passed in, because `renderCharts` rebuilds the rail on every
-  animation frame of a chart drag: called per row it would multiply
-  `formatToParts` and its part scans by the rail length, every frame. That is a
-  separate bound from hoisting `NY_PARTS`, which is what stops `preMarketOpen`
-  CONSTRUCTING an `Intl.DateTimeFormat` per call — the 546s pattern proper. It
-  no longer builds one at all; do not re-document it as though it does. Otherwise `extPct` when an extended print exists and
-  `changePct` otherwise — the desk-wide prior-close rule (2026-07-29) that
-  `desk-watchlist` compounds too, so the rail agrees with the HEADER during
-  regular hours and with the WATCHLISTS panel after them. S44 guards it,
-  driving `wbInfoCache` directly because demo never fetches quotes — the same
-  reason the fault could not surface in demo — and asserts a cached quote for a
-  NON-active symbol does not win. `.wb-grid` went 96 → 200 → **240px**, and
-  the **symbol never abbreviates**: at 200 a column was 96px and, after the
-  row's padding, the `×`, the gap and a ~42px day-%, ~21px was left for the
-  ticker, so every 4-letter live name rendered as `AV…` — which names no
-  instrument, on a rail whose whole purpose is being clicked by ticker (owner
-  report 2026-08-20). `.wb-side-sym` is now the NON-shrinking half and the
-  day-% is the one that yields; `scrollbar-width: thin` on `.wb-rail-col` is
-  part of the width budget, not decoration (two classic 15px bars would eat
-  most of the 40px the widening bought). **Demo cannot reproduce the fault**,
-  so S40 measures a WIDTH BUDGET rather than checking for a clipped label:
-  only 10 demo symbols carry bars, all three letters, and a roster name with
-  no series renders no day-% at all, so at the old 200px rail every demo row
-  still fitted and a clipping assertion passed on the broken CSS.
+  no lists and would otherwise stay a one-entry dropdown all session. The rail carries **NO day-%** at all (owner request
+  2026-08-25). It is a navigation list — its job is "which ticker am I looking
+  at" — and the width it spent on a percentage went to the Pro panes instead
+  (`.wb-grid` first column 240 → **200px**, ~40px to the chart).
+  Removing it RETIRES a whole class of fault rather than fixing it again: the row
+  sits directly under the charts header, which prints the same symbol's move, so
+  the two were permanently comparable and were twice reported as contradicting
+  each other — first two different VINTAGES (the rail read bars/watchlist while
+  the header read the live quote, PR #277), then two different MEASUREMENTS (the
+  header renders `changePct` while the rail preferred `extPct`, so every symbol
+  with an after-hours print disagreed by exactly that move). One number cannot
+  contradict itself. `wbRailPct`, the `preMarketOpen` gate it needed, that
+  gate's hoisted `NY_PARTS` formatter and scenario **S44** all went with it —
+  deleting S44 is not lost coverage, since the behaviour it guarded no longer
+  exists. **The rail is 200px and the ticker NEVER abbreviates** — the two are one
+  rule. `.wb-grid`'s first column went 96 → 200 → 240 (when it still carried a
+  day-%) → **200px** again once the day-% went. 160 was tried in that last pass
+  and is WRONG: `WL_SYM_RE` accepts **ten** characters and `DX-Y.NYB` and
+  `BTC-USD` are already in the roster, while the rail font is 12px IBM Plex Mono
+  at ~7.22px per glyph — so ten characters need ~72px of ticker alone and the
+  160px manual column offered **56**. Two columns of 72 plus row padding and the
+  manual column's `×` cannot fit in 160 however the split is weighted, so this is
+  arithmetic and no dynamic allocation rescues it. 200 is the first width that
+  seats the full validated length in BOTH columns; the panes gain 40px rather
+  than 80, and that smaller win is the price of never clipping a ticker — a
+  clipped symbol names no instrument on a rail whose whole purpose is being
+  clicked by ticker (owner report 2026-08-20, when 4-letter names rendered as
+  `AV…`). `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
+  decoration: two classic 15px bars would eat most of what the width buys.
+  **S40 budgets against the VALIDATOR, not against demo.** Demo carries ten
+  three-letter symbols, so a five-character budget passed on a 160px rail that a
+  real supported symbol would have broken — a budget that admits less than the
+  validator accepts is not a budget. It measures the MANUAL column (the tighter
+  one, since it carries the `×`) against the full 10-character limit and also
+  asserts the rendered ticker is not clipped. Both halves were proved to bite by
+  setting the rail back to 160 and watching them fail.
+  **One residual is ACCEPTED and bounded** (owner ruling 2026-08-25): the budget
+  makes NO allowance for a scrollbar. `.wb-rail-col` is `overflow-y: auto` with
+  `scrollbar-width: thin`, and the manual column holds up to `WB_MANUAL_MAX` 40,
+  so it can overflow. Measured with 40 rows: the column offers **76px** against
+  the **72.2** a ten-character ticker needs — 3.8px of headroom, and this
+  sandbox's Chromium uses OVERLAY scrollbars so it reserves nothing. On a
+  platform that reserves ~11–12px for a thin scrollbar, a **9- or 10-character**
+  symbol could clip; **8** characters (`DX-Y.NYB`, the longest in the roster)
+  still fits. Covering it needs ~**224px**, which would leave the panes gaining
+  16px of the original 80 — so the owner chose the width over the edge case. The
+  TRIGGER to revisit is concrete: if a 9–10 character symbol enters the roster,
+  or the desk is used where scrollbars take layout width, go to 224 and add the
+  scrollbar to S40's budget. Note this is the same class as the
+  `overscroll-behavior` trap below — a Chromium harness cannot reproduce it, so
+  it must be reasoned about rather than tested here.
   **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
   (`VOL_MA`, `data-volma`, owner request 2026-08-12, shipped 2026-08-18) — the
   reference platform's yellow line, and what makes a bar readable as heavy or
   light, since "big volume" only means anything against the recent norm. Three
   things are load-bearing: it is computed from the **WHOLE series, not the
   visible window**, so the leading visible bars carry a real average instead of
-  the line starting 20 bars into the pane (the same rule the Pro 2 colour state
+  the line starting 20 bars into the pane (the same rule the LONG-TERM pane's colour state
   machine follows, for the same reason — a line that moves when you zoom is not
   trustworthy); it uses a **rolling sum** rather than re-summing 20 bars per
   point, because the `All` span is ~9,000 bars across three panes and the
@@ -177,12 +172,39 @@ This project's look is its own — established at kickoff via `/design-intake`
   would otherwise draw up into the price pane. It carries `data-volma` because
   it shares its yellow with the stochastic `%D` lines and neither a test nor a
   reader could otherwise tell which yellow path is which.
-  **Pro 2 candle colouring follows the WEEKLY STOCHASTIC CROSSOVER, not
-  open/close** (owner ruling 2026-07-30): `%K` (red) above `%D` (yellow) ⇒ green
+  **PANE ORDER, and why the NUMBER is not the identity** (owner request
+  2026-08-25): the panes render **LONG-TERM, then SWING, then DAY TRADING**, and
+  are captioned `PRO 1` / `PRO 2` / `PRO 3` **left to right**. So the number is
+  POSITIONAL and the doctrine name is the identity — `PRO 1 · LONG-TERM`,
+  `PRO 2 · SWING`, `PRO 3 · DAY TRADING`.
+  **The config keys deliberately did NOT move**: `cfg.p1` is still the SWING pane
+  and `cfg.p2` still the LONG-TERM one; they simply render second and first. That
+  is what made the change safe to ship — those keys are what the owner's SAVED
+  per-pane settings hang off (SMAs, S/R levels, chart style, the Steady toggle,
+  the extended-hours toggle), so renumbering them would have silently moved the
+  long-term pane's settings onto the swing pane and needed a storage migration.
+  Keeping them means none was required. **Read the doctrine name, never the
+  number**: `cfg.p1` = SWING = displayed "PRO 2". THREE places cross the two, and this
+  list is load-bearing — an earlier version of this entry named only the first
+  two, and following it through another reorder would leave the header bars
+  behind exactly as this PR did (Codex P2): the pane seg in `wireCharts` (label
+  `Pro 1` → key `p2`), the settings-popover title map, and **the header-bar DOM
+  in `index.html`**, where `wbBar-p2`/`chartZoom2` renders FIRST while displaying
+  `PRO 1`. The bars are not cosmetic — each one's zoom seg, lock and gear mutate
+  the config named by its id, so a bar above the wrong chart silently retimes the
+  wrong pane. If the order changes again, all three move together. Reordering was otherwise free because nothing
+  indexes `panes[]` for identity: each entry carries its own `panKey`, `daysKey`
+  and `cfg` in its opts, and `idx` only places the pane on the X axis and draws
+  the dividers. The tests locate panes by DOCTRINE NAME for the same reason —
+  S25, S34 and S39 all matched on the number and silently pointed at the wrong
+  pane the moment the order changed (S39's index-based check was measuring a
+  different window than its own message claimed).
+  **The LONG-TERM pane's candle colouring follows the WEEKLY STOCHASTIC
+  CROSSOVER, not open/close** (owner ruling 2026-07-30): `%K` (red) above `%D` (yellow) ⇒ green
   candle, below ⇒ red — "red over yellow is a buy sign", and on the long-term
   pane the decision is whether momentum is with you, not what one day did.
-  `drawPane` colours by `opts.colorSt` when present; it is set on the **Pro 2
-  pane only**, to the **weekly-scale 92-15-15** (`weeklyStochOnDaily`) — NOT the
+  `drawPane` colours by `opts.colorSt` when present; it is set on the **LONG-TERM pane
+  only** (config key `p2`, displayed `PRO 1`), to the **weekly-scale 92-15-15** (`weeklyStochOnDaily`) — NOT the
   fast daily 14-3-3, since on a long-term pane the regime that matters is the
   long-term one. That weekly series is computed **unconditionally**, independent
   of the `cfg.p2.stochW` overlay toggle: the toggle decides whether the strip is
@@ -1332,15 +1354,15 @@ run for real against the dedicated project on every PR.
 | S5 | Demo lamps | With `?demo=1`, the desk-state cluster (labeled "MARKETS", Accounts header since 2026-07-22) shows "Demo data" and every panel lamp (news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
 | S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; first-row value order changes accordingly | Order/aria-sort unchanged after click |
 | S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shell pre-auth, valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
-| S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 swing / Pro 2 long-term / Pro 3 day-trading EOD) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
-| S25 | Pro 2 stochastic candles | With `?demo=1`, EVERY Pro 2 candle's colour matches the **weekly** `%K` vs `%D` (read off the rendered SVG, pane-scoped by title, volume bars excluded — they stay price-coloured). TWO negative controls must both fail the same comparison: the pane's own daily strip, and Pro 1 against its stochastic. Sampling tolerance scales with bar spacing, so it holds at phone width | Any Pro 2 candle disagreeing with the weekly crossover (a silent fallback to open/close), the daily strip also matching (the wrong series drives the colour), or Pro 1 agreeing everywhere (the rule leaked into the wrong pane) |
-| S34 | Pro 2 steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
+| S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 LONG-TERM / Pro 2 SWING / Pro 3 day-trading EOD — the 2026-08-25 display order; the number is POSITIONAL) and the header bars pair with their own panes (tags PRO 1/2/3 in DOM order, `wbBar-p2` FIRST, and that first bar owning `#chartZoom2`, the LONG-TERM zoom — a bar above the wrong chart silently retimes the wrong pane) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
+| S25 | Long-term stochastic candles | With `?demo=1`, EVERY LONG-TERM candle's colour matches the **weekly** `%K` vs `%D` (read off the rendered SVG, pane-scoped by title, volume bars excluded — they stay price-coloured). TWO negative controls must both fail the same comparison: the pane's own daily strip, and the SWING pane against its stochastic. Sampling tolerance scales with bar spacing, so it holds at phone width | Any LONG-TERM candle disagreeing with the weekly crossover (a silent fallback to open/close), the daily strip also matching (the wrong series drives the colour), or the SWING pane agreeing everywhere (the rule leaked into the wrong pane) |
+| S34 | Long-term steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
 | S40 | Charts rail — manual + roster | With `?demo=1`, `#wbSidebar` renders TWO columns side by side; the manual one starts empty and says what fills it; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed); typing stacks newest-first and re-typing lifts rather than duplicates; an UNCHARTABLE ticker is not pinned; clicking a ROSTER name charts it without entering the manual column; both the stack and the chosen roster survive a reload; the `×` removes one | A rail that quietly collects every symbol looked at, a typo taking a permanent seat in a persisted column, a picker stuck on one entry, or either half lost on reload |
 | S42 | Watchlist column paging | With `?demo=1`, NO column is wheel-scrollable (`overflow` hidden on both axes) and none carries `overscroll-behavior` in any form; the wheel over a column moves the PAGE; a ▲/▼ footer renders on exactly the columns that overflow and nowhere else; the paged column's band head is no taller than its neighbours; the ▲ is dead at the top, the ▼ names how many are still below and that count FALLS as you step, and the ▼ dies at the bottom with the last tiles on screen. Then forced live: resting a DRAG on the ▼ steps the column | A column that still eats the wheel, a pager on a list that fits (or missing from one that does not), a control that grows the band head — which pushes every column's tiles down, not just its own — a count that never changes (it is counting the list, not what is hidden), or a drag that cannot reach past the visible rows, leaving most of a long list undroppable |
 | S41 | Watchlists are vertical columns | With `?demo=1`, tiles STACK downward inside a category and the categories sit SIDE BY SIDE; no `role=tab` exists (the columns are the navigation); the panel sits above `.area-charts` and shares its left edge; no sideways page scroll and no inner crop on `.wl-strip`; and in live NO reorder control is a bare `←`/`‹` | Tiles rendering as fixed-height boxes (a row's `flex-basis` governs HEIGHT in a column — it still looks plausible), a panel inset from the chart below it, or a reorder arrow impersonating a back button, which is what the UI crawler's back selector grabs |
-| S39 | Volume average | With `?demo=1`, all THREE panes carry a `path[data-volma]` in the %D yellow with no NaN coordinates, and Pro 1's spans its FULL 63-bar 3M window rather than 63−20 | A missing line, or one that starts 20 bars in — that is an average computed from the visible window, which also shifts every time you zoom |
+| S39 | Volume average | With `?demo=1`, all THREE panes carry a `path[data-volma]` in the %D yellow with no NaN coordinates, and each daily pane's spans its FULL window — LONG-TERM opens on 6M (126 bars) and SWING on 3M (63), attributed to its own pane by x-band rather than by index, since a set/index check passes even if the two panes swap windows — rather than 63−20 | A missing line, or one that starts 20 bars in — that is an average computed from the visible window, which also shifts every time you zoom |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
 | S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop; Escape cancels; the tray round-trips through `localStorage` across a reload; double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, a tray tile lost on reload, the trash replacing double-click, or any page error during a drag |
 | S31 | Create + delete a whole list | With `?demo=1` NO `#wlNewListBtn` and no `.wl-del` render. Forced live+authed against a stateful fake roster: the created list PERSISTS to the store, a case-insensitive duplicate name is refused without writing and without discarding the typed name, **under `wlLocked` the `×` is disabled AND `openWlDelList` refuses even when called directly while `+ list` stays available**, the delete confirm names the list and its symbol count and opens focus on "Keep it", and the deleted list is gone from the store | A write control in demo, a duplicate accepted (it makes both lists unaddressable via `wlPick`), a delete reachable under the lock (the button guard alone is not the rule), a confirm that doesn't say what is being destroyed, or a delete that only repaints |
@@ -1354,7 +1376,6 @@ run for real against the dedicated project on every PR.
 | S33 | Verify-answer toggle | With `?demo=1` NO `.ask-verify` renders. Forced live+authed with `deskAsk` stubbed to RECORD its `verify` argument: off by default, arming sends `true` **on the wire** (not just `aria-pressed`), it disarms itself once an answer lands so the next question sends `false`, and a FAILED question keeps the arm | A toggle that stays on (every follow-up silently bills the check), a reset that's only cosmetic, or an error that disarms — the owner re-sends and their choice is gone |
 | S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S30 | Watchlist write conflict | With `?demo=1`, `deskSetWatchlists` forwards a version it is handed, `wlMutate` echoes back the version its own read returned, and an omitted version serializes as an explicit `null` — `undefined` would be dropped by `JSON.stringify` and silently bind the RPC's no-check default. The refusal itself is server-side (`desk_014`), exercised against the live table rather than in CI | A write with no `expected_version`, a version invented at write time rather than read, or `undefined` on the wire |
-| S44 | Rail agrees with the header | With `?demo=1`, seeding `wbInfoCache` for the charted symbol and repainting makes the rail row show the header's own quote — `changePct` in the regular session, `extPct` when an extended print exists — and it replaces whatever the rail held | A rail row contradicting the header above it (two vintages, nothing saying which is older), or an extended print rendered as the regular % |
 | S43 | News row dating | With `?demo=1`, rows older than today render a `.news-date` reading `Mon D` ABOVE the clock, today's rows carry NO date, the clock survives alongside the date, the exact instant is in the row's `title`, and no when-column clips | Every row dated (twenty identical `Aug 24`s destroy the signal), no row dated (the Jun-29-reads-as-14:19 fault), a date replacing the clock, or a clipped date — a clipped date is a wrong date |
 | S13 | Heatmap map filter | With `?demo=1`, the panel starts COLLAPSED (`#heatBody` hidden, `aria-expanded=false`) and opens on `#heatToggle`; then the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. On the ETF cut, **every banded ETF gets a tile** — `tiles === Object.keys(etfCats).length`, with NO catch-all band and periods on every tile — read off the dataset via `page.evaluate`, NOT counted in the SVG (tiles are bare `rect`s with no class, sub-3px tiles are skipped by design, and the gloss overlay adds a second rect each, so a DOM count is both ambiguous and flaky at phone width). Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, disabled rows clickable, or a banded ETF with no tile — the 2026-08-06 regression, where the cut drew 25 of 40 because it was built from whatever the charts panel happened to carry |
 | S14 | Live-feed canary (live only) | Desk lamp (`#mastheadState`, labeled "MARKETS", in the Accounts header since 2026-07-22) reads **LIVE** (market open) or **EOD** (market closed) — proves the edge-function feed layer end-to-end (there is no snapshot fallback anymore); skips while demo-only. **STALE is a THIRD legitimate state inside `withinCloseSettleGrace()`** (16:00–16:15 ET) and the scenario accepts it there ONLY: `liveLampFor` will not claim EOD while the newest snapshot still predates the close instant, since EOD asserts the number IS the closing print and desk-market is briefly still serving a body it cached at 15:59 (PR #193). Asserting just LIVE/EOD made this canary fail on any run crossing the bell — `main` went red on 1e3db75 with desktop/tablet reading LIVE at 19:50Z and mobile-chrome/iphone reading STALE at 20:00:29Z and 20:02:08Z, same commit, clock the only variable. The window is evaluated PER ATTEMPT, against the instant the lamp was actually read, inside an `expect(fn).toPass()` retry — never chosen once up front. Selecting the matcher from `withinCloseSettleGrace() || withinCloseSettleGrace(now+20s)` to cover the bell passing mid-wait is the trap and was caught in review: in the last 20s before 16:00 ET the future operand is already true while the market is still OPEN, so a genuinely stalled open-hours feed matches the permissive pattern immediately and the canary reports a FALSE SUCCESS (verified: 15:59:45 ET gives now=false, now+20s=true); the same cached boolean also stays permissive if polling runs past 16:15. A canary that passes while the feed is dead is worse than one that fails spuriously. The window ALONE is not enough either: inside 16:00–16:15 a STALE lamp has two causes and only one is benign — a healthy feed whose newest quote predates the close, or a feed that actually died earlier (one that stopped at 15:45 shows the same unchanged STALE and would sail through, which is the outage this canary exists to catch). The exception therefore ALSO requires the poller to be alive, tested on `DESK.liveStamp.generatedAt` — the value the masthead lamp is itself built from — against `liveLampFor`'s own bound of `generatedAt` age ≤ 6 minutes, not a threshold invented in the test. Do NOT widen this to accept STALE unconditionally — outside the window, or with a dead poller, it must still fail loudly. Note: S1 and S3 allowlist errors from the feed origin ONLY (`.supabase.co/functions/v1/`) — the app handles feed failures by design (panels lamp STALE); S14 is where feed health fails loudly. That allowlist is now ONE shared block at the top of `app.spec.js` (`FEED_ORIGIN`/`FEED_CORS`/`BENIGN_CONSOLE`/`benignPageError`), not a copy per scenario: on 2026-08-01 the copies drifted and S3's `pageerror` listener had no filter at all, so `[iphone]` failed on exactly what `[mobile-chrome]` was already dropping — **WebKit raises a blocked cross-origin fetch as a pageerror, Chromium only logs it**. The SAME drift recurred one layer down hours later (the `0bfb372` post-merge run on `main`): the shared rule had been applied to the pageerror listener but not to S3's CONSOLE twin, which still demanded the FEED ORIGIN appear in the message text or location — and the first message of WebKit's CORS pair names only the refused origin, so `[iphone]` failed again. The rule is therefore ONE predicate, `benignCors(text, src)`, that every listener calls (`benignPageError` is now just its no-`src` alias) — restating it is the bug. It is deliberately stricter than a bare CORS match (pageerror is where real faults land): CORS-phrased AND naming either the feed origin or the run's own origin, and the own-origin half is enabled ONLY for a LOCAL test server (`localhost`/`127.0.0.1`) — not merely "any origin that isn't production", since `qa-live` takes an `app_url` override and a staging deploy would otherwise inherit the carve-out and swallow a real `quote-proxy` CORS break that S14 (which proves the MARKET feed) would not catch | Lamp STALE/missing on a healthy backend, or the S1/S3 allowlist widened beyond the feed origin |

@@ -4986,78 +4986,22 @@ function renderWbInfo() {
    and previously required reading a ticker off the Watchlists panel and
    retyping it. */
 
-/* Day-% for one rail row, in preference order: in PRE-MARKET the watchlist row
-   (the only source carrying preMarketChangePercent); otherwise the live quote
-   for the ACTIVE symbol (so the row directly under the header cannot contradict
-   it); then the charted bars (exact, and what the old rail used); then the
-   watchlist feed's own quote (already fetched — a symbol can be in a list
-   without ever having been charted); then nothing. NEVER a zero placeholder:
-   0.00% is a claim that the name was flat, which is a different statement from
-   "not known yet". Both bounds on the quote branch are load-bearing and are set
-   out on the branch itself. */
-function wbRailPct(sym, data, wlRows, preOpen) {
-  const row = wlRows.get(sym);
-  /* THE ACTIVE SYMBOL READS THE LIVE QUOTE — the same wbInfoCache the header
-     above prints, so the row sitting directly under the header cannot
-     contradict it (owner report 2026-08-24: header said AVAV -0.19% while the
-     rail said +1.03%). Nothing was miscomputed; they were different VINTAGES.
-     The rail WAS being repainted on every quote (renderCharts calls
-     renderWbSidebar), but wbRailPct never read the quote — it went straight to
-     bars, then to the watchlist copy, which rides the 5-minute all-feeds poll
-     and pauses while the tab is hidden. So the rail faithfully re-rendered a
-     stale number every 60 seconds. AVAV is not in the charts roster, so it fell
-     all the way through to that watchlist value.
-
-     ACTIVE SYMBOL ONLY, and this bound is load-bearing (Codex P1): refreshWbQuote()
-     refreshes wbState.sym and NOTHING else, so a cached entry for a ticker
-     visited earlier is never updated again. Preferring it everywhere would let
-     an hour-old quote outrank the 5-minute watchlist value on every row the
-     owner had ever clicked — strictly worse than the bug being fixed.
-
-     NEVER IN PRE-MARKET (Codex P1): quote-proxy's `info` has no pre-market
-     fields at all — extInfo() keys off postMarketPrice — so between 04:00 and
-     09:30 ET its changePct is the PRIOR regular session's move, while
-     desk-watchlist deliberately puts preMarketChangePercent in row.pct. The
-     watchlist is right there and must win. The test is the ACTUAL pre-market
-     window, not "extended and not post-market" (a second Codex P1): after 20:00
-     ET and all weekend a retained row still carries ext === true from a valid
-     POST print while postMarketOpen() has gone false, and that reading would
-     skip the quote and fall through to the regular-session BAR percentage,
-     losing the extended figure the Watchlists panel still shows.
-
-     Otherwise extPct when an extended print exists, else changePct — the
-     desk-wide prior-close rule (owner ruling 2026-07-29) that desk-watchlist
-     compounds too, so the rail agrees with the HEADER during regular hours and
-     with the WATCHLISTS panel after them. */
-  /* preOpen is computed ONCE per rail render and passed in — see renderWbSidebar.
-     Calling preMarketOpen() here would run it per ROW, and renderCharts (which
-     rebuilds this rail) runs on every animation frame of a chart drag. */
-  const preMarket = !!(row && row.ext && preOpen);
-  /* RETURN IT, do not merely skip the quote (Codex P1). Suppressing the quote
-     alone still fell through to the BARS branch below, which is the prior
-     regular session's move — so for any charted symbol the pre-market case was
-     unchanged and the suppression bought nothing. The watchlist row is the only
-     source carrying preMarketChangePercent, so it has to win outright here. */
-  if (preMarket && row.pct != null) return row.pct;
-  if (!preMarket && wbState && wbState.sym === sym) {
-    const q = wbInfoCache[sym] && wbInfoCache[sym].info;
-    if (q) {
-      const p = q.extPct != null ? q.extPct : q.changePct;
-      if (p != null) return p;
-    }
-  }
-  const s = data.symbols[sym];
-  if (s && s.c.length > 1) return (s.c[s.c.length - 1] / s.c[s.c.length - 2] - 1) * 100;
-  return row && row.pct != null ? row.pct : null;
-}
-
-function wbRailBtn(sym, data, wlRows, preOpen) {
+/* NO day-% on a rail row (owner request 2026-08-25). The rail is a navigation
+   list — its job is "which ticker am I looking at", and the width it was
+   spending on a percentage now goes to the Pro panes instead.
+   This also RETIRES a whole class of fault rather than fixing it again. The row
+   sat directly under the charts header, which prints the same symbol's move, so
+   the two were permanently comparable and twice reported as contradicting each
+   other: first two different VINTAGES (PR #277), then two different
+   MEASUREMENTS — the header renders changePct while the rail preferred extPct,
+   so every symbol with an after-hours print disagreed by exactly that move.
+   One number cannot contradict itself. wbRailPct, the preMarketOpen gate it
+   needed, its hoisted NY_PARTS formatter and scenario S44 all went with it. */
+function wbRailBtn(sym) {
   const b = document.createElement('button');
   b.type = 'button'; b.className = 'wb-side-btn';
   b.setAttribute('aria-current', String(sym === wbState.sym));
   b.appendChild(el('span', 'wb-side-sym', sym));
-  const pct = wbRailPct(sym, data, wlRows, preOpen);
-  if (pct != null) b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
   /* A roster name the charts sweep never fetched loads on demand through the
      same path the Load box uses — and is NOT pinned into the manual column,
      since clicking a list is not typing a ticker. */
@@ -5069,18 +5013,13 @@ function renderWbSidebar(data) {
   const nav = document.getElementById('wbSidebar');
   while (nav.firstChild) nav.removeChild(nav.firstChild);
 
-  /* the watchlist feed's rows, by symbol — the source of a day-% for names the
-     charts sweep does not carry */
+  /* `lists` stays — the ROSTER picker below is built from it. What went is the
+     by-symbol Map of every watchlist ROW that used to sit beside it: it existed
+     solely to source a day-% for names the charts sweep does not carry, and the
+     day-% is gone. renderCharts rebuilds this rail on every animation frame of a
+     chart drag, so leaving it would have scanned every row of every list and
+     allocated a Map per frame for a feature that no longer renders (Codex P3). */
   const lists = (wlState.payload && wlState.payload.lists) || [];
-  const wlRows = new Map();
-  for (const l of lists) for (const r of (l.rows || [])) if (r && r.sym) wlRows.set(r.sym, r);
-
-  /* The session gate, evaluated ONCE for the whole rail rather than per row
-     (Codex P2). renderCharts rebuilds this sidebar, and a chart drag calls
-     renderCharts on every animation frame, so a per-row call would construct
-     dozens of date formatters per frame on a populated roster. */
-  const preOpen = preMarketOpen();
-
   const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); nav.appendChild(c); return c; };
 
   /* ── column A — manual ─────────────────────────────────────────────────── */
@@ -5097,7 +5036,7 @@ function renderWbSidebar(data) {
   }
   for (const sym of typed) {
     const row = el('div', 'wb-rail-row');
-    row.appendChild(wbRailBtn(sym, data, wlRows, preOpen));
+    row.appendChild(wbRailBtn(sym));
     const x = el('button', 'wb-rail-x', '×');
     x.type = 'button';
     x.setAttribute('aria-label', 'Remove ' + sym + ' from the manual list');
@@ -5146,7 +5085,7 @@ function renderWbSidebar(data) {
     syms = (list && (list.symbols || (list.rows || []).map(r => r.sym))) || [];
   }
   if (!syms.length) roster.appendChild(el('p', 'wb-rail-empty', 'This list has no symbols.'));
-  for (const sym of syms) roster.appendChild(wbRailBtn(sym, data, wlRows, preOpen));
+  for (const sym of syms) roster.appendChild(wbRailBtn(sym));
 }
 
 /* Graft TODAY's still-forming daily candle onto the EOD daily series so Pro 1
@@ -6104,19 +6043,24 @@ function renderCharts(data, lamp) {
      the next render once each fetch resolves */
   for (const p of ['p1', 'p2', 'p3']) if (show(p)) maybeFetchIntraday(effSym(wbState.cfg[p]));
   const panes = [];
-  if (show('p1')) {
-    const sym = effSym(wbState.cfg.p1);
-    const d = daily(sym);
-    /* Pro 1 = the SWING tier (owner naming 2026-07-22): daily bars, and the
-       doctrine circles live on ITS daily strip — that's the swing signal. */
-    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · SWING · ' + sym, {
-      window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
-      tier: 'Pro 1', sym, cfg: wbState.cfg.p1,
-      pivots: wbState.cfg.p1.srSwing ? d.piv.swing : d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
-      stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
-      stochCaption: stochTag() + ' · DAILY',
-    }]);
-  }
+  /* DISPLAY ORDER: LONG-TERM, then SWING, then DAY TRADING (owner request
+     2026-08-25) — "if Pro 2 came first, then Pro 1, then Pro 3 ... rename them
+     to one, two, three from left to right".
+     So the on-screen NUMBER is POSITIONAL and the DOCTRINE NAME is the identity.
+     The config keys deliberately did NOT move: `cfg.p1` is still the SWING pane
+     and `cfg.p2` still the LONG-TERM one, they just render second and first.
+     That is what makes this change safe to ship — those keys are what the
+     owner's SAVED per-pane settings hang off (SMAs, S/R levels, chart style, the
+     Steady toggle, the extended-hours toggle), so renumbering them would have
+     silently moved the long-term pane's settings onto the swing pane. Keeping
+     them means no storage migration and nothing to lose.
+     Read the doctrine name, never the number: `cfg.p1` = SWING = displayed
+     "PRO 2". Everything that needs to follow the number is remapped at the edge
+     instead — the pane seg (wireCharts) and the settings popover title.
+     Reordering is otherwise free: nothing indexes `panes[]` for identity. Each
+     entry carries its own window/offset/cfg in its opts (`panKey`, `daysKey`,
+     `cfg`), and `idx` is used only to place the pane on the X axis and to draw
+     the dividers between them. */
   if (show('p2')) {
     /* Pro 2 = the LONG-TERM tier (owner naming 2026-07-22): daily candles
        carrying the daily stoch (native) + the WEEKLY stoch overlay (owner
@@ -6132,9 +6076,9 @@ function renderCharts(data, lamp) {
        change what every candle means. */
     const wk2 = weeklyStochOnDaily(d.bars);
     const stW2 = wbState.cfg.p2.stochW ? wk2 : null;
-    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · LONG-TERM · ' + sym, {
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 1 · LONG-TERM · ' + sym, {
       window: paneWindow(wbState.wdays, d.bars), offset: wbState.woff, panKey: 'woff', daysKey: 'wdays', nav: true,
-      tier: 'Pro 2', sym, cfg: wbState.cfg.p2,
+      tier: 'Pro 1', sym, cfg: wbState.cfg.p2,
       /* Candles by the WEEKLY stochastic crossover — Pro 2 ONLY (owner ruling
          2026-07-30). Pro 1 and Pro 3 keep open/close, where a day's direction
          is the point. */
@@ -6158,6 +6102,19 @@ function renderCharts(data, lamp) {
          regime, which is the deliberate lag and not a stale render. */
       stochWCaption: stochWTag() + ' · WEEKLY SCALE · CANDLE COLOUR'
         + (wbState.cfg.p2.stochSteady ? ' (STEADY)' : ''),
+    }]);
+  }
+  if (show('p1')) {
+    const sym = effSym(wbState.cfg.p1);
+    const d = daily(sym);
+    /* Pro 1 = the SWING tier (owner naming 2026-07-22): daily bars, and the
+       doctrine circles live on ITS daily strip — that's the swing signal. */
+    panes.push([d.bars, d.st, stochMarks(d.st), 'PRO 2 · SWING · ' + sym, {
+      window: paneWindow(wbState.days, d.bars), offset: wbState.off, panKey: 'off', daysKey: 'days', nav: true,
+      tier: 'Pro 2', sym, cfg: wbState.cfg.p1,
+      pivots: wbState.cfg.p1.srSwing ? d.piv.swing : d.piv.week, smas: smaList(wbState.cfg.p1), rsi: d.rsi,
+      stW: null,   /* Pro 1 = daily stoch only (owner ruling 2026-07-17, no weekly overlay) */
+      stochCaption: stochTag() + ' · DAILY',
     }]);
   }
   /* Pro 3 = the day-trading tier: real 5-min intraday when the desk is live,
@@ -6276,7 +6233,7 @@ function buildWbSettings() {
   const cols = el('div', 'wb-set-cols');
   {
     const key = wbSetPane;
-    const title = { p1: 'PRO 1 · SWING', p2: 'PRO 2 · LONG-TERM', p3: 'PRO 3 · DAY TRADING' }[key];
+    const title = { p2: 'PRO 1 · LONG-TERM', p1: 'PRO 2 · SWING', p3: 'PRO 3 · DAY TRADING' }[key];
     const cfg = wbState.cfg[key];
     const col = el('div', 'wb-set-col');
     col.appendChild(el('h3', 'wb-set-title', title));
@@ -6418,7 +6375,11 @@ function wireCharts() {
      within the session (owner ruling 2026-07-14). */
 
   const layoutSeg = document.getElementById('chartLayout');
-  for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p1'], ['Pro 2', 'p2'], ['Pro 3', 'p3']]) {
+  /* label -> CFG KEY, and the two are deliberately crossed: the number is
+     positional (Pro 1 is the leftmost pane, which is LONG-TERM = cfg.p2)
+     while the key still names the doctrine. See the display-order note in
+     renderCharts. */
+  for (const [label, mode] of [['Split', 'split'], ['Pro 1', 'p2'], ['Pro 2', 'p1'], ['Pro 3', 'p3']]) {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = label;
     b.setAttribute('aria-pressed', String(mode === 'split'));

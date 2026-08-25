@@ -1013,7 +1013,7 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
 
   // default split: all three pane captions (tier names per owner ruling
   // 2026-07-22: Pro 1 = swing, Pro 2 = long-term), candles, stoch paths (k+d ×3)
-  for (const cap of ['PRO 1 · SWING', 'PRO 2 · LONG-TERM', 'PRO 3 · DAY TRADING']) {
+  for (const cap of ['PRO 1 · LONG-TERM', 'PRO 2 · SWING', 'PRO 3 · DAY TRADING']) {
     await expect(chart, `missing pane caption ${cap}`).toContainText(cap);
   }
   expect(await chart.locator('rect').count(), 'candle/volume rects must render').toBeGreaterThan(30);
@@ -1046,11 +1046,36 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   }
 
   // pane layout seg maximizes a single tier and returns to split
+  /* THE HEADER BARS MUST SIT ABOVE THEIR OWN PANES. Each bar's zoom seg, lock
+     and gear mutate the config named by its ID, so a bar over the wrong chart
+     silently retimes the wrong pane — and that is not hypothetical: reordering
+     the panes without reordering these bars left the LEFT header driving the
+     SWING config while attached to the LONG-TERM chart (Codex P1). The previous
+     S12 missed it because it only checked that clicking #chartZoom changed the
+     chart's rect count, which is true whichever pane it retimed.
+     Asserted three ways: the visible tags read PRO 1/2/3 in DOM order; the FIRST
+     bar is the long-term one (id wbBar-p2, the deliberate label/id crossing);
+     and that first bar owns #chartZoom2, the control that drives the long-term
+     window — which is what actually proves the leftmost controls belong to the
+     leftmost chart. */
+  const bars = await page.evaluate(() => [...document.querySelectorAll('#wbPaneBars .wb-pane-bar')]
+    .map(b => ({ id: b.id, tag: b.querySelector('.wb-seg-tag')?.textContent.trim(),
+                 segs: [...b.querySelectorAll('.seg')].map(s => s.id) })));
+  expect(bars.map(b => b.tag), 'header bars are numbered left to right').toEqual(['PRO 1', 'PRO 2', 'PRO 3']);
+  expect(bars.map(b => b.id), 'the long-term bar (wbBar-p2) leads, matching the pane order')
+    .toEqual(['wbBar-p2', 'wbBar-p1', 'wbBar-p3']);
+  expect(bars[0].segs, 'the leftmost bar owns the LONG-TERM zoom control, not the swing one')
+    .toContain('chartZoom2');
+
+  /* The seg label is POSITIONAL, so "Pro 2" maximises the SWING pane — which
+     is cfg.p1. That crossing is deliberate and lives in wireCharts; asserting
+     it here is what proves the seg follows the on-screen numbering rather than
+     the config key. */
   await page.locator('#chartLayout button', { hasText: 'Pro 2' }).click();
-  await expect(chart).not.toContainText('PRO 1 · SWING');
-  await expect(chart).toContainText('PRO 2 · LONG-TERM');
+  await expect(chart).not.toContainText('PRO 1 · LONG-TERM');
+  await expect(chart).toContainText('PRO 2 · SWING');
   await page.locator('#chartLayout button', { hasText: 'Split' }).click();
-  await expect(chart).toContainText('PRO 1 · SWING');
+  await expect(chart).toContainText('PRO 1 · LONG-TERM');
 
   // per-pane header bars: each gear opens its own popover above its pane.
   // The weekly-stoch overlay toggle now lives on Pro 2 ALONE (owner ruling
@@ -1680,7 +1705,7 @@ test('S24: a failed accounts load keeps the desk authenticated', async ({ page }
 // daily strip and Pro 1 serve as negative controls: the rule must hold against
 // the weekly series and visibly FAIL against the other two, or the check isn't
 // distinguishing which stochastic is in play.
-test('S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close', async ({ page }) => {
+test('S25: long-term candles follow the weekly stochastic; swing follows open/close', async ({ page }) => {
   await page.goto('./?demo=1');
   await page.waitForSelector('#wbChart');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
@@ -1751,28 +1776,33 @@ test('S25: Pro 2 candles follow the weekly stochastic; Pro 1 follows open/close'
       return { agree, disagree };
     };
     return {
-      weekly: read(/^PRO 2/, /CANDLE COLOUR/),        // the rule
-      daily: read(/^PRO 2/, /· DAILY$/),              // must NOT be what drives it
-      p1: read(/^PRO 1/, /· DAILY$/),                 // must still follow price
+      /* Located by DOCTRINE NAME, never by the pane number. The number is
+         positional and the panes were reordered on 2026-08-25 (long-term first);
+         matching /^PRO 2/ silently pointed these probes at the wrong pane, which
+         is how a rule about the weekly stochastic came to be checked against the
+         swing pane. The doctrine name is the stable identity. */
+      weekly: read(/LONG-TERM/, /CANDLE COLOUR/),     // the rule
+      daily: read(/LONG-TERM/, /· DAILY$/),           // must NOT be what drives it
+      swing: read(/SWING/, /· DAILY$/),               // must still follow price
     };
   });
 
   for (const [key, r] of Object.entries(probe)) expect(r.err, `${key} located`).toBeUndefined();
-  expect(probe.weekly.agree, 'Pro 2 candles sampled').toBeGreaterThan(40);
-  expect(probe.p1.agree + probe.p1.disagree, 'Pro 1 candles sampled').toBeGreaterThan(20);
+  expect(probe.weekly.agree, 'long-term candles sampled').toBeGreaterThan(40);
+  expect(probe.swing.agree + probe.swing.disagree, 'swing candles sampled').toBeGreaterThan(20);
 
   // Pro 2: EVERY candle must match the WEEKLY crossover — no exceptions.
-  expect(probe.weekly.disagree, 'every Pro 2 candle matches the weekly %K vs %D').toBe(0);
+  expect(probe.weekly.disagree, 'every long-term candle matches the weekly %K vs %D').toBe(0);
 
   // ...and must NOT be explainable by the fast daily strip in the same pane —
   // otherwise this passes whichever series the code happens to use.
-  expect(probe.daily.disagree, 'Pro 2 colour is the weekly series, not the daily one')
+  expect(probe.daily.disagree, 'long-term colour is the weekly series, not the daily one')
     .toBeGreaterThan(probe.daily.agree * 0.2);
 
   // Pro 1 is the control: it follows open/close, so it must contradict its own
   // stochastic on a real share of bars. Zero here would mean the rule leaked.
-  expect(probe.p1.disagree, 'Pro 1 still follows open/close, not the stochastic')
-    .toBeGreaterThan(probe.p1.agree * 0.1);
+  expect(probe.swing.disagree, 'the swing pane still follows open/close, not the stochastic')
+    .toBeGreaterThan(probe.swing.agree * 0.1);
 });
 
 // S23 — Extended hours across the desk (owner request 2026-07-30). Demo-gated so
@@ -2307,7 +2337,7 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
 // must not depend on where the viewport happens to start. Seeded at the visible
 // window instead, the same candle would change colour as you zoom, which is the
 // kind of fault that quietly destroys trust in the pane.
-test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom', async ({ page }) => {
+test('S34: steady mode repaints the long-term pane, and a bar keeps its colour across a zoom', async ({ page }) => {
   await page.goto('./?demo=1');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
   await page.waitForTimeout(800);
@@ -2320,7 +2350,7 @@ test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom'
     const texts = [...svg.querySelectorAll('text')];
     const titles = texts.filter(t => /^PRO \d/.test(t.textContent))
       .map(t => ({ t: t.textContent, x: +t.getAttribute('x') })).sort((a, c) => a.x - c.x);
-    const ti = titles.findIndex(t => /^PRO 2/.test(t.t));
+    const ti = titles.findIndex(t => /LONG-TERM/.test(t.t));   // by doctrine, not by number
     if (ti < 0) return { err: 'no Pro 2 pane' };
     const x0 = titles[ti].x - 10;
     const x1 = ti + 1 < titles.length ? titles[ti + 1].x - 10 : svg.viewBox.baseVal.width;
@@ -2347,7 +2377,7 @@ test('S34: steady mode repaints Pro 2, and a bar keeps its colour across a zoom'
   const changes = a => a.reduce((n, v, i) => n + (i && v !== a[i - 1] ? 1 : 0), 0);
 
   const plain = await colours(60);
-  expect(plain.err, 'Pro 2 candles located').toBeUndefined();
+  expect(plain.err, 'long-term candles located').toBeUndefined();
   expect(plain.length, 'enough candles sampled').toBeGreaterThan(40);
   expect(await cap(), 'steady is off by default — it recolours ~23% of bars')
     .not.toContain('STEADY');
@@ -2488,7 +2518,7 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
 // which would leave every seg button unpressed and the pane at a width nothing
 // in the UI explains.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S36: the Pro 1 and Pro 2 spans survive a reload, and a bad one falls back', async ({ page }) => {
+test('S36: the swing and long-term spans survive a reload, and a bad one falls back', async ({ page }) => {
   // three page loads plus three chart renders do not fit the 30s default
   test.setTimeout(90_000);
   await page.goto('./?demo=1');
@@ -2658,31 +2688,38 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
   // clicked by ticker, so an abbreviated symbol is the one truncation here
   // that is a wrong value rather than a tight fit (owner report 2026-08-20).
   //
-  // Measured as a WIDTH BUDGET, not as "nothing is currently ellipsised".
-  // Demo cannot reproduce the fault by itself: only 10 symbols carry demo
-  // bars, all three letters, and a roster name with no series renders no
-  // day-% at all — so the squeeze that clipped OKLO and AVAV on the owner's
-  // live desk simply does not occur here, and a clipping check would pass on
-  // the broken CSS too (verified: at the old 200px rail every demo row still
-  // fitted). So take a row that HAS a day-% and ask whether the leftover space
-  // could seat a longer ticker, using the row's own rendered font rather than
-  // an assumed character width.
+  // Budgeted against the VALIDATED LIMIT, not against what demo happens to
+  // hold. WL_SYM_RE accepts up to TEN characters and the roster already carries
+  // DX-Y.NYB and BTC-USD, so a five-character budget passed while a real
+  // supported symbol would have spilled under the × (Codex P2 — the 160px rail
+  // this replaced did exactly that). Measured in the MANUAL column because that
+  // is the tighter one: it carries the remove button as well as the ticker.
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.waitForTimeout(400);
+  expect(await page.locator('#wbSidebar .wb-side-pct').count(),
+    'the rail carries NO day-%: one number cannot contradict the header above it, '
+    + 'which is what it did twice (PRs #277 and this one)').toBe(0);
   const fit = await page.evaluate(() => {
-    const pct = document.querySelector('#wbSidebar .wb-side-pct');
-    if (!pct) return null;
-    const btn = pct.closest('.wb-side-btn');
+    const row = document.querySelector('#wbSidebar .wb-rail-manual .wb-rail-row');
+    if (!row) return null;
+    const btn = row.querySelector('.wb-side-btn');
     const sym = btn.querySelector('.wb-side-sym');
+    const x = row.querySelector('.wb-rail-x');
     const cs = getComputedStyle(btn), cx = document.createElement('canvas').getContext('2d');
     cx.font = getComputedStyle(sym).font;
     const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-    const free = btn.clientWidth - pad - parseFloat(cs.columnGap || 0) - sym.offsetWidth - pct.offsetWidth;
-    return { ticker: sym.textContent, free, need: cx.measureText('WWWWW').width - cx.measureText(sym.textContent).width };
+    return {
+      ticker: sym.textContent,
+      usable: btn.clientWidth - pad,
+      needTen: cx.measureText('WWWWWWWWWW').width,
+      xWidth: x ? x.offsetWidth : 0,
+      clipped: sym.scrollWidth > sym.clientWidth + 1,
+    };
   });
-  expect(fit, 'a rail row carrying a day-% exists to measure').not.toBeNull();
-  expect(fit.free, `a 5-char ticker fits beside the day-% (row shows ${fit.ticker})`)
-    .toBeGreaterThanOrEqual(fit.need);
+  expect(fit, 'a manual rail row exists to measure').not.toBeNull();
+  expect(fit.clipped, `the rendered ticker is not clipped (row shows ${fit.ticker})`).toBe(false);
+  expect(fit.usable, 'the manual column seats a FULL 10-character symbol — the limit WL_SYM_RE '
+    + 'accepts, and DX-Y.NYB/BTC-USD are already in the roster').toBeGreaterThanOrEqual(fit.needTen);
 
   // removal
   /* Wait for the rail to STOP repainting before clicking. renderWatchlist ends
@@ -2940,11 +2977,32 @@ test('S39: every pane draws a volume average, spanning the full window', async (
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
   await page.waitForTimeout(800);
 
+  /* Each average is attributed to ITS OWN pane by x-band, the same way S25 and
+     S34 locate panes, because a bare set assertion does not enforce the claim
+     its message makes: if the swing and long-term panes swapped their 63- and
+     126-bar windows, `arrayContaining([126, 63])` still passes — and that quiet
+     window/config swap is exactly what reordering the panes risks, so it is the
+     one thing this must catch (Codex P2). */
   const ma = await page.evaluate(() => {
     const svg = document.getElementById('wbChart');
+    const titles = [...svg.querySelectorAll('text')]
+      .filter(t => /^PRO \d/.test(t.textContent))
+      .map(t => ({ t: t.textContent, x: t.getBBox().x }))
+      .sort((a, b) => a.x - b.x);
+    const bandOf = (x) => {
+      let hit = null;
+      for (const ti of titles) if (ti.x - 10 <= x) hit = ti;
+      return hit ? hit.t : null;
+    };
     return [...svg.querySelectorAll('path[data-volma]')].map(e => {
       const d = e.getAttribute('d') || '';
-      return { pts: (d.match(/L/g) || []).length + 1, nan: d.includes('NaN'), stroke: e.getAttribute('stroke') };
+      const firstX = parseFloat((d.match(/M\s*(-?[\d.]+)/) || [])[1]);
+      return {
+        pts: (d.match(/L/g) || []).length + 1,
+        nan: d.includes('NaN'),
+        stroke: e.getAttribute('stroke'),
+        pane: bandOf(firstX),
+      };
     });
   });
   expect(ma.length, 'one volume average per pane').toBe(3);
@@ -2952,11 +3010,22 @@ test('S39: every pane draws a volume average, spanning the full window', async (
   // yellow, matching the reference platform and the %D signal line
   expect(ma.every(m => m.stroke === '#f5c518')).toBe(true);
 
-  // Pro 1 opens on 3M = 63 bars. The average must cover ALL of them: it is
-  // computed from the whole series, so the leading visible bars have a real
-  // 20-period value. Computed from the visible window instead, the line would
-  // start 20 bars in (44 points) and the left edge of the strip would be bare.
-  expect(ma[0].pts, 'the average spans the full visible window, not window-minus-20').toBe(63);
+  // Each daily pane's average must cover its FULL window: it is computed from
+  // the whole series, so the leading visible bars carry a real 20-period value.
+  // Computed from the visible window instead, the lines would start 20 bars in
+  // (106 and 44 points) and the left edge of each strip would be bare.
+  // Asserted as a SET, not by index: the panes were reordered on 2026-08-25 and
+  // ma[0] silently became the long-term pane, so an index-based check was
+  // measuring a different window than its own message claimed.
+  const byPane = Object.fromEntries(ma.filter(m => m.pane).map(m => [m.pane.replace(/ · .*/, '') + '|' + (/LONG-TERM/.test(m.pane) ? 'LONG' : /SWING/.test(m.pane) ? 'SWING' : 'DAY'), m.pts]));
+  const ptsFor = (doc) => {
+    const k = Object.keys(byPane).find(k => k.endsWith('|' + doc));
+    return k ? byPane[k] : null;
+  };
+  expect(ptsFor('LONG'), 'the LONG-TERM pane opens on 6M and its average covers all 126 bars '
+    + '(computed from the visible window it would be 106, and the strip would start bare)').toBe(126);
+  expect(ptsFor('SWING'), 'the SWING pane opens on 3M and its average covers all 63 bars '
+    + '(computed from the visible window it would be 44)').toBe(63);
 });
 
 /* S43 — a news row says WHICH DAY when it is not today.
@@ -3048,120 +3117,3 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
   expect(live.retickSurvives, 'the stamp reticker drives the news rollover without throwing').toBe(true);
 });
 
-/* S44 — the charts rail agrees with the header above it.
- *
- * Owner report 2026-08-24: the header read AVAV -0.19% while the rail row for
- * the same ticker read +1.03%. Nothing was miscomputed — they were different
- * VINTAGES. The rail was ALREADY being repainted on every quote (renderCharts
- * calls renderWbSidebar); the defect was that wbRailPct never READ the quote —
- * it went straight to the bars, then fell through to the watchlist copy, which
- * rides the 5-minute all-feeds poll and pauses while the tab is hidden. So the
- * rail faithfully re-rendered a stale number every 60 seconds.
- *
- * Guards SOURCE SELECTION only — which reading wbRailPct picks, and in what
- * order. The cache is written and the rail repainted directly from the test,
- * because demo never fetches quotes: the same reason the original fault could
- * not surface in demo.
- *
- * What this does NOT cover, stated so the gap is not mistaken for coverage: the
- * asynchronous quote-completion path (maybeFetchWbInfo -> renderCharts ->
- * renderWbSidebar) is never exercised here. An earlier version of this comment
- * claimed it was, on the round-1 premise above. Driving it would mean stubbing
- * the network in demo; the repaint was never the broken half, so that machinery
- * would guard a path that already worked. */
-test('S44: the charts rail reads the same quote as the header', async ({ page }) => {
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbSidebar')).toBeVisible({ timeout: 20000 });
-  await page.waitForTimeout(600);
-
-  const out = await page.evaluate(() => {
-    const sym = wbState && wbState.sym;
-    const railPct = () => {
-      const btn = [...document.querySelectorAll('#wbSidebar .wb-side-btn')]
-        .find((b) => b.querySelector('.wb-side-sym')?.textContent.trim() === sym);
-      const p = btn && btn.querySelector('.wb-side-pct');
-      return p ? p.textContent.trim() : null;
-    };
-    const before = railPct();
-
-    /* NOTE the bare identifiers. `wbInfoCache` is a top-level `const`, which
-       creates a LEXICAL binding, not a window property — window.wbInfoCache is
-       undefined, unlike the function declarations (renderWbSidebar) that do
-       land on window. Reaching for window.* here fails at runtime. */
-    // a live quote lands for the charted symbol — regular session, no ext print
-    wbInfoCache[sym] = { at: Date.now(), info: { changePct: -0.19, extPct: null } };
-    renderWbSidebar(wbState.data);
-    const reg = railPct();
-
-    // and after hours the desk-wide prior-close rule wins, not the regular %
-    wbInfoCache[sym] = { at: Date.now(), info: { changePct: -0.19, extPct: 1.03 } };
-    renderWbSidebar(wbState.data);
-    const ext = railPct();
-
-    /* A cached quote for some OTHER symbol must be ignored: only wbState.sym is
-       ever refreshed, so stale entries must not outrank bars/watchlist. */
-    const otherSym = [...document.querySelectorAll('#wbSidebar .wb-side-sym')]
-      .map((e) => e.textContent.trim()).find((t) => t && t !== sym);
-    let other = null;
-    if (otherSym) {
-      wbInfoCache[otherSym] = { at: Date.now(), info: { changePct: -9.99, extPct: null } };
-      renderWbSidebar(wbState.data);
-      const btn = [...document.querySelectorAll('#wbSidebar .wb-side-btn')]
-        .find((b) => b.querySelector('.wb-side-sym')?.textContent.trim() === otherSym);
-      const p = btn && btn.querySelector('.wb-side-pct');
-      other = p ? p.textContent.trim() : null;
-    }
-
-    /* fmtPct renders a TYPOGRAPHIC minus (U+2212), not an ASCII hyphen —
-       normalise so the assertions compare values, not glyphs. */
-    const norm = (v) => (v == null ? v : v.replace(/\u2212/g, '-'));
-    return { sym, before: norm(before), reg: norm(reg), ext: norm(ext), other: norm(other) };
-  });
-
-  /* The pre-market suppression must key off the ACTUAL 04:00-09:30 ET window.
-     "extended and not post-market" was wrong: after 20:00 ET and all weekend a
-     retained watchlist row still carries ext === true from a valid POST print
-     while postMarketOpen() is false, which would misread it as pre-market and
-     drop back to the regular-session bar (Codex P1). preMarketOpen takes a
-     `now`, so the classification is checked directly at fixed instants. */
-  const win = await page.evaluate(() => ({
-    preAt0500: preMarketOpen(new Date('2026-08-25T09:00:00Z')),  // 05:00 ET Tue
-    preAt2100: preMarketOpen(new Date('2026-08-26T01:00:00Z')),  // 21:00 ET Mon
-    preAt1200: preMarketOpen(new Date('2026-08-25T16:00:00Z')),  // 12:00 ET Tue
-    preOnSat:  preMarketOpen(new Date('2026-08-29T09:00:00Z')),  // 05:00 ET Sat
-  }));
-  expect(win.preAt0500, '05:00 ET on a weekday IS pre-market').toBe(true);
-  expect(win.preAt2100, '21:00 ET is NOT pre-market — a retained post print must keep the quote').toBe(false);
-  expect(win.preAt1200, 'midday is not pre-market').toBe(false);
-  expect(win.preOnSat, 'the weekend is not pre-market').toBe(false);
-
-  /* Suppressing the quote in pre-market is not enough: it fell through to the
-     BARS branch, which is the prior regular session's move, so row.pct never
-     won for a charted symbol — the exact case the suppression was for (Codex
-     P1). Driven through wbRailPct directly with a synthetic bars/rows pair so
-     the fallback ORDER is asserted, not the demo data's shape. */
-  const order = await page.evaluate(() => {
-    /* A synthetic symbol, deliberately NOT wbState.sym: the active-symbol quote
-       branch would otherwise win outside pre-market (correctly — that is this
-       PR's whole point) and mask the bars-vs-watchlist ordering being checked. */
-    const sym = '__ORDERTEST__';
-    const rows = new Map([[sym, { ext: true, pct: 7.77 }]]);
-    const data = { symbols: { [sym]: { c: [100, 110] } } };   // bars would say +10%
-    /* The session gate is a PARAMETER — renderWbSidebar computes it once per
-       render and threads it through, so it is passed here rather than stubbed
-       on the global. */
-    return { pre: wbRailPct(sym, data, rows, true), notPre: wbRailPct(sym, data, rows, false) };
-  });
-  expect(order.pre, 'in pre-market the watchlist percentage wins outright, not the bars').toBe(7.77);
-  expect(order.notPre, 'outside pre-market the bars still precede the watchlist').toBeCloseTo(10, 6);
-
-  expect(out.sym, 'a symbol is charted').toBeTruthy();
-  expect(out.other, 'a cached quote for a NON-active symbol must not win — refreshWbQuote\n' +
-    'only refreshes wbState.sym, so that entry is never updated again and would\n' +
-    'outrank fresher bars/watchlist data indefinitely (Codex P1)').not.toBe('-9.99%');
-  expect(out.reg, 'the rail shows the header\'s regular-session quote')
-    .toBe('-0.19%');
-  expect(out.ext, 'an extended print uses the prior-close figure, not the regular one')
-    .toBe('+1.03%');
-  expect(out.reg, 'the quote actually replaced whatever the rail had').not.toBe(out.before);
-});
