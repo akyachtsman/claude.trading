@@ -2983,3 +2983,59 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
   expect(live.oldLabel, 'newsDateLabel dates an older instant').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
   expect(live.retickSurvives, 'the stamp reticker drives the news rollover without throwing').toBe(true);
 });
+
+/* S44 — the charts rail agrees with the header above it.
+ *
+ * Owner report 2026-08-24: the header read AVAV -0.19% while the rail row for
+ * the same ticker read +1.03%. Nothing was miscomputed — they were different
+ * VINTAGES. The header refreshes on wbInfoTtlMs (60s while open); the rail was
+ * repainted ONLY when the watchlist feed landed, which rides the 5-minute
+ * all-feeds poll and pauses while the tab is hidden. Two clocks, one screen,
+ * with nothing on the row saying which was older.
+ *
+ * Guards the source, not the pixels: the rail must prefer the same wbInfoCache
+ * reading the header prints, and must repaint when a quote arrives. Both are
+ * driven directly here because demo never fetches quotes — the same reason the
+ * original fault could not surface in demo. */
+test('S44: the charts rail reads the same quote as the header', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await expect(page.locator('#wbSidebar')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(600);
+
+  const out = await page.evaluate(() => {
+    const sym = wbState && wbState.sym;
+    const railPct = () => {
+      const btn = [...document.querySelectorAll('#wbSidebar .wb-side-btn')]
+        .find((b) => b.querySelector('.wb-side-sym')?.textContent.trim() === sym);
+      const p = btn && btn.querySelector('.wb-side-pct');
+      return p ? p.textContent.trim() : null;
+    };
+    const before = railPct();
+
+    /* NOTE the bare identifiers. `wbInfoCache` is a top-level `const`, which
+       creates a LEXICAL binding, not a window property — window.wbInfoCache is
+       undefined, unlike the function declarations (renderWbSidebar) that do
+       land on window. Reaching for window.* here fails at runtime. */
+    // a live quote lands for the charted symbol — regular session, no ext print
+    wbInfoCache[sym] = { at: Date.now(), info: { changePct: -0.19, extPct: null } };
+    renderWbSidebar(wbState.data);
+    const reg = railPct();
+
+    // and after hours the desk-wide prior-close rule wins, not the regular %
+    wbInfoCache[sym] = { at: Date.now(), info: { changePct: -0.19, extPct: 1.03 } };
+    renderWbSidebar(wbState.data);
+    const ext = railPct();
+
+    /* fmtPct renders a TYPOGRAPHIC minus (U+2212), not an ASCII hyphen —
+       normalise so the assertions compare values, not glyphs. */
+    const norm = (v) => (v == null ? v : v.replace(/\u2212/g, '-'));
+    return { sym, before: norm(before), reg: norm(reg), ext: norm(ext) };
+  });
+
+  expect(out.sym, 'a symbol is charted').toBeTruthy();
+  expect(out.reg, 'the rail shows the header\'s regular-session quote')
+    .toBe('-0.19%');
+  expect(out.ext, 'an extended print uses the prior-close figure, not the regular one')
+    .toBe('+1.03%');
+  expect(out.reg, 'the quote actually replaced whatever the rail had').not.toBe(out.before);
+});

@@ -4885,6 +4885,12 @@ function maybeFetchWbInfo(sym, force) {
          changing the toolbar chrome after the canvas was sized (Codex #131).
          Recursion-safe — sym is now cached, so maybeFetchWbInfo early-returns. */
       if (wbState && wbState.sym === sym) renderCharts(wbState.data, wbState.lamp);
+      /* renderCharts does NOT paint the rail — until now the rail was repainted
+         only by renderWatchlist(), i.e. on the 5-minute all-feeds poll. So a
+         fresh quote updated the header and left the rail row for the SAME
+         symbol showing a stale percentage beside it. Cheap: a DOM list rebuild,
+         no fetching, and wbRailPct reads the cache this call just filled. */
+      if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
     });
 }
 function renderWbInfo() {
@@ -4992,6 +4998,27 @@ function renderWbInfo() {
    nothing. NEVER a zero placeholder: 0.00% is a claim that the name was flat,
    which is a different statement from "not known yet". */
 function wbRailPct(sym, data, wlRows) {
+  /* THE LIVE QUOTE FIRST — the same wbInfoCache reading the header above prints,
+     so the rail row for the charted symbol cannot contradict the number sitting
+     directly over it (owner report 2026-08-24: header said AVAV -0.19% while the
+     rail said +1.03%). Nothing was miscomputed; they were different VINTAGES.
+     The header refreshes on wbInfoTtlMs — 60s while the session is open — but
+     the rail is only repainted when the WATCHLIST feed lands, which rides the
+     5-minute all-feeds poll and pauses entirely while the tab is hidden. On a
+     name as volatile as AVAV (-7.5% the session before) five minutes is easily
+     a point of drift, so the two disagreed with no way to tell which was newer.
+     `maybeFetchWbInfo` now repaints the rail too; this makes it read the same
+     source.
+     Uses extPct when an extended print exists, else changePct — the desk-wide
+     prior-close rule (owner ruling 2026-07-29), which is what desk-watchlist
+     compounds too. So the rail agrees with the HEADER during regular hours and
+     with the WATCHLISTS panel after them, rather than picking one and breaking
+     the other. */
+  const q = wbInfoCache[sym] && wbInfoCache[sym].info;
+  if (q) {
+    const p = q.extPct != null ? q.extPct : q.changePct;
+    if (p != null) return p;
+  }
   const s = data.symbols[sym];
   if (s && s.c.length > 1) return (s.c[s.c.length - 1] / s.c[s.c.length - 2] - 1) * 100;
   const row = wlRows.get(sym);
