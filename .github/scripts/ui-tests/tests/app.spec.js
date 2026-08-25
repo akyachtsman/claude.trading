@@ -936,7 +936,71 @@ test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ p
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
   const lamp = page.locator('#mastheadState .lamp').first();
-  await expect(lamp, 'live feed unreachable or stale — check desk-market').toHaveText(/^(LIVE|EOD)$/, { timeout: 20000 });
+  /* STALE is a THIRD legitimate state for a few minutes after the closing bell,
+     and this canary asserted only two — so any run crossing 16:00 ET failed here
+     on whichever projects happened to execute after it. main went red on 1e3db75
+     exactly that way: desktop and tablet ran S14 at 19:50Z and read LIVE, while
+     mobile-chrome and iphone ran at 20:00:29Z and 20:02:08Z — 29 seconds and two
+     minutes past the close — and read STALE. Same commit, same code; the only
+     variable was the clock.
+     The lamp is RIGHT and the assertion was wrong. liveLampFor refuses to claim
+     EOD while the newest snapshot still predates the close instant, because EOD
+     asserts the number IS the closing print and desk-market is briefly still
+     serving a body it cached at 15:59 (scripts/data.js, Codex review PR #193).
+     Its own comment calls STALE "the honest one" for that state.
+     The tolerance is bounded by the desk's OWN concept — withinCloseSettleGrace,
+     the 15-minute window in which desk-market polls every minute to pick up the
+     settle print — rather than some duration invented here. OUTSIDE that window
+     STALE still fails loudly, which is the entire point of the canary: do not
+     widen this to accept STALE unconditionally.
+     The window is evaluated PER ATTEMPT, against the instant the lamp was
+     actually read — never chosen once up front. Two earlier cuts got this
+     wrong and both are worth recording, because the second failed in the more
+     dangerous direction:
+       - a 20s assertion followed by a re-check inside a catch. That overran the
+         30s per-test budget and the page was torn down mid-evaluate.
+       - selecting the matcher once from EITHER endpoint, `withinCloseSettleGrace()
+         || withinCloseSettleGrace(now + 20s)`, to cover the bell passing mid-wait.
+         That PRE-AUTHORISES STALE: in the last 20 seconds before 16:00 ET the
+         future operand is already true while the market is still OPEN, so a
+         genuinely stalled open-hours feed matches the permissive pattern
+         immediately and the canary reports a FALSE SUCCESS — the bell never has
+         to pass at all. (Verified: at 15:59:45 ET now=false, now+20s=true.) The
+         same cached boolean also stays permissive if polling runs past 16:15.
+         A canary that passes while the feed is dead is worse than one that
+         fails spuriously, which is what makes this the wrong trade (Codex P2).
+     Coupling acceptance to the observation's own instant fixes both: STALE is
+     accepted only when the desk is in the settle window at the moment it was
+     read, and the retry loop still tolerates the bell passing mid-wait because
+     a later attempt re-evaluates.
+     THE WINDOW ALONE IS NOT ENOUGH, though (Codex P2, round 2). Inside 16:00-16:15
+     a STALE lamp has two very different causes and only one is benign: a HEALTHY
+     feed whose newest quote happens to predate the close, or a feed that actually
+     died earlier — one that stopped at 15:45 shows the same unchanged STALE and
+     would sail through, which is precisely the outage this canary exists to
+     catch. So the exception additionally requires the POLLER to be alive, tested
+     on DESK.liveStamp.generatedAt — the very value the masthead lamp is built
+     from (scripts/app.js, the liveLampFor call) — against the desk's own
+     freshness bound rather than one invented here: liveLampFor calls a feed fresh
+     at generatedAt age <= 6 minutes (scripts/data.js). Benign case passes (the
+     poller is running, it simply has no post-close print yet); real outage fails,
+     window or no window. */
+  const SETTLE_POLL_MS = 20000;
+  const LAMP_FRESH_MS = 6 * 60000;   // mirrors liveLampFor's own freshness bound
+  await expect(async () => {
+    const text = ((await lamp.textContent()) || '').trim();
+    if (/^(LIVE|EOD)$/.test(text)) return;
+    const settling = text === 'STALE' && await page.evaluate((freshMs) => {
+      if (typeof withinCloseSettleGrace !== 'function' || !withinCloseSettleGrace()) return false;
+      const gen = typeof DESK !== 'undefined' && DESK.liveStamp && DESK.liveStamp.generatedAt;
+      const age = gen ? Date.now() - new Date(gen).getTime() : NaN;
+      return Number.isFinite(age) && age <= freshMs;
+    }, LAMP_FRESH_MS);
+    if (settling) return;
+    throw new Error('desk lamp reads "' + text + '" — live feed unreachable or stale '
+      + '(check desk-market). STALE passes only inside withinCloseSettleGrace() AND '
+      + 'with a poller that is still fetching.');
+  }).toPass({ timeout: SETTLE_POLL_MS });
 });
 
 // S12 — Charts workbench: three doctrine panes with candles, stochastics,
