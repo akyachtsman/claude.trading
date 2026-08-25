@@ -4986,24 +4986,77 @@ function renderWbInfo() {
    and previously required reading a ticker off the Watchlists panel and
    retyping it. */
 
-/* Day-% for one rail row, in preference order: the charted bars (exact, and
-   what the old rail used), then the watchlist feed's own quote (already
-   fetched — a symbol can be in a list without ever having been charted), then
-   nothing. NEVER a zero placeholder: 0.00% is a claim that the name was flat,
-   which is a different statement from "not known yet". */
-function wbRailPct(sym, data, wlRows) {
+/* Day-% for one rail row, in preference order: in PRE-MARKET the watchlist row
+   (the only source carrying preMarketChangePercent); otherwise the live quote
+   for the ACTIVE symbol (so the row directly under the header cannot contradict
+   it); then the charted bars (exact, and what the old rail used); then the
+   watchlist feed's own quote (already fetched — a symbol can be in a list
+   without ever having been charted); then nothing. NEVER a zero placeholder:
+   0.00% is a claim that the name was flat, which is a different statement from
+   "not known yet". Both bounds on the quote branch are load-bearing and are set
+   out on the branch itself. */
+function wbRailPct(sym, data, wlRows, preOpen) {
+  const row = wlRows.get(sym);
+  /* THE ACTIVE SYMBOL READS THE LIVE QUOTE — the same wbInfoCache the header
+     above prints, so the row sitting directly under the header cannot
+     contradict it (owner report 2026-08-24: header said AVAV -0.19% while the
+     rail said +1.03%). Nothing was miscomputed; they were different VINTAGES.
+     The rail WAS being repainted on every quote (renderCharts calls
+     renderWbSidebar), but wbRailPct never read the quote — it went straight to
+     bars, then to the watchlist copy, which rides the 5-minute all-feeds poll
+     and pauses while the tab is hidden. So the rail faithfully re-rendered a
+     stale number every 60 seconds. AVAV is not in the charts roster, so it fell
+     all the way through to that watchlist value.
+
+     ACTIVE SYMBOL ONLY, and this bound is load-bearing (Codex P1): refreshWbQuote()
+     refreshes wbState.sym and NOTHING else, so a cached entry for a ticker
+     visited earlier is never updated again. Preferring it everywhere would let
+     an hour-old quote outrank the 5-minute watchlist value on every row the
+     owner had ever clicked — strictly worse than the bug being fixed.
+
+     NEVER IN PRE-MARKET (Codex P1): quote-proxy's `info` has no pre-market
+     fields at all — extInfo() keys off postMarketPrice — so between 04:00 and
+     09:30 ET its changePct is the PRIOR regular session's move, while
+     desk-watchlist deliberately puts preMarketChangePercent in row.pct. The
+     watchlist is right there and must win. The test is the ACTUAL pre-market
+     window, not "extended and not post-market" (a second Codex P1): after 20:00
+     ET and all weekend a retained row still carries ext === true from a valid
+     POST print while postMarketOpen() has gone false, and that reading would
+     skip the quote and fall through to the regular-session BAR percentage,
+     losing the extended figure the Watchlists panel still shows.
+
+     Otherwise extPct when an extended print exists, else changePct — the
+     desk-wide prior-close rule (owner ruling 2026-07-29) that desk-watchlist
+     compounds too, so the rail agrees with the HEADER during regular hours and
+     with the WATCHLISTS panel after them. */
+  /* preOpen is computed ONCE per rail render and passed in — see renderWbSidebar.
+     Calling preMarketOpen() here would run it per ROW, and renderCharts (which
+     rebuilds this rail) runs on every animation frame of a chart drag. */
+  const preMarket = !!(row && row.ext && preOpen);
+  /* RETURN IT, do not merely skip the quote (Codex P1). Suppressing the quote
+     alone still fell through to the BARS branch below, which is the prior
+     regular session's move — so for any charted symbol the pre-market case was
+     unchanged and the suppression bought nothing. The watchlist row is the only
+     source carrying preMarketChangePercent, so it has to win outright here. */
+  if (preMarket && row.pct != null) return row.pct;
+  if (!preMarket && wbState && wbState.sym === sym) {
+    const q = wbInfoCache[sym] && wbInfoCache[sym].info;
+    if (q) {
+      const p = q.extPct != null ? q.extPct : q.changePct;
+      if (p != null) return p;
+    }
+  }
   const s = data.symbols[sym];
   if (s && s.c.length > 1) return (s.c[s.c.length - 1] / s.c[s.c.length - 2] - 1) * 100;
-  const row = wlRows.get(sym);
   return row && row.pct != null ? row.pct : null;
 }
 
-function wbRailBtn(sym, data, wlRows) {
+function wbRailBtn(sym, data, wlRows, preOpen) {
   const b = document.createElement('button');
   b.type = 'button'; b.className = 'wb-side-btn';
   b.setAttribute('aria-current', String(sym === wbState.sym));
   b.appendChild(el('span', 'wb-side-sym', sym));
-  const pct = wbRailPct(sym, data, wlRows);
+  const pct = wbRailPct(sym, data, wlRows, preOpen);
   if (pct != null) b.appendChild(el('span', 'wb-side-pct ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''), fmtPct(pct)));
   /* A roster name the charts sweep never fetched loads on demand through the
      same path the Load box uses — and is NOT pinned into the manual column,
@@ -5022,6 +5075,12 @@ function renderWbSidebar(data) {
   const wlRows = new Map();
   for (const l of lists) for (const r of (l.rows || [])) if (r && r.sym) wlRows.set(r.sym, r);
 
+  /* The session gate, evaluated ONCE for the whole rail rather than per row
+     (Codex P2). renderCharts rebuilds this sidebar, and a chart drag calls
+     renderCharts on every animation frame, so a per-row call would construct
+     dozens of date formatters per frame on a populated roster. */
+  const preOpen = preMarketOpen();
+
   const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); nav.appendChild(c); return c; };
 
   /* ── column A — manual ─────────────────────────────────────────────────── */
@@ -5038,7 +5097,7 @@ function renderWbSidebar(data) {
   }
   for (const sym of typed) {
     const row = el('div', 'wb-rail-row');
-    row.appendChild(wbRailBtn(sym, data, wlRows));
+    row.appendChild(wbRailBtn(sym, data, wlRows, preOpen));
     const x = el('button', 'wb-rail-x', '×');
     x.type = 'button';
     x.setAttribute('aria-label', 'Remove ' + sym + ' from the manual list');
@@ -5087,7 +5146,7 @@ function renderWbSidebar(data) {
     syms = (list && (list.symbols || (list.rows || []).map(r => r.sym))) || [];
   }
   if (!syms.length) roster.appendChild(el('p', 'wb-rail-empty', 'This list has no symbols.'));
-  for (const sym of syms) roster.appendChild(wbRailBtn(sym, data, wlRows));
+  for (const sym of syms) roster.appendChild(wbRailBtn(sym, data, wlRows, preOpen));
 }
 
 /* Graft TODAY's still-forming daily candle onto the EOD daily series so Pro 1

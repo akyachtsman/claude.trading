@@ -881,6 +881,36 @@ function postMarketOpen(now) {
   return minutes >= 16 * 60 && minutes < 20 * 60;
 }
 
+/* ONE hoisted formatter, not one per call. Constructing an Intl.DateTimeFormat
+   is the exact pattern that cost this project the 546s (see desk-charts'
+   NY_DATE): ~84us each. The predicate below sits on the INTERACTIVE path —
+   renderCharts rebuilds the charts rail on every animation frame of a chart
+   drag — so the constructor cost is paid once at load rather than per call.
+   Same output, built once.
+   The rail separately evaluates the predicate ONCE PER RENDER and threads the
+   boolean through its rows (see renderWbSidebar); that is a different bound
+   from this one, and it is what keeps formatToParts off the per-row path. */
+const NY_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', weekday: 'short',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+/* PRE-market only, 04:00–09:30 ET. The mirror of postMarketOpen above, and it
+   exists because "not post-market" is NOT the same as "pre-market": after 20:00
+   ET and all weekend, a retained desk-watchlist row can still carry ext === true
+   from a perfectly valid POST-market print while postMarketOpen() has gone
+   false. Testing the actual pre-market window classifies that correctly instead
+   of misreading a stale post print as a pre one (Codex P1, PR #277). */
+function preMarketOpen(now) {
+  const parts = NY_PARTS.formatToParts(now || new Date());
+  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
+  return minutes >= 4 * 60 && minutes < 9 * 60 + 30;
+}
+
 function extendedSessionOpen(now) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', weekday: 'short',
