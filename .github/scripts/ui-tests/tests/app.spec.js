@@ -936,7 +936,38 @@ test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ p
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
   const lamp = page.locator('#mastheadState .lamp').first();
-  await expect(lamp, 'live feed unreachable or stale — check desk-market').toHaveText(/^(LIVE|EOD)$/, { timeout: 20000 });
+  /* STALE is a THIRD legitimate state for a few minutes after the closing bell,
+     and this canary asserted only two — so any run crossing 16:00 ET failed here
+     on whichever projects happened to execute after it. main went red on 1e3db75
+     exactly that way: desktop and tablet ran S14 at 19:50Z and read LIVE, while
+     mobile-chrome and iphone ran at 20:00:29Z and 20:02:08Z — 29 seconds and two
+     minutes past the close — and read STALE. Same commit, same code; the only
+     variable was the clock.
+     The lamp is RIGHT and the assertion was wrong. liveLampFor refuses to claim
+     EOD while the newest snapshot still predates the close instant, because EOD
+     asserts the number IS the closing print and desk-market is briefly still
+     serving a body it cached at 15:59 (scripts/data.js, Codex review PR #193).
+     Its own comment calls STALE "the honest one" for that state.
+     The tolerance is bounded by the desk's OWN concept — withinCloseSettleGrace,
+     the 15-minute window in which desk-market polls every minute to pick up the
+     settle print — rather than some duration invented here. OUTSIDE that window
+     STALE still fails loudly, which is the entire point of the canary: do not
+     widen this to accept STALE unconditionally.
+     The window is tested at BOTH ENDS of the assertion's own 20s poll, by
+     passing withinCloseSettleGrace its optional `now`, because the bell can
+     pass mid-wait. That is deliberately one cheap evaluate rather than a
+     re-check in a catch block: the whole test budget is 30s, so waiting 20s and
+     THEN probing again overran it and the page was torn down mid-evaluate —
+     measured, not theorised. */
+  const SETTLE_POLL_MS = 20000;
+  const settling = await page.evaluate((ms) => {
+    if (typeof withinCloseSettleGrace !== 'function') return false;
+    return withinCloseSettleGrace() || withinCloseSettleGrace(new Date(Date.now() + ms));
+  }, SETTLE_POLL_MS);
+  await expect(lamp, settling
+    ? 'post-close settle window: lamp must still be one of LIVE/EOD/STALE'
+    : 'live feed unreachable or stale — check desk-market',
+  ).toHaveText(settling ? /^(LIVE|EOD|STALE)$/ : /^(LIVE|EOD)$/, { timeout: SETTLE_POLL_MS });
 });
 
 // S12 — Charts workbench: three doctrine panes with candles, stochastics,
