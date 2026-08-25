@@ -141,6 +141,21 @@ This project's look is its own — established at kickoff via `/design-intake`
   one, since it carries the `×`) against the full 10-character limit and also
   asserts the rendered ticker is not clipped. Both halves were proved to bite by
   setting the rail back to 160 and watching them fail.
+  **One residual is ACCEPTED and bounded** (owner ruling 2026-08-25): the budget
+  makes NO allowance for a scrollbar. `.wb-rail-col` is `overflow-y: auto` with
+  `scrollbar-width: thin`, and the manual column holds up to `WB_MANUAL_MAX` 40,
+  so it can overflow. Measured with 40 rows: the column offers **76px** against
+  the **72.2** a ten-character ticker needs — 3.8px of headroom, and this
+  sandbox's Chromium uses OVERLAY scrollbars so it reserves nothing. On a
+  platform that reserves ~11–12px for a thin scrollbar, a **9- or 10-character**
+  symbol could clip; **8** characters (`DX-Y.NYB`, the longest in the roster)
+  still fits. Covering it needs ~**224px**, which would leave the panes gaining
+  16px of the original 80 — so the owner chose the width over the edge case. The
+  TRIGGER to revisit is concrete: if a 9–10 character symbol enters the roster,
+  or the desk is used where scrollbars take layout width, go to 224 and add the
+  scrollbar to S40's budget. Note this is the same class as the
+  `overscroll-behavior` trap below — a Chromium harness cannot reproduce it, so
+  it must be reasoned about rather than tested here.
   **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
   (`VOL_MA`, `data-volma`, owner request 2026-08-12, shipped 2026-08-18) — the
   reference platform's yellow line, and what makes a bar readable as heavy or
