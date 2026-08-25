@@ -1046,6 +1046,27 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
   }
 
   // pane layout seg maximizes a single tier and returns to split
+  /* THE HEADER BARS MUST SIT ABOVE THEIR OWN PANES. Each bar's zoom seg, lock
+     and gear mutate the config named by its ID, so a bar over the wrong chart
+     silently retimes the wrong pane — and that is not hypothetical: reordering
+     the panes without reordering these bars left the LEFT header driving the
+     SWING config while attached to the LONG-TERM chart (Codex P1). The previous
+     S12 missed it because it only checked that clicking #chartZoom changed the
+     chart's rect count, which is true whichever pane it retimed.
+     Asserted three ways: the visible tags read PRO 1/2/3 in DOM order; the FIRST
+     bar is the long-term one (id wbBar-p2, the deliberate label/id crossing);
+     and that first bar owns #chartZoom2, the control that drives the long-term
+     window — which is what actually proves the leftmost controls belong to the
+     leftmost chart. */
+  const bars = await page.evaluate(() => [...document.querySelectorAll('#wbPaneBars .wb-pane-bar')]
+    .map(b => ({ id: b.id, tag: b.querySelector('.wb-seg-tag')?.textContent.trim(),
+                 segs: [...b.querySelectorAll('.seg')].map(s => s.id) })));
+  expect(bars.map(b => b.tag), 'header bars are numbered left to right').toEqual(['PRO 1', 'PRO 2', 'PRO 3']);
+  expect(bars.map(b => b.id), 'the long-term bar (wbBar-p2) leads, matching the pane order')
+    .toEqual(['wbBar-p2', 'wbBar-p1', 'wbBar-p3']);
+  expect(bars[0].segs, 'the leftmost bar owns the LONG-TERM zoom control, not the swing one')
+    .toContain('chartZoom2');
+
   /* The seg label is POSITIONAL, so "Pro 2" maximises the SWING pane — which
      is cfg.p1. That crossing is deliberate and lives in wireCharts; asserting
      it here is what proves the seg follows the on-screen numbering rather than
@@ -2951,11 +2972,32 @@ test('S39: every pane draws a volume average, spanning the full window', async (
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
   await page.waitForTimeout(800);
 
+  /* Each average is attributed to ITS OWN pane by x-band, the same way S25 and
+     S34 locate panes, because a bare set assertion does not enforce the claim
+     its message makes: if the swing and long-term panes swapped their 63- and
+     126-bar windows, `arrayContaining([126, 63])` still passes — and that quiet
+     window/config swap is exactly what reordering the panes risks, so it is the
+     one thing this must catch (Codex P2). */
   const ma = await page.evaluate(() => {
     const svg = document.getElementById('wbChart');
+    const titles = [...svg.querySelectorAll('text')]
+      .filter(t => /^PRO \d/.test(t.textContent))
+      .map(t => ({ t: t.textContent, x: t.getBBox().x }))
+      .sort((a, b) => a.x - b.x);
+    const bandOf = (x) => {
+      let hit = null;
+      for (const ti of titles) if (ti.x - 10 <= x) hit = ti;
+      return hit ? hit.t : null;
+    };
     return [...svg.querySelectorAll('path[data-volma]')].map(e => {
       const d = e.getAttribute('d') || '';
-      return { pts: (d.match(/L/g) || []).length + 1, nan: d.includes('NaN'), stroke: e.getAttribute('stroke') };
+      const firstX = parseFloat((d.match(/M\s*(-?[\d.]+)/) || [])[1]);
+      return {
+        pts: (d.match(/L/g) || []).length + 1,
+        nan: d.includes('NaN'),
+        stroke: e.getAttribute('stroke'),
+        pane: bandOf(firstX),
+      };
     });
   });
   expect(ma.length, 'one volume average per pane').toBe(3);
@@ -2970,9 +3012,15 @@ test('S39: every pane draws a volume average, spanning the full window', async (
   // Asserted as a SET, not by index: the panes were reordered on 2026-08-25 and
   // ma[0] silently became the long-term pane, so an index-based check was
   // measuring a different window than its own message claimed.
-  expect(ma.map(m => m.pts),
-    'each daily pane spans its full window — long-term opens on 6M (126 bars), swing on 3M (63)')
-    .toEqual(expect.arrayContaining([126, 63]));
+  const byPane = Object.fromEntries(ma.filter(m => m.pane).map(m => [m.pane.replace(/ · .*/, '') + '|' + (/LONG-TERM/.test(m.pane) ? 'LONG' : /SWING/.test(m.pane) ? 'SWING' : 'DAY'), m.pts]));
+  const ptsFor = (doc) => {
+    const k = Object.keys(byPane).find(k => k.endsWith('|' + doc));
+    return k ? byPane[k] : null;
+  };
+  expect(ptsFor('LONG'), 'the LONG-TERM pane opens on 6M and its average covers all 126 bars '
+    + '(computed from the visible window it would be 106, and the strip would start bare)').toBe(126);
+  expect(ptsFor('SWING'), 'the SWING pane opens on 3M and its average covers all 63 bars '
+    + '(computed from the visible window it would be 44)').toBe(63);
 });
 
 /* S43 — a news row says WHICH DAY when it is not today.
