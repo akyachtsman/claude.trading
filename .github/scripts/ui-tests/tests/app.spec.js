@@ -2658,30 +2658,32 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
   // clicked by ticker, so an abbreviated symbol is the one truncation here
   // that is a wrong value rather than a tight fit (owner report 2026-08-20).
   //
-  // Measured as a WIDTH BUDGET, not as "nothing is currently ellipsised".
-  // Demo cannot reproduce the fault by itself: only 10 symbols carry demo
-  // bars, all three letters, and a roster name with no series renders no
-  // day-% at all — so the squeeze that clipped OKLO and AVAV on the owner's
-  // live desk simply does not occur here, and a clipping check would pass on
-  // the broken CSS too (verified: at the old 200px rail every demo row still
-  // fitted). So take a row that HAS a day-% and ask whether the leftover space
-  // could seat a longer ticker, using the row's own rendered font rather than
-  // an assumed character width.
+  // Measured as a WIDTH BUDGET, not as "nothing is currently ellipsised", and
+  // that still matters after the rail lost its day-% (owner request
+  // 2026-08-25) — the column was narrowed 240 -> 160px to hand the space to the
+  // Pro panes, so the budget got tighter even as the row got simpler. Demo
+  // cannot reproduce the original squeeze by itself: only 10 symbols carry demo
+  // bars and all are three letters, so a clipping check would pass on broken
+  // CSS too (verified: at the old 200px rail every demo row still fitted).
+  // Ask instead whether the leftover space could seat a longer ticker, using
+  // the row's own rendered font rather than an assumed character width.
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.waitForTimeout(400);
+  expect(await page.locator('#wbSidebar .wb-side-pct').count(),
+    'the rail carries NO day-%: one number cannot contradict the header above it, '
+    + 'which is what it did twice (PRs #277 and this one)').toBe(0);
   const fit = await page.evaluate(() => {
-    const pct = document.querySelector('#wbSidebar .wb-side-pct');
-    if (!pct) return null;
-    const btn = pct.closest('.wb-side-btn');
-    const sym = btn.querySelector('.wb-side-sym');
+    const sym = document.querySelector('#wbSidebar .wb-side-sym');
+    if (!sym) return null;
+    const btn = sym.closest('.wb-side-btn');
     const cs = getComputedStyle(btn), cx = document.createElement('canvas').getContext('2d');
     cx.font = getComputedStyle(sym).font;
     const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-    const free = btn.clientWidth - pad - parseFloat(cs.columnGap || 0) - sym.offsetWidth - pct.offsetWidth;
+    const free = btn.clientWidth - pad - sym.offsetWidth;
     return { ticker: sym.textContent, free, need: cx.measureText('WWWWW').width - cx.measureText(sym.textContent).width };
   });
-  expect(fit, 'a rail row carrying a day-% exists to measure').not.toBeNull();
-  expect(fit.free, `a 5-char ticker fits beside the day-% (row shows ${fit.ticker})`)
+  expect(fit, 'a rail row exists to measure').not.toBeNull();
+  expect(fit.free, `a 5-char ticker fits in the narrowed rail (row shows ${fit.ticker})`)
     .toBeGreaterThanOrEqual(fit.need);
 
   // removal
@@ -3048,120 +3050,3 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
   expect(live.retickSurvives, 'the stamp reticker drives the news rollover without throwing').toBe(true);
 });
 
-/* S44 — the charts rail agrees with the header above it.
- *
- * Owner report 2026-08-24: the header read AVAV -0.19% while the rail row for
- * the same ticker read +1.03%. Nothing was miscomputed — they were different
- * VINTAGES. The rail was ALREADY being repainted on every quote (renderCharts
- * calls renderWbSidebar); the defect was that wbRailPct never READ the quote —
- * it went straight to the bars, then fell through to the watchlist copy, which
- * rides the 5-minute all-feeds poll and pauses while the tab is hidden. So the
- * rail faithfully re-rendered a stale number every 60 seconds.
- *
- * Guards SOURCE SELECTION only — which reading wbRailPct picks, and in what
- * order. The cache is written and the rail repainted directly from the test,
- * because demo never fetches quotes: the same reason the original fault could
- * not surface in demo.
- *
- * What this does NOT cover, stated so the gap is not mistaken for coverage: the
- * asynchronous quote-completion path (maybeFetchWbInfo -> renderCharts ->
- * renderWbSidebar) is never exercised here. An earlier version of this comment
- * claimed it was, on the round-1 premise above. Driving it would mean stubbing
- * the network in demo; the repaint was never the broken half, so that machinery
- * would guard a path that already worked. */
-test('S44: the charts rail reads the same quote as the header', async ({ page }) => {
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbSidebar')).toBeVisible({ timeout: 20000 });
-  await page.waitForTimeout(600);
-
-  const out = await page.evaluate(() => {
-    const sym = wbState && wbState.sym;
-    const railPct = () => {
-      const btn = [...document.querySelectorAll('#wbSidebar .wb-side-btn')]
-        .find((b) => b.querySelector('.wb-side-sym')?.textContent.trim() === sym);
-      const p = btn && btn.querySelector('.wb-side-pct');
-      return p ? p.textContent.trim() : null;
-    };
-    const before = railPct();
-
-    /* NOTE the bare identifiers. `wbInfoCache` is a top-level `const`, which
-       creates a LEXICAL binding, not a window property — window.wbInfoCache is
-       undefined, unlike the function declarations (renderWbSidebar) that do
-       land on window. Reaching for window.* here fails at runtime. */
-    // a live quote lands for the charted symbol — regular session, no ext print
-    wbInfoCache[sym] = { at: Date.now(), info: { changePct: -0.19, extPct: null } };
-    renderWbSidebar(wbState.data);
-    const reg = railPct();
-
-    // and after hours the desk-wide prior-close rule wins, not the regular %
-    wbInfoCache[sym] = { at: Date.now(), info: { changePct: -0.19, extPct: 1.03 } };
-    renderWbSidebar(wbState.data);
-    const ext = railPct();
-
-    /* A cached quote for some OTHER symbol must be ignored: only wbState.sym is
-       ever refreshed, so stale entries must not outrank bars/watchlist. */
-    const otherSym = [...document.querySelectorAll('#wbSidebar .wb-side-sym')]
-      .map((e) => e.textContent.trim()).find((t) => t && t !== sym);
-    let other = null;
-    if (otherSym) {
-      wbInfoCache[otherSym] = { at: Date.now(), info: { changePct: -9.99, extPct: null } };
-      renderWbSidebar(wbState.data);
-      const btn = [...document.querySelectorAll('#wbSidebar .wb-side-btn')]
-        .find((b) => b.querySelector('.wb-side-sym')?.textContent.trim() === otherSym);
-      const p = btn && btn.querySelector('.wb-side-pct');
-      other = p ? p.textContent.trim() : null;
-    }
-
-    /* fmtPct renders a TYPOGRAPHIC minus (U+2212), not an ASCII hyphen —
-       normalise so the assertions compare values, not glyphs. */
-    const norm = (v) => (v == null ? v : v.replace(/\u2212/g, '-'));
-    return { sym, before: norm(before), reg: norm(reg), ext: norm(ext), other: norm(other) };
-  });
-
-  /* The pre-market suppression must key off the ACTUAL 04:00-09:30 ET window.
-     "extended and not post-market" was wrong: after 20:00 ET and all weekend a
-     retained watchlist row still carries ext === true from a valid POST print
-     while postMarketOpen() is false, which would misread it as pre-market and
-     drop back to the regular-session bar (Codex P1). preMarketOpen takes a
-     `now`, so the classification is checked directly at fixed instants. */
-  const win = await page.evaluate(() => ({
-    preAt0500: preMarketOpen(new Date('2026-08-25T09:00:00Z')),  // 05:00 ET Tue
-    preAt2100: preMarketOpen(new Date('2026-08-26T01:00:00Z')),  // 21:00 ET Mon
-    preAt1200: preMarketOpen(new Date('2026-08-25T16:00:00Z')),  // 12:00 ET Tue
-    preOnSat:  preMarketOpen(new Date('2026-08-29T09:00:00Z')),  // 05:00 ET Sat
-  }));
-  expect(win.preAt0500, '05:00 ET on a weekday IS pre-market').toBe(true);
-  expect(win.preAt2100, '21:00 ET is NOT pre-market — a retained post print must keep the quote').toBe(false);
-  expect(win.preAt1200, 'midday is not pre-market').toBe(false);
-  expect(win.preOnSat, 'the weekend is not pre-market').toBe(false);
-
-  /* Suppressing the quote in pre-market is not enough: it fell through to the
-     BARS branch, which is the prior regular session's move, so row.pct never
-     won for a charted symbol — the exact case the suppression was for (Codex
-     P1). Driven through wbRailPct directly with a synthetic bars/rows pair so
-     the fallback ORDER is asserted, not the demo data's shape. */
-  const order = await page.evaluate(() => {
-    /* A synthetic symbol, deliberately NOT wbState.sym: the active-symbol quote
-       branch would otherwise win outside pre-market (correctly — that is this
-       PR's whole point) and mask the bars-vs-watchlist ordering being checked. */
-    const sym = '__ORDERTEST__';
-    const rows = new Map([[sym, { ext: true, pct: 7.77 }]]);
-    const data = { symbols: { [sym]: { c: [100, 110] } } };   // bars would say +10%
-    /* The session gate is a PARAMETER — renderWbSidebar computes it once per
-       render and threads it through, so it is passed here rather than stubbed
-       on the global. */
-    return { pre: wbRailPct(sym, data, rows, true), notPre: wbRailPct(sym, data, rows, false) };
-  });
-  expect(order.pre, 'in pre-market the watchlist percentage wins outright, not the bars').toBe(7.77);
-  expect(order.notPre, 'outside pre-market the bars still precede the watchlist').toBeCloseTo(10, 6);
-
-  expect(out.sym, 'a symbol is charted').toBeTruthy();
-  expect(out.other, 'a cached quote for a NON-active symbol must not win — refreshWbQuote\n' +
-    'only refreshes wbState.sym, so that entry is never updated again and would\n' +
-    'outrank fresher bars/watchlist data indefinitely (Codex P1)').not.toBe('-9.99%');
-  expect(out.reg, 'the rail shows the header\'s regular-session quote')
-    .toBe('-0.19%');
-  expect(out.ext, 'an extended print uses the prior-close figure, not the regular one')
-    .toBe('+1.03%');
-  expect(out.reg, 'the quote actually replaced whatever the rail had').not.toBe(out.before);
-});
