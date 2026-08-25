@@ -5026,6 +5026,12 @@ function wbRailPct(sym, data, wlRows) {
      compounds too, so the rail agrees with the HEADER during regular hours and
      with the WATCHLISTS panel after them. */
   const preMarket = !!(row && row.ext && preMarketOpen());
+  /* RETURN IT, do not merely skip the quote (Codex P1). Suppressing the quote
+     alone still fell through to the BARS branch below, which is the prior
+     regular session's move — so for any charted symbol the pre-market case was
+     unchanged and the suppression bought nothing. The watchlist row is the only
+     source carrying preMarketChangePercent, so it has to win outright here. */
+  if (preMarket && row.pct != null) return row.pct;
   if (!preMarket && wbState && wbState.sym === sym) {
     const q = wbInfoCache[sym] && wbInfoCache[sym].info;
     if (q) {

@@ -3063,6 +3063,30 @@ test('S44: the charts rail reads the same quote as the header', async ({ page })
   expect(win.preAt1200, 'midday is not pre-market').toBe(false);
   expect(win.preOnSat, 'the weekend is not pre-market').toBe(false);
 
+  /* Suppressing the quote in pre-market is not enough: it fell through to the
+     BARS branch, which is the prior regular session's move, so row.pct never
+     won for a charted symbol — the exact case the suppression was for (Codex
+     P1). Driven through wbRailPct directly with a synthetic bars/rows pair so
+     the fallback ORDER is asserted, not the demo data's shape. */
+  const order = await page.evaluate(() => {
+    /* A synthetic symbol, deliberately NOT wbState.sym: the active-symbol quote
+       branch would otherwise win outside pre-market (correctly — that is this
+       PR's whole point) and mask the bars-vs-watchlist ordering being checked. */
+    const sym = '__ORDERTEST__';
+    const rows = new Map([[sym, { ext: true, pct: 7.77 }]]);
+    const data = { symbols: { [sym]: { c: [100, 110] } } };   // bars would say +10%
+    const real = preMarketOpen;
+    try {
+      window.preMarketOpen = () => true;
+      const pre = wbRailPct(sym, data, rows);
+      window.preMarketOpen = () => false;
+      const notPre = wbRailPct(sym, data, rows);
+      return { pre, notPre };
+    } finally { window.preMarketOpen = real; }
+  });
+  expect(order.pre, 'in pre-market the watchlist percentage wins outright, not the bars').toBe(7.77);
+  expect(order.notPre, 'outside pre-market the bars still precede the watchlist').toBeCloseTo(10, 6);
+
   expect(out.sym, 'a symbol is charted').toBeTruthy();
   expect(out.other, 'a cached quote for a NON-active symbol must not win — refreshWbQuote\n' +
     'only refreshes wbState.sym, so that entry is never updated again and would\n' +
