@@ -3026,13 +3026,30 @@ test('S44: the charts rail reads the same quote as the header', async ({ page })
     renderWbSidebar(wbState.data);
     const ext = railPct();
 
+    /* A cached quote for some OTHER symbol must be ignored: only wbState.sym is
+       ever refreshed, so stale entries must not outrank bars/watchlist. */
+    const otherSym = [...document.querySelectorAll('#wbSidebar .wb-side-sym')]
+      .map((e) => e.textContent.trim()).find((t) => t && t !== sym);
+    let other = null;
+    if (otherSym) {
+      wbInfoCache[otherSym] = { at: Date.now(), info: { changePct: -9.99, extPct: null } };
+      renderWbSidebar(wbState.data);
+      const btn = [...document.querySelectorAll('#wbSidebar .wb-side-btn')]
+        .find((b) => b.querySelector('.wb-side-sym')?.textContent.trim() === otherSym);
+      const p = btn && btn.querySelector('.wb-side-pct');
+      other = p ? p.textContent.trim() : null;
+    }
+
     /* fmtPct renders a TYPOGRAPHIC minus (U+2212), not an ASCII hyphen —
        normalise so the assertions compare values, not glyphs. */
     const norm = (v) => (v == null ? v : v.replace(/\u2212/g, '-'));
-    return { sym, before: norm(before), reg: norm(reg), ext: norm(ext) };
+    return { sym, before: norm(before), reg: norm(reg), ext: norm(ext), other: norm(other) };
   });
 
   expect(out.sym, 'a symbol is charted').toBeTruthy();
+  expect(out.other, 'a cached quote for a NON-active symbol must not win — refreshWbQuote\n' +
+    'only refreshes wbState.sym, so that entry is never updated again and would\n' +
+    'outrank fresher bars/watchlist data indefinitely (Codex P1)').not.toBe('-9.99%');
   expect(out.reg, 'the rail shows the header\'s regular-session quote')
     .toBe('-0.19%');
   expect(out.ext, 'an extended print uses the prior-close figure, not the regular one')

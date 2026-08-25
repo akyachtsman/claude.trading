@@ -107,23 +107,36 @@ This project's look is its own — established at kickoff via `/design-intake`
   independently and desk-charts usually wins, so the picker's first render sees
   no lists and would otherwise stay a one-entry dropdown all session. Day-% per
   row falls back **live quote → charts-bars → watchlist quote → nothing**
-  (never 0.00%, which claims the name was flat). The **live quote is FIRST**
-  (`wbInfoCache`, owner report 2026-08-24): the header read AVAV −0.19% while
-  the rail row directly under it read **+1.03%**. Nothing was miscomputed —
-  they were different VINTAGES. The header refreshes on `wbInfoTtlMs` (60s
-  while the session is open), but the rail was repainted ONLY by
-  `renderWatchlist()`, i.e. on the 5-minute all-feeds poll, which also pauses
-  while the tab is hidden; on a name as volatile as AVAV (−7.5% the prior
-  session) that is easily a point of drift, with nothing on screen saying which
-  number was older. `maybeFetchWbInfo` now repaints the rail as well as calling
-  `renderCharts` — **`renderCharts` does NOT paint the rail**, which is the half
-  that made the staleness invisible. The rail uses `extPct` when an extended
-  print exists and `changePct` otherwise — the desk-wide prior-close rule
-  (2026-07-29) that `desk-watchlist` compounds too, so the rail agrees with the
-  HEADER during regular hours and with the WATCHLISTS panel after them, rather
-  than picking one and breaking the other. S44 guards it, driving `wbInfoCache`
-  directly because demo never fetches quotes — the same reason the fault could
-  not surface in demo. `.wb-grid` went 96 → 200 → **240px**, and
+  (never 0.00%, which claims the name was flat). The **live quote is FIRST, but only for
+  the ACTIVE symbol and never in pre-market** (`wbInfoCache`, owner report
+  2026-08-24): the header read AVAV −0.19% while the rail row directly under it
+  read **+1.03%**. Nothing was miscomputed — they were different VINTAGES.
+  **The rail was already being repainted on every quote** (`renderCharts` calls
+  `renderWbSidebar`); the bug was that `wbRailPct` never READ the quote — it
+  went straight to bars, then to the watchlist copy, which rides the 5-minute
+  all-feeds poll and pauses while the tab is hidden. So the rail faithfully
+  re-rendered a stale number every 60s. AVAV is not in the charts roster, so it
+  fell all the way through to that watchlist value. (An earlier cut of this
+  entry claimed `renderCharts` does NOT paint the rail and added a second
+  repaint — both wrong, caught by Codex; the call is at the end of
+  `renderCharts`.)
+  Two bounds are load-bearing, both Codex P1s. **ACTIVE SYMBOL ONLY**:
+  `refreshWbQuote()` refreshes `wbState.sym` and nothing else, so a cached entry
+  for a ticker visited earlier is never updated again — preferring it everywhere
+  would let an hour-old quote outrank the 5-minute watchlist value on every row
+  the owner had ever clicked, strictly worse than the bug being fixed. **NEVER
+  IN PRE-MARKET**: `quote-proxy`'s `info` has no pre-market fields at all
+  (`extInfo` keys off `postMarketPrice`), so between 04:00 and 09:30 ET its
+  `changePct` is the PRIOR regular session's move while `desk-watchlist`
+  deliberately puts `preMarketChangePercent` in `row.pct`; `row.ext` marks both
+  pre and post prints, so "extended but `postMarketOpen()` is false" IS the
+  pre-market case. Otherwise `extPct` when an extended print exists and
+  `changePct` otherwise — the desk-wide prior-close rule (2026-07-29) that
+  `desk-watchlist` compounds too, so the rail agrees with the HEADER during
+  regular hours and with the WATCHLISTS panel after them. S44 guards it,
+  driving `wbInfoCache` directly because demo never fetches quotes — the same
+  reason the fault could not surface in demo — and asserts a cached quote for a
+  NON-active symbol does not win. `.wb-grid` went 96 → 200 → **240px**, and
   the **symbol never abbreviates**: at 200 a column was 96px and, after the
   row's padding, the `×`, the gap and a ~42px day-%, ~21px was left for the
   ticker, so every 4-letter live name rendered as `AV…` — which names no
