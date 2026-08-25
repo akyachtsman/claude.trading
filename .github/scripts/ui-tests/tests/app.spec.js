@@ -3046,6 +3046,23 @@ test('S44: the charts rail reads the same quote as the header', async ({ page })
     return { sym, before: norm(before), reg: norm(reg), ext: norm(ext), other: norm(other) };
   });
 
+  /* The pre-market suppression must key off the ACTUAL 04:00-09:30 ET window.
+     "extended and not post-market" was wrong: after 20:00 ET and all weekend a
+     retained watchlist row still carries ext === true from a valid POST print
+     while postMarketOpen() is false, which would misread it as pre-market and
+     drop back to the regular-session bar (Codex P1). preMarketOpen takes a
+     `now`, so the classification is checked directly at fixed instants. */
+  const win = await page.evaluate(() => ({
+    preAt0500: preMarketOpen(new Date('2026-08-25T09:00:00Z')),  // 05:00 ET Tue
+    preAt2100: preMarketOpen(new Date('2026-08-26T01:00:00Z')),  // 21:00 ET Mon
+    preAt1200: preMarketOpen(new Date('2026-08-25T16:00:00Z')),  // 12:00 ET Tue
+    preOnSat:  preMarketOpen(new Date('2026-08-29T09:00:00Z')),  // 05:00 ET Sat
+  }));
+  expect(win.preAt0500, '05:00 ET on a weekday IS pre-market').toBe(true);
+  expect(win.preAt2100, '21:00 ET is NOT pre-market — a retained post print must keep the quote').toBe(false);
+  expect(win.preAt1200, 'midday is not pre-market').toBe(false);
+  expect(win.preOnSat, 'the weekend is not pre-market').toBe(false);
+
   expect(out.sym, 'a symbol is charted').toBeTruthy();
   expect(out.other, 'a cached quote for a NON-active symbol must not win — refreshWbQuote\n' +
     'only refreshes wbState.sym, so that entry is never updated again and would\n' +

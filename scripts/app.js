@@ -5014,14 +5014,18 @@ function wbRailPct(sym, data, wlRows) {
      fields at all — extInfo() keys off postMarketPrice — so between 04:00 and
      09:30 ET its changePct is the PRIOR regular session's move, while
      desk-watchlist deliberately puts preMarketChangePercent in row.pct. The
-     watchlist is right there and must win. row.ext marks both pre and post
-     prints, so "extended but post-market is not open" IS the pre-market case.
+     watchlist is right there and must win. The test is the ACTUAL pre-market
+     window, not "extended and not post-market" (a second Codex P1): after 20:00
+     ET and all weekend a retained row still carries ext === true from a valid
+     POST print while postMarketOpen() has gone false, and that reading would
+     skip the quote and fall through to the regular-session BAR percentage,
+     losing the extended figure the Watchlists panel still shows.
 
      Otherwise extPct when an extended print exists, else changePct — the
      desk-wide prior-close rule (owner ruling 2026-07-29) that desk-watchlist
      compounds too, so the rail agrees with the HEADER during regular hours and
      with the WATCHLISTS panel after them. */
-  const preMarket = !!(row && row.ext && !postMarketOpen());
+  const preMarket = !!(row && row.ext && preMarketOpen());
   if (!preMarket && wbState && wbState.sym === sym) {
     const q = wbInfoCache[sym] && wbInfoCache[sym].info;
     if (q) {
