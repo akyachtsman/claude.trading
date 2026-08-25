@@ -953,21 +953,36 @@ test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ p
      settle print — rather than some duration invented here. OUTSIDE that window
      STALE still fails loudly, which is the entire point of the canary: do not
      widen this to accept STALE unconditionally.
-     The window is tested at BOTH ENDS of the assertion's own 20s poll, by
-     passing withinCloseSettleGrace its optional `now`, because the bell can
-     pass mid-wait. That is deliberately one cheap evaluate rather than a
-     re-check in a catch block: the whole test budget is 30s, so waiting 20s and
-     THEN probing again overran it and the page was torn down mid-evaluate —
-     measured, not theorised. */
+     The window is evaluated PER ATTEMPT, against the instant the lamp was
+     actually read — never chosen once up front. Two earlier cuts got this
+     wrong and both are worth recording, because the second failed in the more
+     dangerous direction:
+       - a 20s assertion followed by a re-check inside a catch. That overran the
+         30s per-test budget and the page was torn down mid-evaluate.
+       - selecting the matcher once from EITHER endpoint, `withinCloseSettleGrace()
+         || withinCloseSettleGrace(now + 20s)`, to cover the bell passing mid-wait.
+         That PRE-AUTHORISES STALE: in the last 20 seconds before 16:00 ET the
+         future operand is already true while the market is still OPEN, so a
+         genuinely stalled open-hours feed matches the permissive pattern
+         immediately and the canary reports a FALSE SUCCESS — the bell never has
+         to pass at all. (Verified: at 15:59:45 ET now=false, now+20s=true.) The
+         same cached boolean also stays permissive if polling runs past 16:15.
+         A canary that passes while the feed is dead is worse than one that
+         fails spuriously, which is what makes this the wrong trade (Codex P2).
+     Coupling acceptance to the observation's own instant fixes both: STALE is
+     accepted only when the desk is in the settle window at the moment it was
+     read, and the retry loop still tolerates the bell passing mid-wait because
+     a later attempt re-evaluates. */
   const SETTLE_POLL_MS = 20000;
-  const settling = await page.evaluate((ms) => {
-    if (typeof withinCloseSettleGrace !== 'function') return false;
-    return withinCloseSettleGrace() || withinCloseSettleGrace(new Date(Date.now() + ms));
-  }, SETTLE_POLL_MS);
-  await expect(lamp, settling
-    ? 'post-close settle window: lamp must still be one of LIVE/EOD/STALE'
-    : 'live feed unreachable or stale — check desk-market',
-  ).toHaveText(settling ? /^(LIVE|EOD|STALE)$/ : /^(LIVE|EOD)$/, { timeout: SETTLE_POLL_MS });
+  await expect(async () => {
+    const text = ((await lamp.textContent()) || '').trim();
+    if (/^(LIVE|EOD)$/.test(text)) return;
+    const settling = text === 'STALE' && await page.evaluate(
+      () => typeof withinCloseSettleGrace === 'function' && withinCloseSettleGrace());
+    if (settling) return;
+    throw new Error('desk lamp reads "' + text + '" — live feed unreachable or stale '
+      + '(check desk-market). STALE passes only inside withinCloseSettleGrace().');
+  }).toPass({ timeout: SETTLE_POLL_MS });
 });
 
 // S12 — Charts workbench: three doctrine panes with candles, stochastics,
