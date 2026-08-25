@@ -108,8 +108,7 @@ This project's look is its own — established at kickoff via `/design-intake`
   no lists and would otherwise stay a one-entry dropdown all session. The rail carries **NO day-%** at all (owner request
   2026-08-25). It is a navigation list — its job is "which ticker am I looking
   at" — and the width it spent on a percentage went to the Pro panes instead
-  (`.wb-grid` first column 240 → **160px**, ~80px to the chart; measured at 1512
-  the row still leaves 46px after a ticker where a 5-char symbol needs 14).
+  (`.wb-grid` first column 240 → **200px**, ~40px to the chart).
   Removing it RETIRES a whole class of fault rather than fixing it again: the row
   sits directly under the charts header, which prints the same symbol's move, so
   the two were permanently comparable and were twice reported as contradicting
@@ -120,19 +119,28 @@ This project's look is its own — established at kickoff via `/design-intake`
   contradict itself. `wbRailPct`, the `preMarketOpen` gate it needed, that
   gate's hoisted `NY_PARTS` formatter and scenario **S44** all went with it —
   deleting S44 is not lost coverage, since the behaviour it guarded no longer
-  exists. `.wb-grid` went 96 → 200 → **240px**, and
-  the **symbol never abbreviates**: at 200 a column was 96px and, after the
-  row's padding, the `×`, the gap and a ~42px day-%, ~21px was left for the
-  ticker, so every 4-letter live name rendered as `AV…` — which names no
-  instrument, on a rail whose whole purpose is being clicked by ticker (owner
-  report 2026-08-20). `.wb-side-sym` is now the NON-shrinking half and the
-  day-% is the one that yields; `scrollbar-width: thin` on `.wb-rail-col` is
-  part of the width budget, not decoration (two classic 15px bars would eat
-  most of the 40px the widening bought). **Demo cannot reproduce the fault**,
-  so S40 measures a WIDTH BUDGET rather than checking for a clipped label:
-  only 10 demo symbols carry bars, all three letters, and a roster name with
-  no series renders no day-% at all, so at the old 200px rail every demo row
-  still fitted and a clipping assertion passed on the broken CSS.
+  exists. **The rail is 200px and the ticker NEVER abbreviates** — the two are one
+  rule. `.wb-grid`'s first column went 96 → 200 → 240 (when it still carried a
+  day-%) → **200px** again once the day-% went. 160 was tried in that last pass
+  and is WRONG: `WL_SYM_RE` accepts **ten** characters and `DX-Y.NYB` and
+  `BTC-USD` are already in the roster, while the rail font is 12px IBM Plex Mono
+  at ~7.22px per glyph — so ten characters need ~72px of ticker alone and the
+  160px manual column offered **56**. Two columns of 72 plus row padding and the
+  manual column's `×` cannot fit in 160 however the split is weighted, so this is
+  arithmetic and no dynamic allocation rescues it. 200 is the first width that
+  seats the full validated length in BOTH columns; the panes gain 40px rather
+  than 80, and that smaller win is the price of never clipping a ticker — a
+  clipped symbol names no instrument on a rail whose whole purpose is being
+  clicked by ticker (owner report 2026-08-20, when 4-letter names rendered as
+  `AV…`). `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
+  decoration: two classic 15px bars would eat most of what the width buys.
+  **S40 budgets against the VALIDATOR, not against demo.** Demo carries ten
+  three-letter symbols, so a five-character budget passed on a 160px rail that a
+  real supported symbol would have broken — a budget that admits less than the
+  validator accepts is not a budget. It measures the MANUAL column (the tighter
+  one, since it carries the `×`) against the full 10-character limit and also
+  asserts the rendered ticker is not clipped. Both halves were proved to bite by
+  setting the rail back to 160 and watching them fail.
   **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
   (`VOL_MA`, `data-volma`, owner request 2026-08-12, shipped 2026-08-18) — the
   reference platform's yellow line, and what makes a bar readable as heavy or
