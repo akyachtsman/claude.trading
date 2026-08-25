@@ -972,16 +972,34 @@ test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ p
      Coupling acceptance to the observation's own instant fixes both: STALE is
      accepted only when the desk is in the settle window at the moment it was
      read, and the retry loop still tolerates the bell passing mid-wait because
-     a later attempt re-evaluates. */
+     a later attempt re-evaluates.
+     THE WINDOW ALONE IS NOT ENOUGH, though (Codex P2, round 2). Inside 16:00-16:15
+     a STALE lamp has two very different causes and only one is benign: a HEALTHY
+     feed whose newest quote happens to predate the close, or a feed that actually
+     died earlier — one that stopped at 15:45 shows the same unchanged STALE and
+     would sail through, which is precisely the outage this canary exists to
+     catch. So the exception additionally requires the POLLER to be alive, tested
+     on DESK.liveStamp.generatedAt — the very value the masthead lamp is built
+     from (scripts/app.js, the liveLampFor call) — against the desk's own
+     freshness bound rather than one invented here: liveLampFor calls a feed fresh
+     at generatedAt age <= 6 minutes (scripts/data.js). Benign case passes (the
+     poller is running, it simply has no post-close print yet); real outage fails,
+     window or no window. */
   const SETTLE_POLL_MS = 20000;
+  const LAMP_FRESH_MS = 6 * 60000;   // mirrors liveLampFor's own freshness bound
   await expect(async () => {
     const text = ((await lamp.textContent()) || '').trim();
     if (/^(LIVE|EOD)$/.test(text)) return;
-    const settling = text === 'STALE' && await page.evaluate(
-      () => typeof withinCloseSettleGrace === 'function' && withinCloseSettleGrace());
+    const settling = text === 'STALE' && await page.evaluate((freshMs) => {
+      if (typeof withinCloseSettleGrace !== 'function' || !withinCloseSettleGrace()) return false;
+      const gen = typeof DESK !== 'undefined' && DESK.liveStamp && DESK.liveStamp.generatedAt;
+      const age = gen ? Date.now() - new Date(gen).getTime() : NaN;
+      return Number.isFinite(age) && age <= freshMs;
+    }, LAMP_FRESH_MS);
     if (settling) return;
     throw new Error('desk lamp reads "' + text + '" — live feed unreachable or stale '
-      + '(check desk-market). STALE passes only inside withinCloseSettleGrace().');
+      + '(check desk-market). STALE passes only inside withinCloseSettleGrace() AND '
+      + 'with a poller that is still fetching.');
   }).toPass({ timeout: SETTLE_POLL_MS });
 });
 
