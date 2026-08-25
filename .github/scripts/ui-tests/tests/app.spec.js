@@ -3075,14 +3075,10 @@ test('S44: the charts rail reads the same quote as the header', async ({ page })
     const sym = '__ORDERTEST__';
     const rows = new Map([[sym, { ext: true, pct: 7.77 }]]);
     const data = { symbols: { [sym]: { c: [100, 110] } } };   // bars would say +10%
-    const real = preMarketOpen;
-    try {
-      window.preMarketOpen = () => true;
-      const pre = wbRailPct(sym, data, rows);
-      window.preMarketOpen = () => false;
-      const notPre = wbRailPct(sym, data, rows);
-      return { pre, notPre };
-    } finally { window.preMarketOpen = real; }
+    /* The session gate is a PARAMETER — renderWbSidebar computes it once per
+       render and threads it through, so it is passed here rather than stubbed
+       on the global. */
+    return { pre: wbRailPct(sym, data, rows, true), notPre: wbRailPct(sym, data, rows, false) };
   });
   expect(order.pre, 'in pre-market the watchlist percentage wins outright, not the bars').toBe(7.77);
   expect(order.notPre, 'outside pre-market the bars still precede the watchlist').toBeCloseTo(10, 6);
