@@ -16,6 +16,9 @@
 #
 # Required setup:
 #   - Add TEST_AUTH_CREDENTIAL as a repository secret — skip if the project has
+#     (email+password AND identifier-first/split-step gates need TEST_AUTH_EMAIL
+#      as well — directives#304, #310; without it a split-step gate is not even
+#      DETECTED and the authenticated scenarios run against the identifier screen)
 #     no auth; the empty secret makes auth tests self-skip
 #   - Add APP_URL as a repository variable: Settings → Secrets and variables → Variables
 #     e.g. https://<your-username>.github.io/<your-repo>/
@@ -61,23 +64,137 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    # 60, NOT 40. This job runs the ui-suite composite: dependency install + playwright
+    # 120, NOT 90 or 60 (and never 40). This job runs the ui-suite composite: dependency install + playwright
     # install + EVERY project in playwright.config.js + retries + artifact
     # upload, in one sum the composite cannot subdivide.
     #
-    # Sized from two MEASURED numbers, not from one anchor:
+    # Sized from MEASURED numbers — and the warm figure is a RANGE, not one
+    # anchor. An earlier version of this block cited apfp.claude's 16.6min as
+    # though it were typical. THREE repos have measured the warm whole-job path
+    # (a fourth number, the 21m25s cold install below, comes from
+    # claude.directives and measures a different thing — do not count it here):
+    #
+    #     WARM, whole job, 4-project suites
+    #       claude.prop         8m00s    208 tests   cache hit, zero downloads
+    #       apfp.claude        16.2-17.0min ~204 specs   three qa-live runs
+    #       claude.trading     30m35s    128 tests   run 97234645851
+    #
+    # That is a 3.8x spread whole-job to whole-job, on nominally similar suites,
+    # and test COUNT does not predict it — the slowest repo runs the fewest
+    # tests. (#296 quotes 3.7x; that compares claude.trading's 29m34s TEST PHASE
+    # against claude.prop's WHOLE JOB. Like for like it is 3.8x.)
+    #
     #     cold-cache browser install   21m25s   (claude.directives
     #                                            check-job-bounds.py, rule 3)
-    #   + complete job, warm cache     16.6min  (apfp.claude, qa-live on
-    #                                            c302827: 4 projects, 204 specs,
-    #                                            checkout + dependency install
-    #                                            + suite)
     #
     # NOTE the composite installs with `npm install`, not `npm ci` — an earlier
     # version of this block said ci. They differ in resolution and speed, so
-    # treat the 16.6 as measuring THIS path, not a stricter one.
+    # treat these as measuring THIS path, not a stricter one.
     #     -------------------------------------
-    #     healthy COLD run            ~38min    → 60 leaves ~58% headroom
+    # SIZE FROM THE SLOW END, which is the whole point of carrying a range:
+    #     fast end   21m25s + 8m00s   = ~29min  → 60 leaves ~52% headroom
+    #     slow end   21m25s + 30m35s  = ~52min  → 60 leaves ~13% headroom
+    #
+    # claude.trading's cold path is UNMEASURED — they were explicit about not
+    # presenting that ~52 as an observation, and it is arithmetic here too. 60
+    # still holds, but on the slow end it holds by ~8 minutes, not by the ~58%
+    # an average would suggest. A repo at that end should treat adding a project
+    # as a bound change, not a config change.
+    #
+    # ⚠️ 120, NOT 60 — and the raise is not cosmetic. When app.spec.js took S3's
+    # per-test budget from 240s to 900s this arithmetic STOPPED FITTING. Projects
+    # run SERIALLY (playwright.config.js sets no `workers`; a 2-core runner gives
+    # one), so a per-test ceiling is paid once per project — and `retries: 1`
+    # means a FAILING scenario pays it twice:
+    #
+    #     cold install                       21m25s   measured
+    #   + test phase, slow end, post-raise    ~38min   claude.trading measured
+    #                                                  10.7 + 9.3 + 9.1 for three
+    #                                                  profiles; iphone is
+    #                                                  unmeasured, inferred ~9.1
+    #                                                  from its peer phone profile
+    #     -------------------------------------
+    #     healthy cold, slow end              ~59.6min  → against 60: no headroom
+    #
+    # A FAILING S3 does not merely ADD a retry — it REPLACES a healthy run. That
+    # ~38min test phase already contains a SUCCESSFUL S3 (~7.8min on the profiles
+    # claude.trading measured), so when S3 times out that share is first replaced
+    # by the full 900s ceiling and THEN retried at the ceiling:
+    #
+    #     replace healthy S3 with the ceiling   +7.2min
+    #   + retry at the ceiling                  +15min
+    #     -------------------------------------
+    #     ONE profile failing S3                ~82min
+    #     TWO profiles failing S3               ~104min
+    #
+    # 120 covers both with ~16min spare. THREE or more profiles failing S3 is NOT
+    # covered, deliberately: that is not a bound problem, it is S3's budget being
+    # wrong for that app — re-size the budget, do not grow the job.
+    #
+    # WHAT THE ~16min OF SPARE IS FOR, checked rather than assumed. Two rounds
+    # raised per-test ceilings: the scenarios that load and authenticate had each
+    # been sized for two of their five terms (S2 60s -> 180s -> 240s, S4 and CTRL 30s ->
+    # 240s, S1 60s -> 90s, ENTRY 60s -> 90s per page, capped at 5min total), and
+    # then the shared preamble's settles became real observation windows, which
+    # cost every budget containing them (+40s: NAV 300s -> 360s, DISMISS 900s ->
+    # 1200s). A HEALTHY run is unchanged throughout — a ceiling costs nothing
+    # until a test hits it.
+    #
+    # THIRD ROUND, same shape (directives#310): the identifier-first auth step
+    # added a bounded SECOND attempt cycle to that shared preamble — +55s, but
+    # only on a split-step gate with TEST_AUTH_EMAIL set, so a healthy run on
+    # every other app is unchanged again. It cost every budget containing the
+    # preamble: S2/S4/CTRL 240s -> 300s, NAV 360s -> 420s. DISMISS absorbed it
+    # WITHOUT growing, by spending one fewer navigation reset (NAV_RESET_CAP
+    # 3 -> 2) — a navigating trigger is not an overlay trigger, so those resets
+    # were already the cheap side of that trade.
+    #
+    # A FAILING run is where the spare goes, and the scenarios split in two:
+    #
+    #   SHORT ceilings   S1 90s, S2 300s, S4 300s, CTRL 300s, ENTRY <=300s
+    #                    a failure costs <=10min (replace + retry). ONE of these
+    #                    fits alongside two profiles failing S3 — and that claim
+    #                    is UNCHANGED by the raise above: ENTRY's 300s cap
+    #                    already set this class's maximum, so S2/S4/CTRL joined
+    #                    the ceiling rather than raising it. 104min + 10min =
+    #                    ~114min against 120. What DID change is how often the
+    #                    worst case is realized: most projects declare 0-2 entry
+    #                    points, so the TYPICAL class maximum was 240s and is
+    #                    now 300s.
+    #   LONG ceilings    NAV 420s, S3 900s, DISMISS 1200s
+    #                    a failure costs 14-40min. NOT covered alongside a
+    #                    failing S3 — deliberately, on the same reasoning as
+    #                    three failing S3 profiles: two long scenarios failing at
+    #                    once means the app or those budgets are wrong, not this
+    #                    bound. Re-size there, do not grow the job.
+    #
+    # ⚠️ CORRECTING THE PREVIOUS VERSION OF THIS PARAGRAPH, which said the spare
+    # "absorbs ONE such failure alongside a failing S3" without distinguishing
+    # short from long ceilings — and so implied a failing DISMISS was covered. It
+    # was not covered then either, at 900s. The omission was in the sentence
+    # written to prove the check had been done.
+    #
+    # Raising a per-test budget without re-checking its enclosing job is exactly
+    # the defect this comment block was written for; it applies to the block's
+    # own author, twice now.
+    #
+    # The failure mode all of this exists to prevent, arriving from the other
+    # side: GitHub CANCELS the job at the bound, so Playwright never reports the
+    # definitive failure and the run reads as inconclusive rather than red.
+    # **Raising a per-test budget without raising its enclosing job converts a
+    # test failure into a job cancellation.**
+    #
+    # Capping S3's sweep instead was considered and rejected: it is uncapped BY
+    # DESIGN (test.md → "Coverage = controls clicked, not screens visited"), so a
+    # cap would cut mandated coverage to fit a bound — the wrong direction, and
+    # the same move as loosening a test to get green.
+    #
+    # COST OF THE FLOOR, stated because it is real: this is a fleet-wide MINIMUM
+    # sized for the slow end, so a fast repo (claude.prop, 8min warm) must also
+    # allow 120 and will burn that long on a genuine wedge. A repo may set HIGHER,
+    # never lower. The trade is deliberate — a bound too tight kills healthy runs
+    # and yields an inconclusive signal, which this file treats as the worse
+    # failure.
     #
     # The 57-minute figure in claude.directives' check-job-bounds.py header is NOT a sizing input,
     # however tempting the arithmetic. Read it in context: that run "sat 57
@@ -94,7 +211,7 @@ jobs:
     # And a kill here COMPOUNDS: `actions/cache` saves at job END, so a run
     # cancelled during the install also skips the save, leaving the next run
     # equally cold. Too tight does not cost one run, it costs a streak.
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -107,5 +224,6 @@ jobs:
           # workflow_dispatch input overrides repo variable if provided
           app-url: ${{ github.event.inputs.app_url || vars.APP_URL }}
           test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+          test-auth-email: ${{ secrets.TEST_AUTH_EMAIL }}
           artifact-name: playwright-results-live
           app-pages: ${{ vars.APP_PAGES }}

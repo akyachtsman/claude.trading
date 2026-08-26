@@ -20,7 +20,30 @@ on:
     # this re-runs the whole watched run, so pointing it at a project-owned
     # deploy replays that workflow's entire build. Actions-source projects build
     # retry into their own deploy workflow instead (Automation 4b).
-    # Why, and the narrow exception for a provably idempotent deploy:
+    #
+    # ⚠️ ACTION ON AN ACTIONS-SOURCE SWITCH — pick ONE, and handle the guard
+    # entry differently in each. Nothing will tell you to: 'pages-build-
+    # deployment' is GitHub-managed, so the name still RESOLVES after the
+    # switch and W1, workflow-ref-guard and every other static check stay green.
+    #   (a) DELETE this file  -> DROP its REQUIRED entry in the same edit.
+    #   (b) REPOINT it at your own deploy, under W3's idempotent exception
+    #       -> UPDATE the REQUIRED entry to that deploy's name; do NOT drop it.
+    #       Dropping it removes the static guarantee for the customized name,
+    #       so a later watch-list edit can silently disable the exception while
+    #       workflow-ref-guard stays green -- the exact blind spot this whole
+    #       comment is about, reopened on the exception path.
+    #
+    # The reason is NOT that it goes quiet. Day to day it is inert, and that
+    # alone would only be dead weight. The reason is the VISIBILITY FLIP
+    # (global.md -> Hosting & Deployment): flipping repo visibility fires the
+    # legacy managed build even while Actions-source is configured, publishing
+    # the UNFILTERED tree. That build is precisely what this file watches — so
+    # a retry left installed will faithfully RE-RUN a rogue unfiltered deploy
+    # on failure, turning a one-off exposure into a retried one. An unrepointed
+    # monitor fails to notice; an unrepointed retry participates.
+    #
+    # Why, and the narrow exception for a provably idempotent deploy (which
+    # also requires a written REVISIT TRIGGER, not just the reasoning):
     # docs/standards/automations.md -> Watcher Rules (W3).
     workflows: [pages-build-deployment]
     types: [completed]

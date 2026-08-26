@@ -1,0 +1,57 @@
+name: Scheduled Notification
+
+# Standard scheduled job (ships in every project): runs notify-task.js, which
+# emails a notification via notify-email.js. notify-task.js guards on the SMTP
+# config and emits a GitHub Actions notice if it's missing (mandatory repo
+# setup). Customize notify-task.js with your task; add its own env below.
+# See docs/guides/cron-email-notifications.md for setup.
+
+on:
+  schedule:
+    # GitHub cron is UTC-only and best-effort (can run several minutes late).
+    # For a fixed LOCAL time across DST, use TWO entries bracketing the offset
+    # plus a time-guard in the script (see the docs "DST-safe scheduling").
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Bypass any in-script time guard (manual run)'
+        required: false
+        default: 'false'
+
+# Least privilege: the job only reads the repo; email goes out via SMTP secrets.
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10            # always cap scheduled jobs so a hang can't run for hours
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          # Requires a committed lockfile — run `npm install` once in .github/scripts
+          # and commit package-lock.json (same policy as the qa workflows).
+          cache-dependency-path: .github/scripts/package-lock.json
+      - name: Install deps
+        working-directory: .github/scripts
+        run: npm install
+      - name: Run task
+        working-directory: .github/scripts
+        env:
+          # --- your task's own inputs (example; names match the data directive) ---
+          # DB_URL: ${{ vars.DB_URL }}
+          # DB_SERVICE_KEY: ${{ secrets.DB_SERVICE_KEY }}
+          # --- email transport (consumed by notify-email.js) ---
+          # Host/port/user/from are non-sensitive → Variables; only SMTP_PASS is a secret.
+          ALERT_TO:   ${{ vars.ALERT_TO || vars.SMTP_USER }}   # workflow fallback (script requires ALERT_TO)
+          ALERT_FROM: ${{ vars.ALERT_FROM }}                   # empty → notify-email.js defaults to SMTP_USER
+          SMTP_HOST:  ${{ vars.SMTP_HOST }}
+          SMTP_PORT:  ${{ vars.SMTP_PORT }}
+          SMTP_USER:  ${{ vars.SMTP_USER }}
+          SMTP_PASS:  ${{ secrets.SMTP_PASS }}
+          FORCE:      ${{ github.event.inputs.force }}
+        run: node notify-task.js

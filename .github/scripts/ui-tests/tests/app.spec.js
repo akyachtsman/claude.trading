@@ -403,7 +403,31 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
     );
   }
 
-  // Auth passed or no auth required — record mechanism
+  /* S2 MUST DISCRIMINATE — it used to fail OPEN. Ported from the upstream kit
+     (claude.directives, 2026-08-26) as the defect only, not the rewrite: taking
+     upstream's S2 whole would pull in awaitAuthReady/watchPageErrors/
+     credentialFor and the split-step login discovery, which is the take-the-kit-
+     wholesale move the refresh rules forbid for this per-project file.
+
+     The defect: a credential IS configured (we did not skip at the top), yet no
+     gate was found — so `mechanism` is 'none', every assertion above is skipped,
+     and the scenario passes having exercised no authentication at all. That is
+     the same shape as a guard that fails open: indistinguishable in the output
+     from a real pass.
+
+     This desk HAS a gate (the PIN lock) and the credential is set in CI, so this
+     never fires today — which is exactly why it is worth adding. It fires the
+     day gate detection silently breaks, instead of going green. */
+  if (mechanism === 'none') {
+    throw new Error(
+      'S2 FAIL | a credential is configured but NO auth gate was found. ' +
+      'This desk has a PIN lock, so either detectAuthGate() has stopped seeing ' +
+      'it or the lock stopped rendering. Passing here would mean reporting green ' +
+      'on authentication that was never exercised.'
+    );
+  }
+
+  // Auth passed — record mechanism
   test.info().attach('auth-result', {
     body: JSON.stringify({ mechanism, domChanged }),
     contentType: 'application/json',

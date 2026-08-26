@@ -5,9 +5,23 @@
 # session natively, but never CI SUCCESS — so sessions had to poll for green
 # via the scheduling tools, which permission-prompt on every call in web
 # sessions. This workflow turns success into a deliverable event: when a
-# watched QA workflow completes green, it comments on the open PR for that
-# head SHA, and the comment webhook wakes the watching session — no polling,
-# no prompts. Failures are deliberately NOT commented (delivered natively;
+# watched QA workflow completes green, it resolves the run to exactly ONE open
+# PR -- head SHA first, else head branch + head-repo owner -- and comments there,
+# and the comment webhook wakes the watching session. No polling, no prompts.
+# It exits SILENTLY when neither lookup yields a unique candidate, so a green run
+# is not a guaranteed wake and a waiting session still arms a check-in.
+#
+# ⚠️ A UNIQUE MATCH IS NOT PROOF YOUR SESSION WAS WOKEN, EITHER. Uniqueness only
+# stops this picking arbitrarily among duplicates; it does not prove the one
+# match is RELATED to the run. A repository_dispatch run carries the
+# DEFAULT-BRANCH SHA, so when that branch is the head of exactly one open PR (a
+# main -> release promotion), the comment lands on that unrelated PR: every
+# condition above holds, this workflow behaves exactly as designed, and the
+# dispatching session still gets nothing. So a unique result is not proof of
+# coverage -- arm the check-in whenever the run's SHA is not your PR's head
+# (git.md -> PR Lifecycle).
+#
+# Failures are deliberately NOT commented (delivered natively;
 # ci-monitor tracks them repo-side).
 #
 # Drop-in: watched names match the QA workflows every project in this template
@@ -22,11 +36,18 @@
 # triggers are read from this file ON THE DEFAULT BRANCH, so this workflow can
 # NEVER wake the PR that installs it (verified on claude.prop, 2026-07-18: two
 # post-merge runs, zero PR wakes — the mechanism was fine, the install PR just
-# predated it on main). For that one PR only, arm a scheduled verification
-# check-in and confirm the FIRST post-install PR gets its green comment; from
-# then on the webhook covers completion (heartbeats per global.md → Status
-# Line on Every Stop still apply to waits over five minutes). Do not conclude
+# predated it on main). For that PR, arm a scheduled verification check-in and
+# confirm the FIRST post-install PR gets its green comment. Do not conclude
 # "dud" from the install PR's silence.
+#
+# ⚠️ "From then on the webhook covers completion" USED TO FOLLOW HERE, and it is
+# wrong — the install PR is not the only gap. This job is gated on
+# `conclusion == 'success'` and watches three workflows BY NAME, so a cancelled
+# run and a dispatched run outside that list both emit nothing. git.md →
+# *PR Lifecycle* carries the full list and the rule: arm a check-in for any
+# outcome that can end without emitting a wake, and drop it when THAT OUTCOME is
+# terminal, not when any wake arrives. Heartbeats per global.md → Status Line on
+# Every Stop still apply to waits over five minutes.
 on:
   workflow_run:
     workflows:
@@ -57,12 +78,29 @@ jobs:
           WR_HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
         run: |
           set -euo pipefail
-          # jq picks the first match rather than `| head -1`: under `set -o pipefail`
+          # Filtering inside jq rather than `| head -1`: under `set -o pipefail`
           # head can close the pipe before gh finishes, and gh dies on SIGPIPE (141),
           # failing the step on what is actually a successful lookup.
-          num=$(gh pr list --repo "$REPO" --state open --json number,headRefOid \
-            --jq "[.[] | select(.headRefOid == \"$WR_SHA\") | .number]
-                  | if length > 0 then .[0] else empty end")
+          #
+          # EXACTLY ONE match, not the first of several. Two open PRs can share a
+          # head commit -- the same tip proposed against main and against a release
+          # branch is the ordinary case -- and `.[0]` then posts "green" to an
+          # arbitrary one of them, possibly the one whose base the run never tested.
+          # A reader treating that comment as a gate signal is reading a green for
+          # a different PR. Silence is the honest answer: the session arms a
+          # check-in, which is the documented behaviour when no wake is emitted.
+          # --limit 100 with a truncation guard, matching the branch query below.
+          # `gh pr list` defaults to 30, and a truncated page turns the uniqueness
+          # check into its opposite: with two SHA-sharing PRs and only one on the
+          # page, `length == 1` reports UNIQUE and posts to an arbitrary PR. A
+          # full page means the answer may be incomplete, so refuse it rather than
+          # trust it -- the ambiguity path is already silence, which is correct
+          # here too.
+          num=$(gh pr list --repo "$REPO" --state open --limit 100 --json number,headRefOid \
+            --jq "if length >= 100 then empty
+                  else [.[] | select(.headRefOid == \"$WR_SHA\") | .number]
+                       | if length == 1 then .[0] else empty end
+                  end")
           matched="sha"
           # Fall back to the branch when the SHA is not a PR head. Two real cases:
           # a run dispatched onto a PR branch (repository_dispatch /
@@ -75,10 +113,19 @@ jobs:
           # well, and take the result ONLY when exactly one candidate survives:
           # commenting green on the wrong PR is worse than staying silent.
           if [ -z "$num" ] && [ -n "${WR_BRANCH:-}" ]; then
-            num=$(gh pr list --repo "$REPO" --state open --head "$WR_BRANCH" \
+            # --limit, and the truncation guard below it, are both load-bearing.
+            # gh defaults to 30 and applies it BEFORE our owner filter, so a
+            # truncated page can look unique: two PRs from this owner exist,
+            # one lands in the page, `length == 1` passes, and we comment the
+            # WRONG PR instead of staying silent as designed. Raising the limit
+            # narrows that; it cannot close it, so if the fetch comes back FULL
+            # we cannot prove uniqueness and must stay silent.
+            num=$(gh pr list --repo "$REPO" --state open --head "$WR_BRANCH" --limit 100 \
               --json number,headRepositoryOwner \
-              --jq "[.[] | select(.headRepositoryOwner.login == \"${WR_HEAD_OWNER:-}\")]
-                    | if length == 1 then .[0].number else empty end")
+              --jq "if length >= 100 then empty
+                    else [.[] | select(.headRepositoryOwner.login == \"${WR_HEAD_OWNER:-}\")]
+                         | if length == 1 then .[0].number else empty end
+                    end")
             [ -n "$num" ] && matched="branch"
           fi
           if [ -z "$num" ]; then

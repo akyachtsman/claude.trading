@@ -1,15 +1,4 @@
 {
-  "permissions": {
-    "allow": [
-      "Artifact",
-      "mcp__Claude_Code_Remote__send_later",
-      "mcp__Claude_Code_Remote__list_triggers",
-      "mcp__Claude_Code_Remote__delete_trigger",
-      "mcp__claude-code-remote__send_later",
-      "mcp__claude-code-remote__list_triggers",
-      "mcp__claude-code-remote__delete_trigger"
-    ]
-  },
   "extraKnownMarketplaces": {
     "claude-directives": {
       "source": {
@@ -22,7 +11,8 @@
     "directives-toolkit@claude-directives": true,
     "pr-review-toolkit@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
-    "frontend-design@claude-code-plugins": true
+    "frontend-design@claude-code-plugins": true,
+    "plugin-dev@claude-code-plugins": true
   },
   "hooks": {
     "SessionStart": [
@@ -34,6 +24,64 @@
           }
         ]
       }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Artifact",
+      "mcp__Claude_Code_Remote__create_trigger",
+      "mcp__Claude_Code_Remote__delete_trigger",
+      "mcp__Claude_Code_Remote__fire_trigger",
+      "mcp__Claude_Code_Remote__get_session",
+      "mcp__Claude_Code_Remote__list_environments",
+      "mcp__Claude_Code_Remote__list_repos",
+      "mcp__Claude_Code_Remote__list_sessions",
+      "mcp__Claude_Code_Remote__list_triggers",
+      "mcp__Claude_Code_Remote__send_later",
+      "mcp__Claude_Code_Remote__update_trigger",
+      "mcp__claude-code-remote__create_trigger",
+      "mcp__claude-code-remote__delete_trigger",
+      "mcp__claude-code-remote__fire_trigger",
+      "mcp__claude-code-remote__get_session",
+      "mcp__claude-code-remote__list_environments",
+      "mcp__claude-code-remote__list_repos",
+      "mcp__claude-code-remote__list_sessions",
+      "mcp__claude-code-remote__list_triggers",
+      "mcp__claude-code-remote__send_later",
+      "mcp__claude-code-remote__update_trigger",
+      "mcp__github__actions_get",
+      "mcp__github__actions_list",
+      "mcp__github__get_check_run",
+      "mcp__github__get_commit",
+      "mcp__github__get_file_contents",
+      "mcp__github__get_job_logs",
+      "mcp__github__get_label",
+      "mcp__github__get_latest_release",
+      "mcp__github__get_me",
+      "mcp__github__get_release_by_tag",
+      "mcp__github__get_tag",
+      "mcp__github__get_team_members",
+      "mcp__github__get_teams",
+      "mcp__github__issue_read",
+      "mcp__github__list_branches",
+      "mcp__github__list_commits",
+      "mcp__github__list_issue_fields",
+      "mcp__github__list_issue_types",
+      "mcp__github__list_issues",
+      "mcp__github__list_pull_requests",
+      "mcp__github__list_releases",
+      "mcp__github__list_repository_collaborators",
+      "mcp__github__list_tags",
+      "mcp__github__pull_request_read",
+      "mcp__github__search_code",
+      "mcp__github__search_commits",
+      "mcp__github__search_issues",
+      "mcp__github__search_pull_requests",
+      "mcp__github__search_repositories",
+      "mcp__github__search_users"
+    ],
+    "ask": [
+      "mcp__Supabase__deploy_edge_function"
     ]
   }
 }
