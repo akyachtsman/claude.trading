@@ -5351,7 +5351,13 @@ function wbSlotRow(i, sym, data) {
        preventDefault suppresses focus. Unproven complexity that alters
        interaction is worse than none. */
     const again = byPointer && wbSlotClick.i === i && now - wbSlotClick.at <= WB_SLOT_DBL_MS;
-    wbSlotClick = { i, at: now };
+    /* BOTH halves must be pointer clicks, so a keyboard activation neither
+       starts a pair nor continues one. Gating only the check above was half a
+       fix (Codex P2, round 5): the synthetic keyboard click still RECORDED
+       itself, so pressing Enter on a filled slot and then clicking it within the
+       window opened the editor instead of charting. A keyboard activation is
+       navigation like any other, so it also breaks a pair already pending. */
+    wbSlotClick = byPointer ? { i, at: now } : { i: -1, at: 0 };
     setWbSlotTab(i);                    /* Tab comes back to the slot last worked on */
     /* An EMPTY slot has nothing to chart, so its first click opens the editor. */
     if (again || !sym) { openEditor(); return; }

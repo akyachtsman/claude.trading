@@ -3154,6 +3154,17 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   await page.waitForTimeout(500);
   expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
     'two keyboard activations chart twice — they never open the editor').toBe(0);
+  /* BOTH halves must be pointer clicks. Gating only the check leaves the
+     synthetic keyboard click RECORDING itself, so Enter followed by a pointer
+     click inside the window opens the editor instead of charting (Codex P2,
+     round 5). */
+  await page.locator('.wb-slots [data-slot="54"] .wb-slot').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(150);
+  await page.locator('.wb-slots [data-slot="54"] .wb-slot').click();
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'a pointer click after a keyboard one charts — a keyboard press is not half a double-click').toBe(0);
 
   /* The roving stop follows a click EVEN WHEN NOTHING REPAINTS. wbLoadSymbol
      does not repaint when the lookup fails — demo mode refuses live lookups —
