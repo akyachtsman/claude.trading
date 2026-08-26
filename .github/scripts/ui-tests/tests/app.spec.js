@@ -3783,3 +3783,128 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
   expect(live.retickSurvives, 'the stamp reticker drives the news rollover without throwing').toBe(true);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 46 — heatmap label contrast, measured in the BROWSER
+//
+// WHY THIS IS A BROWSER TEST AND NOT A STATIC ONE. Heatmap tile labels sit on a
+// DYNAMIC colour ramp, so AA is carried by a halo stroke under each glyph
+// (paint-order:stroke) rather than by a token pair. check-contrast.js asserted
+// that by reading scripts/app.js, and over five review rounds on PR #283 that
+// produced SEVENTEEN separate ways for valid source to satisfy the check while
+// the rendered labels lost their halo — comments, decoy objects, nested keys,
+// wrappers, string payloads, duplicate keys, computed keys, spreads, a renamed
+// `stroke:`, `stroke-width: 0`, and finally an entirely UNUSED object literal
+// with the right shape. The last two are the point: no source analysis can
+// establish that the thing it read is what the browser painted, and a check
+// satisfied by dead code is not a check.
+//
+// The browser resolves all of it. Everything above collapses into "what is the
+// computed fill, stroke, paint-order and stroke-width of the text that is
+// actually on screen".
+//
+// NON-CIRCULARITY is the part to preserve on edit. Selecting "labels that have a
+// halo" and then asserting they have a halo proves nothing — deleting the halo
+// would empty the set and pass. Two clauses prevent that:
+//   * a FLOOR on how many haloed labels must exist, so removing the halo
+//     outright fails rather than vacuously passing;
+//   * every label sharing the tile-label ink must ITSELF be haloed, so removing
+//     the halo from some labels fails too. The ink is read off the render rather
+//     than hardcoded, so it survives a palette change.
+// Sector and industry captions are correctly excluded: they sit on a FIXED band
+// fill and are measured by the token gate, not by this mechanism.
+test('S46: heatmap tile labels carry a visible halo meeting AA, as rendered', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+
+  const toggle = page.locator('#heatToggle');
+  if (await toggle.count()) await toggle.click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('#heatmapSvg text').length > 20,
+    null, { timeout: 20000 },
+  );
+
+  const report = await page.evaluate(() => {
+    const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const rgb = (s) => {
+      const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?/.exec(s || '');
+      return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null;
+    };
+    const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+    const ratio = (a, b) => {
+      const la = lum(a), lb = lum(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+
+    const texts = [...document.querySelectorAll('#heatmapSvg text')];
+    const read = texts.map((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        txt: (el.textContent || '').slice(0, 12),
+        fill: cs.fill,
+        stroke: cs.stroke,
+        paintOrder: cs.paintOrder,
+        strokeWidth: parseFloat(cs.strokeWidth) || 0,
+        strokeOpacity: cs.strokeOpacity === '' ? 1 : parseFloat(cs.strokeOpacity),
+      };
+    });
+
+    // A halo is only a halo if it is actually painted: a colour, a width, and
+    // opacity. `stroke-width: 0` renders nothing while every colour still reads
+    // correctly — that was one of the seventeen.
+    const haloed = read.filter((t) =>
+      t.stroke && t.stroke !== 'none' && t.strokeWidth > 0 && t.strokeOpacity > 0);
+
+    // Tile-label ink, read off the render rather than hardcoded.
+    const tally = {};
+    haloed.forEach((t) => { tally[t.fill] = (tally[t.fill] || 0) + 1; });
+    const ink = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || null;
+
+    const sameInkUnhaloed = ink
+      ? read.filter((t) => t.fill === ink && !haloed.includes(t)).map((t) => t.txt)
+      : [];
+
+    const failures = [];
+    for (const t of haloed) {
+      const f = rgb(t.fill), s = rgb(t.stroke);
+      if (!f || !s) { failures.push(`${t.txt}: unreadable fill/stroke (${t.fill} / ${t.stroke})`); continue; }
+      if (!/stroke/.test(t.paintOrder)) {
+        failures.push(`${t.txt}: paint-order is "${t.paintOrder}" — the halo paints OVER the glyph`);
+        continue;
+      }
+      const r = ratio(f, s);
+      if (r < 4.5) failures.push(`${t.txt}: ink/halo contrast ${r.toFixed(2)} (need 4.5)`);
+    }
+
+    const worst = haloed.reduce((acc, t) => {
+      const f = rgb(t.fill), s = rgb(t.stroke);
+      if (!f || !s) return acc;
+      const r = ratio(f, s);
+      return acc === null || r < acc ? r : acc;
+    }, null);
+
+    return { total: read.length, haloed: haloed.length, ink, sameInkUnhaloed, failures, worst };
+  });
+
+  // FLOOR — the anti-circularity clause. Demo renders ~101 haloed tile labels;
+  // 40 leaves room for a smaller viewport without admitting "the halo is gone".
+  expect(
+    report.haloed,
+    `Only ${report.haloed} of ${report.total} heatmap labels carry a painted halo. ` +
+    'The tile ramp is dynamic, so the halo IS the AA mechanism — this reads as the ' +
+    'halo having been removed, not as a small map.',
+  ).toBeGreaterThanOrEqual(40);
+
+  // Partial removal: a label with the tile-label ink but no halo.
+  expect(
+    report.sameInkUnhaloed,
+    `These labels use the tile-label ink (${report.ink}) but paint no halo: ` +
+    `${report.sameInkUnhaloed.slice(0, 8).join(', ')}`,
+  ).toEqual([]);
+
+  expect(report.failures, `Heatmap label halo failures:\n  ${report.failures.slice(0, 10).join('\n  ')}`).toEqual([]);
+
+  test.info().attach('heatmap-label-contrast', {
+    body: JSON.stringify({ total: report.total, haloed: report.haloed, ink: report.ink, worstRatio: report.worst }, null, 2),
+    contentType: 'application/json',
+  });
+});

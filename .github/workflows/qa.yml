@@ -70,23 +70,6 @@ jobs:
       # ── Secret scan (composite — single source of truth for the pattern) ────
       - uses: ./.github/actions/secret-scan
 
-      # ⚠️ LOCAL ADDITION — check-contrast.js's heatmap assertion parses
-      # scripts/app.js with acorn. It is a project-specific check (dynamic tile
-      # colours mean the AA mechanism is a halo stroke, not a token pair), and
-      # four regex/scanner implementations of it had eight fail-opens between
-      # them, every one found in review on #283. The script REFUSES LOUDLY if
-      # acorn is missing rather than falling back to pattern matching, so this
-      # install is required, not an optimisation. acorn is one package with no
-      # transitive dependencies; this adds ~13s to a ~7s job.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: .github/scripts/package-lock.json
-      - name: Install static-check deps
-        working-directory: .github/scripts
-        run: npm ci
-
       # ── Contrast guardrail ───────────────────────────────────────────────────
       # WCAG AA check against styles/tokens.css (this project's design tokens).
       # Exits with a notice (no failure) until /design-intake creates tokens.css.
