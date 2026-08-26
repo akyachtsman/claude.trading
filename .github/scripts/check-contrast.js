@@ -310,14 +310,48 @@ if (existsSync(APP)) {
         n.property.type === 'Identifier' && n.property.name === prop;
 
       // ── the HEAT object literal ─────────────────────────────────────────────
+      // `Object.freeze({…})` is unwrapped: it is semantics-preserving here and a
+      // routine hardening edit, and treating it as "no heatmap" would SKIP (Codex
+      // P2, round 5). Any other wrapper is not guessed at — see the refusal below.
+      const literalOf = (init) => {
+        if (!init) return null;
+        if (init.type === 'ObjectExpression') return init;
+        if (init.type === 'CallExpression' && !init.optional
+            && init.callee.type === 'MemberExpression' && !init.callee.computed
+            && init.callee.object.type === 'Identifier' && init.callee.object.name === 'Object'
+            && init.callee.property.type === 'Identifier' && init.callee.property.name === 'freeze'
+            && init.arguments.length === 1 && init.arguments[0].type === 'ObjectExpression') {
+          return init.arguments[0];
+        }
+        return null;
+      };
       const heats = [];
+      let heatDeclared = false;
       walk(ast, (n) => {
-        if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === 'HEAT'
-            && n.init && n.init.type === 'ObjectExpression') heats.push(n.init);
+        if (n.type !== 'VariableDeclarator' || n.id.type !== 'Identifier' || n.id.name !== 'HEAT') return;
+        heatDeclared = true;
+        const lit = literalOf(n.init);
+        if (lit) heats.push(lit);
+      });
+      // A SKIP must mean "this project has no heatmap", never "this check did not
+      // recognise the shape". If HEAT is declared, or anything still reads HEAT.*,
+      // an unreadable declaration is a refusal (Codex P2, round 5) — otherwise
+      // removing the renderer's stroke afterwards would also pass, since paint-site
+      // analysis never runs.
+      let heatRefs = 0;
+      walk(ast, (n) => {
+        if (n.type === 'MemberExpression' && !n.computed
+            && n.object.type === 'Identifier' && n.object.name === 'HEAT') heatRefs++;
       });
 
-      if (heats.length === 0) {
-        console.log('\n  skip  heatmap label ink / halo — no HEAT object literal in scripts/app.js');
+      if (heats.length === 0 && (heatDeclared || heatRefs > 0)) {
+        bail(heatDeclared
+              ? 'HEAT is declared, but its initialiser is not an object literal (or Object.freeze of one).'
+              : `HEAT is not declared here, but ${heatRefs} HEAT.* reference(s) remain.`,
+             'Refusing to skip: a skip means "no heatmap in this project", and there',
+             'plainly is one. Unwrap the initialiser shape here, or re-point this check.');
+      } else if (heats.length === 0) {
+        console.log('\n  skip  heatmap label ink / halo — no HEAT in scripts/app.js');
       } else if (heats.length > 1) {
         bail(`${heats.length} HEAT object literals found; expected exactly 1.`);
       } else {
@@ -346,23 +380,57 @@ if (existsSync(APP)) {
         const ink = direct('ink'), halo = direct('halo');
         const problems = [badHex(ink.hex, 'HEAT.ink'), badHex(halo.hex, 'HEAT.halo')].filter(Boolean);
 
-        // ── paint sites: an object literal with a Property whose VALUE is
-        //    HEAT.ink. A call argument, a variable init or a debug log is not a
-        //    paint site and is left alone.
+        // ── paint sites: EFFECTIVE attributes, not "some property mentions it"
+        //    (Codex P2, round 5). Presence was not enough: renaming
+        //    `stroke: HEAT.halo` to `outline: HEAT.halo` left a presence check
+        //    satisfied while the SVG lost its halo. So each object literal is
+        //    resolved the way JavaScript resolves it — later keys win — and a
+        //    site is one whose effective FILL is HEAT.ink.
+        //
+        //    A SpreadElement AFTER any attribute we depend on can override it and
+        //    is not statically resolvable, so that is a refusal. A spread BEFORE
+        //    them cannot win and is fine — which is what the real renderer does
+        //    (`{ ...attrs, fill: HEAT.ink, … }`), so this does not outlaw the
+        //    idiom, only the unresolvable ordering.
+        const ATTRS = ['fill', 'stroke', 'paint-order'];
+        const resolve = (obj) => {
+          const eff = new Map();
+          const spreads = [];
+          obj.properties.forEach((p, i) => {
+            if (p.type === 'SpreadElement') { spreads.push(i); return; }
+            if (p.type !== 'Property' || p.computed) return;
+            eff.set(keyName(p), { value: p.value, i });
+          });
+          const shadowed = ATTRS.filter((a) => eff.has(a) && spreads.some((si) => si > eff.get(a).i));
+          return { eff, shadowed };
+        };
+
         const sites = [];
-        walk(ast, (n, parent) => {
-          if (!isHeatMember(n, 'ink')) return;
-          if (!parent || parent.type !== 'Property' || parent.value !== n) return;
-          let obj = null;
-          walk(ast, (m) => { if (m.type === 'ObjectExpression' && m.properties.includes(parent)) obj = m; });
-          if (!obj) return;
-          const props = obj.properties.filter((p) => p.type === 'Property' && !p.computed);
-          const haloed = props.some((p) => isHeatMember(p.value, 'halo'));
-          const order = props.some((p) => keyName(p) === 'paint-order'
-            && p.value.type === 'Literal' && p.value.value === 'stroke');
-          sites.push({ line: n.loc.start.line, haloed, order });
+        let unresolvable = null;
+        walk(ast, (obj) => {
+          if (obj.type !== 'ObjectExpression') return;
+          const { eff, shadowed } = resolve(obj);
+          const fill = eff.get('fill');
+          if (!fill || !isHeatMember(fill.value, 'ink')) return;
+          if (shadowed.length) {
+            unresolvable = { line: obj.loc.start.line, shadowed };
+            return;
+          }
+          const stroke = eff.get('stroke');
+          const order = eff.get('paint-order');
+          sites.push({
+            line: fill.value.loc.start.line,
+            haloed: !!stroke && isHeatMember(stroke.value, 'halo'),
+            order: !!order && order.value.type === 'Literal' && order.value.value === 'stroke',
+          });
         });
         const naked = sites.filter((s) => !s.haloed || !s.order);
+        if (unresolvable) {
+          bail(`scripts/app.js:${unresolvable.line} paints with HEAT.ink, but a spread follows `
+               + `${unresolvable.shadowed.join('/')} and could override it.`,
+               'The effective attribute is not statically knowable, so this refuses rather',
+               'than guessing. Move the spread before the paint attributes.');
+        }
 
         if (problems.length || ink.dup > 1 || halo.dup > 1 || sites.length === 0 || naked.length) {
           console.error('\nFAIL  heatmap label ink / halo — the AA mechanism is incomplete');
@@ -375,7 +443,7 @@ if (existsSync(APP)) {
           }
           naked.forEach((s) => console.error(
             `      scripts/app.js:${s.line} paints with HEAT.ink but is missing ` +
-            [!s.haloed && 'stroke: HEAT.halo', !s.order && "'paint-order': 'stroke'"].filter(Boolean).join(' and ')));
+            [!s.haloed && 'an effective stroke of HEAT.halo', !s.order && "an effective 'paint-order' of 'stroke'"].filter(Boolean).join(' and ')));
           console.error('      The tile ramp is dynamic, so the halo stroke IS the AA mechanism here.');
           exitCode = 1;
         } else {
