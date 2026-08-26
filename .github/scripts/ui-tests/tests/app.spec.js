@@ -2750,30 +2750,66 @@ test('S45: symbol column adds verified tickers and survives a repaint', async ({
      is checked in its `.then`, which runs after wbLoadSymbol has already pinned
      and charted — so without ordering inside the loader a slow earlier lookup
      lands late and STEALS THE CHART from the symbol asked for last. It also
-     covers the header Load box and roster clicks, which never touch wbRailGen. */
+     covers the header Load box and roster clicks, which never touch wbRailGen.
+     The WINNER is a real already-loaded symbol so nothing synthetic is ever
+     charted; the loser is the synthetic one, which is the point — it must not
+     reach the chart at all. */
   const stolen = await page.evaluate(async () => {
-    /* Forced live: in demo mode wbLoadSymbol short-circuits before it ever
-       reaches deskQuote, so the race this guards cannot occur there at all. */
-    const realMode = DESK.mode;
-    DESK.mode = 'live';
+    const realMode = DESK.mode; DESK.mode = 'live';
     const realQuote = window.deskQuote;
     const donor = wbState.data.symbols[Object.keys(wbState.data.symbols)[0]];
-    const mk = () => ({ ok: true, series: JSON.parse(JSON.stringify(donor)) });
+    const winner = Object.keys(wbState.data.symbols)[1];      // real, already loaded
     let releaseA;
-    window.deskQuote = (sym) => sym === 'AAAA'
-      ? new Promise(r => { releaseA = () => r(mk()); })
-      : Promise.resolve(mk());
-    const pA = wbLoadSymbol('AAAA', { pin: true });   // slow, asked for first
-    const pB = wbLoadSymbol('BBBB', { pin: true });   // fast, asked for LAST
-    await pB;
+    window.deskQuote = () => new Promise(r => {
+      releaseA = () => r({ ok: true, series: JSON.parse(JSON.stringify(donor)) });
+    });
+    const pA = wbLoadSymbol('AAAA', { pin: true });            // slow, asked for FIRST
+    await wbLoadSymbol(winner, { pin: true });                 // already loaded, asked LAST
     releaseA();
-    await pA;                                          // lands late
-    window.deskQuote = realQuote;
-    DESK.mode = realMode;
-    return wbState.sym;
+    const late = await pA;                                     // lands after
+    window.deskQuote = realQuote; DESK.mode = realMode;
+    return { sym: wbState.sym, winner, late, pinned: readWbSticky().syms.includes('AAAA') };
   });
-  expect(stolen, 'a late-landing superseded lookup does not steal the chart from the newer one')
-    .toBe('BBBB');
+  expect(stolen.sym, 'a late-landing superseded lookup does not steal the chart from the newer one')
+    .toBe(stolen.winner);
+  expect(stolen.late, 'and reports itself cancelled rather than successful').toBe('superseded');
+  expect(stolen.pinned, 'nor pins itself into the column on the way past').toBe(false);
+
+  /* Cancellation is NOT failure. Both used to be `false`, so a rail load
+     superseded through another entry point was reported to the owner as
+     "No data for AAAA" and its draft restored — a request they replaced dressed
+     up as one that failed. Covers BOTH the rejected path (an await that throws
+     jumps straight to catch, skipping the guard above it) and supersession by a
+     bare wbPick, which is how the header charts an already-loaded ticker without
+     going through the loader at all.
+     Deliberately asserts the RETURN CONTRACT and the status line, and never lets
+     a synthetic symbol reach the chart: driving one through the real renderer
+     repaints a series with no intraday bars behind it, which is a fault in the
+     test rig rather than in what is being tested. */
+  const cancels = await page.evaluate(async () => {
+    const realMode = DESK.mode; DESK.mode = 'live';
+    const realSym = wbState.sym;
+    const realQuote = window.deskQuote;
+    const note = document.getElementById('wbInfo');
+    let rejectA;
+    window.deskQuote = () => new Promise((_, rej) => { rejectA = () => rej(new Error('offline')); });
+
+    const pA = wbLoadSymbol('AAAA', { pin: true });   // never resolves until we say
+    wbPick(realSym);                                  // what the header does — no loader
+    note.textContent = 'NEWER STATUS';
+    rejectA();
+    const rejected = await pA;
+
+    window.deskQuote = realQuote; DESK.mode = realMode;
+    return { rejected, note: note.textContent, sym: wbState.sym, realSym };
+  });
+  expect(cancels.rejected,
+    'a load superseded by a bare wbPick — and which then REJECTS — reports cancellation, not failure')
+    .toBe('superseded');
+  expect(cancels.note, 'and never paints its connectivity error over a newer status')
+    .toBe('NEWER STATUS');
+  expect(cancels.sym, 'nor pulls the chart back off what was selected')
+    .toBe(cancels.realSym);
 
   expect(errs, 'no page errors').toEqual([]);
 });

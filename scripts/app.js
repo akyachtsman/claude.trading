@@ -4423,6 +4423,11 @@ function removeWbStickySym(sym) {
    submissions through the header box or a roster click at all, since those never
    touched wbRailGen. Ordering belongs in the one place every path goes through. */
 let wbLoadGen = 0;
+/* Cancellation is its OWN outcome, distinct from failure. Both used to be
+   `false`, so a rail load cancelled by the header box was reported to the owner
+   as "No data for AAAA" and its draft restored — a request they replaced
+   presented as a request that failed (Codex P2, round 3). */
+const WB_SUPERSEDED = 'superseded';
 async function wbLoadSymbol(sym, opts) {
   if (!wbState) return false;
   const gen = ++wbLoadGen;
@@ -4450,7 +4455,7 @@ async function wbLoadSymbol(sym, opts) {
        the symbol the owner asked for last, and cannot repaint its status over a
        newer one. Silent on purpose: this is not a failure the owner should read
        about, it is a request they replaced. */
-    if (gen !== wbLoadGen) return false;
+    if (gen !== wbLoadGen) return WB_SUPERSEDED;
     if (!out.ok || !out.series || out.series.c.length < 30) {
       say(out.error || 'No data found for ' + sym);
       return false;
@@ -4461,6 +4466,11 @@ async function wbLoadSymbol(sym, opts) {
     wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
     return true;
   } catch {
+    /* The same guard, on the exception path. A rejected await jumps straight
+       here, skipping the check above, so a superseded load that fails to reach
+       the network would still have painted its connectivity error over a newer
+       request's status (Codex P2, round 3). */
+    if (gen !== wbLoadGen) return WB_SUPERSEDED;
     say('Quote service unreachable — try again');
     return false;
   }
@@ -4468,6 +4478,13 @@ async function wbLoadSymbol(sym, opts) {
 /* single choke point for switching the active symbol: resets pan, remembers
    the selection so it sticks across reloads, and repaints */
 function wbPick(sym) {
+  /* Invalidate every in-flight load HERE, not only in wbLoadSymbol. This is the
+     one place the active symbol changes, and some paths reach it WITHOUT the
+     loader — the header box's `change` handler charts an already-loaded ticker
+     by calling wbPick directly. Bumping only in the loader left those paths
+     invisible, so a pending lookup could still pin itself and pull the chart
+     back off what the owner had just selected (Codex P2, round 3). */
+  wbLoadGen++;
   wbUserPicked = true;
   wbState.sym = sym;
   wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
@@ -5085,9 +5102,15 @@ function wbRailAddBox(data) {
     const gen = ++wbRailGen;
     renderWbSidebar(data);
     wbLoadSymbol(sym, { pin: true }).then(ok => {
-      /* Superseded — the owner has typed or submitted since. Dropping the whole
-         callback (not just the draft restore) is deliberate: a stale 'No data
-         for A' would otherwise overwrite a newer status too. */
+      /* Cancelled by a NEWER request through any path — the header box, a roster
+         click, or this box. Checked before wbRailGen because those other paths
+         never touch wbRailGen, so the rail-local check alone would let a
+         cancellation through and report it as a failure. */
+      if (ok === WB_SUPERSEDED) return;
+      /* Superseded within the rail itself — the owner has typed or submitted
+         since. Dropping the whole callback (not just the draft restore) is
+         deliberate: a stale 'No data for A' would otherwise overwrite a newer
+         status too. */
       if (gen !== wbRailGen) return;
       wbRailMsg = ok ? '' : 'No data for ' + sym;
       if (!ok) wbRailDraft = sym;
