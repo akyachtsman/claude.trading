@@ -179,22 +179,41 @@ This project's look is its own — established at kickoff via `/design-intake`
   this — it needs a repaint mid-keystroke.
   **FOUR races and truncations were found in review and are all guarded by S45**
   (Codex P2 ×4 on the first cut; each was proved to bite by falsifying it).
-  (a) **A superseded load must not clobber a newer draft.** The box stays usable
-  while a quote is pending — that is what clearing optimistically buys — so
-  "submit A, type B, A fails" is ORDINARY USE. `wbRailGen` is bumped by every
-  keystroke and every submit, and a late callback whose generation is stale
-  returns WITHOUT touching anything: dropping the whole callback, not just the
-  draft restore, because a stale `No data for A` would otherwise repaint over a
-  newer status. Falsified: `AAA` overwrote `BBB`.
+  (a) **A superseded load must not clobber a newer draft, NOR STEAL THE CHART.**
+  The box stays usable while a quote is pending — that is what clearing
+  optimistically buys — so "submit A, type B, A fails" is ORDINARY USE. This took
+  TWO rounds and the split matters. `wbRailGen` (bumped by every keystroke and
+  every submit) guards the RAIL's own callback, and a stale one returns without
+  touching anything — the whole callback, not just the draft restore, since a
+  stale `No data for A` would otherwise repaint over a newer status. But that
+  check runs in the rail's `.then`, **after `wbLoadSymbol` has already called
+  `pin()` and `wbPick()`** — so a slow earlier lookup landing late still switched
+  the chart to itself and pinned it, and the rail's generation could not see the
+  header Load box or a roster click at all. Ordering therefore ALSO lives in the
+  shared loader as **`wbLoadGen`**, bumped by every caller and checked before any
+  side effect; a superseded load returns silently, since a request the owner
+  replaced is not a failure to report. Both were falsified: without the rail
+  guard `AAA` overwrote `BBB`; without the loader guard the chart ended on
+  **AAAA** when the owner had asked for **BBBB** last.
   (b) **`maxLength` is 24, NOT the validator's 10.** It caps the RAW value and
   the browser applies it before any handler runs, so a 10-cap truncates a pasted
   ` ABCDEFGHIJ ` to nine characters — which can be a real but DIFFERENT
   instrument, the wrong-number-wearing-a-plausible-face fault this desk keeps
   hitting. `WL_SYM_RE` stays the authority after trimming.
-  (c) **The WHOLE selection is preserved**, not just `selectionStart` — restoring
-  a collapsed caret makes the next keystroke INSERT where it should REPLACE, so a
-  repaint the owner did not cause silently changes what typing does.
-  (d) **`focus({preventScroll: true})` is load-bearing, not a nicety.** The rail
+  (c) **The WHOLE selection is preserved** — both offsets AND `selectionDirection`,
+  not just `selectionStart`. A collapsed caret makes the next keystroke INSERT
+  where it should REPLACE, and a lost direction changes which end Shift+Arrow
+  extends — a repaint the owner did not cause silently changing what typing does.
+  **TWO of S45's assertions were INERT on the first cut and Codex caught both**
+  (round 2) — worth recording because the failure mode is a guard that reads
+  correct and tests nothing. The maxLength check assigned `el.value` from script,
+  which BYPASSES the browser's `maxlength` entirely, so it stayed green with the
+  cap regressed to 10; it now types the value through real key events, and
+  falsifying it yields `Expected "ABCDEFGHIJ", Received "ABCDEFGHI"` — the
+  wrong-instrument fault itself. The selection check asserted the two offsets but
+  not the direction, so deleting the `selectionDirection` capture left it green;
+  it now makes a BACKWARD selection and asserts direction too.
+    (d) **`focus({preventScroll: true})` is load-bearing, not a nicety.** The rail
   repaints on the 60s poll, so a plain `focus()` yanks an owner who had scrolled
   away back to the charts. Measured on falsification: the page jumped **1616px**.
     Sizing needed NO rail width back: the 78px column leaves ~70px of text room,

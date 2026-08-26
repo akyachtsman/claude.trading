@@ -2685,27 +2685,32 @@ test('S45: symbol column adds verified tickers and survives a repaint', async ({
   // A padded FULL-LENGTH ticker must not lose its last character. maxLength caps
   // the RAW value before any handler runs, so a 10-cap would truncate " ……J " to
   // nine characters — which can be a real but DIFFERENT instrument.
-  const padded = ' ABCDEFGHIJ ';
+  /* TYPED, not assigned. Setting `el.value` from script BYPASSES the browser's
+     maxlength entirely, so an assignment-based check stays green even if the cap
+     regresses to 10 — it would guard nothing (Codex P2, round 2). Real key events
+     are gated by maxlength, which is the behaviour under test. */
   await inp.fill('');
-  await inp.evaluate((el, v) => {
-    el.value = v; el.dispatchEvent(new Event('input', { bubbles: true }));
-  }, padded);
+  await inp.pressSequentially(' ABCDEFGHIJ ');
   expect((await inp.inputValue()).trim(), 'a padded 10-char ticker survives the raw length cap')
     .toBe('ABCDEFGHIJ');
 
   // A SELECTION must survive a repaint, or the next keystroke inserts where it
   // should replace.
+  /* BACKWARD on purpose. Direction decides which end Shift+Arrow extends, so
+     asserting the two offsets alone would stay green with the selectionDirection
+     capture removed — reintroducing the editing change on every repaint (Codex
+     P2, round 2). */
   await inp.fill('');
-  await inp.type('ABCD');
+  await inp.pressSequentially('ABCD');
   const selKept = await page.evaluate(() => {
     const i = document.querySelector('.wb-rail-input');
-    i.setSelectionRange(1, 3);
+    i.setSelectionRange(1, 3, 'backward');
     renderWbSidebar(wbState.data);
     const j = document.querySelector('.wb-rail-input');
-    return { start: j.selectionStart, end: j.selectionEnd };
+    return { start: j.selectionStart, end: j.selectionEnd, dir: j.selectionDirection };
   });
-  expect(selKept, 'the whole selection survives a repaint, not just its start')
-    .toEqual({ start: 1, end: 3 });
+  expect(selKept, 'the whole selection survives a repaint — both offsets AND its direction')
+    .toEqual({ start: 1, end: 3, dir: 'backward' });
 
   // Restoring focus must NOT scroll the page. The rail repaints on a 60s poll,
   // so a plain focus() would yank an owner who had scrolled away back to Charts.
@@ -2740,6 +2745,35 @@ test('S45: symbol column adds verified tickers and survives a repaint', async ({
   });
   expect(raced, 'a late failure from a superseded submit does not overwrite what is being typed')
     .toBe('BBB');
+
+  /* And the SHARED loader must enforce ordering too. The rail's own generation
+     is checked in its `.then`, which runs after wbLoadSymbol has already pinned
+     and charted — so without ordering inside the loader a slow earlier lookup
+     lands late and STEALS THE CHART from the symbol asked for last. It also
+     covers the header Load box and roster clicks, which never touch wbRailGen. */
+  const stolen = await page.evaluate(async () => {
+    /* Forced live: in demo mode wbLoadSymbol short-circuits before it ever
+       reaches deskQuote, so the race this guards cannot occur there at all. */
+    const realMode = DESK.mode;
+    DESK.mode = 'live';
+    const realQuote = window.deskQuote;
+    const donor = wbState.data.symbols[Object.keys(wbState.data.symbols)[0]];
+    const mk = () => ({ ok: true, series: JSON.parse(JSON.stringify(donor)) });
+    let releaseA;
+    window.deskQuote = (sym) => sym === 'AAAA'
+      ? new Promise(r => { releaseA = () => r(mk()); })
+      : Promise.resolve(mk());
+    const pA = wbLoadSymbol('AAAA', { pin: true });   // slow, asked for first
+    const pB = wbLoadSymbol('BBBB', { pin: true });   // fast, asked for LAST
+    await pB;
+    releaseA();
+    await pA;                                          // lands late
+    window.deskQuote = realQuote;
+    DESK.mode = realMode;
+    return wbState.sym;
+  });
+  expect(stolen, 'a late-landing superseded lookup does not steal the chart from the newer one')
+    .toBe('BBBB');
 
   expect(errs, 'no page errors').toEqual([]);
 });

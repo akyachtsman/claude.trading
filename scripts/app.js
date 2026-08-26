@@ -4413,8 +4413,19 @@ function removeWbStickySym(sym) {
    of this call is a second place for the demo gate and the failure notes to
    drift. `pin` adds the symbol to the manual column and is set ONLY by the Load
    box; a roster click charts without claiming the owner typed it. */
+/* Ordering for the SHARED loader, so a superseded lookup cannot chart itself.
+   Every caller bumps it — the rail box, the header Load box and a roster click —
+   so the newest request always wins. The rail's own wbRailGen is NOT enough and
+   this is the fix for why (Codex P2, round 2): that one is checked in the rail's
+   `.then`, which runs AFTER wbLoadSymbol has already called pin() and wbPick(),
+   so a slow lookup A landing after a newer B still switched the chart to A and
+   pinned it — the guard suppressed only A's status line. It also could not see
+   submissions through the header box or a roster click at all, since those never
+   touched wbRailGen. Ordering belongs in the one place every path goes through. */
+let wbLoadGen = 0;
 async function wbLoadSymbol(sym, opts) {
   if (!wbState) return false;
+  const gen = ++wbLoadGen;
   const note = document.getElementById('wbInfo');
   const say = msg => { if (note) note.textContent = msg; };
   /* PIN ONLY WHAT CAN ACTUALLY BE CHARTED, and pin on BOTH success paths.
@@ -4434,6 +4445,12 @@ async function wbLoadSymbol(sym, opts) {
   say('Loading ' + sym + '…');
   try {
     const out = await deskQuote(sym, 'daily');
+    /* Superseded while this was in flight — return WITHOUT charting, pinning or
+       saying anything, so a slower earlier request cannot pull the chart back off
+       the symbol the owner asked for last, and cannot repaint its status over a
+       newer one. Silent on purpose: this is not a failure the owner should read
+       about, it is a request they replaced. */
+    if (gen !== wbLoadGen) return false;
     if (!out.ok || !out.series || out.series.c.length < 30) {
       say(out.error || 'No data found for ' + sym);
       return false;
