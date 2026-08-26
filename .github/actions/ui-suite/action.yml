@@ -55,6 +55,14 @@ inputs:
     required: false
     default: ''
   test-auth-email:
+    # ⚠️ LOCAL NOTE — this input is PLUMBED HERE BUT INERT IN THIS REPO'S KIT.
+    # claude.trading's app.spec.js has no identifier-first path: detectAuthGate()
+    # ignores input[type=email] and detectAndAuth() gets only the credential. The
+    # desk's sole gate is a single-step 6-digit PIN, so there is no identifier
+    # screen to detect and porting upstream's split-step logic would be dead code.
+    # The input and its env pass are KEPT rather than deleted so this file does not
+    # drift from the template over something empty; S2 throws if TEST_AUTH_EMAIL is
+    # ever actually set, which is what stops it being a silent no-op (Codex P2, #283).
     description: 'Identifier for email+password gates (directives#304); empty keeps the password-only path. NOT truly secret: it is typed into a visible input, so failure screenshots/traces record it — use a throwaway test-account address, never a real person''s'
     required: false
     default: ''

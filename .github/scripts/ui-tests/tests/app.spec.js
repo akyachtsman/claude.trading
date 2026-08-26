@@ -344,6 +344,37 @@ test('S1: page loads without JS errors', async ({ page }) => {
 // SCENARIO 2 — Auth Discovery & Login (with API diagnostics)
 // ─────────────────────────────────────────────────────────────────────────────
 test('S2: auth gate discovered and credential accepted', async ({ page }) => {
+  /* TEST_AUTH_EMAIL IS PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — say so, loudly.
+
+     qa.yml / qa-live.yml / qa-response.yml all pass `test-auth-email` into the
+     ui-suite composite, which exports TEST_AUTH_EMAIL into this process
+     (directives#304). Nothing here reads it: detectAuthGate() does not look for
+     input[type=email] and detectAndAuth() is handed only the credential.
+
+     Upstream's S2 rewrite carries the identifier-first logic. This repo took the
+     fails-open DEFECT fix from it and not the helper layer, deliberately — and
+     that decision is what leaves this input inert, so this guard is its cost,
+     paid openly rather than left as a trap.
+
+     Porting the logic instead would be dead code: this desk's only gate is a
+     6-digit PIN in .lock-form, single-step, with no identifier screen to detect.
+
+     So the failure mode Codex named (#283 P2) is real but narrow — set the
+     secret expecting split-step support and you get the password-only path with
+     no indication. Throwing converts that into a message naming the exact cause.
+     It fires BEFORE the credential skip on purpose: TEST_AUTH_EMAIL set without
+     TEST_AUTH_CREDENTIAL would otherwise skip this scenario and report nothing. */
+  if ((process.env.TEST_AUTH_EMAIL ?? '').trim()) {
+    throw new Error(
+      'S2 FAIL | TEST_AUTH_EMAIL is set, but this test kit has no identifier-first ' +
+      '(split-step) login path — detectAuthGate() ignores input[type=email] and ' +
+      'detectAndAuth() receives only the credential. Setting it therefore changes ' +
+      'nothing and the suite silently stays on the password-only path. This desk ' +
+      "uses a single-step PIN gate, so there is no identifier screen to reach: " +
+      'unset the TEST_AUTH_EMAIL secret. If the desk ever gains an email step, ' +
+      "port upstream's identifier-first detection before re-setting it."
+    );
+  }
   if (!AUTH_CREDENTIAL) test.skip(true, 'No auth credential found in CLAUDE.md or TEST_AUTH_CREDENTIAL env var — skipping auth test');
   const consoleErrors = [];
   page.on('pageerror', e => consoleErrors.push(e.message));

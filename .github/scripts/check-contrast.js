@@ -94,6 +94,27 @@ if (FILES.length === 0) {
 }
 
 let exitCode = 0;
+// Hoisted ABOVE the per-file loop (local change). These are pure — no FILE, no
+// css, no token table — and the heatmap check at the bottom of this file needs
+// ratio()/AA after the loop has closed. `pairs` stays inside, since it reads the
+// per-file token table.
+const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+function lum(hex) {
+  let h = hex.replace('#', '');
+  // Only FULLY OPAQUE alpha reaches here: the capture loop above rejects any
+  // token whose alpha is not FF/F, so dropping the channel is exact, not an
+  // approximation. That guard is the only thing keeping this true — a future
+  // caller that reaches lum() without passing through it reintroduces the bug
+  // where #FFFFFF00 scored as opaque white and certified invisible text.
+  if (h.length === 4) h = h.slice(0, 3);
+  if (h.length === 8) h = h.slice(0, 6);
+  if (h.length === 3) h = h.split('').map((x) => x + x).join('');
+  return 0.2126 * lin(parseInt(h.slice(0, 2), 16)) + 0.7152 * lin(parseInt(h.slice(2, 4), 16)) + 0.0722 * lin(parseInt(h.slice(4, 6), 16));
+}
+const ratio = (a, b) => { const la = lum(a), lb = lum(b); return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05); };
+
+const AA = 4.5, AA_LARGE = 3.0;
+
 for (const FILE of FILES) {
 const css = readFileSync(FILE, 'utf8');
 console.log(`\n── ${FILE}`);
@@ -139,22 +160,6 @@ for (const m of css.matchAll(/(--color-[a-z-]+)\s*:\s*(#[0-9a-fA-F]+)\s*;/g)) {
   t[name] = hex;
 }
 
-const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-function lum(hex) {
-  let h = hex.replace('#', '');
-  // Only FULLY OPAQUE alpha reaches here: the capture loop above rejects any
-  // token whose alpha is not FF/F, so dropping the channel is exact, not an
-  // approximation. That guard is the only thing keeping this true — a future
-  // caller that reaches lum() without passing through it reintroduces the bug
-  // where #FFFFFF00 scored as opaque white and certified invisible text.
-  if (h.length === 4) h = h.slice(0, 3);
-  if (h.length === 8) h = h.slice(0, 6);
-  if (h.length === 3) h = h.split('').map((x) => x + x).join('');
-  return 0.2126 * lin(parseInt(h.slice(0, 2), 16)) + 0.7152 * lin(parseInt(h.slice(2, 4), 16)) + 0.0722 * lin(parseInt(h.slice(4, 6), 16));
-}
-const ratio = (a, b) => { const la = lum(a), lb = lum(b); return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05); };
-
-const AA = 4.5, AA_LARGE = 3.0;
 const pairs = [
   // No `|| '#FFFFFF'` fallback: substituting a default made the pair "evaluable"
   // while measuring a colour the page may not use, so a project that DROPPED the
@@ -212,4 +217,52 @@ console.log(failed ? `check-contrast: FAIL — fix ${FILE}` : `check-contrast: O
 if (!failed) console.log('        a floor, not a coverage report: pairs not listed, and tokens used in a role other than the one assumed, are NOT measured — read this script\'s header before trusting the count');
 if (failed) exitCode = 1;
 }
+// ── PROJECT CHECK: heatmap tile labels ──────────────────────────────────────
+// RESTORED after the 2026-08-26 upstream rewrite dropped it (Codex P2 on #283).
+// This is not a token pair and upstream cannot know about it, which is exactly
+// why taking that rewrite verbatim was the wrong call: the template can only
+// carry checks every project shares, so a project-specific assertion is
+// invisible to it and silently disappears on a verbatim install.
+//
+// Heatmap tile labels sit on a DYNAMIC piecewise colour ramp (owner directive
+// 2026-07-12), so there IS no static background to measure them against. AA is
+// carried instead by a solid halo stroke painted under every glyph
+// (`paint-order: stroke`, finviz-style), which makes the real contrast pair
+// HEAT.ink vs HEAT.halo — independent of the tile colour. Assert that pair.
+//
+// STRICTER THAN THE VERSION IT RESTORES, in two places that were both fail-open:
+//   * the old test was /paint-order/ against the whole file, which the
+//     EXPLANATORY COMMENT beside the attribute satisfies on its own — so
+//     deleting the actual attribute left the check green. It now matches the
+//     rendered attribute form.
+//   * a HEAT block whose constants no longer parse used to print "skip" and
+//     pass. A skip here means the mechanism could not be looked at, not that it
+//     is fine. Absent HEAT entirely is still a legitimate skip (a project
+//     without the panel); present-but-unreadable is a failure.
+const APP = 'scripts/app.js';
+if (existsSync(APP)) {
+  const app = readFileSync(APP, 'utf8');
+  if (!/\bconst HEAT\s*=/.test(app)) {
+    console.log('\n  skip  heatmap label ink / halo — no HEAT block in scripts/app.js');
+  } else {
+    const hex = (k) => {
+      const m = app.match(new RegExp('\\b' + k + ":\\s*'(#[0-9a-fA-F]{6})'"));
+      return m ? m[1] : null;
+    };
+    const ink = hex('ink'), halo = hex('halo');
+    const haloed = /['"]paint-order['"]\s*:\s*['"]stroke['"]/.test(app);
+    if (!ink || !halo || !haloed) {
+      console.error('\nFAIL  heatmap label ink / halo — HEAT is present but the mechanism is incomplete');
+      console.error(`      HEAT.ink=${ink ?? 'NOT FOUND'}  HEAT.halo=${halo ?? 'NOT FOUND'}  paint-order:stroke=${haloed}`);
+      console.error('      The tile ramp is dynamic, so the halo stroke IS the AA mechanism here.');
+      console.error('      All three are required; any one missing leaves the labels unmeasurable.');
+      exitCode = 1;
+    } else {
+      const r = ratio(ink, halo), ok = r >= AA;
+      if (!ok) exitCode = 1;
+      console.log(`\n${ok ? '  ok' : 'FAIL'}  ${'heatmap label ink / halo'.padEnd(30)} ${r.toFixed(2)} (need ${AA.toFixed(1)})`);
+    }
+  }
+}
+
 process.exit(exitCode);

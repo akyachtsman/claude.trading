@@ -124,7 +124,14 @@ jobs:
           # scripts/ (not js/) and its owner-editable rosters in config/. The
           # template's generic regex would skip the browser suite on every
           # js-only and config-only change.
-          UI_PATHS: '(\.html$|^scripts/|^styles/|^config/|^\.github/actions/|^\.github/scripts/ui-tests/|^\.github/workflows/qa\.yml$)'
+          # check-ui-viewports.js is in this list because the ONLY job that runs it
+          # is ui-tests (the composite invokes it). Matching just
+          # .github/scripts/ui-tests/ left a PR that touches only the checker with
+          # ui=false, which skips that job, never executes the changed script, and
+          # still reaches the green notification — a gate certified by a run that
+          # never loaded it (Codex P2, #283). Note .github/actions/ is already here,
+          # so editing the composite triggers UI; editing the script it calls did not.
+          UI_PATHS: '(\.html$|^scripts/|^styles/|^config/|^\.github/actions/|^\.github/scripts/ui-tests/|^\.github/scripts/check-ui-viewports\.js$|^\.github/workflows/qa\.yml$)'
         run: |
           # This job gates the LOCAL suite, which serves the repo root as static
           # files, so it needs a static entry point. Enabling it for a repo with
