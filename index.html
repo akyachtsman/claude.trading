@@ -815,7 +815,12 @@
      the column reads as 100 addressable rows rather than a short list with
      blank space under it. The dotted rule is what makes an empty row legible as
      something you can type into. */
-  .wb-slot { min-height: 15px; }
+  /* `touch-action: manipulation` is load-bearing here for the same reason it is
+     on .wl-tile: mobile browsers reserve the double-tap for zoom and would
+     SWALLOW the edit gesture. On a touch-only phone that is the ONLY way to edit
+     a filled slot — F2 needs a keyboard — so without this an owner can fill an
+     empty slot once and then never change or clear it (Codex P1). */
+  .wb-slot { min-height: 15px; touch-action: manipulation; }
   .wb-slot--empty { border-bottom: 1px dotted var(--color-border); border-radius: 0; }
   .wb-slot--empty:hover { background: var(--color-surface-2); border-bottom-color: transparent; border-radius: var(--radius-sm); }
   /* Sized to sit exactly where the button it replaces sat, so opening an editor

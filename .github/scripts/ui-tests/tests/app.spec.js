@@ -3013,6 +3013,48 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
   await page.waitForTimeout(200);
 
+  /* ONE TAB STOP for the whole column, not a hundred. This column precedes the
+     roster in DOM order, so 100 tabbable buttons put the ROSTER up to 100 Tab
+     presses away and made F2 largely theoretical (Codex P2). Arrow keys move the
+     stop with focus. */
+  await page.evaluate(() => { wbEditSlot = -1; wbSlotTab = 0; renderWbSidebar(wbState.data); });
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() =>
+    [...document.querySelectorAll('.wb-slots .wb-slot')].filter(b => b.tabIndex === 0).length),
+    'exactly one slot is in the tab sequence').toBe(1);
+  await page.locator('.wb-slots [data-slot="0"] .wb-slot').focus();
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(150);
+  expect(await page.evaluate(() => {
+    const a = document.activeElement;
+    return a && a.closest('.wb-rail-row') && a.closest('.wb-rail-row').dataset.slot;
+  }), 'ArrowDown moves focus to the next slot').toBe('1');
+  expect(await page.evaluate(() =>
+    [...document.querySelectorAll('.wb-slots .wb-slot')].filter(b => b.tabIndex === 0)
+      .map(b => b.closest('.wb-rail-row').dataset.slot)),
+    'and the single tab stop travels with it').toEqual(['1']);
+  /* A slot is edited by DOUBLE-TAP on a touch-only phone, where F2 does not
+     exist — so the browser must not eat that gesture as a zoom (Codex P1, the
+     same rule .wl-tile follows). */
+  expect(await page.evaluate(() =>
+    getComputedStyle(document.querySelector('.wb-slots .wb-slot')).touchAction),
+    'slots keep the double-tap gesture on touch — it is the only way to edit one there').toBe('manipulation');
+
+  /* A committed ticker that cannot be charted must still CLOSE its editor. In
+     demo mode wbLoadSymbol refuses live lookups and returns without repainting,
+     so leaving the input up left it logically settled but on screen, rejecting
+     every later Enter, Escape and blur (Codex P2). */
+  await page.locator('.wb-slots [data-slot="40"] .wb-slot').click();
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slot-input').fill('ZZZZ');
+  await page.locator('.wb-slot-input').press('Enter');
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'an uncharTable ticker still closes the editor, never leaves an inert one').toBe(0);
+  expect(await page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[40]),
+    'and the slot keeps what was typed').toBe('ZZZZ');
+
   /* The boot re-fetch asks for the FILLED slots and nothing else. `syms` is 100
      positional entries now, mostly empty on any real desk, so feeding it
      straight into restoreStickySymbols' serial loop would fire ~100
