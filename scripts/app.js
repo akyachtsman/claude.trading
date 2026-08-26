@@ -4334,26 +4334,27 @@ function saveWbCfg() {
    workbench reopens on the same chart. syms is re-fetched on boot and merged
    into the watchlist feed; sel restores the selection. */
 const WB_STICKY_KEY = 'wb_sticky_v1';
-/* The manual column's depth. 40 rather than unbounded: it is a localStorage
-   value re-fetched one quote-proxy call at a time on boot, so an unbounded list
-   is an unbounded cold start. */
-const WB_MANUAL_MAX = 40;
-/* The rail's own symbol box lives across re-renders, which is why its draft and
-   its message are MODULE state rather than DOM state. renderWbSidebar wipes the
-   whole rail, and renderCharts rebuilds it on every animation frame of a chart
-   drag and on every feed poll — an input that kept its value only in the DOM
-   would be blanked mid-keystroke by a repaint the owner did not cause. Focus and
-   caret cannot be held this way (they belong to the live node), so those are
-   captured at the top of the render and restored at the bottom. */
-let wbRailDraft = '';
-let wbRailMsg = '';
-/* Bumped by every keystroke AND every submit, so an in-flight lookup can tell
-   whether it is still the newest thing the owner did. The box is deliberately
-   usable while a quote is pending — that is what clearing optimistically buys —
-   so "submit A, type B, A fails" is ORDINARY USE, not an edge case, and without
-   this the late callback restores A over B or repaints an older status on top of
-   a newer one (Codex P2). */
-let wbRailGen = 0;
+/* FIXED SLOTS, not a cap (owner ruling 2026-08-26: "the 100 entries, filled or
+   empty is permanent"). The column is no longer a stack that things are pushed
+   into and removed from — it is 100 addressable rows the owner edits in place,
+   and slot 5 stays slot 5. Nothing reflows, so there is no delete: a slot is
+   cleared by emptying its text. */
+const WB_SLOTS = 100;
+/* How many slot re-fetches are in flight at once on a live boot. Bounded rather
+   than serial (100 slots serially is the SUM of every proxy round-trip) and
+   bounded rather than unbounded (100 parallel requests to one origin just move
+   the stall into the browser's own connection queue). */
+const WB_RESTORE_LANES = 4;
+/* WHICH SLOT is being edited, and its in-progress text. Module state for the
+   same reason the old add box needed it: renderWbSidebar wipes the whole rail
+   and renderCharts rebuilds it on every animation frame of a chart drag and on
+   every feed poll, so an editor holding its value only in the DOM is blanked
+   mid-keystroke by a repaint the owner did not cause. -1 means nothing is being
+   edited, which is the normal state — at most ONE slot is an <input> at a time.
+   That matters at 100 rows: rebuilding a hundred live inputs every animation
+   frame is work the rail cannot afford, so the other 99 stay cheap buttons. */
+let wbEditSlot = -1;
+let wbEditDraft = '';
 /* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
    deliberately not a plausible watchlist title, since the picker's values are
    otherwise list titles the owner types. */
@@ -4367,12 +4368,13 @@ function readWbSticky() {
     const raw = JSON.parse(localStorage.getItem(WB_STICKY_KEY) || 'null');
     if (raw && typeof raw === 'object') {
       return {
-        /* 12 → WB_MANUAL_MAX (owner request 2026-08-17): this list is no longer
-           an invisible re-fetch aid, it is the rail's MANUAL COLUMN and the
-           owner watches it accumulate. A cap of 12 that silently drops the
-           oldest entry is not something you want happening to a column you can
-           see. */
-        syms: Array.isArray(raw.syms) ? raw.syms.filter((s) => typeof s === 'string' && s).slice(0, WB_MANUAL_MAX) : [],
+        /* ALWAYS exactly WB_SLOTS long, holes included. The stored value is
+           positional now (owner ruling 2026-08-26) — index IS the slot — so a
+           filter() would renumber every row below a hole and silently move the
+           owner's symbols. Anything shorter is padded, anything longer is cut,
+           and a pre-2026-08-26 stack migrates by landing in slots 0..n-1 in the
+           order it was already displayed. */
+        syms: wbSlotArray(raw.syms),
         sel: typeof raw.sel === 'string' ? raw.sel : '',
         /* Which roster the rail's second column is showing. A watchlist TITLE
            or the WB_ROSTER_CHARTS sentinel; validated at render against the
@@ -4391,58 +4393,67 @@ function readWbSticky() {
       };
     }
   } catch { /* corrupt or absent */ }
-  return { syms: [], sel: '', roster: '' };
+  return { syms: wbSlotArray(null), sel: '', roster: '' };
 }
 function writeWbSticky(patch) {
   const next = { ...readWbSticky(), ...patch };
   try { localStorage.setItem(WB_STICKY_KEY, JSON.stringify(next)); } catch { /* storage unavailable — session-only */ }
 }
-/* Newest FIRST — the owner's words were "it'll push down like a stack", so a
-   symbol entered again rises back to the top rather than appearing twice. */
-function addWbStickySym(sym) {
-  const syms = [sym, ...readWbSticky().syms.filter((s) => s !== sym)].slice(0, WB_MANUAL_MAX);
-  writeWbSticky({ syms });
+/* Normalise anything to exactly WB_SLOTS entries. Non-strings and junk become
+   '' (an empty slot) rather than being dropped, because dropping shifts every
+   slot below it. */
+function wbSlotArray(raw) {
+  const out = new Array(WB_SLOTS).fill('');
+  if (Array.isArray(raw)) {
+    for (let i = 0; i < WB_SLOTS && i < raw.length; i++) {
+      out[i] = typeof raw[i] === 'string' ? raw[i] : '';
+    }
+  }
+  return out;
 }
-function removeWbStickySym(sym) {
-  writeWbSticky({ syms: readWbSticky().syms.filter((s) => s !== sym) });
+/* Write ONE slot. Positional by definition: this never reorders, never
+   compacts, and never changes the length — emptying a slot leaves a hole where
+   it was, which is what "filled or empty is permanent" means. */
+function setWbSlot(i, sym) {
+  if (!(i >= 0 && i < WB_SLOTS)) return;
+  const syms = readWbSticky().syms.slice();
+  syms[i] = sym || '';
+  writeWbSticky({ syms });
 }
 /* Chart a symbol, fetching its bars first if the desk-charts feed doesn't carry
    it. Extracted from the Load box's submit handler (2026-08-17) so the rail's
    roster column can chart a watchlist name through the SAME path — a watchlist
    is full of tickers the 25-name charts sweep never fetched, and a second copy
    of this call is a second place for the demo gate and the failure notes to
-   drift. `pin` adds the symbol to the manual column and is set ONLY by the Load
-   box; a roster click charts without claiming the owner typed it. */
+   drift. It takes a symbol and nothing else: the `pin` option it used to carry
+   went with the stack the SYMBOL column used to be (owner ruling 2026-08-26). */
 /* Ordering for the SHARED loader, so a superseded lookup cannot chart itself.
-   Every caller bumps it — the rail box, the header Load box and a roster click —
-   so the newest request always wins. The rail's own wbRailGen is NOT enough and
-   this is the fix for why (Codex P2, round 2): that one is checked in the rail's
-   `.then`, which runs AFTER wbLoadSymbol has already called pin() and wbPick(),
-   so a slow lookup A landing after a newer B still switched the chart to A and
-   pinned it — the guard suppressed only A's status line. It also could not see
-   submissions through the header box or a roster click at all, since those never
-   touched wbRailGen. Ordering belongs in the one place every path goes through. */
+   Every caller bumps it — a slot commit, the header Load box and a roster click —
+   so the newest request always wins. Checked in the SHARED loader rather than at
+   any one caller, and on BOTH the fulfilled and rejected paths: an `await` that
+   throws jumps straight to `catch`, skipping a guard placed above it. Without
+   this a slow lookup A landing after a newer B still switched the chart to A,
+   and a caller-local guard could not see the header box or a roster click at
+   all. Ordering belongs in the one place every path goes through. */
 let wbLoadGen = 0;
 /* Cancellation is its OWN outcome, distinct from failure. Both used to be
-   `false`, so a rail load cancelled by the header box was reported to the owner
-   as "No data for AAAA" and its draft restored — a request they replaced
-   presented as a request that failed (Codex P2, round 3). */
+   `false`, so a load cancelled by a newer one was reported to the owner as
+   "No data for AAAA" — a request they replaced presented as a request that
+   failed (Codex P2, round 3). Kept as a distinct value now that the rail no
+   longer reads it, because the loader's own callers still must be able to tell
+   "you replaced this" from "this does not exist" without inspecting a flag. */
 const WB_SUPERSEDED = 'superseded';
-async function wbLoadSymbol(sym, opts) {
+async function wbLoadSymbol(sym) {
   if (!wbState) return false;
   const gen = ++wbLoadGen;
   const note = document.getElementById('wbInfo');
   const say = msg => { if (note) note.textContent = msg; };
-  /* PIN ONLY WHAT CAN ACTUALLY BE CHARTED, and pin on BOTH success paths.
-     Typing a ticker is the manual gesture whether or not its bars are already
-     in the charts payload, so the already-loaded branch must pin too — pinning
-     only after a fetch meant a roster name typed by hand never stacked. But
-     pinning before the outcome is known is worse: a typo would take a
-     permanent seat in a column that persists across sessions and can only be
-     cleared by hand. So each branch pins once it knows the symbol is real.
-     wbPick re-renders the rail via renderCharts, which is what shows it. */
-  const pin = () => { if (opts && opts.pin) addWbStickySym(sym); };
-  if (wbState.data.symbols[sym]) { say(''); pin(); wbPick(sym); return true; }
+  /* NOTHING PINS ANY MORE (owner ruling 2026-08-26: "I didn't want a field to
+     push into the list"). The SYMBOL column is 100 permanent slots the owner
+     edits in place, so no control writes into it as a side effect of charting —
+     not this loader, not the header Load box, not a roster click. Loading a
+     symbol charts it and nothing else. */
+  if (wbState.data.symbols[sym]) { say(''); wbPick(sym); return true; }
   if (DESK.mode === 'demo' || !DESK_DB.url) {
     say('Live ticker lookups are off in demo mode');
     return false;
@@ -4462,7 +4473,6 @@ async function wbLoadSymbol(sym, opts) {
     }
     wbState.data.symbols[sym] = out.series;
     wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
-    pin();
     wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
     return true;
   } catch {
@@ -4488,14 +4498,10 @@ function wbPick(sym) {
   wbUserPicked = true;
   wbState.sym = sym;
   wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
-  /* NO addWbStickySym here any more (2026-08-17). It used to re-pin every
-     non-roster pick so an evicted ad-hoc ticker would be refetched on the next
-     reload — harmless while the list was invisible plumbing. Now that list IS
-     the rail's manual column, and the owner's rule is that it holds what they
-     TYPED: clicking a watchlist name would otherwise push it into a column they
-     never put it in. Pinning moved to the Load box, its only honest caller.
-     Re-fetch on boot no longer depends on this, because restoreStickySymbols
-     also re-hydrates `sel` — see the note there. */
+  /* Writes NO slot. Nothing anywhere pins into the SYMBOL column any more
+     (owner ruling 2026-08-26) — its 100 slots hold exactly what the owner typed
+     into them. Re-fetch on boot does not depend on this, because
+     restoreStickySymbols also re-hydrates `sel` — see the note there. */
   writeWbSticky({ sel: sym });
   renderCharts(wbState.data, wbState.lamp);
 }
@@ -5029,8 +5035,9 @@ function renderWbInfo() {
    ad-hoc ticker the owner had typed, so there was no way to see "the names I
    pulled up myself" apart from "the roster somebody configured".
 
-   MANUAL (left) starts empty and holds only what was typed into the Load box,
-   newest on top, persisted per browser. ROSTER (right) is headed by a picker
+   SYMBOL (left) is 100 permanent slots the owner types into directly, edited in
+   place and persisted per browser (owner ruling 2026-08-26 — it was a stack the
+   Load box pushed into until then). ROSTER (right) is headed by a picker
    listing the owner's watchlists plus the charts roster, so a whole list can be
    clicked down one name at a time — which is the workflow this rail exists for
    and previously required reading a ticker off the Watchlists panel and
@@ -5053,82 +5060,353 @@ function wbRailBtn(sym) {
   b.setAttribute('aria-current', String(sym === wbState.sym));
   b.appendChild(el('span', 'wb-side-sym', sym));
   /* A roster name the charts sweep never fetched loads on demand through the
-     same path the Load box uses — and is NOT pinned into the manual column,
-     since clicking a list is not typing a ticker. */
-  b.addEventListener('click', () => { wbLoadSymbol(sym, { pin: false }); });
+     same path the Load box uses. It writes nothing into the SYMBOL column —
+     that column is edited by hand and only by hand. */
+  b.addEventListener('click', () => {
+    /* Any OTHER navigation breaks a pending slot pair. Without this, clicking
+       slot A, then a roster name, then slot A again within the window reads the
+       last click as the second half of a double-click: it opens A's editor and
+       does NOT chart A, leaving the pane on the roster symbol instead of the
+       newest thing the owner asked for (Codex P2). */
+    wbSlotClick = { i: -1, at: 0 };
+    wbLoadSymbol(sym);
+  });
   return b;
 }
 
-/* The rail's own symbol box (owner request 2026-08-26). ADDITIONAL to the
-   header Load box, which the owner chose to keep — so the two must behave
-   identically, and the only way to guarantee that is to share the one code
-   path: both validate with WL_SYM_RE and both add through
-   wbLoadSymbol(sym, {pin:true}).
-   THAT CALL IS WHAT MAKES A SYMBOL "VERIFIED" — it pins only once the symbol is
-   known to chart, on both the already-loaded and the post-fetch branch, so a
-   typo cannot take a seat in a column that persists across sessions. Never call
-   addWbStickySym from here; that would pin before the outcome is known. */
-function wbRailAddBox(data) {
-  const wrap = el('div', 'wb-rail-add');
-  const inp = document.createElement('input');
-  inp.type = 'text';
-  inp.className = 'wb-rail-input';
-  inp.placeholder = 'Add…';
-  /* NOT 10, the validator's post-trim length. maxLength caps the RAW value, and
-     the browser applies it before any handler runs — so pasting a padded
-     " ABCDEFGHIJ " would be truncated to 10 raw characters, losing the ticker's
-     LAST character and leaving a 9-character string that may well be a real but
-     DIFFERENT instrument (Codex P2). Room for surrounding whitespace, with
-     WL_SYM_RE still the authority on what is accepted after trimming. */
-  inp.maxLength = 24;
-  inp.autocomplete = 'off';
-  inp.spellcheck = false;
-  inp.setAttribute('aria-label', 'Add a symbol to the manual list');
-  inp.value = wbRailDraft;
-  /* Every keystroke into module state — see wbRailDraft. A repaint between two
-     characters would otherwise eat the first one. */
-  inp.addEventListener('input', () => { wbRailDraft = inp.value; wbRailGen++; });
-  inp.addEventListener('keydown', ev => {
-    if (ev.key !== 'Enter') return;
-    ev.preventDefault();             /* the rail is inside no form; stop a stray submit */
-    if (!wbState) return;
-    const sym = inp.value.trim().toUpperCase();
-    if (!WL_SYM_RE.test(sym)) { wbRailMsg = 'Not a ticker'; wbRailDraft = inp.value; renderWbSidebar(data); return; }
-    /* Cleared OPTIMISTICALLY so the next ticker can be typed immediately, and
-       PUT BACK below if the symbol turns out not to chart — retyping a rejected
-       ticker to correct one character is the case this box exists to make fast. */
-    wbRailDraft = '';
-    wbRailMsg = 'Checking ' + sym + '…';
-    const gen = ++wbRailGen;
-    renderWbSidebar(data);
-    wbLoadSymbol(sym, { pin: true }).then(ok => {
-      /* Cancelled by a NEWER request through any path — the header box, a roster
-         click, or this box. Checked before wbRailGen because those other paths
-         never touch wbRailGen, so the rail-local check alone would let a
-         cancellation through and report it as a failure.
-         A bare `return` was WRONG: it left 'Checking A…' on screen with nothing
-         ever coming to replace it, so the rail claimed indefinitely to be
-         checking a symbol that had been cancelled (Codex P2, round 4). Clear it
-         — but ONLY while this submission still owns the message, or a newer rail
-         submit's own 'Checking B…' would be wiped by an older cancellation.
-         Still no draft restore: the request was replaced, not refused. */
-      if (ok === WB_SUPERSEDED) {
-        if (gen === wbRailGen && wbRailMsg) { wbRailMsg = ''; renderWbSidebar(data); }
-        return;
+/* ONE SLOT of the SYMBOL column (owner ruling 2026-08-26). The column is 100
+   permanent rows, and the row itself is the editor — there is no add box, no ×,
+   and nothing reflows: emptying a slot leaves a hole exactly where it was.
+
+   A slot renders as a cheap BUTTON until the owner double-clicks it, and only
+   then becomes an <input>. That is a performance decision, not a cosmetic one:
+   renderCharts rebuilds this rail on every animation frame of a chart drag, and
+   a hundred live inputs per frame is work the rail cannot afford. At most one
+   slot is an input at a time.
+
+   The gestures collide by nature — a single click charts, a double-click edits,
+   and a double-click delivers a `click` FIRST. This is deliberately NOT the
+   watchlist tiles' device (defer the single action, cancel it from `dblclick`),
+   and three Codex P2 findings on PR #282 are all the same reason why. Deferring
+   makes the platform's double-click threshold and OUR wait two INDEPENDENT
+   numbers, and every one of those findings is them disagreeing:
+     · a threshold longer than the wait — the owner is on macOS, where it is
+       user-configurable well past 250ms — charts on the first click, so opening
+       a slot to edit it also retimes the pane;
+     · a pending timer outlives any newer navigation. A roster click inside the
+       window charts, then the older timer fires and pulls the chart BACK.
+       wbLoadGen cannot see it: the stale load does not exist yet when the newer
+       one runs, so it is created holding the newest generation;
+     · `dblclick` needs BOTH clicks on the SAME node, and an editor committing on
+       blur between them rebuilds the rail, so the second click lands on a
+       replacement and the pair is never recognised.
+   So nothing is deferred. The first click charts IMMEDIATELY, and a second click
+   on the SAME SLOT within OUR OWN window opens the editor — one number governing
+   both halves, which is what makes them unable to disagree. Tracked in module
+   state keyed by slot INDEX rather than by node, so a rebuild between the two
+   clicks is irrelevant. The `dblclick` event is not used at all.
+   The trade is stated plainly: a double-click charts that slot before opening
+   it, so the pane briefly shows the symbol being edited. That is coherent — it
+   is the slot's own symbol — and it buys back the 250ms lag the deferral put on
+   the primary action, which is charting. */
+/* Run something that touches focus or selection WITHOUT letting the page move.
+   `focus({preventScroll:true})` is the PROVEN guard here and does the real work:
+   falsified on this rail, a plain focus() during the 60s repaint jumped the page
+   1684px while the owner was reading another panel.
+   This wrapper is a CROSS-ENGINE BELT for the other half, and is honestly
+   UNFALSIFIABLE in this sandbox — setSelectionRange/select take no preventScroll
+   option and are specified as able to scroll a selection into view, but measured
+   here Chromium does not, so removing this changes nothing that can be observed.
+   Kept for the same reason as the overscroll-behavior ban and the scrollbar-width
+   budget: a Chromium-only harness cannot reproduce the case, so it is reasoned
+   about rather than tested. Do NOT record a measured fault for it — there isn't
+   one. */
+function keepPageStill(fn) {
+  const x = window.scrollX, y = window.scrollY;
+  fn();
+  if (window.scrollX !== x || window.scrollY !== y) window.scrollTo(x, y);
+}
+const WB_SLOT_DBL_MS = 500;       /* OUR pairing window — the only one that governs this row */
+let wbSlotClick = { i: -1, at: 0 };
+/* Which slot currently carries the column's single tab stop. See wbSlotRow. */
+let wbSlotTab = 0;
+/* Move the tab stop, updating the LIVE buttons as well as the module state.
+   Assigning wbSlotTab alone is only correct when a repaint follows, and one does
+   NOT always follow: wbLoadSymbol never repaints when the lookup fails — a
+   persisted unresolvable symbol, demo mode, an unreachable proxy — so the
+   clicked row kept tabIndex -1 and Tab went back to the row before it, not the
+   one last worked on (Codex P2). */
+function setWbSlotTab(n) {
+  if (!(n >= 0 && n < WB_SLOTS)) return;
+  const prev = document.querySelector('.wb-rail-manual [data-slot="' + wbSlotTab + '"] .wb-slot');
+  wbSlotTab = n;
+  const next = document.querySelector('.wb-rail-manual [data-slot="' + n + '"] .wb-slot');
+  if (prev && prev !== next) prev.tabIndex = -1;
+  if (next) next.tabIndex = 0;
+}
+
+function wbSlotRow(i, sym, data) {
+  const row = el('div', 'wb-rail-row');
+  row.dataset.slot = String(i);
+
+  if (i === wbEditSlot) {
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'wb-slot-input';
+    /* NOT the validator's 10: maxLength caps the RAW value before any handler
+       runs, so a 10-cap truncates a pasted " ABCDEFGHIJ " to nine characters —
+       which can be a real but DIFFERENT instrument. WL_SYM_RE stays the
+       authority after trimming. */
+    inp.maxLength = 24;
+    inp.autocomplete = 'off';
+    inp.spellcheck = false;
+    inp.setAttribute('aria-label', 'Symbol slot ' + (i + 1));
+    inp.value = wbEditDraft;
+    inp.addEventListener('input', () => { wbEditDraft = inp.value; });
+    /* This input's outcome, once the owner has decided it. Enter saved, Escape
+       abandoned — either way the deferred blur below must not act a second time,
+       or Escape's abandon would be undone by a blur that saves. */
+    let settled = false;
+    const save = () => { const next = inp.value.trim().toUpperCase(); setWbSlot(i, next); return next; };
+    /* Close THIS ROW ONLY, swapping its input back for a button, instead of
+       rebuilding the whole rail. That is not a micro-optimisation, it is the fix
+       for a failure that only appears on a slower machine (CI, all three
+       viewports): a blur commit is deferred a tick, and if that tick lands
+       BEFORE the pending click is delivered, a full rebuild detaches the button
+       the owner is mid-click on and the click event is never dispatched at all.
+       The result was no editor anywhere — clicking from one slot's editor to
+       another simply did nothing. Replacing one row leaves every other node,
+       including the one being clicked, exactly where it was. */
+    const closeRow = () => {
+      const row = document.querySelector('.wb-rail-manual [data-slot="' + i + '"]');
+      if (!row || !row.parentNode) return;
+      /* Carry FOCUS onto the button that replaces the input. A keyboard user
+         pressing Enter here would otherwise be dropped to the document the
+         moment their edit succeeded — and this column is a single tab stop, so
+         Arrow and F2 stay dead until they tab all the way back in (Codex P2).
+         renderWbSidebar's own restore cannot cover this: it snapshots a focused
+         `.wb-slot` BUTTON, and what is focused at this instant is the INPUT. */
+      const hadIt = row.contains(document.activeElement);
+      row.parentNode.replaceChild(wbSlotRow(i, readWbSticky().syms[i] || '', data), row);
+      if (!hadIt) return;
+      const btn = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot');
+      if (btn) keepPageStill(() => btn.focus({ preventScroll: true }));
+    };
+    /* ENTER: save, close, and chart. Charting is a SEPARATE act from saving, and
+       the save happens either way — the owner chose that a slot keeps whatever
+       they typed even when it does not resolve, so a bad entry is never
+       discarded or rewritten. Blur does NOT chart (see below): the owner who
+       clicked away has moved on, and charting behind them fights the click. */
+    const commit = () => {
+      if (settled || wbEditSlot !== i) return;
+      settled = true;
+      const next = save();
+      wbEditSlot = -1; wbEditDraft = '';
+      /* Close the row BEFORE charting, always, and never depend on the lookup to
+         repaint. wbLoadSymbol is async and only repaints VIA wbPick on success,
+         so leaving the input up while it runs left a logically-settled editor on
+         screen whose handlers reject every later Enter, Escape and blur — inert
+         until something else happened to repaint. Demo mode, a no-data reply and
+         an unreachable proxy all take that path, so this was reachable simply by
+         typing a ticker under `?demo=1` (Codex P2). */
+      closeRow();
+      if (next && WL_SYM_RE.test(next)) wbLoadSymbol(next);
+    };
+    inp.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+      else if (ev.key === 'Escape') {              /* abandon, keep what was stored */
+        ev.preventDefault();
+        settled = true;
+        wbEditSlot = -1; wbEditDraft = '';
+        renderWbSidebar(data);
+        /* Same reason as closeRow above: the render finds no input to restore
+           focus to, because Escape just removed the only one. Put the owner back
+           on the slot they were editing rather than on the document. */
+        const btn = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot');
+        if (btn) keepPageStill(() => btn.focus({ preventScroll: true }));
       }
-      /* Superseded within the rail itself — the owner has typed or submitted
-         since. Dropping the whole callback (not just the draft restore) is
-         deliberate: a stale 'No data for A' would otherwise overwrite a newer
-         status too. */
-      if (gen !== wbRailGen) return;
-      wbRailMsg = ok ? '' : 'No data for ' + sym;
-      if (!ok) wbRailDraft = sym;
-      renderWbSidebar(data);
+    });
+    /* Blur keeps what was typed — clicking away from a half-typed slot must not
+       silently drop it. Deferred a tick, because the interesting cases all
+       resolve in the task AFTER the blur, and there are THREE of them. Telling
+       them apart is the whole job here; treating any two alike loses data or
+       fights the owner, and both mistakes were measured on the way to this.
+
+       1. The input is STILL CONNECTED — an ordinary blur. The owner clicked the
+          chart, or tabbed away. Commit normally.
+       2. DETACHED and this slot is STILL the one being edited — a repaint the
+          owner did not cause. renderWbSidebar tears the input out, which FIRES
+          BLUR, so renderCharts (every animation frame of a chart drag, every 60s
+          poll) would otherwise save half a ticker, chart it and close the editor
+          mid-word. A newer input already holds the draft and the focus, so this
+          stale closure must do NOTHING. The wbEditSlot guard inside commit
+          cannot see this case — the slot is still open and this closure still
+          names it, so the guard passes.
+       3. DETACHED and ANOTHER slot is now being edited — the owner clicked
+          straight from this slot to that one, and that slot's openEditor
+          re-rendered before this timer ran. Save what was typed, but do NOT
+          chart it: their attention has moved, and charting an abandoned slot
+          would fight the click they just made. Case 3 is why the isConnected
+          check alone is not enough — it reads like case 2 and is the opposite,
+          and clicking slot to slot is ordinary use, not an edge case. */
+    inp.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (settled) return;
+        if (inp.isConnected) {          /* case 1 — an ordinary blur */
+          settled = true;
+          save();
+          wbEditSlot = -1; wbEditDraft = '';
+          closeRow();
+          return;
+        }
+        if (wbEditSlot === i) {
+          /* Case 2 — this slot is still the one being edited, so a repaint tore
+             the input out. But a repaint that PRESERVED focus and one caused by
+             navigation that TOOK focus look identical from here, and they are
+             opposites (Codex P2). renderWbSidebar only restores focus when the
+             dying input had it, so the live input for this slot holding focus is
+             exactly the "background repaint" case: leave it alone. If focus went
+             elsewhere — the owner clicked an already-loaded roster name, which
+             repaints synchronously — this is a real blur, and treating it as a
+             repaint left the draft unwritten and lost on the next reload. */
+          const live = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot-input');
+          if (live && document.activeElement === live) return;
+          settled = true;
+          save();
+          wbEditSlot = -1; wbEditDraft = '';
+          closeRow();
+          return;
+        }
+        settled = true;                 /* case 3 — another slot took over */
+        save();
+        closeRow();
+      }, 0);
+    });
+    row.appendChild(inp);
+    return row;
+  }
+
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'wb-side-btn wb-slot' + (sym ? '' : ' wb-slot--empty');
+  /* ROVING TAB STOP: the column is ONE tab stop, not a hundred (Codex P2).
+     Native buttons are all tabbable by default, and this column precedes the
+     roster in DOM order, so a keyboard user faced up to 100 Tab presses just to
+     reach the ROSTER — and reaching a deep slot was no better, which made F2
+     largely theoretical. Only `wbSlotTab` is reachable by Tab; Arrow keys, Home
+     and End move within the list, and each move carries the tab stop with it.
+     This is the standard listbox/toolbar pattern and the same reasoning the
+     project already applies to keyboard parity: a slot only a mouse can reach is
+     not a slot everyone has. */
+  b.tabIndex = i === wbSlotTab ? 0 : -1;
+  b.setAttribute('aria-current', String(!!sym && sym === wbState.sym));
+  b.setAttribute('aria-label', sym ? sym + ' — slot ' + (i + 1) : 'Empty slot ' + (i + 1));
+  /* Where the edit gesture is stated. It belongs in `title` rather than the
+     aria-label: a screen reader would otherwise read the same hint on all 100
+     rows, and the label's job is to say WHICH slot this is. */
+  /* A slot holding an unresolvable draft says so, and says the gesture that
+     reaches it — which is a SINGLE click there, not a double, since there is
+     nothing to chart. */
+  const chartable = !!sym && WL_SYM_RE.test(sym);
+  b.title = !sym ? 'Empty slot — click to fill'
+    : chartable ? sym + ' — double-click or F2 to edit'
+    : sym + ' — not a ticker; click to correct';
+  b.appendChild(el('span', 'wb-side-sym', sym || ''));
+
+  const openEditor = () => {
+    /* An edit ENDS any pending pair. Otherwise: click an empty slot (which
+       records this click), type a ticker, commit it — and the very next click on
+       the now-filled row is read as the second half of that original pair, so it
+       reopens the editor instead of charting (Codex P2). The editor lifecycle is
+       navigation too. */
+    wbSlotClick = { i: -1, at: 0 };
+    wbEditSlot = i;
+    wbEditDraft = sym || '';
+    renderWbSidebar(data);
+    const live = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot-input');
+    if (live) keepPageStill(() => {
+      /* preventScroll: the rail repaints on the 60s poll and a plain focus()
+         would yank an owner who had scrolled elsewhere back to the charts —
+         1684px, measured on falsification. setSelectionRange rather than
+         select() because it selects the same text under a narrower contract;
+         neither takes a preventScroll option, which is what keepPageStill is
+         for. */
+      live.focus({ preventScroll: true });
+      live.setSelectionRange(0, live.value.length);
+    });
+  };
+
+  b.addEventListener('click', ev => {
+    const now = Date.now();
+    /* POINTER clicks pair; keyboard ones never do. Enter/Space on a focused
+       button fires a synthetic click with detail 0, so two activations inside
+       the window — or Enter simply auto-repeating while held — were read as a
+       double-click and opened the editor. That contradicts F2 being THE keyboard
+       edit gesture, and makes an ordinary repeated activation silently editable
+       (Codex P2). */
+    const byPointer = ev.detail > 0;
+    /* Keyed by slot INDEX, not by this node: charting rebuilds the rail, so the
+       second click of a pair usually lands on a REPLACEMENT button. That is
+       exactly the case a `dblclick` listener cannot see.
+       Running this on `click` and not on `pointerdown` is deliberate. A
+       pointerdown version was built while chasing the CI failure above and is
+       REJECTED: it could not be falsified in any case once `closeRow` stopped
+       the blur from rebuilding the rail, and unlike an inert guard it changes
+       real behaviour — acting on press rather than release removes the
+       press-drag-away-to-cancel affordance every button has, and its
+       preventDefault suppresses focus. Unproven complexity that alters
+       interaction is worse than none. */
+    const again = byPointer && wbSlotClick.i === i && now - wbSlotClick.at <= WB_SLOT_DBL_MS;
+    /* BOTH halves must be pointer clicks, so a keyboard activation neither
+       starts a pair nor continues one. Gating only the check above was half a
+       fix (Codex P2, round 5): the synthetic keyboard click still RECORDED
+       itself, so pressing Enter on a filled slot and then clicking it within the
+       window opened the editor instead of charting. A keyboard activation is
+       navigation like any other, so it also breaks a pair already pending. */
+    wbSlotClick = byPointer ? { i, at: now } : { i: -1, at: 0 };
+    setWbSlotTab(i);                    /* Tab comes back to the slot last worked on */
+    /* NOTHING CHARTABLE ⇒ open the editor. An empty slot has nothing to chart,
+       and neither does one holding a draft that fails WL_SYM_RE — a slot keeps
+       whatever was typed even when it does not resolve (owner ruling), so `!!`
+       is a state the owner can reach and then click. Charting it anyway sent
+       quote-proxy a value the client already knew was not a ticker, while the
+       Enter path and the restore queue both declined it (Codex P2, round 6).
+       Opening the editor is also the useful answer rather than merely the cheap
+       one: it puts the bad text in front of them, selected, to correct. */
+    if (again || !chartable) { openEditor(); return; }
+    wbLoadSymbol(sym);
+  });
+  /* F2 is the KEYBOARD path to the editor, and it is not a nicety: a
+     double-click is pointer-only, and Enter/Space on a focused button fires
+     `click`, which CHARTS a filled slot rather than editing it — so without
+     this a filled slot could only ever be changed with a mouse. Same rule the
+     watchlist tiles follow with Delete/Backspace: an edit only a mouse can
+     reach is not an edit everyone has. F2 because that is the conventional
+     edit-in-place key (spreadsheets, file managers), and because every other
+     plausible key already means something here. An EMPTY slot needs no
+     shortcut — its plain click opens the editor already. */
+  b.addEventListener('keydown', ev => {
+    if (ev.key === 'F2') { ev.preventDefault(); openEditor(); return; }
+    /* Arrow/Home/End move the roving stop. Focus is applied WITHOUT scrolling
+       the page, the same rule everything else in this rail follows; the slot is
+       brought into view inside its own scroller instead. */
+    const to = ev.key === 'ArrowDown' ? i + 1
+      : ev.key === 'ArrowUp' ? i - 1
+      : ev.key === 'Home' ? 0
+      : ev.key === 'End' ? WB_SLOTS - 1
+      : -1;
+    if (to < 0 || to >= WB_SLOTS) return;
+    ev.preventDefault();
+    setWbSlotTab(to);
+    const next = document.querySelector('.wb-rail-manual [data-slot="' + to + '"] .wb-slot');
+    if (!next) return;
+    keepPageStill(() => {
+      next.focus({ preventScroll: true });
+      next.scrollIntoView({ block: 'nearest' });
     });
   });
-  wrap.appendChild(inp);
-  if (wbRailMsg) wrap.appendChild(el('p', 'wb-rail-msg', wbRailMsg));
-  return wrap;
+  row.appendChild(b);
+  return row;
 }
 
 function renderWbSidebar(data) {
@@ -5138,8 +5416,31 @@ function renderWbSidebar(data) {
      and reapplied to the incoming one at the end. Without this, typing in the
      rail is interrupted by any repaint the owner did not cause: a chart drag
      rebuilds this rail every animation frame, and the feed poll every 60s. */
-  const dying = nav.querySelector('.wb-rail-input');
+  const dying = nav.querySelector('.wb-slot-input');
   const hadFocus = !!dying && document.activeElement === dying;
+  /* The SLOT LIST'S SCROLL POSITION, for the same reason and with the same
+     force as the caret above. `.wb-slots` is rebuilt from scratch here, so its
+     scrollTop resets to 0 — and this rail repaints on every animation frame of
+     a chart drag and every 60s feed poll, so an owner who scrolled down to slot
+     60 is yanked back to slot 1 by a repaint they did not cause. It also breaks
+     the gesture outright: a double-click's first click opens the editor, which
+     re-renders and scrolls the list away underneath the second click, so the
+     editor lands on a DIFFERENT slot than the one that was clicked (measured:
+     clicking slot 30 opened slot 28). Same class as focus({preventScroll}) —
+     preserving editing state must not move what the owner is looking at. */
+  const dyingSlots = nav.querySelector('.wb-slots');
+  const slotScroll = dyingSlots ? dyingSlots.scrollTop : 0;
+  /* A focused slot BUTTON is preserved the same way the input is, and for a
+     sharper reason: charting from the keyboard (Enter/Space on a filled slot)
+     runs synchronously into wbPick, whose render removes the very button that
+     was focused. Nothing then held focus, so it fell to the document and the
+     roving Arrow keys and F2 stopped responding until the owner tabbed all the
+     way back into the rail — which is the column's only tab stop, so that is a
+     long way back (Codex P2). Charting a slot must not cost you your place. */
+  const dyingBtn = document.activeElement && document.activeElement.classList
+    && document.activeElement.classList.contains('wb-slot')
+    && nav.contains(document.activeElement)
+    ? document.activeElement.closest('.wb-rail-row').dataset.slot : null;
   /* The WHOLE selection, not just its start. Restoring a collapsed caret would
      silently drop a range the owner had selected, so their next keystroke would
      INSERT where it should REPLACE (Codex P2) — a repaint they did not cause
@@ -5169,7 +5470,7 @@ function renderWbSidebar(data) {
      what the owner asked for. Vertical space is not scarce here — the rail is
      capped to the chart's height, ~600px+.
      It spans both columns while governing only the roster one, so the columns
-     below are BOTH labelled (MANUAL / ROSTER) — the roster column used to have
+     below are BOTH labelled (SYMBOL / ROSTER) — the roster column used to have
      no title of its own, since the picker served as one. */
   const cols = el('div', 'wb-rail-cols');
   const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); cols.appendChild(c); return c; };
@@ -5179,11 +5480,13 @@ function renderWbSidebar(data) {
   nav.appendChild(cols);
 
   /* ── column A — symbol ─────────────────────────────────────────────────── */
-  /* Laid out to the owner's reference platform (request 2026-08-26, with a
-     screenshot): a SYMBOL header, an ACTIVE section naming what is charted right
-     now, a text box to type into, then the typed stack. Only this LEFT column
-     changed — the roster column beside it was explicitly left alone, since it
-     mirrors the watchlists. */
+  /* A SYMBOL header, an ACTIVE section naming what is charted, then 100
+     PERMANENT SLOTS the owner edits in place (owner ruling 2026-08-26: "I want
+     every item in the list to be editable... the 100 entries, filled or empty is
+     permanent"). No add box and no × — a slot is filled by typing into it and
+     cleared by emptying it, and nothing ever reflows. Only this LEFT column
+     changed; the roster column beside it mirrors the watchlists and is left
+     alone. */
   const manual = column('wb-rail-manual');
   const mHead = el('div', 'wb-rail-head');
   mHead.appendChild(el('span', 'wb-rail-title', 'SYMBOL'));
@@ -5198,30 +5501,13 @@ function renderWbSidebar(data) {
   if (activeSym) manual.appendChild(wbRailBtn(activeSym));
   else manual.appendChild(el('p', 'wb-rail-empty', 'None yet.'));
 
-  manual.appendChild(wbRailAddBox(data));
-
-  manual.appendChild(el('span', 'wb-rail-sub', 'TYPED'));
-  const typed = readWbSticky().syms;
-  if (!typed.length) {
-    /* Says what fills the column rather than just that it is empty — this is
-       the one column that starts blank BY DESIGN, so "nothing here" alone would
-       read as a feed that failed. */
-    manual.appendChild(el('p', 'wb-rail-empty', 'Type a ticker above to stack it here.'));
-  }
-  for (const sym of typed) {
-    const row = el('div', 'wb-rail-row');
-    row.appendChild(wbRailBtn(sym));
-    const x = el('button', 'wb-rail-x', '×');
-    x.type = 'button';
-    x.setAttribute('aria-label', 'Remove ' + sym + ' from the manual list');
-    x.addEventListener('click', ev => {
-      ev.stopPropagation();       /* the row's own button must not also fire */
-      removeWbStickySym(sym);
-      renderWbSidebar(data);      /* the rail only — the chart is unaffected */
-    });
-    row.appendChild(x);
-    manual.appendChild(row);
-  }
+  /* The 100 slots scroll on their OWN, beneath a fixed SYMBOL/ACTIVE head —
+     "the list has 100 slots accessible via scroll just for the list". Putting
+     the scroller on the column instead would carry the header away with it. */
+  const slots = el('div', 'wb-slots');
+  const stored = readWbSticky().syms;
+  for (let i = 0; i < WB_SLOTS; i++) slots.appendChild(wbSlotRow(i, stored[i] || '', data));
+  manual.appendChild(slots);
 
   /* ── column B — roster ─────────────────────────────────────────────────── */
   const roster = column('wb-rail-roster');
@@ -5270,21 +5556,35 @@ function renderWbSidebar(data) {
   if (!syms.length) roster.appendChild(el('p', 'wb-rail-empty', 'This list has no symbols.'));
   for (const sym of syms) roster.appendChild(wbRailBtn(sym));
 
+  /* Restored before the focus block below, so a focus() that does scroll the
+     list finds it already where the owner left it. Clamped by the browser to
+     the new scrollHeight, which is what we want if the list got shorter. */
+  const bornSlots = nav.querySelector('.wb-slots');
+  if (bornSlots && slotScroll) bornSlots.scrollTop = slotScroll;
+
+  if (dyingBtn !== null) {
+    const bornBtn = nav.querySelector('.wb-rail-manual [data-slot="' + dyingBtn + '"] .wb-slot');
+    if (bornBtn) keepPageStill(() => bornBtn.focus({ preventScroll: true }));
+  }
+
   if (hadFocus) {
-    const born = nav.querySelector('.wb-rail-input');
+    const born = nav.querySelector('.wb-slot-input');
     if (born) {
       /* preventScroll is load-bearing, not a nicety: this rail repaints on a
          60s feed poll, so an owner who focused the box and then scrolled away to
          another panel would be YANKED back to the charts by a refocus they never
          asked for (Codex P2). Preserving editing state must not move the page. */
-      born.focus({ preventScroll: true });
-      /* Clamped: the draft can be SHORTER than it was (a submit clears it), and
-         an offset past the end throws in some engines and lands at 0 in others. */
-      const cap = born.value.length;
-      const a = Math.min(selRange && selRange.start != null ? selRange.start : cap, cap);
-      const b = Math.min(selRange && selRange.end != null ? selRange.end : a, cap);
-      try { born.setSelectionRange(a, Math.max(a, b), (selRange && selRange.dir) || 'none'); }
-      catch (_e) { /* not every input type allows a selection range */ }
+      keepPageStill(() => {
+        born.focus({ preventScroll: true });
+        /* Clamped: the draft can be SHORTER than it was (a submit clears it),
+           and an offset past the end throws in some engines and lands at 0 in
+           others. */
+        const cap = born.value.length;
+        const a = Math.min(selRange && selRange.start != null ? selRange.start : cap, cap);
+        const b = Math.min(selRange && selRange.end != null ? selRange.end : a, cap);
+        try { born.setSelectionRange(a, Math.max(a, b), (selRange && selRange.dir) || 'none'); }
+        catch (_e) { /* not every input type allows a selection range */ }
+      });
     }
   }
 }
@@ -6606,6 +6906,12 @@ function wireCharts() {
     const sym = symInput.value.trim().toUpperCase();
     if (sym !== wbState.sym && wbState.data.symbols[sym]) {
       symNote.textContent = '';
+      /* This path reaches wbPick DIRECTLY, without the loader, so it needs its
+         own reset — the submit handler's does not cover it (Codex P2). Every
+         non-slot way of changing the chart must break a pending slot pair;
+         keep this list complete: the roster/ACTIVE button, the header submit,
+         and here. */
+      wbSlotClick = { i: -1, at: 0 };
       wbPick(sym);
     }
   });
@@ -6674,11 +6980,13 @@ function wireCharts() {
        box validates with it too, and two inputs that disagree about what a
        ticker is would be a bug nobody could see from either one. */
     if (!WL_SYM_RE.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    /* `pin: true` — typing a ticker is what "manual" means. This is now ONE of
-       TWO places that happens: the rail's own box (wbRailAddBox) is the other,
-       kept alongside this one by owner ruling 2026-08-26. Both route here so
-       they cannot drift. The rail's ROSTER clicks call this with pin off. */
-    wbLoadSymbol(sym, { pin: true });
+    /* Charts it and writes NOTHING into the SYMBOL column. That column is 100
+       permanent slots edited in place (owner ruling 2026-08-26: "I didn't want a
+       field to push into the list"), so this box is a chart control, not an add
+       control. It breaks a pending slot pair for the same reason a roster click
+       does — see wbRailBtn. */
+    wbSlotClick = { i: -1, at: 0 };
+    wbLoadSymbol(sym);
   });
 
   /* one header bar per chart — its gear opens that pane's own popover,
@@ -6779,24 +7087,71 @@ async function restoreStickySymbols() {
      watchlist symbol left selected at reload would otherwise come back with no
      bars and no way to get them — the rail would open on a blank chart. Fetched
      first so the chart the owner left is the chart they return to. */
-  const wanted = saved.sel && !saved.syms.includes(saved.sel)
-    ? [saved.sel, ...saved.syms]
-    : saved.syms;
-  for (const sym of wanted) {
+  /* FILTER THE HOLES OUT HERE, and only here. `syms` is now 100 positional
+     slots, mostly empty on any real desk — feeding them straight into this loop
+     would fire ~100 serial deskQuote('') calls on every live boot. Filtering is
+     right in THIS list and wrong in the store: this is a re-fetch queue, where
+     neither order nor position means anything, whereas in the store an index IS
+     a slot and a filter would move the owner's symbols. */
+  const filled = saved.syms.filter(Boolean);
+
+  /* One symbol's re-fetch. Kept separate so the SELECTED one can be awaited
+     alone, ahead of everything else, while the rest share a bounded pool. */
+  const fetchOne = async (sym, isSel) => {
     /* skip only if it's already REAL — a demo-fallback may hold SYNTHETIC bars
        for a sticky ticker that collides with the demo roster (e.g. GLD); those
        must still be re-fetched so real bars + fundamentals replace the fakes */
-    if (wbRealSyms.has(sym)) continue;
+    if (wbRealSyms.has(sym)) return;
     try {
       const out = await deskQuote(sym, 'daily');
       if (out.ok && out.series && out.series.c.length >= 30) {
         wbState.data.symbols[sym] = out.series;
         wbRealSyms.add(sym);        /* re-hydrated ad-hoc ticker is real → eligible for fundamentals */
         if (saved.sel === sym && !wbUserPicked) wbState.sym = sym;
-        renderCharts(wbState.data, wbState.lamp);
+        if (isSel) renderCharts(wbState.data, wbState.lamp);
+        else repaintSoon();
       }
     } catch { /* skip a ticker the proxy can't serve */ }
-  }
+  };
+
+  /* Coalesced repaint for the pool. Rendering per response was fine at one
+     request in flight; with a pool it would fire several times a frame, and at
+     a full 100 slots it was ~100 full chart rebuilds either way. The SELECTED
+     symbol still renders immediately — that is the chart the owner is waiting
+     to see. */
+  let repaintPending = false;
+  const repaintSoon = () => {
+    if (repaintPending || !wbState) return;
+    repaintPending = true;
+    requestAnimationFrame(() => { repaintPending = false; renderCharts(wbState.data, wbState.lamp); });
+  };
+
+  /* The SELECTED symbol first and ALONE, so the chart the owner left comes back
+     before anything else competes for a connection. */
+  if (saved.sel) await fetchOne(saved.sel, true);
+
+  /* Then the filled slots, BOUNDED. The old manual column capped this at 40 and
+     ran it strictly serially; 100 slots that way is the SUM of every proxy
+     round-trip, so a fully populated column would spend most of a minute cold
+     (Codex P2, PR #282). A small pool rather than an unbounded fan-out: this is
+     the owner's own browser hitting one origin-guarded proxy, and 100 parallel
+     requests would simply move the stall into the connection queue. */
+  /* UNIQUE, because a positional column can legitimately hold the same ticker in
+     several slots and this is a fetch queue, not the store. Duplicates would
+     each get their own request — and an unresolvable one never lands in
+     wbRealSyms, so a column repeating one bad symbol would re-request it once
+     per slot on every cold start (Codex P2).
+     VALIDATED too, for the same reason the Enter path does not chart an invalid
+     draft: a slot deliberately KEEPS text that fails WL_SYM_RE (owner ruling),
+     so without this every syntactically impossible draft was posted to
+     quote-proxy on every live reload — a column of 100 junk entries meant 100
+     requests the client already knew were pointless. The stored array is
+     untouched: this filters the QUEUE, never the slots. */
+  const queue = [...new Set(filled.filter(sym => sym !== saved.sel && WL_SYM_RE.test(sym)))];
+  let next = 0;
+  const worker = async () => { while (next < queue.length) await fetchOne(queue[next++], false); };
+  await Promise.all(
+    Array.from({ length: Math.min(WB_RESTORE_LANES, queue.length) }, worker));
 }
 
 let wbResizeTimer = 0;
