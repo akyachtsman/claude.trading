@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20260826a">
-<link rel="stylesheet" href="styles/components.css?v=20260826a">
+<link rel="stylesheet" href="styles/tokens.css?v=20260826b">
+<link rel="stylesheet" href="styles/components.css?v=20260826b">
 <style>
   * { box-sizing: border-box; }
   html { height: 100%; }
@@ -685,12 +685,12 @@
      min and give more space to the pro charts") is reached WITHOUT touching the
      rule, by making the glyphs and the chrome cheaper rather than the budget
      tighter. Three savings, all measured, none of them a squeeze on the ticker:
-       · the two columns are NO LONGER EQUAL. They never needed to be — only the
-         manual column carries a `×`, so forcing the roster to match it spent
-         ~12px per rail on nothing. See .wb-rail-manual / .wb-rail-roster below.
+       · the two columns are NO LONGER EQUAL — the SYMBOL column is the wider
+         one. See .wb-rail-manual / .wb-rail-roster below for what pays for the
+         difference (originally a `×` it no longer has; now its own scrollbar).
        · the row font goes 12px → 10px mono, so ten characters cost 60.2px
          instead of 72.3.
-       · row padding 4px → 2px a side and the `×` 3px → 2px.
+       · row padding 4px → 2px a side.
      Measured at 1512: rail 200 → 154, chart 1170 → 1216 (+46px). The type drop
      is the biggest single contributor and is the part to reconsider FIRST if
      this ever needs to grow back — it is a legibility cost, where the unequal
@@ -728,43 +728,52 @@
   /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
      scroll both columns together and defeat the split. `auto`, never `contain`:
      reaching the end of a column must carry on scrolling the page. */
-  /* THE WIDTH BUDGET, measured at 1512 with a 40-row manual column actually
-     overflowing. Ten characters of 10px IBM Plex Mono cost 60.2px (12px cost
-     72.3 — that drop is what paid for most of the 200 → 154 cut).
+  /* THE WIDTH BUDGET, measured at 1440. Ten characters of 10px IBM Plex Mono
+     cost 60.2px (12px cost 72.3 — that drop is what paid for most of the
+     200 → 154 cut).
 
-       manual  = 60.2 ticker + 9.8 `×` + 4 padding = 74.0 needed, 78 given
-       roster  = 60.2 ticker            + 4 padding = 64.2 needed, 68 given
+       SYMBOL  = 60.2 ticker + 4 padding = 64.2 needed, 74 of text room in 78
+       ROSTER  = 60.2 ticker + 4 padding = 64.2 needed, 64 of text room in 68
        rail    = 78 + 68 + 8 gap = 154
 
-     THE COLUMNS ARE DELIBERATELY UNEQUAL, and that is the one structural idea
-     here: `flex: 1 1 0` on both made the roster carry a ~10px allowance for a
-     `×` IT DOES NOT HAVE. Equal columns look like the tidy default and are
-     simply wrong when the two rows are not the same shape.
+     THE COLUMNS ARE DELIBERATELY UNEQUAL, and what pays for the difference has
+     CHANGED — the number is the same, the reason is not. It used to be the `×`
+     on every manual row: `flex: 1 1 0` on both made the roster carry a ~10px
+     allowance for a control it does not have. The 2026-08-26 slot rewrite
+     removed the `×` (a slot is cleared by emptying it), and the same ~10px is
+     now the SYMBOL column's SCROLLBAR allowance instead.
 
-     `scrollbar-width: thin` is part of this budget, not decoration. The ~4px of
-     headroom above does NOT cover a scrollbar that takes layout width. This
-     sandbox's Chromium uses OVERLAY scrollbars and reserves 0, so it CANNOT
-     reproduce the case — where a thin bar takes ~11-12px a 9- or 10-character
-     symbol would clip, while 8 (DX-Y.NYB, the roster's longest) still fits.
-     That remains an ACCEPTED, bounded residual, re-affirmed at this width: the
-     owner has now twice chosen chart space over it, and their own machine
-     (macOS, overlay scrollbars) never sees it. Covering it costs ~24px, which
-     would give back half the cut. Trigger to revisit: a 9-10 character symbol
-     entering the roster, or the desk being used where scrollbars take layout
-     width. S40 budgets against the VALIDATOR's ten characters, never against
-     demo's short names. */
+     That is a real difference between the two columns, not bookkeeping. The
+     SYMBOL column is 100 permanent slots, so `.wb-slots` ALWAYS overflows —
+     unlike the old 40-row stack, which usually did not. Where a thin scrollbar
+     takes layout width (~11-12px) it leaves 74 - 12 = 62px against the 60.2 a
+     ten-character ticker needs, so the SYMBOL column now CLEARS that case
+     rather than accepting it. Narrowing it to the roster's 68 would leave 52
+     and clip — the 10px is no longer slack.
+
+     The ROSTER column keeps the ACCEPTED, bounded residual: 3.8px of headroom
+     and no scrollbar allowance, so where a bar reserves width a 9- or
+     10-character symbol would clip while 8 (DX-Y.NYB, the roster's longest)
+     still fits. This sandbox's Chromium uses OVERLAY scrollbars and reserves 0,
+     so it CANNOT reproduce the case — it must be reasoned about, not tested
+     here. The owner has twice chosen chart space over covering it, and their
+     own machine (macOS, overlay scrollbars) never sees it; covering it costs
+     ~12px. Trigger to revisit: a 9-10 character symbol entering a WATCHLIST, or
+     the desk being used where scrollbars take layout width. S40 budgets against
+     the VALIDATOR's ten characters, never against demo's short names. */
   .wb-rail-col { min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; scrollbar-width: thin; }
-  /* Sized to what each column actually holds — see the budget above. The manual
-     column is the wider one because it alone carries the `×`. */
+  /* Sized to what each column actually holds — see the budget above. The SYMBOL
+     column is the wider one because its 100-slot list always scrolls. */
   .wb-rail-manual { flex: 0 0 78px; }
   .wb-rail-roster { flex: 1 1 0; }
   /* MUST sit after the two rules above, not with the other 860px rules further
      up: identical specificity, so SOURCE ORDER is the whole mechanism and an
      earlier copy silently does nothing (Codex P2 — measured at 393px, the rail
-     was 263px with MANUAL still pinned to 78 and ROSTER taking 177).
+     was 263px with SYMBOL still pinned to 78 and ROSTER taking 177).
      The unequal split is a SIDE-RAIL rule and must not survive the stack: 78px
      is a floor while the rail is 154px wide, and becomes a CAP once the rail
-     spans the viewport. Width is only scarce in the side rail, so the stacked
+     spans the viewport. The scrollbar allowance it buys is only worth paying
+     for where width is scarce. Width is only scarce in the side rail, so the stacked
      rail shares evenly. This is the same trap the .top-boxes overrides carry a
      warning about — equal-specificity overrides placed before what they lift. */
   @media (max-width: 860px) {
@@ -777,33 +786,40 @@
   .wb-rail-pick { width: 100%; padding: 2px 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 600 9px/1.6 var(--font-sans); text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
   .wb-rail-pick:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   .wb-rail-empty { margin: 4px 2px 0; font: 400 9px/1.4 var(--font-sans); font-style: italic; color: var(--color-text-secondary); }
-  /* Section labels inside the SYMBOL column — ACTIVE / TYPED (owner request
-     2026-08-26, matching a reference platform). Dimmer and smaller than the
+  /* Section labels inside the SYMBOL column — ACTIVE (owner request 2026-08-26,
+     matching a reference platform). Dimmer and smaller than the
      column's own title so the hierarchy reads title > section > rows, and
      `sticky` is deliberately NOT set: only .wb-rail-head pins, or two labels
      would stack on top of each other as the column scrolls. */
   .wb-rail-sub { display: block; margin: 6px 0 1px; font: 600 8px/1.5 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
   .wb-rail-sub:first-of-type { margin-top: 2px; }
-  .wb-rail-add { margin: 3px 0 2px; }
-  /* Full column width. The 78px manual column leaves ~74px of text room, which
-     is ~12 characters at 10px mono — comfortably past the 10 WL_SYM_RE accepts,
-     so this box needed none of the rail width back. `min-width: 0` matters: an
-     input's default intrinsic width (~20 chars) would otherwise push the column
-     wider than its flex basis and undo the 154px rail. */
-  .wb-rail-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 2px 3px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; }
-  .wb-rail-input::placeholder { color: var(--color-text-secondary); text-transform: none; font-style: italic; }
-  .wb-rail-input:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -1px; }
-  /* Wraps rather than truncating — it carries the reason an add was refused,
-     which is the one string in this column that is useless when clipped. */
-  .wb-rail-msg { margin: 2px 0 0; font: 400 8px/1.3 var(--font-sans); color: var(--color-text-secondary); overflow-wrap: anywhere; }
-  /* The × rides ALONGSIDE the symbol button rather than inside it — nesting a
-     button in a button is invalid, and a click target inside a click target is
-     how a remove gets fired by someone aiming at the chart. */
+  /* The 100 slots scroll on their OWN, so the SYMBOL title and the ACTIVE row
+     stay put while the list moves under them ("100 slots accessible via scroll
+     just for the list"). `min-height: 0` is what lets it actually shrink and
+     scroll inside the flex column — a flex item defaults to min-height auto and
+     would otherwise grow to its full 100-row content height and take the rail
+     with it. `scrollbar-width: thin` is part of the width budget, not
+     decoration. */
+  .wb-slots { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 1px; }
+  /* An EMPTY slot is still a slot — it keeps its height and stays clickable, so
+     the column reads as 100 addressable rows rather than a short list with
+     blank space under it. The dotted rule is what makes an empty row legible as
+     something you can type into. */
+  .wb-slot { min-height: 15px; }
+  .wb-slot--empty { border-bottom: 1px dotted var(--color-border); border-radius: 0; }
+  .wb-slot--empty:hover { background: var(--color-surface-2); border-bottom-color: transparent; border-radius: var(--radius-sm); }
+  /* Sized to sit exactly where the button it replaces sat, so opening an editor
+     does not shift the rows below it. `min-width: 0` matters: an input's default
+     intrinsic width (~20 characters) would otherwise push the column past its
+     78px flex basis and undo the 154px rail. */
+  .wb-slot-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 3px 2px; border: 1px solid var(--color-accent-bright); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; }
+  /* Suppressing the outline is safe HERE and would not be anywhere else on this
+     page: this input exists ONLY while it is being edited, and its accent border
+     above is the focus indicator. A default outline on top of that border, in a
+     78px column, reads as a rendering fault rather than as focus. */
+  .wb-slot-input:focus-visible { outline: none; }
   .wb-rail-row { display: flex; align-items: stretch; gap: 0; }
   .wb-rail-row .wb-side-btn { flex: 1 1 auto; min-width: 0; }
-  .wb-rail-x { flex: 0 0 auto; padding: 0 2px; border: 0; background: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: 400 10px/1 var(--font-sans); cursor: pointer; }
-  .wb-rail-x:hover { background: var(--color-surface-2); color: var(--color-text-primary); }
-  .wb-rail-x:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -1px; }
   /* The SYMBOL must never be abbreviated at the budgeted size — `AV…` names no
      instrument, and this rail exists to be clicked by ticker. The budget above
      guarantees that, so the ellipsis here NEVER fires in normal rendering
@@ -1548,8 +1564,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20260826a"></script>
-<script src="scripts/data.js?v=20260826a"></script>
-<script src="scripts/app.js?v=20260826a"></script>
+<script src="scripts/config.js?v=20260826b"></script>
+<script src="scripts/data.js?v=20260826b"></script>
+<script src="scripts/app.js?v=20260826b"></script>
 </body>
 </html>

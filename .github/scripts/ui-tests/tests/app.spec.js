@@ -2614,383 +2614,382 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
     .toBe(before.labels[0]);
 });
 
-/* S45 — the SYMBOL column's own add box (owner request 2026-08-26, from a
-   reference-platform screenshot). Guards three things that are each invisible
-   when broken: the column's reading order, that a symbol is VERIFIED before it
-   is kept, and that the box survives a repaint it did not cause.
-   The repaint case is the one that matters most and the one no manual click
-   would ever find — renderCharts rebuilds this rail on every animation frame of
-   a chart drag and on every 60s feed poll, so an input holding its value only in
-   the DOM is blanked between two keystrokes. */
-test('S45: symbol column adds verified tickers and survives a repaint', async ({ page }) => {
-  test.setTimeout(60_000);
+/* S45 — the SYMBOL column: 100 PERMANENT slots, edited in place (owner ruling
+   2026-08-26: "I want every item in the list to be editable... the 100 entries,
+   filled or empty is permanent"). What this guards is that the column is
+   POSITIONAL — slot 5 stays slot 5 — because the failure mode is invisible: a
+   compaction renumbers every row below a hole and silently moves the owner's
+   symbols to addresses they did not choose.
+   Also the gesture split, which collides by nature: a single click charts, a
+   double-click edits, and a double-click delivers a `click` FIRST. */
+test('S45: the symbol column is 100 permanent slots, edited in place', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto('./?demo=1');
-  await expect(page.locator('.wb-rail-input')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('.wb-slots')).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(1200);
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
+  const slots = () => page.evaluate(() =>
+    [...document.querySelectorAll('.wb-slots .wb-rail-row .wb-side-sym')].map(e => e.textContent));
 
-  const typed = () => page.evaluate(() =>
-    [...document.querySelectorAll('.wb-rail-manual .wb-rail-row .wb-side-sym')].map(e => e.textContent));
+  // shape: 100 rows, their own scroller, no delete control, no editor at rest
+  const shape = await page.evaluate(() => {
+    const box = document.querySelector('.wb-slots');
+    return { rows: box.querySelectorAll('.wb-rail-row').length,
+             overflowY: getComputedStyle(box).overflowY,
+             scrolls: box.scrollHeight > box.clientHeight + 2,
+             x: document.querySelectorAll('.wb-rail-x').length,
+             editors: document.querySelectorAll('.wb-slot-input').length,
+             headOutside: !document.querySelector('.wb-slots .wb-rail-head') };
+  });
+  expect(shape.rows, 'exactly 100 slots, filled or empty').toBe(100);
+  expect(shape.scrolls && shape.overflowY === 'auto', 'the LIST scrolls on its own').toBe(true);
+  expect(shape.headOutside, 'and the SYMBOL/ACTIVE head stays put above it').toBe(true);
+  expect(shape.x, 'no × — a slot is cleared by emptying it').toBe(0);
+  expect(shape.editors, 'no live input until a slot is opened — 100 would repaint every frame').toBe(0);
 
-  // reading order matches the reference: title -> ACTIVE -> box -> TYPED
-  const order = await page.evaluate(() =>
-    [...document.querySelector('.wb-rail-manual').children].map(n => n.className.split(' ')[0]));
-  expect(order.indexOf('wb-rail-head'), 'SYMBOL title first').toBe(0);
-  expect(order.indexOf('wb-rail-sub'), 'ACTIVE label above the box').toBeLessThan(order.indexOf('wb-rail-add'));
-  expect(order.indexOf('wb-rail-add'), 'the box sits above the TYPED stack')
-    .toBeLessThan(order.lastIndexOf('wb-rail-sub'));
+  // double-click opens THAT slot, focused
+  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && document.activeElement === i && i.closest('.wb-rail-row').dataset.slot;
+  }), 'double-click opens a focused editor in the slot that was clicked').toBe('3');
 
-  // the ROSTER column is explicitly untouched — it mirrors the watchlists
-  expect(await page.locator('.wb-rail-roster .wb-rail-input').count(),
-    'no add box in the roster column').toBe(0);
+  // lower case is normalised, saved POSITIONALLY, and charted
+  await page.locator('.wb-slot-input').pressSequentially('qqq');
+  await page.locator('.wb-slot-input').press('Enter');
+  await page.waitForTimeout(900);
+  let stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || []);
+  expect(stored[3], 'normalised into slot 3').toBe('QQQ');
+  expect(stored[0], 'slot 0 untouched — nothing was pushed anywhere').toBe('');
+  expect(stored.length, 'still exactly 100').toBe(100);
+  expect((await slots())[3], 'and rendered there').toBe('QQQ');
 
-  const inp = page.locator('.wb-rail-input');
+  /* A SINGLE click charts and opens no editor; a DOUBLE click edits and does
+     NOT chart — the deferred click must be cancelled, or every edit would also
+     retime the chart. */
+  await page.evaluate(() => wbPick(Object.keys(wbState.data.symbols)[0]));
+  await page.waitForTimeout(300);
+  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').click();
+  await page.waitForTimeout(900);
+  expect(await page.evaluate(() => wbState.sym), 'a single click charts that slot').toBe('QQQ');
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'and opens no editor').toBe(0);
 
-  // junk is refused, and the text is KEPT so a typo can be corrected in place
-  await inp.click();
-  await inp.type('!!');
-  await inp.press('Enter');
-  await expect(page.locator('.wb-rail-msg'), 'a refusal says why').toContainText(/not a ticker/i);
-  expect(await inp.inputValue(), 'the rejected text is kept, not discarded').toBe('!!');
-  expect(await typed(), 'junk never pins').toEqual([]);
+  await page.evaluate(() => wbPick(Object.keys(wbState.data.symbols)[0]));
+  await page.waitForTimeout(300);
+  const was = await page.evaluate(() => wbState.sym);
+  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(900);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'a double-click opens the editor').toBe(1);
+  expect(await page.evaluate(() => wbState.sym),
+    'and cancels the deferred chart — editing must not retime the pane').toBe(was);
 
-  // THE HAZARD: a repaint mid-entry must not eat the draft, the focus or the caret
-  await inp.fill('');
-  await inp.type('AVA');
+  // emptying clears the slot and moves NOTHING
+  await page.evaluate(() => {
+    const cur = JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}');
+    const syms = cur.syms.slice(); syms[7] = 'SPY';
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...cur, syms }));
+  });
+  await page.locator('.wb-slot-input').fill('');
+  await page.locator('.wb-slot-input').press('Enter');
+  await page.waitForTimeout(700);
+  stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || []);
+  expect(stored[3], 'emptying the text clears the slot').toBe('');
+  expect(stored[7], 'and nothing below it moves up').toBe('SPY');
+  expect(stored.length, 'still exactly 100 after a clear').toBe(100);
+
+  /* Survives a repaint the owner did not cause — renderCharts rebuilds this rail
+     on every animation frame of a chart drag and every 60s poll, so an editor
+     holding its value only in the DOM is blanked between two keystrokes. */
+  await page.locator('.wb-slots .wb-rail-row').nth(5).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slot-input').pressSequentially('AVA');
   const survived = await page.evaluate(() => {
-    renderWbSidebar(wbState.data);                  // what a chart drag does, every frame
-    const i = document.querySelector('.wb-rail-input');
-    return { value: i.value, focused: document.activeElement === i, caret: i.selectionStart };
+    renderWbSidebar(wbState.data);
+    const i = document.querySelector('.wb-slot-input');
+    return { value: i && i.value, focused: !!i && document.activeElement === i,
+             slot: i && i.closest('.wb-rail-row').dataset.slot };
   });
-  expect(survived.value, 'half-typed text survives a repaint the owner did not cause').toBe('AVA');
-  expect(survived.focused, 'focus survives it too — otherwise typing stops mid-word').toBe(true);
-  expect(survived.caret, 'and the caret does not jump').toBe(3);
+  expect(survived.value, 'a half-typed slot survives a repaint').toBe('AVA');
+  expect(survived.focused, 'and keeps focus — otherwise typing stops mid-word').toBe(true);
+  expect(survived.slot, 'in the same slot').toBe('5');
 
-  // a real symbol is verified, normalised, charted and pinned
-  const roster = await page.evaluate(() =>
-    [...document.querySelectorAll('.wb-rail-roster .wb-side-sym')].map(e => e.textContent));
-  const real = roster[1];
-  await inp.fill('');
-  await inp.type(real.toLowerCase());               // lower case on purpose
-  await inp.press('Enter');
-  await expect
-    .poll(async () => (await typed()).includes(real), { timeout: 10000 })
-    .toBe(true);
-  expect(await inp.inputValue(), 'the box clears, ready for the next ticker').toBe('');
-  await expect(page.locator('.wb-rail-manual .wb-side-btn .wb-side-sym').first(),
-    'ACTIVE names the symbol just charted').toHaveText(real);
+  /* And it must still be there a TICK LATER. Tearing the input out fires blur,
+     whose commit is deferred by design — so a repaint would otherwise save the
+     half-typed text, chart it and close the editor one task after the checks
+     above all pass. The synchronous read cannot see that; only this can. */
+  await page.waitForTimeout(400);
+  const still = await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return { open: !!i, value: i && i.value, focused: !!i && document.activeElement === i,
+             slot5: (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[5] };
+  });
+  expect(still.open, 'the editor is still open a tick after the repaint').toBe(true);
+  expect(still.value, 'still holding the half-typed text').toBe('AVA');
+  expect(still.focused, 'and still focused').toBe(true);
+  expect(still.slot5, 'and the repaint committed NOTHING — the owner is mid-word').toBe('');
 
-  /* ── the four races and truncations Codex found on the first cut ──────── */
+  /* maxLength is 24, NOT the validator's 10 (Codex P2). It caps the RAW value
+     and the browser applies it BEFORE any handler runs, so a 10-cap truncates a
+     pasted " ABCDEFGHIJ " to nine characters — a real but DIFFERENT instrument.
+     Typed through real key events on purpose: assigning el.value from script
+     bypasses maxlength entirely, which is how this assertion sat INERT once
+     already (it stayed green with the cap regressed to 10). */
+  await page.locator('.wb-slot-input').fill('');
+  await page.locator('.wb-slot-input').pressSequentially(' ABCDEFGHIJ ');
+  expect(await page.locator('.wb-slot-input').inputValue(),
+    'a PADDED ten-character symbol survives the raw cap').toBe(' ABCDEFGHIJ ');
+  /* The padding is the whole point and this assertion was INERT without it:
+     a bare 'ABCDEFGHIJ' is exactly ten, so a regressed 10-cap does not truncate
+     it and the check stays green. With the padding a 10-cap yields
+     ' ABCDEFGHI', which TRIMS to a real but DIFFERENT instrument — the
+     wrong-number-wearing-a-plausible-face fault itself. Assert the committed
+     slot too, since that is what the owner would actually be charting. */
+  await page.locator('.wb-slot-input').press('Enter');
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[5]),
+    'and lands whole — not truncated into a different symbol').toBe('ABCDEFGHIJ');
+  /* Reopen it holding that value — the selection check below needs something to
+     select, and an empty input clamps every range to 0,0. */
+  await page.evaluate(() => { wbEditSlot = 5; wbEditDraft = 'ABCDEFGHIJ'; renderWbSidebar(wbState.data); });
+  await page.locator('.wb-slot-input').focus();
 
-  // A padded FULL-LENGTH ticker must not lose its last character. maxLength caps
-  // the RAW value before any handler runs, so a 10-cap would truncate " ……J " to
-  // nine characters — which can be a real but DIFFERENT instrument.
-  /* TYPED, not assigned. Setting `el.value` from script BYPASSES the browser's
-     maxlength entirely, so an assignment-based check stays green even if the cap
-     regresses to 10 — it would guard nothing (Codex P2, round 2). Real key events
-     are gated by maxlength, which is the behaviour under test. */
-  await inp.fill('');
-  await inp.pressSequentially(' ABCDEFGHIJ ');
-  expect((await inp.inputValue()).trim(), 'a padded 10-char ticker survives the raw length cap')
-    .toBe('ABCDEFGHIJ');
-
-  // A SELECTION must survive a repaint, or the next keystroke inserts where it
-  // should replace.
-  /* BACKWARD on purpose. Direction decides which end Shift+Arrow extends, so
-     asserting the two offsets alone would stay green with the selectionDirection
-     capture removed — reintroducing the editing change on every repaint (Codex
-     P2, round 2). */
-  await inp.fill('');
-  await inp.pressSequentially('ABCD');
+  /* The WHOLE selection survives a repaint — both offsets AND the direction.
+     A collapsed caret makes the next keystroke INSERT where it should REPLACE,
+     and a lost direction changes which end Shift+Arrow extends: a repaint the
+     owner did not cause quietly changing what typing does. BACKWARD on purpose
+     — asserting the offsets alone left the direction capture deletable. */
   const selKept = await page.evaluate(() => {
-    const i = document.querySelector('.wb-rail-input');
-    i.setSelectionRange(1, 3, 'backward');
+    const i = document.querySelector('.wb-slot-input');
+    i.setSelectionRange(2, 6, 'backward');
     renderWbSidebar(wbState.data);
-    const j = document.querySelector('.wb-rail-input');
-    return { start: j.selectionStart, end: j.selectionEnd, dir: j.selectionDirection };
+    const n = document.querySelector('.wb-slot-input');
+    return n && { start: n.selectionStart, end: n.selectionEnd, dir: n.selectionDirection };
   });
-  expect(selKept, 'the whole selection survives a repaint — both offsets AND its direction')
-    .toEqual({ start: 1, end: 3, dir: 'backward' });
+  expect(selKept && [selKept.start, selKept.end], 'the selected RANGE survives, not just a caret').toEqual([2, 6]);
+  expect(selKept && selKept.dir, 'and which end it extends from').toBe('backward');
+  await page.waitForTimeout(300);
+  await page.locator('.wb-slot-input').press('Escape');
+  await page.waitForTimeout(200);
 
-  // Restoring focus must NOT scroll the page. The rail repaints on a 60s poll,
-  // so a plain focus() would yank an owner who had scrolled away back to Charts.
-  const scroll = await page.evaluate(async () => {
-    const i = document.querySelector('.wb-rail-input');
-    i.focus();
-    window.scrollTo(0, 0);
-    const before = window.scrollY;
-    renderWbSidebar(wbState.data);
-    await new Promise(r => requestAnimationFrame(r));
-    return { before, after: window.scrollY };
+  // reload: the holes are preserved by INDEX
+  await page.reload();
+  await expect(page.locator('.wb-slots')).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(1200);
+  const back = await slots();
+  expect(back.length, '100 slots after a reload').toBe(100);
+  expect(back[7], 'a filled slot returns to its own index').toBe('SPY');
+  expect(back[6], 'and the hole above it is still a hole').toBe('');
+
+  /* A DEEP slot — the whole point of a 100-row scroller, and the case rows 3/5/7
+     above cannot reach. renderWbSidebar rebuilds `.wb-slots`, resetting its
+     scrollTop, so without the restore the list jumps to the top on every
+     repaint. That breaks the gesture outright rather than merely annoying: the
+     first click of a double-click opens the editor, the re-render scrolls the
+     list away under the second click, and the editor lands on a DIFFERENT slot
+     than the one clicked (measured: clicking 30 opened 28). */
+  await page.locator('.wb-slots .wb-rail-row').nth(60).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && i.closest('.wb-rail-row').dataset.slot;
+  }), 'a deep slot opens the slot that was CLICKED, not one the scroll reset moved under the pointer').toBe('60');
+  await page.locator('.wb-slot-input').fill('AVAV');
+  await page.locator('.wb-slot-input').press('Enter');
+  await page.waitForTimeout(800);
+  const deep = await page.evaluate(() => ({
+    at60: (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[60],
+    top: Math.round(document.querySelector('.wb-slots').scrollTop),
+  }));
+  expect(deep.at60, 'and saves to that index').toBe('AVAV');
+  expect(deep.top, 'with the list still scrolled where the owner left it').toBeGreaterThan(0);
+  await page.evaluate(() => renderWbSidebar(wbState.data));
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => Math.round(document.querySelector('.wb-slots').scrollTop)),
+    'and a repaint the owner did not cause does not move it either — this rail repaints every 60s')
+    .toBe(deep.top);
+
+  /* Blur is NOT one outcome but three, and telling them apart is the whole job.
+     Here: the owner clicks straight from an open editor to ANOTHER slot. The
+     text must be KEPT (that is what the blur handler exists for), the clicked
+     slot must open, and the abandoned one must NOT be charted — their attention
+     has moved. An isConnected check alone reads this as a repaint and DISCARDS
+     the edit, which is what it did before it was measured. */
+  const symWas = await page.evaluate(() => wbState.sym);
+  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slot-input').fill('QQQ');
+  await page.locator('.wb-slots .wb-rail-row').nth(8).locator('.wb-slot').click();
+  await page.waitForTimeout(800);
+  const moved = await page.evaluate(() => ({
+    at3: (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[3],
+    open: (document.querySelector('.wb-slot-input') || {}).closest
+      ? document.querySelector('.wb-slot-input').closest('.wb-rail-row').dataset.slot : null,
+    sym: wbState.sym,
+  }));
+  expect(moved.at3, 'clicking to another slot KEEPS what was typed').toBe('QQQ');
+  expect(moved.open, 'and opens the slot that was clicked').toBe('8');
+  expect(moved.sym, 'without charting the one they left').toBe(symWas);
+
+  /* F2 reaches the editor from the KEYBOARD. A double-click is pointer-only,
+     and Enter/Space on a focused button fires `click`, which CHARTS a filled
+     slot rather than editing it — so without F2 a filled slot could only ever
+     be changed with a mouse. Same rule the watchlist tiles follow with Delete. */
+  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
+  await page.locator('.wb-slots .wb-rail-row').nth(60).locator('.wb-slot').focus();
+  await page.keyboard.press('F2');
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && { slot: i.closest('.wb-rail-row').dataset.slot, value: i.value,
+                  focused: document.activeElement === i };
+  }), 'F2 on a focused FILLED slot opens its editor, loaded and focused')
+    .toEqual({ slot: '60', value: 'AVAV', focused: true });
+  await page.locator('.wb-slot-input').press('Escape');
+  await page.waitForTimeout(300);
+
+  /* Escape still ABANDONS — it must not be undone by the blur that its own
+     re-render fires a tick later. */
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[20] = 'SPY';
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
   });
-  expect(scroll.after, 'a repaint does not scroll the page to refocus the box')
-    .toBe(scroll.before);
+  await page.locator('.wb-slots .wb-rail-row').nth(20).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slot-input').fill('ZZZZ');
+  await page.locator('.wb-slot-input').press('Escape');
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[20]),
+    'Escape keeps what was STORED, not what was typed').toBe('SPY');
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'and closes the editor').toBe(0);
 
-  // A SUPERSEDED load must not clobber a newer draft. Stub wbLoadSymbol to
-  // resolve false slowly, submit A, then type B while A is still in flight.
-  const raced = await page.evaluate(async () => {
-    const real = window.wbLoadSymbol;
-    let release;
-    window.wbLoadSymbol = () => new Promise(r => { release = () => r(false); });
-    const i = document.querySelector('.wb-rail-input');
-    i.focus();
-    i.value = 'AAA'; i.dispatchEvent(new Event('input', { bubbles: true }));
-    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    const j = document.querySelector('.wb-rail-input');
-    j.value = 'BBB'; j.dispatchEvent(new Event('input', { bubbles: true }));
-    release();                                    // A fails, late
-    await new Promise(r => setTimeout(r, 60));
-    window.wbLoadSymbol = real;
-    return document.querySelector('.wb-rail-input').value;
+  /* The boot re-fetch asks for the FILLED slots and nothing else. `syms` is 100
+     positional entries now, mostly empty on any real desk, so feeding it
+     straight into restoreStickySymbols' serial loop would fire ~100
+     deskQuote('') calls at quote-proxy on every live boot. Forced live because
+     the restore is a no-op in demo. */
+  const asked = await page.evaluate(async () => {
+    const realMode = DESK.mode, realQ = window.deskQuote;
+    const seen = [];
+    DESK.mode = 'live';
+    window.deskQuote = async (sym) => { seen.push(sym); return { ok: false }; };
+    try { await restoreStickySymbols(); }
+    finally { window.deskQuote = realQ; DESK.mode = realMode; }
+    return seen;
   });
-  expect(raced, 'a late failure from a superseded submit does not overwrite what is being typed')
-    .toBe('BBB');
-
-  /* And the SHARED loader must enforce ordering too. The rail's own generation
-     is checked in its `.then`, which runs after wbLoadSymbol has already pinned
-     and charted — so without ordering inside the loader a slow earlier lookup
-     lands late and STEALS THE CHART from the symbol asked for last. It also
-     covers the header Load box and roster clicks, which never touch wbRailGen.
-     The WINNER is a real already-loaded symbol so nothing synthetic is ever
-     charted; the loser is the synthetic one, which is the point — it must not
-     reach the chart at all. */
-  const stolen = await page.evaluate(async () => {
-    const realMode = DESK.mode; DESK.mode = 'live';
-    const realQuote = window.deskQuote;
-    const donor = wbState.data.symbols[Object.keys(wbState.data.symbols)[0]];
-    const winner = Object.keys(wbState.data.symbols)[1];      // real, already loaded
-    let releaseA;
-    window.deskQuote = () => new Promise(r => {
-      releaseA = () => r({ ok: true, series: JSON.parse(JSON.stringify(donor)) });
-    });
-    const pA = wbLoadSymbol('AAAA', { pin: true });            // slow, asked for FIRST
-    await wbLoadSymbol(winner, { pin: true });                 // already loaded, asked LAST
-    releaseA();
-    const late = await pA;                                     // lands after
-    window.deskQuote = realQuote; DESK.mode = realMode;
-    return { sym: wbState.sym, winner, late, pinned: readWbSticky().syms.includes('AAAA') };
-  });
-  expect(stolen.sym, 'a late-landing superseded lookup does not steal the chart from the newer one')
-    .toBe(stolen.winner);
-  expect(stolen.late, 'and reports itself cancelled rather than successful').toBe('superseded');
-  expect(stolen.pinned, 'nor pins itself into the column on the way past').toBe(false);
-
-  /* Cancellation is NOT failure. Both used to be `false`, so a rail load
-     superseded through another entry point was reported to the owner as
-     "No data for AAAA" and its draft restored — a request they replaced dressed
-     up as one that failed. Covers BOTH the rejected path (an await that throws
-     jumps straight to catch, skipping the guard above it) and supersession by a
-     bare wbPick, which is how the header charts an already-loaded ticker without
-     going through the loader at all.
-     Deliberately asserts the RETURN CONTRACT and the status line, and never lets
-     a synthetic symbol reach the chart: driving one through the real renderer
-     repaints a series with no intraday bars behind it, which is a fault in the
-     test rig rather than in what is being tested. */
-  const cancels = await page.evaluate(async () => {
-    const realMode = DESK.mode; DESK.mode = 'live';
-    const realSym = wbState.sym;
-    const realQuote = window.deskQuote;
-    const note = document.getElementById('wbInfo');
-    let rejectA;
-    window.deskQuote = () => new Promise((_, rej) => { rejectA = () => rej(new Error('offline')); });
-
-    const pA = wbLoadSymbol('AAAA', { pin: true });   // never resolves until we say
-    wbPick(realSym);                                  // what the header does — no loader
-    note.textContent = 'NEWER STATUS';
-    rejectA();
-    const rejected = await pA;
-
-    window.deskQuote = realQuote; DESK.mode = realMode;
-    return { rejected, note: note.textContent, sym: wbState.sym, realSym };
-  });
-  expect(cancels.rejected,
-    'a load superseded by a bare wbPick — and which then REJECTS — reports cancellation, not failure')
-    .toBe('superseded');
-  expect(cancels.note, 'and never paints its connectivity error over a newer status')
-    .toBe('NEWER STATUS');
-  expect(cancels.sym, 'nor pulls the chart back off what was selected')
-    .toBe(cancels.realSym);
-
-  /* And a cancellation must CLEAR the rail's own status. Returning early left
-     'Checking A…' on screen with nothing ever coming to replace it, so the
-     column claimed indefinitely to be checking a symbol that had been cancelled
-     (Codex P2, round 4). Driven through the real box so the message is set the
-     way a submit sets it. */
-  await inp.fill('');
-  await inp.pressSequentially('ZZZZ');
-  const stuck = await page.evaluate(async () => {
-    const realMode = DESK.mode; DESK.mode = 'live';
-    const realSym = wbState.sym;
-    const realQuote = window.deskQuote;
-    let settle;
-    window.deskQuote = () => new Promise(r => { settle = () => r({ ok: false, error: 'nope' }); });
-    document.querySelector('.wb-rail-input')
-      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await new Promise(r => setTimeout(r, 20));
-    const during = (document.querySelector('.wb-rail-msg') || {}).textContent || '';
-    wbPick(realSym);                       // supersede it from outside the rail
-    settle();
-    await new Promise(r => setTimeout(r, 60));
-    const after = (document.querySelector('.wb-rail-msg') || {}).textContent || '';
-    window.deskQuote = realQuote; DESK.mode = realMode;
-    return { during, after };
-  });
-  expect(stuck.during, 'the box says it is checking while the lookup is in flight')
-    .toMatch(/checking/i);
-  expect(stuck.after, 'and stops saying so once the lookup is cancelled')
-    .toBe('');
-
-
+  expect(asked.filter(s => !s), 'no empty slot is ever sent upstream').toEqual([]);
+  expect(asked.length, 'only the filled slots are re-fetched, not all 100').toBeLessThan(10);
   expect(errs, 'no page errors').toEqual([]);
 });
 
-/* S40 — the charts rail is two columns: a manual stack the owner types into and
-   a picker-headed roster column. Guards the RULES, not the pixels: what may
-   enter the manual column, in what order, and that both halves survive a
-   reload. The pinning rules are where this can silently go wrong — a rail that
-   quietly collects every symbol you look at, or one that keeps a typo forever,
-   both still "work" on screen. */
-test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
-  // Four submits, a roster switch, a full reload and a removal — the 30s
-  // default is spent before the reload lands, and the reload is where the
-  // persistence claim is actually tested.
+/* S40 — the charts rail's ROSTER half: the full-width picker over two columns
+   that start on the same line, every watchlist offered, a click charting
+   without writing anything into the SYMBOL column, and the chosen roster
+   surviving a reload. The SYMBOL column's own behaviour is S45's — the two were
+   one scenario until 2026-08-26, when that column stopped being a stack the
+   Load box pushed into and became 100 slots edited in place. */
+test('S40: charts rail — roster picker and column shape', async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto('./?demo=1');
   await expect(page.locator('#wbSidebar .wb-rail-col').first()).toBeVisible({ timeout: 15000 });
-
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
-  const manual = () => page.evaluate(() =>
-    /* Scoped to .wb-rail-row — the TYPED stack. The column also carries an
-       ACTIVE row naming the charted symbol (owner request 2026-08-26), which is
-       a .wb-side-btn but NOT inside a .wb-rail-row, so an unscoped
-       `.wb-rail-manual .wb-side-sym` now reports the charted symbol as if the
-       owner had typed it. */
-    [...document.querySelectorAll('.wb-rail-manual .wb-rail-row .wb-side-sym')].map(e => e.textContent));
 
-  // two columns, side by side, manual empty to start
+  // two columns, side by side, under a full-width picker
   expect(await page.locator('#wbSidebar .wb-rail-col').count(), 'two rail columns').toBe(2);
-  const [a, b] = await page.evaluate(() =>
-    [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.getBoundingClientRect().left));
-  expect(b, 'the columns sit side by side, not stacked').toBeGreaterThan(a);
-  expect(await manual(), 'the manual column starts empty').toEqual([]);
-  /* `.wb-rail-empty` appears twice in this column now — once under ACTIVE when
-     nothing is charted, once under TYPED. Match on the TYPED copy's text so the
-     assertion keeps meaning what it says. */
-  await expect(page.locator('.wb-rail-manual .wb-rail-empty', { hasText: /Type a ticker/i }),
-    'and says what fills it').toBeVisible();
-
-  // the picker offers the charts roster AND every watchlist. The watchlist feed
-  // lands after the charts one, so a picker with a single entry means the rail
-  // never repainted when the lists arrived.
-  const opts = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.textContent));
-  expect(opts[0], 'the charts roster is kept, per the owner ruling').toBe('Charts roster');
-  expect(opts.length, 'the watchlists join the picker once they load').toBeGreaterThan(1);
-
-  // typing stacks newest-first and never duplicates
-  for (const t of ['SPY', 'QQQ']) {
-    await page.fill('#wbSymInput', t);
-    await page.click('#wbSymForm button[type=submit]');
-    await page.waitForTimeout(350);
-  }
-  expect(await manual(), 'newest on top').toEqual(['QQQ', 'SPY']);
-  await page.fill('#wbSymInput', 'SPY');
-  await page.click('#wbSymForm button[type=submit]');
-  await page.waitForTimeout(350);
-  expect(await manual(), 're-typing lifts it back to the top rather than duplicating').toEqual(['SPY', 'QQQ']);
-
-  // a ticker that cannot be charted must NOT take a permanent seat
-  await page.fill('#wbSymInput', 'ZZZQ');
-  await page.click('#wbSymForm button[type=submit]');
-  await page.waitForTimeout(400);
-  expect(await manual(), 'an unchartable ticker is not pinned').toEqual(['SPY', 'QQQ']);
-
-  // switching the roster re-lists, and clicking a roster name charts it WITHOUT
-  // claiming the owner typed it — that column is typed-only by rule.
-  const vals = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.value));
-  await page.selectOption('.wb-rail-pick', vals[1]);
-  await page.waitForTimeout(400);
-  expect(await page.locator('.wb-rail-roster .wb-side-btn').count(), 'the chosen list is listed').toBeGreaterThan(0);
-  await page.locator('.wb-rail-roster .wb-side-btn').first().click();
-  await page.waitForTimeout(500);
-  expect(await manual(), 'a roster click does not enter the manual column').toEqual(['SPY', 'QQQ']);
-
-  // both halves persist
-  await page.reload();
-  await expect(page.locator('#wbSidebar .wb-rail-col').first()).toBeVisible({ timeout: 15000 });
-  await page.waitForTimeout(1200);
-  expect(await manual(), 'the manual stack survives a reload').toEqual(['SPY', 'QQQ']);
-  expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').value),
-    'and so does the chosen roster').toBe(vals[1]);
-
-  // Every ticker renders IN FULL. `AV…` names no instrument, and this rail is
-  // clicked by ticker, so an abbreviated symbol is the one truncation here
-  // that is a wrong value rather than a tight fit (owner report 2026-08-20).
-  //
-  // Budgeted against the VALIDATED LIMIT, not against what demo happens to
-  // hold. WL_SYM_RE accepts up to TEN characters and the roster already carries
-  // DX-Y.NYB and BTC-USD, so a five-character budget passed while a real
-  // supported symbol would have spilled under the × (Codex P2 — the 160px rail
-  // this replaced did exactly that). Measured in the MANUAL column because that
-  // is the tighter one: it carries the remove button as well as the ticker.
-  await page.setViewportSize({ width: 1512, height: 1000 });
-  await page.waitForTimeout(400);
-  expect(await page.locator('#wbSidebar .wb-side-pct').count(),
-    'the rail carries NO day-%: one number cannot contradict the header above it, '
-    + 'which is what it did twice (PRs #277 and this one)').toBe(0);
-  const fit = await page.evaluate(() => {
-    const row = document.querySelector('#wbSidebar .wb-rail-manual .wb-rail-row');
-    if (!row) return null;
-    const btn = row.querySelector('.wb-side-btn');
-    const sym = btn.querySelector('.wb-side-sym');
-    const x = row.querySelector('.wb-rail-x');
-    const cs = getComputedStyle(btn), cx = document.createElement('canvas').getContext('2d');
-    cx.font = getComputedStyle(sym).font;
-    const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-    return {
-      ticker: sym.textContent,
-      usable: btn.clientWidth - pad,
-      needTen: cx.measureText('WWWWWWWWWW').width,
-      xWidth: x ? x.offsetWidth : 0,
-      clipped: sym.scrollWidth > sym.clientWidth + 1,
-    };
+  const geom = await page.evaluate(() => {
+    const cols = [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.getBoundingClientRect());
+    const top = document.querySelector('.wb-rail-top').getBoundingClientRect();
+    return { left0: cols[0].left, left1: cols[1].left, top0: cols[0].top, top1: cols[1].top,
+             pickAbove: top.bottom <= cols[0].top + 1, pickW: top.width, railW: cols[0].width + cols[1].width };
   });
-  expect(fit, 'a manual rail row exists to measure').not.toBeNull();
-  expect(fit.clipped, `the rendered ticker is not clipped (row shows ${fit.ticker})`).toBe(false);
-  expect(fit.usable, 'the manual column seats a FULL 10-character symbol — the limit WL_SYM_RE '
-    + 'accepts, and DX-Y.NYB/BTC-USD are already in the roster').toBeGreaterThanOrEqual(fit.needTen);
+  expect(geom.left1, 'the columns sit side by side, not stacked').toBeGreaterThan(geom.left0);
+  expect(Math.abs(geom.top0 - geom.top1) < 2, 'and both start on the same line').toBe(true);
+  expect(geom.pickAbove, 'the picker spans the rail ABOVE them — at 68px it could not name its own list').toBe(true);
+  expect(geom.pickW, 'so it is wider than either column').toBeGreaterThan(geom.railW / 2);
 
-  // removal
-  /* Wait for the rail to STOP repainting before clicking. renderWatchlist ends
-     by repainting this rail, and the watchlist feed lands independently of the
-     charts feed, so on a slow mobile-emulated run the × can be detached and
-     rebuilt underneath the click — Playwright reports "element is not stable",
-     then "element was detached from the DOM". That is a race in the harness,
-     not a dead control, so it is waited out rather than forced: a `force`
-     click would skip the actionability check and stop this step proving the
-     button is genuinely clickable. */
-  /* Compares the NODE, not the markup. innerHTML equality is blind to node
-     REPLACEMENT — the rail rebuilds to byte-identical HTML, so the old check
-     passed while the button underneath was still being destroyed and recreated,
-     and the click then failed on exactly the race this gate exists to wait out
-     (iphone/WebKit, 2026-08-26). Asserting the same element survives a quiet
-     period is the precondition the click actually needs. */
-  await expect(async () => {
-    const a = await page.locator('.wb-rail-manual .wb-rail-x').first().elementHandle();
-    await page.waitForTimeout(250);
-    const b = await page.locator('.wb-rail-manual .wb-rail-x').first().elementHandle();
-    expect(await a.evaluate((x, y) => x === y, b), 'the × survives a quiet period').toBe(true);
-  }).toPass({ timeout: 20000 });
-  await page.locator('.wb-rail-manual .wb-rail-x').first().click();
-  await page.waitForTimeout(300);
-  expect(await manual(), 'the × removes one entry').toEqual(['QQQ']);
+  /* THE WIDTH BUDGET — the rule the whole rail width is derived from: a ticker
+     never abbreviates. Budgeted against the VALIDATOR's ten characters, never
+     against demo's three-letter names: a budget that admits less than
+     WL_SYM_RE accepts is not a budget, and DX-Y.NYB (8) is already in the
+     roster. The font is read off the LIVE element rather than hardcoded, so a
+     type-size change re-derives the expectation instead of needing a test
+     edit. */
+  const budget = await page.evaluate(() => {
+    const cv = document.createElement('canvas').getContext('2d');
+    const room = sel => {
+      const e = document.querySelector(sel);
+      if (!e) return null;
+      const c = getComputedStyle(e);
+      return e.clientWidth - parseFloat(c.paddingLeft) - parseFloat(c.paddingRight);
+    };
+    const probe = document.querySelector('.wb-slots .wb-side-sym');
+    const f = getComputedStyle(probe);
+    cv.font = `${f.fontWeight} ${f.fontSize} ${f.fontFamily}`;
+    const clipped = [...document.querySelectorAll('#wbSidebar .wb-side-sym')]
+      .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent);
+    return { ten: cv.measureText('WWWWWWWWWW').width,
+             symbol: room('.wb-slots .wb-slot'),
+             roster: room('.wb-rail-roster .wb-side-btn'),
+             clipped };
+  });
+  expect(budget.symbol, `a 10-char ticker needs ${budget.ten.toFixed(1)}px in the SYMBOL column`)
+    .toBeGreaterThanOrEqual(budget.ten);
+  expect(budget.roster, `and ${budget.ten.toFixed(1)}px in the ROSTER column`)
+    .toBeGreaterThanOrEqual(budget.ten);
+  expect(budget.clipped, 'and no rendered ticker is clipped — a clipped symbol names no instrument').toEqual([]);
+
+  /* The picker offers the charts roster AND every watchlist. The watchlist feed
+     lands after the charts one, so a picker with a single entry means the rail
+     never repainted when the lists arrived. */
+  const opts = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.textContent));
+  expect(opts[0], 'the charts roster is first').toBe('Charts roster');
+  expect(opts.length, 'and every watchlist follows it').toBeGreaterThan(1);
+  expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').title),
+    'the tooltip carries the human name, never the WB_ROSTER_CHARTS sentinel').toBe('Charts roster');
+
+  /* Clicking a ROSTER name charts it and writes NOTHING into the SYMBOL column
+     — nothing pins there any more (owner ruling 2026-08-26). */
+  const filled = () => page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])
+      .map((s, i) => (s ? i + ':' + s : null)).filter(Boolean).join('|'));
+  /* Read the FILLED slots, not the raw array: the store is written lazily (the
+     click itself persists the selected roster), so the array goes from absent
+     to 100 empty strings without a slot gaining anything. Comparing the raw
+     join would fail on that alone and say nothing about the guarantee. */
+  const slotsBefore = await filled();
+  const pick = page.locator('.wb-rail-roster .wb-side-btn').nth(1);
+  const picked = (await pick.textContent()).trim();
+  await pick.click();
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => wbState.sym), 'a roster click charts it').toBe(picked);
+  expect(await filled(), 'and leaves the SYMBOL slots untouched').toBe(slotsBefore);
+  expect(await page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || []).length),
+    'the column is still exactly 100 slots').toBe(100);
+
+  // the chosen roster survives a reload
+  const lists = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.value));
+  if (lists.length > 1) {
+    await page.selectOption('.wb-rail-pick', lists[1]);
+    await page.waitForTimeout(500);
+    await page.reload();
+    await expect(page.locator('.wb-rail-pick')).toBeVisible({ timeout: 15000 });
+    await page.waitForTimeout(1200);
+    expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').value),
+      'the chosen roster survives a reload').toBe(lists[1]);
+  }
   expect(errs, 'no page errors').toEqual([]);
 });
 
-/* S41 — watchlist categories run as COLUMNS, above the charts. The failure this
-   guards is silent: a `flex-basis` meant for a row governs HEIGHT in a column,
-   so the tiles would all render as fixed-height boxes and the panel would still
-   look plausible. */
 /* S42 — the watchlist columns are PAGED, not scrolled (owner request
    2026-08-20: reaching the end of a list carried straight on into the page).
    The rule this guards is that the wheel belongs to the PAGE everywhere on this
