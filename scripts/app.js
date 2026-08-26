@@ -4338,6 +4338,15 @@ const WB_STICKY_KEY = 'wb_sticky_v1';
    value re-fetched one quote-proxy call at a time on boot, so an unbounded list
    is an unbounded cold start. */
 const WB_MANUAL_MAX = 40;
+/* The rail's own symbol box lives across re-renders, which is why its draft and
+   its message are MODULE state rather than DOM state. renderWbSidebar wipes the
+   whole rail, and renderCharts rebuilds it on every animation frame of a chart
+   drag and on every feed poll — an input that kept its value only in the DOM
+   would be blanked mid-keystroke by a repaint the owner did not cause. Focus and
+   caret cannot be held this way (they belong to the live node), so those are
+   captured at the top of the render and restored at the bottom. */
+let wbRailDraft = '';
+let wbRailMsg = '';
 /* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
    deliberately not a plausible watchlist title, since the picker's values are
    otherwise list titles the owner types. */
@@ -5009,8 +5018,62 @@ function wbRailBtn(sym) {
   return b;
 }
 
+/* The rail's own symbol box (owner request 2026-08-26). ADDITIONAL to the
+   header Load box, which the owner chose to keep — so the two must behave
+   identically, and the only way to guarantee that is to share the one code
+   path: both validate with WL_SYM_RE and both add through
+   wbLoadSymbol(sym, {pin:true}).
+   THAT CALL IS WHAT MAKES A SYMBOL "VERIFIED" — it pins only once the symbol is
+   known to chart, on both the already-loaded and the post-fetch branch, so a
+   typo cannot take a seat in a column that persists across sessions. Never call
+   addWbStickySym from here; that would pin before the outcome is known. */
+function wbRailAddBox(data) {
+  const wrap = el('div', 'wb-rail-add');
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'wb-rail-input';
+  inp.placeholder = 'Add…';
+  inp.maxLength = 10;                 /* the length WL_SYM_RE accepts */
+  inp.autocomplete = 'off';
+  inp.spellcheck = false;
+  inp.setAttribute('aria-label', 'Add a symbol to the manual list');
+  inp.value = wbRailDraft;
+  /* Every keystroke into module state — see wbRailDraft. A repaint between two
+     characters would otherwise eat the first one. */
+  inp.addEventListener('input', () => { wbRailDraft = inp.value; });
+  inp.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();             /* the rail is inside no form; stop a stray submit */
+    if (!wbState) return;
+    const sym = inp.value.trim().toUpperCase();
+    if (!WL_SYM_RE.test(sym)) { wbRailMsg = 'Not a ticker'; wbRailDraft = inp.value; renderWbSidebar(data); return; }
+    /* Cleared OPTIMISTICALLY so the next ticker can be typed immediately, and
+       PUT BACK below if the symbol turns out not to chart — retyping a rejected
+       ticker to correct one character is the case this box exists to make fast. */
+    wbRailDraft = '';
+    wbRailMsg = 'Checking ' + sym + '…';
+    renderWbSidebar(data);
+    wbLoadSymbol(sym, { pin: true }).then(ok => {
+      wbRailMsg = ok ? '' : 'No data for ' + sym;
+      if (!ok) wbRailDraft = sym;
+      renderWbSidebar(data);
+    });
+  });
+  wrap.appendChild(inp);
+  if (wbRailMsg) wrap.appendChild(el('p', 'wb-rail-msg', wbRailMsg));
+  return wrap;
+}
+
 function renderWbSidebar(data) {
   const nav = document.getElementById('wbSidebar');
+  /* Focus and caret belong to the live node, so unlike the draft text they
+     cannot be held in module state — they are read off the OUTGOING input here
+     and reapplied to the incoming one at the end. Without this, typing in the
+     rail is interrupted by any repaint the owner did not cause: a chart drag
+     rebuilds this rail every animation frame, and the feed poll every 60s. */
+  const dying = nav.querySelector('.wb-rail-input');
+  const hadFocus = !!dying && document.activeElement === dying;
+  const caret = dying ? dying.selectionStart : null;
   while (nav.firstChild) nav.removeChild(nav.firstChild);
 
   /* `lists` stays — the ROSTER picker below is built from it. What went is the
@@ -5042,11 +5105,29 @@ function renderWbSidebar(data) {
   nav.appendChild(top);
   nav.appendChild(cols);
 
-  /* ── column A — manual ─────────────────────────────────────────────────── */
+  /* ── column A — symbol ─────────────────────────────────────────────────── */
+  /* Laid out to the owner's reference platform (request 2026-08-26, with a
+     screenshot): a SYMBOL header, an ACTIVE section naming what is charted right
+     now, a text box to type into, then the typed stack. Only this LEFT column
+     changed — the roster column beside it was explicitly left alone, since it
+     mirrors the watchlists. */
   const manual = column('wb-rail-manual');
   const mHead = el('div', 'wb-rail-head');
-  mHead.appendChild(el('span', 'wb-rail-title', 'MANUAL'));
+  mHead.appendChild(el('span', 'wb-rail-title', 'SYMBOL'));
   manual.appendChild(mHead);
+
+  /* ACTIVE — the charted symbol, stated rather than implied. The rail already
+     marked it with aria-current and a background, but that only answers "which
+     of these is it" and says nothing when the charted symbol is not in this
+     column at all (a roster click, or a reload restoring a symbol never typed). */
+  manual.appendChild(el('span', 'wb-rail-sub', 'ACTIVE'));
+  const activeSym = (wbState && wbState.sym) || '';
+  if (activeSym) manual.appendChild(wbRailBtn(activeSym));
+  else manual.appendChild(el('p', 'wb-rail-empty', 'None yet.'));
+
+  manual.appendChild(wbRailAddBox(data));
+
+  manual.appendChild(el('span', 'wb-rail-sub', 'TYPED'));
   const typed = readWbSticky().syms;
   if (!typed.length) {
     /* Says what fills the column rather than just that it is empty — this is
@@ -5115,6 +5196,17 @@ function renderWbSidebar(data) {
   }
   if (!syms.length) roster.appendChild(el('p', 'wb-rail-empty', 'This list has no symbols.'));
   for (const sym of syms) roster.appendChild(wbRailBtn(sym));
+
+  if (hadFocus) {
+    const born = nav.querySelector('.wb-rail-input');
+    if (born) {
+      born.focus();
+      /* Clamped: the draft can be SHORTER than it was (a submit clears it), and
+         a caret past the end throws in some engines and lands at 0 in others. */
+      const at = Math.min(caret == null ? born.value.length : caret, born.value.length);
+      try { born.setSelectionRange(at, at); } catch (_e) { /* not all input types allow it */ }
+    }
+  }
 }
 
 /* Graft TODAY's still-forming daily candle onto the EOD daily series so Pro 1
@@ -6498,10 +6590,14 @@ function wireCharts() {
     ev.preventDefault();
     if (!wbState) return;
     const sym = symInput.value.trim().toUpperCase();
-    if (!/^[A-Z0-9.^=-]{1,10}$/.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    /* `pin: true` — the Load box is the ONE place a symbol enters the manual
-       column, because typing it here is what "manual" means. The rail's own
-       roster clicks call this with pin off. */
+    /* The SHARED constant, not a third copy of the same pattern — the rail's own
+       box validates with it too, and two inputs that disagree about what a
+       ticker is would be a bug nobody could see from either one. */
+    if (!WL_SYM_RE.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
+    /* `pin: true` — typing a ticker is what "manual" means. This is now ONE of
+       TWO places that happens: the rail's own box (wbRailAddBox) is the other,
+       kept alongside this one by owner ruling 2026-08-26. Both route here so
+       they cannot drift. The rail's ROSTER clicks call this with pin off. */
     wbLoadSymbol(sym, { pin: true });
   });
 

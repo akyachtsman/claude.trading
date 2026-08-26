@@ -2614,6 +2614,75 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
     .toBe(before.labels[0]);
 });
 
+/* S45 — the SYMBOL column's own add box (owner request 2026-08-26, from a
+   reference-platform screenshot). Guards three things that are each invisible
+   when broken: the column's reading order, that a symbol is VERIFIED before it
+   is kept, and that the box survives a repaint it did not cause.
+   The repaint case is the one that matters most and the one no manual click
+   would ever find — renderCharts rebuilds this rail on every animation frame of
+   a chart drag and on every 60s feed poll, so an input holding its value only in
+   the DOM is blanked between two keystrokes. */
+test('S45: symbol column adds verified tickers and survives a repaint', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wb-rail-input')).toBeVisible({ timeout: 15000 });
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+
+  const typed = () => page.evaluate(() =>
+    [...document.querySelectorAll('.wb-rail-manual .wb-rail-row .wb-side-sym')].map(e => e.textContent));
+
+  // reading order matches the reference: title -> ACTIVE -> box -> TYPED
+  const order = await page.evaluate(() =>
+    [...document.querySelector('.wb-rail-manual').children].map(n => n.className.split(' ')[0]));
+  expect(order.indexOf('wb-rail-head'), 'SYMBOL title first').toBe(0);
+  expect(order.indexOf('wb-rail-sub'), 'ACTIVE label above the box').toBeLessThan(order.indexOf('wb-rail-add'));
+  expect(order.indexOf('wb-rail-add'), 'the box sits above the TYPED stack')
+    .toBeLessThan(order.lastIndexOf('wb-rail-sub'));
+
+  // the ROSTER column is explicitly untouched — it mirrors the watchlists
+  expect(await page.locator('.wb-rail-roster .wb-rail-input').count(),
+    'no add box in the roster column').toBe(0);
+
+  const inp = page.locator('.wb-rail-input');
+
+  // junk is refused, and the text is KEPT so a typo can be corrected in place
+  await inp.click();
+  await inp.type('!!');
+  await inp.press('Enter');
+  await expect(page.locator('.wb-rail-msg'), 'a refusal says why').toContainText(/not a ticker/i);
+  expect(await inp.inputValue(), 'the rejected text is kept, not discarded').toBe('!!');
+  expect(await typed(), 'junk never pins').toEqual([]);
+
+  // THE HAZARD: a repaint mid-entry must not eat the draft, the focus or the caret
+  await inp.fill('');
+  await inp.type('AVA');
+  const survived = await page.evaluate(() => {
+    renderWbSidebar(wbState.data);                  // what a chart drag does, every frame
+    const i = document.querySelector('.wb-rail-input');
+    return { value: i.value, focused: document.activeElement === i, caret: i.selectionStart };
+  });
+  expect(survived.value, 'half-typed text survives a repaint the owner did not cause').toBe('AVA');
+  expect(survived.focused, 'focus survives it too — otherwise typing stops mid-word').toBe(true);
+  expect(survived.caret, 'and the caret does not jump').toBe(3);
+
+  // a real symbol is verified, normalised, charted and pinned
+  const roster = await page.evaluate(() =>
+    [...document.querySelectorAll('.wb-rail-roster .wb-side-sym')].map(e => e.textContent));
+  const real = roster[1];
+  await inp.fill('');
+  await inp.type(real.toLowerCase());               // lower case on purpose
+  await inp.press('Enter');
+  await expect
+    .poll(async () => (await typed()).includes(real), { timeout: 10000 })
+    .toBe(true);
+  expect(await inp.inputValue(), 'the box clears, ready for the next ticker').toBe('');
+  await expect(page.locator('.wb-rail-manual .wb-side-btn .wb-side-sym').first(),
+    'ACTIVE names the symbol just charted').toHaveText(real);
+
+  expect(errs, 'no page errors').toEqual([]);
+});
+
 /* S40 — the charts rail is two columns: a manual stack the owner types into and
    a picker-headed roster column. Guards the RULES, not the pixels: what may
    enter the manual column, in what order, and that both halves survive a
@@ -2631,7 +2700,12 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
   const manual = () => page.evaluate(() =>
-    [...document.querySelectorAll('.wb-rail-manual .wb-side-sym')].map(e => e.textContent));
+    /* Scoped to .wb-rail-row — the TYPED stack. The column also carries an
+       ACTIVE row naming the charted symbol (owner request 2026-08-26), which is
+       a .wb-side-btn but NOT inside a .wb-rail-row, so an unscoped
+       `.wb-rail-manual .wb-side-sym` now reports the charted symbol as if the
+       owner had typed it. */
+    [...document.querySelectorAll('.wb-rail-manual .wb-rail-row .wb-side-sym')].map(e => e.textContent));
 
   // two columns, side by side, manual empty to start
   expect(await page.locator('#wbSidebar .wb-rail-col').count(), 'two rail columns').toBe(2);
@@ -2639,7 +2713,11 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
     [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.getBoundingClientRect().left));
   expect(b, 'the columns sit side by side, not stacked').toBeGreaterThan(a);
   expect(await manual(), 'the manual column starts empty').toEqual([]);
-  await expect(page.locator('.wb-rail-manual .wb-rail-empty'), 'and says what fills it').toBeVisible();
+  /* `.wb-rail-empty` appears twice in this column now — once under ACTIVE when
+     nothing is charted, once under TYPED. Match on the TYPED copy's text so the
+     assertion keeps meaning what it says. */
+  await expect(page.locator('.wb-rail-manual .wb-rail-empty', { hasText: /Type a ticker/i }),
+    'and says what fills it').toBeVisible();
 
   // the picker offers the charts roster AND every watchlist. The watchlist feed
   // lands after the charts one, so a picker with a single entry means the rail
