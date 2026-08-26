@@ -222,45 +222,91 @@ if (failed) exitCode = 1;
 // This is not a token pair and upstream cannot know about it, which is exactly
 // why taking that rewrite verbatim was the wrong call: the template can only
 // carry checks every project shares, so a project-specific assertion is
-// invisible to it and silently disappears on a verbatim install.
+// invisible to it and disappears silently on a verbatim install.
 //
 // Heatmap tile labels sit on a DYNAMIC piecewise colour ramp (owner directive
 // 2026-07-12), so there IS no static background to measure them against. AA is
 // carried instead by a solid halo stroke painted under every glyph
 // (`paint-order: stroke`, finviz-style), which makes the real contrast pair
-// HEAT.ink vs HEAT.halo — independent of the tile colour. Assert that pair.
+// HEAT.ink vs HEAT.halo — independent of the tile colour.
 //
-// STRICTER THAN THE VERSION IT RESTORES, in two places that were both fail-open:
-//   * the old test was /paint-order/ against the whole file, which the
-//     EXPLANATORY COMMENT beside the attribute satisfies on its own — so
-//     deleting the actual attribute left the check green. It now matches the
-//     rendered attribute form.
-//   * a HEAT block whose constants no longer parse used to print "skip" and
-//     pass. A skip here means the mechanism could not be looked at, not that it
-//     is fine. Absent HEAT entirely is still a legitimate skip (a project
-//     without the panel); present-but-unreadable is a failure.
+// ⚠️ EVERY PIECE IS READ FROM ITS OWN SCOPE, NEVER FILE-WIDE (Codex P2, second
+// round on #283). Both earlier versions searched all of scripts/app.js
+// independently for `ink:`, `halo:` and a paint-order attribute, so the gate
+// stayed green if ANY object declared matching colour keys or ANY other
+// renderer used that attribute — the "present but incomplete is a failure"
+// guarantee was only true while no such collision existed. Nothing warns you
+// when one appears. So: ink/halo are read from inside the HEAT block, and the
+// attribute is checked on the declaration that actually paints with HEAT.ink.
+//
+// Anchors are line-based on purpose. Brace-matching scripts/app.js means
+// tokenising JS — its regex literals contain quotes and braces, and a naive
+// scanner desyncs on them and then reports confidently about the wrong span.
+// A failed anchor is a LOUD cannot-check here, never a skip.
 const APP = 'scripts/app.js';
 if (existsSync(APP)) {
-  const app = readFileSync(APP, 'utf8');
-  if (!/\bconst HEAT\s*=/.test(app)) {
+  const lines = readFileSync(APP, 'utf8').split('\n');
+  const heatStarts = lines.reduce((a, l, i) => (/^const HEAT\s*=\s*\{/.test(l) ? [...a, i] : a), []);
+
+  const bail = (...msg) => {
+    console.error('\nFAIL  heatmap label ink / halo — CANNOT CHECK');
+    msg.forEach((m) => console.error('      ' + m));
+    console.error('      This gate is the ONLY thing asserting the heatmap labels meet AA.');
+    console.error('      Re-anchor it rather than deleting it.');
+    exitCode = 1;
+  };
+
+  if (heatStarts.length === 0) {
     console.log('\n  skip  heatmap label ink / halo — no HEAT block in scripts/app.js');
+  } else if (heatStarts.length > 1) {
+    bail(`${heatStarts.length} \`const HEAT = {\` declarations found; expected exactly 1.`);
   } else {
-    const hex = (k) => {
-      const m = app.match(new RegExp('\\b' + k + ":\\s*'(#[0-9a-fA-F]{6})'"));
-      return m ? m[1] : null;
-    };
-    const ink = hex('ink'), halo = hex('halo');
-    const haloed = /['"]paint-order['"]\s*:\s*['"]stroke['"]/.test(app);
-    if (!ink || !halo || !haloed) {
-      console.error('\nFAIL  heatmap label ink / halo — HEAT is present but the mechanism is incomplete');
-      console.error(`      HEAT.ink=${ink ?? 'NOT FOUND'}  HEAT.halo=${halo ?? 'NOT FOUND'}  paint-order:stroke=${haloed}`);
-      console.error('      The tile ramp is dynamic, so the halo stroke IS the AA mechanism here.');
-      console.error('      All three are required; any one missing leaves the labels unmeasurable.');
-      exitCode = 1;
+    // ── the HEAT block: its opening line to the next `};` at column 0 ────────
+    const from = heatStarts[0];
+    const close = lines.findIndex((l, i) => i > from && /^\};?/.test(l));
+    if (close === -1) {
+      bail('`const HEAT = {` never closes on a `};` at column 0.');
     } else {
-      const r = ratio(ink, halo), ok = r >= AA;
-      if (!ok) exitCode = 1;
-      console.log(`\n${ok ? '  ok' : 'FAIL'}  ${'heatmap label ink / halo'.padEnd(30)} ${r.toFixed(2)} (need ${AA.toFixed(1)})`);
+      const heat = lines.slice(from, close + 1).join('\n');
+      const key = (k) => {
+        const m = heat.match(new RegExp('(?:^|[\\s{,])' + k + ":\\s*'(#[0-9a-fA-F]{3,8})'"));
+        return m ? m[1] : null;
+      };
+      const ink = key('ink'), halo = key('halo');
+
+      // ── every declaration that PAINTS with HEAT.ink must also carry
+      //    HEAT.halo and the paint-order attribute. Bounded by the nearest
+      //    preceding `const`/`function` at column 0 and the next line that
+      //    closes at column 0 — the shape heatText already has.
+      const users = [];
+      lines.forEach((l, i) => {
+        if (!/HEAT\.ink\b/.test(l)) return;
+        let top = i; while (top > 0 && !/^(const|let|var|function|export)\b/.test(lines[top])) top--;
+        let bot = i; while (bot < lines.length - 1 && !/^[)}\]];?/.test(lines[bot])) bot++;
+        users.push({ line: i + 1, body: lines.slice(top, bot + 1).join('\n') });
+      });
+
+      const naked = users.filter(
+        (u) => !/HEAT\.halo\b/.test(u.body) || !/['"]paint-order['"]\s*:\s*['"]stroke['"]/.test(u.body)
+      );
+
+      if (!ink || !halo || users.length === 0 || naked.length) {
+        console.error('\nFAIL  heatmap label ink / halo — the AA mechanism is incomplete');
+        console.error(`      HEAT.ink=${ink ?? 'NOT IN THE HEAT BLOCK'}  HEAT.halo=${halo ?? 'NOT IN THE HEAT BLOCK'}`);
+        if (users.length === 0) {
+          console.error('      Nothing paints with HEAT.ink — the labels are no longer drawn with it,');
+          console.error('      so the pair below measures a colour the page does not use.');
+        }
+        naked.forEach((u) =>
+          console.error(`      scripts/app.js:${u.line} paints with HEAT.ink but lacks HEAT.halo and/or paint-order:stroke`)
+        );
+        console.error('      The tile ramp is dynamic, so the halo stroke IS the AA mechanism here.');
+        exitCode = 1;
+      } else {
+        const r = ratio(ink, halo), ok = r >= AA;
+        if (!ok) exitCode = 1;
+        console.log(`\n${ok ? '  ok' : 'FAIL'}  ${'heatmap label ink / halo'.padEnd(30)} ${r.toFixed(2)} (need ${AA.toFixed(1)})`);
+      }
     }
   }
 }
