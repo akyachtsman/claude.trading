@@ -177,7 +177,27 @@ This project's look is its own — established at kickoff via `/design-intake`
   the draft restore failed on the kept-text assertion, and disabling the focus
   restore failed on "focus survives it too". No manual click would ever find
   this — it needs a repaint mid-keystroke.
-  Sizing needed NO rail width back: the 78px column leaves ~70px of text room,
+  **FOUR races and truncations were found in review and are all guarded by S45**
+  (Codex P2 ×4 on the first cut; each was proved to bite by falsifying it).
+  (a) **A superseded load must not clobber a newer draft.** The box stays usable
+  while a quote is pending — that is what clearing optimistically buys — so
+  "submit A, type B, A fails" is ORDINARY USE. `wbRailGen` is bumped by every
+  keystroke and every submit, and a late callback whose generation is stale
+  returns WITHOUT touching anything: dropping the whole callback, not just the
+  draft restore, because a stale `No data for A` would otherwise repaint over a
+  newer status. Falsified: `AAA` overwrote `BBB`.
+  (b) **`maxLength` is 24, NOT the validator's 10.** It caps the RAW value and
+  the browser applies it before any handler runs, so a 10-cap truncates a pasted
+  ` ABCDEFGHIJ ` to nine characters — which can be a real but DIFFERENT
+  instrument, the wrong-number-wearing-a-plausible-face fault this desk keeps
+  hitting. `WL_SYM_RE` stays the authority after trimming.
+  (c) **The WHOLE selection is preserved**, not just `selectionStart` — restoring
+  a collapsed caret makes the next keystroke INSERT where it should REPLACE, so a
+  repaint the owner did not cause silently changes what typing does.
+  (d) **`focus({preventScroll: true})` is load-bearing, not a nicety.** The rail
+  repaints on the 60s poll, so a plain `focus()` yanks an owner who had scrolled
+  away back to the charts. Measured on falsification: the page jumped **1616px**.
+    Sizing needed NO rail width back: the 78px column leaves ~70px of text room,
   about 11 characters at 10px mono, past the ten `WL_SYM_RE` accepts.
   `.wb-rail-input` carries **`min-width: 0`** because an input's default
   intrinsic width (~20 characters) would otherwise push the column past its flex

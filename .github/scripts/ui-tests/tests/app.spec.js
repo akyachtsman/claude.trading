@@ -2680,6 +2680,67 @@ test('S45: symbol column adds verified tickers and survives a repaint', async ({
   await expect(page.locator('.wb-rail-manual .wb-side-btn .wb-side-sym').first(),
     'ACTIVE names the symbol just charted').toHaveText(real);
 
+  /* ── the four races and truncations Codex found on the first cut ──────── */
+
+  // A padded FULL-LENGTH ticker must not lose its last character. maxLength caps
+  // the RAW value before any handler runs, so a 10-cap would truncate " ……J " to
+  // nine characters — which can be a real but DIFFERENT instrument.
+  const padded = ' ABCDEFGHIJ ';
+  await inp.fill('');
+  await inp.evaluate((el, v) => {
+    el.value = v; el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, padded);
+  expect((await inp.inputValue()).trim(), 'a padded 10-char ticker survives the raw length cap')
+    .toBe('ABCDEFGHIJ');
+
+  // A SELECTION must survive a repaint, or the next keystroke inserts where it
+  // should replace.
+  await inp.fill('');
+  await inp.type('ABCD');
+  const selKept = await page.evaluate(() => {
+    const i = document.querySelector('.wb-rail-input');
+    i.setSelectionRange(1, 3);
+    renderWbSidebar(wbState.data);
+    const j = document.querySelector('.wb-rail-input');
+    return { start: j.selectionStart, end: j.selectionEnd };
+  });
+  expect(selKept, 'the whole selection survives a repaint, not just its start')
+    .toEqual({ start: 1, end: 3 });
+
+  // Restoring focus must NOT scroll the page. The rail repaints on a 60s poll,
+  // so a plain focus() would yank an owner who had scrolled away back to Charts.
+  const scroll = await page.evaluate(async () => {
+    const i = document.querySelector('.wb-rail-input');
+    i.focus();
+    window.scrollTo(0, 0);
+    const before = window.scrollY;
+    renderWbSidebar(wbState.data);
+    await new Promise(r => requestAnimationFrame(r));
+    return { before, after: window.scrollY };
+  });
+  expect(scroll.after, 'a repaint does not scroll the page to refocus the box')
+    .toBe(scroll.before);
+
+  // A SUPERSEDED load must not clobber a newer draft. Stub wbLoadSymbol to
+  // resolve false slowly, submit A, then type B while A is still in flight.
+  const raced = await page.evaluate(async () => {
+    const real = window.wbLoadSymbol;
+    let release;
+    window.wbLoadSymbol = () => new Promise(r => { release = () => r(false); });
+    const i = document.querySelector('.wb-rail-input');
+    i.focus();
+    i.value = 'AAA'; i.dispatchEvent(new Event('input', { bubbles: true }));
+    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const j = document.querySelector('.wb-rail-input');
+    j.value = 'BBB'; j.dispatchEvent(new Event('input', { bubbles: true }));
+    release();                                    // A fails, late
+    await new Promise(r => setTimeout(r, 60));
+    window.wbLoadSymbol = real;
+    return document.querySelector('.wb-rail-input').value;
+  });
+  expect(raced, 'a late failure from a superseded submit does not overwrite what is being typed')
+    .toBe('BBB');
+
   expect(errs, 'no page errors').toEqual([]);
 });
 

@@ -4347,6 +4347,13 @@ const WB_MANUAL_MAX = 40;
    captured at the top of the render and restored at the bottom. */
 let wbRailDraft = '';
 let wbRailMsg = '';
+/* Bumped by every keystroke AND every submit, so an in-flight lookup can tell
+   whether it is still the newest thing the owner did. The box is deliberately
+   usable while a quote is pending — that is what clearing optimistically buys —
+   so "submit A, type B, A fails" is ORDINARY USE, not an edge case, and without
+   this the late callback restores A over B or repaints an older status on top of
+   a newer one (Codex P2). */
+let wbRailGen = 0;
 /* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
    deliberately not a plausible watchlist title, since the picker's values are
    otherwise list titles the owner types. */
@@ -5033,14 +5040,20 @@ function wbRailAddBox(data) {
   inp.type = 'text';
   inp.className = 'wb-rail-input';
   inp.placeholder = 'Add…';
-  inp.maxLength = 10;                 /* the length WL_SYM_RE accepts */
+  /* NOT 10, the validator's post-trim length. maxLength caps the RAW value, and
+     the browser applies it before any handler runs — so pasting a padded
+     " ABCDEFGHIJ " would be truncated to 10 raw characters, losing the ticker's
+     LAST character and leaving a 9-character string that may well be a real but
+     DIFFERENT instrument (Codex P2). Room for surrounding whitespace, with
+     WL_SYM_RE still the authority on what is accepted after trimming. */
+  inp.maxLength = 24;
   inp.autocomplete = 'off';
   inp.spellcheck = false;
   inp.setAttribute('aria-label', 'Add a symbol to the manual list');
   inp.value = wbRailDraft;
   /* Every keystroke into module state — see wbRailDraft. A repaint between two
      characters would otherwise eat the first one. */
-  inp.addEventListener('input', () => { wbRailDraft = inp.value; });
+  inp.addEventListener('input', () => { wbRailDraft = inp.value; wbRailGen++; });
   inp.addEventListener('keydown', ev => {
     if (ev.key !== 'Enter') return;
     ev.preventDefault();             /* the rail is inside no form; stop a stray submit */
@@ -5052,8 +5065,13 @@ function wbRailAddBox(data) {
        ticker to correct one character is the case this box exists to make fast. */
     wbRailDraft = '';
     wbRailMsg = 'Checking ' + sym + '…';
+    const gen = ++wbRailGen;
     renderWbSidebar(data);
     wbLoadSymbol(sym, { pin: true }).then(ok => {
+      /* Superseded — the owner has typed or submitted since. Dropping the whole
+         callback (not just the draft restore) is deliberate: a stale 'No data
+         for A' would otherwise overwrite a newer status too. */
+      if (gen !== wbRailGen) return;
       wbRailMsg = ok ? '' : 'No data for ' + sym;
       if (!ok) wbRailDraft = sym;
       renderWbSidebar(data);
@@ -5073,7 +5091,13 @@ function renderWbSidebar(data) {
      rebuilds this rail every animation frame, and the feed poll every 60s. */
   const dying = nav.querySelector('.wb-rail-input');
   const hadFocus = !!dying && document.activeElement === dying;
-  const caret = dying ? dying.selectionStart : null;
+  /* The WHOLE selection, not just its start. Restoring a collapsed caret would
+     silently drop a range the owner had selected, so their next keystroke would
+     INSERT where it should REPLACE (Codex P2) — a repaint they did not cause
+     quietly changing what typing does. */
+  const selRange = dying
+    ? { start: dying.selectionStart, end: dying.selectionEnd, dir: dying.selectionDirection }
+    : null;
   while (nav.firstChild) nav.removeChild(nav.firstChild);
 
   /* `lists` stays — the ROSTER picker below is built from it. What went is the
@@ -5200,11 +5224,18 @@ function renderWbSidebar(data) {
   if (hadFocus) {
     const born = nav.querySelector('.wb-rail-input');
     if (born) {
-      born.focus();
+      /* preventScroll is load-bearing, not a nicety: this rail repaints on a
+         60s feed poll, so an owner who focused the box and then scrolled away to
+         another panel would be YANKED back to the charts by a refocus they never
+         asked for (Codex P2). Preserving editing state must not move the page. */
+      born.focus({ preventScroll: true });
       /* Clamped: the draft can be SHORTER than it was (a submit clears it), and
-         a caret past the end throws in some engines and lands at 0 in others. */
-      const at = Math.min(caret == null ? born.value.length : caret, born.value.length);
-      try { born.setSelectionRange(at, at); } catch (_e) { /* not all input types allow it */ }
+         an offset past the end throws in some engines and lands at 0 in others. */
+      const cap = born.value.length;
+      const a = Math.min(selRange && selRange.start != null ? selRange.start : cap, cap);
+      const b = Math.min(selRange && selRange.end != null ? selRange.end : a, cap);
+      try { born.setSelectionRange(a, Math.max(a, b), (selRange && selRange.dir) || 'none'); }
+      catch (_e) { /* not every input type allows a selection range */ }
     }
   }
 }
