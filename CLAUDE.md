@@ -147,7 +147,95 @@ This project's look is its own — established at kickoff via `/design-intake`
   default and were simply wrong once the two rows stopped being the same shape.
   `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
   decoration: two classic 15px bars would eat most of what the width buys.
-  **The ROSTER PICKER is a FULL-WIDTH HEADER over both columns**, not the roster
+  **The LEFT column is a SYMBOL column with its own add box** (owner request
+  2026-08-26, from a reference-platform screenshot): title `SYMBOL`, an `ACTIVE`
+  section naming the charted symbol, a text input, then the `TYPED` stack. Only
+  the LEFT column changed — the roster column beside it was explicitly left
+  alone, since it mirrors the watchlists. `ACTIVE` states what the rail
+  previously only implied with `aria-current`, and answers the case that marking
+  could not: a symbol charted from the roster, or restored on reload, that is not
+  in this column at all. The header **Load box stays** (owner ruling, asked and
+  answered) — so there are now TWO ways to type a ticker, and they share ONE code
+  path on purpose: both validate with the shared `WL_SYM_RE` (the submit handler
+  had an inline third copy of that regex; it is gone) and both add through
+  **`wbLoadSymbol(sym, {pin:true})`**, which is what "verified" means — it pins
+  only once the symbol is known to chart, on both the already-loaded and
+  post-fetch branches, so a typo cannot take a seat in a column that persists.
+  Never call `addWbStickySym` from the box. A refused entry KEEPS its text so one
+  character can be corrected in place; a successful one clears optimistically and
+  is put back if the symbol turns out not to chart.
+  **The load-bearing part is surviving a repaint the owner did not cause.**
+  `renderWbSidebar` wipes the whole rail, and `renderCharts` rebuilds it on every
+  animation frame of a chart drag and on every 60s feed poll — an input holding
+  its value only in the DOM is blanked between two keystrokes. The draft and the
+  message are therefore **module state** (`wbRailDraft` / `wbRailMsg`), while
+  focus and caret — which belong to the live node and cannot be held that way —
+  are read off the OUTGOING input at the top of the render and reapplied to the
+  incoming one at the end, with the caret clamped (a submit shortens the value,
+  and a caret past the end throws in some engines and silently lands at 0 in
+  others). **S45 guards all of it and both halves were proved to bite**: breaking
+  the draft restore failed on the kept-text assertion, and disabling the focus
+  restore failed on "focus survives it too". No manual click would ever find
+  this — it needs a repaint mid-keystroke.
+  **FOUR races and truncations were found in review and are all guarded by S45**
+  (Codex P2 ×4 on the first cut; each was proved to bite by falsifying it).
+  (a) **A superseded load must not clobber a newer draft, NOR STEAL THE CHART.**
+  The box stays usable while a quote is pending — that is what clearing
+  optimistically buys — so "submit A, type B, A fails" is ORDINARY USE. This took
+  TWO rounds and the split matters. `wbRailGen` (bumped by every keystroke and
+  every submit) guards the RAIL's own callback, and a stale one returns without
+  touching anything — the whole callback, not just the draft restore, since a
+  stale `No data for A` would otherwise repaint over a newer status. But that
+  check runs in the rail's `.then`, **after `wbLoadSymbol` has already called
+  `pin()` and `wbPick()`** — so a slow earlier lookup landing late still switched
+  the chart to itself and pinned it, and the rail's generation could not see the
+  header Load box or a roster click at all. Ordering therefore ALSO lives in the
+  shared loader as **`wbLoadGen`**, bumped by every caller and checked before any
+  side effect; a superseded load returns silently, since a request the owner
+  replaced is not a failure to report. Both were falsified: without the rail
+  guard `AAA` overwrote `BBB`; without the loader guard the chart ended on
+  **AAAA** when the owner had asked for **BBBB** last. Two further consequences,
+  both owner-visible: **cancellation is its own outcome** (`WB_SUPERSEDED`)
+  rather than sharing `false` with failure — a rail load cancelled from the
+  header otherwise reported `No data for A` and restored its draft, a request the
+  owner REPLACED dressed as one that FAILED; and the cancelled callback must
+  still **clear `wbRailMsg`**, since a bare `return` left `Checking A…` on screen
+  with nothing coming to replace it, so the column claimed indefinitely to be
+  checking a cancelled symbol. It clears only while that submission still owns
+  the message, or a newer `Checking B…` would be wiped by an older cancellation.
+  The generation lives in **`wbPick`**, not the loader: that is the documented
+  single choke point for switching the active symbol, and some paths reach it
+  WITHOUT the loader (the header box charts an already-loaded ticker by calling
+  it directly), so bumping only in `wbLoadSymbol` left those invisible. The guard
+  also sits on the **rejected** path — an `await` that throws jumps straight to
+  `catch`, skipping the check above it.
+  (b) **`maxLength` is 24, NOT the validator's 10.** It caps the RAW value and
+  the browser applies it before any handler runs, so a 10-cap truncates a pasted
+  ` ABCDEFGHIJ ` to nine characters — which can be a real but DIFFERENT
+  instrument, the wrong-number-wearing-a-plausible-face fault this desk keeps
+  hitting. `WL_SYM_RE` stays the authority after trimming.
+  (c) **The WHOLE selection is preserved** — both offsets AND `selectionDirection`,
+  not just `selectionStart`. A collapsed caret makes the next keystroke INSERT
+  where it should REPLACE, and a lost direction changes which end Shift+Arrow
+  extends — a repaint the owner did not cause silently changing what typing does.
+  **TWO of S45's assertions were INERT on the first cut and Codex caught both**
+  (round 2) — worth recording because the failure mode is a guard that reads
+  correct and tests nothing. The maxLength check assigned `el.value` from script,
+  which BYPASSES the browser's `maxlength` entirely, so it stayed green with the
+  cap regressed to 10; it now types the value through real key events, and
+  falsifying it yields `Expected "ABCDEFGHIJ", Received "ABCDEFGHI"` — the
+  wrong-instrument fault itself. The selection check asserted the two offsets but
+  not the direction, so deleting the `selectionDirection` capture left it green;
+  it now makes a BACKWARD selection and asserts direction too.
+    (d) **`focus({preventScroll: true})` is load-bearing, not a nicety.** The rail
+  repaints on the 60s poll, so a plain `focus()` yanks an owner who had scrolled
+  away back to the charts. Measured on falsification: the page jumped **1616px**.
+    Sizing needed NO rail width back: the 78px column leaves ~70px of text room,
+  about 11 characters at 10px mono, past the ten `WL_SYM_RE` accepts.
+  `.wb-rail-input` carries **`min-width: 0`** because an input's default
+  intrinsic width (~20 characters) would otherwise push the column past its flex
+  basis and undo the 154px rail.
+    **The ROSTER PICKER is a FULL-WIDTH HEADER over both columns**, not the roster
   column's own head (Codex P2, 2026-08-25). Inside a 68px column it had ~**45px**
   of text room against the ~**82px** its own default "Charts roster" label needs,
   so 6 of demo's 8 list names truncated and the control could no longer answer
@@ -1401,6 +1489,7 @@ run for real against the dedicated project on every PR.
 | S34 | Long-term steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
+| S45 | Symbol column add box | With `?demo=1`, `.wb-rail-manual` reads title → `ACTIVE` → the box → `TYPED` in that order and the ROSTER column has NO box; junk is refused with a reason and its text is KEPT so a typo can be corrected in place, and never pins; a symbol typed in LOWER case is normalised, verified, charted, pinned into `TYPED`, named under `ACTIVE`, and the box clears; and — the part no manual click finds — after `renderWbSidebar` is called mid-entry the half-typed text, the focus AND the caret all survive | An add box in the roster column, a typo taking a seat (the pin ran before the symbol was known to chart), a refusal that discards what was typed, or a draft/focus/caret lost to a repaint — the rail is rebuilt every animation frame of a chart drag and every 60s poll, so this blanks the box between two keystrokes |
 | S40 | Charts rail — manual + roster | With `?demo=1`, `#wbSidebar` renders TWO columns side by side INSIDE `.wb-rail-cols`, both starting on the same line, under a FULL-WIDTH `.wb-rail-top` carrying the picker (it is no longer the roster column's own head — at 68px it could not name the list it had selected); the manual one starts empty and says what fills it; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed); typing stacks newest-first and re-typing lifts rather than duplicates; an UNCHARTABLE ticker is not pinned; clicking a ROSTER name charts it without entering the manual column; both the stack and the chosen roster survive a reload; the `×` removes one | A rail that quietly collects every symbol looked at, a typo taking a permanent seat in a persisted column, a picker stuck on one entry, either half lost on reload, or the two columns starting on different lines (the roster column's `ROSTER` title is what replaced the picker as its head) |
 | S42 | Watchlist column paging | With `?demo=1`, NO column is wheel-scrollable (`overflow` hidden on both axes) and none carries `overscroll-behavior` in any form; the wheel over a column moves the PAGE; a ▲/▼ footer renders on exactly the columns that overflow and nowhere else; the paged column's band head is no taller than its neighbours; the ▲ is dead at the top, the ▼ names how many are still below and that count FALLS as you step, and the ▼ dies at the bottom with the last tiles on screen. Then forced live: resting a DRAG on the ▼ steps the column | A column that still eats the wheel, a pager on a list that fits (or missing from one that does not), a control that grows the band head — which pushes every column's tiles down, not just its own — a count that never changes (it is counting the list, not what is hidden), or a drag that cannot reach past the visible rows, leaving most of a long list undroppable |
 | S41 | Watchlists are vertical columns | With `?demo=1`, tiles STACK downward inside a category and the categories sit SIDE BY SIDE; no `role=tab` exists (the columns are the navigation); the panel sits above `.area-charts` and shares its left edge; no sideways page scroll and no inner crop on `.wl-strip`; and in live NO reorder control is a bare `←`/`‹` | Tiles rendering as fixed-height boxes (a row's `flex-basis` governs HEIGHT in a column — it still looks plausible), a panel inset from the chart below it, or a reorder arrow impersonating a back button, which is what the UI crawler's back selector grabs |

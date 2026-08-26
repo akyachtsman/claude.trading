@@ -2614,6 +2614,236 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
     .toBe(before.labels[0]);
 });
 
+/* S45 — the SYMBOL column's own add box (owner request 2026-08-26, from a
+   reference-platform screenshot). Guards three things that are each invisible
+   when broken: the column's reading order, that a symbol is VERIFIED before it
+   is kept, and that the box survives a repaint it did not cause.
+   The repaint case is the one that matters most and the one no manual click
+   would ever find — renderCharts rebuilds this rail on every animation frame of
+   a chart drag and on every 60s feed poll, so an input holding its value only in
+   the DOM is blanked between two keystrokes. */
+test('S45: symbol column adds verified tickers and survives a repaint', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('./?demo=1');
+  await expect(page.locator('.wb-rail-input')).toBeVisible({ timeout: 15000 });
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+
+  const typed = () => page.evaluate(() =>
+    [...document.querySelectorAll('.wb-rail-manual .wb-rail-row .wb-side-sym')].map(e => e.textContent));
+
+  // reading order matches the reference: title -> ACTIVE -> box -> TYPED
+  const order = await page.evaluate(() =>
+    [...document.querySelector('.wb-rail-manual').children].map(n => n.className.split(' ')[0]));
+  expect(order.indexOf('wb-rail-head'), 'SYMBOL title first').toBe(0);
+  expect(order.indexOf('wb-rail-sub'), 'ACTIVE label above the box').toBeLessThan(order.indexOf('wb-rail-add'));
+  expect(order.indexOf('wb-rail-add'), 'the box sits above the TYPED stack')
+    .toBeLessThan(order.lastIndexOf('wb-rail-sub'));
+
+  // the ROSTER column is explicitly untouched — it mirrors the watchlists
+  expect(await page.locator('.wb-rail-roster .wb-rail-input').count(),
+    'no add box in the roster column').toBe(0);
+
+  const inp = page.locator('.wb-rail-input');
+
+  // junk is refused, and the text is KEPT so a typo can be corrected in place
+  await inp.click();
+  await inp.type('!!');
+  await inp.press('Enter');
+  await expect(page.locator('.wb-rail-msg'), 'a refusal says why').toContainText(/not a ticker/i);
+  expect(await inp.inputValue(), 'the rejected text is kept, not discarded').toBe('!!');
+  expect(await typed(), 'junk never pins').toEqual([]);
+
+  // THE HAZARD: a repaint mid-entry must not eat the draft, the focus or the caret
+  await inp.fill('');
+  await inp.type('AVA');
+  const survived = await page.evaluate(() => {
+    renderWbSidebar(wbState.data);                  // what a chart drag does, every frame
+    const i = document.querySelector('.wb-rail-input');
+    return { value: i.value, focused: document.activeElement === i, caret: i.selectionStart };
+  });
+  expect(survived.value, 'half-typed text survives a repaint the owner did not cause').toBe('AVA');
+  expect(survived.focused, 'focus survives it too — otherwise typing stops mid-word').toBe(true);
+  expect(survived.caret, 'and the caret does not jump').toBe(3);
+
+  // a real symbol is verified, normalised, charted and pinned
+  const roster = await page.evaluate(() =>
+    [...document.querySelectorAll('.wb-rail-roster .wb-side-sym')].map(e => e.textContent));
+  const real = roster[1];
+  await inp.fill('');
+  await inp.type(real.toLowerCase());               // lower case on purpose
+  await inp.press('Enter');
+  await expect
+    .poll(async () => (await typed()).includes(real), { timeout: 10000 })
+    .toBe(true);
+  expect(await inp.inputValue(), 'the box clears, ready for the next ticker').toBe('');
+  await expect(page.locator('.wb-rail-manual .wb-side-btn .wb-side-sym').first(),
+    'ACTIVE names the symbol just charted').toHaveText(real);
+
+  /* ── the four races and truncations Codex found on the first cut ──────── */
+
+  // A padded FULL-LENGTH ticker must not lose its last character. maxLength caps
+  // the RAW value before any handler runs, so a 10-cap would truncate " ……J " to
+  // nine characters — which can be a real but DIFFERENT instrument.
+  /* TYPED, not assigned. Setting `el.value` from script BYPASSES the browser's
+     maxlength entirely, so an assignment-based check stays green even if the cap
+     regresses to 10 — it would guard nothing (Codex P2, round 2). Real key events
+     are gated by maxlength, which is the behaviour under test. */
+  await inp.fill('');
+  await inp.pressSequentially(' ABCDEFGHIJ ');
+  expect((await inp.inputValue()).trim(), 'a padded 10-char ticker survives the raw length cap')
+    .toBe('ABCDEFGHIJ');
+
+  // A SELECTION must survive a repaint, or the next keystroke inserts where it
+  // should replace.
+  /* BACKWARD on purpose. Direction decides which end Shift+Arrow extends, so
+     asserting the two offsets alone would stay green with the selectionDirection
+     capture removed — reintroducing the editing change on every repaint (Codex
+     P2, round 2). */
+  await inp.fill('');
+  await inp.pressSequentially('ABCD');
+  const selKept = await page.evaluate(() => {
+    const i = document.querySelector('.wb-rail-input');
+    i.setSelectionRange(1, 3, 'backward');
+    renderWbSidebar(wbState.data);
+    const j = document.querySelector('.wb-rail-input');
+    return { start: j.selectionStart, end: j.selectionEnd, dir: j.selectionDirection };
+  });
+  expect(selKept, 'the whole selection survives a repaint — both offsets AND its direction')
+    .toEqual({ start: 1, end: 3, dir: 'backward' });
+
+  // Restoring focus must NOT scroll the page. The rail repaints on a 60s poll,
+  // so a plain focus() would yank an owner who had scrolled away back to Charts.
+  const scroll = await page.evaluate(async () => {
+    const i = document.querySelector('.wb-rail-input');
+    i.focus();
+    window.scrollTo(0, 0);
+    const before = window.scrollY;
+    renderWbSidebar(wbState.data);
+    await new Promise(r => requestAnimationFrame(r));
+    return { before, after: window.scrollY };
+  });
+  expect(scroll.after, 'a repaint does not scroll the page to refocus the box')
+    .toBe(scroll.before);
+
+  // A SUPERSEDED load must not clobber a newer draft. Stub wbLoadSymbol to
+  // resolve false slowly, submit A, then type B while A is still in flight.
+  const raced = await page.evaluate(async () => {
+    const real = window.wbLoadSymbol;
+    let release;
+    window.wbLoadSymbol = () => new Promise(r => { release = () => r(false); });
+    const i = document.querySelector('.wb-rail-input');
+    i.focus();
+    i.value = 'AAA'; i.dispatchEvent(new Event('input', { bubbles: true }));
+    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const j = document.querySelector('.wb-rail-input');
+    j.value = 'BBB'; j.dispatchEvent(new Event('input', { bubbles: true }));
+    release();                                    // A fails, late
+    await new Promise(r => setTimeout(r, 60));
+    window.wbLoadSymbol = real;
+    return document.querySelector('.wb-rail-input').value;
+  });
+  expect(raced, 'a late failure from a superseded submit does not overwrite what is being typed')
+    .toBe('BBB');
+
+  /* And the SHARED loader must enforce ordering too. The rail's own generation
+     is checked in its `.then`, which runs after wbLoadSymbol has already pinned
+     and charted — so without ordering inside the loader a slow earlier lookup
+     lands late and STEALS THE CHART from the symbol asked for last. It also
+     covers the header Load box and roster clicks, which never touch wbRailGen.
+     The WINNER is a real already-loaded symbol so nothing synthetic is ever
+     charted; the loser is the synthetic one, which is the point — it must not
+     reach the chart at all. */
+  const stolen = await page.evaluate(async () => {
+    const realMode = DESK.mode; DESK.mode = 'live';
+    const realQuote = window.deskQuote;
+    const donor = wbState.data.symbols[Object.keys(wbState.data.symbols)[0]];
+    const winner = Object.keys(wbState.data.symbols)[1];      // real, already loaded
+    let releaseA;
+    window.deskQuote = () => new Promise(r => {
+      releaseA = () => r({ ok: true, series: JSON.parse(JSON.stringify(donor)) });
+    });
+    const pA = wbLoadSymbol('AAAA', { pin: true });            // slow, asked for FIRST
+    await wbLoadSymbol(winner, { pin: true });                 // already loaded, asked LAST
+    releaseA();
+    const late = await pA;                                     // lands after
+    window.deskQuote = realQuote; DESK.mode = realMode;
+    return { sym: wbState.sym, winner, late, pinned: readWbSticky().syms.includes('AAAA') };
+  });
+  expect(stolen.sym, 'a late-landing superseded lookup does not steal the chart from the newer one')
+    .toBe(stolen.winner);
+  expect(stolen.late, 'and reports itself cancelled rather than successful').toBe('superseded');
+  expect(stolen.pinned, 'nor pins itself into the column on the way past').toBe(false);
+
+  /* Cancellation is NOT failure. Both used to be `false`, so a rail load
+     superseded through another entry point was reported to the owner as
+     "No data for AAAA" and its draft restored — a request they replaced dressed
+     up as one that failed. Covers BOTH the rejected path (an await that throws
+     jumps straight to catch, skipping the guard above it) and supersession by a
+     bare wbPick, which is how the header charts an already-loaded ticker without
+     going through the loader at all.
+     Deliberately asserts the RETURN CONTRACT and the status line, and never lets
+     a synthetic symbol reach the chart: driving one through the real renderer
+     repaints a series with no intraday bars behind it, which is a fault in the
+     test rig rather than in what is being tested. */
+  const cancels = await page.evaluate(async () => {
+    const realMode = DESK.mode; DESK.mode = 'live';
+    const realSym = wbState.sym;
+    const realQuote = window.deskQuote;
+    const note = document.getElementById('wbInfo');
+    let rejectA;
+    window.deskQuote = () => new Promise((_, rej) => { rejectA = () => rej(new Error('offline')); });
+
+    const pA = wbLoadSymbol('AAAA', { pin: true });   // never resolves until we say
+    wbPick(realSym);                                  // what the header does — no loader
+    note.textContent = 'NEWER STATUS';
+    rejectA();
+    const rejected = await pA;
+
+    window.deskQuote = realQuote; DESK.mode = realMode;
+    return { rejected, note: note.textContent, sym: wbState.sym, realSym };
+  });
+  expect(cancels.rejected,
+    'a load superseded by a bare wbPick — and which then REJECTS — reports cancellation, not failure')
+    .toBe('superseded');
+  expect(cancels.note, 'and never paints its connectivity error over a newer status')
+    .toBe('NEWER STATUS');
+  expect(cancels.sym, 'nor pulls the chart back off what was selected')
+    .toBe(cancels.realSym);
+
+  /* And a cancellation must CLEAR the rail's own status. Returning early left
+     'Checking A…' on screen with nothing ever coming to replace it, so the
+     column claimed indefinitely to be checking a symbol that had been cancelled
+     (Codex P2, round 4). Driven through the real box so the message is set the
+     way a submit sets it. */
+  await inp.fill('');
+  await inp.pressSequentially('ZZZZ');
+  const stuck = await page.evaluate(async () => {
+    const realMode = DESK.mode; DESK.mode = 'live';
+    const realSym = wbState.sym;
+    const realQuote = window.deskQuote;
+    let settle;
+    window.deskQuote = () => new Promise(r => { settle = () => r({ ok: false, error: 'nope' }); });
+    document.querySelector('.wb-rail-input')
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 20));
+    const during = (document.querySelector('.wb-rail-msg') || {}).textContent || '';
+    wbPick(realSym);                       // supersede it from outside the rail
+    settle();
+    await new Promise(r => setTimeout(r, 60));
+    const after = (document.querySelector('.wb-rail-msg') || {}).textContent || '';
+    window.deskQuote = realQuote; DESK.mode = realMode;
+    return { during, after };
+  });
+  expect(stuck.during, 'the box says it is checking while the lookup is in flight')
+    .toMatch(/checking/i);
+  expect(stuck.after, 'and stops saying so once the lookup is cancelled')
+    .toBe('');
+
+
+  expect(errs, 'no page errors').toEqual([]);
+});
+
 /* S40 — the charts rail is two columns: a manual stack the owner types into and
    a picker-headed roster column. Guards the RULES, not the pixels: what may
    enter the manual column, in what order, and that both halves survive a
@@ -2631,7 +2861,12 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
   const manual = () => page.evaluate(() =>
-    [...document.querySelectorAll('.wb-rail-manual .wb-side-sym')].map(e => e.textContent));
+    /* Scoped to .wb-rail-row — the TYPED stack. The column also carries an
+       ACTIVE row naming the charted symbol (owner request 2026-08-26), which is
+       a .wb-side-btn but NOT inside a .wb-rail-row, so an unscoped
+       `.wb-rail-manual .wb-side-sym` now reports the charted symbol as if the
+       owner had typed it. */
+    [...document.querySelectorAll('.wb-rail-manual .wb-rail-row .wb-side-sym')].map(e => e.textContent));
 
   // two columns, side by side, manual empty to start
   expect(await page.locator('#wbSidebar .wb-rail-col').count(), 'two rail columns').toBe(2);
@@ -2639,7 +2874,11 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
     [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.getBoundingClientRect().left));
   expect(b, 'the columns sit side by side, not stacked').toBeGreaterThan(a);
   expect(await manual(), 'the manual column starts empty').toEqual([]);
-  await expect(page.locator('.wb-rail-manual .wb-rail-empty'), 'and says what fills it').toBeVisible();
+  /* `.wb-rail-empty` appears twice in this column now — once under ACTIVE when
+     nothing is charted, once under TYPED. Match on the TYPED copy's text so the
+     assertion keeps meaning what it says. */
+  await expect(page.locator('.wb-rail-manual .wb-rail-empty', { hasText: /Type a ticker/i }),
+    'and says what fills it').toBeVisible();
 
   // the picker offers the charts roster AND every watchlist. The watchlist feed
   // lands after the charts one, so a picker with a single entry means the rail
@@ -2730,11 +2969,18 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
      not a dead control, so it is waited out rather than forced: a `force`
      click would skip the actionability check and stop this step proving the
      button is genuinely clickable. */
+  /* Compares the NODE, not the markup. innerHTML equality is blind to node
+     REPLACEMENT — the rail rebuilds to byte-identical HTML, so the old check
+     passed while the button underneath was still being destroyed and recreated,
+     and the click then failed on exactly the race this gate exists to wait out
+     (iphone/WebKit, 2026-08-26). Asserting the same element survives a quiet
+     period is the precondition the click actually needs. */
   await expect(async () => {
-    const before = await page.locator('.wb-rail-manual').innerHTML();
+    const a = await page.locator('.wb-rail-manual .wb-rail-x').first().elementHandle();
     await page.waitForTimeout(250);
-    expect(await page.locator('.wb-rail-manual').innerHTML()).toBe(before);
-  }).toPass({ timeout: 10000 });
+    const b = await page.locator('.wb-rail-manual .wb-rail-x').first().elementHandle();
+    expect(await a.evaluate((x, y) => x === y, b), 'the × survives a quiet period').toBe(true);
+  }).toPass({ timeout: 20000 });
   await page.locator('.wb-rail-manual .wb-rail-x').first().click();
   await page.waitForTimeout(300);
   expect(await manual(), 'the × removes one entry').toEqual(['QQQ']);
