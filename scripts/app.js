@@ -3540,6 +3540,15 @@ const HEAT_CAP_FOR = key => (key === 'r2k' ? 5 : HEAT.cap);
    exactly finviz's trick: the glyph's contrast pair is ink-vs-halo (15.9:1),
    independent of tile color. check-contrast.js asserts that pair. */
 const heatText = (attrs, fs) => svgEl('text', {
+  /* `heat-label` is a TEST MARKER and is load-bearing (Codex P2, PR #283).
+     S46 asserts these labels carry a painted halo, and it used to identify them
+     by "has a stroke" — which is the property under test, so removing the halo
+     emptied the set and passed. Worse, changing fill AND stroke together on some
+     labels left the rest satisfying every clause. A marker set by the renderer
+     itself cannot be derived from the thing being checked: every element with
+     this class MUST have the halo, whatever its colours become. Do not remove it
+     because it has no styling — it is the selector, not a hook for CSS. */
+  class: 'heat-label',
   ...attrs, fill: HEAT.ink, stroke: HEAT.halo, 'paint-order': 'stroke',
   /* halo stays a shadow, not an outline: ~1px at small sizes, capped so
      display-size tickers don't read as cartoon-stroked */

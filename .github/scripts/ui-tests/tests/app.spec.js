@@ -3784,48 +3784,58 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCENARIO 46 — heatmap label contrast, measured in the BROWSER
+// SCENARIO 46 — heatmap label halo, measured on the RENDERED page
 //
-// WHY THIS IS A BROWSER TEST AND NOT A STATIC ONE. Heatmap tile labels sit on a
-// DYNAMIC colour ramp, so AA is carried by a halo stroke under each glyph
-// (paint-order:stroke) rather than by a token pair. check-contrast.js asserted
-// that by reading scripts/app.js, and over five review rounds on PR #283 that
-// produced SEVENTEEN separate ways for valid source to satisfy the check while
-// the rendered labels lost their halo — comments, decoy objects, nested keys,
-// wrappers, string payloads, duplicate keys, computed keys, spreads, a renamed
-// `stroke:`, `stroke-width: 0`, and finally an entirely UNUSED object literal
-// with the right shape. The last two are the point: no source analysis can
-// establish that the thing it read is what the browser painted, and a check
-// satisfied by dead code is not a check.
+// WHY THIS IS A BROWSER TEST. Heatmap tile labels sit on a DYNAMIC colour ramp,
+// so AA is carried by a halo stroke under each glyph rather than by a token
+// pair. check-contrast.js asserted that by READING scripts/app.js, and over five
+// review rounds on PR #283 that produced seventeen ways for valid source to
+// satisfy the check while the rendered labels lost their halo — ending with an
+// entirely UNUSED object literal of the right shape, and a `stroke-width: 0`
+// that specifies a perfect halo and paints nothing. No source analysis closes
+// either: a check satisfied by dead code is not a check.
 //
-// The browser resolves all of it. Everything above collapses into "what is the
-// computed fill, stroke, paint-order and stroke-width of the text that is
-// actually on screen".
+// SELECTION IS BY MARKER, NEVER BY THE PROPERTY UNDER TEST. The first version
+// selected "labels that have a stroke" and asserted they have a halo — which
+// passes vacuously when the halo is deleted, and (Codex P2, round 7) still
+// passed when SOME labels regressed: changing fill and stroke TOGETHER on half
+// of them kept the survivors satisfying every clause, because the inferred ink
+// was tallied from the haloed set itself. `heatText` now stamps `.heat-label`,
+// so membership is decided by the renderer and cannot move with the colours.
+// Sector and industry captions are correctly excluded — they sit on a FIXED band
+// fill and are covered by the token gate.
 //
-// NON-CIRCULARITY is the part to preserve on edit. Selecting "labels that have a
-// halo" and then asserting they have a halo proves nothing — deleting the halo
-// would empty the set and pass. Two clauses prevent that:
-//   * a FLOOR on how many haloed labels must exist, so removing the halo
-//     outright fails rather than vacuously passing;
-//   * every label sharing the tile-label ink must ITSELF be haloed, so removing
-//     the halo from some labels fails too. The ink is read off the render rather
-//     than hardcoded, so it survives a palette change.
-// Sector and industry captions are correctly excluded: they sit on a FIXED band
-// fill and are measured by the token gate, not by this mechanism.
-test('S46: heatmap tile labels carry a visible halo meeting AA, as rendered', async ({ page }) => {
+// A HALO IS ONLY A HALO IF IT PAINTS A SOLID OUTLINE UNDER THE GLYPH. Each of
+// these was a separate way to keep every colour reading correctly while
+// rendering no halo (rounds 6-7):
+//   * stroke-width 0                → nothing drawn
+//   * stroke-opacity, or alpha in the stroke colour → translucent or invisible
+//   * stroke-dasharray '0 10000'    → a dash pattern with no visible dash
+//   * paint-order 'fill stroke'     → contains "stroke", paints it OVER the glyph
+// Opacity is required to be FULL rather than merely non-zero, on the same rule
+// check-contrast.js applies to tokens: a translucent colour has no contrast
+// ratio of its own, and compositing needs a background this page does not have
+// (the tile beneath is the dynamic ramp — which is the whole reason the halo
+// exists).
+//
+// RESIDUAL, stated rather than implied: this asserts the properties that decide
+// whether a stroke paints a solid outline. It does not sample pixels, so a
+// mechanism that defeats all of them at once (a filter, a mask, a clip) would
+// pass. Pixel sampling is the only thing above this rung.
+test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', async ({ page }) => {
   await page.goto('./?demo=1');
   await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
 
   const toggle = page.locator('#heatToggle');
   if (await toggle.count()) await toggle.click();
   await page.waitForFunction(
-    () => document.querySelectorAll('#heatmapSvg text').length > 20,
+    () => document.querySelectorAll('#heatmapSvg text.heat-label').length > 20,
     null, { timeout: 20000 },
   );
 
   const report = await page.evaluate(() => {
     const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-    const rgb = (s) => {
+    const parse = (s) => {
       const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?/.exec(s || '');
       return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null;
     };
@@ -3834,77 +3844,65 @@ test('S46: heatmap tile labels carry a visible halo meeting AA, as rendered', as
       const la = lum(a), lb = lum(b);
       return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
     };
+    const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 
-    const texts = [...document.querySelectorAll('#heatmapSvg text')];
-    const read = texts.map((el) => {
-      const cs = getComputedStyle(el);
-      return {
-        txt: (el.textContent || '').slice(0, 12),
-        fill: cs.fill,
-        stroke: cs.stroke,
-        paintOrder: cs.paintOrder,
-        strokeWidth: parseFloat(cs.strokeWidth) || 0,
-        strokeOpacity: cs.strokeOpacity === '' ? 1 : parseFloat(cs.strokeOpacity),
-      };
-    });
-
-    // A halo is only a halo if it is actually painted: a colour, a width, and
-    // opacity. `stroke-width: 0` renders nothing while every colour still reads
-    // correctly — that was one of the seventeen.
-    const haloed = read.filter((t) =>
-      t.stroke && t.stroke !== 'none' && t.strokeWidth > 0 && t.strokeOpacity > 0);
-
-    // Tile-label ink, read off the render rather than hardcoded.
-    const tally = {};
-    haloed.forEach((t) => { tally[t.fill] = (tally[t.fill] || 0) + 1; });
-    const ink = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || null;
-
-    const sameInkUnhaloed = ink
-      ? read.filter((t) => t.fill === ink && !haloed.includes(t)).map((t) => t.txt)
-      : [];
-
+    const labels = [...document.querySelectorAll('#heatmapSvg text.heat-label')];
     const failures = [];
-    for (const t of haloed) {
-      const f = rgb(t.fill), s = rgb(t.stroke);
-      if (!f || !s) { failures.push(`${t.txt}: unreadable fill/stroke (${t.fill} / ${t.stroke})`); continue; }
-      if (!/stroke/.test(t.paintOrder)) {
-        failures.push(`${t.txt}: paint-order is "${t.paintOrder}" — the halo paints OVER the glyph`);
-        continue;
-      }
-      const r = ratio(f, s);
-      if (r < 4.5) failures.push(`${t.txt}: ink/halo contrast ${r.toFixed(2)} (need 4.5)`);
+    let worst = null;
+
+    for (const el of labels) {
+      const cs = getComputedStyle(el);
+      const txt = (el.textContent || '').trim().slice(0, 12) || '(blank)';
+      const fill = parse(cs.fill);
+      const stroke = parse(cs.stroke);
+
+      if (!fill) { failures.push(`${txt}: unreadable fill "${cs.fill}"`); continue; }
+      if (!stroke) { failures.push(`${txt}: no halo — stroke is "${cs.stroke}"`); continue; }
+
+      // Opacity, in all three places it can be lost.
+      if (fill.a !== 1) { failures.push(`${txt}: fill is translucent (alpha ${fill.a})`); continue; }
+      if (stroke.a !== 1) { failures.push(`${txt}: halo colour is translucent (alpha ${stroke.a}) — it has no contrast ratio of its own`); continue; }
+      const so = cs.strokeOpacity === '' ? 1 : num(cs.strokeOpacity);
+      if (so !== 1) { failures.push(`${txt}: stroke-opacity ${so} — the halo is not fully painted`); continue; }
+
+      // Width.
+      const sw = num(cs.strokeWidth) ?? 0;
+      if (!(sw > 0)) { failures.push(`${txt}: stroke-width ${cs.strokeWidth} — nothing is drawn`); continue; }
+
+      // A dash pattern can leave no visible outline while every colour reads correctly.
+      const dash = (cs.strokeDasharray || 'none').trim();
+      if (dash && dash !== 'none') { failures.push(`${txt}: stroke-dasharray "${dash}" — the halo is not a solid outline`); continue; }
+
+      // paint-order must put the stroke FIRST: "fill stroke" still contains
+      // "stroke" but paints it OVER the glyph, which is the opposite mechanism.
+      const first = (cs.paintOrder || 'normal').trim().split(/\s+/)[0];
+      if (first !== 'stroke') { failures.push(`${txt}: paint-order "${cs.paintOrder}" — the halo paints OVER the glyph`); continue; }
+
+      const r = ratio(fill, stroke);
+      if (worst === null || r < worst) worst = r;
+      if (r < 4.5) failures.push(`${txt}: ink/halo contrast ${r.toFixed(2)} (need 4.5)`);
     }
 
-    const worst = haloed.reduce((acc, t) => {
-      const f = rgb(t.fill), s = rgb(t.stroke);
-      if (!f || !s) return acc;
-      const r = ratio(f, s);
-      return acc === null || r < acc ? r : acc;
-    }, null);
-
-    return { total: read.length, haloed: haloed.length, ink, sameInkUnhaloed, failures, worst };
+    return { marked: labels.length, failures, worst };
   });
 
-  // FLOOR — the anti-circularity clause. Demo renders ~101 haloed tile labels;
-  // 40 leaves room for a smaller viewport without admitting "the halo is gone".
+  // The panel must actually have rendered. Demo draws ~101 marked labels; 40
+  // leaves room for a narrower viewport without admitting "the heatmap is gone".
+  // This is a FLOOR on the panel, not a sample — every marked label is asserted.
   expect(
-    report.haloed,
-    `Only ${report.haloed} of ${report.total} heatmap labels carry a painted halo. ` +
-    'The tile ramp is dynamic, so the halo IS the AA mechanism — this reads as the ' +
-    'halo having been removed, not as a small map.',
+    report.marked,
+    `Only ${report.marked} labels carry the .heat-label marker. Either the heatmap ` +
+    'did not render, or heatText stopped stamping the class the selector depends on.',
   ).toBeGreaterThanOrEqual(40);
 
-  // Partial removal: a label with the tile-label ink but no halo.
   expect(
-    report.sameInkUnhaloed,
-    `These labels use the tile-label ink (${report.ink}) but paint no halo: ` +
-    `${report.sameInkUnhaloed.slice(0, 8).join(', ')}`,
+    report.failures,
+    `${report.failures.length} of ${report.marked} heatmap labels fail the halo contract:\n  ` +
+    report.failures.slice(0, 12).join('\n  '),
   ).toEqual([]);
 
-  expect(report.failures, `Heatmap label halo failures:\n  ${report.failures.slice(0, 10).join('\n  ')}`).toEqual([]);
-
-  test.info().attach('heatmap-label-contrast', {
-    body: JSON.stringify({ total: report.total, haloed: report.haloed, ink: report.ink, worstRatio: report.worst }, null, 2),
+  test.info().attach('heatmap-label-halo', {
+    body: JSON.stringify({ marked: report.marked, worstRatio: report.worst }, null, 2),
     contentType: 'application/json',
   });
 });
