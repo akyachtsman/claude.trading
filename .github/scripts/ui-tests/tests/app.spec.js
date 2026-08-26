@@ -3809,7 +3809,7 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
 // these was a separate way to keep every colour reading correctly while
 // rendering no halo (rounds 6-7):
 //   * stroke-width 0                → nothing drawn
-//   * stroke-opacity, or alpha in the stroke colour → translucent or invisible
+//   * stroke-opacity, opacity or fill-opacity, or alpha in either colour
 //   * stroke-dasharray '0 10000'    → a dash pattern with no visible dash
 //   * paint-order 'fill stroke'     → contains "stroke", paints it OVER the glyph
 // Opacity is required to be FULL rather than merely non-zero, on the same rule
@@ -3864,6 +3864,13 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
       if (stroke.a !== 1) { failures.push(`${txt}: halo colour is translucent (alpha ${stroke.a}) — it has no contrast ratio of its own`); continue; }
       const so = cs.strokeOpacity === '' ? 1 : num(cs.strokeOpacity);
       if (so !== 1) { failures.push(`${txt}: stroke-opacity ${so} — the halo is not fully painted`); continue; }
+      // `opacity` and `fill-opacity` are the remaining ways to make the label or
+      // its ink invisible while every colour above still reads as opaque RGB
+      // (Codex P2, round 8). Same computed style, no pixel sampling needed.
+      const op = cs.opacity === '' ? 1 : num(cs.opacity);
+      if (op !== 1) { failures.push(`${txt}: opacity ${op} — the label is not fully painted`); continue; }
+      const fo = cs.fillOpacity === '' ? 1 : num(cs.fillOpacity);
+      if (fo !== 1) { failures.push(`${txt}: fill-opacity ${fo} — the ink is not fully painted`); continue; }
 
       // Width.
       const sw = num(cs.strokeWidth) ?? 0;

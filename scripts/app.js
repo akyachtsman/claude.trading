@@ -3540,19 +3540,23 @@ const HEAT_CAP_FOR = key => (key === 'r2k' ? 5 : HEAT.cap);
    exactly finviz's trick: the glyph's contrast pair is ink-vs-halo (15.9:1),
    independent of tile color. check-contrast.js asserts that pair. */
 const heatText = (attrs, fs) => svgEl('text', {
-  /* `heat-label` is a TEST MARKER and is load-bearing (Codex P2, PR #283).
-     S46 asserts these labels carry a painted halo, and it used to identify them
-     by "has a stroke" — which is the property under test, so removing the halo
-     emptied the set and passed. Worse, changing fill AND stroke together on some
-     labels left the rest satisfying every clause. A marker set by the renderer
-     itself cannot be derived from the thing being checked: every element with
-     this class MUST have the halo, whatever its colours become. Do not remove it
-     because it has no styling — it is the selector, not a hook for CSS. */
-  class: 'heat-label',
   ...attrs, fill: HEAT.ink, stroke: HEAT.halo, 'paint-order': 'stroke',
   /* halo stays a shadow, not an outline: ~1px at small sizes, capped so
      display-size tickers don't read as cartoon-stroked */
   'stroke-width': Math.min(1.8, Math.max(0.8, fs / 12)).toFixed(2), 'stroke-linejoin': 'round',
+  /* `heat-label` is a TEST MARKER and is load-bearing (Codex P2, PR #283).
+     S46 asserts these labels carry a painted halo, and it used to identify them
+     by "has a stroke" — the property under test, so deleting the halo emptied the
+     set and passed. A marker stamped by the renderer cannot be derived from the
+     thing being checked: every element carrying it MUST have the halo, whatever
+     its colours become. Do not delete it for having no styling — it is the
+     selector, not a hook for CSS.
+     AFTER the spread, and MERGED with any caller class, both deliberately: placed
+     BEFORE `...attrs` a caller passing its own `class` silently removed that whole
+     cohort from the scenario's membership while the rest still cleared its floor —
+     a presentation class quietly narrowing what gets tested. Nothing passes `class`
+     today; this is what keeps that true. */
+  class: ['heat-label', attrs.class].filter(Boolean).join(' '),
 });
 const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
 const fmtPrice = v => Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
