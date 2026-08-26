@@ -2811,6 +2811,36 @@ test('S45: symbol column adds verified tickers and survives a repaint', async ({
   expect(cancels.sym, 'nor pulls the chart back off what was selected')
     .toBe(cancels.realSym);
 
+  /* And a cancellation must CLEAR the rail's own status. Returning early left
+     'Checking A…' on screen with nothing ever coming to replace it, so the
+     column claimed indefinitely to be checking a symbol that had been cancelled
+     (Codex P2, round 4). Driven through the real box so the message is set the
+     way a submit sets it. */
+  await inp.fill('');
+  await inp.pressSequentially('ZZZZ');
+  const stuck = await page.evaluate(async () => {
+    const realMode = DESK.mode; DESK.mode = 'live';
+    const realSym = wbState.sym;
+    const realQuote = window.deskQuote;
+    let settle;
+    window.deskQuote = () => new Promise(r => { settle = () => r({ ok: false, error: 'nope' }); });
+    document.querySelector('.wb-rail-input')
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 20));
+    const during = (document.querySelector('.wb-rail-msg') || {}).textContent || '';
+    wbPick(realSym);                       // supersede it from outside the rail
+    settle();
+    await new Promise(r => setTimeout(r, 60));
+    const after = (document.querySelector('.wb-rail-msg') || {}).textContent || '';
+    window.deskQuote = realQuote; DESK.mode = realMode;
+    return { during, after };
+  });
+  expect(stuck.during, 'the box says it is checking while the lookup is in flight')
+    .toMatch(/checking/i);
+  expect(stuck.after, 'and stops saying so once the lookup is cancelled')
+    .toBe('');
+
+
   expect(errs, 'no page errors').toEqual([]);
 });
 

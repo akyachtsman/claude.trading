@@ -194,7 +194,21 @@ This project's look is its own — established at kickoff via `/design-intake`
   side effect; a superseded load returns silently, since a request the owner
   replaced is not a failure to report. Both were falsified: without the rail
   guard `AAA` overwrote `BBB`; without the loader guard the chart ended on
-  **AAAA** when the owner had asked for **BBBB** last.
+  **AAAA** when the owner had asked for **BBBB** last. Two further consequences,
+  both owner-visible: **cancellation is its own outcome** (`WB_SUPERSEDED`)
+  rather than sharing `false` with failure — a rail load cancelled from the
+  header otherwise reported `No data for A` and restored its draft, a request the
+  owner REPLACED dressed as one that FAILED; and the cancelled callback must
+  still **clear `wbRailMsg`**, since a bare `return` left `Checking A…` on screen
+  with nothing coming to replace it, so the column claimed indefinitely to be
+  checking a cancelled symbol. It clears only while that submission still owns
+  the message, or a newer `Checking B…` would be wiped by an older cancellation.
+  The generation lives in **`wbPick`**, not the loader: that is the documented
+  single choke point for switching the active symbol, and some paths reach it
+  WITHOUT the loader (the header box charts an already-loaded ticker by calling
+  it directly), so bumping only in `wbLoadSymbol` left those invisible. The guard
+  also sits on the **rejected** path — an `await` that throws jumps straight to
+  `catch`, skipping the check above it.
   (b) **`maxLength` is 24, NOT the validator's 10.** It caps the RAW value and
   the browser applies it before any handler runs, so a 10-cap truncates a pasted
   ` ABCDEFGHIJ ` to nine characters — which can be a real but DIFFERENT

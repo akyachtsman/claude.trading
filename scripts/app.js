@@ -5105,8 +5105,17 @@ function wbRailAddBox(data) {
       /* Cancelled by a NEWER request through any path — the header box, a roster
          click, or this box. Checked before wbRailGen because those other paths
          never touch wbRailGen, so the rail-local check alone would let a
-         cancellation through and report it as a failure. */
-      if (ok === WB_SUPERSEDED) return;
+         cancellation through and report it as a failure.
+         A bare `return` was WRONG: it left 'Checking A…' on screen with nothing
+         ever coming to replace it, so the rail claimed indefinitely to be
+         checking a symbol that had been cancelled (Codex P2, round 4). Clear it
+         — but ONLY while this submission still owns the message, or a newer rail
+         submit's own 'Checking B…' would be wiped by an older cancellation.
+         Still no draft restore: the request was replaced, not refused. */
+      if (ok === WB_SUPERSEDED) {
+        if (gen === wbRailGen && wbRailMsg) { wbRailMsg = ''; renderWbSidebar(data); }
+        return;
+      }
       /* Superseded within the rail itself — the owner has typed or submitted
          since. Dropping the whole callback (not just the draft restore) is
          deliberate: a stale 'No data for A' would otherwise overwrite a newer
