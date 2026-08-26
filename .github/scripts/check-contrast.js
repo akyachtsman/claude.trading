@@ -219,188 +219,167 @@ if (failed) exitCode = 1;
 }
 // ── PROJECT CHECK: heatmap tile labels ──────────────────────────────────────
 // Heatmap tile labels sit on a DYNAMIC piecewise colour ramp (owner directive
-// 2026-07-12), so there IS no static background to measure them against. AA is
-// carried instead by a solid halo stroke painted under every glyph
+// 2026-07-12), so there is no static background to measure them against. AA is
+// carried by a solid halo stroke painted under every glyph
 // (`paint-order: stroke`, finviz-style), making the real contrast pair
-// HEAT.ink vs HEAT.halo — independent of the tile colour. Upstream's template
-// cannot carry this check, which is why a verbatim install silently deleted it
-// (Codex P2, #283) and why it lives here.
+// HEAT.ink vs HEAT.halo. Upstream's template cannot carry this check, which is
+// why a verbatim install silently deleted it (Codex P2, #283).
 //
-// ⚠️ THIS IS THE THIRD IMPLEMENTATION AND THE FIRST NON-TEXTUAL ONE. Rounds one
-// and two matched the three required pieces with regexes over raw source, and
-// each round Codex found another way for valid JavaScript to satisfy the text
-// while the rendered labels lost their halo:
-//   * a commented-out renderer line still contained all three strings;
-//   * `ink`/`halo` moved to a nested `palette: {…}` inside HEAT still matched,
-//     while `HEAT.ink` resolved to undefined at runtime;
-//   * `  const HEAT = {` under one level of indentation matched nothing and took
-//     the "no heatmap here" SKIP path — the opposite of the loud CANNOT CHECK
-//     that version promised;
-//   * `#23262D00` — fully transparent — measured 15.14, because this parser
-//     accepted 8-digit hex and bypassed the alpha rejection the token loop above
-//     applies. That is verbatim the claude.prop 2026-08-23 defect that lum()'s
-//     own comment warns any new caller will reintroduce. It did.
-// The pattern is the finding: a regex cannot answer "is this property actually
-// set on this object", so every fix moved the fail-open instead of closing it.
-// So the source is SCANNED — comments and regex literals blanked, brace spans
-// recorded — and every question is asked structurally. No parser dependency is
-// available: static-checks runs this with bare `node` and no npm install.
+// ⚠️ THIS IS THE FOURTH IMPLEMENTATION AND THE FIRST CORRECT ONE. The three
+// before it asked the source questions with regexes and a hand-rolled scanner,
+// and Codex found eight separate ways for valid JavaScript to satisfy the text
+// while the rendered labels lost their halo — or, by the last round, for valid
+// code to be REJECTED. In order:
+//   1  a loose /paint-order/ matched the explanatory COMMENT beside the attribute
+//   2  ink/halo and paint-order matched anywhere in the file, so a decoy object
+//      or a second renderer satisfied them
+//   3  a renderer line prefixed with `//` still contained all three strings
+//   4  ink/halo nested under `palette: {…}` matched, while HEAT.ink was undefined
+//   5  `  const HEAT = {` indented one level matched nothing and SKIPPED, exiting 0
+//   6  `#23262D00` (transparent) measured 15.14 — the alpha guard was bypassed,
+//      verbatim the claude.prop 2026-08-23 defect lum() warns about
+//   7  a string payload `note: "ink: '#FFFFFF'"` was read as a property
+//   8  a duplicate `ink:` was read first-wins where JavaScript takes the LAST
+// Every fix moved the fail-open instead of closing it, and round four added the
+// opposite failure — `console.log(HEAT.ink)` in a debug helper read as a
+// renderer missing its halo. That is what an approximation looks like when it is
+// pushed past its limit in both directions at once.
 //
-// The scanner is heuristic in exactly one place (telling a regex literal from a
-// division) and is built so that a misread cannot pass quietly: an unterminated
-// string or comment, or unbalanced braces, is a LOUD cannot-check. It reports;
-// it never shrugs.
+// THE ROOT CAUSE, stated once: "is this property actually set on this object"
+// and "does this object literal paint a label" are questions about program
+// SEMANTICS. Text matching cannot answer them, so no amount of tightening ever
+// would have. This now parses with acorn and walks the AST, where each question
+// has an exact answer and none of the eight evasions is expressible:
+//   * duplicates resolve LAST, because that is what JavaScript does;
+//   * a string is a Literal value, never a Property;
+//   * a nested object's properties are not HEAT's properties;
+//   * a paint site is a Property whose VALUE is HEAT.ink — a call argument is not;
+//   * comments and regex literals are the lexer's problem, not ours.
 //
-// REMAINING CEILING, stated because it is real: this proves the SOURCE says the
-// right thing, not that the browser painted it. The durable version of this
-// assertion reads computed `fill`/`stroke`/`paint-order` off the rendered tiles
-// in the Playwright suite, where none of the above is expressible. Filed as
-// follow-up work rather than scope-crept into a refresh PR.
-function scanJs(src) {
-  const out = src.split('');
-  const spans = [];
-  const stack = [];
-  let i = 0, last = '';
-  const n = src.length;
-  const blank = (a, b) => { for (let k = a; k < b; k++) if (out[k] !== '\n') out[k] = ' '; };
-  while (i < n) {
-    const c = src[i], c2 = src[i + 1];
-    if (c === '/' && c2 === '/') { let j = i; while (j < n && src[j] !== '\n') j++; blank(i, j); i = j; continue; }
-    if (c === '/' && c2 === '*') {
-      const e = src.indexOf('*/', i + 2);
-      if (e === -1) return { error: 'unterminated block comment' };
-      blank(i, e + 2); i = e + 2; continue;
-    }
-    if (c === "'" || c === '"' || c === '`') {
-      const q = c; let j = i + 1;
-      while (j < n) {
-        if (src[j] === '\\') { j += 2; continue; }
-        if (src[j] === q) { j++; break; }
-        if (q !== '`' && src[j] === '\n') return { error: `unterminated ${q} string near offset ${i}` };
-        j++;
-      }
-      if (j > n) return { error: 'unterminated string at EOF' };
-      i = j; last = 'str'; continue;
-    }
-    if (c === '/') {
-      // Regex literal vs division. A regex may follow an operator, punctuation,
-      // `}` or a keyword — never an identifier, number, string, `)` or `]`.
-      const div = last === 'word' || last === 'num' || last === 'str' || last === ')' || last === ']';
-      if (!div) {
-        let j = i + 1, cls = false, ok = false;
-        while (j < n) {
-          const d = src[j];
-          if (d === '\\') { j += 2; continue; }
-          if (d === '\n') break;
-          if (cls) { if (d === ']') cls = false; j++; continue; }
-          if (d === '[') { cls = true; j++; continue; }
-          if (d === '/') { ok = true; j++; break; }
-          j++;
-        }
-        if (ok) { blank(i, j); i = j; last = 'regex'; continue; }
-      }
-      last = '/'; i++; continue;
-    }
-    if (c === '{') { stack.push(i); last = '{'; i++; continue; }
-    if (c === '}') {
-      const open = stack.pop();
-      if (open === undefined) return { error: `unbalanced } at offset ${i}` };
-      spans.push({ open, close: i });
-      last = '}'; i++; continue;
-    }
-    if (/[A-Za-z_$]/.test(c)) { let j = i; while (j < n && /[\w$]/.test(src[j])) j++; 
-      last = /^(return|typeof|instanceof|in|of|new|delete|void|case|do|else|yield|await)$/.test(src.slice(i, j)) ? 'kw' : 'word';
-      i = j; continue; }
-    if (/[0-9]/.test(c)) { let j = i; while (j < n && /[\w.]/.test(src[j])) j++; last = 'num'; i = j; continue; }
-    if (!/\s/.test(c)) last = c;
-    i++;
-  }
-  if (stack.length) return { error: `${stack.length} unclosed { — first at offset ${stack[0]}` };
-  return { code: out.join(''), spans };
-}
-
+// COST, stated because it is a real trade: static-checks now installs
+// .github/scripts deps (acorn, one package, no transitive deps) before running
+// this, taking the job from ~7s to ~20s. That is the price of a gate that
+// answers the question it claims to. If acorn is unresolvable the check REFUSES
+// LOUDLY rather than falling back to pattern matching — a fallback would restore
+// exactly the eight holes above, on the day the install breaks.
+//
+// REMAINING CEILING: this proves the SOURCE says the right thing, not that the
+// browser painted it. The durable form reads computed fill/stroke/paint-order
+// off rendered tiles in the Playwright suite. Follow-up, not scope-crept here.
 const APP = 'scripts/app.js';
 if (existsSync(APP)) {
   const bail = (...msg) => {
     console.error('\nFAIL  heatmap label ink / halo — CANNOT CHECK');
     msg.forEach((m) => console.error('      ' + m));
     console.error('      This gate is the ONLY thing asserting the heatmap labels meet AA.');
-    console.error('      Re-anchor it rather than deleting it.');
+    console.error('      Repair it rather than deleting it.');
     exitCode = 1;
   };
-  const scan = scanJs(readFileSync(APP, 'utf8'));
-  if (scan.error) {
-    bail(`Could not scan ${APP}: ${scan.error}.`,
-         'The scanner refuses to guess — a misread span would report confidently',
-         'about the wrong code, which is worse than the fault being checked for.');
-  } else {
-    const { code, spans } = scan;
-    // innermost brace span containing an offset
-    const inner = (p) => spans.filter((s) => s.open < p && p < s.close)
-                              .sort((a, b) => b.open - a.open)[0] || null;
 
-    const decls = [...code.matchAll(/(?:^|[\n;])\s*(?:const|let|var)\s+HEAT\s*=\s*\{/g)];
-    if (decls.length === 0) {
-      console.log('\n  skip  heatmap label ink / halo — no HEAT declaration in scripts/app.js');
-    } else if (decls.length > 1) {
-      bail(`${decls.length} HEAT declarations found; expected exactly 1.`);
-    } else {
-      const braceAt = decls[0].index + decls[0][0].length - 1;
-      const heat = spans.find((s) => s.open === braceAt);
-      if (!heat) {
-        bail('The HEAT declaration was found but its object literal never closes.');
+  let acorn = null;
+  try { acorn = require('acorn'); } catch { /* handled below */ }
+
+  if (!acorn) {
+    bail('acorn is not resolvable from .github/scripts.',
+         'Run `npm ci` there (qa.yml does this before calling this script).',
+         'Refusing rather than falling back to regex: the pattern-matching versions',
+         'of this check had eight separate fail-opens, all found in review.');
+  } else {
+    let ast = null;
+    try {
+      ast = acorn.parse(readFileSync(APP, 'utf8'), { ecmaVersion: 'latest', sourceType: 'script', locations: true });
+    } catch (e) {
+      bail(`${APP} does not parse: ${e.message}`);
+    }
+    if (ast) {
+      // ── walk ────────────────────────────────────────────────────────────────
+      const walk = (node, fn, parent = null) => {
+        if (!node || typeof node.type !== 'string') return;
+        fn(node, parent);
+        for (const k of Object.keys(node)) {
+          if (k === 'type' || k === 'loc' || k === 'start' || k === 'end') continue;
+          const v = node[k];
+          if (Array.isArray(v)) v.forEach((c) => c && typeof c.type === 'string' && walk(c, fn, node));
+          else if (v && typeof v.type === 'string') walk(v, fn, node);
+        }
+      };
+      const keyName = (p) => (p.key.type === 'Identifier' ? p.key.name : p.key.type === 'Literal' ? String(p.key.value) : null);
+      const isHeatMember = (n, prop) =>
+        n && n.type === 'MemberExpression' && !n.computed &&
+        n.object.type === 'Identifier' && n.object.name === 'HEAT' &&
+        n.property.type === 'Identifier' && n.property.name === prop;
+
+      // ── the HEAT object literal ─────────────────────────────────────────────
+      const heats = [];
+      walk(ast, (n) => {
+        if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === 'HEAT'
+            && n.init && n.init.type === 'ObjectExpression') heats.push(n.init);
+      });
+
+      if (heats.length === 0) {
+        console.log('\n  skip  heatmap label ink / halo — no HEAT object literal in scripts/app.js');
+      } else if (heats.length > 1) {
+        bail(`${heats.length} HEAT object literals found; expected exactly 1.`);
       } else {
-        // DIRECT properties only: a match whose innermost enclosing span is HEAT
-        // itself. A nested `palette: { ink: … }` resolves to undefined at runtime.
-        const direct = (k) => {
-          for (const m of code.matchAll(new RegExp('\\b' + k + "\\s*:\\s*'(#[0-9a-fA-F]+)'", 'g'))) {
-            if (m.index > heat.open && m.index < heat.close && inner(m.index) === heat) return m[1];
+        // DIRECT properties, LAST wins — JavaScript's own rule for duplicate keys.
+        const direct = (name) => {
+          let hex = null, dup = 0;
+          for (const p of heats[0].properties) {
+            if (p.type !== 'Property' || p.computed || keyName(p) !== name) continue;
+            dup++;
+            hex = p.value.type === 'Literal' && typeof p.value.value === 'string' ? p.value.value : null;
           }
-          return null;
+          return { hex, dup };
         };
-        // Same alpha rule as the token loop above — a translucent halo has no
+        // Same alpha rule as the token loop above: a translucent colour has no
         // contrast ratio of its own, and lum() drops the channel.
-        const opaque = (h) => {
+        const badHex = (h, label) => {
+          if (h === null) return `${label} is not a string literal on HEAT`;
+          if (!/^#[0-9a-fA-F]+$/.test(h)) return `${label} is "${h}", not a #hex colour`;
           const d = h.slice(1);
-          if (![3, 4, 6, 8].includes(d.length)) return `invalid hex "${h}" (expected 3, 4, 6 or 8 digits)`;
+          if (![3, 4, 6, 8].includes(d.length)) return `${label} "${h}" is not 3, 4, 6 or 8 hex digits`;
           const a = d.length === 4 ? d[3].toLowerCase() : d.length === 8 ? d.slice(6).toLowerCase() : null;
-          if (a !== null && a !== 'f' && a !== 'ff') return `"${h}" carries alpha and cannot be measured`;
+          if (a !== null && a !== 'f' && a !== 'ff') return `${label} "${h}" carries alpha and cannot be measured`;
           return null;
         };
 
         const ink = direct('ink'), halo = direct('halo');
-        const bad = [ink && opaque(ink), halo && opaque(halo)].filter(Boolean);
+        const problems = [badHex(ink.hex, 'HEAT.ink'), badHex(halo.hex, 'HEAT.halo')].filter(Boolean);
 
-        // Every object literal that PAINTS with HEAT.ink must also carry
-        // HEAT.halo and paint-order:stroke — checked in that literal, so a second
-        // renderer cannot ride on heatText's attribute.
-        const users = [];
-        for (const m of code.matchAll(/HEAT\.ink\b/g)) {
-          const sp = inner(m.index);
-          users.push({
-            line: code.slice(0, m.index).split('\n').length,
-            body: sp ? code.slice(sp.open, sp.close + 1) : '',
-          });
-        }
-        const naked = users.filter(
-          (u) => !/HEAT\.halo\b/.test(u.body) || !/['"]paint-order['"]\s*:\s*['"]stroke['"]/.test(u.body)
-        );
+        // ── paint sites: an object literal with a Property whose VALUE is
+        //    HEAT.ink. A call argument, a variable init or a debug log is not a
+        //    paint site and is left alone.
+        const sites = [];
+        walk(ast, (n, parent) => {
+          if (!isHeatMember(n, 'ink')) return;
+          if (!parent || parent.type !== 'Property' || parent.value !== n) return;
+          let obj = null;
+          walk(ast, (m) => { if (m.type === 'ObjectExpression' && m.properties.includes(parent)) obj = m; });
+          if (!obj) return;
+          const props = obj.properties.filter((p) => p.type === 'Property' && !p.computed);
+          const haloed = props.some((p) => isHeatMember(p.value, 'halo'));
+          const order = props.some((p) => keyName(p) === 'paint-order'
+            && p.value.type === 'Literal' && p.value.value === 'stroke');
+          sites.push({ line: n.loc.start.line, haloed, order });
+        });
+        const naked = sites.filter((s) => !s.haloed || !s.order);
 
-        if (!ink || !halo || bad.length || users.length === 0 || naked.length) {
+        if (problems.length || ink.dup > 1 || halo.dup > 1 || sites.length === 0 || naked.length) {
           console.error('\nFAIL  heatmap label ink / halo — the AA mechanism is incomplete');
-          console.error(`      HEAT.ink=${ink ?? 'NOT A DIRECT PROPERTY OF HEAT'}  HEAT.halo=${halo ?? 'NOT A DIRECT PROPERTY OF HEAT'}`);
-          bad.forEach((b) => console.error('      ' + b));
-          if (users.length === 0) {
-            console.error('      Nothing executable paints with HEAT.ink — commented-out code does');
-            console.error('      not count, so the pair would measure a colour the page never uses.');
+          problems.forEach((m) => console.error('      ' + m));
+          if (ink.dup > 1) console.error(`      HEAT.ink is declared ${ink.dup} times — JavaScript takes the last; remove the duplicates`);
+          if (halo.dup > 1) console.error(`      HEAT.halo is declared ${halo.dup} times — JavaScript takes the last; remove the duplicates`);
+          if (sites.length === 0) {
+            console.error('      No object literal paints with HEAT.ink, so the pair below would');
+            console.error('      measure a colour the page never renders.');
           }
-          naked.forEach((u) =>
-            console.error(`      scripts/app.js:${u.line} paints with HEAT.ink but lacks HEAT.halo and/or paint-order:stroke`)
-          );
+          naked.forEach((s) => console.error(
+            `      scripts/app.js:${s.line} paints with HEAT.ink but is missing ` +
+            [!s.haloed && 'stroke: HEAT.halo', !s.order && "'paint-order': 'stroke'"].filter(Boolean).join(' and ')));
           console.error('      The tile ramp is dynamic, so the halo stroke IS the AA mechanism here.');
           exitCode = 1;
         } else {
-          const r = ratio(ink, halo), ok = r >= AA;
+          const r = ratio(ink.hex, halo.hex), ok = r >= AA;
           if (!ok) exitCode = 1;
           console.log(`\n${ok ? '  ok' : 'FAIL'}  ${'heatmap label ink / halo'.padEnd(30)} ${r.toFixed(2)} (need ${AA.toFixed(1)})`);
         }
