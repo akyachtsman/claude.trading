@@ -5130,6 +5130,20 @@ const WB_SLOT_DBL_MS = 500;       /* OUR pairing window — the only one that go
 let wbSlotClick = { i: -1, at: 0 };
 /* Which slot currently carries the column's single tab stop. See wbSlotRow. */
 let wbSlotTab = 0;
+/* Move the tab stop, updating the LIVE buttons as well as the module state.
+   Assigning wbSlotTab alone is only correct when a repaint follows, and one does
+   NOT always follow: wbLoadSymbol never repaints when the lookup fails — a
+   persisted unresolvable symbol, demo mode, an unreachable proxy — so the
+   clicked row kept tabIndex -1 and Tab went back to the row before it, not the
+   one last worked on (Codex P2). */
+function setWbSlotTab(n) {
+  if (!(n >= 0 && n < WB_SLOTS)) return;
+  const prev = document.querySelector('.wb-rail-manual [data-slot="' + wbSlotTab + '"] .wb-slot');
+  wbSlotTab = n;
+  const next = document.querySelector('.wb-rail-manual [data-slot="' + n + '"] .wb-slot');
+  if (prev && prev !== next) prev.tabIndex = -1;
+  if (next) next.tabIndex = 0;
+}
 
 function wbSlotRow(i, sym, data) {
   const row = el('div', 'wb-rail-row');
@@ -5278,6 +5292,12 @@ function wbSlotRow(i, sym, data) {
   b.appendChild(el('span', 'wb-side-sym', sym || ''));
 
   const openEditor = () => {
+    /* An edit ENDS any pending pair. Otherwise: click an empty slot (which
+       records this click), type a ticker, commit it — and the very next click on
+       the now-filled row is read as the second half of that original pair, so it
+       reopens the editor instead of charting (Codex P2). The editor lifecycle is
+       navigation too. */
+    wbSlotClick = { i: -1, at: 0 };
     wbEditSlot = i;
     wbEditDraft = sym || '';
     renderWbSidebar(data);
@@ -5309,7 +5329,7 @@ function wbSlotRow(i, sym, data) {
        interaction is worse than none. */
     const again = wbSlotClick.i === i && now - wbSlotClick.at <= WB_SLOT_DBL_MS;
     wbSlotClick = { i, at: now };
-    wbSlotTab = i;                      /* Tab comes back to the slot last worked on */
+    setWbSlotTab(i);                    /* Tab comes back to the slot last worked on */
     /* An EMPTY slot has nothing to chart, so its first click opens the editor. */
     if (again || !sym) { openEditor(); return; }
     wbLoadSymbol(sym);
@@ -5335,11 +5355,9 @@ function wbSlotRow(i, sym, data) {
       : -1;
     if (to < 0 || to >= WB_SLOTS) return;
     ev.preventDefault();
-    wbSlotTab = to;
+    setWbSlotTab(to);
     const next = document.querySelector('.wb-rail-manual [data-slot="' + to + '"] .wb-slot');
     if (!next) return;
-    next.tabIndex = 0;
-    b.tabIndex = -1;
     keepPageStill(() => {
       next.focus({ preventScroll: true });
       next.scrollIntoView({ block: 'nearest' });
@@ -5370,6 +5388,17 @@ function renderWbSidebar(data) {
      preserving editing state must not move what the owner is looking at. */
   const dyingSlots = nav.querySelector('.wb-slots');
   const slotScroll = dyingSlots ? dyingSlots.scrollTop : 0;
+  /* A focused slot BUTTON is preserved the same way the input is, and for a
+     sharper reason: charting from the keyboard (Enter/Space on a filled slot)
+     runs synchronously into wbPick, whose render removes the very button that
+     was focused. Nothing then held focus, so it fell to the document and the
+     roving Arrow keys and F2 stopped responding until the owner tabbed all the
+     way back into the rail — which is the column's only tab stop, so that is a
+     long way back (Codex P2). Charting a slot must not cost you your place. */
+  const dyingBtn = document.activeElement && document.activeElement.classList
+    && document.activeElement.classList.contains('wb-slot')
+    && nav.contains(document.activeElement)
+    ? document.activeElement.closest('.wb-rail-row').dataset.slot : null;
   /* The WHOLE selection, not just its start. Restoring a collapsed caret would
      silently drop a range the owner had selected, so their next keystroke would
      INSERT where it should REPLACE (Codex P2) — a repaint they did not cause
@@ -5490,6 +5519,11 @@ function renderWbSidebar(data) {
      the new scrollHeight, which is what we want if the list got shorter. */
   const bornSlots = nav.querySelector('.wb-slots');
   if (bornSlots && slotScroll) bornSlots.scrollTop = slotScroll;
+
+  if (dyingBtn !== null) {
+    const bornBtn = nav.querySelector('.wb-rail-manual [data-slot="' + dyingBtn + '"] .wb-slot');
+    if (bornBtn) keepPageStill(() => bornBtn.focus({ preventScroll: true }));
+  }
 
   if (hadFocus) {
     const born = nav.querySelector('.wb-slot-input');

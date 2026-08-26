@@ -3040,6 +3040,76 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
     getComputedStyle(document.querySelector('.wb-slots .wb-slot')).touchAction),
     'slots keep the double-tap gesture on touch — it is the only way to edit one there').toBe('manipulation');
 
+  /* AN EDIT ENDS A PENDING PAIR. Click an empty slot (which records that click),
+     type a ticker, commit it — then click the now-filled row straight away. That
+     click must CHART. Without clearing the pair on open it is read as the second
+     half of the original one and reopens the editor instead, so a slot could not
+     be charted immediately after filling it (Codex P2). */
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[50] = '';
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+    wbPick(Object.keys(wbState.data.symbols)[1]);
+  });
+  await page.waitForTimeout(300);
+  const pairFrom = await page.evaluate(() => wbState.sym);
+  const pairSym = await page.evaluate(() => Object.keys(wbState.data.symbols)[0]);
+  await page.locator('.wb-slots [data-slot="50"] .wb-slot').click();
+  await page.waitForTimeout(150);
+  await page.locator('.wb-slot-input').fill(pairSym);
+  await page.locator('.wb-slot-input').press('Enter');
+  await page.waitForTimeout(150);          /* well inside WB_SLOT_DBL_MS */
+  await page.locator('.wb-slots [data-slot="50"] .wb-slot').click();
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'clicking a slot right after filling it charts — it does not reopen the editor').toBe(0);
+  expect(await page.evaluate(() => wbState.sym),
+    'and the chart moved to what was just typed').toBe(pairSym);
+  expect(pairFrom).not.toBe(pairSym);      /* the assertion above would be vacuous otherwise */
+
+  /* CHARTING FROM THE KEYBOARD MUST NOT COST YOU YOUR PLACE. Enter on a filled
+     slot runs synchronously into wbPick, whose render removes the focused
+     button; with nothing restoring it, focus fell to the document and the roving
+     Arrow keys and F2 stopped responding until the owner tabbed all the way back
+     in — and this column is a single tab stop, so that is a long way back
+     (Codex P2). */
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[2] = Object.keys(wbState.data.symbols)[0];
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  });
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slots [data-slot="2"] .wb-slot').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => {
+    const a = document.activeElement;
+    const row = a && a.closest && a.closest('.wb-rail-row');
+    return row ? row.dataset.slot : (a ? a.tagName : null);
+  }), 'keyboard charting keeps focus on the slot, not on the document').toBe('2');
+
+  /* The roving stop follows a click EVEN WHEN NOTHING REPAINTS. wbLoadSymbol
+     does not repaint when the lookup fails — demo mode refuses live lookups —
+     so assigning the module state alone left the live buttons untouched and Tab
+     went back to the wrong slot (Codex P2). */
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[46] = 'ZZZZ';   /* filled, and it will NOT resolve */
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; wbSlotTab = 0; renderWbSidebar(wbState.data);
+  });
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slots [data-slot="46"] .wb-slot').click();
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() =>
+    [...document.querySelectorAll('.wb-slots .wb-slot')].filter(b => b.tabIndex === 0)
+      .map(b => b.closest('.wb-rail-row').dataset.slot)),
+    'the live tab stop follows the click even with no repaint').toEqual(['46']);
+  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
+  await page.waitForTimeout(200);
+
   /* A committed ticker that cannot be charted must still CLOSE its editor. In
      demo mode wbLoadSymbol refuses live lookups and returns without repainting,
      so leaving the input up left it logically settled but on screen, rejecting
