@@ -2969,11 +2969,18 @@ test('S40: charts rail — manual stack + roster picker', async ({ page }) => {
      not a dead control, so it is waited out rather than forced: a `force`
      click would skip the actionability check and stop this step proving the
      button is genuinely clickable. */
+  /* Compares the NODE, not the markup. innerHTML equality is blind to node
+     REPLACEMENT — the rail rebuilds to byte-identical HTML, so the old check
+     passed while the button underneath was still being destroyed and recreated,
+     and the click then failed on exactly the race this gate exists to wait out
+     (iphone/WebKit, 2026-08-26). Asserting the same element survives a quiet
+     period is the precondition the click actually needs. */
   await expect(async () => {
-    const before = await page.locator('.wb-rail-manual').innerHTML();
+    const a = await page.locator('.wb-rail-manual .wb-rail-x').first().elementHandle();
     await page.waitForTimeout(250);
-    expect(await page.locator('.wb-rail-manual').innerHTML()).toBe(before);
-  }).toPass({ timeout: 10000 });
+    const b = await page.locator('.wb-rail-manual .wb-rail-x').first().elementHandle();
+    expect(await a.evaluate((x, y) => x === y, b), 'the × survives a quiet period').toBe(true);
+  }).toPass({ timeout: 20000 });
   await page.locator('.wb-rail-manual .wb-rail-x').first().click();
   await page.waitForTimeout(300);
   expect(await manual(), 'the × removes one entry').toEqual(['QQQ']);
