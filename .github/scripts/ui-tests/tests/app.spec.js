@@ -3812,6 +3812,8 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
 //   * stroke-opacity, opacity or fill-opacity, or alpha in either colour
 //   * stroke-dasharray '0 10000'    → a dash pattern with no visible dash
 //   * paint-order 'fill stroke'     → contains "stroke", paints it OVER the glyph
+//   * display:none, visibility:hidden, empty text, a zero-size box → every
+//     computed colour still reads correctly on an element painting nothing
 // Opacity is required to be FULL rather than merely non-zero, on the same rule
 // check-contrast.js applies to tokens: a translucent colour has no contrast
 // ratio of its own, and compositing needs a background this page does not have
@@ -3852,9 +3854,27 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
 
     for (const el of labels) {
       const cs = getComputedStyle(el);
-      const txt = (el.textContent || '').trim().slice(0, 12) || '(blank)';
+      const raw = (el.textContent || '').trim();
+      const txt = raw.slice(0, 12) || '(blank)';
       const fill = parse(cs.fill);
       const stroke = parse(cs.stroke);
+
+      // A marked element that paints NO GLYPH has no halo either, and every
+      // computed-style assertion below would still pass on it (Codex P2, round 9).
+      // Each of these is DOM state the render already resolved — no pixel
+      // sampling — which is the line these checks are drawn on.
+      if (!raw) { failures.push('(blank): a marked label with no text content paints no glyph'); continue; }
+      if (cs.display === 'none') { failures.push(`${txt}: display:none — nothing is painted`); continue; }
+      if (cs.visibility === 'hidden' || cs.visibility === 'collapse') {
+        failures.push(`${txt}: visibility:${cs.visibility} — nothing is painted`); continue;
+      }
+      // Zero-size covers the remaining geometric ways to paint nothing (a zero
+      // font-size, a degenerate transform) without reaching for pixels. Measured,
+      // not inferred: a label scrolled out of view still has a box.
+      const box = el.getBoundingClientRect();
+      if (!(box.width > 0 && box.height > 0)) {
+        failures.push(`${txt}: renders a ${box.width}x${box.height} box — nothing is painted`); continue;
+      }
 
       if (!fill) { failures.push(`${txt}: unreadable fill "${cs.fill}"`); continue; }
       if (!stroke) { failures.push(`${txt}: no halo — stroke is "${cs.stroke}"`); continue; }
