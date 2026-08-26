@@ -706,19 +706,25 @@
   @media (max-width: 860px) {
     .wb-grid { grid-template-columns: minmax(0, 1fr); }
     #wbSidebar { max-height: 220px; }
-    /* The unequal split is a SIDE-RAIL rule and must not survive the stack.
-       `.wb-rail-manual` is pinned to 78px so a 154px side rail seats a ten
-       character ticker; once the rail spans the full width that 78 stops being
-       a floor and becomes a cap, leaving a narrow manual column beside a
-       roster three times its size. Widths are only scarce when the rail is
-       154px wide, so here they go back to sharing evenly. */
-    .wb-rail-manual { flex: 1 1 0; }
+    /* The stacked rail's equal column split lives AFTER the base rules that
+       set the side-rail widths — see the second 860px block below. */
   }
   /* The rail is a ROW of two columns; each column scrolls on its own so a
      40-name watchlist cannot push the manual stack off the bottom. The
      max-height is overwritten per render to match the chart's height (see the
      note in renderCharts), so this value is only the pre-measure default. */
-  #wbSidebar { display: flex; flex-direction: row; align-items: stretch; gap: var(--space-2); max-height: 600px; }
+  /* A COLUMN now: the roster picker is a full-width header over both symbol
+     columns (see renderWbSidebar). It was a row of two columns until
+     2026-08-25, when the 154px rail left the picker too narrow to name the
+     list it had selected. */
+  #wbSidebar { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); max-height: 600px; }
+  /* `min-height: 0` is load-bearing: a flex ITEM defaults to min-height auto,
+     so without it this row refuses to shrink below its content and the rail's
+     max-height (set per render to the chart's height) stops capping anything —
+     the columns' own overflow-y never engages and a long roster grows the grid
+     row instead of scrolling. */
+  .wb-rail-cols { display: flex; flex-direction: row; align-items: stretch; gap: var(--space-2); flex: 1 1 auto; min-height: 0; }
+  .wb-rail-top { flex: 0 0 auto; }
   /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
      scroll both columns together and defeat the split. `auto`, never `contain`:
      reaching the end of a column must carry on scrolling the page. */
@@ -752,6 +758,18 @@
      column is the wider one because it alone carries the `×`. */
   .wb-rail-manual { flex: 0 0 78px; }
   .wb-rail-roster { flex: 1 1 0; }
+  /* MUST sit after the two rules above, not with the other 860px rules further
+     up: identical specificity, so SOURCE ORDER is the whole mechanism and an
+     earlier copy silently does nothing (Codex P2 — measured at 393px, the rail
+     was 263px with MANUAL still pinned to 78 and ROSTER taking 177).
+     The unequal split is a SIDE-RAIL rule and must not survive the stack: 78px
+     is a floor while the rail is 154px wide, and becomes a CAP once the rail
+     spans the viewport. Width is only scarce in the side rail, so the stacked
+     rail shares evenly. This is the same trap the .top-boxes overrides carry a
+     warning about — equal-specificity overrides placed before what they lift. */
+  @media (max-width: 860px) {
+    .wb-rail-manual { flex: 1 1 0; }
+  }
   .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
   .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
   /* The picker inherits the dark charts scope, so it is styled here rather than
@@ -767,11 +785,21 @@
   .wb-rail-x { flex: 0 0 auto; padding: 0 2px; border: 0; background: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); font: 400 10px/1 var(--font-sans); cursor: pointer; }
   .wb-rail-x:hover { background: var(--color-surface-2); color: var(--color-text-primary); }
   .wb-rail-x:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -1px; }
-  /* The SYMBOL is the one thing in this row that must never be abbreviated —
-     `AV…` names no instrument, and this rail exists to be clicked by ticker.
-     So it is the non-shrinking half and the day-% is the half that yields;
-     with the 240px rail above neither actually gives ground. */
-  .wb-side-sym { flex: 0 0 auto; white-space: nowrap; }
+  /* The SYMBOL must never be abbreviated at the budgeted size — `AV…` names no
+     instrument, and this rail exists to be clicked by ticker. The budget above
+     guarantees that, so the ellipsis here NEVER fires in normal rendering
+     (~3.9px of headroom at ten characters).
+     It is a LAST RESORT for the one case the budget cannot see: a browser
+     MINIMUM FONT SIZE. A user who sets one of 12px or more has the nominal 10px
+     silently enlarged while the 154px rail and its 78px column stay put, and
+     `.wb-side-sym` was `flex: 0 0 auto` with no overflow — so the ticker did not
+     shrink, did not clip, and SPILLED UNDER the `×`, where it is both unreadable
+     and sitting on another control (Codex P2). Under a forced enlargement
+     something has to give, and a truncated ticker beats two overlapping ones.
+     This also makes S40's `scrollWidth > clientWidth` assertion LIVE: with no
+     overflow constraint that check could never fire, so the scenario rested on
+     its width assertion alone. */
+  .wb-side-sym { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* 10px, not the --font-xs 12px it was: ten characters at 12px cost 72.3px
      of ticker alone, which is what pinned the rail at 200. Sized literally
      rather than via a token because no token is 10px and inventing one for a
