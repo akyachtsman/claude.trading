@@ -5179,7 +5179,18 @@ function wbSlotRow(i, sym, data) {
        including the one being clicked, exactly where it was. */
     const closeRow = () => {
       const row = document.querySelector('.wb-rail-manual [data-slot="' + i + '"]');
-      if (row && row.parentNode) row.parentNode.replaceChild(wbSlotRow(i, readWbSticky().syms[i] || '', data), row);
+      if (!row || !row.parentNode) return;
+      /* Carry FOCUS onto the button that replaces the input. A keyboard user
+         pressing Enter here would otherwise be dropped to the document the
+         moment their edit succeeded — and this column is a single tab stop, so
+         Arrow and F2 stay dead until they tab all the way back in (Codex P2).
+         renderWbSidebar's own restore cannot cover this: it snapshots a focused
+         `.wb-slot` BUTTON, and what is focused at this instant is the INPUT. */
+      const hadIt = row.contains(document.activeElement);
+      row.parentNode.replaceChild(wbSlotRow(i, readWbSticky().syms[i] || '', data), row);
+      if (!hadIt) return;
+      const btn = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot');
+      if (btn) keepPageStill(() => btn.focus({ preventScroll: true }));
     };
     /* ENTER: save, close, and chart. Charting is a SEPARATE act from saving, and
        the save happens either way — the owner chose that a slot keeps whatever
@@ -5208,6 +5219,11 @@ function wbSlotRow(i, sym, data) {
         settled = true;
         wbEditSlot = -1; wbEditDraft = '';
         renderWbSidebar(data);
+        /* Same reason as closeRow above: the render finds no input to restore
+           focus to, because Escape just removed the only one. Put the owner back
+           on the slot they were editing rather than on the document. */
+        const btn = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot');
+        if (btn) keepPageStill(() => btn.focus({ preventScroll: true }));
       }
     });
     /* Blur keeps what was typed — clicking away from a half-typed slot must not
@@ -5314,8 +5330,15 @@ function wbSlotRow(i, sym, data) {
     });
   };
 
-  b.addEventListener('click', () => {
+  b.addEventListener('click', ev => {
     const now = Date.now();
+    /* POINTER clicks pair; keyboard ones never do. Enter/Space on a focused
+       button fires a synthetic click with detail 0, so two activations inside
+       the window — or Enter simply auto-repeating while held — were read as a
+       double-click and opened the editor. That contradicts F2 being THE keyboard
+       edit gesture, and makes an ordinary repeated activation silently editable
+       (Codex P2). */
+    const byPointer = ev.detail > 0;
     /* Keyed by slot INDEX, not by this node: charting rebuilds the rail, so the
        second click of a pair usually lands on a REPLACEMENT button. That is
        exactly the case a `dblclick` listener cannot see.
@@ -5327,7 +5350,7 @@ function wbSlotRow(i, sym, data) {
        press-drag-away-to-cancel affordance every button has, and its
        preventDefault suppresses focus. Unproven complexity that alters
        interaction is worse than none. */
-    const again = wbSlotClick.i === i && now - wbSlotClick.at <= WB_SLOT_DBL_MS;
+    const again = byPointer && wbSlotClick.i === i && now - wbSlotClick.at <= WB_SLOT_DBL_MS;
     wbSlotClick = { i, at: now };
     setWbSlotTab(i);                    /* Tab comes back to the slot last worked on */
     /* An EMPTY slot has nothing to chart, so its first click opens the editor. */
@@ -6864,6 +6887,12 @@ function wireCharts() {
     const sym = symInput.value.trim().toUpperCase();
     if (sym !== wbState.sym && wbState.data.symbols[sym]) {
       symNote.textContent = '';
+      /* This path reaches wbPick DIRECTLY, without the loader, so it needs its
+         own reset — the submit handler's does not cover it (Codex P2). Every
+         non-slot way of changing the chart must break a pending slot pair;
+         keep this list complete: the roster/ACTIVE button, the header submit,
+         and here. */
+      wbSlotClick = { i: -1, at: 0 };
       wbPick(sym);
     }
   });
@@ -7092,8 +7121,14 @@ async function restoreStickySymbols() {
      several slots and this is a fetch queue, not the store. Duplicates would
      each get their own request — and an unresolvable one never lands in
      wbRealSyms, so a column repeating one bad symbol would re-request it once
-     per slot on every cold start (Codex P2). */
-  const queue = [...new Set(filled.filter(sym => sym !== saved.sel))];
+     per slot on every cold start (Codex P2).
+     VALIDATED too, for the same reason the Enter path does not chart an invalid
+     draft: a slot deliberately KEEPS text that fails WL_SYM_RE (owner ruling),
+     so without this every syntactically impossible draft was posted to
+     quote-proxy on every live reload — a column of 100 junk entries meant 100
+     requests the client already knew were pointless. The stored array is
+     untouched: this filters the QUEUE, never the slots. */
+  const queue = [...new Set(filled.filter(sym => sym !== saved.sel && WL_SYM_RE.test(sym)))];
   let next = 0;
   const worker = async () => { while (next < queue.length) await fetchOne(queue[next++], false); };
   await Promise.all(

@@ -3090,6 +3090,71 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
     return row ? row.dataset.slot : (a ? a.tagName : null);
   }), 'keyboard charting keeps focus on the slot, not on the document').toBe('2');
 
+  /* EVERY non-slot way of changing the chart breaks a pending slot pair — and
+     the header's `change` handler reaches wbPick DIRECTLY, without the loader or
+     the submit handler, so it needs its own reset (Codex P2). Click slot A, pick
+     an already-loaded symbol in the header, click A again inside the window: the
+     last click must CHART A, not be read as the second half of the first pair. */
+  const [pairA, pairB] = await page.evaluate(() => Object.keys(wbState.data.symbols).slice(0, 2));
+  await page.evaluate((sym) => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[6] = sym;
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  }, pairA);
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slots [data-slot="6"] .wb-slot').click();
+  await page.waitForTimeout(150);
+  await page.evaluate((sym) => {
+    const inp = document.getElementById('wbSymInput');
+    inp.value = sym; inp.dispatchEvent(new Event('change', { bubbles: true }));
+  }, pairB);
+  await page.waitForTimeout(150);
+  await page.locator('.wb-slots [data-slot="6"] .wb-slot').click();
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'the header change path breaks the pair — the next slot click charts').toBe(0);
+  expect(await page.evaluate(() => wbState.sym), 'and lands on that slot').toBe(pairA);
+
+  /* SETTLING AN EDITOR KEEPS FOCUS ON THE SLOT — for Enter AND for Escape.
+     Both remove the focused input; renderWbSidebar's restore cannot help,
+     because it snapshots a focused `.wb-slot` BUTTON and what is focused here is
+     the INPUT. Without this a keyboard user is dropped to the document the
+     moment their edit lands, and this column is a single tab stop (Codex P2). */
+  for (const [key, slot] of [['Enter', '52'], ['Escape', '53']]) {
+    await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
+    await page.waitForTimeout(150);
+    await page.locator('.wb-slots [data-slot="' + slot + '"] .wb-slot').click();
+    await page.waitForTimeout(200);
+    await page.locator('.wb-slot-input').fill('AAPL');
+    await page.locator('.wb-slot-input').press(key);
+    await page.waitForTimeout(600);
+    expect(await page.evaluate(() => {
+      const a = document.activeElement;
+      const row = a && a.closest && a.closest('.wb-rail-row');
+      return row ? row.dataset.slot : (a ? a.tagName : null);
+    }), key + ' leaves focus on the slot, not on the document').toBe(slot);
+  }
+
+  /* KEYBOARD ACTIVATION NEVER PAIRS. Enter/Space fire a synthetic click with
+     detail 0; two of them inside the window — or Enter auto-repeating while
+     held — were read as a double-click and opened the editor, contradicting F2
+     being THE keyboard edit gesture (Codex P2). */
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[54] = Object.keys(wbState.data.symbols)[0];
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  });
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slots [data-slot="54"] .wb-slot').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
+    'two keyboard activations chart twice — they never open the editor').toBe(0);
+
   /* The roving stop follows a click EVEN WHEN NOTHING REPAINTS. wbLoadSymbol
      does not repaint when the lookup fails — demo mode refuses live lookups —
      so assigning the module state alone left the live buttons untouched and Tab
@@ -3131,15 +3196,24 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      deskQuote('') calls at quote-proxy on every live boot. Forced live because
      the restore is a no-op in demo. */
   const asked = await page.evaluate(async () => {
+    /* Seeded with the three things that must NOT reach the proxy alongside the
+       one that must: a hole, a draft that fails WL_SYM_RE (a slot deliberately
+       KEEPS unresolvable text, owner ruling), and a duplicate. */
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}');
+    const syms = new Array(100).fill('');
+    syms[1] = 'SPY'; syms[2] = 'NOT A TICKER'; syms[3] = 'ABCDEFGHIJKLM'; syms[4] = 'SPY';
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms, sel: '' }));
     const realMode = DESK.mode, realQ = window.deskQuote;
     const seen = [];
     DESK.mode = 'live';
     window.deskQuote = async (sym) => { seen.push(sym); return { ok: false }; };
-    try { await restoreStickySymbols(); }
+    try { wbRealSyms.clear(); await restoreStickySymbols(); }
     finally { window.deskQuote = realQ; DESK.mode = realMode; }
     return seen;
   });
   expect(asked.filter(s => !s), 'no empty slot is ever sent upstream').toEqual([]);
+  expect(asked, 'and neither is an invalid draft or a duplicate — only the one real ticker')
+    .toEqual(['SPY']);
   expect(asked.length, 'only the filled slots are re-fetched, not all 100').toBeLessThan(10);
   expect(errs, 'no page errors').toEqual([]);
 });
