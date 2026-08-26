@@ -5020,7 +5020,27 @@ function renderWbSidebar(data) {
      chart drag, so leaving it would have scanned every row of every list and
      allocated a Map per frame for a feature that no longer renders (Codex P3). */
   const lists = (wlState.payload && wlState.payload.lists) || [];
-  const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); nav.appendChild(c); return c; };
+  /* The picker is a FULL-WIDTH header over both columns, not the roster
+     column's own head (Codex P2, 2026-08-25). Inside a 68px column its
+     collapsed label had ~45px of text room against the ~82px its own default
+     "Charts roster" needs, so 6 of demo's 8 list names truncated and the
+     control could no longer answer the one question it exists to answer —
+     which roster is loaded. Spanning the rail gives it ~131px, which seats
+     every name including "Industry & metals" (99.6px).
+     This costs ~20px of VERTICAL space and no chart width at all, which is why
+     it beat the alternatives: widening the roster column to fit the label puts
+     the rail back at 191px and cuts the chart's gain from 46px to 9, undoing
+     what the owner asked for. Vertical space is not scarce here — the rail is
+     capped to the chart's height, ~600px+.
+     It spans both columns while governing only the roster one, so the columns
+     below are BOTH labelled (MANUAL / ROSTER) — the roster column used to have
+     no title of its own, since the picker served as one. */
+  const cols = el('div', 'wb-rail-cols');
+  const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); cols.appendChild(c); return c; };
+
+  const top = el('div', 'wb-rail-top');
+  nav.appendChild(top);
+  nav.appendChild(cols);
 
   /* ── column A — manual ─────────────────────────────────────────────────── */
   const manual = column('wb-rail-manual');
@@ -5052,6 +5072,7 @@ function renderWbSidebar(data) {
   /* ── column B — roster ─────────────────────────────────────────────────── */
   const roster = column('wb-rail-roster');
   const rHead = el('div', 'wb-rail-head');
+  rHead.appendChild(el('span', 'wb-rail-title', 'ROSTER'));
   const sel = document.createElement('select');
   sel.className = 'wb-rail-pick';
   sel.setAttribute('aria-label', 'Symbol list to show');
@@ -5065,11 +5086,19 @@ function renderWbSidebar(data) {
   const savedRoster = readWbSticky().roster;
   const valid = savedRoster === WB_ROSTER_CHARTS || lists.some(l => l.title === savedRoster);
   sel.value = valid ? savedRoster : WB_ROSTER_CHARTS;
+  /* Kept even though the full-width header now seats every roster name: a list
+     the OWNER creates has no length limit, so a long enough title still
+     truncates and the tooltip is how it is read without opening the menu.
+     Set from the SELECTED OPTION's text, never from `sel.value`, because the
+     charts entry's value is the WB_ROSTER_CHARTS sentinel (a NUL-prefixed
+     token) and would show the owner an internal string instead of a list
+     name — verified in the browser, where it renders "Charts roster". */
+  sel.title = (sel.selectedOptions[0] && sel.selectedOptions[0].textContent) || '';
   sel.addEventListener('change', () => {
     writeWbSticky({ roster: sel.value });
     renderWbSidebar(data);
   });
-  rHead.appendChild(sel);
+  top.appendChild(sel);
   roster.appendChild(rHead);
 
   let syms;

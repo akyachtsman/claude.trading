@@ -119,44 +119,86 @@ This project's look is its own — established at kickoff via `/design-intake`
   contradict itself. `wbRailPct`, the `preMarketOpen` gate it needed, that
   gate's hoisted `NY_PARTS` formatter and scenario **S44** all went with it —
   deleting S44 is not lost coverage, since the behaviour it guarded no longer
-  exists. **The rail is 200px and the ticker NEVER abbreviates** — the two are one
-  rule. `.wb-grid`'s first column went 96 → 200 → 240 (when it still carried a
-  day-%) → **200px** again once the day-% went. 160 was tried in that last pass
-  and is WRONG: `WL_SYM_RE` accepts **ten** characters and `DX-Y.NYB` and
-  `BTC-USD` are already in the roster, while the rail font is 12px IBM Plex Mono
-  at ~7.22px per glyph — so ten characters need ~72px of ticker alone and the
-  160px manual column offered **56**. Two columns of 72 plus row padding and the
-  manual column's `×` cannot fit in 160 however the split is weighted, so this is
-  arithmetic and no dynamic allocation rescues it. 200 is the first width that
-  seats the full validated length in BOTH columns; the panes gain 40px rather
-  than 80, and that smaller win is the price of never clipping a ticker — a
-  clipped symbol names no instrument on a rail whose whole purpose is being
-  clicked by ticker (owner report 2026-08-20, when 4-letter names rendered as
-  `AV…`). `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
+  exists. **The ticker NEVER abbreviates — that is the rule; the width is only ever
+  derived from it.** `.wb-grid`'s first column went 96 → 200 → 240 (when it
+  still carried a day-%) → 200 → **154px** (owner request 2026-08-25, "reduce
+  the width of these two columns to a min and give more space to the pro
+  charts"). Read the rule, never the number: a clipped symbol names no
+  instrument on a rail whose whole purpose is being clicked by ticker (owner
+  report 2026-08-20, when 4-letter names rendered as `AV…`), and `WL_SYM_RE`
+  accepts **ten** characters with `DX-Y.NYB` and `BTC-USD` already in the
+  roster. **160 was tried and REJECTED in review** on the same day 200 was set:
+  at 12px IBM Plex Mono (~7.22px/glyph) ten characters need ~72px of ticker
+  alone, and a 160px rail's manual column offered **56**.
+  154 reaches a narrower rail than that rejected 160 **without touching the
+  rule**, because it makes the glyphs and the chrome cheaper instead of the
+  budget tighter — which is the whole lesson: the earlier attempt tried to buy
+  width out of the ticker's own allowance, and there was none to take. Three
+  measured savings, in order of size: the row font goes **12px → 10px** mono, so
+  ten characters cost **60.2px** instead of 72.3; **the two columns stop being
+  equal** (`.wb-rail-manual` `flex: 0 0 78px`, `.wb-rail-roster` `flex: 1 1 0`),
+  since only the manual column carries a `×` and forcing the roster to match it
+  spent ~12px per rail on nothing; and row padding 4px → 2px a side with the `×`
+  3px → 2px. Measured at 1512: **rail 200 → 154, chart 1170 → 1216 (+46px)**,
+  with ~3.9px of headroom in BOTH columns — slightly MORE than the 3.3px the
+  200px rail had. The type drop is the biggest contributor and is the first
+  thing to give back if this ever needs to grow: it is a legibility cost, where
+  the unequal split and the padding were pure waste. Equal columns are the tidy
+  default and were simply wrong once the two rows stopped being the same shape.
+  `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
   decoration: two classic 15px bars would eat most of what the width buys.
+  **The ROSTER PICKER is a FULL-WIDTH HEADER over both columns**, not the roster
+  column's own head (Codex P2, 2026-08-25). Inside a 68px column it had ~**45px**
+  of text room against the ~**82px** its own default "Charts roster" label needs,
+  so 6 of demo's 8 list names truncated and the control could no longer answer
+  the one question it exists to answer — which roster is loaded. Spanning the
+  rail gives it **131px**, which seats every name including `Industry & metals`
+  (99.6px); measured overflow is now zero. It cost ~20px of VERTICAL space and
+  **no chart width at all** — which is why it beat the alternative of widening
+  the roster column to fit the label, which puts the rail back at **191px** and
+  cuts the chart's gain from 46px to **9**, undoing the request. Vertical space
+  is not scarce in a rail capped to the chart's height. Three consequences:
+  `#wbSidebar` is a `flex-direction: column` (it was a row of two columns) with
+  a `.wb-rail-cols` row inside it; that row needs **`min-height: 0`**, since a
+  flex ITEM defaults to `min-height: auto` and would refuse to shrink below its
+  content, which stops the per-render rail cap from capping anything and lets a
+  long roster grow the grid row instead of scrolling; and the roster column
+  gained its own **`ROSTER` title**, because the picker used to serve as that
+  column's head and the two columns must still start on the same line.
+  `sel.title` is KEPT even so — an owner-created list has no title-length limit,
+  so a long enough name still truncates — and is read from the selected
+  **OPTION's TEXT, never `sel.value`**: the charts entry's value is the
+  `WB_ROSTER_CHARTS` sentinel, a NUL-prefixed token, so the obvious
+  `sel.title = sel.value` would show the owner an internal string instead of a
+  list name (verified in the browser, where it renders "Charts roster").
   **S40 budgets against the VALIDATOR, not against demo.** Demo carries ten
   three-letter symbols, so a five-character budget passed on a 160px rail that a
   real supported symbol would have broken — a budget that admits less than the
   validator accepts is not a budget. It measures the MANUAL column (the tighter
   one, since it carries the `×`) against the full 10-character limit and also
-  asserts the rendered ticker is not clipped. Both halves were proved to bite by
-  setting the rail back to 160 and watching them fail.
-  **One residual is ACCEPTED and bounded** (owner ruling 2026-08-25): the budget
-  makes NO allowance for a scrollbar. `.wb-rail-col` is `overflow-y: auto` with
-  `scrollbar-width: thin`, and the manual column holds up to `WB_MANUAL_MAX` 40,
-  so it can overflow. Measured with 40 rows: the column offers **76px** against
-  the **72.2** a ten-character ticker needs — 3.8px of headroom, and this
+  asserts the rendered ticker is not clipped. Critically it reads the **computed
+  font off the live element** rather than hardcoding a pixel figure, which is
+  why the 12px → 10px change needed no test edit: at 154 it re-derived its own
+  expectation as 60.2 and still failed at **48** when the manual column was
+  narrowed to 62px to falsify it (proved, this pass — as it was proved at 200 by
+  setting the rail back to 160).
+  **One residual is ACCEPTED and bounded** (owner ruling 2026-08-25, re-affirmed
+  at 154): the budget makes NO allowance for a scrollbar. `.wb-rail-col` is
+  `overflow-y: auto` with `scrollbar-width: thin`, and the manual column holds up
+  to `WB_MANUAL_MAX` 40, so it can overflow. Measured with 40 rows the column
+  offers **64.2px** against the **60.2** a ten-character ticker needs, and this
   sandbox's Chromium uses OVERLAY scrollbars so it reserves nothing. On a
   platform that reserves ~11–12px for a thin scrollbar, a **9- or 10-character**
-  symbol could clip; **8** characters (`DX-Y.NYB`, the longest in the roster)
-  still fits. Covering it needs ~**224px**, which would leave the panes gaining
-  16px of the original 80 — so the owner chose the width over the edge case. The
-  TRIGGER to revisit is concrete: if a 9–10 character symbol enters the roster,
-  or the desk is used where scrollbars take layout width, go to 224 and add the
-  scrollbar to S40's budget. Note this is the same class as the
-  `overscroll-behavior` trap below — a Chromium harness cannot reproduce it, so
-  it must be reasoned about rather than tested here.
-  **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
+  symbol could clip; **8** (`DX-Y.NYB`, the longest in the roster) still fits.
+  Covering it costs ~**24px**, which would hand back half the cut — so the owner
+  has now TWICE chosen chart space over it, and their own machine (macOS,
+  overlay scrollbars) never renders the case. The TRIGGER to revisit is
+  concrete: if a 9–10 character symbol enters the roster, or the desk is used
+  where scrollbars take layout width, widen and add the scrollbar to S40's
+  budget. Note this is the same class as the `overscroll-behavior` trap below —
+  a Chromium harness cannot reproduce it, so it must be reasoned about rather
+  than tested here.
+    **A 20-period VOLUME AVERAGE** rides over the histogram on all three panes
   (`VOL_MA`, `data-volma`, owner request 2026-08-12, shipped 2026-08-18) — the
   reference platform's yellow line, and what makes a bar readable as heavy or
   light, since "big volume" only means anything against the recent norm. Three
@@ -1359,7 +1401,7 @@ run for real against the dedicated project on every PR.
 | S34 | Long-term steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
-| S40 | Charts rail — manual + roster | With `?demo=1`, `#wbSidebar` renders TWO columns side by side; the manual one starts empty and says what fills it; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed); typing stacks newest-first and re-typing lifts rather than duplicates; an UNCHARTABLE ticker is not pinned; clicking a ROSTER name charts it without entering the manual column; both the stack and the chosen roster survive a reload; the `×` removes one | A rail that quietly collects every symbol looked at, a typo taking a permanent seat in a persisted column, a picker stuck on one entry, or either half lost on reload |
+| S40 | Charts rail — manual + roster | With `?demo=1`, `#wbSidebar` renders TWO columns side by side INSIDE `.wb-rail-cols`, both starting on the same line, under a FULL-WIDTH `.wb-rail-top` carrying the picker (it is no longer the roster column's own head — at 68px it could not name the list it had selected); the manual one starts empty and says what fills it; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed); typing stacks newest-first and re-typing lifts rather than duplicates; an UNCHARTABLE ticker is not pinned; clicking a ROSTER name charts it without entering the manual column; both the stack and the chosen roster survive a reload; the `×` removes one | A rail that quietly collects every symbol looked at, a typo taking a permanent seat in a persisted column, a picker stuck on one entry, either half lost on reload, or the two columns starting on different lines (the roster column's `ROSTER` title is what replaced the picker as its head) |
 | S42 | Watchlist column paging | With `?demo=1`, NO column is wheel-scrollable (`overflow` hidden on both axes) and none carries `overscroll-behavior` in any form; the wheel over a column moves the PAGE; a ▲/▼ footer renders on exactly the columns that overflow and nowhere else; the paged column's band head is no taller than its neighbours; the ▲ is dead at the top, the ▼ names how many are still below and that count FALLS as you step, and the ▼ dies at the bottom with the last tiles on screen. Then forced live: resting a DRAG on the ▼ steps the column | A column that still eats the wheel, a pager on a list that fits (or missing from one that does not), a control that grows the band head — which pushes every column's tiles down, not just its own — a count that never changes (it is counting the list, not what is hidden), or a drag that cannot reach past the visible rows, leaving most of a long list undroppable |
 | S41 | Watchlists are vertical columns | With `?demo=1`, tiles STACK downward inside a category and the categories sit SIDE BY SIDE; no `role=tab` exists (the columns are the navigation); the panel sits above `.area-charts` and shares its left edge; no sideways page scroll and no inner crop on `.wl-strip`; and in live NO reorder control is a bare `←`/`‹` | Tiles rendering as fixed-height boxes (a row's `flex-basis` governs HEIGHT in a column — it still looks plausible), a panel inset from the chart below it, or a reorder arrow impersonating a back button, which is what the UI crawler's back selector grabs |
 | S39 | Volume average | With `?demo=1`, all THREE panes carry a `path[data-volma]` in the %D yellow with no NaN coordinates, and each daily pane's spans its FULL window — LONG-TERM opens on 6M (126 bars) and SWING on 3M (63), attributed to its own pane by x-band rather than by index, since a set/index check passes even if the two panes swap windows — rather than 63−20 | A missing line, or one that starts 20 bars in — that is an average computed from the visible window, which also shifts every time you zoom |
