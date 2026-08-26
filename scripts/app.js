@@ -5143,17 +5143,32 @@ function wbSlotRow(i, sym, data) {
        abandoned — either way the deferred blur below must not act a second time,
        or Escape's abandon would be undone by a blur that saves. */
     let settled = false;
+    const save = () => { const next = inp.value.trim().toUpperCase(); setWbSlot(i, next); return next; };
+    /* Close THIS ROW ONLY, swapping its input back for a button, instead of
+       rebuilding the whole rail. That is not a micro-optimisation, it is the fix
+       for a failure that only appears on a slower machine (CI, all three
+       viewports): a blur commit is deferred a tick, and if that tick lands
+       BEFORE the pending click is delivered, a full rebuild detaches the button
+       the owner is mid-click on and the click event is never dispatched at all.
+       The result was no editor anywhere — clicking from one slot's editor to
+       another simply did nothing. Replacing one row leaves every other node,
+       including the one being clicked, exactly where it was. */
+    const closeRow = () => {
+      const row = document.querySelector('.wb-rail-manual [data-slot="' + i + '"]');
+      if (row && row.parentNode) row.parentNode.replaceChild(wbSlotRow(i, readWbSticky().syms[i] || '', data), row);
+    };
+    /* ENTER: save, close, and chart. Charting is a SEPARATE act from saving, and
+       the save happens either way — the owner chose that a slot keeps whatever
+       they typed even when it does not resolve, so a bad entry is never
+       discarded or rewritten. Blur does NOT chart (see below): the owner who
+       clicked away has moved on, and charting behind them fights the click. */
     const commit = () => {
       if (settled || wbEditSlot !== i) return;
       settled = true;
-      const next = inp.value.trim().toUpperCase();
+      const next = save();
       wbEditSlot = -1; wbEditDraft = '';
-      setWbSlot(i, next);
-      /* Charting is a SEPARATE act from saving, and the save happens either
-         way: the owner chose that a slot keeps whatever they typed even when it
-         does not resolve, so a bad entry is never discarded or rewritten. */
       if (next && WL_SYM_RE.test(next)) wbLoadSymbol(next);
-      renderWbSidebar(data);
+      else renderWbSidebar(data);
     };
     inp.addEventListener('keydown', ev => {
       if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
@@ -5190,11 +5205,17 @@ function wbSlotRow(i, sym, data) {
     inp.addEventListener('blur', () => {
       setTimeout(() => {
         if (settled) return;
-        if (inp.isConnected) { commit(); return; }
-        if (wbEditSlot === i) return;
-        settled = true;
-        setWbSlot(i, inp.value.trim().toUpperCase());
-        renderWbSidebar(data);
+        if (inp.isConnected) {          /* case 1 — an ordinary blur */
+          settled = true;
+          save();
+          wbEditSlot = -1; wbEditDraft = '';
+          closeRow();
+          return;
+        }
+        if (wbEditSlot === i) return;   /* case 2 — a repaint; a newer input owns this slot */
+        settled = true;                 /* case 3 — another slot took over */
+        save();
+        closeRow();
       }, 0);
     });
     row.appendChild(inp);
@@ -5233,7 +5254,15 @@ function wbSlotRow(i, sym, data) {
     const now = Date.now();
     /* Keyed by slot INDEX, not by this node: charting rebuilds the rail, so the
        second click of a pair usually lands on a REPLACEMENT button. That is
-       exactly the case a `dblclick` listener cannot see. */
+       exactly the case a `dblclick` listener cannot see.
+       Running this on `click` and not on `pointerdown` is deliberate. A
+       pointerdown version was built while chasing the CI failure above and is
+       REJECTED: it could not be falsified in any case once `closeRow` stopped
+       the blur from rebuilding the rail, and unlike an inert guard it changes
+       real behaviour — acting on press rather than release removes the
+       press-drag-away-to-cancel affordance every button has, and its
+       preventDefault suppresses focus. Unproven complexity that alters
+       interaction is worse than none. */
     const again = wbSlotClick.i === i && now - wbSlotClick.at <= WB_SLOT_DBL_MS;
     wbSlotClick = { i, at: now };
     /* An EMPTY slot has nothing to chart, so its first click opens the editor. */

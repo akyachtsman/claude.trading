@@ -2880,6 +2880,40 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
       ? document.querySelector('.wb-slot-input').closest('.wb-rail-row').dataset.slot : null,
     sym: wbState.sym,
   }));
+  /* Now the same move with the press and the release SEPARATED, which is what a
+     machine slower than a warm laptop does on its own — this failed on all three
+     CI viewports while passing locally every time. The blur's commit is deferred
+     a tick; give that tick room and it lands BEFORE the click is delivered. If
+     it rebuilds the whole rail there, the button under the pointer is detached
+     and the click event is never dispatched: no editor opens anywhere, and the
+     owner's click simply does nothing. Closing only the edited ROW is what makes
+     it survive. Falsified: with a full rebuild in the blur this returns
+     editor=null, exactly as CI reported. */
+  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
+  await page.waitForTimeout(200);
+  const slowTo = page.locator('.wb-slots [data-slot="31"] .wb-slot');
+  await slowTo.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
+  /* 30 and 31, both still EMPTY at this point — an empty slot opens its editor
+     on a single click, where a filled one would chart instead. */
+  await page.evaluate(() => { document.querySelector('.wb-slots [data-slot="30"] .wb-slot').click(); });
+  await page.waitForTimeout(200);
+  await page.locator('.wb-slot-input').fill('AVAV');
+  const toBox = await slowTo.boundingBox();
+  await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(60);        /* the deferred blur commit runs in here */
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const slow = await page.evaluate(() => ({
+    open: (document.querySelector('.wb-slot-input') || {}).closest
+      ? document.querySelector('.wb-slot-input').closest('.wb-rail-row').dataset.slot : null,
+    at30: (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[30],
+  }));
+  expect(slow.open, 'a SLOW press still opens the slot — the blur must not rebuild the rail under it').toBe('31');
+  expect(slow.at30, 'and the text it left behind is still saved').toBe('AVAV');
+  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
+  await page.waitForTimeout(200);
   expect(moved.at3, 'clicking to another slot KEEPS what was typed').toBe('QQQ');
   expect(moved.open, 'and opens the slot that was clicked').toBe('8');
   expect(moved.sym, 'without charting the one they left').toBe(symWas);
