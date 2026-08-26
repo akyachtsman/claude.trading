@@ -5304,7 +5304,13 @@ function wbSlotRow(i, sym, data) {
   /* Where the edit gesture is stated. It belongs in `title` rather than the
      aria-label: a screen reader would otherwise read the same hint on all 100
      rows, and the label's job is to say WHICH slot this is. */
-  b.title = sym ? sym + ' — double-click or F2 to edit' : 'Empty slot — click to fill';
+  /* A slot holding an unresolvable draft says so, and says the gesture that
+     reaches it — which is a SINGLE click there, not a double, since there is
+     nothing to chart. */
+  const chartable = !!sym && WL_SYM_RE.test(sym);
+  b.title = !sym ? 'Empty slot — click to fill'
+    : chartable ? sym + ' — double-click or F2 to edit'
+    : sym + ' — not a ticker; click to correct';
   b.appendChild(el('span', 'wb-side-sym', sym || ''));
 
   const openEditor = () => {
@@ -5359,8 +5365,15 @@ function wbSlotRow(i, sym, data) {
        navigation like any other, so it also breaks a pair already pending. */
     wbSlotClick = byPointer ? { i, at: now } : { i: -1, at: 0 };
     setWbSlotTab(i);                    /* Tab comes back to the slot last worked on */
-    /* An EMPTY slot has nothing to chart, so its first click opens the editor. */
-    if (again || !sym) { openEditor(); return; }
+    /* NOTHING CHARTABLE ⇒ open the editor. An empty slot has nothing to chart,
+       and neither does one holding a draft that fails WL_SYM_RE — a slot keeps
+       whatever was typed even when it does not resolve (owner ruling), so `!!`
+       is a state the owner can reach and then click. Charting it anyway sent
+       quote-proxy a value the client already knew was not a ticker, while the
+       Enter path and the restore queue both declined it (Codex P2, round 6).
+       Opening the editor is also the useful answer rather than merely the cheap
+       one: it puts the bad text in front of them, selected, to correct. */
+    if (again || !chartable) { openEditor(); return; }
     wbLoadSymbol(sym);
   });
   /* F2 is the KEYBOARD path to the editor, and it is not a nicety: a

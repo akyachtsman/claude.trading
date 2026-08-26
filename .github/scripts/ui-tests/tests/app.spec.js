@@ -3116,6 +3116,33 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
     'the header change path breaks the pair — the next slot click charts').toBe(0);
   expect(await page.evaluate(() => wbState.sym), 'and lands on that slot').toBe(pairA);
 
+  /* A SLOT HOLDING AN UNRESOLVABLE DRAFT IS NEVER CHARTED. The owner can reach
+     that state deliberately — a slot keeps whatever was typed even when it does
+     not resolve — and clicking it used to post the value to quote-proxy, which
+     the Enter path and the restore queue both already declined to do (Codex P2,
+     round 6). The editor opens instead, holding the bad text for correction. */
+  const junkCalls = await page.evaluate(async () => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[58] = '!!';
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+    const realMode = DESK.mode, realQ = window.deskQuote;
+    const seen = [];
+    DESK.mode = 'live';
+    window.deskQuote = async (sym) => { seen.push(sym); return { ok: false }; };
+    document.querySelector('.wb-slots [data-slot="58"] .wb-slot').click();
+    await new Promise(r => setTimeout(r, 300));
+    window.deskQuote = realQ; DESK.mode = realMode;
+    return { seen, editor: (document.querySelector('.wb-slot-input') || {}).closest
+      ? document.querySelector('.wb-slot-input').closest('.wb-rail-row').dataset.slot : null,
+      value: (document.querySelector('.wb-slot-input') || {}).value };
+  });
+  expect(junkCalls.seen, 'an unresolvable draft is never sent to the proxy').toEqual([]);
+  expect(junkCalls.editor, 'clicking it opens the editor instead').toBe('58');
+  expect(junkCalls.value, 'holding the bad text, ready to correct').toBe('!!');
+  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
+  await page.waitForTimeout(200);
+
   /* SETTLING AN EDITOR KEEPS FOCUS ON THE SLOT — for Enter AND for Escape.
      Both remove the focused input; renderWbSidebar's restore cannot help,
      because it snapshots a focused `.wb-slot` BUTTON and what is focused here is
