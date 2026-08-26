@@ -2800,12 +2800,53 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      first click of a double-click opens the editor, the re-render scrolls the
      list away under the second click, and the editor lands on a DIFFERENT slot
      than the one clicked (measured: clicking 30 opened 28). */
-  await page.locator('.wb-slots .wb-rail-row').nth(60).locator('.wb-slot').dblclick();
+  /* ONE click, and what is asserted is what is under the POINTER before and
+     after it. That is the invariant directly: the click opens the row it landed
+     on, and that row is still there afterwards because neither the list nor the
+     page moved. Deliberately not a second click that has to land — Playwright
+     re-scrolls during its own actionability checks, and with this rail's top
+     above the viewport that scroll arrives between the two clicks of a
+     `dblclick`, moving slot 58 under a pointer aimed at 60. That is the harness
+     moving the page, not the app (isolated: driven directly the app holds still
+     every time), and a guard that flakes 1 run in 3 on harness behaviour is
+     worse than one that measures the thing it cares about. The pairing across a
+     rebuilt node is covered by the slot-to-slot case below. */
+  const deepBtn = page.locator('.wb-slots .wb-rail-row').nth(60).locator('.wb-slot');
+  await deepBtn.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
+  /* Force the rail's TOP above the viewport — ordinary, since this panel sits
+     far down the page — and hold it there. This geometry is the one that
+     exposes Chromium's scroll anchoring: emptying and rebuilding #wbSidebar
+     makes the browser compensate by scrolling the PAGE (measured 31px), which
+     puts a different row under the pointer. It is set explicitly rather than
+     left to wherever earlier steps happened to leave the page, which is what
+     made this check pass or fail by luck: it failed only on the runs that had
+     drifted to that geometry, 1 to 2 runs in 3. */
+  await page.evaluate(() => {
+    const r = document.querySelector('.wb-slots').getBoundingClientRect();
+    window.scrollTo(0, window.scrollY + r.top + 70);
+  });
   await page.waitForTimeout(250);
-  expect(await page.evaluate(() => {
-    const i = document.querySelector('.wb-slot-input');
-    return i && i.closest('.wb-rail-row').dataset.slot;
-  }), 'a deep slot opens the slot that was CLICKED, not one the scroll reset moved under the pointer').toBe('60');
+  const deepBox = await deepBtn.boundingBox();
+  const dx = deepBox.x + deepBox.width / 2, dy = deepBox.y + deepBox.height / 2;
+  const at = ({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    const row = el && el.closest('.wb-rail-row');
+    const inp = document.querySelector('.wb-slot-input');
+    return { under: row && row.dataset.slot,
+             editor: inp && inp.closest('.wb-rail-row').dataset.slot,
+             listTop: Math.round(document.querySelector('.wb-slots').scrollTop),
+             pageY: Math.round(window.scrollY) };
+  };
+  const before = await page.evaluate(at, { x: dx, y: dy });
+  expect(before.under, 'the pointer is over the deep slot to begin with').toBe('60');
+  await page.mouse.click(dx, dy);
+  await page.waitForTimeout(250);
+  const after = await page.evaluate(at, { x: dx, y: dy });
+  expect(after.editor, 'a deep slot opens the slot that was CLICKED').toBe('60');
+  expect(after.under, 'and that row is STILL under the pointer — the list did not jump').toBe('60');
+  expect(after.listTop, 'the slot list keeps its scroll across the repaint').toBe(before.listTop);
+  expect(after.pageY, 'and the PAGE does not move — the owner may be reading elsewhere').toBe(before.pageY);
   await page.locator('.wb-slot-input').fill('AVAV');
   await page.locator('.wb-slot-input').press('Enter');
   await page.waitForTimeout(800);
@@ -2921,6 +2962,22 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
     'Escape keeps what was STORED, not what was typed').toBe('SPY');
   expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
     'and closes the editor').toBe(0);
+
+  /* A REPAINT THE OWNER DID NOT CAUSE MUST NOT MOVE THE PAGE. This rail is
+     rebuilt every 60s, and restoring focus to the open editor with a plain
+     focus() drags an owner reading another panel back to the charts —
+     falsified here at 1684px. focus({preventScroll:true}) is what stops it, and
+     this scenario had no guard for it until now. */
+  await page.evaluate(() => { document.querySelector('.wb-slots [data-slot="3"] .wb-slot').click(); });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(250);
+  await page.evaluate(() => renderWbSidebar(wbState.data));
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => Math.round(window.scrollY)),
+    'the 60s repaint does not yank the page back to the charts').toBe(0);
+  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
+  await page.waitForTimeout(200);
 
   /* The boot re-fetch asks for the FILLED slots and nothing else. `syms` is 100
      positional entries now, mostly empty on any real desk, so feeding it

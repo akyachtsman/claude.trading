@@ -724,6 +724,16 @@
      the columns' own overflow-y never engages and a long roster grows the grid
      row instead of scrolling. */
   .wb-rail-cols { display: flex; flex-direction: row; align-items: stretch; gap: var(--space-2); flex: 1 1 auto; min-height: 0; }
+  /* SCROLL ANCHORING OFF for the whole rail. renderWbSidebar empties #wbSidebar
+     and rebuilds it, and Chromium compensates for that content change by
+     adjusting the scroll position of the nearest scroller — the PAGE. Measured:
+     with the rail's top above the viewport (ordinary, since this panel sits far
+     down the page), opening a slot editor scrolled the page 31px, which moved a
+     different row under the pointer. It cannot be caught by restoring scrollY in
+     JS around the render: the adjustment happens during LAYOUT, after the
+     synchronous block has already read an unchanged value. Excluding this
+     subtree from anchor selection stops it at the source. */
+  #wbSidebar, #wbSidebar * { overflow-anchor: none; }
   .wb-rail-top { flex: 0 0 auto; }
   /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
      scroll both columns together and defeat the split. `auto`, never `contain`:

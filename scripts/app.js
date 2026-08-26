@@ -5101,6 +5101,23 @@ function wbRailBtn(sym) {
    it, so the pane briefly shows the symbol being edited. That is coherent — it
    is the slot's own symbol — and it buys back the 250ms lag the deferral put on
    the primary action, which is charting. */
+/* Run something that touches focus or selection WITHOUT letting the page move.
+   `focus({preventScroll:true})` is the PROVEN guard here and does the real work:
+   falsified on this rail, a plain focus() during the 60s repaint jumped the page
+   1684px while the owner was reading another panel.
+   This wrapper is a CROSS-ENGINE BELT for the other half, and is honestly
+   UNFALSIFIABLE in this sandbox — setSelectionRange/select take no preventScroll
+   option and are specified as able to scroll a selection into view, but measured
+   here Chromium does not, so removing this changes nothing that can be observed.
+   Kept for the same reason as the overscroll-behavior ban and the scrollbar-width
+   budget: a Chromium-only harness cannot reproduce the case, so it is reasoned
+   about rather than tested. Do NOT record a measured fault for it — there isn't
+   one. */
+function keepPageStill(fn) {
+  const x = window.scrollX, y = window.scrollY;
+  fn();
+  if (window.scrollX !== x || window.scrollY !== y) window.scrollTo(x, y);
+}
 const WB_SLOT_DBL_MS = 500;       /* OUR pairing window — the only one that governs this row */
 let wbSlotClick = { i: -1, at: 0 };
 
@@ -5200,9 +5217,16 @@ function wbSlotRow(i, sym, data) {
     wbEditDraft = sym || '';
     renderWbSidebar(data);
     const live = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot-input');
-    /* preventScroll: the rail repaints on the 60s poll and a plain focus()
-       would yank an owner who had scrolled elsewhere back to the charts. */
-    if (live) { live.focus({ preventScroll: true }); live.select(); }
+    if (live) keepPageStill(() => {
+      /* preventScroll: the rail repaints on the 60s poll and a plain focus()
+         would yank an owner who had scrolled elsewhere back to the charts —
+         1684px, measured on falsification. setSelectionRange rather than
+         select() because it selects the same text under a narrower contract;
+         neither takes a preventScroll option, which is what keepPageStill is
+         for. */
+      live.focus({ preventScroll: true });
+      live.setSelectionRange(0, live.value.length);
+    });
   };
 
   b.addEventListener('click', () => {
@@ -5383,14 +5407,17 @@ function renderWbSidebar(data) {
          60s feed poll, so an owner who focused the box and then scrolled away to
          another panel would be YANKED back to the charts by a refocus they never
          asked for (Codex P2). Preserving editing state must not move the page. */
-      born.focus({ preventScroll: true });
-      /* Clamped: the draft can be SHORTER than it was (a submit clears it), and
-         an offset past the end throws in some engines and lands at 0 in others. */
-      const cap = born.value.length;
-      const a = Math.min(selRange && selRange.start != null ? selRange.start : cap, cap);
-      const b = Math.min(selRange && selRange.end != null ? selRange.end : a, cap);
-      try { born.setSelectionRange(a, Math.max(a, b), (selRange && selRange.dir) || 'none'); }
-      catch (_e) { /* not every input type allows a selection range */ }
+      keepPageStill(() => {
+        born.focus({ preventScroll: true });
+        /* Clamped: the draft can be SHORTER than it was (a submit clears it),
+           and an offset past the end throws in some engines and lands at 0 in
+           others. */
+        const cap = born.value.length;
+        const a = Math.min(selRange && selRange.start != null ? selRange.start : cap, cap);
+        const b = Math.min(selRange && selRange.end != null ? selRange.end : a, cap);
+        try { born.setSelectionRange(a, Math.max(a, b), (selRange && selRange.dir) || 'none'); }
+        catch (_e) { /* not every input type allows a selection range */ }
+      });
     }
   }
 }
