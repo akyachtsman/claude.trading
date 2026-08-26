@@ -4340,6 +4340,11 @@ const WB_STICKY_KEY = 'wb_sticky_v1';
    and slot 5 stays slot 5. Nothing reflows, so there is no delete: a slot is
    cleared by emptying its text. */
 const WB_SLOTS = 100;
+/* How many slot re-fetches are in flight at once on a live boot. Bounded rather
+   than serial (100 slots serially is the SUM of every proxy round-trip) and
+   bounded rather than unbounded (100 parallel requests to one origin just move
+   the stall into the browser's own connection queue). */
+const WB_RESTORE_LANES = 4;
 /* WHICH SLOT is being edited, and its in-progress text. Module state for the
    same reason the old add box needed it: renderWbSidebar wipes the whole rail
    and renderCharts rebuilds it on every animation frame of a chart drag and on
@@ -5072,11 +5077,32 @@ function wbRailBtn(sym) {
    slot is an input at a time.
 
    The gestures collide by nature — a single click charts, a double-click edits,
-   and a double-click delivers a `click` FIRST — so the chart is DEFERRED by
-   WB_SLOT_CLICK_MS and cancelled by the row's own dblclick. Same device the
-   watchlist tiles use for the same reason. */
-const WB_SLOT_CLICK_MS = 250;     /* under the ~500ms platform double-click threshold */
-let wbSlotClickTimer = null;
+   and a double-click delivers a `click` FIRST. This is deliberately NOT the
+   watchlist tiles' device (defer the single action, cancel it from `dblclick`),
+   and three Codex P2 findings on PR #282 are all the same reason why. Deferring
+   makes the platform's double-click threshold and OUR wait two INDEPENDENT
+   numbers, and every one of those findings is them disagreeing:
+     · a threshold longer than the wait — the owner is on macOS, where it is
+       user-configurable well past 250ms — charts on the first click, so opening
+       a slot to edit it also retimes the pane;
+     · a pending timer outlives any newer navigation. A roster click inside the
+       window charts, then the older timer fires and pulls the chart BACK.
+       wbLoadGen cannot see it: the stale load does not exist yet when the newer
+       one runs, so it is created holding the newest generation;
+     · `dblclick` needs BOTH clicks on the SAME node, and an editor committing on
+       blur between them rebuilds the rail, so the second click lands on a
+       replacement and the pair is never recognised.
+   So nothing is deferred. The first click charts IMMEDIATELY, and a second click
+   on the SAME SLOT within OUR OWN window opens the editor — one number governing
+   both halves, which is what makes them unable to disagree. Tracked in module
+   state keyed by slot INDEX rather than by node, so a rebuild between the two
+   clicks is irrelevant. The `dblclick` event is not used at all.
+   The trade is stated plainly: a double-click charts that slot before opening
+   it, so the pane briefly shows the symbol being edited. That is coherent — it
+   is the slot's own symbol — and it buys back the 250ms lag the deferral put on
+   the primary action, which is charting. */
+const WB_SLOT_DBL_MS = 500;       /* OUR pairing window — the only one that governs this row */
+let wbSlotClick = { i: -1, at: 0 };
 
 function wbSlotRow(i, sym, data) {
   const row = el('div', 'wb-rail-row');
@@ -5170,7 +5196,6 @@ function wbSlotRow(i, sym, data) {
   b.appendChild(el('span', 'wb-side-sym', sym || ''));
 
   const openEditor = () => {
-    if (wbSlotClickTimer) { clearTimeout(wbSlotClickTimer); wbSlotClickTimer = null; }
     wbEditSlot = i;
     wbEditDraft = sym || '';
     renderWbSidebar(data);
@@ -5181,13 +5206,16 @@ function wbSlotRow(i, sym, data) {
   };
 
   b.addEventListener('click', () => {
-    if (wbSlotClickTimer) clearTimeout(wbSlotClickTimer);
-    /* An EMPTY slot has nothing to chart, so it opens straight to the editor —
-       waiting 250ms to do nothing would just feel broken. */
-    if (!sym) { openEditor(); return; }
-    wbSlotClickTimer = setTimeout(() => { wbSlotClickTimer = null; wbLoadSymbol(sym); }, WB_SLOT_CLICK_MS);
+    const now = Date.now();
+    /* Keyed by slot INDEX, not by this node: charting rebuilds the rail, so the
+       second click of a pair usually lands on a REPLACEMENT button. That is
+       exactly the case a `dblclick` listener cannot see. */
+    const again = wbSlotClick.i === i && now - wbSlotClick.at <= WB_SLOT_DBL_MS;
+    wbSlotClick = { i, at: now };
+    /* An EMPTY slot has nothing to chart, so its first click opens the editor. */
+    if (again || !sym) { openEditor(); return; }
+    wbLoadSymbol(sym);
   });
-  b.addEventListener('dblclick', ev => { ev.preventDefault(); openEditor(); });
   /* F2 is the KEYBOARD path to the editor, and it is not a nicety: a
      double-click is pointer-only, and Enter/Space on a focused button fires
      `click`, which CHARTS a filled slot rather than editing it — so without
@@ -6864,24 +6892,53 @@ async function restoreStickySymbols() {
      neither order nor position means anything, whereas in the store an index IS
      a slot and a filter would move the owner's symbols. */
   const filled = saved.syms.filter(Boolean);
-  const wanted = saved.sel && !filled.includes(saved.sel)
-    ? [saved.sel, ...filled]
-    : filled;
-  for (const sym of wanted) {
+
+  /* One symbol's re-fetch. Kept separate so the SELECTED one can be awaited
+     alone, ahead of everything else, while the rest share a bounded pool. */
+  const fetchOne = async (sym, isSel) => {
     /* skip only if it's already REAL — a demo-fallback may hold SYNTHETIC bars
        for a sticky ticker that collides with the demo roster (e.g. GLD); those
        must still be re-fetched so real bars + fundamentals replace the fakes */
-    if (wbRealSyms.has(sym)) continue;
+    if (wbRealSyms.has(sym)) return;
     try {
       const out = await deskQuote(sym, 'daily');
       if (out.ok && out.series && out.series.c.length >= 30) {
         wbState.data.symbols[sym] = out.series;
         wbRealSyms.add(sym);        /* re-hydrated ad-hoc ticker is real → eligible for fundamentals */
         if (saved.sel === sym && !wbUserPicked) wbState.sym = sym;
-        renderCharts(wbState.data, wbState.lamp);
+        if (isSel) renderCharts(wbState.data, wbState.lamp);
+        else repaintSoon();
       }
     } catch { /* skip a ticker the proxy can't serve */ }
-  }
+  };
+
+  /* Coalesced repaint for the pool. Rendering per response was fine at one
+     request in flight; with a pool it would fire several times a frame, and at
+     a full 100 slots it was ~100 full chart rebuilds either way. The SELECTED
+     symbol still renders immediately — that is the chart the owner is waiting
+     to see. */
+  let repaintPending = false;
+  const repaintSoon = () => {
+    if (repaintPending || !wbState) return;
+    repaintPending = true;
+    requestAnimationFrame(() => { repaintPending = false; renderCharts(wbState.data, wbState.lamp); });
+  };
+
+  /* The SELECTED symbol first and ALONE, so the chart the owner left comes back
+     before anything else competes for a connection. */
+  if (saved.sel) await fetchOne(saved.sel, true);
+
+  /* Then the filled slots, BOUNDED. The old manual column capped this at 40 and
+     ran it strictly serially; 100 slots that way is the SUM of every proxy
+     round-trip, so a fully populated column would spend most of a minute cold
+     (Codex P2, PR #282). A small pool rather than an unbounded fan-out: this is
+     the owner's own browser hitting one origin-guarded proxy, and 100 parallel
+     requests would simply move the stall into the connection queue. */
+  const queue = filled.filter(sym => sym !== saved.sel);
+  let next = 0;
+  const worker = async () => { while (next < queue.length) await fetchOne(queue[next++], false); };
+  await Promise.all(
+    Array.from({ length: Math.min(WB_RESTORE_LANES, queue.length) }, worker));
 }
 
 let wbResizeTimer = 0;

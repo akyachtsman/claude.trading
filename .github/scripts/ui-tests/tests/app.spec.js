@@ -2666,9 +2666,10 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(stored.length, 'still exactly 100').toBe(100);
   expect((await slots())[3], 'and rendered there').toBe('QQQ');
 
-  /* A SINGLE click charts and opens no editor; a DOUBLE click edits and does
-     NOT chart — the deferred click must be cancelled, or every edit would also
-     retime the chart. */
+  /* A SINGLE click charts and opens no editor. Nothing is deferred, so the
+     chart is immediate — the 250ms wait this used to take was the source of
+     three separate races (Codex P2 ×3, PR #282), all of them the platform's
+     double-click threshold and ours being two independent numbers. */
   await page.evaluate(() => wbPick(Object.keys(wbState.data.symbols)[0]));
   await page.waitForTimeout(300);
   await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').click();
@@ -2677,15 +2678,22 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
     'and opens no editor').toBe(0);
 
+  /* A DOUBLE click opens the editor. It also charts that slot on the way in —
+     the accepted trade for removing the defer — so what is asserted is the
+     EDITOR, and that the chart landed on THIS slot's own symbol rather than
+     somewhere else. A pairing keyed by slot index is what makes this work at
+     all: charting rebuilds the rail, so the second click lands on a
+     REPLACEMENT button and a `dblclick` listener would never fire. */
   await page.evaluate(() => wbPick(Object.keys(wbState.data.symbols)[0]));
   await page.waitForTimeout(300);
-  const was = await page.evaluate(() => wbState.sym);
   await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').dblclick();
   await page.waitForTimeout(900);
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'a double-click opens the editor').toBe(1);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && i.closest('.wb-rail-row').dataset.slot;
+  }), 'a double-click opens the editor on the slot that was clicked').toBe('3');
   expect(await page.evaluate(() => wbState.sym),
-    'and cancels the deferred chart — editing must not retime the pane').toBe(was);
+    "and charts that slot's own symbol, never another").toBe('QQQ');
 
   // emptying clears the slot and moves NOTHING
   await page.evaluate(() => {
@@ -2834,6 +2842,49 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(moved.at3, 'clicking to another slot KEEPS what was typed').toBe('QQQ');
   expect(moved.open, 'and opens the slot that was clicked').toBe('8');
   expect(moved.sym, 'without charting the one they left').toBe(symWas);
+
+  /* SWITCHING DIRECTLY BETWEEN TWO FILLED SLOTS (Codex P2, PR #282). The first
+     click charts, which REBUILDS the rail, so the second click lands on a
+     replacement button — a `dblclick` listener needs both clicks on the same
+     node and would never fire, leaving the slot charted but never opened. The
+     pairing is keyed by slot INDEX in module state for exactly this reason. */
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice(); syms[2] = 'QQQ'; syms[4] = 'SPY';
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  });
+  await page.locator('.wb-slots .wb-rail-row').nth(2).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(300);
+  await page.locator('.wb-slots .wb-rail-row').nth(4).locator('.wb-slot').dblclick();
+  await page.waitForTimeout(900);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && i.closest('.wb-rail-row').dataset.slot;
+  }), 'a double-click on ANOTHER filled slot opens it, even with an editor already open').toBe('4');
+  await page.locator('.wb-slot-input').press('Escape');
+  await page.waitForTimeout(300);
+
+  /* A SLOW double-click still edits (Codex P2, PR #282). This is the finding
+     that bites the owner: they are on macOS, where the double-click speed is
+     user-configurable well past the 250ms this row used to defer by. Under that
+     design the first click's timer had already charted, and the pair opened
+     nothing — measured here at a 300ms gap, which produced no editor at all.
+     Our own 500ms window governs both halves now, so they cannot disagree.
+     Driven through raw mouse clicks, not `dblclick()`: Playwright's dblclick
+     sends the pair as fast as it can and could never express this gap. */
+  const slot4 = await page.locator('.wb-slots .wb-rail-row').nth(4).locator('.wb-slot').boundingBox();
+  const cx = slot4.x + slot4.width / 2, cy = slot4.y + slot4.height / 2;
+  await page.mouse.click(cx, cy);
+  await page.waitForTimeout(300);
+  await page.mouse.click(cx, cy);
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && i.closest('.wb-rail-row').dataset.slot;
+  }), 'two clicks 300ms apart still open the editor — a defer shorter than the platform pairing charts instead').toBe('4');
+  await page.locator('.wb-slot-input').press('Escape');
+  await page.waitForTimeout(300);
 
   /* F2 reaches the editor from the KEYBOARD. A double-click is pointer-only,
      and Enter/Space on a focused button fires `click`, which CHARTS a filled
