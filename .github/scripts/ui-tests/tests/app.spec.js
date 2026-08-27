@@ -3876,6 +3876,30 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
         failures.push(`${txt}: renders a ${box.width}x${box.height} box — nothing is painted`); continue;
       }
 
+      // ANCESTOR OPACITY (Codex P2, round 10, and the case that proved my
+      // boundary was in the wrong place). `opacity` does NOT inherit and does
+      // NOT appear in a descendant's computed value, so `#heatmapSvg { opacity:
+      // 0 }` paints the whole subtree transparently while every label below it
+      // still reports opacity 1, a valid box, and correct colours. Every other
+      // check in this loop reads the ELEMENT; this is the only one that has to
+      // walk up. Note the neighbouring hazards do NOT need it and are already
+      // covered: `visibility` inherits, and an ancestor `display: none` collapses
+      // the descendant's box to 0x0.
+      let anc = el.parentElement, faded = null;
+      while (anc) {
+        const acs = getComputedStyle(anc);
+        const av = acs.opacity === '' ? 1 : num(acs.opacity);
+        if (av !== null && av !== 1) {
+          faded = { on: anc.tagName.toLowerCase() + (anc.id ? '#' + anc.id : ''), v: av };
+          break;
+        }
+        anc = anc.parentElement;
+      }
+      if (faded) {
+        failures.push(`${txt}: ancestor <${faded.on}> has opacity ${faded.v} — the subtree is not fully painted`);
+        continue;
+      }
+
       if (!fill) { failures.push(`${txt}: unreadable fill "${cs.fill}"`); continue; }
       if (!stroke) { failures.push(`${txt}: no halo — stroke is "${cs.stroke}"`); continue; }
 
