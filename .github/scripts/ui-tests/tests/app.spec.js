@@ -3838,9 +3838,37 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
 
   const report = await page.evaluate(() => {
     const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    // Colour parsing has a CANVAS FALLBACK, and it is a FALSE-FAILURE fix rather
+    // than an evasion fix (Codex P2, round 12). getComputedStyle may preserve a
+    // functional syntax — `oklch()`, `color(display-p3 …)`, `lab()` — instead of
+    // serialising to rgb(). The regex returned null on those, so a legitimate,
+    // fully-opaque, high-contrast palette would have failed this blocking gate as
+    // "unreadable". The browser is the only thing that knows every syntax it
+    // supports, so ask it: a 1x1 canvas normalises anything assignable to
+    // fillStyle. The regex stays as the fast path so the common case is exact.
+    const cv = document.createElement('canvas');
+    cv.width = 1; cv.height = 1;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
     const parse = (s) => {
-      const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?/.exec(s || '');
-      return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null;
+      const v = (s || '').trim();
+      if (!v || v === 'none' || v === 'transparent') return null;
+      const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?/.exec(v);
+      if (m) return { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] };
+      if (!ctx) return null;
+      // Canvas silently KEEPS the previous fillStyle when a value is not
+      // assignable, so a sentinel is the only way to tell "parsed to black" from
+      // "rejected". Two different sentinels, because either one alone is
+      // ambiguous for its own colour.
+      ctx.fillStyle = '#000000';
+      ctx.fillStyle = v;
+      const asBlack = ctx.fillStyle;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = v;
+      if (asBlack === '#000000' && ctx.fillStyle === '#ffffff') return null;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      return { r: d[0], g: d[1], b: d[2], a: d[3] / 255 };
     };
     const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
     const ratio = (a, b) => {
@@ -3937,9 +3965,27 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
       const sw = num(cs.strokeWidth) ?? 0;
       if (!(sw > 0)) { failures.push(`${txt}: stroke-width ${cs.strokeWidth} — nothing is drawn`); continue; }
 
-      // A dash pattern can leave no visible outline while every colour reads correctly.
-      const dash = (cs.strokeDasharray || 'none').trim();
-      if (dash && dash !== 'none') { failures.push(`${txt}: stroke-dasharray "${dash}" — the halo is not a solid outline`); continue; }
+      // A dash pattern can leave no visible outline while every colour reads
+      // correctly (`0 10000`). But rejecting every non-`none` value is a FALSE
+      // FAILURE (Codex P2, round 12): `0 0` is an all-zero pattern that renders
+      // SOLID, and a blocking gate must not reject a valid render. So the list is
+      // parsed and judged on what it paints — a zero-length dash, or any positive
+      // gap, means the outline is broken; all-zero means solid.
+      const dashRaw = (cs.strokeDasharray || 'none').trim();
+      if (dashRaw && dashRaw !== 'none') {
+        const parts = dashRaw.split(/[\s,]+/).map(parseFloat).filter((n) => Number.isFinite(n));
+        const solid = parts.length === 0 || parts.every((n) => n === 0);
+        if (!solid) {
+          // An odd-length list repeats doubled, so normalise before pairing.
+          const seq = parts.length % 2 ? parts.concat(parts) : parts;
+          const zeroDash = seq.some((n, i) => i % 2 === 0 && n === 0);
+          const openGap = seq.some((n, i) => i % 2 === 1 && n > 0);
+          if (zeroDash || openGap) {
+            failures.push(`${txt}: stroke-dasharray "${dashRaw}" — the halo is not a solid outline`);
+            continue;
+          }
+        }
+      }
 
       // paint-order must put the stroke FIRST: "fill stroke" still contains
       // "stroke" but paints it OVER the glyph, which is the opposite mechanism.
