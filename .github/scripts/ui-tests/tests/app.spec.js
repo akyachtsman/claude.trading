@@ -3849,6 +3849,32 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
     const cv = document.createElement('canvas');
     cv.width = 1; cv.height = 1;
     const ctx = cv.getContext('2d', { willReadFrequently: true });
+    // Reads an alpha component out of a colour STRING, or null when the syntax
+    // carries none. Handles both the modern `f(a b c / alpha)` slash form and the
+    // legacy `f(a, b, c, alpha)` fourth argument, plus 4-/8-digit hex (whose
+    // alpha is 8-bit at source, so no precision is lost there).
+    const pctOrNum = (t) => {
+      const m = /^\s*([\d.]+)(%?)\s*$/.exec(t);
+      return m ? +m[1] / (m[2] ? 100 : 1) : null;
+    };
+    const explicitAlpha = (s) => {
+      const v = (s || '').trim();
+      const fn = /^[a-z-]+\((.*)\)$/is.exec(v);
+      if (fn) {
+        const halves = fn[1].split('/');
+        if (halves.length === 2) return pctOrNum(halves[1]);
+        const args = fn[1].split(',');
+        if (args.length === 4) return pctOrNum(args[3]);
+        return null;
+      }
+      const hex = /^#([0-9a-f]{4}|[0-9a-f]{8})$/i.exec(v);
+      if (hex) {
+        const h = hex[1];
+        return h.length === 8 ? parseInt(h.slice(6), 16) / 255
+                              : parseInt(h[3] + h[3], 16) / 255;
+      }
+      return null;
+    };
     const parse = (s) => {
       const v = (s || '').trim();
       if (!v || v === 'none' || v === 'transparent') return null;
@@ -3868,7 +3894,17 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
       ctx.clearRect(0, 0, 1, 1);
       ctx.fillRect(0, 0, 1, 1);
       const d = ctx.getImageData(0, 0, 1, 1).data;
-      return { r: d[0], g: d[1], b: d[2], a: d[3] / 255 };
+      // Alpha comes from the SOURCE STRING at full precision whenever the syntax
+      // states one, NEVER from the rasterized byte (Codex P2, round 13):
+      // getImageData quantizes alpha to 8 bits, so `oklch(... / 99.99%)` rounds
+      // to 255 and reads as fully opaque, slipping past the full-opacity check
+      // below. Measured in Chromium: /0.9999 -> byte 255, /0.99 -> byte 252, so
+      // the hole admits everything above ~0.998. RGB still comes from the canvas
+      // — that quantization is harmless, since a colour this check ACCEPTS is
+      // opaque and its channels are only ever used for a contrast ratio.
+      // Falling back to the byte when no explicit alpha is found is the safe
+      // direction: it never INVENTS opacity, it only declines to override.
+      return { r: d[0], g: d[1], b: d[2], a: explicitAlpha(v) ?? d[3] / 255 };
     };
     const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
     const ratio = (a, b) => {
@@ -3978,9 +4014,11 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
         if (!solid) {
           // An odd-length list repeats doubled, so normalise before pairing.
           const seq = parts.length % 2 ? parts.concat(parts) : parts;
-          const zeroDash = seq.some((n, i) => i % 2 === 0 && n === 0);
+          // The outline is broken IFF some GAP is positive. A zero-length DASH
+          // removes nothing, so `5 0 0 0` paints continuously — rejecting it was
+          // a false failure (Codex P2, round 13).
           const openGap = seq.some((n, i) => i % 2 === 1 && n > 0);
-          if (zeroDash || openGap) {
+          if (openGap) {
             failures.push(`${txt}: stroke-dasharray "${dashRaw}" — the halo is not a solid outline`);
             continue;
           }
