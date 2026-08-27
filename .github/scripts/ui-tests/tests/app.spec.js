@@ -3812,7 +3812,8 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
 //   * stroke-opacity, opacity or fill-opacity, or alpha in either colour
 //   * stroke-dasharray '0 10000'    → a dash pattern with no visible dash
 //   * paint-order 'fill stroke'     → contains "stroke", paints it OVER the glyph
-//   * display:none, visibility:hidden, empty text, a zero-size box → every
+//   * display:none, visibility:hidden, empty text, a zero-size box, a transform
+//     putting the label off-canvas → every
 //     computed colour still reads correctly on an element painting nothing
 // Opacity is required to be FULL rather than merely non-zero, on the same rule
 // check-contrast.js applies to tokens: a translucent colour has no contrast
@@ -3848,6 +3849,7 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
     };
     const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 
+    const svgBox = document.querySelector('#heatmapSvg').getBoundingClientRect();
     const labels = [...document.querySelectorAll('#heatmapSvg text.heat-label')];
     const failures = [];
     let worst = null;
@@ -3874,6 +3876,21 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
       const box = el.getBoundingClientRect();
       if (!(box.width > 0 && box.height > 0)) {
         failures.push(`${txt}: renders a ${box.width}x${box.height} box — nothing is painted`); continue;
+      }
+      // A box with real dimensions can still be nowhere near the map: a transform
+      // on the label or any group above it (`translateX(10000px)`) preserves the
+      // size and every paint property while putting the glyph off-canvas (Codex
+      // P2, round 11). Tested as INTERSECTION with #heatmapSvg, not containment —
+      // a label may legitimately straddle the edge of its own tile — and against
+      // the SVG rather than the viewport, so a heatmap scrolled below the fold
+      // still passes: both rects move together.
+      const onMap = box.right > svgBox.left && box.left < svgBox.right
+                 && box.bottom > svgBox.top && box.top < svgBox.bottom;
+      if (!onMap) {
+        failures.push(
+          `${txt}: renders outside #heatmapSvg — label x[${Math.round(box.left)},${Math.round(box.right)}] ` +
+          `vs map x[${Math.round(svgBox.left)},${Math.round(svgBox.right)}]`);
+        continue;
       }
 
       // ANCESTOR OPACITY (Codex P2, round 10, and the case that proved my
