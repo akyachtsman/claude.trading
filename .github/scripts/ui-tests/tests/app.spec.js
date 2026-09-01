@@ -4175,12 +4175,19 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
     const scale = A.w / geom.svg.w;
 
     // A pixel counts as PAINTED BY THE LABEL when hiding the label changed it.
-    // 12 is summed across RGB — PNG is lossless, so anything above this is real
-    // paint rather than codec noise.
+    // 12, summed across RGB. PNG is lossless so there is no codec noise; what
+    // this actually discards is the faint antialiased fringe, and discarding it
+    // makes the percentile bands below CLEANER rather than losing signal.
+    // Measured share of changed pixels dropped: 8.7% on desktop, 4.8% on Pixel 5
+    // (1st percentile of non-zero deltas is 2, 5th is 6 desktop / 14 Pixel 5).
     const DIFF_TOL = 12;
-    // A real ticker at this map's type paints hundreds of device pixels. This is
-    // a threshold on MEASURED OUTPUT, not a proxy for it — which is the whole
-    // difference between this check and the four magic numbers declined in #283.
+    // A real ticker at this map's type paints hundreds of device pixels, so this
+    // is a floor with room, not a tuned value: the SMALLEST legitimate label
+    // measured paints 86 device pixels on desktop and 159 on Pixel 5, against a
+    // 5th-percentile of 130 and 421. That is 8.6x headroom at the worst case.
+    // It is also a threshold on MEASURED OUTPUT rather than a proxy for it,
+    // which is the whole difference between this check and the four magic
+    // numbers declined in #283.
     const MIN_PAINTED = 10;
 
     let totalChanged = 0;
@@ -4267,6 +4274,14 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
   // would otherwise read as "all labels are invisible" (a loud false alarm) or,
   // with the comparison inverted, as a clean pass on a blank map. Either way the
   // advisory verdict would be resting on a measurement that never happened.
+  // 20 per label is a MECHANISM floor, not a health check — proving the
+  // difference sees labels at all, where whether each one is fine is the
+  // advisory part below. Measured on a clean render: 735 changed pixels per
+  // label on desktop and 1751 on Pixel 5, so this sits 36x and 87x below
+  // observed and cannot fire on a healthy map. It is deliberately loose in the
+  // other direction too: a map painting 3% of normal still clears it, because a
+  // 3% signal is enough to prove the instrument works, and calling that map
+  // unhealthy is the advisory check's job rather than this one's.
   expect(
     report.totalChanged,
     `Hiding every label changed only ${report.totalChanged} device pixels across the whole map. `
