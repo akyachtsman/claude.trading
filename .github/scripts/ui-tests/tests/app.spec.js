@@ -4058,3 +4058,237 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
     contentType: 'application/json',
   });
 });
+
+// ---------------------------------------------------------------------------
+// S47 — the ADVISORY half of the halo contract. S46 asks the DOM what every
+// label SAYS it paints; this asks the screen what actually arrived.
+//
+// Five findings closed PR #283 unfixed, and they are ONE class: `stroke-width:
+// 0.01px`, a subpixel intersection sliver, a sub-pixel dash gap,
+// `transform: scale(0.001)`, an opaque shape appended after the labels
+// (`focusGroup`/`focusTile` really are appended after `drawTiles`), and
+// `mix-blend-mode: multiply`. Every one leaves EVERY computed value S46 reads
+// correct while the glyph rasterises to nothing or composites against something
+// other than the pair that was measured. No DOM property answers them.
+//
+// The method is a DIFFERENCE, which is what lets one measurement cover all five
+// instead of five invented thresholds: screenshot the map, hide the labels,
+// screenshot again. Pixels that changed are, by construction, exactly what the
+// labels put on the screen — after rasterization, after compositing, after
+// whatever painted over them. A label that changes nothing reached nobody.
+//
+// It is ADVISORY (owner ruling 2026-09-01): per-label findings are reported and
+// never fail the run, so antialiasing tolerance and per-viewport flake cannot
+// block a merge while this proves itself. What IS blocking is the harness's own
+// integrity — see the assertions at the bottom. A check that cannot fail is not
+// a check, and an advisory verdict resting on a broken measurement is worse
+// than no verdict, so "did the sampling actually work" is asserted for real
+// while "did every label pass" is only reported.
+// ---------------------------------------------------------------------------
+test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+
+  const toggle = page.locator('#heatToggle');
+  if (await toggle.count()) await toggle.click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('#heatmapSvg text.heat-label').length > 20,
+    null, { timeout: 20000 },
+  );
+
+  const svg = page.locator('#heatmapSvg');
+  await svg.scrollIntoViewIfNeeded();
+
+  // THE POINTER MUST LEAVE THE MAP BEFORE ANYTHING IS PHOTOGRAPHED, and this is
+  // not housekeeping — without it this scenario reports five false findings on a
+  // clean render, every run. `#heatToggle` is clicked to open the panel, which
+  // leaves the pointer sitting where the button was; the map then draws itself
+  // underneath it, `#heatTip` opens on the tile now under the cursor, and that
+  // opaque tooltip covers whatever is behind it. Measured on demo at 1440x900:
+  // BRK.B, JPM, BAC and two of their percentage labels sampled rgb(241,238,230)
+  // — the tooltip's own background — IDENTICALLY in both shots, so the
+  // difference correctly reported that they never reached the screen.
+  //
+  // Which is the mechanism working, not failing: an opaque overlay hiding labels
+  // is precisely the finding this scenario exists for (Codex P2, PR #283, on
+  // `focusGroup`/`focusTile` being appended after `drawTiles`). It just happened
+  // to be the test's own pointer causing it. The tooltip is dismissed and its
+  // absence ASSERTED, because a silent reappearance would put those five
+  // findings back and they would read as a real regression.
+  await page.mouse.move(2, 2);
+  await expect(page.locator('#heatTip')).toBeHidden();
+
+  // Geometry BEFORE hiding anything, in CSS px relative to the SVG's own box —
+  // the screenshot is cropped to that box, so a label's rect has to be measured
+  // against the same origin. A label moved off-canvas keeps its rect, which is
+  // the point: it lands outside the crop and samples zero pixels.
+  const geom = await page.evaluate(() => {
+    const el = document.querySelector('#heatmapSvg');
+    const r = el.getBoundingClientRect();
+    return {
+      svg: { w: r.width, h: r.height },
+      labels: [...el.querySelectorAll('text.heat-label')].map((n) => {
+        const b = n.getBoundingClientRect();
+        return {
+          t: (n.textContent || '').trim().slice(0, 12) || '(blank)',
+          x: b.x - r.x, y: b.y - r.y, w: b.width, h: b.height,
+        };
+      }),
+    };
+  });
+
+  const shotWith = (await svg.screenshot()).toString('base64');
+  // `visibility: hidden` rather than removing the nodes: it takes the glyphs off
+  // the screen without reflowing the map, so every other pixel is untouched and
+  // the difference isolates the labels alone.
+  await page.addStyleTag({
+    content: '#heatmapSvg text.heat-label { visibility: hidden !important; }',
+  });
+  const shotWithout = (await svg.screenshot()).toString('base64');
+
+  const report = await page.evaluate(async ({ a, b, geom }) => {
+    // Chromium decodes its own PNGs. Doing this in the page rather than in Node
+    // is what keeps this dependency-free — PR #283 removed `acorn` for exactly
+    // this reason, and a decoder in package.json would put it straight back.
+    const load = async (b64) => {
+      const blob = await (await fetch(`data:image/png;base64,${b64}`)).blob();
+      const bmp = await createImageBitmap(blob);
+      const cv = document.createElement('canvas');
+      cv.width = bmp.width; cv.height = bmp.height;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(bmp, 0, 0);
+      return { d: cx.getImageData(0, 0, bmp.width, bmp.height).data, w: bmp.width, h: bmp.height };
+    };
+
+    const A = await load(a);
+    const B = await load(b);
+    if (A.w !== B.w || A.h !== B.h) {
+      return { harness: `screenshot size mismatch: ${A.w}x${A.h} vs ${B.w}x${B.h}` };
+    }
+    if (!A.w || !A.h) return { harness: 'screenshot is empty' };
+
+    const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const lum = (r, g, bl) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(bl);
+
+    // Device pixels per CSS pixel. Derived from the shot rather than read off
+    // devicePixelRatio, so a scaled screenshot or a zoomed page still maps.
+    const scale = A.w / geom.svg.w;
+
+    // A pixel counts as PAINTED BY THE LABEL when hiding the label changed it.
+    // 12 is summed across RGB — PNG is lossless, so anything above this is real
+    // paint rather than codec noise.
+    const DIFF_TOL = 12;
+    // A real ticker at this map's type paints hundreds of device pixels. This is
+    // a threshold on MEASURED OUTPUT, not a proxy for it — which is the whole
+    // difference between this check and the four magic numbers declined in #283.
+    const MIN_PAINTED = 10;
+
+    let totalChanged = 0;
+    const findings = [];
+    let worst = null;
+
+    for (const L of geom.labels) {
+      const x0 = Math.max(0, Math.floor(L.x * scale));
+      const y0 = Math.max(0, Math.floor(L.y * scale));
+      const x1 = Math.min(A.w, Math.ceil((L.x + L.w) * scale));
+      const y1 = Math.min(A.h, Math.ceil((L.y + L.h) * scale));
+
+      const lums = [];
+      let changed = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const i = (y * A.w + x) * 4;
+          const delta = Math.abs(A.d[i] - B.d[i])
+            + Math.abs(A.d[i + 1] - B.d[i + 1])
+            + Math.abs(A.d[i + 2] - B.d[i + 2]);
+          if (delta > DIFF_TOL) {
+            changed++;
+            lums.push(lum(A.d[i], A.d[i + 1], A.d[i + 2]));
+          }
+        }
+      }
+      totalChanged += changed;
+
+      if (changed < MIN_PAINTED) {
+        findings.push(`${L.t}: painted ${changed}px on screen (need ${MIN_PAINTED}) — the label is in the DOM but not on the display`);
+        continue;
+      }
+
+      // Ink and halo AS COMPOSITED. Percentile means rather than min/max, since
+      // antialiasing puts a tail of blended pixels at both ends; the extremes
+      // would report a ratio no reader ever sees.
+      //
+      // 5% is MEASURED, not guessed, and the width matters more than it looks:
+      // a glyph is mostly antialiased edge, so a wide band averages the blend
+      // back into both ends and collapses a perfectly good label. On a CLEAN
+      // demo render the false-finding count is 7 labels at 20%, 3 at 10%, and
+      // ZERO at both 5% and 2% — so 5% is the widest setting that reports
+      // nothing on a good map, with 2% as headroom rather than a cliff. The
+      // smallest label paints 86 device pixels and the median 453, so 5% is
+      // still 4+ pixels at each end for the smallest label on the map.
+      // Corroboration that this is measuring the right pair at all: the ratios
+      // land on 15.14, which is what check-contrast independently computes for
+      // #FFFFFF on #23262D.
+      lums.sort((p, q) => p - q);
+      const band = Math.max(1, Math.floor(lums.length * 0.05));
+      const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+      const loL = mean(lums.slice(0, band));
+      const hiL = mean(lums.slice(-band));
+      const r = (hiL + 0.05) / (loL + 0.05);
+      if (worst === null || r < worst) worst = r;
+      if (r < 4.5) {
+        findings.push(`${L.t}: composited ink/halo ${r.toFixed(2)} over ${changed}px (need 4.5) — the measured pair is not the pair on screen`);
+      }
+    }
+
+    return { sampled: geom.labels.length, totalChanged, findings, worst };
+  }, { a: shotWith, b: shotWithout, geom });
+
+  // ---- BLOCKING: the measurement itself has to have worked ----
+  expect(report.harness, `pixel sampling could not run: ${report.harness}`).toBeUndefined();
+
+  expect(
+    report.sampled,
+    `Only ${report.sampled} labels to sample — the heatmap did not render, or heatText stopped stamping .heat-label.`,
+  ).toBeGreaterThanOrEqual(40);
+
+  // ONE QUALIFICATION ON "ADVISORY", stated rather than discovered later: a
+  // TOTAL wipeout trips this blocking assertion instead of the advisory path.
+  // Measured — `transform: scale(0.001)` on every label yields 0 changed pixels
+  // map-wide and fails here. That is intended: with nothing changing anywhere,
+  // "every label is invisible" and "the difference is broken" are the same
+  // observation, and the honest response to an unreadable instrument is to stop
+  // rather than to report a confident verdict from it. Partial damage — 19 of
+  // 101 for a 0.01px stroke, 25 for an off-canvas quarter, 100 for a blend mode
+  // — all stays advisory, which is the case the owner's ruling was about.
+  //
+  // Non-circularity for the HARNESS. If hiding the labels changed nothing, the
+  // difference is broken and every per-label number below is meaningless — which
+  // would otherwise read as "all labels are invisible" (a loud false alarm) or,
+  // with the comparison inverted, as a clean pass on a blank map. Either way the
+  // advisory verdict would be resting on a measurement that never happened.
+  expect(
+    report.totalChanged,
+    `Hiding every label changed only ${report.totalChanged} device pixels across the whole map. `
+    + 'The screenshot difference is not measuring the labels, so no per-label result below can be trusted.',
+  ).toBeGreaterThan(report.sampled * 20);
+
+  // ---- ADVISORY: reported, never thrown ----
+  if (report.findings.length) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `S47 (advisory): ${report.findings.length} of ${report.sampled} heatmap labels `
+      + `did not survive to the screen:\n  ${report.findings.slice(0, 12).join('\n  ')}`,
+    );
+  }
+
+  test.info().attach('heatmap-label-pixels', {
+    body: JSON.stringify({
+      sampled: report.sampled,
+      totalChangedPx: report.totalChanged,
+      worstCompositedRatio: report.worst,
+      advisoryFindings: report.findings,
+    }, null, 2),
+    contentType: 'application/json',
+  });
+});
