@@ -4125,13 +4125,23 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
   const geom = await page.evaluate(() => {
     const el = document.querySelector('#heatmapSvg');
     const r = el.getBoundingClientRect();
+    // user units -> CSS px, so an UNTRANSFORMED bbox can be sized in the same
+    // space as the screenshot. Falls back to 1 if the SVG carries no viewBox.
+    const vb = (el.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+    const u2c = (vb.length === 4 && vb[2]) ? r.width / vb[2] : 1;
     return {
       svg: { w: r.width, h: r.height },
+      u2c,
       labels: [...el.querySelectorAll('text.heat-label')].map((n) => {
+        // WHERE the paint is: the transformed, on-screen rect.
         const b = n.getBoundingClientRect();
+        // WHAT IT SHOULD HAVE BEEN: getBBox is the element's own geometry in
+        // LOCAL user space, before any transform on it or its ancestors.
+        const g = n.getBBox();
         return {
           t: (n.textContent || '').trim().slice(0, 12) || '(blank)',
           x: b.x - r.x, y: b.y - r.y, w: b.width, h: b.height,
+          bw: g.width, bh: g.height,
         };
       }),
     };
@@ -4182,14 +4192,29 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
     const DIFF_TOL = 12;
     // COVERAGE, not an absolute pixel count (Codex P2, #285). An absolute floor
     // cannot see PARTIAL loss: a big label clipped to a one-pixel strip still
-    // clears any small constant while being unreadable. Coverage is measured
-    // against the label's own DECLARED footprint, so losing 90% of a label
-    // registers as losing 90% whatever its size. Measured on clean renders,
-    // every healthy label covers 0.393–0.658 of its exclusive box (desktop) and
-    // 0.393–0.610 (Pixel 5) — a tight, viewport-independent invariant, since a
-    // glyph run is a fairly constant fraction of ink to box. 0.15 sits 2.6x
-    // below the worst observed.
-    const MIN_COVERAGE = 0.15;
+    // clears any small constant while being unreadable. A label is judged on
+    // the fraction of the footprint it SHOULD have occupied that it actually
+    // painted, so losing 90% registers as losing 90% whatever its size.
+    //
+    // THE DENOMINATOR MUST NOT BE THE DAMAGED RECTANGLE (Codex P2, round 2).
+    // `getBoundingClientRect` returns the box AFTER transforms, so a shrunken
+    // label shrinks the yardstick with it and the ratio stays healthy — the
+    // yardstick has to be independent of the damage it is measuring. Measured
+    // under `transform: scale(0.5)`: against the transformed rect every label
+    // scores 0.419–0.786 and the regression is SILENT; against the
+    // untransformed bbox the same labels score 0.115–0.254.
+    //
+    // `getBBox()` is the element's own geometry in local user space, before any
+    // transform on it or its ancestors, so it survives exactly the case that
+    // defeats the rect. Clean-render coverage against it: 0.407–0.784 desktop,
+    // 0.498–0.781 Pixel 5.
+    //
+    // 0.20 is 2x below the worst clean observation (0.407) — the same safety
+    // margin the earlier floor carried, kept because a false finding is the
+    // worse failure for an advisory check. STATED CONSEQUENCE: coverage falls
+    // with AREA, so this catches a shrink below roughly 62% linear and a milder
+    // one passes. That is a real gap, not a claim of completeness.
+    const MIN_COVERAGE = 0.20;
     // Below this many exclusive pixels a label is too small to judge, and is
     // reported as unattributable rather than failed. The smallest exclusive
     // area measured on a clean map is 161 device px (desktop) / 392 (Pixel 5),
@@ -4235,17 +4260,19 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
     for (let i = 0; i < boxes.length; i++) {
       const b = boxes[i];
       const L = geom.labels[i];
-      // DECLARED footprint spans the whole box, including any part off the
-      // edge of the map. That is the point: a label translated off-canvas keeps
-      // its declared size and simply paints none of it, which reads as the loss
-      // it is instead of shrinking the yardstick to match the damage.
-      let declared = 0;
+      // Two tallies over the on-screen rect: how much of it this label owns
+      // outright (`exclusive`), and how much of that it painted (`covered`).
+      // The rect is only ever WHERE to look; the yardstick comes from the
+      // untransformed bbox below.
+      let rectPx = 0;
+      let exclusive = 0;
       let covered = 0;
       const lums = [];
       for (let y = b.y0; y < b.y1; y++) {
         for (let x = b.x0; x < b.x1; x++) {
+          rectPx++;
           const inShot = y >= 0 && y < A.h && x >= 0 && x < A.w;
-          if (!inShot) { declared++; continue; }
+          if (!inShot) continue;
           const m = y * A.w + x;
           const o = m * 4;
           const delta = Math.abs(A.d[o] - B.d[o])
@@ -4254,7 +4281,7 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
           const changed = delta > DIFF_TOL;
           // COVERAGE counts only pixels this label owns outright, so a dead
           // label cannot borrow a healthy neighbour's paint.
-          if (!shared[m]) { declared++; if (changed) covered++; }
+          if (!shared[m]) { exclusive++; if (changed) covered++; }
           if (changed) {
             if (!painted[m]) { painted[m] = 1; totalChanged++; }
             // CONTRAST samples the whole box, shared pixels included, and that
@@ -4274,14 +4301,20 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
         }
       }
 
-      if (declared < MIN_ATTRIBUTABLE) {
-        findings.push(`${L.t}: only ${declared}px of this label's box is unshared — too small to attribute, not judged`);
+      // The expectation: the label's untransformed footprint in device pixels,
+      // scaled down by how much of its rect it owns outright, so exclusivity
+      // and the undamaged yardstick compose instead of contradicting.
+      const expected = (L.bw * geom.u2c * scale) * (L.bh * geom.u2c * scale);
+      const declared = expected * (rectPx ? exclusive / rectPx : 0);
+      if (!(declared >= MIN_ATTRIBUTABLE)) {
+        findings.push(`${L.t}: only ${Math.round(declared)}px of footprint is attributable to this label alone — not judged`);
         continue;
       }
       const coverage = covered / declared;
       if (coverage < MIN_COVERAGE) {
         findings.push(
-          `${L.t}: painted ${covered} of ${declared}px of its own footprint (${(coverage * 100).toFixed(1)}%, need ${MIN_COVERAGE * 100}%)`
+          `${L.t}: painted ${covered} of the ${Math.round(declared)}px its own untransformed footprint calls for `
+          + `(${(coverage * 100).toFixed(1)}%, need ${MIN_COVERAGE * 100}%)`
           + ' — the label is in the DOM but not on the display',
         );
         continue;
