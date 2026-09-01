@@ -4220,6 +4220,25 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
     // area measured on a clean map is 161 device px (desktop) / 392 (Pixel 5),
     // so this never fires on a healthy render.
     const MIN_ATTRIBUTABLE = 40;
+    // EXTENT: the area of the box actually reached by paint, over the footprint
+    // it should have reached. Density alone is not enough (Codex P2, round 3),
+    // because ink-per-box varies ~1.9x between a sparse label and a dense one,
+    // so ONE global density floor gives each label a different sensitivity — and
+    // measured, a 40% clip and a 0.7 shrink are entirely silent under it:
+    //
+    //   measure   clean desktop   clip 40%        scale(0.7)
+    //   density   0.407-0.784     0.244-0.610     0.210-0.401   (floor 0.20)
+    //   extent    0.631-0.931     0.385-0.777     0.301-0.517
+    //
+    // Extent is density-INDEPENDENT: a clip that removes 40% of a label's
+    // height removes 40% of its extent whether the glyphs are fat or thin. The
+    // two measures fail differently, so both are applied and either can flag.
+    // 0.45 is 1.4x below the worst clean observation (0.631 desktop, 0.772 on
+    // Pixel 5). The margin is deliberately not spent down to the 0.55 that
+    // would catch a 40% clip outright: two of the four CI viewports are WebKit
+    // and CANNOT be run in this sandbox, so a floor calibrated to 1.15x here
+    // would first misfire somewhere I cannot test.
+    const MIN_EXTENT = 0.45;
 
     // OWNERSHIP. Label boxes genuinely overlap here — 41 pairs on a CLEAN
     // desktop render, 18 on Pixel 5, because a tile's ticker and its percentage
@@ -4267,6 +4286,8 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
       let rectPx = 0;
       let exclusive = 0;
       let covered = 0;
+      let minX = Infinity; let maxX = -Infinity;
+      let minY = Infinity; let maxY = -Infinity;
       const lums = [];
       for (let y = b.y0; y < b.y1; y++) {
         for (let x = b.x0; x < b.x1; x++) {
@@ -4281,7 +4302,16 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
           const changed = delta > DIFF_TOL;
           // COVERAGE counts only pixels this label owns outright, so a dead
           // label cannot borrow a healthy neighbour's paint.
-          if (!shared[m]) { exclusive++; if (changed) covered++; }
+          if (!shared[m]) {
+            exclusive++;
+            if (changed) {
+              covered++;
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
           if (changed) {
             if (!painted[m]) { painted[m] = 1; totalChanged++; }
             // CONTRAST samples the whole box, shared pixels included, and that
@@ -4310,6 +4340,19 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
         findings.push(`${L.t}: only ${Math.round(declared)}px of footprint is attributable to this label alone — not judged`);
         continue;
       }
+      // How far the surviving paint REACHES, against the footprint it should
+      // have filled. Uses the same untransformed expectation as coverage.
+      const reachW = maxX >= minX ? (maxX - minX + 1) : 0;
+      const reachH = maxY >= minY ? (maxY - minY + 1) : 0;
+      const extent = (reachW * reachH) / Math.max(1, expected);
+      if (extent < MIN_EXTENT) {
+        findings.push(
+          `${L.t}: paint reaches only ${(extent * 100).toFixed(1)}% of its untransformed footprint `
+          + `(need ${MIN_EXTENT * 100}%) — part of the label is clipped, covered or shrunk away`,
+        );
+        continue;
+      }
+
       const coverage = covered / declared;
       if (coverage < MIN_COVERAGE) {
         findings.push(
