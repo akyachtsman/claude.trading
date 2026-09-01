@@ -2,7 +2,9 @@ name: Codex Monitor
 
 # Watches the Codex automated reviewer and flags PRs where it raised concerns,
 # so they aren't merged blind when no session is active. Codex comments on every
-# PR — including clean passes — so this acts only on reviews that carry actual
+# PR when it has suggestions, and sometimes on clean passes too — which form a
+# clean verdict takes is not predictable (see the ⚠️ below), so this acts only
+# on reviews that carry actual
 # suggestions: state == changes_requested, or a COMMENTED review that left inline
 # comments. Approving / empty reviews are ignored. Flagged PRs get a
 # `codex-flagged` label (Codex already posted suggestions inline, so no duplicate
@@ -15,9 +17,20 @@ name: Codex Monitor
 # merged on 2026-08-19 needed. And the all-clear does NOT arrive as a review:
 # Codex posts flagged rounds as pull_request_review events but posts clean
 # verdicts ("Didn't find any major issues") as plain ISSUE COMMENTS — observed
-# on #237 and #238, 2026-08-19. A monitor listening only on pull_request_review
-# can hear the complaint but never the all-clear. That is why issue_comment is
-# a trigger here: not scope creep, the only path the all-clear travels.
+# on #237 and #238 (2026-08-19) and again on #293 (2026-08-23), where it cleared
+# the label automatically. A monitor listening only on pull_request_review can
+# hear the complaint but never that all-clear. That is why issue_comment is a
+# trigger here: not scope creep.
+#
+# ⚠️ It is NOT the only path a clean verdict travels, and the other two are
+# invisible to this workflow: a bare 👍 reaction, and an INLINE REVIEW COMMENT
+# (pull_request_review_comment) when Codex replies inside a review thread. Both
+# observed on #294, 2026-08-23. When a clean round arrives either way the label
+# cannot clear itself and must be removed by hand with a rationale — see
+# git.md -> PR Lifecycle. Look for the verdict in the PR's comments AND its
+# review threads: an inline reply never enters the comment list, so a
+# comments-only check reads as "still pending" on a head Codex has cleared.
+# Do not read a stuck label as unaddressed concerns.
 on:
   pull_request_review:
     types: [submitted]
@@ -112,7 +125,8 @@ jobs:
           }
 
           if [ "$EVENT" = "issue_comment" ]; then
-            # Clean verdicts travel ONLY this path (see header). Match on the
+            # The only clean-verdict form this workflow can act on (see header:
+            # reactions and inline review comments are invisible here). Match on the
             # stable prefix; the trailing flourish varies ("Hooray!", "Breezy!").
             # The body is untrusted text: it is compared, never executed.
             case "$COMMENT_BODY" in

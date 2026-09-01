@@ -21,6 +21,12 @@
   --color-accent-hover:   #7E5008;
   --color-accent-bright:  #8F5D12; /* wordmark, lamps, active states — text-safe on white */
   --color-accent-light:   #F3E8CC; /* amber tint for focus halos / selected rows */
+  /* Button ink ON an accent fill. Declared as a token rather than the literal
+     `#fff` .btn used to carry, because the contrast gate can only measure a pair
+     it can see: a hard-coded foreground over a token background is the exact
+     shape design.md records as scoring "OK" while a control rendered
+     white-on-white. Measured here: 5.23:1 on accent, 6.91:1 on accent-hover. */
+  --color-on-accent:      #FFFFFF;
 
   /* color — P&L semantics ONLY (never decorative) */
   --color-gain:           #177C4B;

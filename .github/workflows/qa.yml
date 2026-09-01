@@ -16,6 +16,9 @@
 #
 # Required setup:
 #   - Add TEST_AUTH_CREDENTIAL as a repository secret — skip if the project has
+#     (email+password AND identifier-first/split-step gates need TEST_AUTH_EMAIL
+#      as well — directives#304, #310; without it a split-step gate is not even
+#      DETECTED and the authenticated scenarios run against the identifier screen)
 #     no auth; the empty secret makes auth tests self-skip
 #   - Set UI_TESTS_DIR below to the path of your Playwright test directory
 #   - Adjust the UI_PATHS regex in the ui-changes job to your project layout
@@ -39,16 +42,16 @@ on:
   workflow_dispatch:
 
 # Least privilege: these jobs only read the repo and run tests.
-permissions:
-  contents: read
-
-# Cancel a superseded run when a newer commit lands on the same PR/branch, so a
-# stale in-flight run can't post a green wake signal for an old SHA (Codex #125).
-# LOCAL HARDENING — the upstream template carries no concurrency block; this is
-# kept deliberately on every refresh, not drift.
+# ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
+# Supersede in-flight runs for the same PR (or ref): a push while CI is running
+# otherwise leaves two suites racing, and the older one's result is noise that
+# can land AFTER the newer one and read as the current verdict.
 concurrency:
   group: qa-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   # Path to the directory containing playwright.config.js and package.json
@@ -78,6 +81,19 @@ jobs:
         # Every `workflow_run.workflows:` entry must name a real workflow. GitHub
         # raises no error when one does not — the watcher simply never fires.
         run: python3 .github/scripts/workflow-ref-guard.py
+
+      - name: Job bounds guard
+        # ENFORCED: every job bounded, none >= 360, ui-suite callers >= 120.
+        # Without this step the 120 below is a NUMBER IN A COMMENT: an edit back
+        # to 40 passes CI and then cancels healthy cold runs, which read as
+        # inconclusive rather than red, so nobody chases them.
+        # ADVISORY: the direct-`playwright install` floor of 30 prints and never
+        # fails the build — identifying a playwright invocation inside a `run:`
+        # block means parsing bash, and the heuristic is not sound enough to gate
+        # on (rule 3 in the script header). Do not read a green run as proof that
+        # floor was met. Scans .github/workflows; it skips templates/workflows,
+        # which only claude.directives has, and says so.
+        run: python3 .github/scripts/check-job-bounds.py
   ui-changes:
     name: Detect UI-relevant changes
     runs-on: ubuntu-latest
@@ -96,27 +112,26 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # Per-project: paths whose changes warrant a browser run.
-          #
-          # ⚠️ THIS PROJECT USES scripts/, NOT js/. The upstream template ships
-          # `^js/`, which matches NOTHING here — adopting it verbatim would send
-          # every change to scripts/*.js past the browser job untested, which is
-          # precisely the regression the 2026-07-31 owner ruling fixed. Keep
-          # `^scripts/` (and `^config/`, read at runtime by the app) on every
-          # future template refresh.
-          #
-          # History for that ruling: index.html here is markup only — every
-          # behaviour lives in scripts/ and every appearance in styles/ — so the
-          # old template-default matcher skipped the browser job on exactly the
-          # changes most likely to break the browser. PRs #167, #188, #196 and
-          # #200 each added a modal reusing the `.lock-error` class and each
-          # touched app.js alone, so none ran a browser test; the selector count
-          # climbed 1 → 5 and S11 was broken for six days before anyone saw it.
-          #
-          # Adopted FROM the template: `\.html$` (any deployed page is an entry
-          # point, nested ones included) and `^\.github/actions/` (so a change to
-          # the composites is exercised pre-merge).
-          UI_PATHS: '(\.html$|^scripts/|^styles/|^config/|^\.github/actions/|^\.github/scripts/ui-tests/|^\.github/workflows/qa\.yml$)'
+          # Per-project: paths whose changes warrant a browser run. Includes
+          # js/ and styles/ (a source-only change must not skip the browser
+          # job) and .github/actions/ (changes to the composites are exercised
+          # pre-merge).
+          # ANY deployed .html is an entry point, nested ones included: APP_PAGES
+          # advertises paths like vendor/console.html, and a matcher anchored to
+          # root-level files let a PR touching only that page set ui=false and
+          # skip the very ENTRY gate the page exists for.
+          # ⚠️ LOCAL — tailored to THIS project's layout: the app's JS lives in
+          # scripts/ (not js/) and its owner-editable rosters in config/. The
+          # template's generic regex would skip the browser suite on every
+          # js-only and config-only change.
+          # check-ui-viewports.js is in this list because the ONLY job that runs it
+          # is ui-tests (the composite invokes it). Matching just
+          # .github/scripts/ui-tests/ left a PR that touches only the checker with
+          # ui=false, which skips that job, never executes the changed script, and
+          # still reaches the green notification — a gate certified by a run that
+          # never loaded it (Codex P2, #283). Note .github/actions/ is already here,
+          # so editing the composite triggers UI; editing the script it calls did not.
+          UI_PATHS: '(\.html$|^scripts/|^styles/|^config/|^\.github/actions/|^\.github/scripts/ui-tests/|^\.github/scripts/check-ui-viewports\.js$|^\.github/workflows/qa\.yml$)'
         run: |
           # This job gates the LOCAL suite, which serves the repo root as static
           # files, so it needs a static entry point. Enabling it for a repo with
@@ -156,18 +171,150 @@ jobs:
     needs: [static-checks, ui-changes]
     if: needs.ui-changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
-    # ⚠️ 60, NOT 40 and NOT 20. This bound covers the WHOLE job in one sum:
-    # dependency install, the browser install, EVERY playwright project, retries
-    # and the artifact upload. The cold-cache install alone measures 21m25s and a
-    # complete warm job measured 16.6 min, so a healthy cold run is ~38 min — a
-    # 40-minute ceiling cancels it with nothing wrong. It got tighter still when
-    # the matrix went from two projects to four (desktop + tablet added), which
-    # is why the bound was raised in the SAME change.
+    # 120, NOT 90 or 60 (and never 40). This job runs the ui-suite composite: dependency install + playwright
+    # install + EVERY project in playwright.config.js + retries + artifact
+    # upload, in one sum the composite cannot subdivide.
     #
-    # And a cancelled run is not a red one: it reads as INCONCLUSIVE, so nobody
-    # chases it. A bound below the work it bounds does not protect anything —
-    # it fails on a schedule and looks like flakiness.
-    timeout-minutes: 60
+    # Sized from MEASURED numbers — and the warm figure is a RANGE, not one
+    # anchor. An earlier version of this block cited apfp.claude's 16.6min as
+    # though it were typical. THREE repos have measured the warm whole-job path
+    # (a fourth number, the 21m25s cold install below, comes from
+    # claude.directives and measures a different thing — do not count it here):
+    #
+    #     WARM, whole job, 4-project suites
+    #       claude.prop         8m00s    208 tests   cache hit, zero downloads
+    #       apfp.claude        16.2-17.0min ~204 specs   three qa-live runs
+    #       claude.trading     30m35s    128 tests   run 97234645851
+    #
+    # That is a 3.8x spread whole-job to whole-job, on nominally similar suites,
+    # and test COUNT does not predict it — the slowest repo runs the fewest
+    # tests. (#296 quotes 3.7x; that compares claude.trading's 29m34s TEST PHASE
+    # against claude.prop's WHOLE JOB. Like for like it is 3.8x.)
+    #
+    #     cold-cache browser install   21m25s   (claude.directives
+    #                                            check-job-bounds.py, rule 3)
+    #
+    # NOTE the composite installs with `npm install`, not `npm ci` — an earlier
+    # version of this block said ci. They differ in resolution and speed, so
+    # treat these as measuring THIS path, not a stricter one.
+    #     -------------------------------------
+    # SIZE FROM THE SLOW END, which is the whole point of carrying a range:
+    #     fast end   21m25s + 8m00s   = ~29min  → 60 leaves ~52% headroom
+    #     slow end   21m25s + 30m35s  = ~52min  → 60 leaves ~13% headroom
+    #
+    # claude.trading's cold path is UNMEASURED — they were explicit about not
+    # presenting that ~52 as an observation, and it is arithmetic here too. 60
+    # still holds, but on the slow end it holds by ~8 minutes, not by the ~58%
+    # an average would suggest. A repo at that end should treat adding a project
+    # as a bound change, not a config change.
+    #
+    # ⚠️ 120, NOT 60 — and the raise is not cosmetic. When app.spec.js took S3's
+    # per-test budget from 240s to 900s this arithmetic STOPPED FITTING. Projects
+    # run SERIALLY (playwright.config.js sets no `workers`; a 2-core runner gives
+    # one), so a per-test ceiling is paid once per project — and `retries: 1`
+    # means a FAILING scenario pays it twice:
+    #
+    #     cold install                       21m25s   measured
+    #   + test phase, slow end, post-raise    ~38min   claude.trading measured
+    #                                                  10.7 + 9.3 + 9.1 for three
+    #                                                  profiles; iphone is
+    #                                                  unmeasured, inferred ~9.1
+    #                                                  from its peer phone profile
+    #     -------------------------------------
+    #     healthy cold, slow end              ~59.6min  → against 60: no headroom
+    #
+    # A FAILING S3 does not merely ADD a retry — it REPLACES a healthy run. That
+    # ~38min test phase already contains a SUCCESSFUL S3 (~7.8min on the profiles
+    # claude.trading measured), so when S3 times out that share is first replaced
+    # by the full 900s ceiling and THEN retried at the ceiling:
+    #
+    #     replace healthy S3 with the ceiling   +7.2min
+    #   + retry at the ceiling                  +15min
+    #     -------------------------------------
+    #     ONE profile failing S3                ~82min
+    #     TWO profiles failing S3               ~104min
+    #
+    # 120 covers both with ~16min spare. THREE or more profiles failing S3 is NOT
+    # covered, deliberately: that is not a bound problem, it is S3's budget being
+    # wrong for that app — re-size the budget, do not grow the job.
+    #
+    # WHAT THE ~16min OF SPARE IS FOR, checked rather than assumed. Two rounds
+    # raised per-test ceilings: the scenarios that load and authenticate had each
+    # been sized for two of their five terms (S2 60s -> 180s -> 240s, S4 and CTRL 30s ->
+    # 240s, S1 60s -> 90s, ENTRY 60s -> 90s per page, capped at 5min total), and
+    # then the shared preamble's settles became real observation windows, which
+    # cost every budget containing them (+40s: NAV 300s -> 360s, DISMISS 900s ->
+    # 1200s). A HEALTHY run is unchanged throughout — a ceiling costs nothing
+    # until a test hits it.
+    #
+    # THIRD ROUND, same shape (directives#310): the identifier-first auth step
+    # added a bounded SECOND attempt cycle to that shared preamble — +55s, but
+    # only on a split-step gate with TEST_AUTH_EMAIL set, so a healthy run on
+    # every other app is unchanged again. It cost every budget containing the
+    # preamble: S2/S4/CTRL 240s -> 300s, NAV 360s -> 420s. DISMISS absorbed it
+    # WITHOUT growing, by spending one fewer navigation reset (NAV_RESET_CAP
+    # 3 -> 2) — a navigating trigger is not an overlay trigger, so those resets
+    # were already the cheap side of that trade.
+    #
+    # A FAILING run is where the spare goes, and the scenarios split in two:
+    #
+    #   SHORT ceilings   S1 90s, S2 300s, S4 300s, CTRL 300s, ENTRY <=300s
+    #                    a failure costs <=10min (replace + retry). ONE of these
+    #                    fits alongside two profiles failing S3 — and that claim
+    #                    is UNCHANGED by the raise above: ENTRY's 300s cap
+    #                    already set this class's maximum, so S2/S4/CTRL joined
+    #                    the ceiling rather than raising it. 104min + 10min =
+    #                    ~114min against 120. What DID change is how often the
+    #                    worst case is realized: most projects declare 0-2 entry
+    #                    points, so the TYPICAL class maximum was 240s and is
+    #                    now 300s.
+    #   LONG ceilings    NAV 420s, S3 900s, DISMISS 1200s
+    #                    a failure costs 14-40min. NOT covered alongside a
+    #                    failing S3 — deliberately, on the same reasoning as
+    #                    three failing S3 profiles: two long scenarios failing at
+    #                    once means the app or those budgets are wrong, not this
+    #                    bound. Re-size there, do not grow the job.
+    #
+    # ⚠️ CORRECTING THE PREVIOUS VERSION OF THIS PARAGRAPH, which said the spare
+    # "absorbs ONE such failure alongside a failing S3" without distinguishing
+    # short from long ceilings — and so implied a failing DISMISS was covered. It
+    # was not covered then either, at 900s. The omission was in the sentence
+    # written to prove the check had been done.
+    #
+    # Raising a per-test budget without re-checking its enclosing job is exactly
+    # the defect this comment block was written for; it applies to the block's
+    # own author, twice now.
+    #
+    # The failure mode all of this exists to prevent, arriving from the other
+    # side: GitHub CANCELS the job at the bound, so Playwright never reports the
+    # definitive failure and the run reads as inconclusive rather than red.
+    # **Raising a per-test budget without raising its enclosing job converts a
+    # test failure into a job cancellation.**
+    #
+    # Capping S3's sweep instead was considered and rejected: it is uncapped BY
+    # DESIGN (test.md → "Coverage = controls clicked, not screens visited"), so a
+    # cap would cut mandated coverage to fit a bound — the wrong direction, and
+    # the same move as loosening a test to get green.
+    #
+    # COST OF THE FLOOR, stated because it is real: this is a fleet-wide MINIMUM
+    # sized for the slow end, so a fast repo (claude.prop, 8min warm) must also
+    # allow 120 and will burn that long on a genuine wedge. A repo may set HIGHER,
+    # never lower. The trade is deliberate — a bound too tight kills healthy runs
+    # and yields an inconclusive signal, which this file treats as the worse
+    # failure.
+    #
+    # The 57-minute figure in claude.directives' check-job-bounds.py header is NOT a sizing input,
+    # however tempting the arithmetic. Read it in context: that run "sat 57
+    # minutes on a browser install", cited under "an unbounded job that WEDGES".
+    # It is the pathology bounds exist to kill. Size to survive it and you have
+    # built a bound that cannot trip on its own purpose.
+    #
+    # 40 was wrong in the other direction, and the failure mode is why this
+    # comment is long: a cancelled run is NOT a red one. It reads as
+    # inconclusive, so nobody chases it — the same shape as a viewport never
+    # instantiated and a live gate nobody watched. Raise this BEFORE adding
+    # projects, never after.
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -185,33 +332,14 @@ jobs:
           tests-dir: ${{ env.UI_TESTS_DIR }}
           app-url: http://localhost:8080
           test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+          test-auth-email: ${{ secrets.TEST_AUTH_EMAIL }}
           artifact-name: playwright-results-local
           app-pages: ${{ vars.APP_PAGES }}
           start-local-server: 'true'
-          advisory-run: 'false'
-          # Live-gated scenarios stay qa-live.yml's job. They do NOT self-skip
-          # here: they gate on liveBackendConfigured(), which reads the committed
-          # scripts/config.js, and this desk is live — so against localhost S10,
-          # S11 and S14 would run for real and fail on a runner that cannot reach
-          # Supabase. Everything that CAN pass locally still gates the merge.
+          # ⚠️ LOCAL — see the input's description in the composite.
           grep-invert: 'live only'
+          advisory-run: 'false'
 
-  # ── Green wake signal ────────────────────────────────────────────────────
-  # LOCAL HARDENING — the upstream template carries no notify job; this is kept
-  # deliberately on every refresh, not drift.
-  #
-  # Comments on the PR when this run is green so a watching Claude session is
-  # woken via the PR-comment webhook and can auto-merge. PR context is read
-  # straight off the event, so no cross-workflow lookup is needed.
-  #
-  # Retained even though the refreshed ci-notify.yml now resolves the open PR by
-  # head SHA with a branch fallback, which is the gap this job was added for.
-  # The costs are asymmetric: keeping both risks a duplicate green comment
-  # (visible, harmless, trivially removed), while dropping this one risks PR
-  # wakes silently stopping if workflow_run does not deliver here — and a wake
-  # that never arrives is indistinguishable from a run still in progress. If the
-  # duplicate is confirmed on the first PRs after this lands, delete THIS job
-  # and keep ci-notify.yml.
   notify:
     name: Notify PR on green
     needs: [static-checks, ui-changes, ui-tests]

@@ -16,6 +16,12 @@ export default defineConfig({
        WebKit once the vendor widget frames hydrate mid-sweep and keep the
        network busy (qa-live run 113). 10s is generous for any real action. */
     actionTimeout: 10_000,
+    /* The OTHER half of the same guard, and it was missing here while
+       actionTimeout was not. Navigation defaults to 0 = NO timeout, so a hung
+       goto() runs to the test timeout exactly as the hung click above did —
+       which makes every per-scenario budget arithmetic over an unbounded term.
+       A guard that fails open is indistinguishable from one that passes. */
+    navigationTimeout: 30_000,
     headless: true,
     screenshot: 'only-on-failure',
     video: 'off',

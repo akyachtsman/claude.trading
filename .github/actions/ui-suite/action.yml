@@ -3,15 +3,41 @@
 #
 # Caveats baked into this design:
 # - Composite steps cannot carry per-step `timeout-minutes` — bound the run with
-#   the CALLING job's `timeout-minutes`. The qa workflows set 40, and that number
-#   is not arbitrary: the cold-cache install below was measured at 21m25s, so the
-#   20 they used to carry killed every cold run before a single test executed.
-#   If you lower it, measure the cold path first — the browser install is the
-#   whole cost, and a kill during it also skips the cache save that would have
-#   made the next run cheap.
+#   the CALLING job's `timeout-minutes`. The qa workflows set 120, sized from a
+#   cold-cache install at 21m25s plus a warm whole job — and the warm figure is a
+#   RANGE, not the single 16.6min this note used to cite: claude.prop 8m00s,
+#   apfp.claude 16.2-17.0min, claude.trading 30m35s, a 3.8x spread on nominally
+#   similar 4-project suites. Size from the SLOW end, and include a RETRY: with
+#   S3's per-test budget now 900s and `retries: 1`, a failing scenario REPLACES
+#   its healthy S3 with the ceiling and then retries at it — ~+22min for one
+#   profile, ~+44min for two — so the slow end runs ~82min with one failing
+#   profile and ~104min with two. That is what took this from 60 to 120; at 60 a
+#   healthy slow-end cold run had NO headroom at all. The callers carry the full
+#   table, the arithmetic, and what 120 deliberately does not cover. These
+#   measure THIS composite's `npm install` path below, not a stricter `npm ci`.
+#   That 120 is ENFORCED, not merely documented: check-job-bounds.py rejects any
+#   ui-suite caller below it, and templates/workflows/qa.yml invokes the guard in
+#   its static-checks job. If you copied this composite, copy
+#   templates/scripts/check-job-bounds.py to .github/scripts/ and keep that step,
+#   or the 120 reverts to being a number in a comment — which is what it was until
+#   #291, and what let three callers sit at 40.
+#   The browser install is NOT the whole cost, whatever an earlier version of
+#   this note said: those warm figures are the suite's own share, and each scales
+#   with the number of projects in playwright.config.js. That is also the best
+#   available explanation of the 3.8x spread — same project count, very different
+#   apps — so read the range as "your repo sits somewhere in here", not as noise
+#   around a mean. Raise the CALLERS before adding projects, never after.
+#   If you lower it, measure the cold path first — and note a kill during install
+#   also skips the cache save that would have made the next run cheap, so too
+#   tight costs a streak rather than a run.
 # - `advisory-run` flips ONLY the Playwright run step to continue-on-error;
 #   setup/install/server/upload always stay blocking, so a broken install can
 #   never pass green.
+# - The viewport gate below runs on THIS composite's Node, which `setup-node` pins
+#   to 20. A project that has migrated to a TypeScript `playwright.config.ts` must
+#   either raise that pin to 22 (type stripping is on by default from 22.18) or
+#   keep a `.js` config — Node 20 cannot import a TS config, and the gate says so
+#   by name when it hits ERR_UNKNOWN_FILE_EXTENSION rather than passing quiet.
 name: 'UI test suite'
 description: >
   Install deps + Playwright, optionally start a bundled local server, run the
@@ -26,6 +52,18 @@ inputs:
     required: true
   test-auth-credential:
     description: 'Seeded test credential; empty makes auth tests self-skip'
+    required: false
+    default: ''
+  test-auth-email:
+    # ⚠️ LOCAL NOTE — this input is PLUMBED HERE BUT INERT IN THIS REPO'S KIT.
+    # claude.trading's app.spec.js has no identifier-first path: detectAuthGate()
+    # ignores input[type=email] and detectAndAuth() gets only the credential. The
+    # desk's sole gate is a single-step 6-digit PIN, so there is no identifier
+    # screen to detect and porting upstream's split-step logic would be dead code.
+    # The input and its env pass are KEPT rather than deleted so this file does not
+    # drift from the template over something empty; S2 throws if TEST_AUTH_EMAIL is
+    # ever actually set, which is what stops it being a silent no-op (Codex P2, #283).
+    description: 'Identifier for email+password gates (directives#304); empty keeps the password-only path. NOT truly secret: it is typed into a visible input, so failure screenshots/traces record it — use a throwaway test-account address, never a real person''s'
     required: false
     default: ''
   artifact-name:
@@ -47,10 +85,6 @@ inputs:
       tests a release blocker, so leaving this empty is a claim, not a default.
     required: false
     default: ''
-  advisory-run:
-    description: "Set 'true' to make ONLY the run step advisory; setup/install/server/upload stay blocking."
-    required: false
-    default: 'false'
   grep-invert:
     description: >
       ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
@@ -66,6 +100,10 @@ inputs:
       and must run those scenarios for real.
     required: false
     default: ''
+  advisory-run:
+    description: "Set 'true' to make ONLY the run step advisory; setup/install/server/upload stay blocking."
+    required: false
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -83,6 +121,31 @@ runs:
       run: npm install
       working-directory: ${{ inputs.tests-dir }}
 
+    # This suite's ENTIRE viewport coverage is playwright.config.js's `projects`
+    # list — one spec set, run at whatever widths that list declares, with exactly
+    # one test setting its own (S4, at 390). A list that drifts to phone-only
+    # leaves nothing anywhere rendering the app at laptop width, and a green run
+    # says nothing about it: a viewport never instantiated produces no failing
+    # test. test.md → UI coverage gates, fifth gate.
+    #
+    # HERE, specifically: this is the first point node_modules exists (the script
+    # IMPORTS the config so Node expands `...devices[…]`, which needs
+    # @playwright/test resolvable), and it is BEFORE the browser install so a
+    # broken config fails in seconds instead of after a ~20-minute download.
+    #
+    # Always blocking — `advisory-run` flips ONLY the run step. There is no silent
+    # exit: config missing, import throwing, node_modules absent and zero projects
+    # each get their own exit code and their own printed line (#282).
+    #
+    # Copy templates/scripts/check-ui-viewports.js to .github/scripts/ WITH this
+    # composite — this step names it by path and fails at resolution without it,
+    # the same coupling check-job-bounds.py has with qa.yml.
+    - name: Check three viewport classes are declared
+      shell: bash
+      env:
+        TESTS_DIR: ${{ inputs.tests-dir }}
+      run: node .github/scripts/check-ui-viewports.js --tests-dir "$TESTS_DIR"
+
     # Browsers are ~400MB and were re-downloaded on EVERY run. This is a BUDGET
     # fix, not a hang fix, and the distinction was measured rather than assumed:
     # downstream the install step SUCCEEDED in 21m25s, and the job then hit its
@@ -91,9 +154,28 @@ runs:
     # Caching removes a 21-minute step from a 30-minute job, which is decisive
     # rather than probabilistic.
     #
-    # ⚠️ Actions caches are scoped to the branch that SAVED them, so the first run
-    # on a new default branch still misses even when a PR branch populated one.
-    # Expect one more slow run after adopting this, then hits.
+    # ⚠️ Cache SAVES are branch-scoped; cache RESTORES are not scoped the same
+    # way, and conflating the two is the mistake to avoid. A save belongs to the
+    # branch that made it, so the first run on a new default branch still misses
+    # even when a PR branch populated one — expect one more slow run after
+    # adopting this, then hits. A RESTORE reaches further: measured in
+    # claude.insurance (2026-08-25, run 32897692210 / job 97964016597, qa-live on
+    # main, event=workflow_run), a workflow_run-triggered job RESTORED the exact
+    # key a manual workflow_dispatch had written — the same key workflow_run had
+    # been DENIED writing three times — two days and three intervening runs
+    # later. So narrow any statement of the limit to SAVES; "workflow_run can't
+    # use the cache" is wrong, and that correction stands whatever anyone does
+    # with it.
+    #
+    # That makes a dispatch-warms / workflow_run-reads path real and durable. It
+    # is deliberately NOT adopted here, and the cost is the reason rather than a
+    # footnote: it bought ~15s (install ~22s warm). The cache-hit branch below
+    # still runs install-deps, and apt dominates — claude.prop measured 114 MB of
+    # apt fetched on two separate runs with BOTH caches hit, i.e. that half is
+    # invariant. A manual warming step would trade a documented human action for
+    # ~15s against a constant nobody has bounded. Recorded as a finding
+    # (claude.directives #303), not as procedure: do not add a warming step
+    # without re-measuring.
     - name: Cache Playwright browsers
       id: pw-cache
       uses: actions/cache@v4
@@ -112,11 +194,23 @@ runs:
       # are largely preinstalled on the runner image, so `install-deps chromium`
       # finishes in ~30s and invites the conclusion that the step is incidental.
       # Webkit's are not: gstreamer, wayland, hyphen, enchant and flite come to
-      # roughly sixty packages and minutes, not seconds (apfp.claude, 2026-08-19).
-      # Do NOT bound this step on the chromium figure, and do NOT make it
-      # warn-and-continue — a partial install does not fail here, it fails later
-      # as every webkit test dying on a missing `libwayland-server.so.0`, which
-      # turns one clear message into fifty confusing ones.
+      # roughly sixty packages.
+      #
+      # THE MAGNITUDE IS DISPUTED AND BOTH MEASUREMENTS ARE DATED, because runner
+      # images change and an undated figure gets read as current:
+      #   2026-08-19  apfp.claude     "minutes, not seconds" for webkit's deps
+      #   2026-08-23  claude.trading  ~52s and ~56s for Node + npm install +
+      #                               cache restore + install-deps BOTH browsers
+      #                               + server start, i.e. this step was well
+      #                               under a minute on that image, warm path
+      # Both may be true of their own day. Treat neither as the current cost.
+      #
+      # THE SAFETY ADVICE BELOW SURVIVES EITHER FIGURE — only the magnitude is in
+      # question, so do not delete it while correcting a number. Do NOT bound this
+      # step on the chromium figure, and do NOT make it warn-and-continue — a
+      # partial install does not fail here, it fails later as every webkit test
+      # dying on a missing `libwayland-server.so.0`, which turns one clear
+      # message into fifty confusing ones.
       shell: bash
       run: |
         if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
@@ -145,15 +239,17 @@ runs:
       env:
         APP_URL: ${{ inputs.app-url }}
         TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
+        TEST_AUTH_EMAIL: ${{ inputs.test-auth-email }}
         APP_PAGES: ${{ inputs.app-pages }}
         GREP_INVERT: ${{ inputs.grep-invert }}
       # No --reporter flag: a CLI reporter REPLACES the config's list, which
       # would drop the json reporter and leave playwright-results.json unwritten
       # while the upload step below still claims to publish it.
       #
-      # The pattern goes through an env var and is quoted at the point of use —
-      # never interpolated into the command line — so a title containing spaces
-      # or shell metacharacters stays one argument.
+      # ⚠️ LOCAL ADDITION (grep-invert) — see the input's description. The pattern
+      # goes through an env var and is quoted at the point of use — never
+      # interpolated into the command line — so a title containing spaces or
+      # shell metacharacters stays one argument.
       run: |
         if [ -n "$GREP_INVERT" ]; then
           npx playwright test --grep-invert "$GREP_INVERT"

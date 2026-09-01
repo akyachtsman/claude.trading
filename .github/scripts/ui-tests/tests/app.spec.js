@@ -344,6 +344,37 @@ test('S1: page loads without JS errors', async ({ page }) => {
 // SCENARIO 2 — Auth Discovery & Login (with API diagnostics)
 // ─────────────────────────────────────────────────────────────────────────────
 test('S2: auth gate discovered and credential accepted', async ({ page }) => {
+  /* TEST_AUTH_EMAIL IS PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — say so, loudly.
+
+     qa.yml / qa-live.yml / qa-response.yml all pass `test-auth-email` into the
+     ui-suite composite, which exports TEST_AUTH_EMAIL into this process
+     (directives#304). Nothing here reads it: detectAuthGate() does not look for
+     input[type=email] and detectAndAuth() is handed only the credential.
+
+     Upstream's S2 rewrite carries the identifier-first logic. This repo took the
+     fails-open DEFECT fix from it and not the helper layer, deliberately — and
+     that decision is what leaves this input inert, so this guard is its cost,
+     paid openly rather than left as a trap.
+
+     Porting the logic instead would be dead code: this desk's only gate is a
+     6-digit PIN in .lock-form, single-step, with no identifier screen to detect.
+
+     So the failure mode Codex named (#283 P2) is real but narrow — set the
+     secret expecting split-step support and you get the password-only path with
+     no indication. Throwing converts that into a message naming the exact cause.
+     It fires BEFORE the credential skip on purpose: TEST_AUTH_EMAIL set without
+     TEST_AUTH_CREDENTIAL would otherwise skip this scenario and report nothing. */
+  if ((process.env.TEST_AUTH_EMAIL ?? '').trim()) {
+    throw new Error(
+      'S2 FAIL | TEST_AUTH_EMAIL is set, but this test kit has no identifier-first ' +
+      '(split-step) login path — detectAuthGate() ignores input[type=email] and ' +
+      'detectAndAuth() receives only the credential. Setting it therefore changes ' +
+      'nothing and the suite silently stays on the password-only path. This desk ' +
+      "uses a single-step PIN gate, so there is no identifier screen to reach: " +
+      'unset the TEST_AUTH_EMAIL secret. If the desk ever gains an email step, ' +
+      "port upstream's identifier-first detection before re-setting it."
+    );
+  }
   if (!AUTH_CREDENTIAL) test.skip(true, 'No auth credential found in CLAUDE.md or TEST_AUTH_CREDENTIAL env var — skipping auth test');
   const consoleErrors = [];
   page.on('pageerror', e => consoleErrors.push(e.message));
@@ -403,7 +434,31 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
     );
   }
 
-  // Auth passed or no auth required — record mechanism
+  /* S2 MUST DISCRIMINATE — it used to fail OPEN. Ported from the upstream kit
+     (claude.directives, 2026-08-26) as the defect only, not the rewrite: taking
+     upstream's S2 whole would pull in awaitAuthReady/watchPageErrors/
+     credentialFor and the split-step login discovery, which is the take-the-kit-
+     wholesale move the refresh rules forbid for this per-project file.
+
+     The defect: a credential IS configured (we did not skip at the top), yet no
+     gate was found — so `mechanism` is 'none', every assertion above is skipped,
+     and the scenario passes having exercised no authentication at all. That is
+     the same shape as a guard that fails open: indistinguishable in the output
+     from a real pass.
+
+     This desk HAS a gate (the PIN lock) and the credential is set in CI, so this
+     never fires today — which is exactly why it is worth adding. It fires the
+     day gate detection silently breaks, instead of going green. */
+  if (mechanism === 'none') {
+    throw new Error(
+      'S2 FAIL | a credential is configured but NO auth gate was found. ' +
+      'This desk has a PIN lock, so either detectAuthGate() has stopped seeing ' +
+      'it or the lock stopped rendering. Passing here would mean reporting green ' +
+      'on authentication that was never exercised.'
+    );
+  }
+
+  // Auth passed — record mechanism
   test.info().attach('auth-result', {
     body: JSON.stringify({ mechanism, domChanged }),
     contentType: 'application/json',
@@ -3728,3 +3783,278 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
   expect(live.retickSurvives, 'the stamp reticker drives the news rollover without throwing').toBe(true);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 46 — heatmap label halo, measured on the RENDERED page
+//
+// WHY THIS IS A BROWSER TEST. Heatmap tile labels sit on a DYNAMIC colour ramp,
+// so AA is carried by a halo stroke under each glyph rather than by a token
+// pair. check-contrast.js asserted that by READING scripts/app.js, and over five
+// review rounds on PR #283 that produced seventeen ways for valid source to
+// satisfy the check while the rendered labels lost their halo — ending with an
+// entirely UNUSED object literal of the right shape, and a `stroke-width: 0`
+// that specifies a perfect halo and paints nothing. No source analysis closes
+// either: a check satisfied by dead code is not a check.
+//
+// SELECTION IS BY MARKER, NEVER BY THE PROPERTY UNDER TEST. The first version
+// selected "labels that have a stroke" and asserted they have a halo — which
+// passes vacuously when the halo is deleted, and (Codex P2, round 7) still
+// passed when SOME labels regressed: changing fill and stroke TOGETHER on half
+// of them kept the survivors satisfying every clause, because the inferred ink
+// was tallied from the haloed set itself. `heatText` now stamps `.heat-label`,
+// so membership is decided by the renderer and cannot move with the colours.
+// Sector and industry captions are correctly excluded — they sit on a FIXED band
+// fill and are covered by the token gate.
+//
+// A HALO IS ONLY A HALO IF IT PAINTS A SOLID OUTLINE UNDER THE GLYPH. Each of
+// these was a separate way to keep every colour reading correctly while
+// rendering no halo (rounds 6-7):
+//   * stroke-width 0                → nothing drawn
+//   * stroke-opacity, opacity or fill-opacity, or alpha in either colour
+//   * stroke-dasharray '0 10000'    → a dash pattern with no visible dash
+//   * paint-order 'fill stroke'     → contains "stroke", paints it OVER the glyph
+//   * display:none, visibility:hidden, empty text, a zero-size box, a transform
+//     putting the label off-canvas → every
+//     computed colour still reads correctly on an element painting nothing
+// Opacity is required to be FULL rather than merely non-zero, on the same rule
+// check-contrast.js applies to tokens: a translucent colour has no contrast
+// ratio of its own, and compositing needs a background this page does not have
+// (the tile beneath is the dynamic ramp — which is the whole reason the halo
+// exists).
+//
+// RESIDUAL, stated rather than implied: this asserts the properties that decide
+// whether a stroke paints a solid outline. It does not sample pixels, so a
+// mechanism that defeats all of them at once (a filter, a mask, a clip) would
+// pass. Pixel sampling is the only thing above this rung.
+test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+
+  const toggle = page.locator('#heatToggle');
+  if (await toggle.count()) await toggle.click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('#heatmapSvg text.heat-label').length > 20,
+    null, { timeout: 20000 },
+  );
+
+  const report = await page.evaluate(() => {
+    const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    // Colour parsing has a CANVAS FALLBACK, and it is a FALSE-FAILURE fix rather
+    // than an evasion fix (Codex P2, round 12). getComputedStyle may preserve a
+    // functional syntax — `oklch()`, `color(display-p3 …)`, `lab()` — instead of
+    // serialising to rgb(). The regex returned null on those, so a legitimate,
+    // fully-opaque, high-contrast palette would have failed this blocking gate as
+    // "unreadable". The browser is the only thing that knows every syntax it
+    // supports, so ask it: a 1x1 canvas normalises anything assignable to
+    // fillStyle. The regex stays as the fast path so the common case is exact.
+    const cv = document.createElement('canvas');
+    cv.width = 1; cv.height = 1;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    // Reads an alpha component out of a colour STRING, or null when the syntax
+    // carries none. Handles both the modern `f(a b c / alpha)` slash form and the
+    // legacy `f(a, b, c, alpha)` fourth argument, plus 4-/8-digit hex (whose
+    // alpha is 8-bit at source, so no precision is lost there).
+    const pctOrNum = (t) => {
+      const m = /^\s*([\d.]+)(%?)\s*$/.exec(t);
+      return m ? +m[1] / (m[2] ? 100 : 1) : null;
+    };
+    const explicitAlpha = (s) => {
+      const v = (s || '').trim();
+      const fn = /^[a-z-]+\((.*)\)$/is.exec(v);
+      if (fn) {
+        const halves = fn[1].split('/');
+        if (halves.length === 2) return pctOrNum(halves[1]);
+        const args = fn[1].split(',');
+        if (args.length === 4) return pctOrNum(args[3]);
+        return null;
+      }
+      const hex = /^#([0-9a-f]{4}|[0-9a-f]{8})$/i.exec(v);
+      if (hex) {
+        const h = hex[1];
+        return h.length === 8 ? parseInt(h.slice(6), 16) / 255
+                              : parseInt(h[3] + h[3], 16) / 255;
+      }
+      return null;
+    };
+    const parse = (s) => {
+      const v = (s || '').trim();
+      if (!v || v === 'none' || v === 'transparent') return null;
+      const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?/.exec(v);
+      if (m) return { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] };
+      if (!ctx) return null;
+      // Canvas silently KEEPS the previous fillStyle when a value is not
+      // assignable, so a sentinel is the only way to tell "parsed to black" from
+      // "rejected". Two different sentinels, because either one alone is
+      // ambiguous for its own colour.
+      ctx.fillStyle = '#000000';
+      ctx.fillStyle = v;
+      const asBlack = ctx.fillStyle;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = v;
+      if (asBlack === '#000000' && ctx.fillStyle === '#ffffff') return null;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      // Alpha comes from the SOURCE STRING at full precision whenever the syntax
+      // states one, NEVER from the rasterized byte (Codex P2, round 13):
+      // getImageData quantizes alpha to 8 bits, so `oklch(... / 99.99%)` rounds
+      // to 255 and reads as fully opaque, slipping past the full-opacity check
+      // below. Measured in Chromium: /0.9999 -> byte 255, /0.99 -> byte 252, so
+      // the hole admits everything above ~0.998. RGB still comes from the canvas
+      // — that quantization is harmless, since a colour this check ACCEPTS is
+      // opaque and its channels are only ever used for a contrast ratio.
+      // Falling back to the byte when no explicit alpha is found is the safe
+      // direction: it never INVENTS opacity, it only declines to override.
+      return { r: d[0], g: d[1], b: d[2], a: explicitAlpha(v) ?? d[3] / 255 };
+    };
+    const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+    const ratio = (a, b) => {
+      const la = lum(a), lb = lum(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+    const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
+    const svgBox = document.querySelector('#heatmapSvg').getBoundingClientRect();
+    const labels = [...document.querySelectorAll('#heatmapSvg text.heat-label')];
+    const failures = [];
+    let worst = null;
+
+    for (const el of labels) {
+      const cs = getComputedStyle(el);
+      const raw = (el.textContent || '').trim();
+      const txt = raw.slice(0, 12) || '(blank)';
+      const fill = parse(cs.fill);
+      const stroke = parse(cs.stroke);
+
+      // A marked element that paints NO GLYPH has no halo either, and every
+      // computed-style assertion below would still pass on it (Codex P2, round 9).
+      // Each of these is DOM state the render already resolved — no pixel
+      // sampling — which is the line these checks are drawn on.
+      if (!raw) { failures.push('(blank): a marked label with no text content paints no glyph'); continue; }
+      if (cs.display === 'none') { failures.push(`${txt}: display:none — nothing is painted`); continue; }
+      if (cs.visibility === 'hidden' || cs.visibility === 'collapse') {
+        failures.push(`${txt}: visibility:${cs.visibility} — nothing is painted`); continue;
+      }
+      // Zero-size covers the remaining geometric ways to paint nothing (a zero
+      // font-size, a degenerate transform) without reaching for pixels. Measured,
+      // not inferred: a label scrolled out of view still has a box.
+      const box = el.getBoundingClientRect();
+      if (!(box.width > 0 && box.height > 0)) {
+        failures.push(`${txt}: renders a ${box.width}x${box.height} box — nothing is painted`); continue;
+      }
+      // A box with real dimensions can still be nowhere near the map: a transform
+      // on the label or any group above it (`translateX(10000px)`) preserves the
+      // size and every paint property while putting the glyph off-canvas (Codex
+      // P2, round 11). Tested as INTERSECTION with #heatmapSvg, not containment —
+      // a label may legitimately straddle the edge of its own tile — and against
+      // the SVG rather than the viewport, so a heatmap scrolled below the fold
+      // still passes: both rects move together.
+      const onMap = box.right > svgBox.left && box.left < svgBox.right
+                 && box.bottom > svgBox.top && box.top < svgBox.bottom;
+      if (!onMap) {
+        failures.push(
+          `${txt}: renders outside #heatmapSvg — label x[${Math.round(box.left)},${Math.round(box.right)}] ` +
+          `vs map x[${Math.round(svgBox.left)},${Math.round(svgBox.right)}]`);
+        continue;
+      }
+
+      // ANCESTOR OPACITY (Codex P2, round 10, and the case that proved my
+      // boundary was in the wrong place). `opacity` does NOT inherit and does
+      // NOT appear in a descendant's computed value, so `#heatmapSvg { opacity:
+      // 0 }` paints the whole subtree transparently while every label below it
+      // still reports opacity 1, a valid box, and correct colours. Every other
+      // check in this loop reads the ELEMENT; this is the only one that has to
+      // walk up. Note the neighbouring hazards do NOT need it and are already
+      // covered: `visibility` inherits, and an ancestor `display: none` collapses
+      // the descendant's box to 0x0.
+      let anc = el.parentElement, faded = null;
+      while (anc) {
+        const acs = getComputedStyle(anc);
+        const av = acs.opacity === '' ? 1 : num(acs.opacity);
+        if (av !== null && av !== 1) {
+          faded = { on: anc.tagName.toLowerCase() + (anc.id ? '#' + anc.id : ''), v: av };
+          break;
+        }
+        anc = anc.parentElement;
+      }
+      if (faded) {
+        failures.push(`${txt}: ancestor <${faded.on}> has opacity ${faded.v} — the subtree is not fully painted`);
+        continue;
+      }
+
+      if (!fill) { failures.push(`${txt}: unreadable fill "${cs.fill}"`); continue; }
+      if (!stroke) { failures.push(`${txt}: no halo — stroke is "${cs.stroke}"`); continue; }
+
+      // Opacity, in all three places it can be lost.
+      if (fill.a !== 1) { failures.push(`${txt}: fill is translucent (alpha ${fill.a})`); continue; }
+      if (stroke.a !== 1) { failures.push(`${txt}: halo colour is translucent (alpha ${stroke.a}) — it has no contrast ratio of its own`); continue; }
+      const so = cs.strokeOpacity === '' ? 1 : num(cs.strokeOpacity);
+      if (so !== 1) { failures.push(`${txt}: stroke-opacity ${so} — the halo is not fully painted`); continue; }
+      // `opacity` and `fill-opacity` are the remaining ways to make the label or
+      // its ink invisible while every colour above still reads as opaque RGB
+      // (Codex P2, round 8). Same computed style, no pixel sampling needed.
+      const op = cs.opacity === '' ? 1 : num(cs.opacity);
+      if (op !== 1) { failures.push(`${txt}: opacity ${op} — the label is not fully painted`); continue; }
+      const fo = cs.fillOpacity === '' ? 1 : num(cs.fillOpacity);
+      if (fo !== 1) { failures.push(`${txt}: fill-opacity ${fo} — the ink is not fully painted`); continue; }
+
+      // Width.
+      const sw = num(cs.strokeWidth) ?? 0;
+      if (!(sw > 0)) { failures.push(`${txt}: stroke-width ${cs.strokeWidth} — nothing is drawn`); continue; }
+
+      // A dash pattern can leave no visible outline while every colour reads
+      // correctly (`0 10000`). But rejecting every non-`none` value is a FALSE
+      // FAILURE (Codex P2, round 12): `0 0` is an all-zero pattern that renders
+      // SOLID, and a blocking gate must not reject a valid render. So the list is
+      // parsed and judged on what it paints — a zero-length dash, or any positive
+      // gap, means the outline is broken; all-zero means solid.
+      const dashRaw = (cs.strokeDasharray || 'none').trim();
+      if (dashRaw && dashRaw !== 'none') {
+        const parts = dashRaw.split(/[\s,]+/).map(parseFloat).filter((n) => Number.isFinite(n));
+        const solid = parts.length === 0 || parts.every((n) => n === 0);
+        if (!solid) {
+          // An odd-length list repeats doubled, so normalise before pairing.
+          const seq = parts.length % 2 ? parts.concat(parts) : parts;
+          // The outline is broken IFF some GAP is positive. A zero-length DASH
+          // removes nothing, so `5 0 0 0` paints continuously — rejecting it was
+          // a false failure (Codex P2, round 13).
+          const openGap = seq.some((n, i) => i % 2 === 1 && n > 0);
+          if (openGap) {
+            failures.push(`${txt}: stroke-dasharray "${dashRaw}" — the halo is not a solid outline`);
+            continue;
+          }
+        }
+      }
+
+      // paint-order must put the stroke FIRST: "fill stroke" still contains
+      // "stroke" but paints it OVER the glyph, which is the opposite mechanism.
+      const first = (cs.paintOrder || 'normal').trim().split(/\s+/)[0];
+      if (first !== 'stroke') { failures.push(`${txt}: paint-order "${cs.paintOrder}" — the halo paints OVER the glyph`); continue; }
+
+      const r = ratio(fill, stroke);
+      if (worst === null || r < worst) worst = r;
+      if (r < 4.5) failures.push(`${txt}: ink/halo contrast ${r.toFixed(2)} (need 4.5)`);
+    }
+
+    return { marked: labels.length, failures, worst };
+  });
+
+  // The panel must actually have rendered. Demo draws ~101 marked labels; 40
+  // leaves room for a narrower viewport without admitting "the heatmap is gone".
+  // This is a FLOOR on the panel, not a sample — every marked label is asserted.
+  expect(
+    report.marked,
+    `Only ${report.marked} labels carry the .heat-label marker. Either the heatmap ` +
+    'did not render, or heatText stopped stamping the class the selector depends on.',
+  ).toBeGreaterThanOrEqual(40);
+
+  expect(
+    report.failures,
+    `${report.failures.length} of ${report.marked} heatmap labels fail the halo contract:\n  ` +
+    report.failures.slice(0, 12).join('\n  '),
+  ).toEqual([]);
+
+  test.info().attach('heatmap-label-halo', {
+    body: JSON.stringify({ marked: report.marked, worstRatio: report.worst }, null, 2),
+    contentType: 'application/json',
+  });
+});
