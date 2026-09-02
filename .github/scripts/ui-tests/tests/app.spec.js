@@ -4058,3 +4058,380 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
     contentType: 'application/json',
   });
 });
+
+// ---------------------------------------------------------------------------
+// S47 — the ADVISORY half of the halo contract. S46 asks the DOM what every
+// label SAYS it paints; this asks the screen what actually arrived.
+//
+// Five findings closed PR #283 unfixed, and they are ONE class: `stroke-width:
+// 0.01px`, a subpixel intersection sliver, a sub-pixel dash gap,
+// `transform: scale(0.001)`, an opaque shape appended after the labels
+// (`focusGroup`/`focusTile` really are appended after `drawTiles`), and
+// `mix-blend-mode: multiply`. Every one leaves EVERY computed value S46 reads
+// correct while the glyph rasterises to nothing or composites against something
+// other than the pair that was measured. No DOM property answers them.
+//
+// The method is a DIFFERENCE, which is what lets one measurement cover all five
+// instead of five invented thresholds: screenshot the map, hide the labels,
+// screenshot again. Pixels that changed are, by construction, exactly what the
+// labels put on the screen — after rasterization, after compositing, after
+// whatever painted over them. A label that changes nothing reached nobody.
+//
+// It is ADVISORY (owner ruling 2026-09-01): per-label findings are reported and
+// never fail the run, so antialiasing tolerance and per-viewport flake cannot
+// block a merge while this proves itself. What IS blocking is the harness's own
+// integrity — see the assertions at the bottom. A check that cannot fail is not
+// a check, and an advisory verdict resting on a broken measurement is worse
+// than no verdict, so "did the sampling actually work" is asserted for real
+// while "did every label pass" is only reported.
+// ---------------------------------------------------------------------------
+test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ page }) => {
+  await page.goto('./?demo=1');
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+
+  const toggle = page.locator('#heatToggle');
+  if (await toggle.count()) await toggle.click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('#heatmapSvg text.heat-label').length > 20,
+    null, { timeout: 20000 },
+  );
+
+  const svg = page.locator('#heatmapSvg');
+  await svg.scrollIntoViewIfNeeded();
+
+  // THE POINTER MUST LEAVE THE MAP BEFORE ANYTHING IS PHOTOGRAPHED, and this is
+  // not housekeeping — without it this scenario reports five false findings on a
+  // clean render, every run. `#heatToggle` is clicked to open the panel, which
+  // leaves the pointer sitting where the button was; the map then draws itself
+  // underneath it, `#heatTip` opens on the tile now under the cursor, and that
+  // opaque tooltip covers whatever is behind it. Measured on demo at 1440x900:
+  // BRK.B, JPM, BAC and two of their percentage labels sampled rgb(241,238,230)
+  // — the tooltip's own background — IDENTICALLY in both shots, so the
+  // difference correctly reported that they never reached the screen.
+  //
+  // Which is the mechanism working, not failing: an opaque overlay hiding labels
+  // is precisely the finding this scenario exists for (Codex P2, PR #283, on
+  // `focusGroup`/`focusTile` being appended after `drawTiles`). It just happened
+  // to be the test's own pointer causing it. The tooltip is dismissed and its
+  // absence ASSERTED, because a silent reappearance would put those five
+  // findings back and they would read as a real regression.
+  await page.mouse.move(2, 2);
+  await expect(page.locator('#heatTip')).toBeHidden();
+
+  // Geometry BEFORE hiding anything, in CSS px relative to the SVG's own box —
+  // the screenshot is cropped to that box, so a label's rect has to be measured
+  // against the same origin. A label moved off-canvas keeps its rect, which is
+  // the point: it lands outside the crop and samples zero pixels.
+  const geom = await page.evaluate(() => {
+    const el = document.querySelector('#heatmapSvg');
+    const r = el.getBoundingClientRect();
+    // user units -> CSS px, so an UNTRANSFORMED bbox can be sized in the same
+    // space as the screenshot. Falls back to 1 if the SVG carries no viewBox.
+    const vb = (el.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+    const u2c = (vb.length === 4 && vb[2]) ? r.width / vb[2] : 1;
+    return {
+      svg: { w: r.width, h: r.height },
+      u2c,
+      labels: [...el.querySelectorAll('text.heat-label')].map((n) => {
+        // WHERE the paint is: the transformed, on-screen rect.
+        const b = n.getBoundingClientRect();
+        // WHAT IT SHOULD HAVE BEEN: getBBox is the element's own geometry in
+        // LOCAL user space, before any transform on it or its ancestors.
+        const g = n.getBBox();
+        return {
+          t: (n.textContent || '').trim().slice(0, 12) || '(blank)',
+          x: b.x - r.x, y: b.y - r.y, w: b.width, h: b.height,
+          bw: g.width, bh: g.height,
+        };
+      }),
+    };
+  });
+
+  const shotWith = (await svg.screenshot()).toString('base64');
+  // `visibility: hidden` rather than removing the nodes: it takes the glyphs off
+  // the screen without reflowing the map, so every other pixel is untouched and
+  // the difference isolates the labels alone.
+  await page.addStyleTag({
+    content: '#heatmapSvg text.heat-label { visibility: hidden !important; }',
+  });
+  const shotWithout = (await svg.screenshot()).toString('base64');
+
+  const report = await page.evaluate(async ({ a, b, geom }) => {
+    // Chromium decodes its own PNGs. Doing this in the page rather than in Node
+    // is what keeps this dependency-free — PR #283 removed `acorn` for exactly
+    // this reason, and a decoder in package.json would put it straight back.
+    const load = async (b64) => {
+      const blob = await (await fetch(`data:image/png;base64,${b64}`)).blob();
+      const bmp = await createImageBitmap(blob);
+      const cv = document.createElement('canvas');
+      cv.width = bmp.width; cv.height = bmp.height;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(bmp, 0, 0);
+      return { d: cx.getImageData(0, 0, bmp.width, bmp.height).data, w: bmp.width, h: bmp.height };
+    };
+
+    const A = await load(a);
+    const B = await load(b);
+    if (A.w !== B.w || A.h !== B.h) {
+      return { harness: `screenshot size mismatch: ${A.w}x${A.h} vs ${B.w}x${B.h}` };
+    }
+    if (!A.w || !A.h) return { harness: 'screenshot is empty' };
+
+    const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const lum = (r, g, bl) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(bl);
+
+    // Device pixels per CSS pixel. Derived from the shot rather than read off
+    // devicePixelRatio, so a scaled screenshot or a zoomed page still maps.
+    const scale = A.w / geom.svg.w;
+
+    // A pixel counts as PAINTED BY THE LABEL when hiding the label changed it.
+    // 12, summed across RGB. PNG is lossless so there is no codec noise; what
+    // this actually discards is the faint antialiased fringe, and discarding it
+    // makes the percentile bands below CLEANER rather than losing signal.
+    // Measured share of changed pixels dropped: 8.7% on desktop, 4.8% on Pixel 5.
+    const DIFF_TOL = 12;
+    // COVERAGE, not an absolute pixel count (Codex P2, #285). An absolute floor
+    // cannot see PARTIAL loss: a big label clipped to a one-pixel strip still
+    // clears any small constant while being unreadable. A label is judged on
+    // the fraction of the footprint it SHOULD have occupied that it actually
+    // painted, so losing 90% registers as losing 90% whatever its size.
+    //
+    // THE DENOMINATOR MUST NOT BE THE DAMAGED RECTANGLE (Codex P2, round 2).
+    // `getBoundingClientRect` returns the box AFTER transforms, so a shrunken
+    // label shrinks the yardstick with it and the ratio stays healthy — the
+    // yardstick has to be independent of the damage it is measuring. Measured
+    // under `transform: scale(0.5)`: against the transformed rect every label
+    // scores 0.419–0.786 and the regression is SILENT; against the
+    // untransformed bbox the same labels score 0.115–0.254.
+    //
+    // `getBBox()` is the element's own geometry in local user space, before any
+    // transform on it or its ancestors, so it survives exactly the case that
+    // defeats the rect. Clean-render coverage against it: 0.407–0.784 desktop,
+    // 0.498–0.781 Pixel 5.
+    //
+    // 0.20 is 2x below the worst clean observation (0.407) — the same safety
+    // margin the earlier floor carried, kept because a false finding is the
+    // worse failure for an advisory check. STATED CONSEQUENCE: coverage falls
+    // with AREA, so this catches a shrink below roughly 62% linear and a milder
+    // one passes. That is a real gap, not a claim of completeness.
+    const MIN_COVERAGE = 0.20;
+    // Below this many exclusive pixels a label is too small to judge, and is
+    // reported as unattributable rather than failed. The smallest exclusive
+    // area measured on a clean map is 161 device px (desktop) / 392 (Pixel 5),
+    // so this never fires on a healthy render.
+    const MIN_ATTRIBUTABLE = 40;
+    // EXTENT: the area of the box actually reached by paint, over the footprint
+    // it should have reached. Density alone is not enough (Codex P2, round 3),
+    // because ink-per-box varies ~1.9x between a sparse label and a dense one,
+    // so ONE global density floor gives each label a different sensitivity — and
+    // measured, a 40% clip and a 0.7 shrink are entirely silent under it:
+    //
+    //   measure   clean desktop   clip 40%        scale(0.7)
+    //   density   0.407-0.784     0.244-0.610     0.210-0.401   (floor 0.20)
+    //   extent    0.631-0.931     0.385-0.777     0.301-0.517
+    //
+    // Extent is density-INDEPENDENT: a clip that removes 40% of a label's
+    // height removes 40% of its extent whether the glyphs are fat or thin. The
+    // two measures fail differently, so both are applied and either can flag.
+    // 0.45 is 1.4x below the worst clean observation (0.631 desktop, 0.772 on
+    // Pixel 5). The margin is deliberately not spent down to the 0.55 that
+    // would catch a 40% clip outright: two of the four CI viewports are WebKit
+    // and CANNOT be run in this sandbox, so a floor calibrated to 1.15x here
+    // would first misfire somewhere I cannot test.
+    const MIN_EXTENT = 0.45;
+
+    // OWNERSHIP. Label boxes genuinely overlap here — 41 pairs on a CLEAN
+    // desktop render, 18 on Pixel 5, because a tile's ticker and its percentage
+    // sit in one stack and their boxes touch. So overlap is NORMAL and cannot
+    // be treated as a fault. It IS a measurement problem though (Codex P2):
+    // both screenshots hide every label at once, so a naive per-box count lets
+    // a dead label borrow its healthy neighbour's pixels, and summing the boxes
+    // counts the shared ones twice (measured: 890 of 74,200 on desktop).
+    // Every pixel is therefore attributed to at most ONE label, and a label is
+    // judged only on the pixels no other label's box claims. Measured, that
+    // still leaves each label 73.7%+ of its own box, so nothing is judged on a
+    // scrap.
+    // Box edges EXPAND to whole device pixels (floor the near edge, ceil the
+    // far one) rather than rounding. Rounding trims up to a pixel off each
+    // side, and the outermost ring is where the darkest halo lives — measured,
+    // that alone dropped one clean-render label to a 4.20 ratio and produced a
+    // false finding. The glyph's own extremes have to be inside the window.
+    const boxes = geom.labels.map((L) => ({
+      x0: Math.floor(L.x * scale), y0: Math.floor(L.y * scale),
+      x1: Math.ceil((L.x + L.w) * scale), y1: Math.ceil((L.y + L.h) * scale),
+    }));
+    const claims = new Int32Array(A.w * A.h).fill(-1);
+    const shared = new Uint8Array(A.w * A.h);
+    boxes.forEach((b, i) => {
+      for (let y = Math.max(0, b.y0); y < Math.min(A.h, b.y1); y++) {
+        for (let x = Math.max(0, b.x0); x < Math.min(A.w, b.x1); x++) {
+          const m = y * A.w + x;
+          if (claims[m] === -1) claims[m] = i; else shared[m] = 1;
+        }
+      }
+    });
+
+    const painted = new Uint8Array(A.w * A.h);
+    let totalChanged = 0;
+    const findings = [];
+    let worst = null;
+
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      const L = geom.labels[i];
+      // Two tallies over the on-screen rect: how much of it this label owns
+      // outright (`exclusive`), and how much of that it painted (`covered`).
+      // The rect is only ever WHERE to look; the yardstick comes from the
+      // untransformed bbox below.
+      let rectPx = 0;
+      let exclusive = 0;
+      let covered = 0;
+      let minX = Infinity; let maxX = -Infinity;
+      let minY = Infinity; let maxY = -Infinity;
+      const lums = [];
+      for (let y = b.y0; y < b.y1; y++) {
+        for (let x = b.x0; x < b.x1; x++) {
+          rectPx++;
+          const inShot = y >= 0 && y < A.h && x >= 0 && x < A.w;
+          if (!inShot) continue;
+          const m = y * A.w + x;
+          const o = m * 4;
+          const delta = Math.abs(A.d[o] - B.d[o])
+            + Math.abs(A.d[o + 1] - B.d[o + 1])
+            + Math.abs(A.d[o + 2] - B.d[o + 2]);
+          const changed = delta > DIFF_TOL;
+          // COVERAGE counts only pixels this label owns outright, so a dead
+          // label cannot borrow a healthy neighbour's paint.
+          if (!shared[m]) {
+            exclusive++;
+            if (changed) {
+              covered++;
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+          if (changed) {
+            if (!painted[m]) { painted[m] = 1; totalChanged++; }
+            // CONTRAST samples the whole box, shared pixels included, and that
+            // difference is deliberate. The two questions are not the same one:
+            // "how much of my footprint did I paint" needs sole ownership, while
+            // "what colours did the paint land in" is a property of the pixels.
+            // Restricting this sample to the exclusive region shrinks it enough
+            // to bias the 5% bands — measured, it put ONE clean-render label at
+            // 4.20 and produced a false finding, which is the failure this whole
+            // scenario is advisory to avoid. The residual risk is the mirror of
+            // it: a heavily overlapped label could borrow a neighbour's extremes
+            // and read better than it is. That is bounded — no label shares more
+            // than 26.3% of its box — and it is the safer side to err on, since
+            // coverage above already catches a label that painted nothing.
+            lums.push(lum(A.d[o], A.d[o + 1], A.d[o + 2]));
+          }
+        }
+      }
+
+      // The expectation: the label's untransformed footprint in device pixels,
+      // scaled down by how much of its rect it owns outright, so exclusivity
+      // and the undamaged yardstick compose instead of contradicting.
+      const expected = (L.bw * geom.u2c * scale) * (L.bh * geom.u2c * scale);
+      const declared = expected * (rectPx ? exclusive / rectPx : 0);
+      if (!(declared >= MIN_ATTRIBUTABLE)) {
+        findings.push(`${L.t}: only ${Math.round(declared)}px of footprint is attributable to this label alone — not judged`);
+        continue;
+      }
+      // How far the surviving paint REACHES, against the footprint it should
+      // have filled. Uses the same untransformed expectation as coverage.
+      const reachW = maxX >= minX ? (maxX - minX + 1) : 0;
+      const reachH = maxY >= minY ? (maxY - minY + 1) : 0;
+      const extent = (reachW * reachH) / Math.max(1, expected);
+      if (extent < MIN_EXTENT) {
+        findings.push(
+          `${L.t}: paint reaches only ${(extent * 100).toFixed(1)}% of its untransformed footprint `
+          + `(need ${MIN_EXTENT * 100}%) — part of the label is clipped, covered or shrunk away`,
+        );
+        continue;
+      }
+
+      const coverage = covered / declared;
+      if (coverage < MIN_COVERAGE) {
+        findings.push(
+          `${L.t}: painted ${covered} of the ${Math.round(declared)}px its own untransformed footprint calls for `
+          + `(${(coverage * 100).toFixed(1)}%, need ${MIN_COVERAGE * 100}%)`
+          + ' — the label is in the DOM but not on the display',
+        );
+        continue;
+      }
+
+      // Ink and halo AS COMPOSITED. Percentile means rather than min/max, since
+      // antialiasing puts a tail of blended pixels at both ends; the extremes
+      // would report a ratio no reader ever sees.
+      //
+      // 5% is MEASURED, not guessed: on a CLEAN demo render the false-finding
+      // count is 7 labels at 20%, 3 at 10%, and ZERO at both 5% and 2%. So 5%
+      // is the widest setting that reports nothing on a good map, with 2% as
+      // headroom rather than a cliff. Corroboration that this measures the right
+      // pair at all: the ratios land on 15.14, which is what check-contrast
+      // independently computes for #FFFFFF on #23262D.
+      lums.sort((p, q) => p - q);
+      const band = Math.max(1, Math.floor(lums.length * 0.05));
+      const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+      const loL = mean(lums.slice(0, band));
+      const hiL = mean(lums.slice(-band));
+      const r = (hiL + 0.05) / (loL + 0.05);
+      if (worst === null || r < worst) worst = r;
+      if (r < 4.5) {
+        findings.push(`${L.t}: composited ink/halo ${r.toFixed(2)} over ${covered}px (need 4.5) — the measured pair is not the pair on screen`);
+      }
+    }
+
+    return { sampled: geom.labels.length, totalChanged, findings, worst };
+  }, { a: shotWith, b: shotWithout, geom });
+
+  // ---- BLOCKING: the measurement itself has to have worked ----
+  expect(report.harness, `pixel sampling could not run: ${report.harness}`).toBeUndefined();
+
+  expect(
+    report.sampled,
+    `Only ${report.sampled} labels to sample — the heatmap did not render, or heatText stopped stamping .heat-label.`,
+  ).toBeGreaterThanOrEqual(40);
+
+  // Non-circularity for the HARNESS, and NOTHING MORE (Codex P2, #285). This
+  // asks one question: did hiding the labels change the picture at all? If not,
+  // "every label is invisible" and "the difference is broken" are the same
+  // observation and no per-label number below can be trusted.
+  //
+  // It deliberately does NOT scale with the number of labels. A per-label floor
+  // measures DAMAGE, not instrument health: with 100 of 101 labels dead and one
+  // painting normally, a `sampled * 20` gate fails at ~735 against a 2,020
+  // threshold — turning the sharpest partial-loss case there is into a blocking
+  // failure, in flat contradiction of the advisory contract. Any non-zero
+  // difference proves the instrument works, and how much was lost is then the
+  // advisory report's business. PNG is lossless and both shots are of the same
+  // page, so a changed pixel is real paint and never noise.
+  expect(
+    report.totalChanged,
+    'Hiding every label changed NO pixels at all across the whole map. Either the labels were '
+    + 'never painted, or the screenshot difference is not measuring them — those are the same '
+    + 'observation from here, so no per-label result can be trusted.',
+  ).toBeGreaterThan(0);
+
+  // ---- ADVISORY: reported, never thrown ----
+  if (report.findings.length) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `S47 (advisory): ${report.findings.length} of ${report.sampled} heatmap labels `
+      + `did not survive to the screen:\n  ${report.findings.slice(0, 12).join('\n  ')}`,
+    );
+  }
+
+  test.info().attach('heatmap-label-pixels', {
+    body: JSON.stringify({
+      sampled: report.sampled,
+      totalChangedPx: report.totalChanged,
+      worstCompositedRatio: report.worst,
+      advisoryFindings: report.findings,
+    }, null, 2),
+    contentType: 'application/json',
+  });
+});
