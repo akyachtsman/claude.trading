@@ -98,6 +98,18 @@ LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85  "
 # the viewport gate (Codex, #347 round 28). The leading position IS load-bearing,
 # so it is refused separately below.
 GLOB_CHARS = "*?"
+# EXTGLOB, the fifth pattern shape: `?(...)` and `*(...)` are already caught by
+# GLOB_CHARS above (their lead character is one of `*?`), but `+(...)`, `@(...)`
+# and `!(...)` are not — `+`, `@` and `!` are ordinary filename characters on
+# their own (the same reasoning GLOB_CHARS's own comment gives for leaving `!`
+# out of it), so banning them outright would be another false refusal of the
+# kind this file's history is full of. The TRIGGER is the pair, not the letter:
+# `report+(1).json` is a plain filename, `+(secret|report).json` is a pattern
+# (Codex, PR #286). Checked as a substring rather than requiring a matching
+# close paren, same tradeoff GLOB_CHARS already makes for `*`/`?`: refusing a
+# LEGAL `report+(.json` for a shape it does not have is a smaller cost than
+# missing `+(a|b)` split across a check that only fires once fully formed.
+EXTGLOB_PREFIXES = ("+(", "@(", "!(")
 
 
 def _has_class(segment):
@@ -156,6 +168,14 @@ def forbid_chars(value, what):
         refuse(f"{what} contains glob metacharacters.",
                f"got {value!r} -- the artifact uploader expands patterns, so this "
                "names a set of files rather than the one report.")
+    # EXTGLOB PREFIXES -- see EXTGLOB_PREFIXES above. `+(secret|report).json`
+    # contains none of GLOB_CHARS on its own, so it survived this far unrefused
+    # and reached the uploader as a pattern (Codex, PR #286).
+    if any(p in value for p in EXTGLOB_PREFIXES):
+        refuse(f"{what} contains an extglob prefix.",
+               f"got {value!r} -- `+(`, `@(` and `!(` open an extended glob "
+               "group to the artifact uploader, so this can name a set of "
+               "files rather than the one report.")
     # A BACKSLASH IS AN ESCAPE TO THE UPLOADER AND A LETTER TO EVERYONE ELSE.
     # On the Linux runners every shipped caller uses, `foo\bar.json` is a legal
     # filename that the quoted `rm`, Node and Playwright all address literally --

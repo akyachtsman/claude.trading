@@ -375,6 +375,32 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
       "port upstream's identifier-first detection before re-setting it."
     );
   }
+  /* TEST_AUTH_READY_SELECTOR / TEST_AUTH_READY_REQUEST / TEST_AUTH_SUCCESS_SELECTOR
+     are PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — same shape as the
+     TEST_AUTH_EMAIL guard above, and for the same reason: qa.yml / qa-live.yml /
+     qa-response.yml pass all three into the ui-suite composite (directives#302,
+     #320, #379), which exports them into this process, but nothing here reads
+     them. mechanism below still comes from the windowed detectAuthGate() /
+     detectAndAuth() pair, and success below is still decided from domChanged /
+     onscreenError, never from a configured selector. Configuring one of these
+     expecting the stronger PROVEN answer would silently get the windowed one
+     instead — the same silent-no-op trap TEST_AUTH_EMAIL already guards against,
+     caught in review on this same PR (Codex P2, #286) rather than left for an
+     owner to discover by setting a variable that does nothing. */
+  if ((process.env.TEST_AUTH_READY_SELECTOR ?? '').trim()
+      || (process.env.TEST_AUTH_READY_REQUEST ?? '').trim()
+      || (process.env.TEST_AUTH_SUCCESS_SELECTOR ?? '').trim()) {
+    throw new Error(
+      'S2 FAIL | TEST_AUTH_READY_SELECTOR, TEST_AUTH_READY_REQUEST or ' +
+      'TEST_AUTH_SUCCESS_SELECTOR is set, but this test kit does not read any of ' +
+      'them — S2 still decides "gate found" and "login succeeded" from the ' +
+      'windowed detectAuthGate()/detectAndAuth() pair and a DOM/onscreen-error ' +
+      'check, never from a configured selector or request. Setting one of these ' +
+      'therefore changes nothing and the suite silently keeps windowing the ' +
+      'answer instead of proving it. Unset them, or wire them into ' +
+      'detectAuthGate()/detectAndAuth() and this assertion before re-setting one.'
+    );
+  }
   if (!AUTH_CREDENTIAL) test.skip(true, 'No auth credential found in CLAUDE.md or TEST_AUTH_CREDENTIAL env var — skipping auth test');
   const consoleErrors = [];
   page.on('pageerror', e => consoleErrors.push(e.message));

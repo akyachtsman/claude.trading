@@ -361,6 +361,11 @@ runs:
         APP_PAGES: ${{ inputs.app-pages }}
         REPORT_PATH: ${{ steps.report-path.outputs.relative }}
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+        # ⚠️ LOCAL ADDITION — same sequence-parity reasoning as REPORT_PATH
+        # above: this step's own `rm` does not read it, but it must still match
+        # what the run step (and the two config-evaluating steps either side of
+        # it) sees, per this file's own env-parity rule.
+        GREP_INVERT: ${{ inputs.grep-invert }}
       # `--` ENDS OPTION PARSING. A report-path beginning with `-` is a valid
       # relative filename that GNU rm reads as a flag: `rm -f "--preserve-root"`
       # exits 0 and deletes NOTHING, so the stale report survives and the
@@ -410,6 +415,10 @@ runs:
         # requires identical env, and two of these steps import the config. See
         # the run step for why this variable is pinned at all (#347 round 18).
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+        # ⚠️ LOCAL ADDITION — this step IMPORTS the config, same as the run step
+        # below; missing this here is exactly the divergence this file's own
+        # env-parity comments warn about (Codex, PR #286).
+        GREP_INVERT: ${{ inputs.grep-invert }}
       run: node "$GITHUB_WORKSPACE/.github/scripts/check-ui-viewports.js" --tests-dir . --declared "$RUNNER_TEMP/ui-viewports-declared.json"
 
     - name: Run Playwright tests
@@ -530,6 +539,9 @@ runs:
         # requires identical env, and two of these steps import the config. See
         # the run step for why this variable is pinned at all (#347 round 18).
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+        # ⚠️ LOCAL ADDITION — same env-parity reasoning as the declared-only
+        # check above: this step re-imports the config too.
+        GREP_INVERT: ${{ inputs.grep-invert }}
       # THROUGH THE ENVIRONMENT, NOT INTERPOLATED. `${{ }}` is substituted into
       # the script source before bash parses it, so a report-path carrying a
       # quote and a shell operator would execute — the same template-injection
