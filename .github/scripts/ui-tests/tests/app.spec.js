@@ -10,9 +10,46 @@
 // are present in HTML but not visible to Playwright, check for dvh units in CSS and
 // replace with vh.
 
-import { test, expect } from '@playwright/test';
+import { test as base, expect } from '@playwright/test';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER WITNESS — evidence that a test BODY started at its project's width (#348)
+// ─────────────────────────────────────────────────────────────────────────────
+// check-ui-viewports.js reads the run's JSON report. A result there proves a test
+// was SCHEDULED in a project declaring a width; it does not prove a page was ever
+// that wide, because a hook that throws before the body still leaves a result.
+// This fixture is the stronger evidence. It yields a FUNCTION and records nothing
+// at setup; the test body CALLS it as its first statement, and the call records
+// `page.viewportSize()` on the result as a `rendered-viewport` annotation (once
+// per test, however often it is called). Only code running inside the test
+// callback can make that call, so a witness means the callback was ENTERED with
+// the page at that width. The gate reports RENDERED for a width class only where
+// such a witness carries a width inside that class. Ported from the upstream kit
+// (Codex P2, PR #286 round 2) rather than left unimplemented: without it every
+// scenario here is permanently SCHEDULED-only, and the stronger disposition
+// check-ui-viewports.js carries never has anything to read.
+//
+// ⚠️ It records the width the body STARTS at. A setViewportSize() later in the
+// body is not seen, which is why S4 keeps its own `viewport-override` marker.
+// EVERY scenario below requests `renderWitness` AND calls `renderWitness();` as
+// its first statement, BEFORE any skip/throw preamble — an honest failing or
+// skipping body still entered the callback with a real page at that width, which
+// is exactly what the witness attests. A test added later should do both.
+const test = base.extend({
+  renderWitness: async ({ page }, use, testInfo) => {
+    // Records NOTHING at setup: the body's own call is the witness.
+    let recorded = false;
+    await use(() => {
+      if (recorded) return;
+      recorded = true;
+      const vp = page.viewportSize();
+      testInfo.annotations.push({ type: 'rendered-viewport',
+        description: JSON.stringify(vp ? { width: vp.width, height: vp.height } : null) });
+    });
+  },
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CREDENTIAL DISCOVERY — read from CLAUDE.md at runtime
@@ -298,7 +335,8 @@ function testValueFor(el) {
 // ─────────────────────────────────────────────────────────────────────────────
 // SCENARIO 1 — Page Load
 // ─────────────────────────────────────────────────────────────────────────────
-test('S1: page loads without JS errors', async ({ page }) => {
+test('S1: page loads without JS errors', async ({ page, renderWitness }) => {
+  renderWitness();
   const errors = [];
   /* Shared with S3 — see benignPageError at the top of this file. */
   page.on('pageerror', e => {
@@ -343,7 +381,8 @@ test('S1: page loads without JS errors', async ({ page }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SCENARIO 2 — Auth Discovery & Login (with API diagnostics)
 // ─────────────────────────────────────────────────────────────────────────────
-test('S2: auth gate discovered and credential accepted', async ({ page }) => {
+test('S2: auth gate discovered and credential accepted', async ({ page, renderWitness }) => {
+  renderWitness();
   /* TEST_AUTH_EMAIL IS PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — say so, loudly.
 
      qa.yml / qa-live.yml / qa-response.yml all pass `test-auth-email` into the
@@ -375,6 +414,32 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
       "port upstream's identifier-first detection before re-setting it."
     );
   }
+  /* TEST_AUTH_READY_SELECTOR / TEST_AUTH_READY_REQUEST / TEST_AUTH_SUCCESS_SELECTOR
+     are PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — same shape as the
+     TEST_AUTH_EMAIL guard above, and for the same reason: qa.yml / qa-live.yml /
+     qa-response.yml pass all three into the ui-suite composite (directives#302,
+     #320, #379), which exports them into this process, but nothing here reads
+     them. mechanism below still comes from the windowed detectAuthGate() /
+     detectAndAuth() pair, and success below is still decided from domChanged /
+     onscreenError, never from a configured selector. Configuring one of these
+     expecting the stronger PROVEN answer would silently get the windowed one
+     instead — the same silent-no-op trap TEST_AUTH_EMAIL already guards against,
+     caught in review on this same PR (Codex P2, #286) rather than left for an
+     owner to discover by setting a variable that does nothing. */
+  if ((process.env.TEST_AUTH_READY_SELECTOR ?? '').trim()
+      || (process.env.TEST_AUTH_READY_REQUEST ?? '').trim()
+      || (process.env.TEST_AUTH_SUCCESS_SELECTOR ?? '').trim()) {
+    throw new Error(
+      'S2 FAIL | TEST_AUTH_READY_SELECTOR, TEST_AUTH_READY_REQUEST or ' +
+      'TEST_AUTH_SUCCESS_SELECTOR is set, but this test kit does not read any of ' +
+      'them — S2 still decides "gate found" and "login succeeded" from the ' +
+      'windowed detectAuthGate()/detectAndAuth() pair and a DOM/onscreen-error ' +
+      'check, never from a configured selector or request. Setting one of these ' +
+      'therefore changes nothing and the suite silently keeps windowing the ' +
+      'answer instead of proving it. Unset them, or wire them into ' +
+      'detectAuthGate()/detectAndAuth() and this assertion before re-setting one.'
+    );
+  }
   if (!AUTH_CREDENTIAL) test.skip(true, 'No auth credential found in CLAUDE.md or TEST_AUTH_CREDENTIAL env var — skipping auth test');
   const consoleErrors = [];
   page.on('pageerror', e => consoleErrors.push(e.message));
@@ -391,6 +456,11 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
   const mechanism  = (await detectAuthGate(page))
     ? await detectAndAuth(page, AUTH_CREDENTIAL ?? '')
     : 'none';
+  // KD-1 (docs/standards/kit-defects.md, directives#327): with a credential
+  // configured, reaching 'none' means this run never found a gate at all —
+  // every assertion below is vacuous without one, so this must fail rather
+  // than silently pass.
+  if (mechanism === 'none') throw new Error(`S2 FAIL | no auth gate found at ${page.url()}, but TEST_AUTH_CREDENTIAL is set — this scenario never reached the gate (set APP_URL, or point S2 at the login route). Failing rather than passing: every assertion below is vacuous without a gate (directives#327).`);
   const afterSnap  = await domSnapshot(page);
 
   const domChanged = JSON.stringify(beforeSnap) !== JSON.stringify(afterSnap);
@@ -468,7 +538,8 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SCENARIO 3 — Element Mapping & Interaction Sweep
 // ─────────────────────────────────────────────────────────────────────────────
-test('S3: interactive elements discovered and exercised without errors', async ({ page }) => {
+test('S3: interactive elements discovered and exercised without errors', async ({ page, renderWitness }) => {
+  renderWitness();
   // The sweep scales with ELEMENT COUNT (settle + capped idle wait per
   // element), and element count scales with VIEWPORT WIDTH — a wider layout
   // exposes more controls to discover and click. So this budget is driven by
@@ -669,7 +740,13 @@ test('S3: interactive elements discovered and exercised without errors', async (
 // ─────────────────────────────────────────────────────────────────────────────
 // SCENARIO 4 — Responsive Layout
 // ─────────────────────────────────────────────────────────────────────────────
-test('S4: no horizontal overflow at 390px mobile viewport', async ({ page }) => {
+test('S4: no horizontal overflow at 390px mobile viewport', async ({ page, renderWitness }) => {
+  renderWitness();
+  // check-ui-viewports.js's `viewport-override` marker: this runs at the width
+  // it chooses in EVERY project, so without it a run containing only this test
+  // would falsely certify its host project's own declared width too (#347
+  // round 4). setViewportSize() needs the same line.
+  test.info().annotations.push({ type: 'viewport-override', description: '390' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('./');
   await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
@@ -787,7 +864,8 @@ const navSkippable = (page, el) => page.evaluate(({ sel, index, skip }) => {
   return !node || skip.some((s) => node.closest(s));
 }, { sel: el.selector, index: el.index, skip: NAV_SKIP });
 
-test('NAV: back navigation strictly unwinds (no loop)', async ({ page }) => {
+test('NAV: back navigation strictly unwinds (no loop)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.setTimeout(120_000);
   await gotoAndAuth(page);
 
@@ -877,7 +955,8 @@ test('NAV: back navigation strictly unwinds (no loop)', async ({ page }) => {
 // A duplicated primary CTA (e.g. two "Add asset" buttons) is a finding. Scans
 // visible add/new/create controls, groups by accessible name, flags any with >1.
 // ─────────────────────────────────────────────────────────────────────────────
-test('CTRL: no duplicated primary action control', async ({ page }) => {
+test('CTRL: no duplicated primary action control', async ({ page, renderWitness }) => {
+  renderWitness();
   await gotoAndAuth(page);
   const dupes = await page.evaluate(() => {
     const norm = s => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -906,7 +985,8 @@ test('CTRL: no duplicated primary action control', async ({ page }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // S5 — Demo lamps: every panel honestly labels demo data (design signature).
-test('S5: demo mode shows DEMO lamps on every panel', async ({ page }) => {
+test('S5: demo mode shows DEMO lamps on every panel', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#mastheadState')).toContainText(/demo data/i);
   for (const id of ['#newsLamp', '#askLamp']) {
@@ -915,7 +995,8 @@ test('S5: demo mode shows DEMO lamps on every panel', async ({ page }) => {
 });
 
 // S6 — Positions sort: header click reorders rows and flips aria-sort.
-test('S6: positions table sorts on header click', async ({ page }) => {
+test('S6: positions table sorts on header click', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   // Positions collapse closed by default (2026-08-07, the accounts-area cut),
   // so the table has to be disclosed before it can be sorted. Asserting the
@@ -951,7 +1032,8 @@ async function liveBackendConfigured(page) {
 }
 
 // S10 — Locked → login → render (needs backend + TEST_AUTH_CREDENTIAL).
-test('S10: valid PIN unlocks accounts (live only)', async ({ page }) => {
+test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
   await page.goto('./');
@@ -963,7 +1045,8 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page }) => {
 });
 
 // S11 — Wrong PIN: plain error, still locked, nothing rendered.
-test('S11: invalid PIN shows an error and stays locked (live only)', async ({ page }) => {
+test('S11: invalid PIN shows an error and stays locked (live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
   const pinInput = page.locator('.lock-form input.input');
@@ -987,7 +1070,8 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
 // freshest desk-market fetch: a HEALTHY feed reads LIVE while the market is open
 // or EOD once it has closed (owner ruling 2026-07-22) — only STALE/missing means
 // the edge-function layer is actually down.
-test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ page }) => {
+test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
   const lamp = page.locator('#mastheadState .lamp').first();
@@ -1061,7 +1145,8 @@ test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ p
 // S12 — Charts workbench: three doctrine panes with candles, stochastics,
 // zoom presets, symbol select, pane layouts, and the settings popover.
 // Defaults must render candles + k/%d stochastic paths in every pane.
-test('S12: charts workbench renders panes and controls respond', async ({ page }) => {
+test('S12: charts workbench renders panes and controls respond', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   const chart = page.locator('#wbChart');
   await expect(chart.locator('rect').first()).toBeVisible({ timeout: 10000 });
@@ -1183,7 +1268,8 @@ test('S12: charts workbench renders panes and controls respond', async ({ page }
 // S13 — Heatmap MAP FILTER rail: index cuts re-render the treemap, the ETF cut
 // draws one tile per banded ETF and unlocks multi-period performance,
 // unfetched feeds stay disabled.
-test('S13: heatmap map-filter cuts and period select respond', async ({ page }) => {
+test('S13: heatmap map-filter cuts and period select respond', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   // The panel is COLLAPSED by default now (owner request 2026-07-31, load
   // time) and fetches nothing until opened, so the cut/period assertions below
@@ -1263,7 +1349,8 @@ test('S13: heatmap map-filter cuts and period select respond', async ({ page }) 
 // S20 — Watchlist chart timeframe (owner request 2026-07-30). Demo-gated, so it
 // runs on every PR: the demo generator shapes its walk per timeframe precisely
 // so this control is exercisable without a live feed.
-test('S20: watchlist timeframe control redraws the tile sparklines', async ({ page }) => {
+test('S20: watchlist timeframe control redraws the tile sparklines', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   const tf = page.locator('#wlTf');
   await expect(tf.locator('button')).toHaveCount(7);      // 1D 1M 3M 6M 1Y 2Y 5Y
@@ -1299,7 +1386,8 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
 // cosmetic: wlPick() resolves a list by title whenever its index has shifted,
 // and gives up unless exactly one matches. Two lists sharing a name would make
 // every add, remove and drop into either of them silently unaddressable.
-test('S31: create and delete a list; delete is behind the lock', async ({ page }) => {
+test('S31: create and delete a list; delete is behind the lock', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -1401,7 +1489,8 @@ test('S31: create and delete a list; delete is behind the lock', async ({ page }
 // timing logic rather than the backend. It catches the regressions that matter
 // — a hold shortened to something accidental, a drag that arms a removal, or
 // the keyboard path disappearing.
-test('S21: watchlist edits need no unlock; removal needs a double-click', async ({ page }) => {
+test('S21: watchlist edits need no unlock; removal needs a double-click', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -1520,7 +1609,8 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
 // desktop test and be dead on a phone. Covers the three decisions the owner
 // signed off on: the sort snaps to Manual, the tray persists, and the trash is
 // an ADDITION to double-click removal rather than a replacement.
-test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', async ({ page }) => {
+test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -1679,7 +1769,8 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
 // "New list" by default, so targeting by title alone could add to the first
 // band while the dialog named the second. Position is the key; the title is
 // checked against it.
-test('S22: quick edits resolve the right band when two lists share a title', async ({ page }) => {
+test('S22: quick edits resolve the right band when two lists share a title', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -1707,7 +1798,8 @@ test('S22: quick edits resolve the right band when two lists share a title', asy
 // collapses every failure to null, and loadPrivate treated that as a bad PIN:
 // it cleared DESK.authed straight after a CORRECT unlock, so the watchlist's +
 // and ✎ silently vanished with no error shown anywhere.
-test('S24: a failed accounts load keeps the desk authenticated', async ({ page }) => {
+test('S24: a failed accounts load keeps the desk authenticated', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -1760,7 +1852,8 @@ test('S24: a failed accounts load keeps the desk authenticated', async ({ page }
 // daily strip and Pro 1 serve as negative controls: the rule must hold against
 // the weekly series and visibly FAIL against the other two, or the check isn't
 // distinguishing which stochastic is in play.
-test('S25: long-term candles follow the weekly stochastic; swing follows open/close', async ({ page }) => {
+test('S25: long-term candles follow the weekly stochastic; swing follows open/close', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await page.waitForSelector('#wbChart');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
@@ -1863,7 +1956,8 @@ test('S25: long-term candles follow the weekly stochastic; swing follows open/cl
 // S23 — Extended hours across the desk (owner request 2026-07-30). Demo-gated so
 // it runs every PR; the demo generator mirrors the live payload's shape,
 // including the parts that must be ABSENT.
-test('S23: post-market prints render, and only where the instrument trades', async ({ page }) => {
+test('S23: post-market prints render, and only where the instrument trades', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#mktTiles .mk-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -1948,7 +2042,8 @@ function assistantGates(page) {
   test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
 }
 
-test('S15: assistant remembers across a reload (opt-in, live only)', async ({ page }) => {
+test('S15: assistant remembers across a reload (opt-in, live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   assistantGates(page);
   await unlockDesk(page);
@@ -1957,7 +2052,8 @@ test('S15: assistant remembers across a reload (opt-in, live only)', async ({ pa
   await expect(page.locator('#askBody .ask-thread')).toContainText(/HELIX/i, { timeout: 10000 });
 });
 
-test('S16: a research question renders an answer (opt-in, live only)', async ({ page }) => {
+test('S16: a research question renders an answer (opt-in, live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   assistantGates(page);
   await unlockDesk(page);
@@ -1965,7 +2061,8 @@ test('S16: a research question renders an answer (opt-in, live only)', async ({ 
   await expect(page.locator('#askBody .ask-a').last()).toBeVisible();
 });
 
-test('S17: an off-page ticker returns an answer via live data (opt-in, live only)', async ({ page }) => {
+test('S17: an off-page ticker returns an answer via live data (opt-in, live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   assistantGates(page);
   await unlockDesk(page);
@@ -1973,7 +2070,8 @@ test('S17: an off-page ticker returns an answer via live data (opt-in, live only
   await expect(page.locator('#askBody .ask-a').last()).toBeVisible();
 });
 
-test('S18: gives a directional view, not a refusal; disclaimer stays (opt-in, live only)', async ({ page }) => {
+test('S18: gives a directional view, not a refusal; disclaimer stays (opt-in, live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   assistantGates(page);
   await unlockDesk(page);
@@ -1982,7 +2080,8 @@ test('S18: gives a directional view, not a refusal; disclaimer stays (opt-in, li
   await expect(page.locator('#askBody .ai-disclaimer')).toContainText(/not financial advice/i);
 });
 
-test('S19: clear empties the conversation (opt-in, live only)', async ({ page }) => {
+test('S19: clear empties the conversation (opt-in, live only)', async ({ page, renderWitness }) => {
+  renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   assistantGates(page);
   await unlockDesk(page);
@@ -2001,7 +2100,8 @@ test('S19: clear empties the conversation (opt-in, live only)', async ({ page })
 // still looks like a tile. Guarding it by measuring scrollWidth against
 // clientWidth catches a regression that no screenshot review reliably would.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S27: watchlist tiles are half-width, stacked, and never clip a value', async ({ page }) => {
+test('S27: watchlist tiles are half-width, stacked, and never clip a value', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   // Start from a clean slate. This test runs late in the file, after S13 (which
   // now persists the heatmap open, hm_open_v1), S20 (wl_tf_v1) and S26 (sort +
@@ -2052,7 +2152,8 @@ test('S27: watchlist tiles are half-width, stacked, and never clip a value', asy
 // guarded. Both values are read from the live page's own globals (classic
 // scripts, so top-level consts are in scope inside evaluate).
 // ─────────────────────────────────────────────────────────────────────────────
-test('S28: the charts quote cache is timestamped and its TTL is session-aware', async ({ page }) => {
+test('S28: the charts quote cache is timestamped and its TTL is session-aware', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 15000 });
 
@@ -2085,7 +2186,8 @@ test('S28: the charts quote cache is timestamped and its TTL is session-aware', 
 // whatever was already answered today. Exercised against a stateful fake store,
 // since the real refusal lives in the RPC.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', async ({ page }) => {
+test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
 
@@ -2195,7 +2297,8 @@ test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', a
    version it read, on BOTH write paths. Send nothing and the RPC silently falls
    back to last-write-wins — which is how the Radar list was deleted on
    2026-08-01 by a save built from a snapshot taken before it existed. */
-test('S30: watchlist writes carry the roster version they read', async ({ page }) => {
+test('S30: watchlist writes carry the roster version they read', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await page.waitForSelector('.wl-strip .mkt-group', { timeout: 15000 });
 
@@ -2264,7 +2367,8 @@ test('S30: watchlist writes carry the roster version they read', async ({ page }
 // that the composer comes back immediately, and that the thread SAYS the answer
 // is still coming. A silent stop would look like a lost question on reload.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S32: a question can be interrupted, and the stop is not silent', async ({ page }) => {
+test('S32: a question can be interrupted, and the stop is not silent', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
 
@@ -2319,7 +2423,8 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
   expect(busy, 'askBusy must clear on abort or the panel is dead').toBe(false);
 });
 
-test('S33: verify is armed per question and disarms itself after an answer', async ({ page }) => {
+test('S33: verify is armed per question and disarms itself after an answer', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
 
@@ -2392,7 +2497,8 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
 // must not depend on where the viewport happens to start. Seeded at the visible
 // window instead, the same candle would change colour as you zoom, which is the
 // kind of fault that quietly destroys trust in the pane.
-test('S34: steady mode repaints the long-term pane, and a bar keeps its colour across a zoom', async ({ page }) => {
+test('S34: steady mode repaints the long-term pane, and a bar keeps its colour across a zoom', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
   await page.waitForTimeout(800);
@@ -2491,7 +2597,8 @@ test('S34: steady mode repaints the long-term pane, and a bar keeps its colour a
    removal and then swallows the second click. Asserting "single click opens it"
    alone would pass with that bug fully present, which is why the double-click
    and drag cases below are the load-bearing half of this test. */
-test('S35: a tile opens a detail window; double-click still removes', async ({ page }) => {
+test('S35: a tile opens a detail window; double-click still removes', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
 
@@ -2573,7 +2680,8 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
 // which would leave every seg button unpressed and the pane at a width nothing
 // in the UI explains.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S36: the swing and long-term spans survive a reload, and a bad one falls back', async ({ page }) => {
+test('S36: the swing and long-term spans survive a reload, and a bad one falls back', async ({ page, renderWitness }) => {
+  renderWitness();
   // three page loads plus three chart renders do not fit the 30s default
   test.setTimeout(90_000);
   await page.goto('./?demo=1');
@@ -2608,7 +2716,8 @@ test('S36: the swing and long-term spans survive a reload, and a bad one falls b
   expect(await pressed(), 'an unrecognised span falls back to the default').toEqual({ p1: '3M', p2: '6M' });
 });
 
-test('S37: every pane pins a last-price tab, and panning does not restate it', async ({ page }) => {
+test('S37: every pane pins a last-price tab, and panning does not restate it', async ({ page, renderWitness }) => {
+  renderWitness();
   test.setTimeout(60_000);
   await page.goto('./?demo=1');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
@@ -2677,7 +2786,8 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
    symbols to addresses they did not choose.
    Also the gesture split, which collides by nature: a single click charts, a
    double-click edits, and a double-click delivers a `click` FIRST. */
-test('S45: the symbol column is 100 permanent slots, edited in place', async ({ page }) => {
+test('S45: the symbol column is 100 permanent slots, edited in place', async ({ page, renderWitness }) => {
+  renderWitness();
   test.setTimeout(90_000);
   await page.goto('./?demo=1');
   await expect(page.locator('.wb-slots')).toBeVisible({ timeout: 15000 });
@@ -3317,7 +3427,8 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
    surviving a reload. The SYMBOL column's own behaviour is S45's — the two were
    one scenario until 2026-08-26, when that column stopped being a stack the
    Load box pushed into and became 100 slots edited in place. */
-test('S40: charts rail — roster picker and column shape', async ({ page }) => {
+test('S40: charts rail — roster picker and column shape', async ({ page, renderWitness }) => {
+  renderWitness();
   test.setTimeout(90_000);
   await page.goto('./?demo=1');
   await expect(page.locator('#wbSidebar .wb-rail-col').first()).toBeVisible({ timeout: 15000 });
@@ -3417,7 +3528,10 @@ test('S40: charts rail — roster picker and column shape', async ({ page }) => 
    panel, which is why the fix is `overflow: hidden` and not `overscroll-
    behavior: contain` — the property this project has banned outright after it
    ate the mouse wheel three times. */
-test('S42: watchlist columns page instead of scrolling', async ({ page, browserName }) => {
+test('S42: watchlist columns page instead of scrolling', async ({ page, browserName, renderWitness }) => {
+  renderWitness();
+  // See S4 — same `viewport-override` marker, same reason.
+  test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
@@ -3569,7 +3683,8 @@ test('S42: watchlist columns page instead of scrolling', async ({ page, browserN
   expect(errs, 'no page errors').toEqual([]);
 });
 
-test('S41: watchlists are vertical columns above the charts', async ({ page }) => {
+test('S41: watchlists are vertical columns above the charts', async ({ page, renderWitness }) => {
+  renderWitness();
   // Sized to a DESK, not a phone. Columns-side-by-side is the wide-screen
   // design; at 393px a long list legitimately spreads its own sub-columns
   // across the full width and pushes the next list onto a row below, which is
@@ -3577,6 +3692,8 @@ test('S41: watchlists are vertical columns above the charts', async ({ page }) =
   // at phone width tested the breakpoint, not the layout. The narrow behaviour
   // that actually matters — no sideways page scroll — is checked separately
   // below, at the project's own viewport.
+  // See S4 — same `viewport-override` marker, same reason.
+  test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
@@ -3621,6 +3738,8 @@ test('S41: watchlists are vertical columns above the charts', async ({ page }) =
 
   // Narrow width: the columns may wrap onto more than one row, but the PAGE
   // must never scroll sideways and the panel must never be cropped.
+  // See S4 — same `viewport-override` marker, same reason.
+  test.info().annotations.push({ type: 'viewport-override', description: '390' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
   const narrow = await page.evaluate(() => ({
@@ -3637,7 +3756,8 @@ test('S41: watchlists are vertical columns above the charts', async ({ page }) =
    from the VISIBLE window instead of the whole series still draws a plausible
    line, it just starts 20 bars in and leaves the left edge of the strip bare —
    and it shifts every time you zoom, which is what makes it untrustworthy. */
-test('S39: every pane draws a volume average, spanning the full window', async ({ page }) => {
+test('S39: every pane draws a volume average, spanning the full window', async ({ page, renderWitness }) => {
+  renderWitness();
   test.setTimeout(60_000);
   await page.goto('./?demo=1');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
@@ -3707,7 +3827,8 @@ test('S39: every pane draws a volume average, spanning the full window', async (
  * satisfy that while destroying the signal, since twenty identical "Aug 24"
  * labels make the one old row stop standing out. So this checks BOTH states —
  * today's rows carry no date, older rows do. Demo seeds both deliberately. */
-test('S43: news rows date anything that is not from today', async ({ page }) => {
+test('S43: news rows date anything that is not from today', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.news-row').first()).toBeVisible({ timeout: 20000 });
 
@@ -3825,7 +3946,8 @@ test('S43: news rows date anything that is not from today', async ({ page }) => 
 // whether a stroke paints a solid outline. It does not sample pixels, so a
 // mechanism that defeats all of them at once (a filter, a mask, a clip) would
 // pass. Pixel sampling is the only thing above this rung.
-test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', async ({ page }) => {
+test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
 
@@ -4085,7 +4207,8 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
 // than no verdict, so "did the sampling actually work" is asserted for real
 // while "did every label pass" is only reported.
 // ---------------------------------------------------------------------------
-test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ page }) => {
+test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ page, renderWitness }) => {
+  renderWitness();
   await page.goto('./?demo=1');
   await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
 

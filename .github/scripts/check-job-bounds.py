@@ -605,6 +605,7 @@ errors = []
 warnings = []
 checked = 0
 unevaluatable = []
+ui_unverified = []   # ui-suite callers exempt from the floor AND unreadable: claim nothing about them
 
 for scan_dir in SCAN_DIRS:
     directory = REPO_ROOT / scan_dir
@@ -659,6 +660,40 @@ for scan_dir in SCAN_DIRS:
                 literal = _expr_literal(re.fullmatch(r"\$\{\{(.*)\}\}", bound.strip(), re.S).group(1)) \
                     if re.fullmatch(r"\$\{\{(.*)\}\}", bound.strip(), re.S) else None
                 if literal is None or literal != int(literal):
+                    # FAIL CLOSED WHERE A FLOOR APPLIES. The exemption above is
+                    # about rule 1 — a context-dependent expression IS a bound,
+                    # and jobs carrying no floor keep the exemption. But a
+                    # ui-suite caller also has to clear UI_SUITE_FLOOR, and that
+                    # test sits below this `continue`: the job skipped it and the
+                    # pass line went on asserting "ui-suite callers >= N" anyway.
+                    # That is the same defect this file already documents for the
+                    # advisory browser floor, in a branch written before that note
+                    # — a pass line crediting a rule that never ran. Reported
+                    # upstream by claude.trading (#334); the doctrine there is
+                    # that a check which cannot evaluate its input must FAIL,
+                    # never fall through to a skip.
+                    #
+                    # Evaluating one more expression shape would leave every other
+                    # shape open, so this refuses instead of guessing. The remedy
+                    # is in the message: a floored job takes a literal bound.
+                    if is_ui_suite_job(job) and not _statically_disabled(job):
+                        errors.append(
+                            f"{rel} → job '{name}' calls the ui-suite composite and is bounded by an\n"
+                            f"      expression this check cannot evaluate: {bound!r}.\n"
+                            f"      The {UI_SUITE_FLOOR}-minute floor is not optional for a ui-suite caller — a browser\n"
+                            f"      install plus a full Playwright run does not fit under it — and an\n"
+                            f"      unreadable bound cannot be shown to clear it. Refusing beats certifying:\n"
+                            f"      declare a literal timeout-minutes >= {UI_SUITE_FLOOR} on this job.\n"
+                            f"      (A job with no floor keeps the expression exemption; this one has one.)"
+                        )
+                        continue
+                    # A DISABLED ui-suite caller lands here before reaching the
+                    # exemption below, so record it here too. Both paths, because
+                    # recording in only one covered only half the disabled
+                    # callers -- the defect this whole branch exists to stop,
+                    # reproduced inside its own fix.
+                    if is_ui_suite_job(job) and _statically_disabled(job):
+                        ui_unverified.append(f"{rel} → {name}")
                     unevaluatable.append(f"{rel} → {name}")
                     continue
                 bound = int(literal)
@@ -685,6 +720,16 @@ for scan_dir in SCAN_DIRS:
             # is a live defect the moment someone re-enables it. Cost is
             # conditional on running; a declaration is not.
             if _statically_disabled(job):
+                # Exempt: a parked job incurs no cost, so the two cost floors do
+                # not apply. Exempt is NOT verified, though -- this `continue`
+                # sits ABOVE the floor test, so a disabled ui-suite caller never
+                # reached it whether its bound was readable or not, and folding
+                # it into "ui-suite callers >= N" credits the rule with a job it
+                # skipped. Recorded here rather than in the expression branch:
+                # putting it there covered only the unreadable half and left the
+                # same over-claim for a disabled caller bounded at a literal 60.
+                if is_ui_suite_job(job):
+                    ui_unverified.append(f"{rel} → {name}")
                 continue
             if bound < UI_SUITE_FLOOR and is_ui_suite_job(job):
                 errors.append(
@@ -720,6 +765,7 @@ if errors:
 
 scope = ", ".join(SCAN_DIRS)
 note = f" {len(unevaluatable)} expression-bounded job(s) not range-checked." if unevaluatable else ""
+
 # Report only what was ENFORCED. Naming the advisory browser floor here said the
 # run had passed a rule it no longer checks — and said it loudest in the one
 # scenario the advisory exists for, a sub-30 browser job, which warns and then
@@ -731,7 +777,27 @@ advisory = (
     if warnings
     else f" Browser floor (>= {BROWSER_FLOOR}) is ADVISORY and had nothing to report."
 )
+# SCOPE THE MAX CLAIM TO WHAT WAS ACTUALLY RANGE-CHECKED. "none >= 360" over a
+# set that includes jobs this check skipped is the same over-claim the ui-suite
+# line carried: the note below discloses the skip, but the assertion in front of
+# it still spoke for every job. Naming the range-checked count instead removes
+# the thing that can be wrong rather than qualifying it. (The ui-suite floor
+# needs no such hedge — an unreadable bound on a floored job is now an error
+# above, so reaching this line means every caller cleared it.)
+# The ui-suite claim covers the callers the floor was ENFORCED on. A disabled
+# caller with an unreadable bound is exempt from the floor (it incurs no cost)
+# but was never tested against it, so folding it into "ui-suite callers >= N"
+# credits the rule with a job it skipped -- the same over-claim, one carve-out
+# further in.
+ui_claim = f" ui-suite callers >= {UI_SUITE_FLOOR}."
+if ui_unverified:
+    ui_claim = (
+        f" ui-suite callers >= {UI_SUITE_FLOOR} where enforced; "
+        f"{len(ui_unverified)} disabled caller(s) exempt, so unchecked: "
+        + "; ".join(ui_unverified) + "."
+    )
 print(
-    f"✅ check-job-bounds: {checked} job(s) in {scope} bounded, none >= {GITHUB_DEFAULT}, "
-    f"ui-suite callers >= {UI_SUITE_FLOOR}.{note}{advisory}"
+    f"✅ check-job-bounds: {checked} job(s) in {scope} bounded, "
+    f"none of the {checked - len(unevaluatable)} range-checked >= {GITHUB_DEFAULT},"
+    f"{ui_claim}{note}{advisory}"
 )
