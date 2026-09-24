@@ -742,6 +742,11 @@ test('S3: interactive elements discovered and exercised without errors', async (
 // ─────────────────────────────────────────────────────────────────────────────
 test('S4: no horizontal overflow at 390px mobile viewport', async ({ page, renderWitness }) => {
   renderWitness();
+  // check-ui-viewports.js's `viewport-override` marker: this runs at the width
+  // it chooses in EVERY project, so without it a run containing only this test
+  // would falsely certify its host project's own declared width too (#347
+  // round 4). setViewportSize() needs the same line.
+  test.info().annotations.push({ type: 'viewport-override', description: '390' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('./');
   await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
@@ -3525,6 +3530,8 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
    ate the mouse wheel three times. */
 test('S42: watchlist columns page instead of scrolling', async ({ page, browserName, renderWitness }) => {
   renderWitness();
+  // See S4 — same `viewport-override` marker, same reason.
+  test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
@@ -3685,6 +3692,8 @@ test('S41: watchlists are vertical columns above the charts', async ({ page, ren
   // at phone width tested the breakpoint, not the layout. The narrow behaviour
   // that actually matters — no sideways page scroll — is checked separately
   // below, at the project's own viewport.
+  // See S4 — same `viewport-override` marker, same reason.
+  test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
@@ -3729,6 +3738,8 @@ test('S41: watchlists are vertical columns above the charts', async ({ page, ren
 
   // Narrow width: the columns may wrap onto more than one row, but the PAGE
   // must never scroll sideways and the panel must never be cropped.
+  // See S4 — same `viewport-override` marker, same reason.
+  test.info().annotations.push({ type: 'viewport-override', description: '390' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
   const narrow = await page.evaluate(() => ({
