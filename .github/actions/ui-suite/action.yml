@@ -34,10 +34,15 @@
 #   setup/install/server/upload always stay blocking, so a broken install can
 #   never pass green.
 # - The viewport gate below runs on THIS composite's Node, which `setup-node` pins
-#   to 20. A project that has migrated to a TypeScript `playwright.config.ts` must
-#   either raise that pin to 22 (type stripping is on by default from 22.18) or
-#   keep a `.js` config — Node 20 cannot import a TS config, and the gate says so
-#   by name when it hits ERR_UNKNOWN_FILE_EXTENSION rather than passing quiet.
+#   to 20. That Node cannot import a TypeScript module ANYWHERE IN THE CONFIG'S
+#   GRAPH — a `playwright.config.js` that imports a `.ts` helper fails exactly as
+#   a `playwright.config.ts` does, so "keep a .js config" is not the escape hatch
+#   this note used to claim (Codex, #333 round 11). A project in that position must
+#   either raise the pin to 22 (type stripping is on by default from 22.18) or keep
+#   the config's ENTIRE import graph in JavaScript. The gate names the condition
+#   when it hits ERR_UNKNOWN_FILE_EXTENSION rather than passing quiet — and it is a
+#   refusal on a config Playwright's own runner would have loaded, so it counts
+#   against the muting risk, not for it.
 name: 'UI test suite'
 description: >
   Install deps + Playwright, optionally start a bundled local server, run the
@@ -47,6 +52,22 @@ inputs:
   tests-dir:
     description: 'Directory containing playwright.config.js and package.json'
     required: true
+  report-path:
+    description: >-
+      Playwright JSON report, relative to tests-dir — a SINGLE relative path
+      inside the workspace, validated before use. The viewport gate reads it
+      AFTER the run to check that each declared width had a test SCHEDULED
+      under it: a non-skipped result in a project declaring that width. It does
+      NOT establish that a page was rendered there — see test.md -> UI coverage
+      gates, and directives#348. Your config must DECLARE a json reporter; this
+      composite pins where it writes by exporting PLAYWRIGHT_JSON_OUTPUT_FILE,
+      so the reporter's own `outputFile` need not match. Leave this empty and the
+      validator DERIVES `.agent-reports/playwright-results.json` at the workspace
+      root, expressed relative to your `tests-dir` — so it works at any depth. The
+      literal default it replaced only worked for a suite three levels down and
+      resolved outside the workspace for anything else.
+    required: false
+    default: ''
   app-url:
     description: 'URL the suite targets (local server or live deploy)'
     required: true
@@ -64,6 +85,18 @@ inputs:
     # drift from the template over something empty; S2 throws if TEST_AUTH_EMAIL is
     # ever actually set, which is what stops it being a silent no-op (Codex P2, #283).
     description: 'Identifier for email+password gates (directives#304); empty keeps the password-only path. NOT truly secret: it is typed into a visible input, so failure screenshots/traces record it — use a throwaway test-account address, never a real person''s'
+    required: false
+    default: ''
+  test-auth-ready-selector:
+    description: 'TEST_AUTH_READY_SELECTOR (directives#302, #320): a selector matching whichever auth outcome occurs, so "no gate" is PROVEN rather than windowed. Empty keeps the windowed answer. Not a secret — pass it from a repo VARIABLE, never a secret: a masked selector in a failure message is unreadable'
+    required: false
+    default: ''
+  test-auth-ready-request:
+    description: 'TEST_AUTH_READY_REQUEST (directives#302, #320): a substring of the URL of the request whose completion decides the auth outcome. Empty keeps the windowed answer. Not a secret — pass it from a repo VARIABLE'
+    required: false
+    default: ''
+  test-auth-success-selector:
+    description: 'TEST_AUTH_SUCCESS_SELECTOR (directives#379): a selector only the signed-in view shows; S2 asserts it is visible after submitting the credential. Empty keeps reading the gate clearing as success. Not a secret — pass it from a repo VARIABLE, never a secret: a masked selector in a failure message is unreadable'
     required: false
     default: ''
   artifact-name:
@@ -128,10 +161,30 @@ runs:
     # says nothing about it: a viewport never instantiated produces no failing
     # test. test.md → UI coverage gates, fifth gate.
     #
-    # HERE, specifically: this is the first point node_modules exists (the script
-    # IMPORTS the config so Node expands `...devices[…]`, which needs
-    # @playwright/test resolvable), and it is BEFORE the browser install so a
-    # broken config fails in seconds instead of after a ~20-minute download.
+    # WHERE THIS STEP SITS, and what that costs. It used to run right after the
+    # dependency install, BEFORE the browser download, so a broken config failed
+    # in seconds rather than after a cold-cache ~20-minute install. That is no
+    # longer true and the ordering is now deliberate the other way:
+    #
+    # This step and `Run Playwright tests` both EVALUATE THE CONFIG. Anything
+    # running between them can change what the config observes, so the gate ends
+    # up checking one config while the run uses another. Codex reproduced it on
+    # #333 with a config branching on whether APP_URL answers: the gate saw a dead
+    # URL (server not yet started), the run saw a live one, three projects versus
+    # one, and BOTH exited 0. Matching the two steps' env (round 8) and
+    # working-directory (round 12) did not help, because the divergence was time,
+    # not values.
+    #
+    # So correctness beat feedback speed: the gate is now the last thing before
+    # the run, and check-ui-suite-env.py enforces that adjacency mechanically.
+    # THE COST IS REAL — a config this gate would reject now costs a browser
+    # install first. It is bounded by the cache step above (the ~20 minutes is a
+    # cold-cache figure, not the steady state), and a gate that certifies a
+    # different config than the one that runs is worth nothing however fast it is.
+    #
+    # If the wait becomes intolerable, the fix is a SECOND advisory invocation
+    # early on, not moving this one back: the authoritative verdict has to come
+    # from the evaluation adjacent to the run.
     #
     # Always blocking — `advisory-run` flips ONLY the run step. There is no silent
     # exit: config missing, import throwing, node_modules absent and zero projects
@@ -140,12 +193,23 @@ runs:
     # Copy templates/scripts/check-ui-viewports.js to .github/scripts/ WITH this
     # composite — this step names it by path and fails at resolution without it,
     # the same coupling check-job-bounds.py has with qa.yml.
-    - name: Check three viewport classes are declared
-      shell: bash
-      env:
-        TESTS_DIR: ${{ inputs.tests-dir }}
-      run: node .github/scripts/check-ui-viewports.js --tests-dir "$TESTS_DIR"
-
+    #
+    # That coupling is DERIVED now, not just documented here. /refresh-repo greps
+    # its callers for `.github/scripts/*` paths, and until 2026-09-01 its pattern
+    # demanded a command prefix immediately before `.github/` — which the
+    # `"$GITHUB_WORKSPACE/..."` form below does not have, so this file returned no
+    # match and a refresh silently omitted the one script this composite cannot
+    # run without. This comment was the compensation for that. Keep it as the
+    # explanation; check-refresh-derivation.py is the enforcement.
+    #
+    # THE SAME ENVIRONMENT AS THE RUN STEP, deliberately. This step IMPORTS the
+    # config, so it evaluates whatever that config computes from process.env — and
+    # the shipped config already reads APP_URL. Give it a thinner environment than
+    # `Run Playwright tests` below and the two steps read DIFFERENT configs: a
+    # selection key set only when TEST_AUTH_CREDENTIAL is present is invisible
+    # here and active there. Reproduced by Codex on #333 with a config setting
+    # `shard` under that condition — check step exit 0, run step partitioned.
+    # Any variable added to the run step below must be added here too.
     # Browsers are ~400MB and were re-downloaded on EVERY run. This is a BUDGET
     # fix, not a hang fix, and the distinction was measured rather than assumed:
     # downstream the install step SUCCEEDED in 21m25s, and the job then hit its
@@ -233,14 +297,164 @@ runs:
         "./$TESTS_DIR/node_modules/.bin/http-server" "$SERVER_ROOT" -p 8080 --silent &
         sleep 2
 
-    - name: Run Playwright tests
+    # IMMEDIATELY BEFORE THE RUN, and after the local server is up. This step
+    # evaluates the config, and the run below evaluates it again; anything that
+    # differs between those two moments is a config the gate did not check.
+    # Round 8 matched their environment, round 12 their working directory —
+    # and round 16 found the step ORDER doing the same damage: a config that
+    # branches on whether APP_URL answers saw a dead URL here and a live one
+    # there. Codex reproduced it exporting three projects while down and one
+    # while up, with both this gate and Playwright exiting 0.
+    #
+    # So: nothing may run between this step and the Playwright command that
+    # changes what the config can observe. Adding a step in between is the
+    # regression to watch for.
+
+    # A REPORT LEFT BY SOMETHING ELSE IS NOT EVIDENCE ABOUT THIS RUN. Playwright's
+    # json reporter writes during onEnd, so a run that aborts early — or a config
+    # that quietly stops declaring the reporter — leaves whatever was there
+    # before. In a job that invokes this composite twice, or on a runner with a
+    # warm workspace, that is a PREVIOUS run's report, and the post-run gate
+    # would certify it as this one's (Codex, #347 round 4).
+    #
+    # Deleting first turns that into the missing-report refusal it should have
+    # been: exit 15, CANNOT CHECK, naming the path. Before the sequence below,
+    # never between its steps — the three that follow must stay consecutive
+    # because two of them evaluate the config.
+    # VALIDATE ONCE, BEFORE ANYTHING CONSUMES IT. `report-path` reaches a `rm`,
+    # a `--report` argument and a MULTILINE artifact `path:` list. A newline in
+    # it becomes a second entry in that list, and the upload runs under
+    # `always()` — so a caller deriving this input from untrusted workflow input
+    # could have an arbitrary runner-readable file uploaded even on a failing
+    # run (Codex, #347 round 8). `..` escaping the workspace is the same class.
+    #
+    # Refused here rather than sanitised at each use: three consumers with three
+    # escaping rules is how one of them ends up wrong, which is the coupling
+    # this composite has already been caught by twice.
+    - name: Validate report-path
+      id: report-path
       shell: bash
-      continue-on-error: ${{ inputs.advisory-run == 'true' }}
+      env:
+        REPORT_PATH: ${{ inputs.report-path }}
+        TESTS_DIR: ${{ inputs.tests-dir }}
+      run: python3 "$GITHUB_ACTION_PATH/validate-report-path.py"
+
+    - name: Clear any stale Playwright report
+      shell: bash
+      # THE SAME ENV AS THE THREE STEPS AFTER IT, and the reason is the guard
+      # rather than this step's own needs. Since #347 round 21 this step is part
+      # of `check-ui-suite-env.py` -> SEQUENCE: outside it, skipping this step,
+      # making it advisory or changing its command all left the guard green,
+      # while an uncleared report from a previous invocation satisfied the
+      # post-run gate. Folding it in gets every rule at once, and one rule over
+      # four steps beats an exemption that has to be re-argued on every read.
+      # An `rm` does not import the config, so most of this block is inert here —
+      # deliberately, and REPORT_PATH is not: it decides which file is cleared,
+      # and it must be the one the other three read and write.
       env:
         APP_URL: ${{ inputs.app-url }}
         TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
         TEST_AUTH_EMAIL: ${{ inputs.test-auth-email }}
+        TEST_AUTH_READY_SELECTOR: ${{ inputs.test-auth-ready-selector }}
+        TEST_AUTH_READY_REQUEST: ${{ inputs.test-auth-ready-request }}
+        TEST_AUTH_SUCCESS_SELECTOR: ${{ inputs.test-auth-success-selector }}
         APP_PAGES: ${{ inputs.app-pages }}
+        REPORT_PATH: ${{ steps.report-path.outputs.relative }}
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+      # `--` ENDS OPTION PARSING. A report-path beginning with `-` is a valid
+      # relative filename that GNU rm reads as a flag: `rm -f "--preserve-root"`
+      # exits 0 and deletes NOTHING, so the stale report survives and the
+      # post-run gate certifies it (Codex, #347 round 5). Quoting stops the
+      # shell from splitting it; only `--` stops rm from interpreting it.
+      run: rm -f -- "$REPORT_PATH" "$RUNNER_TEMP/ui-viewports-declared.json"
+      working-directory: ${{ inputs.tests-dir }}
+
+    - name: Check three viewport classes are declared
+      shell: bash
+      # SAME working-directory AND SAME env AS THE RUN STEP BELOW. Both steps
+      # evaluate the config, so both must present it the same world.
+      #
+      # Four attempts got here, and the first three each satisfied some of the
+      # constraints while breaking another:
+      #   * export TESTS_DIR to both steps — the Playwright workers inherit it
+      #     and it overrides a value the calling job set;
+      #   * interpolate ${{ }} into the command — template injection, HIGH;
+      #   * take it through env and `unset` it before node — the unset is
+      #     textual (an `if false; then unset …; fi` satisfies a regex), and
+      #     the step-level assignment SHADOWS an inherited TESTS_DIR that the
+      #     run step still sees, so unsetting it created a fresh divergence.
+      # Each fix was aimed at the constraint that had just been violated.
+      #
+      # There is no variable here at all: `working-directory` is a YAML field, so
+      # the input is not interpolated into a shell body; GITHUB_WORKSPACE is
+      # runner-provided and identical in both steps; `--tests-dir .` is a literal.
+      # Nothing to shadow, nothing to unset, nothing to keep in step.
+      working-directory: ${{ inputs.tests-dir }}
+      env:
+        APP_URL: ${{ inputs.app-url }}
+        TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
+        TEST_AUTH_EMAIL: ${{ inputs.test-auth-email }}
+        TEST_AUTH_READY_SELECTOR: ${{ inputs.test-auth-ready-selector }}
+        TEST_AUTH_READY_REQUEST: ${{ inputs.test-auth-ready-request }}
+        TEST_AUTH_SUCCESS_SELECTOR: ${{ inputs.test-auth-success-selector }}
+        APP_PAGES: ${{ inputs.app-pages }}
+        # REPORT_PATH is on ALL THREE steps, not just the one that uses it.
+        # check-ui-suite-env.py enforces exact env parity across the sequence,
+        # and that rule is not bureaucratic: two of these steps IMPORT the
+        # config, so a variable present at one evaluation and absent at another
+        # is a config that can differ between them (#333 round 10).
+        # FROM THE VALIDATED OUTPUT, never the action input — every consumer in
+        # this composite now reads a value the validator accepted (#347 r10).
+        REPORT_PATH: ${{ steps.report-path.outputs.relative }}
+        # Same value on every step of the sequence: check-ui-suite-env.py
+        # requires identical env, and two of these steps import the config. See
+        # the run step for why this variable is pinned at all (#347 round 18).
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+      run: node "$GITHUB_WORKSPACE/.github/scripts/check-ui-viewports.js" --tests-dir . --declared "$RUNNER_TEMP/ui-viewports-declared.json"
+
+    - name: Run Playwright tests
+      shell: bash
+      continue-on-error: ${{ inputs.advisory-run == 'true' }}
+      env:
+        # Deliberately NO TESTS_DIR here, and none on the viewport check above
+        # either — neither step declares one, so neither shadows an inherited
+        # value and neither can branch on the other's absence.
+        # check-ui-suite-env.py enforces that these two mappings match exactly,
+        # and that both steps run from the same working-directory.
+        APP_URL: ${{ inputs.app-url }}
+        TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
+        TEST_AUTH_EMAIL: ${{ inputs.test-auth-email }}
+        TEST_AUTH_READY_SELECTOR: ${{ inputs.test-auth-ready-selector }}
+        TEST_AUTH_READY_REQUEST: ${{ inputs.test-auth-ready-request }}
+        TEST_AUTH_SUCCESS_SELECTOR: ${{ inputs.test-auth-success-selector }}
+        APP_PAGES: ${{ inputs.app-pages }}
+        # REPORT_PATH is on ALL THREE steps, not just the one that uses it.
+        # check-ui-suite-env.py enforces exact env parity across the sequence,
+        # and that rule is not bureaucratic: two of these steps IMPORT the
+        # config, so a variable present at one evaluation and absent at another
+        # is a config that can differ between them (#333 round 10).
+        # FROM THE VALIDATED OUTPUT, never the action input — every consumer in
+        # this composite now reads a value the validator accepted (#347 r10).
+        REPORT_PATH: ${{ steps.report-path.outputs.relative }}
+        # NEUTRALISE PLAYWRIGHT'S OWN REDIRECT. `PLAYWRIGHT_JSON_OUTPUT_FILE`
+        # takes precedence over the json reporter's configured `outputFile`, so a
+        # caller whose job or workflow already exports it sends the report
+        # somewhere else and the configured file is never written at all.
+        # Measured on the shipped 1.62.1: with the variable set the config's
+        # `outputFile` produced NO file, and the post-run gate — reading the
+        # validated path — exited 15 on a run that had passed (Codex, #347
+        # round 18). Setting it to the same validated path is the fix rather
+        # than clearing it: an unset variable still leaves the destination to
+        # the config, while this pins it to the path every step here agrees on.
+        #
+        # It does NOT substitute for the config declaring a json reporter.
+        # Measured too: with no json reporter in the config, the variable writes
+        # nothing. The downstream obligation below is unchanged; what this
+        # removes is the obligation for the config's `outputFile` to MATCH.
+        # (Resolved against the process cwd, measured — which is this step's
+        # working-directory, the same base the gate resolves `--report` against.)
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+        # ⚠️ LOCAL ADDITION — see the grep-invert input's description.
         GREP_INVERT: ${{ inputs.grep-invert }}
       # No --reporter flag: a CLI reporter REPLACES the config's list, which
       # would drop the json reporter and leave playwright-results.json unwritten
@@ -258,12 +472,98 @@ runs:
         fi
       working-directory: ${{ inputs.tests-dir }}
 
+    # THE COVERAGE CLAIM COMES FROM THE RUN, not from anything predicted before
+    # it. The step above certifies only that three widths are DECLARED; whether
+    # the run SCHEDULED anything at them depends on selection keys, .gitignore,
+    # shards, reporters, focused tests and globalSetup, and #335 measured that no
+    # pre-run observation answers it — `playwright test --list` differs from a
+    # run in argv visibility, filterOnly, globalSetup and skip disposition.
+    # The run's own JSON report has none of those gaps, because it is the run.
+    #
+    # SCHEDULED, NOT EXECUTED, and this step's NAME has to say so. It read
+    # "Check the run actually exercised all three viewport classes" — the
+    # EXECUTED guarantee #347 withdrew — while the gate it invokes prints
+    # SCHEDULED and states in its own output that it is not proof a page was
+    # rendered. A hook that fails before the test body starts still produces a
+    # non-skipped result, so this step can pass with no page and no viewport
+    # ever reached (Codex, #347 round 18). The step name is the most prominent
+    # carrier of the claim there is: it is what a reader sees in the Actions
+    # log without opening anything. Proving the stronger thing is #348.
+    #
+    # always(): a suite that failed still ran tests, and its report still says
+    # which widths the run scheduled. A report that is missing because the run
+    # died early is a genuine CANNOT CHECK, and says so rather than passing.
+    - name: Check the run scheduled tests at all three viewport classes
+      # always() AND the validation having passed — the SAME pair the upload
+      # below needs, for the same reason and found the same way. Round 9 gated
+      # the upload and left this step on bare `always()`, so a REFUSED
+      # report-path still reached it: Codex passed `/dev/zero` and the gate's
+      # readFileSync had not returned after a second (#347 round 10). A step
+      # that runs after a refusal is a step the validator does not protect,
+      # however carefully the validator is written.
+      if: ${{ always() && steps.report-path.outcome == 'success' }}
+      shell: bash
+      # NO continue-on-error, and advisory-run does NOT reach it. The input says
+      # "ONLY the run step advisory" and this is not the run step — it is the
+      # coverage gate, and making it advisory removes the guarantee exactly when
+      # it matters most: a suite that exits 0 having run only desktop tests
+      # leaves the composite green with two bands never scheduled (Codex, #347
+      # round 6). An advisory RUN is a project choosing to tolerate failing
+      # tests; it is not a choice to stop checking which widths were scheduled.
+      env:
+        APP_URL: ${{ inputs.app-url }}
+        TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
+        TEST_AUTH_EMAIL: ${{ inputs.test-auth-email }}
+        TEST_AUTH_READY_SELECTOR: ${{ inputs.test-auth-ready-selector }}
+        TEST_AUTH_READY_REQUEST: ${{ inputs.test-auth-ready-request }}
+        TEST_AUTH_SUCCESS_SELECTOR: ${{ inputs.test-auth-success-selector }}
+        APP_PAGES: ${{ inputs.app-pages }}
+        # REPORT_PATH is on ALL THREE steps, not just the one that uses it.
+        # check-ui-suite-env.py enforces exact env parity across the sequence,
+        # and that rule is not bureaucratic: two of these steps IMPORT the
+        # config, so a variable present at one evaluation and absent at another
+        # is a config that can differ between them (#333 round 10).
+        # FROM THE VALIDATED OUTPUT, never the action input — every consumer in
+        # this composite now reads a value the validator accepted (#347 r10).
+        REPORT_PATH: ${{ steps.report-path.outputs.relative }}
+        # Same value on every step of the sequence: check-ui-suite-env.py
+        # requires identical env, and two of these steps import the config. See
+        # the run step for why this variable is pinned at all (#347 round 18).
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+      # THROUGH THE ENVIRONMENT, NOT INTERPOLATED. `${{ }}` is substituted into
+      # the script source before bash parses it, so a report-path carrying a
+      # quote and a shell operator would execute — the same template-injection
+      # class the viewport-check step above records having been caught on once
+      # already. Quoting the expression does not help; quoting the VARIABLE does.
+      run: node "$GITHUB_WORKSPACE/.github/scripts/check-ui-viewports.js" --tests-dir . --declared "$RUNNER_TEMP/ui-viewports-declared.json" --report "$REPORT_PATH"
+      working-directory: ${{ inputs.tests-dir }}
+
     - name: Upload test results
-      if: ${{ always() }}
+      # always() AND the validation having passed. `always()` is what makes the
+      # artifact useful — a failing suite is exactly when someone wants the
+      # screenshots — and it is also what let a rejected report-path be uploaded
+      # anyway. Both halves are needed: run whatever else failed, but not on a
+      # path that was refused.
+      if: ${{ always() && steps.report-path.outcome == 'success' }}
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.artifact-name }}
+        # FROM THE VALIDATED OUTPUT, never the raw input. `report-path` lets a
+        # caller move the JSON report and the post-run gate reads it there, so
+        # this list has to follow it (#347 round 6) — but interpolating the INPUT
+        # here left the exfiltration path open even after round 8 added the
+        # validator: this step runs under `always()`, so a refused value still
+        # reached the artifact list (Codex, #347 round 9). Two changes, either of
+        # which would have closed it, because the `if:` below is a condition
+        # someone could relax and this is a value that no longer exists to be
+        # misused.
         path: |
           .agent-reports/screenshots/
-          .agent-reports/playwright-results.json
+          ${{ steps.report-path.outputs.path }}
+        # `report-path` may legitimately land under a DOT directory — a caller
+        # passing `results.json` with the shipped `.github/scripts/ui-tests`
+        # tests-dir gets `.github/scripts/ui-tests/results.json`. upload-artifact
+        # ignores hidden files by default, so the gate would read the report
+        # while the artifact silently omitted it (Codex, #347 round 16).
+        include-hidden-files: true
         retention-days: 7

@@ -225,5 +225,11 @@ jobs:
           app-url: ${{ github.event.inputs.app_url || vars.APP_URL }}
           test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
           test-auth-email: ${{ secrets.TEST_AUTH_EMAIL }}
+          # VARIABLES, not secrets: selectors and a URL substring, and a masked one
+          # is unreadable in a failure message. Empty keeps the windowed answer (#320)
+          # and S2 reading the gate clearing as success (#379).
+          test-auth-ready-selector: ${{ vars.TEST_AUTH_READY_SELECTOR }}
+          test-auth-ready-request: ${{ vars.TEST_AUTH_READY_REQUEST }}
+          test-auth-success-selector: ${{ vars.TEST_AUTH_SUCCESS_SELECTOR }}
           artifact-name: playwright-results-live
           app-pages: ${{ vars.APP_PAGES }}

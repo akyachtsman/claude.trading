@@ -71,8 +71,10 @@ jobs:
       - uses: ./.github/actions/secret-scan
 
       # ── Contrast guardrail ───────────────────────────────────────────────────
-      # WCAG AA check against styles/tokens.css (this project's design tokens).
-      # Exits with a notice (no failure) until /design-intake creates tokens.css.
+      # WCAG AA check against this project's design tokens — styles/tokens.css or
+      # css/tokens.css by default; elsewhere, append `--tokens <file>` (repeat it
+      # per theme file). Exits with a notice (no failure) until /design-intake
+      # creates tokens.css.
       - name: Contrast guardrail (WCAG AA)
         run: node .github/scripts/check-contrast.js
 
@@ -94,6 +96,14 @@ jobs:
         # floor was met. Scans .github/workflows; it skips templates/workflows,
         # which only claude.directives has, and says so.
         run: python3 .github/scripts/check-job-bounds.py
+
+      - name: Tracked Python compiles without warnings
+        # A `\` in a plain (non-raw) docstring is invisible on 3.11, a
+        # SyntaxWarning on 3.12, and a SyntaxError on 3.15 — at which point the
+        # guard carrying it stops running and stops checking. This compiles every
+        # tracked .py with warnings promoted to errors, so the class cannot come
+        # back silently on a future interpreter. Cheap: no imports, no execution.
+        run: python3 .github/scripts/check-py-warnings.py
   ui-changes:
     name: Detect UI-relevant changes
     runs-on: ubuntu-latest
@@ -333,6 +343,12 @@ jobs:
           app-url: http://localhost:8080
           test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
           test-auth-email: ${{ secrets.TEST_AUTH_EMAIL }}
+          # VARIABLES, not secrets: selectors and a URL substring, and a masked one
+          # is unreadable in a failure message. Empty keeps the windowed answer (#320)
+          # and S2 reading the gate clearing as success (#379).
+          test-auth-ready-selector: ${{ vars.TEST_AUTH_READY_SELECTOR }}
+          test-auth-ready-request: ${{ vars.TEST_AUTH_READY_REQUEST }}
+          test-auth-success-selector: ${{ vars.TEST_AUTH_SUCCESS_SELECTOR }}
           artifact-name: playwright-results-local
           app-pages: ${{ vars.APP_PAGES }}
           start-local-server: 'true'
@@ -340,6 +356,13 @@ jobs:
           grep-invert: 'live only'
           advisory-run: 'false'
 
+  # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
+  # A precise, PR-scoped, stale-SHA-guarded "green" wake comment — distinct from
+  # ci-notify.yml's workflow_run watcher, which fires on any push (not just
+  # PRs), doesn't check draft state, and can name a superseded commit on its
+  # branch-fallback match. This job re-reads the PR's current head via `gh pr
+  # view` immediately before posting, so a comment consumed as an auto-merge
+  # signal never names a commit the PR has since moved past.
   notify:
     name: Notify PR on green
     needs: [static-checks, ui-changes, ui-tests]

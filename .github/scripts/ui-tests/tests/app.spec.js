@@ -391,6 +391,11 @@ test('S2: auth gate discovered and credential accepted', async ({ page }) => {
   const mechanism  = (await detectAuthGate(page))
     ? await detectAndAuth(page, AUTH_CREDENTIAL ?? '')
     : 'none';
+  // KD-1 (docs/standards/kit-defects.md, directives#327): with a credential
+  // configured, reaching 'none' means this run never found a gate at all —
+  // every assertion below is vacuous without one, so this must fail rather
+  // than silently pass.
+  if (mechanism === 'none') throw new Error(`S2 FAIL | no auth gate found at ${page.url()}, but TEST_AUTH_CREDENTIAL is set — this scenario never reached the gate (set APP_URL, or point S2 at the login route). Failing rather than passing: every assertion below is vacuous without a gate (directives#327).`);
   const afterSnap  = await domSnapshot(page);
 
   const domChanged = JSON.stringify(beforeSnap) !== JSON.stringify(afterSnap);
