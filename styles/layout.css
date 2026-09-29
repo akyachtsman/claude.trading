@@ -24,7 +24,12 @@
   /* `.wl-area` joined the opt-out 2026-08-17: it now sits directly on top of
      `.area-charts`, and a capped-and-centred panel above a full-bleed one would
      be visibly inset from the chart it is meant to feed. */
-  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
+  /* Both selectors weigh the same (0,5,0) as the one they replace. `main` (the
+     landmark between masthead and footer) is a plain block that must NOT take the
+     cap itself — that would cap the full-bleed panels inside it — so the cap goes
+     to its children exactly as it went to .shell's own before. */
+  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area):not(:where(main)),
+  .shell > :where(main) > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -1050,4 +1055,19 @@
     .acct-widgets-wrap { flex-basis: 100%; }
     .acct-widgets .widget-frame { width: 100%; }
     .col-rail { flex-basis: 100%; }
+  }
+
+  /* Touch targets. The icon controls below are 18–26px on purpose — dense, mouse
+     first. A coarse pointer (phone, tablet) gets the 44px target design.md asks
+     for; `pointer: fine` (every desktop) never matches, so nothing here moves a
+     desktop pixel. Deliberately NOT covered: the band gutter's «/»/× cluster and
+     the ▲/▼ pager (three 18px controls share a ~90px column — 44px each cannot
+     fit without redesigning the gutter), the symbol rail's rows (a 100-slot
+     scroller whose S40/S45 geometry is measured at these sizes), and the pane
+     bars' ⚙/🔓 (three bars share ~390px on a phone: two 44px buttons per ~85px
+     bar measured as overflowing the row, the overlap S12's comments warn about). */
+  @media (pointer: coarse) {
+    .wl-edit, .wl-add--tray, .wl-trash, .wl-lock, .wl-newlist, .news-topic-x { min-width: 44px; min-height: 44px; }
+    .wl-add--tray, .wl-trash, .wl-lock, .news-topic-x { width: 44px; height: 44px; }
+    .wl-newlist { height: 44px; }
   }

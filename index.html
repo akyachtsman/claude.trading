@@ -26,6 +26,11 @@
          belonging to nothing, and the Lock is about the accounts. -->
   </header>
 
+  <!-- The primary content landmark. A plain block: it wraps everything between the
+       masthead and the footer without changing any width or margin (layout.css's
+       shell cap is re-pointed at ITS children, not at it). -->
+  <main id="main">
+
   <!-- Top row: the Markets panel (shrunk 10%) beside Ask-the-desk.
        Accounts / news sit in their own band below.
        The MARKET STRIP that used to lead this row was removed 2026-07-29 (owner
@@ -198,7 +203,7 @@
              grammar and would have been saved as a symbol that doesn't exist.
              Pasting a column is the documented workflow, so the field has to
              hold what was pasted. -->
-        <textarea class="input wl-quick-input" id="wlQuickInput" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="wlQuickHint"></textarea>
+        <textarea class="input wl-quick-input" id="wlQuickInput" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Symbols to add" aria-describedby="wlQuickHint"></textarea>
         <div class="wl-edit-actions">
           <button type="button" class="btn" id="wlQuickSaveBtn">Add</button>
         </div>
@@ -527,6 +532,8 @@
       <p class="stamp heat-note" id="heatSource"></p>
     </div>
   </section>
+
+  </main>
 
   <footer class="site-footer">
     <p>Data: IBKR Flex reports (accounts) · market and news snapshots committed by scheduled jobs. Every panel shows its own as-of stamp — this dashboard renders snapshots, not live quotes.</p>
