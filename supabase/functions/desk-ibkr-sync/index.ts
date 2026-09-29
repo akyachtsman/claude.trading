@@ -75,20 +75,29 @@ export function flexError(doc: any): FlexErr | null {
 
 // deno-lint-ignore no-explicit-any
 async function flexCall(url: string): Promise<any> {
-  let res: Response;
+  /* The WHOLE exchange — connect, headers AND body — sits inside one protected
+     operation: the 15s signal also covers `res.text()`, so a Flex that answers
+     the headers and then stalls the body aborts THERE, and that has to classify
+     the same as a stall before the headers (retryable), not escape to the outer
+     handler as a hard failure. */
+  let text: string;
   try {
-    res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(FLEX_TIMEOUT_MS) });
+    const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(FLEX_TIMEOUT_MS) });
+    // A 5xx/429 body is an HTML page that parses to "no error", i.e. it used to be
+    // read as a successful (empty) statement.
+    if (!res.ok) {
+      throw Object.assign(new Error(`Flex HTTP ${res.status}`), { transient: res.status >= 500 || res.status === 429 });
+    }
+    text = await res.text();
   } catch (e) {
+    // Already classified above (HTTP status): pass it through untouched.
+    if ((e as { transient?: boolean })?.transient !== undefined) throw e;
     // NEVER rethrow `e`: its message names the URL, token included. A network
-    // fault or timeout is retryable by the next cron slot, so it is transient.
+    // fault, a timeout or an abort at ANY step is retryable by the next cron
+    // slot, so it is transient.
     throw Object.assign(new Error(`Flex request failed (${e instanceof Error ? e.name : 'error'})`), { transient: true });
   }
-  // A 5xx/429 body is an HTML page that parses to "no error", i.e. it used to be
-  // read as a successful (empty) statement.
-  if (!res.ok) {
-    throw Object.assign(new Error(`Flex HTTP ${res.status}`), { transient: res.status >= 500 || res.status === 429 });
-  }
-  return parser.parse(await res.text());
+  return parser.parse(text);
 }
 
 /* The statement URL comes from the RESPONSE BODY and the very next request
@@ -111,8 +120,11 @@ const isTransientFlex = (e: FlexErr | null) =>
   e && (e.code === '1001' || e.code === '1019' || /try again|in progress|at this time/i.test(e.message));
 
 // Edge-budget version of the pipeline's requestStatement: 2 SendRequest
-// attempts (15s apart) + ≤4 GetStatement polls (5s, then 15s) ≈ 65s worst
-// case — the second cron slot is the retry for anything slower.
+// attempts (15s apart) + ≤4 GetStatement polls (5s, then 15s) ≈ 65s of waiting.
+// A stalled call ends the run at once as `not-ready` (see flexCall), so the
+// ceiling is that wait plus ONE stalled call's 15s ≈ 80s — well inside the 150s
+// pg_net timeout desk_005 gives this function. The second cron slot is the
+// retry for anything slower.
 // deno-lint-ignore no-explicit-any
 async function requestStatement(token: string, queryId: string): Promise<any> {
   let send, err: FlexErr | null = null;

@@ -145,7 +145,15 @@ const REST_TIMEOUT_MS = 15000;     // PostgREST
 const RUN_BUDGET_MS = 350_000;
 const MODEL_CALL_MAX_MS = 150_000;
 const MIN_CALL_BUDGET_MS = 20_000;
-const MIN_TOOL_BUDGET_MS = 1_000;   // below this a tool fetch is not started at all
+/* A tool result has to be carried back by another model call, which needs its
+   own MIN_CALL_BUDGET_MS: a tool may only spend what is left BEYOND that (plus a
+   small margin). Otherwise a fetch that starts with 21s left eats the whole
+   deadline and the loop then has no budget to hand the result over — a 504 with
+   a perfectly good tool result in hand. A tool with less than MIN_TOOL_BUDGET_MS
+   to spend is not started: it answers a tool ERROR at once, and the follow-up
+   call, which still has its budget, answers with what it has. */
+const TOOL_RESERVE_MS = MIN_CALL_BUDGET_MS + 2_000;
+const MIN_TOOL_BUDGET_MS = 3_000;
 
 /* PROMPT-INJECTION BOUNDARY, server side, for BOTH callers (the browser's PIN
    path and desk-cron-ask). `desk_get_watchlists_open` / `desk_set_watchlists_open`
@@ -323,13 +331,15 @@ async function handle(req: Request): Promise<Response> {
   } catch (_e) { /* replay is best-effort; continue without history */ }
 
   /* Every tool fetch is clamped to what is left of the TURN, not just to its own
-     cap: get_technicals makes two sequential fetches (daily, then the intraday
-     graft), and 20s + 20s started with 21s remaining ran the turn ~20s past its
-     deadline before the 504. The budget is read again before each fetch, so the
-     two share it. null = nothing usable left: the helper answers a tool error
-     (or skips a best-effort graft) instead of starting a fetch. */
+     cap, and what it may spend excludes TOOL_RESERVE_MS for the model call that
+     carries its result back. get_technicals makes two sequential fetches (daily,
+     then the intraday graft), and 20s + 20s started with 21s remaining ran the
+     turn ~20s past its deadline before the 504. The budget is read again before
+     each fetch, so the two share it. null = nothing usable left: the helper
+     answers a tool error (or skips a best-effort graft) instead of starting a
+     fetch. */
   const toolBudget = (): number | null => {
-    const b = Math.min(TOOL_TIMEOUT_MS, deadline - Date.now());
+    const b = Math.min(TOOL_TIMEOUT_MS, deadline - Date.now() - TOOL_RESERVE_MS);
     return b >= MIN_TOOL_BUDGET_MS ? b : null;
   };
   const NO_TIME = { ok: false, error: 'out of time for this turn — answer with what you have and note it' };
@@ -591,7 +601,10 @@ async function handle(req: Request): Promise<Response> {
   // the first may be recorded as "verified".
   async function auditDraft(draft: string): Promise<string[] | null> {
     if (!receipts.length && !sources.length) return null;   // nothing to check against
-    const budget = Math.min(MODEL_TIMEOUT_MS, deadline - Date.now());
+    // Leave MIN_CALL_BUDGET_MS behind for the rewrite a rejection would queue: an
+    // audit that eats the whole deadline can only end in a rejected draft nobody
+    // can rewrite, where skipping it (unverified) would have returned the answer.
+    const budget = Math.min(MODEL_TIMEOUT_MS, deadline - Date.now() - MIN_CALL_BUDGET_MS);
     if (budget < MIN_CALL_BUDGET_MS) return null;   // out of turn budget: never block an answer on the checker
     const evidence = JSON.stringify({ tool_payloads: receipts, web_sources: sources }).slice(0, 60000);
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -716,8 +729,8 @@ async function handle(req: Request): Promise<Response> {
         let out: Record<string, unknown>;
         if (toolCalls >= MAX_TOOL_CALLS) {
           out = { ok: false, error: 'tool-call budget reached for this turn — answer with what you have and note it' };
-        } else if (deadline - Date.now() < MIN_CALL_BUDGET_MS) {
-          out = { ok: false, error: 'out of time for this turn — answer with what you have and note it' };
+        } else if (toolBudget() === null) {
+          out = NO_TIME;   // no fetch: the result goes straight back to the model, which still has its own budget
         } else {
           toolCalls++;
           const symbol = String(tu.input?.symbol ?? '');
@@ -884,7 +897,9 @@ Deno.serve(async (req) => {
   try {
     return await handle(req);
   } catch (e) {
-    const timedOut = (e as Any)?.name === 'TimeoutError';
+    // AbortSignal.timeout raises TimeoutError; a body read cut off by it can surface as AbortError on some runtimes.
+    // Every signal in this file is one of our own timeouts, so both mean "timed out".
+    const timedOut = (e as Any)?.name === 'TimeoutError' || (e as Any)?.name === 'AbortError';
     console.error('desk-ask failed:', (e as Any)?.name ?? 'error', logDetail(e));
     return reply(timedOut ? 504 : 502, {
       ok: false,

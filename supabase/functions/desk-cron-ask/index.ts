@@ -62,6 +62,9 @@ const MAIL_TIMEOUT_MS = 15000;
 const ASK_TIMEOUT_MS = 215000;
 const CRON_WALL_MS = 230000;
 const ASK_TIMED_OUT = 'failed: ask timed out; answer may still land in the thread';
+// AbortSignal.timeout raises TimeoutError; a body read cut off by it can surface as AbortError on some runtimes.
+// Every signal here is one of our own timeouts, so both mean "timed out".
+const isTimeout = (e: unknown) => ['TimeoutError', 'AbortError'].includes((e as { name?: string })?.name ?? '');
 
 type Row = {
   id: number;
@@ -590,7 +593,9 @@ Deno.serve(async (req) => {
           body: JSON.stringify({ question: r.prompt, context }),
           signal: AbortSignal.timeout(askMs),
         });
-        const aj = await ar.json().catch(() => null);
+        // A body that stalls after the headers aborts HERE, with the ask's own timeout: that must reach
+        // the catch below as a timed-out ask, not be swallowed into a null body ("failed: HTTP 200").
+        const aj = await ar.json().catch((e) => { if (isTimeout(e)) throw e; return null; });
         // A gateway 504 carries no error of ours (desk-ask's own 504 does): the request outlived the gateway, not the ask.
         if (ar.status === 504 && !aj?.error) status = ASK_TIMED_OUT;
         else if (!ar.ok || !aj?.ok) status = `failed: ${String(aj?.error ?? `HTTP ${ar.status}`).slice(0, 160)}`;
@@ -607,7 +612,7 @@ Deno.serve(async (req) => {
       } catch (e) {
         // Our own wait ran out: desk-ask carries on regardless and archives the
         // answer, so this is NOT a failed ask — say so, rather than a bare abort message.
-        status = (e as Any)?.name === 'TimeoutError' ? ASK_TIMED_OUT : 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
+        status = isTimeout(e) ? ASK_TIMED_OUT : 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
       }
       /* The post-run stamp is best-effort, unlike the claim above: last_run_at
          was already written, so a failure here cannot re-fire the row — it only
