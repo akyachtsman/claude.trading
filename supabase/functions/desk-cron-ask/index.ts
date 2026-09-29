@@ -42,21 +42,25 @@ const MAX_PER_TICK = 1;
 
 // Every fetch is bounded, so a hung upstream costs its own section (or its own
 // row) rather than the whole tick. The ask call gets the longest leash: desk-ask
-// runs the full agentic tool loop, and pg_net gives this function 240s (desk_018).
+// runs the full agentic tool loop.
 const FEED_TIMEOUT_MS = 25000;
 const REST_TIMEOUT_MS = 15000;
 const MAIL_TIMEOUT_MS = 15000;
-/* A legitimate run is 4-6 Claude calls of 30-90s, so the old 200s aborted real
-   answers: this function stamped the row failed and sent no email while desk-ask
-   carried on and archived the answer anyway — and the slot was already claimed,
-   so it was never retried. desk-ask's own turn deadline is 350s; this stays a
-   little under it so the platform's ~400s wall clock is never the one to decide.
-   The wait actually used is CLAMPED to what is left of CRON_WALL_MS after the
-   steps before it, and room is kept for the two writes after it (email, stamp),
-   so the whole tick sums to under 400s even when every other step runs to its
-   own timeout (15+15+25+15 before, 15+15 after — 100s of worst-case overhead). */
-const ASK_TIMEOUT_MS = 330000;
-const CRON_WALL_MS = 390000;
+/* THE CEILING IS pg_net's, NOT the platform's. desk_018 invokes this function
+   with `timeout_milliseconds := 240000`: after 240s pg_net stops waiting for the
+   response, so a tick that runs longer has nobody listening — the email and the
+   final status stamp would land after the caller has given up. Everything here
+   therefore has to finish under that, and the ask wait is CLAMPED to what is
+   left of CRON_WALL_MS after the steps before it, keeping room for the two
+   writes after it (email, stamp): worst case 15+15+25+15 before and 15+15 after
+   still sums to 230s, under the 240s ceiling. In practice the clamp, not
+   ASK_TIMEOUT_MS, is what binds (~200s). A legitimate run is 4-6 Claude calls of 30-90s and can
+   outlast that: desk-ask carries on regardless and archives the answer, and
+   this row is stamped as a timed-out ask (below) — the email is what such a run
+   loses. RAISING EITHER NUMBER REQUIRES RAISING desk_018's pg_net timeout too, a
+   migration the owner must apply; it is deliberately NOT changed here. */
+const ASK_TIMEOUT_MS = 215000;
+const CRON_WALL_MS = 230000;
 const ASK_TIMED_OUT = 'failed: ask timed out; answer may still land in the thread';
 
 type Row = {

@@ -510,7 +510,7 @@ async function handle(req: Request): Promise<Response> {
   // deno-lint-ignore no-explicit-any
   let finalMsg: any = null;
   let toolCalls = 0, resumes = 0, iters = 0;
-  let searchForced = false, verified = false;
+  let searchForced = false, auditTried = false, verified = false;
   let unsupported: string[] = [];
   /* The code-execution container this turn is bound to, once the API has made
      one. We never ASK for code execution — but `web_search_20260209` /
@@ -557,10 +557,15 @@ async function handle(req: Request): Promise<Response> {
   // know it isn't just coming up with the same answer twice"). Extraction and
   // lookup are far less prone to that than evaluation, because a number is
   // either in the JSON or it is not.
-  async function auditDraft(draft: string): Promise<string[]> {
-    if (!receipts.length && !sources.length) return [];   // nothing to check against
+  // Returns the unsupported claims ([] = the check RAN and found none), or null
+  // when it did NOT complete — nothing to check against, out of turn budget, a
+  // non-OK reply, an unparseable or non-array reply. null and [] must never be
+  // conflated: [] is a grounding result, null is the absence of one, and only
+  // the first may be recorded as "verified".
+  async function auditDraft(draft: string): Promise<string[] | null> {
+    if (!receipts.length && !sources.length) return null;   // nothing to check against
     const budget = Math.min(MODEL_TIMEOUT_MS, deadline - Date.now());
-    if (budget < MIN_CALL_BUDGET_MS) return [];   // out of turn budget: never block an answer on the checker
+    if (budget < MIN_CALL_BUDGET_MS) return null;   // out of turn budget: never block an answer on the checker
     const evidence = JSON.stringify({ tool_payloads: receipts, web_sources: sources }).slice(0, 60000);
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -583,14 +588,14 @@ async function handle(req: Request): Promise<Response> {
         messages: [{ role: 'user', content: `EVIDENCE:\n${evidence}\n\nDRAFT ANSWER:\n${draft}` }],
       }),
     });
-    if (!res.ok) return [];   // never block an answer on the checker failing
+    if (!res.ok) return null;   // never block an answer on the checker failing
     try {
       const j = await res.json();
       addUsage(j.usage);   // the check is not free — count it with everything else
       const raw = textOf(j).replace(/^```(?:json)?|```$/g, '').trim();
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
-    } catch { return []; }
+      return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : null;
+    } catch { return null; }
   }
 
   let outOfTime = false;
@@ -712,14 +717,17 @@ async function handle(req: Request): Promise<Response> {
       continue;
     }
 
-    if (verifyThisTurn && !verified) {
-      verified = true;   // one revision pass, never a loop
+    if (verifyThisTurn && !auditTried) {
+      auditTried = true;   // one revision pass, never a loop
       const draft = textOf(msg);
       // "never block an answer on the checker failing" has to cover a thrown
-      // fetch (network fault, timeout) as well as a non-OK reply.
-      let gaps: string[] = [];
-      try { gaps = draft ? await auditDraft(draft) : []; } catch { /* checker fault: keep the answer */ }
-      if (gaps.length) {
+      // fetch (network fault, timeout) as well as a non-OK reply — the answer is
+      // kept either way, but it is only recorded as verified when a grounding
+      // result actually came back.
+      let gaps: string[] | null = null;
+      try { gaps = draft ? await auditDraft(draft) : null; } catch { /* checker fault: keep the answer, unverified */ }
+      verified = gaps !== null;
+      if (gaps?.length) {
         unsupported = gaps;
         messages.push({ role: 'assistant', content: msg.content });
         messages.push({
@@ -761,15 +769,20 @@ async function handle(req: Request): Promise<Response> {
   const checked = {
     searched: sources.length > 0,
     forcedSearch: searchForced,
-    /* The local `verified` — the check actually RAN — not `verifyThisTurn`,
-       which is only the intent. They come apart: a turn that exhausts
-       MAX_ITERS breaks out before the terminal-answer path, so the audit never
-       happens while the intent was still true. Reporting the intent was
+    /* The local `verified` — the check actually COMPLETED with a result — not
+       `verifyThisTurn`, which is only the intent, and not merely that it was
+       attempted: a checker that timed out, threw, ran out of turn budget or had
+       no evidence to check against produced no grounding result, so it leaves
+       `verified` false (and `verifyIncomplete` true). Intent and outcome also
+       come apart when a turn exhausts MAX_ITERS: it breaks out before the
+       terminal-answer path, so the audit never happens while the intent was
+       still true. Reporting the intent was
        survivable while this was a throwaway response field; storing it would
        write a durable claim that an answer was checked when nothing checked
        it, which is precisely the false confidence this column exists to
        prevent. `requested` still records what the owner asked for. */
     verified,
+    verifyIncomplete: auditTried && !verified,   // asked for, attempted, no result
     requested: askedToVerify,   // typed on this question, vs armed globally
     unsupported,
   };

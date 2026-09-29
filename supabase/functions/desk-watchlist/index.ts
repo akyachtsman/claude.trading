@@ -290,12 +290,12 @@ function normalizeLists(raw: any[]): List[] {
 // user-agent is enough to trip it, and the reply is a 401 "Forbidden use of
 // secret API key in browser" that this function's .catch would swallow into a
 // silent empty roster. UA belongs on the OUTBOUND Yahoo calls only.
-async function listsFromTable(): Promise<List[] | null> {
+async function listsFromTable(): Promise<{ lists: List[]; fp: string } | null> {
   const url = Deno.env.get('SUPABASE_URL');
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!url || !key) return null;
   const res = await tfetch(
-    `${url}/rest/v1/desk_watchlists?select=title,symbols,pos&order=pos.asc,id.asc`,
+    `${url}/rest/v1/desk_watchlists?select=id,title,symbols,pos,updated_at&order=pos.asc,id.asc`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` } },
   ).catch((e) => { console.warn('desk-watchlist: desk_watchlists read did not complete —', (e as Error)?.name); return null; });
   // Falling back to the bootstrap config is the intended degrade, but it must
@@ -310,7 +310,22 @@ async function listsFromTable(): Promise<List[] | null> {
   // the bootstrap config, so deleting every list would appear not to persist —
   // the owner's save would silently resurrect the seeded ETFs. Only an
   // unreachable/!ok/non-array response counts as failure.
-  return normalizeLists(rows);
+  return { lists: normalizeLists(rows), fp: rosterFp(rows) };
+}
+
+/* Fingerprint of the roster TABLE STATE: row count + per-row id/pos/updated_at,
+   no symbol arrays. Every write (desk_set_watchlists_open is a replace-all)
+   deletes and re-inserts, so an edit changes the id set and updated_at — adds,
+   renames, reorders and DELETES included. It is recorded from the SAME read the
+   sweep is built from, and compared against a tiny read (rosterFpNow), so
+   detecting an edit never reads or serialises a roster. */
+const ROSTER_FP_ROWS = 51;   // the RPC caps the roster at 50 lists; +1 so an overflow still reads as a change
+// deno-lint-ignore no-explicit-any
+function rosterFp(rows: any[]): string {
+  // By id and capped, so the sweep's full read (ordered by pos) and the tiny
+  // check read (ordered by id, LIMIT) fingerprint identically.
+  const r = [...rows].sort((a, b) => Number(a?.id) - Number(b?.id)).slice(0, ROSTER_FP_ROWS);
+  return `${r.length}|` + r.map((x) => `${x?.id}:${x?.pos}:${x?.updated_at}`).join(',');
 }
 
 // Bootstrap fallback — the committed config, used only if the table read fails.
@@ -322,12 +337,12 @@ async function listsFromConfig(): Promise<List[] | null> {
   return lists.length ? lists : null;
 }
 
-async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config' }> {
+async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config'; fp: string | null }> {
   const fromTable = await listsFromTable();
   // null = read failed; [] = read succeeded and the owner has no lists.
-  if (fromTable !== null) return { lists: fromTable, source: 'table' };
+  if (fromTable !== null) return { lists: fromTable.lists, source: 'table', fp: fromTable.fp };
   const fromConfig = await listsFromConfig();
-  if (fromConfig) return { lists: fromConfig, source: 'config' };
+  if (fromConfig) return { lists: fromConfig, source: 'config', fp: null };
   throw new Error('no watchlists available from desk_watchlists or config');
 }
 
@@ -349,12 +364,12 @@ const inflight = new Map<string, Promise<unknown>>(); // single-flight, per rang
 // reachable anonymously without `force`. Now a burst costs ONE quote sweep plus
 // one spark sweep per range.
 // deno-lint-ignore no-explicit-any
-type Sweep = { lists: List[]; source: 'table' | 'config'; uniq: string[]; truncated: string[]; byYahoo: Map<string, any>; quoted: number };
+type Sweep = { lists: List[]; source: 'table' | 'config'; fp: string | null; uniq: string[]; truncated: string[]; byYahoo: Map<string, any>; quoted: number };
 let quoteCache: { at: number; data: Sweep } | null = null;
 let quoteInflight: Promise<Sweep> | null = null;
 
 async function quoteSweep(): Promise<Sweep> {
-  const { lists, source } = await loadLists();
+  const { lists, source, fp } = await loadLists();
   // One fetch per unique symbol no matter how many lists repeat it.
   const all = [...new Set(lists.flatMap((l) => l.symbols))];
   const uniq = all.slice(0, MAX_SYMBOLS);
@@ -370,7 +385,7 @@ async function quoteSweep(): Promise<Sweep> {
   // deno-lint-ignore no-explicit-any
   const byYahoo = new Map<string, any>();
   for (const q of results.flat()) if (q?.symbol) byYahoo.set(String(q.symbol).toUpperCase(), q);
-  return { lists, source, uniq, truncated, byYahoo, quoted: results.flat().length };
+  return { lists, source, fp, uniq, truncated, byYahoo, quoted: results.flat().length };
 }
 
 function sharedSweep(): Promise<Sweep> {
@@ -468,12 +483,33 @@ const FORCE_MIN_GAP_MS = 30_000;
 
 // A roster edit forces too (see below) and must NOT be throttled: a second drag
 // or add inside the window would otherwise repaint the pre-edit roster and look
-// like the save failed. One PostgREST read decides it; Yahoo is not touched.
+// like the save failed. `force` is anonymous and the open RPC lets any caller
+// inflate the roster, so THIS CHECK must be cheap however big the roster is: it
+// reads only id/pos/updated_at (LIMIT ROSTER_FP_ROWS), compares against the fingerprint recorded when the cached sweep was built, and
+// concurrent callers share one read. Yahoo is not touched.
+let fpInflight: Promise<string | null> | null = null;
+function rosterFpNow(): Promise<string | null> {
+  fpInflight ??= (async () => {
+    const url = Deno.env.get('SUPABASE_URL');
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !key) return null;
+    const res = await tfetch(
+      `${url}/rest/v1/desk_watchlists?select=id,pos,updated_at&order=id.asc&limit=${ROSTER_FP_ROWS}`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    ).catch(() => null);
+    if (!res || !res.ok) return null;
+    const rows = await res.json().catch(() => null);
+    return Array.isArray(rows) ? rosterFp(rows) : null;
+  })().finally(() => { fpInflight = null; });
+  return fpInflight;
+}
 async function rosterChanged(): Promise<boolean> {
   const cached = quoteCache?.data;
   if (!cached) return false; // nothing cached, so the request sweeps anyway
-  const fresh = await listsFromTable();
-  return fresh !== null && JSON.stringify(fresh) !== JSON.stringify(cached.lists);
+  const fresh = await rosterFpNow();
+  if (fresh === null) return false; // unreadable: keep the throttle rather than sweep on a guess
+  // A config-sourced sweep has no fingerprint: the table is readable now, which is itself a change.
+  return cached.fp === null || fresh !== cached.fp;
 }
 
 Deno.serve(async (req) => {
