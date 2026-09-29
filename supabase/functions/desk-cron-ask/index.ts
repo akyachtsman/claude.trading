@@ -46,7 +46,18 @@ const MAX_PER_TICK = 1;
 const FEED_TIMEOUT_MS = 25000;
 const REST_TIMEOUT_MS = 15000;
 const MAIL_TIMEOUT_MS = 15000;
-const ASK_TIMEOUT_MS = 200000;
+/* A legitimate run is 4-6 Claude calls of 30-90s, so the old 200s aborted real
+   answers: this function stamped the row failed and sent no email while desk-ask
+   carried on and archived the answer anyway — and the slot was already claimed,
+   so it was never retried. desk-ask's own turn deadline is 350s; this stays a
+   little under it so the platform's ~400s wall clock is never the one to decide.
+   The wait actually used is CLAMPED to what is left of CRON_WALL_MS after the
+   steps before it, and room is kept for the two writes after it (email, stamp),
+   so the whole tick sums to under 400s even when every other step runs to its
+   own timeout (15+15+25+15 before, 15+15 after — 100s of worst-case overhead). */
+const ASK_TIMEOUT_MS = 330000;
+const CRON_WALL_MS = 390000;
+const ASK_TIMED_OUT = 'failed: ask timed out; answer may still land in the thread';
 
 type Row = {
   id: number;
@@ -171,7 +182,14 @@ async function liveFeed(name: string, body: Record<string, unknown> = {}): Promi
    The pattern is the RPC's own (`^[A-Z0-9.^=-]{1,10}$`, after trim + upper). */
 const TICKER_RE = /^[A-Z0-9.^=-]{1,10}$/;
 const WL_MAX_LISTS = 50;      // the RPC's own cap
-const WL_MAX_SYMS = 400;      // per list, per group — the 80k context cap is the backstop
+/* The RPC has NO per-list symbol cap, so 50 lists x 400 junk tickers (~280KB)
+   used to fill desk-ask's whole 80k context cap, whose slice then cut the LATER
+   sections (heatmap, technicals, feedsUnavailable) off mid-string — the
+   scheduled brief lost them silently. The cap is on the TOTAL, unresolved names
+   ride as a bounded list plus a count, and `watchlist` is emitted LAST. Kept in
+   step with desk-ask's sanitizeContext (separate deployments, no shared module). */
+const WL_MAX_TOTAL_SYMS = 300;
+const WL_MAX_UNRESOLVED = 25;   // names kept per list; the rest ride as `unresolvedTotal`
 function cleanSym(v: Any): string | null {
   const s = String(v ?? '').trim().toUpperCase();
   return TICKER_RE.test(s) ? s : null;
@@ -180,24 +198,32 @@ const finiteOrNull = (v: Any): number | null => (typeof v === 'number' && Number
 
 function watchlistContext(lists: Any): Any[] {
   if (!Array.isArray(lists)) return [];
+  let remaining = WL_MAX_TOTAL_SYMS;
   return lists.slice(0, WL_MAX_LISTS).map((l: Any, i: number) => {
     const resolved = new Set<string>();
     const symbols: Any[] = [];
+    let omitted = 0;   // valid names dropped by the total cap
     for (const r of Array.isArray(l?.rows) ? l.rows : []) {
       const sym = cleanSym(r?.sym);
       if (!sym || resolved.has(sym)) continue;
       resolved.add(sym);
+      if (remaining <= 0) { omitted++; continue; }   // counted, and kept out of `unresolved` via `resolved`
+      remaining--;
       symbols.push({ sym, last: finiteOrNull(r?.last), dayChgPct: finiteOrNull(r?.pct), extended: r?.ext === true });
-      if (symbols.length >= WL_MAX_SYMS) break;
     }
     // Saved but not quoted — named so an unresolved ticker is visible as such.
     const unresolved = new Set<string>();
     for (const s of Array.isArray(l?.symbols) ? l.symbols : []) {
       const sym = cleanSym(s);
       if (sym && !resolved.has(sym)) unresolved.add(sym);
-      if (unresolved.size >= WL_MAX_SYMS) break;
     }
-    return { list: `List ${i + 1}`, symbols, unresolved: [...unresolved] };
+    const shown = [...unresolved].slice(0, WL_MAX_UNRESOLVED);
+    return {
+      list: `List ${i + 1}`, symbols,
+      ...(omitted ? { symbolsOmitted: omitted } : {}),
+      unresolved: shown,
+      ...(unresolved.size > shown.length ? { unresolvedTotal: unresolved.size } : {}),
+    };
   });
 }
 
@@ -378,12 +404,12 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
       );
       // A rejected read answers with an error OBJECT, which the loop below
       // would only trip over (and swallow) as "not iterable".
-      if (!sres.ok) { console.error(`desk-cron-ask snapshots read failed: HTTP ${sres.status}`); return []; }
+      if (!sres.ok) { console.error(`desk-cron-ask snapshots read failed: HTTP ${sres.status}`); return null; }
       const rows = await sres.json();
       const latest = new Map<number, Any>();
       for (const r of rows || []) if (!latest.has(r.account_key)) latest.set(r.account_key, r);
       return [...latest.values()].sort((a, b) => a.account_key - b.account_key);
-    } catch (e) { console.error(`desk-cron-ask snapshots read failed: ${(e as Any)?.name ?? 'error'}`); return []; }
+    } catch (e) { console.error(`desk-cron-ask snapshots read failed: ${(e as Any)?.name ?? 'error'}`); return null; }
   })();
 
   const [accounts, market, news, watchlist, heat, charts] = await Promise.all([
@@ -405,13 +431,15 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
     // stock, not a read on their liquidity, and withholding the numbers is the
     // enforcement point rather than a line in the system prompt. dayPct stays
     // because it is the ticker's own market move, not a fact about the account.
-    accounts: (accounts || []).map((s: Any) => ({
+    // null (not []) when the read FAILED, so "unavailable" never reads as "no
+    // holdings"; it is also named in feedsUnavailable below.
+    accounts: accounts ? accounts.map((s: Any) => ({
       account: 'Account ' + s.account_key,
       label: s.label ?? null,
       asOf: s.as_of,
       positions: (Array.isArray(s.positions) ? s.positions : [])
         .map((p: Any) => ({ sym: p.sym, dayPct: p.dayPct })),
-    })),
+    })) : null,
     /* Extended-hours prints carried through (Codex review, PR #241). desk-market
        puts the later price in `ext` (the instrument's own after-hours trade) or
        `extProxy` (an index naming the ETF that stands in for it, since indices
@@ -445,23 +473,26 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
       at: n.t ?? null,
       symbols: (Array.isArray(n.chips) ? n.chips : []).map((c: Any) => ({ sym: c[0], dayPct: c[1] ?? null })),
     })),
-    // The watchlist goes in FULL — it is the curated focus list, and summarising
-    // it would defeat the point of curating it (the PR #241 ruling). Symbols
-    // only, lists numbered rather than titled: see watchlistContext. null (not
-    // []) when the feed was down, so "unavailable" never reads as "empty".
-    watchlist: watchlist ? watchlistContext(watchlist.lists) : null,
     heatmap: heatmapFrom(heat),
     // The oscillator readings the Pro panes draw, for the whole charted roster.
     technicals: technicalsFrom(charts),
     // Best-effort feeds that did not answer — said out loud, since a missing
     // section is otherwise indistinguishable from an empty one.
-    feedsUnavailable: [['desk-market', market], ['desk-news', news], ['desk-watchlist', watchlist],
+    feedsUnavailable: [['accounts', accounts], ['desk-market', market], ['desk-news', news], ['desk-watchlist', watchlist],
       ['desk-heatmap', heat], ['desk-charts', charts]].filter(([, v]) => !v).map(([n]) => n),
+    // The watchlist goes in FULL up to WL_MAX_TOTAL_SYMS — it is the curated focus
+    // list, and summarising it would defeat the point of curating it (the PR #241
+    // ruling); the cap is far above any real roster. Symbols only, lists numbered
+    // rather than titled: see watchlistContext. null (not []) when the feed was
+    // down, so "unavailable" never reads as "empty". LAST on purpose: it is the
+    // one section a caller can inflate, so residual truncation must eat it first.
+    watchlist: watchlist ? watchlistContext(watchlist.lists) : null,
   };
 }
 
 // ── entrypoint ──────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
+  const t0 = Date.now();
   if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST only' });
   const secret = Deno.env.get('CRON_SECRET');
   if (!secret || req.headers.get('x-cron-secret') !== secret) {
@@ -536,22 +567,29 @@ Deno.serve(async (req) => {
       // above rests on last_run_at having been written, so running anyway would
       // send the brief AND leave the row due to send it again five minutes
       // later. Skipping costs one delayed brief; proceeding costs up to 18
-      // duplicates. The next tick retries the claim, so a transient PostgREST
-      // blip self-heals well inside the catch-up window.
+      // duplicates. A claim that genuinely did not land is retried by the next
+      // tick, well inside the catch-up window. A claim that DID land but whose
+      // reply was lost (a timeout) reads the same here, yet last_run_at is
+      // already written, so the next tick will NOT retry it: that slot's brief
+      // is skipped, never duplicated.
       if (!await stamp(r.id, 'running')) {
         out.push({ id: r.id, ok: false, status: 'skipped: could not claim the slot' });
         continue;
       }
       let status = 'ok';
       try {
+        // Clamped to what is left of the wall clock, keeping room for the email and the stamp after it.
+        const askMs = Math.min(ASK_TIMEOUT_MS, CRON_WALL_MS - (Date.now() - t0) - MAIL_TIMEOUT_MS - REST_TIMEOUT_MS);
         const ar = await fetch(`${url}/functions/v1/desk-ask`, {
           method: 'POST',
           headers: { ...headers, 'x-cron-secret': secret },
           body: JSON.stringify({ question: r.prompt, context }),
-          signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
+          signal: AbortSignal.timeout(askMs),
         });
         const aj = await ar.json().catch(() => null);
-        if (!ar.ok || !aj?.ok) status = `failed: ${String(aj?.error ?? `HTTP ${ar.status}`).slice(0, 160)}`;
+        // A gateway 504 carries no error of ours (desk-ask's own 504 does): the request outlived the gateway, not the ask.
+        if (ar.status === 504 && !aj?.error) status = ASK_TIMED_OUT;
+        else if (!ar.ok || !aj?.ok) status = `failed: ${String(aj?.error ?? `HTTP ${ar.status}`).slice(0, 160)}`;
         // Deliver it. The thread copy is the archive; the email is what reaches
         // the owner when they are not at the desk — which is the whole point of
         // a scheduled ask. Only on a real answer: mailing a blank on a failed
@@ -563,7 +601,9 @@ Deno.serve(async (req) => {
           if (aj.memoryStored === false) status += '; not saved to the thread';
         }
       } catch (e) {
-        status = 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
+        // Our own wait ran out: desk-ask carries on regardless and archives the
+        // answer, so this is NOT a failed ask — say so, rather than a bare abort message.
+        status = (e as Any)?.name === 'TimeoutError' ? ASK_TIMED_OUT : 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
       }
       /* The post-run stamp is best-effort, unlike the claim above: last_run_at
          was already written, so a failure here cannot re-fire the row — it only

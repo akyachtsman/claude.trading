@@ -91,6 +91,22 @@ async function flexCall(url: string): Promise<any> {
   return parser.parse(await res.text());
 }
 
+/* The statement URL comes from the RESPONSE BODY and the very next request
+   appends `t=TOKEN` to it — so a tampered or misparsed reply would send the
+   credential to whatever host it names. Only https on interactivebrokers.com (or
+   a subdomain) is followed; an absent Url falls back to the known endpoint. The
+   message names no URL: it reaches the logs and the JSON reply. */
+function statementUrl(raw: unknown): string {
+  if (raw === undefined || raw === null || raw === '') return `${FLEX_BASE}.GetStatement`;
+  let u: URL;
+  try { u = new URL(String(raw)); } catch { throw new Error('Flex SendRequest returned an unparseable statement URL'); }
+  const host = u.hostname.toLowerCase();
+  if (u.protocol !== 'https:' || (host !== 'interactivebrokers.com' && !host.endsWith('.interactivebrokers.com'))) {
+    throw new Error('Flex SendRequest returned a statement URL that is not https on interactivebrokers.com; not following it');
+  }
+  return u.origin + u.pathname;   // the query/fragment is dropped: the token is appended by the caller
+}
+
 const isTransientFlex = (e: FlexErr | null) =>
   e && (e.code === '1001' || e.code === '1019' || /try again|in progress|at this time/i.test(e.message));
 
@@ -111,7 +127,7 @@ async function requestStatement(token: string, queryId: string): Promise<any> {
   // The reference code goes straight into the next URL, so it must look like one.
   const ref = String(send?.FlexStatementResponse?.ReferenceCode ?? '');
   if (!/^[A-Za-z0-9]{1,64}$/.test(ref)) throw new Error('Flex SendRequest returned no usable reference code');
-  const getUrl = send.FlexStatementResponse.Url || `${FLEX_BASE}.GetStatement`;
+  const getUrl = statementUrl(send.FlexStatementResponse.Url);
 
   for (let attempt = 0; attempt < 4; attempt++) {
     await sleep(attempt === 0 ? 5000 : 15000);
