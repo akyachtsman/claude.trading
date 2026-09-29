@@ -120,6 +120,23 @@ const benignCors = (text, src) => {
    logs it, so this is the iphone project's half of the same rule. */
 const benignPageError = (text) => benignCors(text);
 
+/* NO SCENARIO MAY WRITE THE OWNER'S REAL ROSTER. The watchlist RPCs are PIN-free
+   and carry the live DESK_DB.url, so a sweep that authenticates for real and
+   clicks controls (S3, NAV/CTRL via gotoAndAuth) or a forced-live drag (S42)
+   can reach a replace-all against the actual table in CI. Register BEFORE the
+   page loads. Only the WRITE is answered here (`desk_set_watchlists*`); reads
+   stay real, because S3 exercises them. Returns a live counter of the writes
+   that were intercepted, so a scenario that can assert on it may. */
+async function blockRosterWrites(page) {
+  const blocked = { count: 0 };
+  await page.route('**/rest/v1/rpc/desk_set_watchlists*', (route) => {
+    blocked.count++;
+    return route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ok: true, version: null }) });
+  });
+  return blocked;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API CALL CAPTURE — must wrap fetch before page load via addInitScript
 // ─────────────────────────────────────────────────────────────────────────────
@@ -601,6 +618,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
     consoleErrors.push(t);
   });
 
+  await blockRosterWrites(page);   // not asserted: a legitimate click (a band's ↑/↓) may issue one
   const getApiCalls = await captureApiCalls(page);
   await page.goto('./');
   await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
@@ -758,6 +776,7 @@ test('S4: no horizontal overflow at 390px mobile viewport', async ({ page, rende
 // the navigation/control invariants below never just exercise the login screen)
 // ─────────────────────────────────────────────────────────────────────────────
 async function gotoAndAuth(page) {
+  await blockRosterWrites(page);   // NAV and CTRL click real controls on an authenticated desk
   await page.goto('./');
   await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
   // Detect once and branch — each detectAuthGate() call burns a 5s waitFor timeout when
@@ -3983,6 +4002,7 @@ test('S42: watchlist columns page instead of scrolling', async ({ page, browserN
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
+  await blockRosterWrites(page);   // the forced-live drag below must never reach the real roster
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
   const errs = [];
