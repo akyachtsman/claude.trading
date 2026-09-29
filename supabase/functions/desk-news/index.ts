@@ -248,7 +248,7 @@ async function yahooDayPct(symbol: string): Promise<number | null> {
      the quote are both still the previous session, so a clock comparison
      concluded the last bar was not today, took that same bar as the baseline,
      and measured its close against itself — every symbol read 0.00%, verified
-     on FRMI against a real +3.65% move. Overnight is precisely when the sync
+     on a small-cap against a real +3.65% move. Overnight is precisely when the sync
      cron runs (09:35 UTC), so this would have written a zero for every
      position in the account.
      Comparing the quote's ET date with the last bar's ET date is true at every
@@ -324,7 +324,7 @@ async function refresh(topic: string): Promise<unknown> {
     const held = cfg.perTicker.enabled ? await heldTickers() : [];
 
     /* A TOPIC REPLACES THE WHOLE SWEEP, not just the broad wire (owner report
-       2026-08-17: typed "avav", still saw FRMI headlines above it). The first
+       2026-08-17: typed one held ticker, still saw another held ticker's headlines above it). The first
        cut left the per-ticker holdings lookups running on the reasoning that
        dropping news about a position would be the worse surprise. In practice
        it is the other way round — those rows are ranked holdings-first, so
@@ -382,7 +382,7 @@ async function refresh(topic: string): Promise<unknown> {
         /* `t` is UTC HH:mm and is kept ONLY so a client cached from before this
            change keeps rendering a clock. It is not sufficient on its own: a
            bare HH:mm cannot say WHICH DAY, so a two-month-old headline rendered
-           as "14:19" reads as today's — the owner hit exactly that on an AVAV
+           as "14:19" reads as today's — the owner hit exactly that on a held
            Q4 story from Jun 29 sitting fourth in an August feed, where position
            in a recency-sorted list also implies freshness. Worse, the client's
            utcHmToPt() pins the bare HH:mm onto TODAY's date to do the Pacific
