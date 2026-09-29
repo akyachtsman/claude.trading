@@ -75,7 +75,7 @@ function renderMasthead() {
       /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
          leaving them live after a lock would let a drag change the order and
          then silently revert (Codex review, PR #190) */
-      lock.addEventListener('click', () => { sessionStorage.removeItem('desk_pin'); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
+      lock.addEventListener('click', () => { try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ } DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
       wrap.appendChild(lock);
     }
   }
@@ -7761,13 +7761,11 @@ const WIDGET_PATHS = {
   'timeline': 'timeline',
   'screener': 'screener',
 };
-const WIDGET_DEFAULTS = [
-  { type: 'events', title: 'Economic calendar', width: 245, height: 305, config: {
-    colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
-    importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',
-  } },
-  { type: 'fred-glance', title: 'Economy at a glance — FRED', width: 245, height: 305 },
-];
+/* Fallback when config/widgets.json cannot be read. EMPTY on purpose since the embeds
+   were retired (owner ruling 2026-08-07): the old TradingView + FRED pair here meant a
+   transient fetch failure brought vendor iframes — and their JS — back onto a desk
+   that promises to run none. Re-adding a widget is a config edit, not a code edit. */
+const WIDGET_DEFAULTS = [];
 
 function widgetSrc(path, config) {
   /* the URL TradingView's own loader builds: widget name in the path, the
