@@ -542,13 +542,23 @@ async function handle(req: Request): Promise<Response> {
   let toolCalls = 0, resumes = 0, iters = 0;
   let searchForced = false, auditTried = false, verified = false;
   let unsupported: string[] = [];
-  /* The terminal response the grounding check REJECTED, while its rewrite is
-     still pending. `finalMsg` moves on the moment the rewrite answers, so
-     `finalMsg === rejectedDraft` after the loop means the rewrite never ran (the
-     turn budget or the iteration cap ended the loop first) and the only answer
-     in hand is one the audit just found unsupported. */
-  // deno-lint-ignore no-explicit-any
-  let rejectedDraft: any = null;
+  /* THE ONE PIECE OF STATE that says the response in `finalMsg` is not yet an
+     answer: a follow-up model call this turn has QUEUED and that must complete
+     before anything here may be accepted. It is set at every place the loop
+     appends a message that needs another call —
+       pause-resume       a pause_turn the loop is to resume
+       tool-result        tool results waiting to be handed back to the model
+       forced-search      the mandatory-search retry (NO_SEARCH_NOTE)
+       grounding-rewrite  the rewrite after the audit rejected the draft
+     — and cleared ONLY when the next model call has actually returned. Every way
+     out of the loop that is not a completed answer (the turn deadline, the
+     iteration cap, the resume cap) therefore lands here with it still set, and
+     the turn is REJECTED: a clean JSON+CORS error, nothing stored — never the
+     stale response, which is a half-finished thought, an unsearched draft the
+     search gate exists to stop, or one the audit just found unsupported. A call
+     that throws, aborts or is refused leaves through the error paths instead. */
+  type Pending = 'pause-resume' | 'tool-result' | 'forced-search' | 'grounding-rewrite';
+  let pendingFollowUp: Pending | null = null;
   /* The code-execution container this turn is bound to, once the API has made
      one. We never ASK for code execution — but `web_search_20260209` /
      `web_fetch_20260209` filter their results inside one ("dynamic
@@ -694,6 +704,7 @@ async function handle(req: Request): Promise<Response> {
     const msg = await apiRes.json();
     addUsage(msg.usage);
     finalMsg = msg;   // always track the latest response for text extraction
+    pendingFollowUp = null;   // the queued follow-up (if any) has now actually run
     // Latch the container the moment one appears, and never clear it: a
     // container is per-turn state, and dropping it mid-loop is exactly the
     // 400 above.
@@ -713,6 +724,7 @@ async function handle(req: Request): Promise<Response> {
     }
 
     if (msg.stop_reason === 'pause_turn') {
+      pendingFollowUp = 'pause-resume';   // set BEFORE the cap check: a refused resume is still a resume owed
       if (++resumes > MAX_RESUMES) break;
       messages.push({ role: 'assistant', content: msg.content });
       continue;
@@ -741,6 +753,7 @@ async function handle(req: Request): Promise<Response> {
       }
       messages.push({ role: 'assistant', content: msg.content });
       messages.push({ role: 'user', content: results });
+      pendingFollowUp = 'tool-result';
       continue;
     }
 
@@ -754,6 +767,7 @@ async function handle(req: Request): Promise<Response> {
       searchForced = true;
       messages.push({ role: 'assistant', content: msg.content });
       messages.push({ role: 'user', content: NO_SEARCH_NOTE });
+      pendingFollowUp = 'forced-search';
       continue;
     }
 
@@ -769,7 +783,7 @@ async function handle(req: Request): Promise<Response> {
       verified = gaps !== null;
       if (gaps?.length) {
         unsupported = gaps;
-        rejectedDraft = msg;
+        pendingFollowUp = 'grounding-rewrite';
         messages.push({ role: 'assistant', content: msg.content });
         messages.push({
           role: 'user',
@@ -787,23 +801,21 @@ async function handle(req: Request): Promise<Response> {
     break; // end_turn or other terminal reason
   }
 
-  /* The audit rejected the draft and the rewrite could not run: never publish
-     what the checker just found unsupported (the dashboard renders `answer`
-     without looking at `checked.unsupported`). Nothing is stored either — no
-     memory row, so the next question does not replay it as the desk's own words.
-     (A rewrite call that throws, aborts or is refused already leaves through the
-     error paths above/below before anything is stored.) */
-  if (rejectedDraft && finalMsg === rejectedDraft) {
-    console.error('desk-ask: draft rejected by its grounding check and the rewrite could not run; nothing stored');
-    return reply(504, { ok: false, error: 'the draft failed its grounding check and there was no time left to rewrite it — try again' });
+  /* The loop ended with a queued follow-up that never ran (see `pendingFollowUp`):
+     reject rather than publish what is in hand. Nothing is stored — no memory
+     row, so the next question does not replay it as the desk's own words. */
+  if (pendingFollowUp) {
+    console.error(`desk-ask: turn ended with a required follow-up still pending (${pendingFollowUp}) after`, usage.calls, 'model call(s); nothing stored');
+    const why: Record<Pending, string> = {
+      'pause-resume': 'the assistant ran out of time before finishing — try again',
+      'tool-result': 'the assistant ran out of time before finishing — try again',
+      'forced-search': 'the draft had no web search behind it and there was no time left to run one — try again',
+      'grounding-rewrite': 'the draft failed its grounding check and there was no time left to rewrite it — try again',
+    };
+    return reply(504, { ok: false, error: why[pendingFollowUp] });
   }
-
-  /* Out of turn budget. A terminal response (the answer whose forced-search or
-     grounding pass we skipped) is a real answer and goes out — `checked` below
-     says it was not searched/verified. A tool_use / pause_turn response is a
-     half-finished thought, never presented as the answer. */
-  if (outOfTime && (!finalMsg || finalMsg.stop_reason === 'tool_use' || finalMsg.stop_reason === 'pause_turn')) {
-    console.error('desk-ask ran out of turn budget after', usage.calls, 'model call(s)');
+  if (outOfTime && !finalMsg) {   // out of budget before the first call could start
+    console.error('desk-ask ran out of turn budget before any model call');
     return reply(504, { ok: false, error: 'the assistant ran out of time before finishing — try again' });
   }
   const answer = textOf(finalMsg);
