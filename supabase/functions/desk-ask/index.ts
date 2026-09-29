@@ -512,6 +512,13 @@ async function handle(req: Request): Promise<Response> {
   let toolCalls = 0, resumes = 0, iters = 0;
   let searchForced = false, auditTried = false, verified = false;
   let unsupported: string[] = [];
+  /* The terminal response the grounding check REJECTED, while its rewrite is
+     still pending. `finalMsg` moves on the moment the rewrite answers, so
+     `finalMsg === rejectedDraft` after the loop means the rewrite never ran (the
+     turn budget or the iteration cap ended the loop first) and the only answer
+     in hand is one the audit just found unsupported. */
+  // deno-lint-ignore no-explicit-any
+  let rejectedDraft: any = null;
   /* The code-execution container this turn is bound to, once the API has made
      one. We never ASK for code execution — but `web_search_20260209` /
      `web_fetch_20260209` filter their results inside one ("dynamic
@@ -729,6 +736,7 @@ async function handle(req: Request): Promise<Response> {
       verified = gaps !== null;
       if (gaps?.length) {
         unsupported = gaps;
+        rejectedDraft = msg;
         messages.push({ role: 'assistant', content: msg.content });
         messages.push({
           role: 'user',
@@ -744,6 +752,17 @@ async function handle(req: Request): Promise<Response> {
     }
 
     break; // end_turn or other terminal reason
+  }
+
+  /* The audit rejected the draft and the rewrite could not run: never publish
+     what the checker just found unsupported (the dashboard renders `answer`
+     without looking at `checked.unsupported`). Nothing is stored either — no
+     memory row, so the next question does not replay it as the desk's own words.
+     (A rewrite call that throws, aborts or is refused already leaves through the
+     error paths above/below before anything is stored.) */
+  if (rejectedDraft && finalMsg === rejectedDraft) {
+    console.error('desk-ask: draft rejected by its grounding check and the rewrite could not run; nothing stored');
+    return reply(504, { ok: false, error: 'the draft failed its grounding check and there was no time left to rewrite it — try again' });
   }
 
   /* Out of turn budget. A terminal response (the answer whose forced-search or
