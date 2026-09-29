@@ -88,7 +88,10 @@ function wireBackdrop(back) {
 document.addEventListener('keydown', ev => {
   const m = modalTop();
   if (!m) return;
-  if (ev.key === 'Escape') { m.dismiss(); return; }
+  /* Held Escape auto-repeats: one physical press must be ONE dismissal, or the dirty
+     scheduled-ask warning (first press warns, second closes) is bypassed by a single
+     long press — and a held key would walk down a stack of nested dialogs. */
+  if (ev.key === 'Escape') { if (!ev.repeat) m.dismiss(); return; }
   if (ev.key !== 'Tab') return;
   const tabs = modalTabbables(m.panel), last = tabs.length - 1;
   const i = tabs.indexOf(document.activeElement);

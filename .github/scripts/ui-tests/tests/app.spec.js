@@ -5043,8 +5043,12 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
 
     if (dirty) {
       await dirty.edit();
-      await page.keyboard.press('Escape');
-      await expect(back, `${name}: the first Escape only warns`).toBeVisible();
+      // ONE physical press held long enough to auto-repeat: the second keydown carries
+      // repeat:true and must not count as the confirming second dismissal
+      await page.keyboard.down('Escape');
+      await page.keyboard.down('Escape');
+      await page.keyboard.up('Escape');
+      await expect(back, `${name}: the first Escape only warns — its auto-repeat is not a second press`).toBeVisible();
       await expect(page.locator(dirty.note), `${name}: and says why`).toHaveText(/Unsaved changes/);
     }
     await page.keyboard.press('Escape');
