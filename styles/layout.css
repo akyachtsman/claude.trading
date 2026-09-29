@@ -583,7 +583,7 @@
   .mk-tf-wrap { display: flex; justify-content: center; }
   .mk-tf button { appearance: none; border: 0; background: none; padding: 4px 10px; font: 600 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); border-radius: var(--radius-sm); cursor: pointer; min-height: 32px; }
   .mk-tf button[aria-pressed="true"] { background: var(--color-surface-2); color: var(--color-accent); }
-  .mk-sec-head { font: 600 var(--font-md)/1.2 var(--font-sans); margin: var(--space-2) 0 var(--space-2); }
+  .mk-sec-head { font: 600 var(--font-base)/1.2 var(--font-sans); margin: var(--space-2) 0 var(--space-2); }
   /* Sector strip: the watchlist tile idiom, stacked one per row (owner request
      2026-08-07). Wide and short rather than a grid cell, so the sector NAME can
      be spelled out at full size beside its ticker and the price + sparkline sit

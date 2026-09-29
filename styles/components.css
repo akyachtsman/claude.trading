@@ -278,7 +278,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-band-empty {
   display: flex; align-items: center;
   min-height: 66px; padding: var(--space-2) var(--space-2);
-  font-size: var(--font-size-xs); font-style: italic;
+  font-size: var(--font-xs); font-style: italic;
   color: var(--color-text-secondary); white-space: normal;
 }
 /* One column per list. 92px = a 66px tile + its 5px side padding either side +
@@ -591,7 +591,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   width: 18px; height: 18px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid transparent; border-radius: 4px; background: none;
-  color: var(--color-text-muted); font-size: 13px; line-height: 1;
+  color: var(--color-text-secondary); font-size: 13px; line-height: 1;
   cursor: pointer; padding: 0;
 }
 .wl-del:hover:not(:disabled), .wl-del:focus-visible {
@@ -609,7 +609,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-ghost {
   position: fixed; top: 0; left: 0; z-index: 60;
   pointer-events: none; opacity: .9;
-  box-shadow: var(--shadow-raised, 0 4px 14px rgba(0,0,0,.35));
+  box-shadow: var(--shadow-raised);
 }
 .wl-tile.wl-dragging { opacity: .35; }
 /* Armed = a finger has rested on the tile and the drag is about to take over,
@@ -746,11 +746,11 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
    shared 85vh so the stats never push the chart off a laptop screen. */
 .wl-detail-panel { max-width: 1040px; }
 .wl-detail-name {
-  font-size: var(--font-size-sm); color: var(--color-text-secondary);
+  font-size: var(--font-sm); color: var(--color-text-secondary);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .wl-detail-quote { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
-.wl-detail-last { font-size: var(--font-size-xl); font-variant-numeric: tabular-nums; }
+.wl-detail-last { font-size: var(--font-xl); font-variant-numeric: tabular-nums; }
 /* Gain/loss on the change only — P&L, never decoration. */
 .wl-detail-chg.up { color: var(--color-gain); }
 .wl-detail-chg.down { color: var(--color-loss); }
@@ -759,7 +759,7 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
    last: the regular close and the after-hours price are two different facts,
    and overwriting one with the other is how an unattributed number ships. */
 .wl-detail-ext {
-  font-size: var(--font-size-sm); color: var(--color-text-secondary);
+  font-size: var(--font-sm); color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
 }
 .wl-detail-bar { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
@@ -773,12 +773,12 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 .wl-sma-dot { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
 .wl-detail-chart { display: block; width: 100%; height: 380px; margin-top: var(--space-2); }
 .wl-detail-chart[hidden] { display: none; }
-.wl-detail-empty { color: var(--color-text-secondary); font-size: var(--font-size-sm); margin-top: var(--space-3); }
+.wl-detail-empty { color: var(--color-text-secondary); font-size: var(--font-sm); margin-top: var(--space-3); }
 .wl-detail-stats {
   display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
   margin-top: var(--space-3); padding-top: var(--space-3);
   border-top: 1px solid var(--color-border);
-  font-size: var(--font-size-sm); font-variant-numeric: tabular-nums;
+  font-size: var(--font-sm); font-variant-numeric: tabular-nums;
 }
 .wl-detail-stats b { color: var(--color-text-secondary); font-weight: 500; margin-right: 6px; }
 .wl-detail-stats .wl-detail-muted { color: var(--color-text-secondary); }
