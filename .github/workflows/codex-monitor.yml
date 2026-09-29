@@ -26,11 +26,13 @@ name: Codex Monitor
 # invisible to this workflow: a bare 👍 reaction, and an INLINE REVIEW COMMENT
 # (pull_request_review_comment) when Codex replies inside a review thread. Both
 # observed on #294, 2026-08-23. When a clean round arrives either way the label
-# cannot clear itself and must be removed by hand with a rationale — see
-# git.md -> PR Lifecycle. Look for the verdict in the PR's comments AND its
-# review threads: an inline reply never enters the comment list, so a
-# comments-only check reads as "still pending" on a head Codex has cleared.
-# Do not read a stuck label as unaddressed concerns.
+# cannot clear itself: request another pass so the verdict lands as the COMMENT
+# this workflow acts on. Taking the label off by hand is governed solely by
+# git.md -> PR Lifecycle's unreachable-review test, and an inline reply is not
+# evidence that a comment cannot arrive. Look for the verdict in the PR's
+# comments AND its review threads: an inline reply never enters the comment
+# list, so a comments-only check reads as "still pending" on a head Codex has
+# cleared. Do not read a stuck label as unaddressed concerns.
 on:
   pull_request_review:
     types: [submitted]
@@ -47,7 +49,11 @@ permissions:
 # comment event means the merge blocker is never added, which is the one
 # direction this monitor must never fail in. Ordering safety comes from the
 # newer-verdict holds in the script instead: their failure direction is a stale
-# label that costs a manual clear, never a missing one (Codex, #239).
+# label that costs ANOTHER REVIEW PASS, never a missing one (Codex, #239).
+# Not a manual clear: a stale label from run ordering is not an observable
+# terminal state, so the unreachable-review test does not admit hand removal
+# for it. Requesting a pass is the whole remedy, and the monitor clears the
+# label itself on the clean comment verdict that comes back.
 jobs:
   flag:
     runs-on: ubuntu-latest
@@ -80,8 +86,8 @@ jobs:
           # the two runs are independent — the delayed clean one must not
           # outvote the newer flagged one. Newest verdict wins; if ANYTHING
           # from Codex postdates this event, hold and let that event's own run
-          # decide. Holding is the conservative direction: it costs a manual
-          # clear, never a wrongly unblocked merge. Fails loudly (assignment):
+          # decide. Holding is the conservative direction: it costs another
+          # review pass, never a wrongly unblocked merge. Fails loudly:
           # an unreadable review list must not read as "no newer verdict".
           # $1 = this verdict's timestamp (RFC3339). $2 = a review id to EXCLUDE,
           # or "" for none.
@@ -92,7 +98,7 @@ jobs:
           # verdicts, the delayed all-clear reaches clear_flag(), and the merge
           # blocker comes off — inverting this file's own invariant (see the
           # concurrency note above): the failure direction must be a stale label
-          # that costs a manual clear, NEVER a missing one. A tie must HOLD.
+          # that costs another review pass, NEVER a missing one. A tie must HOLD.
           #
           # $2 exists because >= alone is a different bug: on the review path the
           # current review is in this list and would count ITSELF as newer, so the
