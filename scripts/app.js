@@ -294,7 +294,10 @@ function drawMktChart() {
   const padR = 46, plotW = W - padR - 6, plotH = H - 14;
   if (!lines.length) {
     const tx = svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', 'font-family': 'var(--font-sans)', 'font-size': 11, fill: 'var(--color-text-secondary)' });
-    tx.textContent = mktState.seriesFailed ? 'Index series unavailable — retrying with the next refresh' : 'Loading index series…';
+    /* failure is tracked PER LEG: Today/5D read the intraday leg, 1M/1Y/2Y the daily
+       one, so a partial outage must not leave the dead leg's timeframes on "Loading…" */
+    const leg = (mktState.tf === 'today' || mktState.tf === '5d') ? 'intra' : 'daily';
+    tx.textContent = mktState.legFailed && mktState.legFailed[leg] ? 'Index series unavailable — retrying with the next refresh' : 'Loading index series…';
     svg.appendChild(tx); return;
   }
   const all = lines.flatMap(l => l.vals);
@@ -398,11 +401,12 @@ async function fetchMktSeries() {
       };
     }));
     if (per.some(p => p.daily || p.intra)) {
-      mktPer = per; mktState.series = buildMktSeries(per); mktState.seriesFailed = false;
+      mktPer = per; mktState.series = buildMktSeries(per);
+      mktState.legFailed = { intra: per.every(p => !p.intra), daily: per.every(p => !p.daily) };
       const first = !mktSeriesDone; mktSeriesDone = true;
       if (first) renderMarkets(DESK.data.market); else drawMktChart();
-    } else if (!mktSeriesDone) { mktState.seriesFailed = true; drawMktChart(); }
-  } catch { if (!mktSeriesDone) { mktState.seriesFailed = true; drawMktChart(); } }
+    } else if (!mktSeriesDone) { mktState.legFailed = { intra: true, daily: true }; drawMktChart(); }
+  } catch { if (!mktSeriesDone) { mktState.legFailed = { intra: true, daily: true }; drawMktChart(); } }
   finally { mktSeriesPending = false; }
 }
 
@@ -513,9 +517,11 @@ function renderAccounts(accounts, lamp) {
            watchlist rail already follows, and it mattered here: four option
            positions were reading 0.00% while one of them was down 38%. Sorted
            to the bottom rather than treated as zero, so an unknown never ranks
-           between a loser and a winner. */
+           between a loser and a winner: the sort key is BLANK, which makeSortable
+           keeps last in either direction (a -Infinity sentinel led the column
+           ascending, ahead of the largest losses). */
         [Number.isFinite(p.dayPct) ? fmtPct(p.dayPct) : '—',
-         Number.isFinite(p.dayPct) ? p.dayPct : -Infinity,
+         Number.isFinite(p.dayPct) ? p.dayPct : '',
          p.dayPct > 0 ? 'up' : p.dayPct < 0 ? 'down' : ''],
         [fmtSigned(p.unrl), p.unrl, p.unrl > 0 ? 'up' : p.unrl < 0 ? 'down' : ''],
       ];
@@ -3922,7 +3928,10 @@ function renderHeatTable(hm) {
     .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 12);
   const thead = document.createElement('thead');
   const hr = document.createElement('tr');
-  for (const name of ['Symbol', 'Sector', 'Last', 'Mkt cap', 'Day %']) {
+  /* recolorForPeriod() rewrites each tile's `pct` to the selected period, so the
+     column must name that period — a 1M return under "Day %" reads as a daily move. */
+  const pctHead = ({ '1w': '1W %', '1m': '1M %', ytd: 'YTD %' })[mapView.period] || 'Day %';
+  for (const name of ['Symbol', 'Sector', 'Last', 'Mkt cap', pctHead]) {
     const th = document.createElement('th'); th.textContent = name; th.setAttribute('scope', 'col');
     hr.appendChild(th);
   }
