@@ -4781,12 +4781,12 @@ const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6)
    series. Period is per pane (owner ruling 2026-08-13): a pane's levels should
    be drawn over the horizon that pane trades. Every pane used to get the
    prior-CALENDAR-MONTH set, which on a fast mover strands them far from price —
-   SPCX on 2026-08-12 put R3 at 212.80 with the stock at 146.15, because July
+   One symbol on 2026-08-12 put R3 at 212.80 with the stock at 146.15, because July
    contained a 171 -> 107 collapse. The day-trading pane in particular was
    reading month-old levels.
 
    NOT the reference terminal's model. That was investigated at length the same
-   day against four of its symbols (SPCX/SPY/EEM/GLD): its levels are EVENLY
+   day against four of its symbols (XXXX/SPY/EEM/GLD): its levels are EVENLY
    spaced about the prior day's CLOSE — P +/- n*D — whereas classic pivot gaps
    alternate (P-L, H-P) and coincide only when the close sits exactly at the
    range midpoint. Its step D could not be reproduced by ATR (any length or

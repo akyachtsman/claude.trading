@@ -190,7 +190,7 @@ function buildDemoData() {
        live path builds these through newsWhen() from the feed's `ts`. */
     { t: '10:15', src: 'CNBC',      h: 'Amazon Prime Day sales tracking ahead of last year', chips: [['AMZN', 1.12]] },
     { t: '16:22', d: 'Aug 21', full: '2026-08-21 16:22 PT', src: 'Bloomberg', h: 'Volatility drifts lower; VIX under 15 for third session', chips: [['VIX', -4.20]] },
-    { t: '14:19', d: 'Jun 29', full: '2026-06-29 14:19 PT', src: 'Stocktwits', h: 'Defense drone maker jumps after Q4 earnings beat estimates', chips: [['AVAV', 2.31]] },
+    { t: '14:19', d: 'Jun 29', full: '2026-06-29 14:19 PT', src: 'Stocktwits', h: 'Defense drone maker jumps after Q4 earnings beat estimates', chips: [['DRNX', 2.31]] },
   ];
   return { accounts, market, news, labels, asOfDate, markets: buildDemoMarkets() };
 }

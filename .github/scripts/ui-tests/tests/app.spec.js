@@ -3432,14 +3432,14 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(after.under, 'and that row is STILL under the pointer — the list did not jump').toBe('60');
   expect(after.listTop, 'the slot list keeps its scroll across the repaint').toBe(before.listTop);
   expect(after.pageY, 'and the PAGE does not move — the owner may be reading elsewhere').toBe(before.pageY);
-  await page.locator('.wb-slot-input').fill('AVAV');
+  await page.locator('.wb-slot-input').fill('WXYZ');
   await page.locator('.wb-slot-input').press('Enter');
   await page.waitForTimeout(800);
   const deep = await page.evaluate(() => ({
     at60: (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[60],
     top: Math.round(document.querySelector('.wb-slots').scrollTop),
   }));
-  expect(deep.at60, 'and saves to that index').toBe('AVAV');
+  expect(deep.at60, 'and saves to that index').toBe('WXYZ');
   expect(deep.top, 'with the list still scrolled where the owner left it').toBeGreaterThan(0);
   await page.evaluate(() => renderWbSidebar(wbState.data));
   await page.waitForTimeout(200);
@@ -3483,7 +3483,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      on a single click, where a filled one would chart instead. */
   await page.evaluate(() => { document.querySelector('.wb-slots [data-slot="30"] .wb-slot').click(); });
   await page.waitForTimeout(200);
-  await page.locator('.wb-slot-input').fill('AVAV');
+  await page.locator('.wb-slot-input').fill('WXYZ');
   const toBox = await slowTo.boundingBox();
   await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2);
   await page.mouse.down();
@@ -3496,7 +3496,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
     at30: (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[30],
   }));
   expect(slow.open, 'a SLOW press still opens the slot — the blur must not rebuild the rail under it').toBe('31');
-  expect(slow.at30, 'and the text it left behind is still saved').toBe('AVAV');
+  expect(slow.at30, 'and the text it left behind is still saved').toBe('WXYZ');
   await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
   await page.waitForTimeout(200);
   expect(moved.at3, 'clicking to another slot KEEPS what was typed').toBe('QQQ');
@@ -3559,7 +3559,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
     return i && { slot: i.closest('.wb-rail-row').dataset.slot, value: i.value,
                   focused: document.activeElement === i };
   }), 'F2 on a focused FILLED slot opens its editor, loaded and focused')
-    .toEqual({ slot: '60', value: 'AVAV', focused: true });
+    .toEqual({ slot: '60', value: 'WXYZ', focused: true });
   await page.locator('.wb-slot-input').press('Escape');
   await page.waitForTimeout(300);
 
