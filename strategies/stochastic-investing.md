@@ -32,7 +32,7 @@ panes in the source platform are not just layouts, they are the tiers
 > inverse of the rows above (owner request; the panes were reordered, the tiers
 > were not). The tier names here are the course's own and stay as written; it is
 > only the pane column that has moved. Identify a tier by its DOCTRINE NAME, and
-> read `CLAUDE.md` for how the config keys (`cfg.p1` is still SWING) deliberately
+> read `docs/architecture/charts-panes-and-stochastics.md` (indexed from `CLAUDE.md`) for how the config keys (`cfg.p1` is still SWING) deliberately
 > did not move with the numbering.
 
 Workbench coverage: our panel serves the Pro 1/Pro 2 tiers today (EOD daily

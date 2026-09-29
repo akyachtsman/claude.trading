@@ -1,6 +1,6 @@
 # Specs index
 
-One directory per feature, produced by `/sdd-loop`. These are a record of what was asked and decided at the time; **`CLAUDE.md` ("Application Architecture" and the owner rulings in it) is authoritative** where the two differ.
+One directory per feature, produced by `/sdd-loop`. These are a record of what was asked and decided at the time; **`CLAUDE.md` ("Application Architecture" and the owner rulings in it, including the topic files under `docs/architecture/` it points to) is authoritative** where the two differ.
 
 | Directory | Purpose | Status (2026-09-29) |
 |---|---|---|

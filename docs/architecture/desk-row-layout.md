@@ -1,0 +1,210 @@
+# Desk row and page layout
+
+How the desk row (Markets | News | Ask | Accounts), the positions table and the heatmap footer are sized: the measuring column, out-of-flow panels, breakpoints and the caps (`styles/layout.css`).
+
+  **EVERY COLUMN IN THE DESK ROW ENDS ON ONE LINE at ≥1120px** (owner request
+  2026-08-21: "I want all of these windows to be as tall as the bottom of the
+  Real Estate XLRE box"). **MARKETS is the measuring column** — four index
+  tiles, a chart and eleven sector rows is content fixed by the desk rather
+  than by whatever the feeds returned today, so it is the only honest ruler.
+  Everything else is fitted to it: `.desk-row` goes `align-items: stretch`
+  (it was `flex-start`, which let the boxes half stop at its own content and
+  leave **~690px of empty page** beside the news), Ask loses its 420px cap and
+  its `align-self: start` so the slack goes to the thread, and the account
+  cards stretch to the same line instead of stopping 204px short.
+  **ASK is taken out of flow inside its own column too**, for the same reason
+  and after the same fault reached the owner: with the 420px cap lifted, a long
+  answer dragged the whole row down past Markets and the panel ran on down the
+  page ("anything below the real estate should be cut off", 2026-08-21). A flex
+  line's height is the MAX of its items, so `stretch` alone cannot express "fill
+  this row but never set it". **Demo cannot show this** — `.ask-thread:empty` is
+  `display: none`, so with no conversation there is nothing to overflow; it
+  needs a forced live+authed session with answers in the thread, which is how
+  it was finally measured (3,129px of answer, row held at 927, thread scrolling
+  internally).
+  **NEWS is taken OUT OF FLOW to make that possible** — the documented device,
+  and this is the case that justifies it: an absolutely-positioned panel
+  contributes nothing to the line's cross size, so Markets stays the only
+  column measuring itself and News resolves against whatever height it lands
+  on. No flex alignment can express "let the SHORTER column drive the taller
+  one" — `stretch` gives the row to the tallest, which is backwards here, since
+  demo carries 8 headlines and the live feed 20 and News is the column that
+  runs past XLRE. `#newsList` keeps `overflow-y: auto` and deliberately NO
+  `overscroll-behavior`, so reaching the last headline carries on scrolling the
+  page; it is the one body on this row with genuinely more content than column.
+  One ordering trap: the Ask and accounts overrides must sit **later in the
+  stylesheet** than the base `align-self: start` and `max-height: 420px` they
+  lift — equal specificity, so source order is the whole mechanism, and placed
+  earlier they silently did nothing (measured: Ask stayed at 158 while News and
+  Markets moved). Measured at 1512/1280/1152: all four panels end at 927 with
+  XLRE at 912. Below 1120 the row stacks and every one of these rules is inert.
+  **The desk row (`.top-boxes`) reads Ask | Accounts at ≥1120px** — Ask on the
+  left taking whatever is left, the accounts as a fixed **232px column** on its
+  right with the cards **stacked one per row** (owner request 2026-08-20:
+  "move the accounts back on top and squeeze it on the right side of the desk
+  AI, reducing the width of that guy, and you could re-expand the heat map to
+  the full screen"). This REPLACES the 2026-08-18 `.heat-row`, where the
+  accounts sat beside the heatmap; that wrapper and its CSS are deleted, not
+  disabled, and the heat panel is full-bleed again. Two rules from the old
+  three-across arrangement went with it and must not be reinstated without
+  their cause: `zoom: .62` on the card and the 150px header column BESIDE the
+  grid both existed so Ask / Account A / Account B could start on one 158px
+  line. The cards are a COLUMN now, with no line to match, so the scale and the
+  side header were solving a problem that no longer exists.
+  The gate is **1120, the same breakpoint `.desk-row` itself uses**, and the two
+  must agree: that gate was lowered to 1120 precisely because the accounts had
+  left this row, so a higher one here leaves 1120–1400 running the old
+  share-the-row rules — measured, that put Ask at **198px** at a 1280 viewport.
+  It also matters that the owner's browser reports `innerWidth` 1152, the same
+  trap the watchlist column layout hit at 1900.
+  **What is capped is the POSITIONS TABLE, not the column** (`.acct-positions`,
+  `max-height: 120px` ≈ three rows): "don't allow the accounts to grow with
+  positions. Use a scroll button." It carries an **ordinary scrollbar**
+  (`overflow-y: auto`, `scrollbar-width: thin`, `scrollbar-gutter: stable`) —
+  it was paged by the shared ▲/▼ for a few hours on 2026-08-20 and the owner
+  asked for a scrollbar instead the next morning ("need scroll bar inside so I
+  can look at the rest of the positions"). The pager was not broken (measured:
+  `▲▼2`, three of five rows shown); a 20px button bar under a row sliced in
+  half is simply not how anyone expects to read a table. **The cap is the part
+  that was asked for** and it stays; only the mechanism for reaching the rest
+  changed. NO `overscroll-behavior` here, so the last position chains on to
+  scrolling the page — the same configuration `#newsList` uses, and the one
+  that avoids the wheel-eating fault. This is the one place a scrollbar beat
+  the paging idiom: the watchlist columns keep theirs, because there the wheel
+  had nowhere to chain from six short containers. Capping the whole
+  accounts column was built first and is WRONG — the header takes most of a
+  short column, so the cards themselves were left a **31px sliver**, which stops
+  the growth by hiding the thing the panel exists for. Three rows rather than a
+  roomier six because the owner's own account holds five and their screenshot
+  already showed the panel outrunning its neighbour: a cap that only bit at
+  seven would have changed nothing they can see. Opening the disclosure now
+  costs a card 140px instead of an unbounded amount, and the bar is removed
+  entirely while the table is collapsed.
+  **The heatmap footer is ONE row** (`.heat-foot`: legend left, movers
+  disclosure right) — "much more condensed and not waste so much space". The
+  standing "Sized by market cap · colored by day % change" caption was DELETED
+  rather than shrunk, because the legend's own label already said it; the 44px
+  summary target, sized for a standalone control, drops to 24 inside a row. The
+  `#heatSource` node stays (now `:empty`-hidden) because it is where the
+  empty-state line lands — removing it would make that message throw on a null.
+  (owner request 2026-08-08 for the original three-across form). **Ask is height-ELASTIC, not pinned**: 192px while
+  its thread is empty, growing with the conversation to a 420px cap past which
+  the thread scrolls. It was briefly a fixed 158 — and at that height the
+  header, composer and disclaimer consume the whole panel, so `.ask-thread`
+  resolved to ZERO and every answer rendered into a 0px box (owner report
+  2026-08-09, "cant see my results"; measured: 255px of answer, 0px of room).
+  The earlier "158 is the floor" figure came from checking only that the FORM
+  fitted, which it did — the thread silently absorbed the shortfall, so the
+  panel looked fine and the assistant was unusable. 192 is what the authed
+  panel actually needs at rest.
+  Ask is on the FAR LEFT and **fluid** — it takes
+  whatever the cards leave (1052 at 1512, 1452 at 1920) — and the two cards are
+  **200×158** beside it, matched to Ask's height. They went 485 → 242 → 200 over
+  two passes; Ask was briefly pinned at 489 and became fluid in the second, so
+  narrowing the cards now widens Ask automatically instead of leaving dead space. The accounts header
+  (title, desk lamp, Refresh/Lock, synced stamp) sits in a 150px `.accounts-side`
+  column BESIDE the cards rather than above them: stacked, it pushed the cards
+  ~75px below Ask and the row read as staggered, and in live mode its two
+  full-size buttons wrapped it onto three lines. `.btn` is 44px tall with 20px
+  padding — right for a form's primary action, far too heavy for two secondary
+  header controls — so they are 26px here. Two details are load-bearing:
+  `.area-accounts` must be `flex: 0 0 auto`, or it shrinks below its own content
+  and spills 22px past a 1512 viewport; and `.account-grid`'s 12px `margin-top`
+  is zeroed, since it exists to clear a header ABOVE it and was the last thing
+  holding the cards off Ask's line. **Demo never renders Refresh/Lock**, so none
+  of this is visible under `?demo=1` — force `DESK.mode='live'` and
+  `DESK.authed=true`, then `renderMasthead()`, to see the header the owner
+  actually has. **The LOCKED state keeps the row's shape too**: the lock
+  panel replaces both cards, so it spans both grid tracks at the same height —
+  it was 200×247 against the cards' 158 and the row jumped the moment the desk
+  locked. It is `min-height`, NOT `height`: the wrong-PIN error renders below
+  the form and at a fixed 158 landed 8px OUTSIDE the panel, so a failed unlock
+  showed no visible reason — and **S11 would not have caught that**, since the
+  element still exists and still carries its text. The row is 158 whenever the
+  desk is merely locked and grows ~27px only while an error is on screen. It is
+  also deliberately NOT `zoom`ed like `.account`: the cards are scaled because
+  they carry many figures, whereas this panel is a text input, and shrinking one
+  people must type into to 62% would buy nothing. Ask moves
+  by `order`, **not** by moving the markup: the accounts section carries the
+  desk's masthead state and the Refresh/Lock controls, and reordering the DOM
+  would drag those out of the reading order keyboard and screen-reader users
+  follow. The card is **scaled, not re-typeset** (owner ruling: "reduce font to
+  fit") — at full size it needs 331px of height, and shrinking individual fonts
+  would leave padding and gaps at their old size, so it would read as starved
+  rather than smaller; `zoom` takes type, padding and borders together, the same
+  device the Markets column uses. **`.62` is the largest scale that fits** —
+  `.66` still overflows by 10px. One asymmetry is easy to get wrong: the width
+  comes from the grid track and is already in rendered pixels, while `height` is
+  set INSIDE the zoomed box and must be divided by the scale to render at 158.
+  The whole block is gated at 1400 because both numbers break a narrow screen —
+  two 200px cards plus gaps overflow a 390px viewport outright,
+  and below 1400 the stats drop to 1-up, which no longer fits 158px.
+  **Three across at ≥1400px** (owner request 2026-08-07) — Watchlists moved
+  INSIDE `.top-band` as `.col-watchlist`, so the row reads Markets | Watchlists |
+  Ask. It reached its current shape over three passes the same day: first
+  387 / 1040 / 385 pinned at 600px tall and gated at 1900px; then Watchlists
+  became the FLUID column and the gate dropped to 1400, because the owner's
+  browser measured `innerWidth` 1152 (a 1512 laptop with DevTools docked) so the
+  1900 version never engaged on the machine it was built for; then Markets was
+  cut by a **THIRD** (387 → **258** rendered) with **Ask matched to it at 258**,
+  Watchlists taking the ~256px that freed. Markets keeps its 0.9 `zoom`, so its
+  basis is the pre-zoom **287** (287 × 0.9 ≈ 258); Ask carries no zoom, so its
+  basis IS the rendered width. Watchlists measures ~932 at 1512 and ~1332 at
+  1920. The shell cap went 1560 → **1880**, so a 1920 monitor doesn't carry
+  180px of dead margin each side. Narrower screens keep exactly the layout they
+  had: `order:-1` + a 100% basis puts Watchlists back on its own full-width row
+  ABOVE Markets and Ask.
+  **SUPERSEDED 2026-08-17 — the paragraph below is history, not current
+  behaviour.** Watchlists left `.top-band` for its own full-width block above
+  the charts, so the band is now TWO columns (Markets | News) and the
+  out-of-flow arrangement was **deleted rather than ported**: it existed for
+  exactly one reason — to let the shorter watchlist column drive the row's
+  height — and with no third column to defer to, plain `align-items: stretch`
+  is correct again. The inner `overflow-y: auto` went with it, since neither
+  panel is cropped any more and a scroll container with nothing to scroll is
+  the dead-wheel trap. News is now the FLUID column (Markets keeps its pinned
+  345 basis), or the row would strand ~800px of empty band at 1512. Kept below
+  because the reasoning explains why no future layout should reach for the
+  same device without the same cause.
+  **No column is height-pinned, and WATCHLISTS is what sets the row height**
+  (owner request 2026-08-07, revising the same day's first cut). Watchlists runs
+  at its FULL length — the old 600px cap hid whole lists behind an inner
+  scrollbar — and the row ends at its last band. The intermediate version used
+  plain `align-items: stretch`, but stretch gives the row to the TALLEST column,
+  and once Markets was cut to 258px it became the tallest (~811px against the
+  watchlist's ~586), so the row ran on past the last band and left Watchlists
+  standing in dead space. Pinning Markets to a number would re-break the moment
+  a list is added or removed.
+  The fix is that **Markets and News are taken out of flow** — `position:
+  absolute; inset: 0` inside a `position: relative` column. An out-of-flow panel
+  contributes nothing to the line's cross size, so the only column still
+  measuring its own content is Watchlists and the other two resolve against
+  whatever height it lands on. That is what lets a SHORTER column drive a taller
+  one, which no flex alignment can express. Both then genuinely scroll, and that
+  is **not** a return of the dead-wheel trap below: they CAN scroll, and they
+  leave `overscroll-behavior` at `auto` so reaching the end chains to the page.
+  In demo (7 lists, ~586px) that puts 8 of the 11 sector rows below the fold of
+  their own panel; the live roster is 12 lists and much taller, so Markets
+  generally fits without scrolling there.
+  The Markets grids are therefore re-columned **by the COLUMN's width, not the
+  viewport's**: both are `repeat(4, 1fr)` and drop to 2 only under a
+  `max-width: 520px` **viewport** query, which never fires on the wide screen
+  where this narrow column exists — 4-up at 287px pre-zoom puts a ~63px sector
+  cell under a 10px label and a mono %, and they spill the box. The two grids
+  then **differ on purpose**, and both splits came from a text-overflow audit
+  rather than taste: index tiles stay **2-up** (forcing them 3-up clips 5–6
+  elements — the `--font-lg` mono % and the `.mk-ext` proxy line), while the 11
+  sectors go **3-up** to pull ~140px out of the row (914 → 773). The 10px sector
+  label does not survive that on its own: a 3-up cell is **71px** and
+  "Communication" needs **76px** — the one label that is a single unbreakable
+  word, so neither wrapping nor `break-word` helps. It is set to **9px in this
+  column only** (~68px, clearing every other name), which sizes the label to the
+  cell instead of clipping or ellipsising it; the stacked layout below 1400px
+  keeps the 10px label at its 4-up width. Two more rules are
+  load-bearing and were both caught by measuring rather than by eye: the ≤1280
+  stack must carry **`flex-wrap: nowrap`**, because a `flex-direction: column`
+  container that is allowed to wrap spills into EXTRA COLUMNS when its content
+  outgrows the box (this sent the panels to 2822px at a 1280 viewport and
+  scrolled the page sideways — the fault S4 exists to catch); and `.col-rail`
+  needs an explicit **380px basis rather than `auto`**, or with wrapping enabled
+  it measures its own content and breaks onto a row of its own at 1440–1728.

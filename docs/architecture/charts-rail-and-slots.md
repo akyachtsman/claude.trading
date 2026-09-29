@@ -1,0 +1,391 @@
+# Charts symbol rail and the 100-slot editor
+
+`scripts/app.js` charts-workbench symbol rail: the SYMBOL column (100 positional slots edited in place), the ROSTER column and picker, the rail width budget, and the click / blur / focus / scroll rules of the slot editor (`renderWbSidebar`; scenarios S40, S45).
+
+- `scripts/app.js` — all rendering + interactions (accounts with per-card
+  equity sparklines, news, ask-the-desk panel, the Markets window, stochastic
+  charts workbench, PIN lock/unlock flow) + the
+  **charts SYMBOL RAIL is TWO COLUMNS** (`renderWbSidebar()`, owner request
+  2026-08-17), replacing one flat list that mixed the fixed 25-name roster with
+  every ad-hoc ticker typed, so there was no way to separate "names I pulled up"
+  from "the roster someone configured". **SYMBOL** (left) is **100 PERMANENT
+  SLOTS the owner edits IN PLACE**; **ROSTER** (right) is headed
+  by a `<select>` of the owner's watchlists plus a `WB_ROSTER_CHARTS` entry for
+  the 25-name charts roster — kept, not retired (owner ruling), because its 800
+  bars are already loaded so those names chart instantly. Two rules are
+  load-bearing on the roster side: `restoreStickySymbols`
+  re-hydrates **`sel` as well as `syms`**, since a watchlist symbol left
+  selected is no longer in `syms` and would return with no bars; and
+  `renderWatchlist` ends by repainting the rail, because the two feeds land
+  independently and desk-charts usually wins, so the picker's first render sees
+  no lists and would otherwise stay a one-entry dropdown all session.
+  **THE LIST IS THE EDITOR** (owner ruling 2026-08-26: "I didn't want a field to
+  push into the list. I want every item in the list to be editable. And the list
+  has 100 slots accessible via scroll just for the list" / "I don't need the x to
+  delete a item. the 100 entries, filled or empty is permanent"). This REPLACES
+  the add-box-plus-stack shipped hours earlier in PR #281, and the replacement is
+  structural rather than cosmetic — the storage changed meaning. `WB_MANUAL_MAX`
+  40, the `×` per row, `addWbStickySym`/`removeWbStickySym`, the add box and the
+  whole **pin** mechanism (`wbLoadSymbol({pin:true})`) are **deleted**:
+  `wb_sticky_v1.syms` is now **POSITIONAL and always exactly `WB_SLOTS` (100)
+  long**, holes included, so index IS the slot. `wbSlotArray` pads, truncates and
+  junk-fills on every read, and `setWbSlot` writes one index — a `filter()`
+  anywhere here would renumber every row below a hole and silently move the
+  owner's symbols. A pre-2026-08-26 stack migrates by landing in slots 0..n-1 in
+  the order it was already displayed. **NOTHING PINS ANY MORE** — not the loader,
+  not the header Load box, not a roster click. Charting a symbol charts it and
+  writes no slot, which is what makes the column mean "what I typed".
+  What follows is all load-bearing. **A slot is a cheap `<button>` until
+  double-clicked, and at most ONE is an `<input>` at a time** (`wbEditSlot` /
+  `wbEditDraft` in module state): `renderCharts` rebuilds this rail on every
+  animation frame of a chart drag, and a hundred live inputs per frame is work
+  the rail cannot afford. The gestures collide by nature — **single click charts,
+  double-click edits**, and a double-click delivers a `click` FIRST. **NOTHING IS
+  DEFERRED, and that is the fix for THREE Codex P2 findings at once** (PR #282).
+  The first cut copied the watchlist tiles' device — defer the single action,
+  cancel it from `dblclick` — and every one of those findings is the same root
+  cause: deferring makes the platform's pairing threshold and OUR wait two
+  INDEPENDENT numbers. A threshold LONGER than the wait charts on the first
+  click, so opening a slot to edit it also retimes the pane — and the owner is on
+  **macOS, where double-click speed is user-configurable well past 250ms**. A
+  pending timer also outlives any newer navigation: a roster click inside the
+  window charts, then the older timer fires and pulls the chart BACK, and
+  `wbLoadGen` cannot see it because the stale load does not exist yet when the
+  newer one runs, so it is born holding the newest generation. And `dblclick`
+  needs BOTH clicks on the SAME node, which an editor committing on blur between
+  them destroys. So the first click charts **immediately**, and a second click on
+  the SAME SLOT within `WB_SLOT_DBL_MS` (500, **ours**) opens the editor — one
+  number governing both halves, so they cannot disagree — tracked in module state
+  keyed by slot **INDEX, not by node**, since charting rebuilds the rail. The
+  `dblclick` event is not used at all. **The trade is stated rather than hidden:**
+  a double-click charts that slot before opening it, so the pane briefly shows the
+  symbol being edited. That is coherent (it is the slot's own symbol) and it buys
+  back the 250ms lag the defer put on the primary action. Note the slot-to-slot
+  case CANNOT be falsified in this sandbox — Chromium dispatches `dblclick` to the
+  replacement node, so the old design passes it too; the **slow** double-click is
+  the one S45 proves, measured at a 300ms gap opening no editor at all under the
+  defer. **F2 is the KEYBOARD path to
+  the editor** — a double-click is pointer-only, and Enter/Space on a focused
+  button fires `click`, which CHARTS a filled slot rather than editing it, so
+  without F2 a filled slot could only ever be changed with a mouse. That is the
+  same rule the watchlist tiles follow with Delete/Backspace: an edit only a
+  mouse can reach is not an edit everyone has. The gesture is stated in the
+  button's `title`, NOT its `aria-label` — a screen reader would otherwise read
+  the same hint on all 100 rows, and the label's job is to say which slot this is. **A BLUR IS NOT ONE OUTCOME
+  BUT THREE, and telling them apart is the whole job** — this is the subtle part,
+  and none of it was visible in a browser probe that looked complete. The blur is
+  deferred a tick, and in that tick:
+  (1) the input is **still connected** — an ordinary blur (the owner clicked
+  elsewhere, or tabbed away); commit normally.
+  (2) **detached, and this slot is still the one being edited** — a repaint the
+  owner did not cause. `renderWbSidebar` tears the input out, which FIRES BLUR,
+  so `renderCharts` (every animation frame of a chart drag, every 60s poll) would
+  otherwise save half a ticker, chart it and close the editor mid-word. The
+  `wbEditSlot` guard inside `commit` cannot see this — the slot is still open and
+  the stale closure still names it, so the guard passes. Do nothing: a newer
+  input already holds the draft and the focus.
+  (3) **detached, and ANOTHER slot is now being edited** — the owner clicked
+  straight from this slot to that one, and that slot's `openEditor` re-rendered
+  before this timer ran. Save what was typed, but do NOT chart it: their
+  attention has moved. **Case 3 is why `isConnected` alone is not enough** — it
+  reads exactly like case 2 and is the opposite, so the first fix silently
+  DISCARDED every edit the owner clicked away from, and clicking slot to slot is
+  ordinary use. A `settled` flag covers the fourth path: Escape must not be undone
+  by the blur its own re-render fires a tick later.
+  **A BLUR CLOSES ITS OWN ROW (`closeRow`) AND MUST NEVER REBUILD THE RAIL.**
+  This is not a micro-optimisation, it is the fix for a failure that **passed
+  locally every time and failed on ALL THREE CI viewports** (Codex saw the
+  mechanism first; CI proved it). The commit is deferred a tick, and on any
+  machine slower than a warm laptop that tick lands BEFORE the pending click is
+  delivered. A full `renderWbSidebar` there detaches the button the owner is
+  mid-click on, so the click event is **never dispatched at all** — clicking from
+  one slot's editor to another did *nothing*, no editor anywhere. Replacing the
+  single row leaves every other node, including the one being clicked, where it
+  was. Reproduced deterministically by separating mouse-down from mouse-up by
+  60ms, which is what S45 now does; falsified, it returns `editor=null`, exactly
+  what CI reported. Blur therefore also **never charts** — only Enter does, plus
+  a click on a slot. A **`pointerdown` version of the gesture was built for this
+  and REJECTED**: once `closeRow` was in place it could not be falsified in any
+  case, and unlike an inert guard it changes real behaviour (acting on press
+  removes press-drag-away-to-cancel, and its `preventDefault` suppresses focus).
+  **`touch-action: manipulation` on `.wb-slot` is load-bearing** (Codex P1), the
+  same rule `.wl-tile` follows: mobile browsers reserve the double-tap for zoom
+  and would SWALLOW the edit gesture. On a touch-only phone that gesture is the
+  ONLY way to edit a filled slot — F2 needs a keyboard — so without it an owner
+  can fill an empty slot once and then never change or clear it.
+  **The column is ONE TAB STOP, not a hundred** (`wbSlotTab`, roving tabindex,
+  Codex P2). Native buttons are all tabbable, and this column precedes the roster
+  in DOM order, so 100 of them put the ROSTER up to 100 Tab presses away and made
+  F2 largely theoretical — you could not reach a deep slot to press it. Arrow
+  keys, Home and End move within the list and carry the tab stop with them; a
+  click moves it too, so Tab returns to the slot last worked on.
+  **A commit CLOSES the row before it charts, always** (Codex P2). `wbLoadSymbol`
+  is async and only repaints VIA `wbPick` on success, so charting first left a
+  logically-settled editor on screen whose handlers reject every later Enter,
+  Escape and blur — inert until something else happened to repaint. Demo mode, a
+  no-data reply and an unreachable proxy all take that path, so it was reachable
+  by simply typing a ticker under `?demo=1`.
+  **The re-fetch queue is DEDUPED and VALIDATED** (Codex P2, rounds 2 and 4): a
+  positional column can hold the same ticker in several slots, and an
+  unresolvable one never lands in `wbRealSyms`, so a column repeating one bad
+  symbol re-requested it once per slot on every cold start. It is filtered
+  through `WL_SYM_RE` for the same reason the Enter path refuses to chart an
+  invalid draft — a slot deliberately KEEPS text that fails the validator, so
+  without this every syntactically impossible entry was posted to quote-proxy on
+  every live reload. The filter is on the QUEUE; the stored array keeps its
+  holes and its junk, because there an index IS a slot.
+  **A pending slot pair is BROKEN by any other navigation** — a roster click, the
+  header Load box's SUBMIT, the header input's **`change`** handler (which
+  reaches `wbPick` directly, without the loader, so the submit reset does not
+  cover it) and **an editor opening** all reset `wbSlotClick` (Codex P2, rounds
+  2, 3 and 4). **Keep that list complete**: it took three rounds to find all four
+  doors, and each missing one has the same symptom — a slot click read as the
+  second half of a stale pair, so it edits instead of charting. **BOTH HALVES must be
+  POINTER clicks**: Enter/Space fire a synthetic click with `detail` 0, so two
+  activations inside the window — or Enter auto-repeating while held — opened the
+  editor, contradicting F2 being THE keyboard edit gesture. Gating only the CHECK
+  was half a fix and took a fifth round to finish: the synthetic click still
+  RECORDED itself, so Enter followed by a pointer click inside the window opened
+  the editor too. A keyboard activation is navigation like any other, so it also
+  breaks a pair already pending. Otherwise clicking slot A, then a roster name, then slot A
+  again inside the window reads the last click as the second half of a pair: it
+  opens A's editor and does NOT chart A, leaving the pane on the roster symbol
+  rather than the newest thing asked for. The editor is navigation too, and
+  missing that had its own symptom: click an empty slot, type a ticker, commit —
+  and the next click on the now-filled row reopened the editor instead of
+  charting, so a slot could not be charted immediately after being filled.
+  **The roving tab stop moves through `setWbSlotTab`, which updates the LIVE
+  buttons, not just module state** (Codex P2). Assigning `wbSlotTab` alone is
+  only correct when a repaint follows, and one does not always follow:
+  `wbLoadSymbol` never repaints when the lookup fails — a persisted unresolvable
+  symbol, demo mode, an unreachable proxy — so the clicked row kept `tabIndex`
+  -1 and Tab went back to the row before it.
+  **SETTLING an editor keeps focus on that slot** — `closeRow` carries focus onto
+  the button it puts in place of a focused input, and Escape does the same after
+  its repaint (Codex P2). `renderWbSidebar`'s own restore cannot cover this: it
+  snapshots a focused `.wb-slot` BUTTON, and what is focused at that instant is
+  the INPUT. Without it a keyboard user is dropped to the document the moment
+  their edit lands. Falsified: focus went to `BODY` on Enter.
+  **A focused slot BUTTON is preserved across a repaint, exactly like the input**
+  (Codex P2). Charting from the keyboard runs synchronously into `wbPick`, whose
+  render removes the button that was focused; with nothing restoring it focus
+  fell to the document and the Arrow keys and F2 stopped responding until the
+  owner tabbed all the way back in — and this column is a SINGLE tab stop, so
+  that is a long way back. Falsified: focus landed on `BODY`.
+  **`.wb-slots` SCROLL POSITION is restored across a render**, same class as the
+  caret and `preventScroll`. The list is rebuilt here, so its `scrollTop` resets
+  to 0 — and this rail repaints every 60s, so an owner scrolled to slot 60 is
+  yanked back to slot 1 by a repaint they did not cause. It also breaks the
+  gesture outright rather than merely annoying: a double-click's FIRST click
+  opens the editor, the re-render scrolls the list away under the SECOND click,
+  and the editor opens on a different slot than the one clicked — **measured,
+  clicking slot 30 opened slot 28**, and 17 with the restore removed. S45 now
+  exercises a DEEP slot for exactly this reason: rows 3/5/7 need no scroll, which
+  is why the first version of the scenario could not see any of it.
+  **`overflow-anchor: none` on `#wbSidebar` and its subtree is the OTHER half,
+  and it is not the same fix.** `renderWbSidebar` EMPTIES the rail and rebuilds
+  it, and Chromium compensates for that content change by adjusting the nearest
+  scroller — **the PAGE**. Measured with the rail's top above the viewport
+  (ordinary: this panel sits far down the page), opening a slot editor scrolled
+  the page **31px**, which put slot 58 under a pointer aimed at 60. It **cannot**
+  be fixed by saving and restoring `scrollY` around the render: the adjustment
+  happens during LAYOUT, after the synchronous block has already read an
+  unchanged value — `keepPageStill` is synchronous and did not see it. Excluding
+  the subtree from anchor selection stops it at the source. This is also why S45
+  **sets that geometry explicitly** rather than trusting where earlier steps left
+  the page: the check passed or failed by luck, 1–2 runs in 3, purely on whether
+  the page had drifted to the exposing position.
+  **`restoreStickySymbols` filters the holes out — there and ONLY there.** `syms`
+  is 100 positional entries, mostly empty on a real desk, so feeding it straight
+  into that serial loop fired ~100 `deskQuote('')` calls at quote-proxy on every
+  live boot. Filtering is right in a re-fetch QUEUE, where neither order nor
+  position means anything, and wrong in the STORE, where an index IS a slot.
+  **And the queue is BOUNDED, not serial** (`WB_RESTORE_LANES` 4, Codex P2): the
+  old manual column capped this at 40 and awaited each in turn, so 100 filled
+  slots is the SUM of every proxy round-trip — most of a minute cold. Bounded
+  rather than unbounded too, since 100 parallel requests to one origin only move
+  the stall into the browser's connection queue. The **selected** symbol is
+  fetched first and ALONE and repaints immediately — it is the chart the owner is
+  waiting for — while the pool's repaints are coalesced to one per frame instead
+  of one per response.
+  **NOTHING CHARTABLE ⇒ the click opens the EDITOR** — an empty slot and one
+  holding a draft that fails `WL_SYM_RE` behave alike, because neither has
+  anything to chart (Codex P2, round 6). Charting it anyway posted quote-proxy a
+  value the client already knew was not a ticker, while the Enter path and the
+  re-fetch queue both declined it — three paths, one rule, and this was the last
+  one still disagreeing. Opening the editor is the useful answer as well as the
+  cheap one: it puts the bad text in front of the owner, selected, to correct.
+  The row's `title` says so, since the gesture there is a SINGLE click.
+  And **a slot keeps whatever was typed even when it does not resolve** (owner ruling, asked and answered): the
+  save and the chart are separate acts, so a bad entry is never discarded or
+  rewritten — accepted knowingly as the silent-failure class it is.
+  `wbLoadGen`/`WB_SUPERSEDED` SURVIVE the rewrite: the rail no longer reads the
+  outcome, but the header Load box, a roster click and a slot commit still race
+  each other, and cancellation must stay distinguishable from failure.
+  The rail carries **NO day-%** at all (owner request
+  2026-08-25). It is a navigation list — its job is "which ticker am I looking
+  at" — and the width it spent on a percentage went to the Pro panes instead
+  (`.wb-grid` first column 240 → **200px**, ~40px to the chart).
+  Removing it RETIRES a whole class of fault rather than fixing it again: the row
+  sits directly under the charts header, which prints the same symbol's move, so
+  the two were permanently comparable and were twice reported as contradicting
+  each other — first two different VINTAGES (the rail read bars/watchlist while
+  the header read the live quote, PR #277), then two different MEASUREMENTS (the
+  header renders `changePct` while the rail preferred `extPct`, so every symbol
+  with an after-hours print disagreed by exactly that move). One number cannot
+  contradict itself. `wbRailPct`, the `preMarketOpen` gate it needed, that
+  gate's hoisted `NY_PARTS` formatter and scenario **S44** all went with it —
+  deleting S44 is not lost coverage, since the behaviour it guarded no longer
+  exists. **The ticker NEVER abbreviates — that is the rule; the width is only ever
+  derived from it.** `.wb-grid`'s first column went 96 → 200 → 240 (when it
+  still carried a day-%) → 200 → **154px** (owner request 2026-08-25, "reduce
+  the width of these two columns to a min and give more space to the pro
+  charts"). Read the rule, never the number: a clipped symbol names no
+  instrument on a rail whose whole purpose is being clicked by ticker (owner
+  report 2026-08-20, when 4-letter names rendered as `AV…`), and `WL_SYM_RE`
+  accepts **ten** characters with `DX-Y.NYB` and `BTC-USD` already in the
+  roster. **160 was tried and REJECTED in review** on the same day 200 was set:
+  at 12px IBM Plex Mono (~7.22px/glyph) ten characters need ~72px of ticker
+  alone, and a 160px rail's manual column offered **56**.
+  154 reaches a narrower rail than that rejected 160 **without touching the
+  rule**, because it makes the glyphs and the chrome cheaper instead of the
+  budget tighter — which is the whole lesson: the earlier attempt tried to buy
+  width out of the ticker's own allowance, and there was none to take. Three
+  measured savings, in order of size: the row font goes **12px → 10px** mono, so
+  ten characters cost **60.2px** instead of 72.3; **the two columns stop being
+  equal** (`.wb-rail-manual` `flex: 0 0 78px`, `.wb-rail-roster` `flex: 1 1 0`),
+  since only the manual column carries a `×` and forcing the roster to match it
+  spent ~12px per rail on nothing; and row padding 4px → 2px a side with the `×`
+  3px → 2px. Measured at 1512: **rail 200 → 154, chart 1170 → 1216 (+46px)**,
+  with ~3.9px of headroom in BOTH columns — slightly MORE than the 3.3px the
+  200px rail had. The type drop is the biggest contributor and is the first
+  thing to give back if this ever needs to grow: it is a legibility cost, where
+  the unequal split and the padding were pure waste. Equal columns are the tidy
+  default and were simply wrong once the two rows stopped being the same shape.
+  `scrollbar-width: thin` on `.wb-rail-col` is part of the budget, not
+  decoration: two classic 15px bars would eat most of what the width buys.
+  **The LEFT column is a SYMBOL column** (owner request 2026-08-26, from a
+  reference-platform screenshot): title `SYMBOL`, an `ACTIVE` section naming the
+  charted symbol, then the 100 slots. Only the LEFT column changed — the roster
+  column beside it was explicitly left alone, since it mirrors the watchlists.
+  `ACTIVE` states what the rail previously only implied with `aria-current`, and
+  answers the case that marking could not: a symbol charted from the roster, or
+  restored on reload, that is not in this column at all. The header **Load box
+  stays** (owner ruling, asked and answered), and it now writes NOTHING — it
+  charts, like every other path. Both it and a slot commit validate with the
+  shared `WL_SYM_RE` (the submit handler had an inline third copy of that regex;
+  it is gone).
+  **THE FIRST CUT OF THIS WAS WRONG AND IS WORTH RECORDING.** PR #281 shipped an
+  add box that pushed onto a stack — a faithful reading of the screenshot's input
+  field, and the owner rejected it within the hour: "I didn't want a field to push
+  into the list. I want every item in the list to be editable." The screenshot's
+  input was not an ADD control, it was the SELECTED ROW being edited. A whole
+  round of race-hardening (`wbRailDraft`/`wbRailMsg`/`wbRailGen`, the optimistic
+  clear, the pin-on-success rule, five Codex rounds) existed only to make that
+  box safe and was deleted wholesale. **Three of its findings SURVIVE, because
+  they are properties of any in-place editor, not of the box**, and each had to
+  be re-guarded after the rewrite silently dropped it:
+  (a) **`maxLength` is 24, NOT the validator's 10.** It caps the RAW value and
+  the browser applies it before any handler runs, so a 10-cap truncates a pasted
+  ` ABCDEFGHIJ ` to nine characters — a real but DIFFERENT instrument, the
+  wrong-number-wearing-a-plausible-face fault this desk keeps hitting.
+  `WL_SYM_RE` stays the authority after trimming. **S45's guard for this has now
+  been INERT TWICE**, which is why the padding is spelled out here: it must type
+  through real key events (assigning `el.value` bypasses `maxlength` entirely)
+  AND the value must be PADDED — a bare `ABCDEFGHIJ` is exactly ten, so a
+  regressed cap does not truncate it and the check stays green. Falsifying the
+  current form yields `Expected " ABCDEFGHIJ ", Received " ABCDEFGHI"`.
+  (b) **The WHOLE selection is preserved** — both offsets AND
+  `selectionDirection`, not just `selectionStart`. A collapsed caret makes the
+  next keystroke INSERT where it should REPLACE, and a lost direction changes
+  which end Shift+Arrow extends. S45 makes a BACKWARD selection and asserts the
+  direction, since asserting the offsets alone left the direction capture
+  deletable; the input must hold a value first, or every range clamps to 0,0.
+  (c) **`focus({preventScroll: true})` is load-bearing, not a nicety.** The rail
+  repaints on the 60s poll, so a plain `focus()` yanks an owner who had scrolled
+  away back to the charts. Measured on falsification: the page jumped **1616px**
+  originally, **1684** when re-falsified on the slot rail. S45 had NO guard for
+  this until 2026-08-26 — a fourth guard the rewrite silently dropped — and it is
+  the single most owner-visible thing in this file. `select()` was replaced by
+  `setSelectionRange` beside it (same text, narrower contract); `keepPageStill`
+  wraps both as a **cross-engine belt that is honestly UNFALSIFIABLE here** —
+  measured, Chromium's selection calls do not scroll, so removing it changes
+  nothing observable. Do not record a measured fault for it; the measured ones
+  are `preventScroll` (1684px) and `overflow-anchor` (31px). `keepPageStill` DOES
+  mask a lone plain-`focus()` regression (it scrolls the page back), which is why
+  S45's guard clicks EMPTY slot 90, asserts the editor is focused and off-screen,
+  and stubs `scrollTo` for that one repaint to isolate the focus call — falsified:
+  scrollY 0 → 2126px on desktop, 4163px on mobile-chrome.
+  **What the rewrite ADDED is the blur/repaint interaction** — see the
+  `inp.isConnected` rule above. It is the same class as (a)–(c): a repaint the
+  owner did not cause quietly changing what their typing does.
+  Two CSS rules are load-bearing for the column itself. **`.wb-slots` carries its
+  own `overflow-y: auto` plus `min-height: 0`** — the slots scroll beneath a
+  fixed `SYMBOL`/`ACTIVE` head ("100 slots accessible via scroll just for the
+  list"), and without the `min-height` a flex item defaults to `min-height: auto`
+  and would grow to its full 100-row content height, taking the rail with it.
+  And **`.wb-slot-input` carries `min-width: 0`**, because an input's default
+  intrinsic width (~20 characters) would otherwise push the column past its flex
+  basis and undo the 154px rail.
+    **The ROSTER PICKER is a FULL-WIDTH HEADER over both columns**, not the roster
+  column's own head (Codex P2, 2026-08-25). Inside a 68px column it had ~**45px**
+  of text room against the ~**82px** its own default "Charts roster" label needs,
+  so 6 of demo's 8 list names truncated and the control could no longer answer
+  the one question it exists to answer — which roster is loaded. Spanning the
+  rail gives it **131px**, which seats every name including `Industry & metals`
+  (99.6px); measured overflow is now zero. It cost ~20px of VERTICAL space and
+  **no chart width at all** — which is why it beat the alternative of widening
+  the roster column to fit the label, which puts the rail back at **191px** and
+  cuts the chart's gain from 46px to **9**, undoing the request. Vertical space
+  is not scarce in a rail capped to the chart's height. Three consequences:
+  `#wbSidebar` is a `flex-direction: column` (it was a row of two columns) with
+  a `.wb-rail-cols` row inside it; that row needs **`min-height: 0`**, since a
+  flex ITEM defaults to `min-height: auto` and would refuse to shrink below its
+  content, which stops the per-render rail cap from capping anything and lets a
+  long roster grow the grid row instead of scrolling; and the roster column
+  gained its own **`ROSTER` title**, because the picker used to serve as that
+  column's head and the two columns must still start on the same line.
+  `sel.title` is KEPT even so — an owner-created list has no title-length limit,
+  so a long enough name still truncates — and is read from the selected
+  **OPTION's TEXT, never `sel.value`**: the charts entry's value is the
+  `WB_ROSTER_CHARTS` sentinel, a NUL-prefixed token, so the obvious
+  `sel.title = sel.value` would show the owner an internal string instead of a
+  list name (verified in the browser, where it renders "Charts roster").
+  **The sentinel is written as the escape `'\u0000charts'`, NEVER a literal NUL
+  byte** (audit 2026-09-29): a raw one sat in `app.js` from #248 (2026-08-18) and
+  made ripgrep/the Grep tool treat the whole file as binary, silently skipping it
+  on every directory search for six weeks — exactly the searches "is there already
+  an implementation of this?" depends on. No raw control byte belongs in a source
+  file; `rg -c renderWbSidebar scripts/` returning `app.js` is the quick check.
+  **S40 budgets against the VALIDATOR, not against demo.** Demo carries ten
+  three-letter symbols, so a five-character budget passed on a 160px rail that a
+  real supported symbol would have broken — a budget that admits less than the
+  validator accepts is not a budget. It measures **BOTH columns** against the
+  full 10-character limit and also asserts no rendered ticker is clipped.
+  Critically it reads the **computed
+  font off the live element** rather than hardcoding a pixel figure, which is
+  why the 12px → 10px change needed no test edit: at 154 it re-derived its own
+  expectation as 60.2 and still failed at **58** when the SYMBOL column was
+  narrowed to 62px to falsify it (proved, this pass — as it was proved at 200 by
+  setting the rail back to 160). It was briefly LOST when S40 was rewritten for
+  the slot column and restored in the same pass; do not let a rail rewrite drop
+  it again, since it is the only thing holding the never-clip rule.
+  **The 78/68 split is UNCHANGED in number and CHANGED in reason.** It used to
+  pay for the `×` on every manual row; that control is gone, and the same ~10px
+  is now the SYMBOL column's **scrollbar allowance**. This is a real difference,
+  not bookkeeping: the SYMBOL column is 100 permanent slots, so `.wb-slots`
+  ALWAYS overflows, where the old 40-row stack usually did not. Where a thin
+  scrollbar takes layout width (~11–12px) the column still offers **62px**
+  against the **60.2** a ten-character ticker needs — so it now CLEARS that case
+  rather than accepting it, and narrowing it to the roster's 68 would leave 52
+  and clip. **The residual survives on the ROSTER column ONLY** (owner ruling
+  2026-08-25, re-affirmed at 154): 3.8px of headroom and no scrollbar allowance,
+  so where a bar reserves width a **9- or 10-character** symbol could clip;
+  **8** (`DX-Y.NYB`, the longest in the roster) still fits. This sandbox's
+  Chromium uses OVERLAY scrollbars and reserves nothing, so it CANNOT reproduce
+  the case. Covering it now costs ~**12px** rather than the old 24. The TRIGGER
+  to revisit is concrete: if a 9–10 character symbol enters a WATCHLIST, or the
+  desk is used where scrollbars take layout width, widen the roster column and
+  add the scrollbar to S40's budget. Note this is the same class as the
+  `overscroll-behavior` trap below — a Chromium harness cannot reproduce it, so
+  it must be reasoned about rather than tested here.

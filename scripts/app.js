@@ -29,6 +29,80 @@ function sparkline(values, w, h, stroke) {
 
 const seriesColor = key => 'var(--color-series-' + key + ')';
 
+/* ── shared modal helper ───────────────────────────────────────────────────
+   EVERY dialog on the desk opens through openModal() and closes through
+   closeModal(), so initial focus, Escape, backdrop click, focus RETURNED to the
+   opener and the Tab/Shift+Tab TRAP live once. aria-modal only DECLARES the page
+   behind inert; browsers do not enforce it for Tab, so focus used to walk out of
+   the dialog into the desk behind it.
+   opts: initialFocus (element, else the first control), restoreFocusTo (the
+   opener, else whatever held focus), dismissOnBackdrop (default true) and
+   onDismiss — what Escape/backdrop DO. Pass the modal's own close function so
+   its veto still applies (`wlBusy`, the dirty scheduled-ask warning). */
+const modalStack = [];   /* open dialogs, topmost last — only the top one answers keys */
+const modalWired = new WeakSet();   /* backdrops that already carry their pointer listeners */
+const MODAL_TABBABLE = 'a[href], button, input, select, textarea, [tabindex]';
+const modalTop = () => modalStack[modalStack.length - 1];
+function modalTabbables(panel) {
+  return [...panel.querySelectorAll(MODAL_TABBABLE)].filter(n =>
+    !n.matches(':disabled') && n.tabIndex >= 0 && n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden');
+}
+function openModal(back, opts = {}) {
+  const panel = back.querySelector('[role="dialog"], [role="alertdialog"]') || back;
+  const at = modalStack.findIndex(m => m.back === back);
+  const prior = at >= 0 ? modalStack.splice(at, 1)[0].opener : null;   /* re-opened while open */
+  const held = document.activeElement;
+  modalStack.push({
+    back, panel, backdrop: opts.dismissOnBackdrop !== false,
+    dismiss: opts.onDismiss || (() => closeModal(back)),
+    opener: opts.restoreFocusTo || prior || (held && held !== document.body && !back.contains(held) ? held : null),
+  });
+  if (!modalWired.has(back)) { modalWired.add(back); wireBackdrop(back); }
+  back.hidden = false;
+  const want = opts.initialFocus && !opts.initialFocus.matches(':disabled') ? opts.initialFocus : modalTabbables(panel)[0];
+  if (want) want.focus();
+  if (!panel.contains(document.activeElement)) { panel.tabIndex = -1; panel.focus(); }
+}
+function closeModal(back) {
+  if (!back) return;
+  back.hidden = true;
+  const at = modalStack.findIndex(m => m.back === back);
+  if (at < 0) return;
+  const { opener } = modalStack.splice(at, 1)[0];
+  /* the opener may have been re-rendered away while the dialog was up, which replaces the node */
+  if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+}
+/* On the backdrop itself, not delegated from document: iOS Safari sends no click to
+   a document listener for a tap on a non-clickable div. A press that STARTED inside
+   the panel never dismisses, even if released over the backdrop — dragging a text
+   selection out of a textarea must not close the editor. */
+function wireBackdrop(back) {
+  let downInPanel = false;
+  back.addEventListener('mousedown', ev => { downInPanel = ev.target !== back; });
+  back.addEventListener('click', ev => {
+    const m = modalStack.find(x => x.back === back);
+    if (m && m.backdrop && ev.target === back && !downInPanel) m.dismiss();
+    downInPanel = false;
+  });
+}
+document.addEventListener('keydown', ev => {
+  const m = modalTop();
+  if (!m) return;
+  /* Held Escape auto-repeats: one physical press must be ONE dismissal, or the dirty
+     scheduled-ask warning (first press warns, second closes) is bypassed by a single
+     long press — and a held key would walk down a stack of nested dialogs. */
+  if (ev.key === 'Escape') { if (!ev.repeat) m.dismiss(); return; }
+  if (ev.key !== 'Tab') return;
+  const tabs = modalTabbables(m.panel), last = tabs.length - 1;
+  const i = tabs.indexOf(document.activeElement);
+  const stray = !m.panel.contains(document.activeElement);
+  /* wrap at either end, and pull a stray focus back in; anywhere else the browser's own order is right */
+  const to = !tabs.length ? m.panel
+    : ev.shiftKey ? (i <= 0 ? tabs[last] : null)
+    : (i === last || stray ? tabs[0] : null);
+  if (to) { ev.preventDefault(); to.focus(); }
+});
+
 /* ── shared state ──────────────────────────────────────────────────────── */
 const DESK = {
   mode: 'demo',        /* 'demo' | 'live' */
@@ -1556,30 +1630,20 @@ async function wlMutate(mutate) {
 
 /* ── quick add ─────────────────────────────────────────────────────────── */
 let wlQuickList = null;   /* {idx, title} — which band's + was pressed */
-let wlReturnFocus = null; /* the + or tile that opened a dialog, to restore to */
 
-/* Both quick dialogs hand focus back to whatever opened them (Codex review,
-   PR #196), the way the full editor already does. Without it a keyboard user who
-   pressed Delete on a tile and then chose "Keep it" is dropped on <body> and has
-   to tab the whole page to get back to where they were. */
-function wlRestoreFocus() {
-  const el = wlReturnFocus;
-  wlReturnFocus = null;
-  /* the panel may have re-rendered under us, which replaces the node */
-  if (el && el.isConnected && typeof el.focus === 'function') el.focus();
-}
-
-function wlQuickErr(msg) {
-  const p = document.getElementById('wlQuickErr');
+/* The error line every dialog carries: text in, hidden when empty. Focus goes
+   back to the opener on close (Codex review, PR #196) — see openModal. */
+function modalErr(id, msg) {
+  const p = document.getElementById(id);
   if (!p) return;
   p.textContent = msg || '';
   p.hidden = !msg;
 }
+function wlQuickErr(msg) { modalErr('wlQuickErr', msg); }
 
 function openWlQuickAdd(idx, title, invoker) {
   if (!wlCanEdit() || wlBusy) return;
   wlQuickList = { idx, title };
-  wlReturnFocus = invoker || null;
   const back = document.getElementById('wlQuickBackdrop');
   const head = document.getElementById('wlQuickTitle');
   const input = document.getElementById('wlQuickInput');
@@ -1594,16 +1658,13 @@ function openWlQuickAdd(idx, title, invoker) {
   input.value = '';
   input.disabled = false;
   wlQuickErr('');
-  back.hidden = false;
-  input.focus();
+  openModal(back, { initialFocus: input, restoreFocusTo: invoker, onDismiss: closeWlQuickAdd });
 }
 
 function closeWlQuickAdd() {
   if (wlBusy) return;   /* don't abandon a write mid-flight */
-  const back = document.getElementById('wlQuickBackdrop');
-  if (back) back.hidden = true;
+  closeModal(document.getElementById('wlQuickBackdrop'));
   wlQuickList = null;
-  wlRestoreFocus();
 }
 
 async function submitWlQuickAdd() {
@@ -1650,33 +1711,24 @@ async function submitWlQuickAdd() {
 /* ── double-click to remove ────────────────────────────────────────────── */
 let wlRmTarget = null;            /* {sym, idx, title} awaiting confirmation */
 
-function wlRmErr(msg) {
-  const p = document.getElementById('wlRmErr');
-  if (!p) return;
-  p.textContent = msg || '';
-  p.hidden = !msg;
-}
+function wlRmErr(msg) { modalErr('wlRmErr', msg); }
 
 function openWlRemove(sym, idx, title, invoker) {
   if (!wlCanEdit() || wlBusy) return;
   wlRmTarget = { sym, idx, title };
-  wlReturnFocus = invoker || null;
   const back = document.getElementById('wlRmBackdrop');
   const text = document.getElementById('wlRmText');
   if (!back) return;
   if (text) text.textContent = 'Remove ' + sym + ' from “' + title + '”?';
   wlRmErr('');
-  back.hidden = false;
-  const cancel = document.getElementById('wlRmCancelBtn');
-  if (cancel) cancel.focus();   /* destructive dialog opens on the safe choice */
+  /* destructive dialog opens on the safe choice */
+  openModal(back, { initialFocus: document.getElementById('wlRmCancelBtn'), restoreFocusTo: invoker, onDismiss: closeWlRemove });
 }
 
 function closeWlRemove() {
   if (wlBusy) return;
-  const back = document.getElementById('wlRmBackdrop');
-  if (back) back.hidden = true;
+  closeModal(document.getElementById('wlRmBackdrop'));
   wlRmTarget = null;
-  wlRestoreFocus();
 }
 
 async function confirmWlRemove() {
@@ -1711,38 +1763,23 @@ async function confirmWlRemove() {
    when the market is shut. */
 let wlDelTarget = null;   /* {idx, title} — which band's × was pressed */
 
-function wlNewErr(msg) {
-  const p = document.getElementById('wlNewErr');
-  if (!p) return;
-  p.textContent = msg || '';
-  p.hidden = !msg;
-}
-
-function wlDelErr(msg) {
-  const p = document.getElementById('wlDelErr');
-  if (!p) return;
-  p.textContent = msg || '';
-  p.hidden = !msg;
-}
+function wlNewErr(msg) { modalErr('wlNewErr', msg); }
+function wlDelErr(msg) { modalErr('wlDelErr', msg); }
 
 function openWlNewList(invoker) {
   if (!wlCanEdit() || wlBusy) return;
-  wlReturnFocus = invoker || null;
   const back = document.getElementById('wlNewBackdrop');
   const input = document.getElementById('wlNewInput');
   if (!back || !input) return;
   input.value = '';
   input.disabled = false;
   wlNewErr('');
-  back.hidden = false;
-  input.focus();
+  openModal(back, { initialFocus: input, restoreFocusTo: invoker, onDismiss: closeWlNewList });
 }
 
 function closeWlNewList() {
   if (wlBusy) return;   /* don't abandon a write mid-flight */
-  const back = document.getElementById('wlNewBackdrop');
-  if (back) back.hidden = true;
-  wlRestoreFocus();
+  closeModal(document.getElementById('wlNewBackdrop'));
 }
 
 async function submitWlNewList() {
@@ -1785,7 +1822,6 @@ function openWlDelList(idx, title, invoker) {
      reach this function directly. */
   if (wlLocked) { wlNote('Unlock the arrangement to delete a list'); return; }
   wlDelTarget = { idx, title };
-  wlReturnFocus = invoker || null;
   const back = document.getElementById('wlDelBackdrop');
   const text = document.getElementById('wlDelText');
   if (!back) return;
@@ -1802,17 +1838,14 @@ function openWlDelList(idx, title, invoker) {
       ' This cannot be undone.';
   }
   wlDelErr('');
-  back.hidden = false;
-  const cancel = document.getElementById('wlDelCancelBtn');
-  if (cancel) cancel.focus();   /* destructive dialog opens on the safe choice */
+  /* destructive dialog opens on the safe choice */
+  openModal(back, { initialFocus: document.getElementById('wlDelCancelBtn'), restoreFocusTo: invoker, onDismiss: closeWlDelList });
 }
 
 function closeWlDelList() {
   if (wlBusy) return;
-  const back = document.getElementById('wlDelBackdrop');
-  if (back) back.hidden = true;
+  closeModal(document.getElementById('wlDelBackdrop'));
   wlDelTarget = null;
-  wlRestoreFocus();
 }
 
 async function confirmWlDelList() {
@@ -1928,7 +1961,7 @@ const WL_DETAIL_SPAN = { '1mo': 21, '3mo': 63, '6mo': 126, '1y': 252, '2y': 504,
    keeps the quote it already has, so the window claimed "no chart data" during
    an ordinary reload, and lamped the panel STALE before its first fetch had
    even settled. */
-const wlDetail = { sym: null, tf: '1d', bars: null, info: undefined, seq: 0, invoker: null, asOf: null, at: null, loading: false , smas: null };
+const wlDetail = { sym: null, tf: '1d', bars: null, info: undefined, seq: 0, asOf: null, at: null, loading: false , smas: null };
 
 function openWlDetail(sym, invoker) {
   const back = document.getElementById('wlDetailBackdrop');
@@ -1941,33 +1974,26 @@ function openWlDetail(sym, invoker) {
   wlDetail.tf = wlTf;
   wlDetail.bars = null;
   wlDetail.info = undefined;
-  wlDetail.invoker = invoker || null;
   const title = document.getElementById('wlDetailTitle');
   if (title) title.textContent = sym;
   const nameEl = document.getElementById('wlDetailName');
   if (nameEl) nameEl.textContent = '';
-  back.hidden = false;
+  openModal(back, { initialFocus: document.getElementById('wlDetailCloseBtn'), restoreFocusTo: invoker, onDismiss: closeWlDetail });
   /* read the saved set once per open, not per render */
   if (!wlDetail.smas) wlDetail.smas = loadWlSmas();
   renderWlDetailTf();
   renderWlDetailSmas();
   renderWlDetail();
   loadWlDetail();
-  const close = document.getElementById('wlDetailCloseBtn');
-  if (close) close.focus();
 }
 
 function closeWlDetail() {
-  const back = document.getElementById('wlDetailBackdrop');
-  if (back) back.hidden = true;
   /* Bumping the sequence orphans any fetch still in flight, so a slow 5Y reply
      cannot repaint a window the owner has already closed — or, worse, land in
      the next symbol's window. */
   wlDetail.seq++;
   wlDetail.sym = null;
-  const focus = wlDetail.invoker;
-  wlDetail.invoker = null;
-  if (focus && document.body.contains(focus)) focus.focus();
+  closeModal(document.getElementById('wlDetailBackdrop'));
 }
 
 function renderWlDetailTf() {
@@ -2338,10 +2364,6 @@ function wireWatchlistDetail() {
   const back = document.getElementById('wlDetailBackdrop');
   const close = document.getElementById('wlDetailCloseBtn');
   if (close) close.addEventListener('click', closeWlDetail);
-  if (back) back.addEventListener('click', e => { if (e.target === back) closeWlDetail(); });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && back && !back.hidden) closeWlDetail();
-  });
   /* The chart is sized from its rendered box, so a resize has to redraw it or
      the candles keep the old width's geometry. */
   window.addEventListener('resize', () => {
@@ -2367,13 +2389,11 @@ function wireWatchlistQuickEdits() {
     });
   }
 
-  const q = document.getElementById('wlQuickBackdrop');
   const qClose = document.getElementById('wlQuickCloseBtn');
   const qSave = document.getElementById('wlQuickSaveBtn');
   const qInput = document.getElementById('wlQuickInput');
   if (qClose) qClose.addEventListener('click', closeWlQuickAdd);
   if (qSave) qSave.addEventListener('click', submitWlQuickAdd);
-  if (q) q.addEventListener('click', e => { if (e.target === q) closeWlQuickAdd(); });
   /* Enter submits, Shift+Enter breaks a line. Pasting is unaffected either way —
      a paste inserts its own newlines without going through this handler, which
      is what lets the textarea take a broker column verbatim. */
@@ -2385,40 +2405,26 @@ function wireWatchlistQuickEdits() {
 
   const nb = document.getElementById('wlNewListBtn');
   if (nb) nb.addEventListener('click', () => openWlNewList(nb));
-  const n = document.getElementById('wlNewBackdrop');
   const nClose = document.getElementById('wlNewCloseBtn');
   const nSave = document.getElementById('wlNewSaveBtn');
   const nInput = document.getElementById('wlNewInput');
   if (nClose) nClose.addEventListener('click', closeWlNewList);
   if (nSave) nSave.addEventListener('click', submitWlNewList);
-  if (n) n.addEventListener('click', e => { if (e.target === n) closeWlNewList(); });
   if (nInput) nInput.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
     submitWlNewList();
   });
 
-  const d = document.getElementById('wlDelBackdrop');
   const dCancel = document.getElementById('wlDelCancelBtn');
   const dOk = document.getElementById('wlDelConfirmBtn');
   if (dCancel) dCancel.addEventListener('click', closeWlDelList);
   if (dOk) dOk.addEventListener('click', confirmWlDelList);
-  if (d) d.addEventListener('click', e => { if (e.target === d) closeWlDelList(); });
 
-  const r = document.getElementById('wlRmBackdrop');
   const rCancel = document.getElementById('wlRmCancelBtn');
   const rOk = document.getElementById('wlRmConfirmBtn');
   if (rCancel) rCancel.addEventListener('click', closeWlRemove);
   if (rOk) rOk.addEventListener('click', confirmWlRemove);
-  if (r) r.addEventListener('click', e => { if (e.target === r) closeWlRemove(); });
-
-  document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape') return;
-    if (q && !q.hidden) closeWlQuickAdd();
-    if (r && !r.hidden) closeWlRemove();
-    if (n && !n.hidden) closeWlNewList();
-    if (d && !d.hidden) closeWlDelList();
-  });
 }
 
 function renderWlEditor() {
@@ -2468,12 +2474,7 @@ function renderWlEditor() {
   });
 }
 
-function wlEditErr(msg) {
-  const e = document.getElementById('wlEditErr');
-  if (!e) return;
-  e.textContent = msg || '';
-  e.hidden = !msg;
-}
+function wlEditErr(msg) { modalErr('wlEditErr', msg); }
 
 async function openWlEditor() {
   const pin = null;   /* open RPCs — no PIN (desk_011) */
@@ -2508,9 +2509,7 @@ async function openWlEditor() {
   renderWlEditor();
   const stamp = document.getElementById('wlEditStamp');
   if (stamp) stamp.textContent = wlEdit.length + (wlEdit.length === 1 ? ' list' : ' lists');
-  back.hidden = false;
-  const first = back.querySelector('.wl-edit-title');
-  if (first) first.focus();
+  openModal(back, { initialFocus: back.querySelector('.wl-edit-title'), restoreFocusTo: document.getElementById('wlEditBtn'), onDismiss: closeWlEditor });
 }
 
 /* Re-read the roster into the OPEN modal after a conflict. Shares openWlEditor's
@@ -2535,12 +2534,9 @@ async function reloadWlEditorDraft() {
 }
 
 function closeWlEditor() {
-  const back = document.getElementById('wlEditBackdrop');
-  if (back) back.hidden = true;
+  closeModal(document.getElementById('wlEditBackdrop'));
   wlEdit = null;
   wlEditVersion = null;
-  const btn = document.getElementById('wlEditBtn');
-  if (btn) btn.focus();
 }
 
 async function saveWlEditor() {
@@ -2590,11 +2586,6 @@ function wireWatchlistEditor() {
   if (btn) btn.addEventListener('click', openWlEditor);
   const close = document.getElementById('wlEditCloseBtn');
   if (close) close.addEventListener('click', closeWlEditor);
-  const back = document.getElementById('wlEditBackdrop');
-  if (back) back.addEventListener('click', e => { if (e.target === back) closeWlEditor(); });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && back && !back.hidden) closeWlEditor();
-  });
   const add = document.getElementById('wlAddListBtn');
   if (add) add.addEventListener('click', () => {
     if (!wlEdit) return;
@@ -2923,7 +2914,7 @@ function askSchedWhen(r) {
    this panel rather than as static markup, because the row count is data.
    The draft is local until Save: a write REPLACES the whole roster, so saving
    on every field would mean a round trip per keystroke. */
-function openAskSched(pin) {
+function openAskSched(pin, opener) {
   const back = document.getElementById('askSchedBackdrop');
   const list = document.getElementById('askSchedList');
   if (!back || !list) return;
@@ -3064,7 +3055,7 @@ function openAskSched(pin) {
       now.title = 'Ask this question right now, in the thread. Does not save the schedule.';
       now.addEventListener('click', () => {
         if (!askRun || !r.prompt.trim()) return;
-        back.hidden = true;
+        closeModal(back);
         askRun(r.prompt.trim(), { scheduled: true });
       });
 
@@ -3180,21 +3171,21 @@ function openAskSched(pin) {
     };
   }
   if (saveBtn) saveBtn.onclick = () => save();
-  if (close) {
-    /* Two-stage rather than a discard-confirm dialog: the roster is small and
-       the cost of losing an edit is retyping it, but losing it SILENTLY is the
-       part that reads as a bug. */
-    close.onclick = () => {
-      if (dirty && !closeArmed) {
-        closeArmed = true;
-        note('Unsaved changes — press Save, or ✕ again to discard', true);
-        return;
-      }
-      back.hidden = true;
-    };
-  }
+  /* Two-stage rather than a discard-confirm dialog: the roster is small and
+     the cost of losing an edit is retyping it, but losing it SILENTLY is the
+     part that reads as a bug. Escape takes the same road as ✕. */
+  const requestClose = () => {
+    if (dirty && !closeArmed) {
+      closeArmed = true;
+      note('Unsaved changes — press Save, or ✕ again to discard', true);
+      return;
+    }
+    closeModal(back);
+  };
+  if (close) close.onclick = requestClose;
 
-  back.hidden = false;
+  /* no backdrop dismissal: an off-target click must not throw away an edited roster */
+  openModal(back, { restoreFocusTo: opener, dismissOnBackdrop: false, onDismiss: requestClose });
   load();
 }
 
@@ -3267,10 +3258,10 @@ function renderAsk() {
   const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
   schedBtn.title = 'Questions the desk asks itself on a schedule — it runs with this page shut';
-  schedBtn.addEventListener('click', () => openAskSched(pin));
+  schedBtn.addEventListener('click', () => openAskSched(pin, schedBtn));
   const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
-  sysBtn.addEventListener('click', () => openSysPromptModal(pin));
+  sysBtn.addEventListener('click', () => openSysPromptModal(pin, sysBtn));
   const err = el('p', 'lock-error', ''); err.hidden = true;
   form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn); form.appendChild(verifyBtn); form.appendChild(schedBtn); form.appendChild(sysBtn);
   body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
@@ -3426,10 +3417,10 @@ function updateSysPromptCounter() {
   counter.classList.toggle('sys-prompt-counter--low', left < 1000);
 }
 function closeSysPromptModal() {
-  document.getElementById('sysPromptBackdrop').hidden = true;
+  closeModal(document.getElementById('sysPromptBackdrop'));
 }
 let sysPromptGen = 0;   /* a slow read from an earlier open must not land on a later one */
-async function openSysPromptModal(pin) {
+async function openSysPromptModal(pin, opener) {
   const backdrop = document.getElementById('sysPromptBackdrop');
   const textEl = document.getElementById('sysPromptText');
   const stamp = document.getElementById('sysPromptStamp');
@@ -3437,7 +3428,7 @@ async function openSysPromptModal(pin) {
   const submitBtn = document.getElementById('sysPromptSubmit');
   const gen = ++sysPromptGen;
   err.hidden = true;
-  backdrop.hidden = false;
+  openModal(backdrop, { restoreFocusTo: opener, onDismiss: closeSysPromptModal });
   /* Save stays OFF until a read has actually succeeded. This is a replace of the
      one live row, and the text in the box is only the owner's prompt if the read
      landed: mid-load it is the word "Loading…", and after a failed read it is
@@ -3462,7 +3453,6 @@ async function openSysPromptModal(pin) {
   textEl.focus();
 }
 function wireSysPromptModal() {
-  const backdrop = document.getElementById('sysPromptBackdrop');
   const textEl = document.getElementById('sysPromptText');
   const stamp = document.getElementById('sysPromptStamp');
   const err = document.getElementById('sysPromptErr');
@@ -3470,8 +3460,6 @@ function wireSysPromptModal() {
 
   textEl.addEventListener('input', updateSysPromptCounter);
   document.getElementById('sysPromptCloseBtn').addEventListener('click', () => closeSysPromptModal());
-  backdrop.addEventListener('mousedown', ev => { if (ev.target === backdrop) closeSysPromptModal(); });
-  document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !backdrop.hidden) closeSysPromptModal(); });
 
   submitBtn.addEventListener('click', async () => {
     const content = textEl.value.trim();
