@@ -594,7 +594,8 @@ This project's look is its own — established at kickoff via `/design-intake`
   and every desk-market/desk-news/desk-heatmap/desk-charts in-memory cache in
   one click (`force:true` in the POST body; each edge function's cache-read
   skips its TTL check when set, but only ONCE per 30s per isolate — desk-heatmap
-  per universe, desk-news per topic, desk-watchlist exempting a roster edit — since
+  per universe, desk-news per topic, desk-watchlist exempting a roster edit (detected by a ~3KB `id,pos,updated_at`
+  fingerprint read, not a full-roster compare) — since
   these feeds are anon-callable and an unthrottled `force` would let any caller start
   a full upstream sweep per request; a forced refresh that FAILS hands its stamp back
   so a retry is not locked out; `quote-proxy`'s stays unthrottled behind its Origin
@@ -1487,10 +1488,13 @@ This project's look is its own — established at kickoff via `/design-intake`
   first to vanish. The watchlist is capped at 300 symbols total (25 unresolved names
   per list, plus counts) and is emitted LAST, so any residual truncation eats it
   first. `desk-ask` has a 350s turn deadline (each model call gets min(150s, what
-  remains)) and answers a JSON+CORS 504 when it runs out; `desk-cron-ask` waits up to
-  330s (clamped under the ~400s wall clock) and records "ask timed out; answer may
+  remains)) and answers a JSON+CORS 504 when it runs out; `desk-cron-ask` waits about 200s
+  (kept under `desk_018`'s 240s pg_net timeout — raising both needs a migration the
+  owner applies) and records "ask timed out; answer may
   still land in the thread" — the exchange is still archived. The memory append
-  checks its response (`memoryStored`/`memoryError`), and a failed snapshot read
+  checks its response (`memoryStored`/`memoryError`), `checked.verified` is true only
+  when the grounding check actually COMPLETED (`verifyIncomplete` otherwise — a timed-out
+  or skipped check used to be stored as verified), and a failed snapshot read
   lists `accounts` in `feedsUnavailable` instead of reading as "no holdings".
   (The scheduled twice-daily AI brief — `desk-brief`,
   its `desk-brief-evening`/`desk-brief-morning` cron jobs, and the dashboard
@@ -1500,7 +1504,7 @@ This project's look is its own — established at kickoff via `/design-intake`
   returns.)
 - `supabase/migrations/` — `desk_001`–`desk_006` were applied out-of-band and are
   RECONSTRUCTED from the live catalog (not the original text; `desk_003_seed` is a
-  data-free placeholder; `desk_005`'s `cron.schedule` calls are commented out so a
+  data-free placeholder; `desk_005`'s and `desk_018`'s `cron.schedule` calls are commented out so a
   replay cannot point a scratch DB at the live functions). A replay of the directory
   has not been tested, and `list_migrations` plus PITR remain the authoritative
   history. `desk_007`–`019` each carry a `-- revert:` line. The files target a
