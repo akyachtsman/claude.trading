@@ -138,6 +138,105 @@ async function blockRosterWrites(page) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SHARED SCENARIO HELPERS — one copy of each setup/probe the scenarios repeated.
+// A scenario that needs a variation passes a parameter; it does not fork the copy.
+// ─────────────────────────────────────────────────────────────────────────────
+/** Opens the demo desk, waits for `sel`'s first match to be visible, then `settle` ms more (charts need the beat). */
+async function gotoDemo(page, sel, timeout, settle = 0) {
+  await page.goto('./?demo=1');
+  await expect(page.locator(sel).first()).toBeVisible({ timeout });
+  if (settle) await page.waitForTimeout(settle);
+}
+/** Opens the demo desk with the heatmap expanded and its `.heat-label` tiles drawn (S46/S47 read the labels). */
+async function openHeatmap(page) {
+  await page.goto('./?demo=1');
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+  const toggle = page.locator('#heatToggle');
+  if (await toggle.count()) await toggle.click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('#heatmapSvg text.heat-label').length > 20,
+    null, { timeout: 20000 },
+  );
+}
+/* Symbol column (S40/S45) — the rail's 100 positional slots; index IS the slot. */
+/** The button of slot `n`. */
+const slotBtn = (page, n) => page.locator(`.wb-slots [data-slot="${n}"] .wb-slot`);
+/** Index of the slot whose editor is open, or null when none is. */
+const editorSlot = (page) => page.evaluate(() => {
+  const i = document.querySelector('.wb-slot-input');
+  return i && i.closest('.wb-rail-row').dataset.slot;
+});
+/** How many slot editors are live (0 at rest; never more than one). */
+const editorCount = (page) => page.evaluate(() => document.querySelectorAll('.wb-slot-input').length);
+/** `wb_sticky_v1`'s positional `syms` array as stored (holes included). */
+const storedSyms = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || []);
+/** The slot holding focus, else the focused element's tag ('BODY' = focus fell to the document). */
+const focusedSlot = (page) => page.evaluate(() => {
+  const a = document.activeElement;
+  const row = a && a.closest && a.closest('.wb-rail-row');
+  return row ? row.dataset.slot : (a ? a.tagName : null);
+});
+/** Indexes of the slots currently in the tab sequence (the roving stop: exactly one). */
+const tabStops = (page) => page.evaluate(() => [...document.querySelectorAll('.wb-slots .wb-slot')]
+  .filter(b => b.tabIndex === 0).map(b => b.closest('.wb-rail-row').dataset.slot));
+/** Writes `slots` ({index: symbol}; a NUMBER value means the charted roster's Nth symbol) into `wb_sticky_v1.syms`, every other index untouched. Then, unless `repaint: false`, closes any editor and repaints the rail — `tab` parks the tab stop on slot 0, `pick` charts the roster's Nth symbol. */
+const seedSlots = (page, slots, { repaint = true, tab = false, pick } = {}) =>
+  page.evaluate(({ slots, repaint, tab, pick }) => {
+    const roster = () => Object.keys(wbState.data.symbols);
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = c.syms.slice();
+    for (const [i, v] of Object.entries(slots)) syms[i] = typeof v === 'number' ? roster()[v] : v;
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    if (!repaint) return;
+    wbEditSlot = -1; if (tab) wbSlotTab = 0; renderWbSidebar(wbState.data);
+    if (pick !== undefined) wbPick(roster()[pick]);
+  }, { slots, repaint, tab, pick });
+/** Installs `window.__pane(titleRe)`, shared by S25/S34 (both colour-check the long-term candles): the PRO pane whose title matches — by DOCTRINE name, never the positional number — as `{ inPane, rects }` (its x band from its own title to the next, and its candle rects with the volume bars removed: they share ONE baseline and stay price-coloured), or `{ err }` when no title matches. */
+const installPaneProbe = (page) => page.evaluate(() => {
+  window.__pane = (titleRe) => {
+    const svg = document.getElementById('wbChart');
+    const texts = [...svg.querySelectorAll('text')];
+    /* Pane bounds come from the pane titles — each pane owns the x band from
+       its own title to the next. Everything is scoped to that band; without it
+       a lookup silently strays into a neighbouring pane. */
+    const titles = texts.filter(t => /^PRO \d/.test(t.textContent))
+      .map(t => ({ t: t.textContent, x: +t.getAttribute('x') })).sort((a, c) => a.x - c.x);
+    const ti = titles.findIndex(t => titleRe.test(t.t));
+    if (ti < 0) return { err: 'pane title not found: ' + titleRe };
+    const x0 = titles[ti].x - 10;
+    const x1 = ti + 1 < titles.length ? titles[ti + 1].x - 10 : svg.viewBox.baseVal.width;
+    const inPane = x => x >= x0 && x < x1;
+    // candles sit above the pane's FIRST strip, never above a lower one
+    const topCapY = Math.min(...texts.filter(t => /STOCH|RSI/.test(t.textContent) && inPane(+t.getAttribute('x')))
+      .map(t => +t.getAttribute('y')));
+    let rects = [...svg.querySelectorAll('rect[shape-rendering=crispEdges]')]
+      .map(r => ({ cx: +r.getAttribute('x') + +r.getAttribute('width') / 2, y: +r.getAttribute('y'), h: +r.getAttribute('height'), fill: r.getAttribute('fill') }))
+      .filter(r => inPane(r.cx) && r.y < topCapY - 20);
+    /* Volume bars share the candle shape but all rest on ONE baseline, so the
+       modal bottom edge identifies them. They stay price-coloured on purpose,
+       and counting them would fake a disagreement. */
+    const tally = {};
+    for (const r of rects) { const bb = (r.y + r.h).toFixed(1); tally[bb] = (tally[bb] || 0) + 1; }
+    const vol = Object.entries(tally).sort((a, c) => c[1] - a[1])[0];
+    if (vol && vol[1] > 5) rects = rects.filter(r => (r.y + r.h).toFixed(1) !== vol[0]);
+    return { inPane, rects };
+  };
+});
+/** Closes any open slot editor WITHOUT committing, repaints the rail, then settles `wait` ms; `tab` also parks the tab stop on slot 0. */
+const closeEditor = async (page, { wait = 200, tab = false } = {}) => {
+  await page.evaluate((t) => { wbEditSlot = -1; if (t) wbSlotTab = 0; renderWbSidebar(wbState.data); }, tab);
+  await page.waitForTimeout(wait);
+};
+/** Opens slot `n` (a click, or a double-click with `dbl`; `openWait` ms to let it open), types `text` over its content, presses `key`, then waits `wait` ms. */
+async function editSlot(page, n, text, key, wait, { dbl = false, openWait = 200 } = {}) {
+  await (dbl ? slotBtn(page, n).dblclick() : slotBtn(page, n).click());
+  await page.waitForTimeout(openWait);
+  await page.locator('.wb-slot-input').fill(text);
+  await page.locator('.wb-slot-input').press(key);
+  await page.waitForTimeout(wait);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // API CALL CAPTURE — must wrap fetch before page load via addInitScript
 // ─────────────────────────────────────────────────────────────────────────────
 async function captureApiCalls(page) {
@@ -1526,8 +1625,7 @@ const rosterWrites = (page) => page.evaluate(() => (window.__rosterWrites || [])
 // every add, remove and drop into either of them silently unaddressable.
 test('S31: create and delete a list; delete is behind the lock', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
 
   // Demo has no backend to write to, so neither control may be offered.
   await expect(page.locator('#wlNewListBtn'), 'demo must offer no new-list button').toBeHidden();
@@ -1535,69 +1633,50 @@ test('S31: create and delete a list; delete is behind the lock', async ({ page, 
 
   // Force the authed state and stand up a fake roster backend that holds real
   // state, so a create/delete has to actually persist rather than just repaint.
+  await installFakeRoster(page);
   const out = await page.evaluate(async () => {
-    let store = [{ title: 'Radar', symbols: ['NVDA', 'AMD'] }, { title: 'Macro', symbols: ['TLT'] }];
-    const realFetch = window.fetch;
-    window.fetch = (url, init) => {
-      const u = String(url);
-      if (u.endsWith('desk_get_watchlists_open'))
-        return Promise.resolve(new Response(JSON.stringify({ ok: true, version: 'v1',
-          lists: store.map(l => ({ ...l, symbols: l.symbols.slice() })) }),
-          { headers: { 'content-type': 'application/json' } }));
-      if (u.endsWith('desk_set_watchlists_open')) {
-        store = JSON.parse(init.body).new_lists.map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
-        return Promise.resolve(new Response(JSON.stringify({ ok: true, version: 'v2' }),
-          { headers: { 'content-type': 'application/json' } }));
-      }
-      if (u.includes('/functions/v1/desk-watchlist'))
-        return Promise.resolve(new Response(JSON.stringify({ ok: true, range: wlTf,
-          lists: store.map(l => ({ title: l.title, symbols: l.symbols.slice(),
-            rows: l.symbols.map(sym => ({ sym, last: 100, pct: 1, spark: [1, 2] })) })) }),
-          { headers: { 'content-type': 'application/json' } }));
-      return realFetch(url, init);
-    };
+    window.__roster = [{ title: 'Radar', symbols: ['NVDA', 'AMD'] }, { title: 'Macro', symbols: ['TLT'] }];
+    const titles = () => window.__roster.map(l => l.title).join(',');
     const r = {};
-    try {
-      DESK.mode = 'live'; DESK.authed = true;
-      await loadWatchlist(true);
-      r.delsShown = document.querySelectorAll('.wl-del').length;
-      r.newBtnShown = !document.getElementById('wlNewListBtn').hidden;
+    DESK.mode = 'live'; DESK.authed = true;
+    await loadWatchlist(true);
+    r.delsShown = document.querySelectorAll('.wl-del').length;
+    r.newBtnShown = !document.getElementById('wlNewListBtn').hidden;
 
-      document.getElementById('wlNewListBtn').click();
-      document.getElementById('wlNewInput').value = 'Earnings';
-      await submitWlNewList();
-      r.afterCreate = store.map(l => l.title).join(',');
+    document.getElementById('wlNewListBtn').click();
+    document.getElementById('wlNewInput').value = 'Earnings';
+    await submitWlNewList();
+    r.afterCreate = titles();
 
-      // Case-insensitive: "earnings" must not join "Earnings".
-      document.getElementById('wlNewListBtn').click();
-      document.getElementById('wlNewInput').value = 'earnings';
-      await submitWlNewList();
-      r.dupeRefused = /already have a list/.test(document.getElementById('wlNewErr').textContent);
-      r.dupeDialogStaysOpen = !document.getElementById('wlNewBackdrop').hidden;
-      r.dupeKeptName = document.getElementById('wlNewInput').value;
-      r.afterDupe = store.map(l => l.title).join(',');
-      closeWlNewList();
+    // Case-insensitive: "earnings" must not join "Earnings".
+    document.getElementById('wlNewListBtn').click();
+    document.getElementById('wlNewInput').value = 'earnings';
+    await submitWlNewList();
+    r.dupeRefused = /already have a list/.test(document.getElementById('wlNewErr').textContent);
+    r.dupeDialogStaysOpen = !document.getElementById('wlNewBackdrop').hidden;
+    r.dupeKeptName = document.getElementById('wlNewInput').value;
+    r.afterDupe = titles();
+    closeWlNewList();
 
-      // The count comes from SAVED symbols, so an unresolved-ticker list cannot
-      // be described as empty at the moment it is about to be destroyed.
-      // LOCKED: the × must be disabled, and the guard must hold even when the
-      // dialog is opened directly — a disabled button is a hint, not the rule
-      // (owner ruling 2026-08-01).
-      wlLocked = true;
-      renderWatchlist();
-      r.lockedDisabled = document.querySelectorAll('.wl-del')[0].disabled;
-      r.lockedNewListStillOffered = !document.getElementById('wlNewListBtn').hidden;
-      openWlDelList(0, store[0].title, null);
-      r.lockedDialogRefused = document.getElementById('wlDelBackdrop').hidden;
-      wlLocked = false;
-      renderWatchlist();
+    // The count comes from SAVED symbols, so an unresolved-ticker list cannot
+    // be described as empty at the moment it is about to be destroyed.
+    // LOCKED: the × must be disabled, and the guard must hold even when the
+    // dialog is opened directly — a disabled button is a hint, not the rule
+    // (owner ruling 2026-08-01).
+    wlLocked = true;
+    renderWatchlist();
+    r.lockedDisabled = document.querySelectorAll('.wl-del')[0].disabled;
+    r.lockedNewListStillOffered = !document.getElementById('wlNewListBtn').hidden;
+    openWlDelList(0, window.__roster[0].title, null);
+    r.lockedDialogRefused = document.getElementById('wlDelBackdrop').hidden;
+    wlLocked = false;
+    renderWatchlist();
 
-      document.querySelectorAll('.wl-del')[0].click();
-      r.delText = document.getElementById('wlDelText').textContent;
-      r.focusOnSafe = document.activeElement.id;
-      await confirmWlDelList();
-      r.afterDelete = store.map(l => l.title).join(',');
-    } finally { window.fetch = realFetch; }
+    document.querySelectorAll('.wl-del')[0].click();
+    r.delText = document.getElementById('wlDelText').textContent;
+    r.focusOnSafe = document.activeElement.id;
+    await confirmWlDelList();
+    r.afterDelete = titles();
     return r;
   });
 
@@ -1631,8 +1710,7 @@ test('S31: create and delete a list; delete is behind the lock', async ({ page, 
 // the keyboard path disappearing.
 test('S21: watchlist edits need no unlock; removal needs a double-click', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
 
   // DEMO has no backend to write to — the roster is a committed bootstrap file —
   // so an edit control there would be one that cannot work.
@@ -1762,8 +1840,7 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
 // an ADDITION to double-click removal rather than a replacement.
 test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Escape writes nothing', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
 
   // Demo has no backend to write to, so no write surface may render at all —
   // the tray and the trash are write controls like the + always was.
@@ -1961,8 +2038,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
 // checked against it.
 test('S22: quick edits resolve the right band when two lists share a title', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
 
   const picked = await page.evaluate(() => {
     /* two same-named lists, distinguishable only by position */
@@ -1990,8 +2066,7 @@ test('S22: quick edits resolve the right band when two lists share a title', asy
 // and ✎ silently vanished with no error shown anywhere.
 test('S24: a failed accounts load keeps the desk authenticated', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
 
   const state = await page.evaluate(async () => {
     // Stand in for the live desk holding a validated PIN, then make the
@@ -2048,27 +2123,18 @@ test('S25: long-term candles follow the weekly stochastic; swing follows open/cl
   await page.waitForSelector('#wbChart');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
   await page.waitForTimeout(800);
+  await installPaneProbe(page);
 
   const probe = await page.evaluate(() => {
     const svg = document.getElementById('wbChart');
-    const W = svg.viewBox.baseVal.width;
     const texts = [...svg.querySelectorAll('text')];
     const pts = el => (el.getAttribute('d').match(/[ML][-\d.]+[ ,][-\d.]+/g) || [])
       .map(s => s.slice(1).split(/[ ,]/).map(Number)).map(([x, y]) => ({ x, y }));
 
-    /* Pane bounds come from the pane titles — each pane owns the x band from
-       its own title to the next. Everything below is scoped to that band;
-       without it a lookup silently strays into a neighbouring pane. */
-    const titles = texts.filter(t => /^PRO \d/.test(t.textContent))
-      .map(t => ({ t: t.textContent, x: +t.getAttribute('x') }))
-      .sort((a, c) => a.x - c.x);
-
     const read = (titleRe, capRe) => {
-      const ti = titles.findIndex(t => titleRe.test(t.t));
-      if (ti < 0) return { err: 'pane title not found: ' + titleRe };
-      const x0 = titles[ti].x - 10;
-      const x1 = ti + 1 < titles.length ? titles[ti + 1].x - 10 : W;
-      const inPane = x => x >= x0 && x < x1;
+      const pane = window.__pane(titleRe);   // the pane's x band + its candles (see installPaneProbe)
+      if (pane.err) return { err: pane.err };
+      const { inPane, rects } = pane;
 
       const cap = texts.find(t => capRe.test(t.textContent) && inPane(+t.getAttribute('x')));
       if (!cap) return { err: 'caption not found in pane: ' + capRe };
@@ -2081,21 +2147,6 @@ test('S25: long-term candles follow the weekly stochastic; swing follows open/cl
       const kO = near('#e23b3b'), dO = near('#f5c518');
       if (!kO || !dO) return { err: 'strip paths not found under ' + capRe };
       const k = pts(kO.p), d = pts(dO.p);
-
-      // candles sit above the pane's FIRST strip, never above a lower one
-      const topCapY = Math.min(...texts
-        .filter(t => /STOCH|RSI/.test(t.textContent) && inPane(+t.getAttribute('x')))
-        .map(t => +t.getAttribute('y')));
-      let rects = [...svg.querySelectorAll('rect[shape-rendering=crispEdges]')]
-        .map(r => ({ cx: +r.getAttribute('x') + +r.getAttribute('width') / 2, y: +r.getAttribute('y'), h: +r.getAttribute('height'), fill: r.getAttribute('fill') }))
-        .filter(r => inPane(r.cx) && r.y < topCapY - 20);
-      /* Volume bars share the candle shape but all rest on ONE baseline, so the
-         modal bottom edge identifies them. They stay price-coloured on purpose,
-         and counting them here would fake a disagreement. */
-      const tally = {};
-      for (const r of rects) { const bb = (r.y + r.h).toFixed(1); tally[bb] = (tally[bb] || 0) + 1; }
-      const vol = Object.entries(tally).sort((a, c) => c[1] - a[1])[0];
-      if (vol && vol[1] > 5) rects = rects.filter(r => (r.y + r.h).toFixed(1) !== vol[0]);
 
       /* Tolerance scales with bar spacing. A fixed pixel budget spans three
          bars once the pane is 166px wide on a phone, which is how an earlier
@@ -2148,8 +2199,7 @@ test('S25: long-term candles follow the weekly stochastic; swing follows open/cl
 // including the parts that must be ABSENT.
 test('S23: post-market prints render, and only where the instrument trades', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('#mktTiles .mk-tile').first()).toBeVisible({ timeout: 10000 });
+  await gotoDemo(page, '#mktTiles .mk-tile', 10000);
 
   // All four index tiles carry an after-hours line, and each NAMES its proxy —
   // an index has no extended session, so an unlabelled number here would claim
@@ -2276,7 +2326,9 @@ async function askDesk(page, q) {
   await page.locator('#askBody form button[type="submit"]').click();
   await expect(page.locator('#askBody .ask-a').last()).toBeVisible({ timeout: 90000 });
 }
-function assistantGates(page) {
+/** The shared opening of S15–S19: skip unless live + opted in + credentialed, size the timeout, unlock the desk. */
+async function assistantSession(page) {
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   test.skip(!process.env.RUN_ASSISTANT_TESTS, 'assistant tests are opt-in (real Claude calls) — set RUN_ASSISTANT_TESTS=1');
   test.skip(!AUTH_CREDENTIAL, NO_CREDENTIAL);
   /* The config's 30s test timeout is shorter than ONE askDesk (its own wait is
@@ -2285,15 +2337,14 @@ function assistantGates(page) {
      unlockDesk (its waits sum to 40s) + askDesk (90s) + a second unlockDesk
      (40s) + the 10s replay check is 180s only if every wait runs to its limit,
      so a healthy run has headroom. Set here rather than per test because all
-     five call this gate first, and a sixth added later gets it for free. */
+     five open with this session, and a sixth added later gets it for free. */
   test.setTimeout(180_000);
+  await unlockDesk(page);
 }
 
 test('S15: assistant remembers across a reload (opt-in, live only)', async ({ page, renderWitness }) => {
   renderWitness();
-  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  assistantGates(page);
-  await unlockDesk(page);
+  await assistantSession(page);
   await askDesk(page, 'Remember the codeword is HELIX. Reply with just: noted.');
   await unlockDesk(page); // fresh render → transcript replays from desk_chat_memory
   await expect(page.locator('#askBody .ask-thread')).toContainText(/HELIX/i, { timeout: 10000 });
@@ -2301,27 +2352,21 @@ test('S15: assistant remembers across a reload (opt-in, live only)', async ({ pa
 
 test('S16: a research question renders an answer (opt-in, live only)', async ({ page, renderWitness }) => {
   renderWitness();
-  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  assistantGates(page);
-  await unlockDesk(page);
+  await assistantSession(page);
   await askDesk(page, 'What was the most recent US CPI year-over-year figure? One sentence, name the source.');
   await expect(page.locator('#askBody .ask-a').last()).toBeVisible();
 });
 
 test('S17: an off-page ticker returns an answer via live data (opt-in, live only)', async ({ page, renderWitness }) => {
   renderWitness();
-  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  assistantGates(page);
-  await unlockDesk(page);
+  await assistantSession(page);
   await askDesk(page, 'What is the current price of KO? One line.');
   await expect(page.locator('#askBody .ask-a').last()).toBeVisible();
 });
 
 test('S18: gives a directional view, not a refusal; disclaimer stays (opt-in, live only)', async ({ page, renderWitness }) => {
   renderWitness();
-  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  assistantGates(page);
-  await unlockDesk(page);
+  await assistantSession(page);
   await askDesk(page, 'One-word lean on SPY right now: buy, sell, or hold?');
   await expect(page.locator('#askBody .lock-error')).toBeHidden();
   await expect(page.locator('#askBody .ai-disclaimer')).toContainText(/not financial advice/i);
@@ -2329,9 +2374,7 @@ test('S18: gives a directional view, not a refusal; disclaimer stays (opt-in, li
 
 test('S19: clear empties the conversation (opt-in, live only)', async ({ page, renderWitness }) => {
   renderWitness();
-  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  assistantGates(page);
-  await unlockDesk(page);
+  await assistantSession(page);
   await askDesk(page, 'Reply with just: ok.');
   page.on('dialog', d => d.accept()); // the clear confirmation
   await page.locator('#askBody .ask-clear').click();
@@ -2430,8 +2473,7 @@ test('S27: watchlist tiles are half-width, stacked, and never clip a value', asy
 // ─────────────────────────────────────────────────────────────────────────────
 test('S28: the charts quote cache is timestamped and its TTL is session-aware', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 15000 });
+  await gotoDemo(page, '#wbChart', 15000);
 
   const run = await page.evaluate(async () => {
     if (typeof wbInfoTtlMs !== 'function' || typeof maybeFetchWbInfo !== 'function') return { missing: true };
@@ -2523,8 +2565,7 @@ test('S28: the charts quote cache is timestamped and its TTL is session-aware', 
 // ─────────────────────────────────────────────────────────────────────────────
 test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
+  await gotoDemo(page, '#askBody', 15000);
 
   // Demo has no backend to write to, so no roster control is offered at all.
   await expect(page.locator('.ask-sched-btn'), 'no ⏱ in demo').toHaveCount(0);
@@ -2721,8 +2762,7 @@ test('S30: watchlist writes carry the roster version they read', async ({ page, 
 // ─────────────────────────────────────────────────────────────────────────────
 test('S32: a question can be interrupted, and the stop is not silent', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
+  await gotoDemo(page, '#askBody', 15000);
 
   // Demo has no backend to ask, so no Stop should exist to press.
   await expect(page.locator('.ask-stop'), 'no Stop in demo — there is nothing in flight').toHaveCount(0);
@@ -2782,8 +2822,7 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
 
 test('S33: verify is armed per question and disarms itself after an answer', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('#askBody')).toBeVisible({ timeout: 15000 });
+  await gotoDemo(page, '#askBody', 15000);
 
   // Demo has no backend, so there is no answer to check and no control to offer.
   await expect(page.locator('.ask-verify'), 'no verify toggle in demo').toHaveCount(0);
@@ -2869,35 +2908,16 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
 // kind of fault that quietly destroys trust in the pane.
 test('S34: steady mode repaints the long-term pane, and a bar keeps its colour across a zoom', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 10000 });
-  await page.waitForTimeout(800);
+  await gotoDemo(page, '#wbChart', 10000, 800);
+  await installPaneProbe(page);
 
   /* Colours of the RIGHTMOST candles in Pro 2, newest first. Keyed from the
      right edge on purpose: the last N bars are the same N bars at any zoom, so
      two reads stay comparable while every x-coordinate has moved. */
   const colours = n => page.evaluate(count => {
-    const svg = document.getElementById('wbChart');
-    const texts = [...svg.querySelectorAll('text')];
-    const titles = texts.filter(t => /^PRO \d/.test(t.textContent))
-      .map(t => ({ t: t.textContent, x: +t.getAttribute('x') })).sort((a, c) => a.x - c.x);
-    const ti = titles.findIndex(t => /LONG-TERM/.test(t.t));   // by doctrine, not by number
-    if (ti < 0) return { err: 'no Pro 2 pane' };
-    const x0 = titles[ti].x - 10;
-    const x1 = ti + 1 < titles.length ? titles[ti + 1].x - 10 : svg.viewBox.baseVal.width;
-    const inPane = x => x >= x0 && x < x1;
-    const topCapY = Math.min(...texts.filter(t => /STOCH|RSI/.test(t.textContent) && inPane(+t.getAttribute('x')))
-      .map(t => +t.getAttribute('y')));
-    let rects = [...svg.querySelectorAll('rect[shape-rendering=crispEdges]')]
-      .map(r => ({ cx: +r.getAttribute('x') + +r.getAttribute('width') / 2, y: +r.getAttribute('y'), h: +r.getAttribute('height'), fill: r.getAttribute('fill') }))
-      .filter(r => inPane(r.cx) && r.y < topCapY - 20);
-    // volume bars share the candle shape but rest on one baseline — and stay
-    // price-coloured, so counting them would fake a disagreement
-    const tally = {};
-    for (const r of rects) { const bb = (r.y + r.h).toFixed(1); tally[bb] = (tally[bb] || 0) + 1; }
-    const vol = Object.entries(tally).sort((a, c) => c[1] - a[1])[0];
-    if (vol && vol[1] > 5) rects = rects.filter(r => (r.y + r.h).toFixed(1) !== vol[0]);
-    return rects.sort((a, c) => c.cx - a.cx).slice(0, count).map(r => r.fill.includes('gain'));
+    const pane = window.__pane(/LONG-TERM/);   // by doctrine, not by number
+    if (pane.err) return pane;
+    return pane.rects.sort((a, c) => c.cx - a.cx).slice(0, count).map(r => r.fill.includes('gain'));
   }, n);
 
   const cap = () => page.evaluate(() => {
@@ -2969,8 +2989,7 @@ test('S34: steady mode repaints the long-term pane, and a bar keeps its colour a
    and drag cases below are the load-bearing half of this test. */
 test('S35: a tile opens a detail window; double-click still removes', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
 
   const detail = page.locator('#wlDetailBackdrop');
   await expect(detail, 'the window starts closed').toBeHidden();
@@ -3067,8 +3086,7 @@ test('S36: the swing and long-term spans survive a reload, and a bad one falls b
   renderWitness();
   // three page loads plus three chart renders do not fit the 30s default
   test.setTimeout(90_000);
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
+  await gotoDemo(page, '#wbChart', 20000);
   const pressed = async () => page.evaluate(() => ({
     p1: [...document.querySelectorAll('#chartZoom button')].find(b => b.getAttribute('aria-pressed') === 'true')?.textContent,
     p2: [...document.querySelectorAll('#chartZoom2 button')].find(b => b.getAttribute('aria-pressed') === 'true')?.textContent,
@@ -3102,9 +3120,7 @@ test('S36: the swing and long-term spans survive a reload, and a bad one falls b
 test('S37: every pane pins a last-price tab, and panning does not restate it', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(60_000);
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
-  await page.waitForTimeout(800);
+  await gotoDemo(page, '#wbChart', 20000, 800);
 
   // The tab is a filled pentagon + its inverted label; read both so a flag
   // drawn with no number (or a number with no flag) fails rather than passes.
@@ -3209,9 +3225,7 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
 test('S45: the symbol column is 100 permanent slots, edited in place', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(90_000);
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wb-slots')).toBeVisible({ timeout: 15000 });
-  await page.waitForTimeout(1200);
+  await gotoDemo(page, '.wb-slots', 15000, 1200);
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
   const slots = () => page.evaluate(() =>
@@ -3234,7 +3248,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(shape.editors, 'no live input until a slot is opened — 100 would repaint every frame').toBe(0);
 
   // double-click opens THAT slot, focused
-  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').dblclick();
+  await slotBtn(page, 3).dblclick();
   await page.waitForTimeout(200);
   expect(await page.evaluate(() => {
     const i = document.querySelector('.wb-slot-input');
@@ -3245,7 +3259,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   await page.locator('.wb-slot-input').pressSequentially('qqq');
   await page.locator('.wb-slot-input').press('Enter');
   await page.waitForTimeout(900);
-  let stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || []);
+  let stored = await storedSyms(page);
   expect(stored[3], 'normalised into slot 3').toBe('QQQ');
   expect(stored[0], 'slot 0 untouched — nothing was pushed anywhere').toBe('');
   expect(stored.length, 'still exactly 100').toBe(100);
@@ -3257,11 +3271,10 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      double-click threshold and ours being two independent numbers. */
   await page.evaluate(() => wbPick(Object.keys(wbState.data.symbols)[0]));
   await page.waitForTimeout(300);
-  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').click();
+  await slotBtn(page, 3).click();
   await page.waitForTimeout(900);
   expect(await page.evaluate(() => wbState.sym), 'a single click charts that slot').toBe('QQQ');
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'and opens no editor').toBe(0);
+  expect(await editorCount(page), 'and opens no editor').toBe(0);
 
   /* A DOUBLE click opens the editor. It also charts that slot on the way in —
      the accepted trade for removing the defer — so what is asserted is the
@@ -3271,25 +3284,18 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      REPLACEMENT button and a `dblclick` listener would never fire. */
   await page.evaluate(() => wbPick(Object.keys(wbState.data.symbols)[0]));
   await page.waitForTimeout(300);
-  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').dblclick();
+  await slotBtn(page, 3).dblclick();
   await page.waitForTimeout(900);
-  expect(await page.evaluate(() => {
-    const i = document.querySelector('.wb-slot-input');
-    return i && i.closest('.wb-rail-row').dataset.slot;
-  }), 'a double-click opens the editor on the slot that was clicked').toBe('3');
+  expect(await editorSlot(page), 'a double-click opens the editor on the slot that was clicked').toBe('3');
   expect(await page.evaluate(() => wbState.sym),
     "and charts that slot's own symbol, never another").toBe('QQQ');
 
   // emptying clears the slot and moves NOTHING
-  await page.evaluate(() => {
-    const cur = JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}');
-    const syms = cur.syms.slice(); syms[7] = 'SPY';
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...cur, syms }));
-  });
+  await seedSlots(page, { 7: 'SPY' }, { repaint: false });
   await page.locator('.wb-slot-input').fill('');
   await page.locator('.wb-slot-input').press('Enter');
   await page.waitForTimeout(700);
-  stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || []);
+  stored = await storedSyms(page);
   expect(stored[3], 'emptying the text clears the slot').toBe('');
   expect(stored[7], 'and nothing below it moves up').toBe('SPY');
   expect(stored.length, 'still exactly 100 after a clear').toBe(100);
@@ -3297,7 +3303,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   /* Survives a repaint the owner did not cause — renderCharts rebuilds this rail
      on every animation frame of a chart drag and every 60s poll, so an editor
      holding its value only in the DOM is blanked between two keystrokes. */
-  await page.locator('.wb-slots .wb-rail-row').nth(5).locator('.wb-slot').dblclick();
+  await slotBtn(page, 5).dblclick();
   await page.waitForTimeout(200);
   await page.locator('.wb-slot-input').pressSequentially('AVA');
   const survived = await page.evaluate(() => {
@@ -3343,9 +3349,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      slot too, since that is what the owner would actually be charting. */
   await page.locator('.wb-slot-input').press('Enter');
   await page.waitForTimeout(400);
-  expect(await page.evaluate(() =>
-    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[5]),
-    'and lands whole — not truncated into a different symbol').toBe('ABCDEFGHIJ');
+  expect((await storedSyms(page))[5], 'and lands whole — not truncated into a different symbol').toBe('ABCDEFGHIJ');
   /* Reopen it holding that value — the selection check below needs something to
      select, and an empty input clamps every range to 0,0. */
   await page.evaluate(() => { wbEditSlot = 5; wbEditDraft = 'ABCDEFGHIJ'; renderWbSidebar(wbState.data); });
@@ -3396,7 +3400,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      every time), and a guard that flakes 1 run in 3 on harness behaviour is
      worse than one that measures the thing it cares about. The pairing across a
      rebuilt node is covered by the slot-to-slot case below. */
-  const deepBtn = page.locator('.wb-slots .wb-rail-row').nth(60).locator('.wb-slot');
+  const deepBtn = slotBtn(page, 60);
   await deepBtn.scrollIntoViewIfNeeded();
   await page.waitForTimeout(200);
   /* Force the rail's TOP above the viewport — ordinary, since this panel sits
@@ -3454,10 +3458,10 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      has moved. An isConnected check alone reads this as a repaint and DISCARDS
      the edit, which is what it did before it was measured. */
   const symWas = await page.evaluate(() => wbState.sym);
-  await page.locator('.wb-slots .wb-rail-row').nth(3).locator('.wb-slot').dblclick();
+  await slotBtn(page, 3).dblclick();
   await page.waitForTimeout(200);
   await page.locator('.wb-slot-input').fill('QQQ');
-  await page.locator('.wb-slots .wb-rail-row').nth(8).locator('.wb-slot').click();
+  await slotBtn(page, 8).click();
   await page.waitForTimeout(800);
   const moved = await page.evaluate(() => ({
     at3: (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[3],
@@ -3474,9 +3478,8 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      owner's click simply does nothing. Closing only the edited ROW is what makes
      it survive. Falsified: with a full rebuild in the blur this returns
      editor=null, exactly as CI reported. */
-  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-  await page.waitForTimeout(200);
-  const slowTo = page.locator('.wb-slots [data-slot="31"] .wb-slot');
+  await closeEditor(page);
+  const slowTo = slotBtn(page, 31);
   await slowTo.scrollIntoViewIfNeeded();
   await page.waitForTimeout(200);
   /* 30 and 31, both still EMPTY at this point — an empty slot opens its editor
@@ -3497,8 +3500,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   }));
   expect(slow.open, 'a SLOW press still opens the slot — the blur must not rebuild the rail under it').toBe('31');
   expect(slow.at30, 'and the text it left behind is still saved').toBe('WXYZ');
-  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-  await page.waitForTimeout(200);
+  await closeEditor(page);
   expect(moved.at3, 'clicking to another slot KEEPS what was typed').toBe('QQQ');
   expect(moved.open, 'and opens the slot that was clicked').toBe('8');
   expect(moved.sym, 'without charting the one they left').toBe(symWas);
@@ -3514,14 +3516,11 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
     localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
     wbEditSlot = -1; renderWbSidebar(wbState.data);
   });
-  await page.locator('.wb-slots .wb-rail-row').nth(2).locator('.wb-slot').dblclick();
+  await slotBtn(page, 2).dblclick();
   await page.waitForTimeout(300);
-  await page.locator('.wb-slots .wb-rail-row').nth(4).locator('.wb-slot').dblclick();
+  await slotBtn(page, 4).dblclick();
   await page.waitForTimeout(900);
-  expect(await page.evaluate(() => {
-    const i = document.querySelector('.wb-slot-input');
-    return i && i.closest('.wb-rail-row').dataset.slot;
-  }), 'a double-click on ANOTHER filled slot opens it, even with an editor already open').toBe('4');
+  expect(await editorSlot(page), 'a double-click on ANOTHER filled slot opens it, even with an editor already open').toBe('4');
   await page.locator('.wb-slot-input').press('Escape');
   await page.waitForTimeout(300);
 
@@ -3533,16 +3532,13 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      Our own 500ms window governs both halves now, so they cannot disagree.
      Driven through raw mouse clicks, not `dblclick()`: Playwright's dblclick
      sends the pair as fast as it can and could never express this gap. */
-  const slot4 = await page.locator('.wb-slots .wb-rail-row').nth(4).locator('.wb-slot').boundingBox();
+  const slot4 = await slotBtn(page, 4).boundingBox();
   const cx = slot4.x + slot4.width / 2, cy = slot4.y + slot4.height / 2;
   await page.mouse.click(cx, cy);
   await page.waitForTimeout(300);
   await page.mouse.click(cx, cy);
   await page.waitForTimeout(700);
-  expect(await page.evaluate(() => {
-    const i = document.querySelector('.wb-slot-input');
-    return i && i.closest('.wb-rail-row').dataset.slot;
-  }), 'two clicks 300ms apart still open the editor — a defer shorter than the platform pairing charts instead').toBe('4');
+  expect(await editorSlot(page), 'two clicks 300ms apart still open the editor — a defer shorter than the platform pairing charts instead').toBe('4');
   await page.locator('.wb-slot-input').press('Escape');
   await page.waitForTimeout(300);
 
@@ -3551,7 +3547,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      slot rather than editing it — so without F2 a filled slot could only ever
      be changed with a mouse. Same rule the watchlist tiles follow with Delete. */
   await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-  await page.locator('.wb-slots .wb-rail-row').nth(60).locator('.wb-slot').focus();
+  await slotBtn(page, 60).focus();
   await page.keyboard.press('F2');
   await page.waitForTimeout(300);
   expect(await page.evaluate(() => {
@@ -3565,22 +3561,10 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
 
   /* Escape still ABANDONS — it must not be undone by the blur that its own
      re-render fires a tick later. */
-  await page.evaluate(() => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    const syms = c.syms.slice(); syms[20] = 'SPY';
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
-    wbEditSlot = -1; renderWbSidebar(wbState.data);
-  });
-  await page.locator('.wb-slots .wb-rail-row').nth(20).locator('.wb-slot').dblclick();
-  await page.waitForTimeout(200);
-  await page.locator('.wb-slot-input').fill('ZZZZ');
-  await page.locator('.wb-slot-input').press('Escape');
-  await page.waitForTimeout(600);
-  expect(await page.evaluate(() =>
-    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[20]),
-    'Escape keeps what was STORED, not what was typed').toBe('SPY');
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'and closes the editor').toBe(0);
+  await seedSlots(page, { 20: 'SPY' });
+  await editSlot(page, 20, 'ZZZZ', 'Escape', 600, { dbl: true });
+  expect((await storedSyms(page))[20], 'Escape keeps what was STORED, not what was typed').toBe('SPY');
+  expect(await editorCount(page), 'and closes the editor').toBe(0);
 
   /* A REPAINT THE OWNER DID NOT CAUSE MUST NOT MOVE THE PAGE. This rail is
      rebuilt every 60s, and restoring focus to the open editor with a plain
@@ -3598,8 +3582,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      asserted empty rather than assumed, and the editor is asserted OPEN and
      FOCUSED before anything is measured, so this cannot pass by never having
      armed the thing it guards. */
-  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-  await page.waitForTimeout(200);
+  await closeEditor(page);
   expect(await page.evaluate(() =>
     document.querySelector('.wb-slots [data-slot="90"] .wb-side-sym').textContent),
     'slot 90 is empty, so a click on it opens the editor rather than charting').toBe('');
@@ -3675,29 +3658,19 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(await page.evaluate(() => Math.round(window.scrollY)),
     `the 60s repaint does not yank the page back to the charts (belt and braces both real; isolated trace ${JSON.stringify(focusTrace)})`)
     .toBe(0);
-  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-  await page.waitForTimeout(200);
+  await closeEditor(page);
 
   /* ONE TAB STOP for the whole column, not a hundred. This column precedes the
      roster in DOM order, so 100 tabbable buttons put the ROSTER up to 100 Tab
      presses away and made F2 largely theoretical (Codex P2). Arrow keys move the
      stop with focus. */
-  await page.evaluate(() => { wbEditSlot = -1; wbSlotTab = 0; renderWbSidebar(wbState.data); });
-  await page.waitForTimeout(200);
-  expect(await page.evaluate(() =>
-    [...document.querySelectorAll('.wb-slots .wb-slot')].filter(b => b.tabIndex === 0).length),
-    'exactly one slot is in the tab sequence').toBe(1);
-  await page.locator('.wb-slots [data-slot="0"] .wb-slot').focus();
+  await closeEditor(page, { tab: true });
+  expect((await tabStops(page)).length, 'exactly one slot is in the tab sequence').toBe(1);
+  await slotBtn(page, 0).focus();
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(150);
-  expect(await page.evaluate(() => {
-    const a = document.activeElement;
-    return a && a.closest('.wb-rail-row') && a.closest('.wb-rail-row').dataset.slot;
-  }), 'ArrowDown moves focus to the next slot').toBe('1');
-  expect(await page.evaluate(() =>
-    [...document.querySelectorAll('.wb-slots .wb-slot')].filter(b => b.tabIndex === 0)
-      .map(b => b.closest('.wb-rail-row').dataset.slot)),
-    'and the single tab stop travels with it').toEqual(['1']);
+  expect(await focusedSlot(page), 'ArrowDown moves focus to the next slot').toBe('1');
+  expect(await tabStops(page), 'and the single tab stop travels with it').toEqual(['1']);
   /* A slot is edited by DOUBLE-TAP on a touch-only phone, where F2 does not
      exist — so the browser must not eat that gesture as a zoom (Codex P1, the
      same rule .wl-tile follows). */
@@ -3710,25 +3683,14 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      click must CHART. Without clearing the pair on open it is read as the second
      half of the original one and reopens the editor instead, so a slot could not
      be charted immediately after filling it (Codex P2). */
-  await page.evaluate(() => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    const syms = c.syms.slice(); syms[50] = '';
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
-    wbEditSlot = -1; renderWbSidebar(wbState.data);
-    wbPick(Object.keys(wbState.data.symbols)[1]);
-  });
+  await seedSlots(page, { 50: '' }, { pick: 1 });
   await page.waitForTimeout(300);
   const pairFrom = await page.evaluate(() => wbState.sym);
   const pairSym = await page.evaluate(() => Object.keys(wbState.data.symbols)[0]);
-  await page.locator('.wb-slots [data-slot="50"] .wb-slot').click();
-  await page.waitForTimeout(150);
-  await page.locator('.wb-slot-input').fill(pairSym);
-  await page.locator('.wb-slot-input').press('Enter');
-  await page.waitForTimeout(150);          /* well inside WB_SLOT_DBL_MS */
-  await page.locator('.wb-slots [data-slot="50"] .wb-slot').click();
+  await editSlot(page, 50, pairSym, 'Enter', 150, { openWait: 150 });   /* well inside WB_SLOT_DBL_MS */
+  await slotBtn(page, 50).click();
   await page.waitForTimeout(600);
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'clicking a slot right after filling it charts — it does not reopen the editor').toBe(0);
+  expect(await editorCount(page), 'clicking a slot right after filling it charts — it does not reopen the editor').toBe(0);
   expect(await page.evaluate(() => wbState.sym),
     'and the chart moved to what was just typed').toBe(pairSym);
   expect(pairFrom).not.toBe(pairSym);      /* the assertion above would be vacuous otherwise */
@@ -3739,21 +3701,12 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      Arrow keys and F2 stopped responding until the owner tabbed all the way back
      in — and this column is a single tab stop, so that is a long way back
      (Codex P2). */
-  await page.evaluate(() => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    const syms = c.syms.slice(); syms[2] = Object.keys(wbState.data.symbols)[0];
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
-    wbEditSlot = -1; renderWbSidebar(wbState.data);
-  });
+  await seedSlots(page, { 2: 0 });
   await page.waitForTimeout(200);
-  await page.locator('.wb-slots [data-slot="2"] .wb-slot').focus();
+  await slotBtn(page, 2).focus();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(700);
-  expect(await page.evaluate(() => {
-    const a = document.activeElement;
-    const row = a && a.closest && a.closest('.wb-rail-row');
-    return row ? row.dataset.slot : (a ? a.tagName : null);
-  }), 'keyboard charting keeps focus on the slot, not on the document').toBe('2');
+  expect(await focusedSlot(page), 'keyboard charting keeps focus on the slot, not on the document').toBe('2');
 
   /* EVERY non-slot way of changing the chart breaks a pending slot pair — and
      the header's `change` handler reaches wbPick DIRECTLY, without the loader or
@@ -3761,24 +3714,18 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      an already-loaded symbol in the header, click A again inside the window: the
      last click must CHART A, not be read as the second half of the first pair. */
   const [pairA, pairB] = await page.evaluate(() => Object.keys(wbState.data.symbols).slice(0, 2));
-  await page.evaluate((sym) => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    const syms = c.syms.slice(); syms[6] = sym;
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
-    wbEditSlot = -1; renderWbSidebar(wbState.data);
-  }, pairA);
+  await seedSlots(page, { 6: pairA });
   await page.waitForTimeout(200);
-  await page.locator('.wb-slots [data-slot="6"] .wb-slot').click();
+  await slotBtn(page, 6).click();
   await page.waitForTimeout(150);
   await page.evaluate((sym) => {
     const inp = document.getElementById('wbSymInput');
     inp.value = sym; inp.dispatchEvent(new Event('change', { bubbles: true }));
   }, pairB);
   await page.waitForTimeout(150);
-  await page.locator('.wb-slots [data-slot="6"] .wb-slot').click();
+  await slotBtn(page, 6).click();
   await page.waitForTimeout(600);
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'the header change path breaks the pair — the next slot click charts').toBe(0);
+  expect(await editorCount(page), 'the header change path breaks the pair — the next slot click charts').toBe(0);
   expect(await page.evaluate(() => wbState.sym), 'and lands on that slot').toBe(pairA);
 
   /* A SLOT HOLDING AN UNRESOLVABLE DRAFT IS NEVER CHARTED. The owner can reach
@@ -3805,8 +3752,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(junkCalls.seen, 'an unresolvable draft is never sent to the proxy').toEqual([]);
   expect(junkCalls.editor, 'clicking it opens the editor instead').toBe('58');
   expect(junkCalls.value, 'holding the bad text, ready to correct').toBe('!!');
-  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-  await page.waitForTimeout(200);
+  await closeEditor(page);
 
   /* SETTLING AN EDITOR KEEPS FOCUS ON THE SLOT — for Enter AND for Escape.
      Both remove the focused input; renderWbSidebar's restore cannot help,
@@ -3814,84 +3760,52 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      the INPUT. Without this a keyboard user is dropped to the document the
      moment their edit lands, and this column is a single tab stop (Codex P2). */
   for (const [key, slot] of [['Enter', '52'], ['Escape', '53']]) {
-    await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-    await page.waitForTimeout(150);
-    await page.locator('.wb-slots [data-slot="' + slot + '"] .wb-slot').click();
-    await page.waitForTimeout(200);
-    await page.locator('.wb-slot-input').fill('AAPL');
-    await page.locator('.wb-slot-input').press(key);
-    await page.waitForTimeout(600);
-    expect(await page.evaluate(() => {
-      const a = document.activeElement;
-      const row = a && a.closest && a.closest('.wb-rail-row');
-      return row ? row.dataset.slot : (a ? a.tagName : null);
-    }), key + ' leaves focus on the slot, not on the document').toBe(slot);
+    await closeEditor(page, { wait: 150 });
+    await editSlot(page, slot, 'AAPL', key, 600);
+    expect(await focusedSlot(page), key + ' leaves focus on the slot, not on the document').toBe(slot);
   }
 
   /* KEYBOARD ACTIVATION NEVER PAIRS. Enter/Space fire a synthetic click with
      detail 0; two of them inside the window — or Enter auto-repeating while
      held — were read as a double-click and opened the editor, contradicting F2
      being THE keyboard edit gesture (Codex P2). */
-  await page.evaluate(() => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    const syms = c.syms.slice(); syms[54] = Object.keys(wbState.data.symbols)[0];
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
-    wbEditSlot = -1; renderWbSidebar(wbState.data);
-  });
+  await seedSlots(page, { 54: 0 });
   await page.waitForTimeout(200);
-  await page.locator('.wb-slots [data-slot="54"] .wb-slot').focus();
+  await slotBtn(page, 54).focus();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(200);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'two keyboard activations chart twice — they never open the editor').toBe(0);
+  expect(await editorCount(page), 'two keyboard activations chart twice — they never open the editor').toBe(0);
   /* BOTH halves must be pointer clicks. Gating only the check leaves the
      synthetic keyboard click RECORDING itself, so Enter followed by a pointer
      click inside the window opens the editor instead of charting (Codex P2,
      round 5). */
-  await page.locator('.wb-slots [data-slot="54"] .wb-slot').focus();
+  await slotBtn(page, 54).focus();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(150);
-  await page.locator('.wb-slots [data-slot="54"] .wb-slot').click();
+  await slotBtn(page, 54).click();
   await page.waitForTimeout(500);
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'a pointer click after a keyboard one charts — a keyboard press is not half a double-click').toBe(0);
+  expect(await editorCount(page), 'a pointer click after a keyboard one charts — a keyboard press is not half a double-click').toBe(0);
 
   /* The roving stop follows a click EVEN WHEN NOTHING REPAINTS. wbLoadSymbol
      does not repaint when the lookup fails — demo mode refuses live lookups —
      so assigning the module state alone left the live buttons untouched and Tab
      went back to the wrong slot (Codex P2). */
-  await page.evaluate(() => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    const syms = c.syms.slice(); syms[46] = 'ZZZZ';   /* filled, and it will NOT resolve */
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
-    wbEditSlot = -1; wbSlotTab = 0; renderWbSidebar(wbState.data);
-  });
+  await seedSlots(page, { 46: 'ZZZZ' }, { tab: true });   /* filled, and it will NOT resolve */
   await page.waitForTimeout(200);
-  await page.locator('.wb-slots [data-slot="46"] .wb-slot').click();
+  await slotBtn(page, 46).click();
   await page.waitForTimeout(500);
-  expect(await page.evaluate(() =>
-    [...document.querySelectorAll('.wb-slots .wb-slot')].filter(b => b.tabIndex === 0)
-      .map(b => b.closest('.wb-rail-row').dataset.slot)),
-    'the live tab stop follows the click even with no repaint').toEqual(['46']);
-  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
-  await page.waitForTimeout(200);
+  expect(await tabStops(page), 'the live tab stop follows the click even with no repaint').toEqual(['46']);
+  await closeEditor(page);
 
   /* A committed ticker that cannot be charted must still CLOSE its editor. In
      demo mode wbLoadSymbol refuses live lookups and returns without repainting,
      so leaving the input up left it logically settled but on screen, rejecting
      every later Enter, Escape and blur (Codex P2). */
-  await page.locator('.wb-slots [data-slot="40"] .wb-slot').click();
-  await page.waitForTimeout(200);
-  await page.locator('.wb-slot-input').fill('ZZZZ');
-  await page.locator('.wb-slot-input').press('Enter');
-  await page.waitForTimeout(700);
-  expect(await page.evaluate(() => document.querySelectorAll('.wb-slot-input').length),
-    'an uncharTable ticker still closes the editor, never leaves an inert one').toBe(0);
-  expect(await page.evaluate(() =>
-    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])[40]),
-    'and the slot keeps what was typed').toBe('ZZZZ');
+  await editSlot(page, 40, 'ZZZZ', 'Enter', 700);
+  expect(await editorCount(page), 'an uncharTable ticker still closes the editor, never leaves an inert one').toBe(0);
+  expect((await storedSyms(page))[40], 'and the slot keeps what was typed').toBe('ZZZZ');
 
   /* The boot re-fetch asks for the FILLED slots and nothing else. `syms` is 100
      positional entries now, mostly empty on any real desk, so feeding it
@@ -3930,8 +3844,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
 test('S40: charts rail — roster picker and column shape', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(90_000);
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbSidebar .wb-rail-col').first()).toBeVisible({ timeout: 15000 });
+  await gotoDemo(page, '#wbSidebar .wb-rail-col', 15000);
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
 
@@ -3995,9 +3908,8 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
 
   /* Clicking a ROSTER name charts it and writes NOTHING into the SYMBOL column
      — nothing pins there any more (owner ruling 2026-08-26). */
-  const filled = () => page.evaluate(() =>
-    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || [])
-      .map((s, i) => (s ? i + ':' + s : null)).filter(Boolean).join('|'));
+  const filled = async () => (await storedSyms(page))
+    .map((s, i) => (s ? i + ':' + s : null)).filter(Boolean).join('|');
   /* Read the FILLED slots, not the raw array: the store is written lazily (the
      click itself persists the selected roster), so the array goes from absent
      to 100 empty strings without a slot gaining anything. Comparing the raw
@@ -4009,9 +3921,7 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   await page.waitForTimeout(700);
   expect(await page.evaluate(() => wbState.sym), 'a roster click charts it').toBe(picked);
   expect(await filled(), 'and leaves the SYMBOL slots untouched').toBe(slotsBefore);
-  expect(await page.evaluate(() =>
-    (JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').syms || []).length),
-    'the column is still exactly 100 slots').toBe(100);
+  expect((await storedSyms(page)).length, 'the column is still exactly 100 slots').toBe(100);
 
   // the chosen roster survives a reload
   // (unconditional: the picker was just asserted to offer more than one entry,
@@ -4040,8 +3950,7 @@ test('S42: watchlist columns page instead of scrolling', async ({ page, browserN
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
   await blockRosterWrites(page);   // the forced-live drag below must never reach the real roster
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 15000);
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
 
@@ -4209,8 +4118,7 @@ test('S41: watchlists are vertical columns above the charts', async ({ page, ren
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
-  await page.goto('./?demo=1');
-  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 15000);
 
   const shape = await page.evaluate(() => {
     const groups = [...document.querySelectorAll('.wl-strip .mkt-group')];
@@ -4273,9 +4181,7 @@ test('S41: watchlists are vertical columns above the charts', async ({ page, ren
 test('S39: every pane draws a volume average, spanning the full window', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(60_000);
-  await page.goto('./?demo=1');
-  await expect(page.locator('#wbChart')).toBeVisible({ timeout: 20000 });
-  await page.waitForTimeout(800);
+  await gotoDemo(page, '#wbChart', 20000, 800);
 
   /* Each average is attributed to ITS OWN pane by x-band, the same way S25 and
      S34 locate panes, because a bare set assertion does not enforce the claim
@@ -4343,8 +4249,7 @@ test('S39: every pane draws a volume average, spanning the full window', async (
  * today's rows carry no date, older rows do. Demo seeds both deliberately. */
 test('S43: news rows date anything that is not from today', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await expect(page.locator('.news-row').first()).toBeVisible({ timeout: 20000 });
+  await gotoDemo(page, '.news-row', 20000);
 
   const rows = await page.evaluate(() => [...document.querySelectorAll('.news-row')].map((r) => {
     const when = r.querySelector('.news-time');
@@ -4474,15 +4379,7 @@ test('S43: news rows date anything that is not from today', async ({ page, rende
 // pass. Pixel sampling is the only thing above this rung.
 test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
-
-  const toggle = page.locator('#heatToggle');
-  if (await toggle.count()) await toggle.click();
-  await page.waitForFunction(
-    () => document.querySelectorAll('#heatmapSvg text.heat-label').length > 20,
-    null, { timeout: 20000 },
-  );
+  await openHeatmap(page);
 
   const report = await page.evaluate(() => {
     const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
@@ -4735,15 +4632,7 @@ test('S46: heatmap tile labels carry a painted halo meeting AA, as rendered', as
 // ---------------------------------------------------------------------------
 test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ page, renderWitness }) => {
   renderWitness();
-  await page.goto('./?demo=1');
-  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
-
-  const toggle = page.locator('#heatToggle');
-  if (await toggle.count()) await toggle.click();
-  await page.waitForFunction(
-    () => document.querySelectorAll('#heatmapSvg text.heat-label').length > 20,
-    null, { timeout: 20000 },
-  );
+  await openHeatmap(page);
 
   const svg = page.locator('#heatmapSvg');
   await svg.scrollIntoViewIfNeeded();
