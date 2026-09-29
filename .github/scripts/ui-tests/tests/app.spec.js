@@ -5116,3 +5116,239 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     dirty: { edit: () => page.locator('.ask-sched-q').fill('an unsaved edit'), note: '#askSchedNote' },
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S49 — a position whose day-% is UNKNOWN says so: it stays null through the
+// payload mapper, renders as an em dash, and sorts LAST in both directions.
+//
+// The sync stores null when the feeds could not price a symbol (option OCC
+// symbols, thin tickers). Three separate layers used to turn that into a number:
+// `Number(null)` is 0, so the mapper made it a flat +0.00% before the renderer
+// could dash it; fmtPct(null) answered "+0.00%" (null >= 0); and the sort key
+// -Infinity led an ascending click and printed "-Infinity" into data-sort. The
+// result was four option positions reading 0.00% while AVAV was down 38% — the
+// largest moves in the account claiming they had not moved. A GENUINE flat 0
+// must survive all of it, which is what stops "dash everything falsy" passing.
+//
+// Demo, in-page: mapDashboardPayload and renderAccounts are fed a hand-built
+// payload, so nothing here touches a backend.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S49: a position with an unknown day-% renders a dash and sorts last in both directions', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '#accountGrid .lamp', 10000);
+
+  const out = await page.evaluate(() => {
+    const payload = { accounts: [{ account_key: 'A', label: 'L', nav: '100', day_pnl: '1', total_unrl: '2', cash: '3', as_of: '2026-09-25', created_at: null,
+      positions: [{ sym: 'UNK', qty: 1, mkt: 10, dayPct: null, unrl: 1 }, { sym: 'LOSS', qty: 1, mkt: 10, dayPct: -38.4, unrl: 1 },
+                  { sym: 'FLAT', qty: 1, mkt: 10, dayPct: 0, unrl: 1 }, { sym: 'UP', qty: 1, mkt: 10, dayPct: 1.2, unrl: 1 }] }],
+      equity: [{ account_key: 'A', as_of: '2026-09-25', nav: '100' }] };
+    const m = mapDashboardPayload(payload);
+    renderAccounts(m.accounts, { cls: 'lamp--eod', text: 'EOD' });
+    const table = [...document.querySelectorAll('.acct-positions table')].pop();
+    const rows = () => [...table.tBodies[0].rows];
+    const th = [...table.tHead.rows[0].cells].find(c => c.textContent === 'Day %');
+    const order = () => rows().map(r => r.cells[0].textContent.split(' ')[0]).join(',');
+    const cell = sym => { const c = rows().find(r => r.cells[0].textContent.startsWith(sym + ' ')).cells[2]; return { text: c.textContent, sort: c.dataset.sort }; };
+    const mapped = Object.fromEntries(m.accounts[0].positions.map(p => [p.sym, p.dayPct]));
+    const cells = { UNK: cell('UNK'), FLAT: cell('FLAT'), LOSS: cell('LOSS') };
+    const found = !!th;
+    th.click(); const asc = order();
+    th.click(); const desc = order();
+    return { mapped, cells, found, asc, desc };
+  });
+
+  expect(out.found, 'the positions table has a Day % column to sort').toBe(true);
+  expect(out.mapped.UNK, 'an unknown day-% stays null through the mapper — Number(null) is a fabricated flat 0').toBeNull();
+  expect(out.mapped.FLAT, 'a GENUINE flat day stays 0, so "unknown" is not "anything falsy"').toBe(0);
+  expect(out.mapped.LOSS, 'and a real move is untouched').toBe(-38.4);
+  expect(out.cells.UNK.text, 'an unknown day-% renders an em dash, never +0.00%').toBe('—');
+  expect(out.cells.FLAT.text, 'a real flat day still reads +0.00%').toBe('+0.00%');
+  expect(out.cells.LOSS.text, 'and the 38% loser reads as one').toBe('−38.40%');
+  expect(out.cells.UNK.sort, 'the unknown carries a BLANK sort key — not -Infinity, which printed into data-sort').toBe('');
+  expect(out.asc, 'ascending: the unknown is parked LAST, not first').toBe('LOSS,FLAT,UP,UNK');
+  expect(out.desc, 'descending: still LAST — an unknown never ranks between a loser and a winner').toBe('UP,FLAT,LOSS,UNK');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S50 — the heatmap follows its PERIOD: the ETF cut recolours by it, and the
+// movers table's last column is named for it.
+//
+// Two faults, one cause. The ETF cut was exempt from recolorForPeriod, so 1-Month
+// Performance drew a map coloured by DAY % under a "1-Month" label (desk-heatmap's
+// etf universe carries pctW/pctM/pctYtd, and the period select already unlocked
+// them for it). And the movers table hard-coded its header "Day %" while its rows
+// carried the selected period's figure. Either way the reader is told a number
+// means something it does not.
+//
+// The tiles are read off what renderHeatmap is HANDED (the map is bare rects with
+// no class, so a DOM read cannot say which figure coloured them). The period is
+// driven through the panel's own select. At 1-Day the same read must show tiles
+// whose day-% differs from their period figure — otherwise "pct === pctM" would
+// be true of a demo dataset where the two happen to agree, and the check would
+// pass whatever the code did.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S50: the heatmap follows its period — ETF tiles recolour and the movers header names it', async ({ page, renderWitness }) => {
+  renderWitness();
+  await page.goto('./?demo=1');
+  await page.locator('#heatToggle').click();
+  await expect(page.locator('#heatBody')).toBeVisible();
+  await page.waitForFunction(() => !!heatBase && !!heatEtf, null, { timeout: 15000 });
+  await page.locator('.map-filter-btn', { hasText: 'ETFs' }).click();
+  await expect(page.locator('#heatTitle')).toContainText('ETFs');
+  await page.evaluate(() => {
+    const render = renderHeatmap;
+    renderHeatmap = (hm, lamp) => { window.__hm = hm; return render(hm, lamp); };
+  });
+
+  const FIELD = { '1w': 'pctW', '1m': 'pctM', ytd: 'pctYtd' };
+  const read = async (period) => {
+    await page.locator('#heatPeriod').selectOption(period);
+    return page.evaluate((field) => {
+      const tiles = window.__hm.sectors.flatMap(s => s.tiles);
+      return {
+        head: [...document.querySelectorAll('#heatTable thead th')].pop().textContent,
+        n: tiles.length,
+        onPeriod: field ? tiles.filter(t => t.pct === t[field]).length : null,
+        onDay: field ? null : tiles.filter(t => t.pct !== t.pctM).length,
+      };
+    }, FIELD[period] || null);
+  };
+
+  const day = await read('1d');
+  expect(day.head, 'at 1-Day the movers column reads Day %').toBe('Day %');
+  expect(day.n, 'the ETF cut draws tiles').toBeGreaterThan(0);
+  expect(day.onDay, 'and at 1-Day they are coloured by the DAY move — it differs from the 1-Month figure, so the checks below can fail').toBeGreaterThan(0);
+  for (const [period, head] of [['1w', '1W %'], ['1m', '1M %'], ['ytd', 'YTD %']]) {
+    const r = await read(period);
+    expect(r.head, `at ${period} the movers column is named ${head}, not Day %`).toBe(head);
+    expect(r.n, `${period}: the ETF cut still draws tiles`).toBeGreaterThan(0);
+    expect(r.onPeriod, `${period}: EVERY ETF tile is coloured by its ${FIELD[period]}, not left on the day move`).toBe(r.n);
+  }
+  expect((await read('1d')).head, 'and back at 1-Day the header returns to Day %').toBe('Day %');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S51 — the Markets chart stays honest about its two legs.
+//
+// fetchMktSeries used to be a true one-shot: the Today line froze at whatever the
+// page loaded with while pinEnd() re-tilted that frozen path onto the ticking
+// tile — by afternoon the drawn shape was fabricated. Now each market poll
+// re-pulls the INTRADAY leg while the session is open, and the DAILY leg is
+// fetched once per index and reused (the multi-year history does not change
+// intraday, and re-pulling it every minute is the cost that argues for the
+// split). And when one leg is down the chart says WHICH: Today reads "Index series
+// unavailable" while 1M — a different leg — still draws its lines.
+//
+// Demo page, forced live with quotes stubbed in-page (as S28 does): no request
+// leaves it. Each index's second intraday reply ends higher than its first, so a
+// Today line that is still frozen shows the SAME end after both polls.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S51: the Markets chart follows the market poll and names the leg that is down', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '#mktTiles .mk-tile', 10000);
+
+  const out = await page.evaluate(async () => {
+    const r = {};
+    DESK.mode = 'live'; if (!DESK_DB.url) DESK_DB.url = 'https://stub.invalid';
+    marketSessionOpen = () => true; withinCloseSettleGrace = () => false;
+    let mode = 'ok', dailyCalls = 0, intraCalls = 0;
+    const day = '2026-09-29';
+    const daily = { c: Array.from({ length: 300 }, (_, i) => 100 + i * 0.1) };
+    deskQuote = async (proxy, kind) => {
+      if (mode === 'fail') return { ok: false };
+      if (kind === 'daily') { dailyCalls++; return { ok: true, series: daily }; }
+      intraCalls++;
+      const last = intraCalls <= MKT_INDEX.length ? 102 : 110;   // 1st poll ends 102, the 2nd ends 110
+      return { ok: true, series: { t: [day + 'T13:30', day + 'T13:35', day + 'T13:40'], c: [100, 101, last] } };
+    };
+    const reset = () => { mktSeriesDone = false; mktPer = null; mktState.series = null; mktState.legFailed = null; };
+    const text = () => { const t = document.querySelector('#mktChart text'); return t && t.textContent; };
+    const paths = () => document.querySelectorAll('#mktChart path').length;
+
+    reset(); const k = MKT_INDEX[0].key;
+    await fetchMktSeries();
+    r.end1 = mktState.series.today[k].slice(-1)[0];
+    await fetchMktSeries();                                   // a SECOND market poll, session still open
+    r.end2 = mktState.series.today[k].slice(-1)[0];
+    r.dailyCalls = dailyCalls; r.intraCalls = intraCalls; r.indices = MKT_INDEX.length;
+
+    /* Today's leg down, the daily leg up */
+    mode = 'ok'; dailyCalls = 0;
+    deskQuote = async (proxy, kind) => kind === 'daily' ? { ok: true, series: daily } : { ok: false };
+    reset(); await fetchMktSeries();
+    mktState.tf = 'today'; drawMktChart(); r.todayText = text(); r.todayPaths = paths();
+    mktState.tf = '1m'; drawMktChart(); r.monthText = text(); r.monthPaths = paths();
+
+    /* both legs down */
+    deskQuote = async () => ({ ok: false });
+    reset(); await fetchMktSeries();
+    mktState.tf = 'today'; drawMktChart(); r.bothText = text();
+    return r;
+  });
+
+  expect(out.end2, 'the Today line follows the SECOND poll — a frozen one-shot would still end where the first left it').toBeGreaterThan(out.end1);
+  expect(out.dailyCalls, 'the daily leg is fetched ONCE per index and reused across polls').toBe(out.indices);
+  expect(out.intraCalls, 'while the intraday leg is pulled again on every poll').toBe(2 * out.indices);
+  expect(out.todayText, 'Today, with only the intraday leg down, says the series is unavailable').toMatch(/Index series unavailable/);
+  expect(out.monthText, '1M, on the leg that IS up, shows no failure notice').not.toMatch(/unavailable|Loading/);
+  expect(out.monthPaths, '1M still draws its lines').toBeGreaterThan(out.todayPaths);
+  expect(out.bothText, 'with both legs down the chart says so rather than loading forever').toMatch(/Index series unavailable/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S52 — the news topic box searches what it shows.
+//
+// desk-news echoes the CLEANED topic, and refreshNews drops a reply whose topic
+// is not the one currently asked for. Compared against the RAW box text, any
+// topic with `: ( $ ?`, non-ASCII or a double space looked like a stale reply and
+// vanished silently — "AAPL: Q3 (earnings)" produced no news and no error. And a
+// stale reply must still be dropped: the slower search for an abandoned topic
+// landing last must not repaint the panel over the topic now typed. Last, the
+// box shows the CLEANED topic, so a topic of only unsupported characters empties
+// it rather than leaving raw text over an unfiltered sweep.
+//
+// Demo, `deskFeed` stubbed in-page — the stand-in echoes the cleaned topic the
+// way the function does, with its rule written out here rather than borrowed
+// from the app, so a change to the app's copy cannot make the check agree with
+// itself. Nothing leaves the page.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S52: the news topic accepts a punctuated topic, drops a stale reply and cleans what it shows', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '.news-row', 20000);
+
+  const out = await page.evaluate(async () => {
+    const clean = t => String(t || '').replace(/[^A-Za-z0-9 &.,'+-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    const gate = {}; let n = 0, auto = true;
+    deskFeed = (name, body) => new Promise(res => {
+      const id = ++n;
+      const land = () => res({ items: [], topic: clean(body && body.topic), generatedAt: new Date().toISOString(), asOf: '2026-09-29' });
+      gate[id] = land; if (auto) land();
+    });
+    const r = {};
+    /* 1) raw box text with ( : ) — the echo is the cleaned form and must be ACCEPTED */
+    DESK.data.newsTopic = 'SENTINEL';
+    localStorage.setItem(NEWS_TOPIC_KEY, 'AAPL: Q3 (earnings)');
+    await refreshNews(true);
+    r.punctuated = DESK.data.newsTopic;
+    /* 2) A in flight, retyped to B, B lands, THEN A lands — the stale A must be dropped */
+    auto = false; n = 0; DESK.data.newsTopic = 'SENTINEL';
+    localStorage.setItem(NEWS_TOPIC_KEY, 'aaa'); const a = refreshNews(true);
+    localStorage.setItem(NEWS_TOPIC_KEY, 'bbb'); const b = refreshNews(true);
+    gate[2](); await b; gate[1](); await a;
+    r.stale = DESK.data.newsTopic;
+    auto = true;
+    return r;
+  });
+  expect(out.punctuated, 'a punctuated topic is accepted: the cleaned echo is matched against the cleaned box, not the raw text').toBe('AAPL Q3 earnings');
+  expect(out.stale, 'a reply for an abandoned topic is dropped even when it lands last').toBe('bbb');
+
+  /* The box itself: it shows the CLEANED topic, and only that is stored. */
+  for (const [typed, shown] of [['???', ''], ['fed $ rate', 'fed rate'], ['fed rate cut', 'fed rate cut']]) {
+    await page.locator('#newsTopic').fill(typed);
+    await page.locator('#newsTopic').press('Enter');
+    await expect(page.locator('#newsTopic'), `"${typed}" is shown as "${shown}"`).toHaveValue(shown);
+    expect(await page.evaluate(() => localStorage.getItem('news_topic_v1')),
+      `and "${typed}" stores "${shown}" — a topic of only junk clears rather than searching raw text`)
+      .toBe(shown || null);
+  }
+});
