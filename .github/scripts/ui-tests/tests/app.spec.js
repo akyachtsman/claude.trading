@@ -3622,22 +3622,59 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      with it in place a lone regression to a plain focus() is INVISIBLE from
      outside — measured: swapping preventScroll out left this scenario green. The
      page-still wrapper is the belt and `{preventScroll:true}` is the braces, and
-     a scenario that lets the belt catch the fall proves neither. scrollTo is
-     neutralised for the length of the repaint so what is measured is the focus
-     call itself, which is the guard CLAUDE.md names as the proven one. */
-  await page.evaluate(() => {
+     a scenario that lets the belt catch the fall proves neither. So the repaint
+     runs with scrollTo neutralised and the focus() call itself is MEASURED — the
+     page position is read the instant that call returns, before anything else
+     in the repaint (the selection restore, which specs allow to scroll and which
+     WebKit does in CI) can move it. The wrappers call THROUGH to the real
+     methods and record a trace, so a failure names the call that moved the page
+     instead of just a number. */
+  const focusTrace = await page.evaluate(() => {
     const realScrollTo = window.scrollTo;
+    const realFocus = HTMLElement.prototype.focus;
+    const realSel = HTMLInputElement.prototype.setSelectionRange;
+    const trace = [];
+    const isEditor = (el) => el && el.classList && el.classList.contains('wb-slot-input');
     window.scrollTo = () => {};
-    try { renderWbSidebar(wbState.data); } finally { window.scrollTo = realScrollTo; }
+    HTMLElement.prototype.focus = function (...a) {
+      const r = realFocus.apply(this, a);
+      if (isEditor(this)) trace.push(['focus', Math.round(window.scrollY)]);
+      return r;
+    };
+    HTMLInputElement.prototype.setSelectionRange = function (...a) {
+      const r = realSel.apply(this, a);
+      if (isEditor(this)) trace.push(['selection', Math.round(window.scrollY)]);
+      return r;
+    };
+    try { renderWbSidebar(wbState.data); } finally {
+      window.scrollTo = realScrollTo;
+      HTMLElement.prototype.focus = realFocus;
+      HTMLInputElement.prototype.setSelectionRange = realSel;
+    }
+    return trace;
   });
   await page.waitForTimeout(350);
-  expect(await page.evaluate(() => Math.round(window.scrollY)),
-    'the 60s repaint does not yank the page back to the charts').toBe(0);
+  const focusStep = focusTrace.find(t => t[0] === 'focus');
+  expect(focusStep, `the repaint restored focus to the editor through focus() (trace ${JSON.stringify(focusTrace)})`)
+    .toBeTruthy();
+  expect(focusStep[1],
+    `focus({preventScroll:true}) does not move the page (trace ${JSON.stringify(focusTrace)})`).toBe(0);
   expect(await page.evaluate(() => {
     const i = document.querySelector('.wb-slot-input');
     return i && { slot: i.closest('.wb-rail-row').dataset.slot, focused: document.activeElement === i };
   }), 'and the repaint restored focus to the editor — the branch that could have scrolled did run')
     .toEqual({ slot: '90', focused: true });
+  /* THE PRODUCTION GUARANTEE, everything real: focus, the selection restore and
+     the keepPageStill belt together. This is the property the owner sees — a
+     repaint they did not cause leaves the page where it was — and it must hold
+     on every engine, including the ones where the selection call scrolls. */
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(250);
+  await page.evaluate(() => { renderWbSidebar(wbState.data); });
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => Math.round(window.scrollY)),
+    `the 60s repaint does not yank the page back to the charts (belt and braces both real; isolated trace ${JSON.stringify(focusTrace)})`)
+    .toBe(0);
   await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
   await page.waitForTimeout(200);
 
