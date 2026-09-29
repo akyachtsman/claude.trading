@@ -1172,7 +1172,10 @@ function mapDashboardPayload(payload) {
     label: a.label || (cfgByKey[a.account_key] || {}).label || 'Account ' + a.account_key,
     code: (cfgByKey[a.account_key] || {}).code || '',
     nav: Number(a.nav), day: Number(a.day_pnl), total: Number(a.total_unrl), cash: Number(a.cash),
-    positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: Number(p.mkt), dayPct: Number(p.dayPct), unrl: Number(p.unrl) })),
+    /* dayPct stays NULL when the sync could not price the symbol: Number(null) is 0,
+       which every consumer reads as a real flat day (app.js's em-dash branch keys
+       on Number.isFinite, and buildAskContext hands the assistant this value). */
+    positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: Number(p.mkt), dayPct: p.dayPct == null ? null : Number(p.dayPct), unrl: Number(p.unrl) })),
     equity: dates.map(d => byDate.get(d)[a.account_key]),
     asOf: a.as_of,
     syncedAt: a.created_at || null,   /* when the sync wrote this snapshot (desk_007) */
