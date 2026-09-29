@@ -1,5 +1,5 @@
 // Generic exploratory UI test — no project-specific selectors or credentials.
-// Reads auth credentials from CLAUDE.md at runtime.
+// Reads the auth credential from the TEST_AUTH_CREDENTIAL env var only.
 // Discovers app structure, exercises all interactive elements, captures API calls.
 //
 // ⚠️ Known CI compatibility issue — 100dvh not supported in older CI browsers:
@@ -11,8 +11,6 @@
 // replace with vh.
 
 import { test as base, expect } from '@playwright/test';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDER WITNESS — evidence that a test BODY started at its project's width (#348)
@@ -52,28 +50,19 @@ const test = base.extend({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CREDENTIAL DISCOVERY — read from CLAUDE.md at runtime
+// CREDENTIAL — TEST_AUTH_CREDENTIAL env var ONLY
 // ─────────────────────────────────────────────────────────────────────────────
-function readCredentialFromClaude() {
-  try {
-    const root = resolve(process.cwd(), '../../..'); // up from .github/scripts/ui-tests
-    const claude = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
-    // Matches all of:
-    //   Test PIN: 0100        Valid PIN: 0100
-    //   TEST_AUTH_CREDENTIAL: 0100
-    //   | Valid test PIN | `0100` |   (table format)
-    const match = claude.match(
-      /(?:valid\s+(?:test\s+)?pin|test\s+(?:pin|credential|password)|TEST_AUTH_CREDENTIAL)\s*[:|]\s*`?([0-9a-zA-Z!@#$%^&*]{2,})`?/i
-    );
-    return match?.[1]?.trim() ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// Falls back to null if neither env var nor CLAUDE.md has a credential.
-// Auth-dependent tests skip gracefully rather than failing when null.
-const AUTH_CREDENTIAL = process.env.TEST_AUTH_CREDENTIAL ?? readCredentialFromClaude() ?? null;
+// This scenario file used to fall back to scraping CLAUDE.md for a "Valid test
+// credential" line. This project's CLAUDE.md records the secret's NAME and never
+// its value ("repo secret `TEST_AUTH_CREDENTIAL` (name only)"), so the scrape
+// matched the table cell's first word and returned the string "repo" whenever
+// the env var was unset — an invented value that S2/S10 then typed into the PIN
+// box as though it were a real, merely wrong, credential: a confusing failure at
+// best and a pass-by-luck at worst. Nothing here may invent a credential: with
+// the secret absent the live-auth scenarios SKIP, saying why. An empty string
+// (an unset GitHub secret exports as "") is absent too.
+const AUTH_CREDENTIAL = (process.env.TEST_AUTH_CREDENTIAL ?? '').trim() || null;
+const NO_CREDENTIAL = 'TEST_AUTH_CREDENTIAL is not set (a secret is never read from CLAUDE.md) — skipping the live-auth scenario';
 /* Kept in step with playwright.config.js's baseURL — same env var, same
    default. Read here so a scenario can tell WHICH origin it is exercising,
    which is what separates a CI-only cross-origin refusal from a real one. */
@@ -440,7 +429,7 @@ test('S2: auth gate discovered and credential accepted', async ({ page, renderWi
       'detectAuthGate()/detectAndAuth() and this assertion before re-setting one.'
     );
   }
-  if (!AUTH_CREDENTIAL) test.skip(true, 'No auth credential found in CLAUDE.md or TEST_AUTH_CREDENTIAL env var — skipping auth test');
+  if (!AUTH_CREDENTIAL) test.skip(true, NO_CREDENTIAL);
   const consoleErrors = [];
   page.on('pageerror', e => consoleErrors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
@@ -483,7 +472,7 @@ test('S2: auth gate discovered and credential accepted', async ({ page, renderWi
     const firstKey = apiCalls[0]?.firstFieldKey ?? null;
     const diag = {
       mechanism,
-      credentialProvided: AUTH_CREDENTIAL ? 'yes' : 'none — check CLAUDE.md',
+      credentialProvided: AUTH_CREDENTIAL ? 'yes' : 'none — TEST_AUTH_CREDENTIAL is unset',
       onscreenError: errText,
       consoleErrors,
       apiCalls,
@@ -1035,7 +1024,7 @@ async function liveBackendConfigured(page) {
 test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness }) => {
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
+  test.skip(!AUTH_CREDENTIAL, NO_CREDENTIAL);
   await page.goto('./');
   const pinInput = page.locator('.lock-form input.input');
   await expect(pinInput).toBeVisible();
@@ -1375,6 +1364,46 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
   await expect(page.locator('#wlTf button', { hasText: '1Y' })).toHaveAttribute('aria-pressed', 'true');
 });
 
+/* A stateful stand-in for the PIN-free roster RPCs (desk_get/set_watchlists_open)
+   and the desk-watchlist feed, seeded from whatever the demo panel is showing.
+   Scenarios that force `DESK.mode = 'live'` and then DROP a tile, remove one or
+   quick-add another have to install this first, for two reasons. The write
+   controls funnel through wlMutate, whose RPCs are anon-callable and carry the
+   real DESK_DB.url, so where the backend is reachable (CI) an un-stubbed drop
+   REORDERS THE OWNER'S REAL ROSTER on every run. And with no backend a drop
+   answers "Could not reach the desk" and commits nothing, so a test that never
+   looks at the write cannot tell a drag that arranged the panel from one that
+   drew a ghost and dropped it on the floor. `window.__rosterWrites` records every
+   replace-all; `window.__roster` is the store those writes produced. */
+async function installFakeRoster(page) {
+  await page.evaluate(() => {
+    const realFetch = window.fetch;
+    const json = (o) => Promise.resolve(new Response(JSON.stringify(o),
+      { headers: { 'content-type': 'application/json' } }));
+    window.__roster = wlState.payload.lists.map(l => ({
+      title: l.title, symbols: (l.symbols || l.rows.map(r => r.sym)).slice() }));
+    window.__rosterWrites = [];
+    window.fetch = (url, init) => {
+      const u = String(url);
+      if (u.endsWith('desk_get_watchlists_open'))
+        return json({ ok: true, version: 'v' + window.__rosterWrites.length,
+          lists: window.__roster.map(l => ({ title: l.title, symbols: l.symbols.slice() })) });
+      if (u.endsWith('desk_set_watchlists_open')) {
+        window.__roster = JSON.parse(init.body).new_lists
+          .map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
+        window.__rosterWrites.push(window.__roster.map(l => ({ title: l.title, symbols: l.symbols.slice() })));
+        return json({ ok: true, version: 'v' + window.__rosterWrites.length });
+      }
+      if (u.includes('/functions/v1/desk-watchlist'))
+        return json({ ok: true, range: wlTf, lists: window.__roster.map(l => ({
+          title: l.title, symbols: l.symbols.slice(),
+          rows: l.symbols.map(sym => ({ sym, last: 100, pct: 1, spark: [1, 2] })) })) });
+      return realFetch(url, init);
+    };
+  });
+}
+const rosterWrites = (page) => page.evaluate(() => (window.__rosterWrites || []).length);
+
 // S31 — Create and delete a whole watchlist from the panel (owner request
 // 2026-08-01). Both edits previously required opening the ✎ editor.
 //
@@ -1436,6 +1465,7 @@ test('S31: create and delete a list; delete is behind the lock', async ({ page, 
       await submitWlNewList();
       r.dupeRefused = /already have a list/.test(document.getElementById('wlNewErr').textContent);
       r.dupeDialogStaysOpen = !document.getElementById('wlNewBackdrop').hidden;
+      r.dupeKeptName = document.getElementById('wlNewInput').value;
       r.afterDupe = store.map(l => l.title).join(',');
       closeWlNewList();
 
@@ -1467,6 +1497,7 @@ test('S31: create and delete a list; delete is behind the lock', async ({ page, 
   expect(out.afterCreate, 'the created list must persist').toBe('Radar,Macro,Earnings');
   expect(out.dupeRefused, 'a duplicate name must be refused').toBe(true);
   expect(out.dupeDialogStaysOpen, 'a refusal must not discard the typed name').toBe(true);
+  expect(out.dupeKeptName, 'the refusal leaves the typed name in the box to correct').toBe('earnings');
   expect(out.afterDupe, 'and must not write anything').toBe('Radar,Macro,Earnings');
   expect(out.delText, 'the confirm must name the list and its symbol count')
     .toContain('Radar');
@@ -1518,6 +1549,9 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   // PIN-free RPCs). DESK.authed stays FALSE here on purpose: setting it would
   // let a regression back to auth-gating pass unnoticed.
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  /* Nothing below may reach the real backend, and the quick-add check needs to
+     count writes — see installFakeRoster. */
+  await installFakeRoster(page);
   // ONE + for the whole panel now (owner request 2026-07-31) — it mints into
   // the staging tray, and the drag decides which list. The per-band buttons are
   // gone: fifteen bands meant fifteen controls doing the same job.
@@ -1579,9 +1613,17 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await page.locator('#wlTrayAdd').click();
   await expect(page.locator('#wlQuickTitle')).toContainText(/Radar/i);
   expect(await page.locator('#wlQuickList').count(), 'no destination dropdown').toBe(0);
+  await expect(page.locator('#wlQuickErr'), 'no error before anything is submitted').toBeHidden();
   await page.locator('#wlQuickInput').fill('!!!');
   await page.locator('#wlQuickSaveBtn').click();
-  await expect(page.locator('#wlQuickErr')).toBeVisible();
+  /* The message is asserted, not just visibility: with no reachable backend a
+     junk entry that WAS accepted would still surface "Could not reach the desk"
+     in this same element, so a bare toBeVisible passes on an app that has
+     stopped validating. And nothing may have been written. */
+  await expect(page.locator('#wlQuickErr'), 'junk is refused by the parser, not by the network')
+    .toContainText(/No usable ticker/);
+  await expect(page.locator('#wlQuickBackdrop'), 'a refusal keeps the dialog open').toBeVisible();
+  expect(await rosterWrites(page), 'junk reaches no write').toBe(0);
 
   // A pasted broker column must survive as SEPARATE symbols. A single-line
   // input silently joined them into one token that passed the ticker grammar
@@ -1617,10 +1659,14 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   // Demo has no backend to write to, so no write surface may render at all —
   // the tray and the trash are write controls like the + always was.
   await expect(page.locator('#wlTrash'), 'no write control in demo').toBeHidden();
+  await expect(page.locator('#wlTrayAdd'), 'no + in demo').toBeHidden();
 
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  /* Every drop below is a real write through wlMutate — see installFakeRoster
+     for why it must not reach the actual backend, and for what it lets us read. */
+  await installFakeRoster(page);
   // The WRITE CONTROLS are what must appear in live — the + and the trash.
   // The staging row itself is now hidden while empty (owner ruling
   // 2026-07-31: the permanent second row was unnecessary), so asserting it
@@ -1689,7 +1735,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   // lowest point on screen — picking it by index put the grab off-screen and no
   // drag began at all. Asking the DOM what is actually under a point is the only
   // form that holds on both mobile projects, whose viewports differ by ~60px.
-  const pts = await page.evaluate(() => {
+  const findPts = () => page.evaluate(() => {
     const vw = window.innerWidth, vh = window.innerHeight;
     const visible = (el) => {
       const b = el.getBoundingClientRect();
@@ -1717,7 +1763,22 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
     }
     return null;
   });
+  const pts = await findPts();
   expect(pts, 'a tile and a different band are both on screen for the drag').not.toBeNull();
+  // What the drop is EXPECTED to do, read off the page before the pointer moves:
+  // which symbol is grabbed, from which list, into which. The two bands differ
+  // by construction (see the hit-test above), so a real drop must move the
+  // symbol between two lists.
+  const plan = await page.evaluate(({ from, to }) => {
+    const grab = document.elementFromPoint(from.x, from.y);
+    const zone = (pt) => document.elementFromPoint(pt.x, pt.y).closest('.mkt-group-tiles[data-band]');
+    const count = (title, sym) => window.__roster.find(l => l.title === title).symbols.filter(x => x === sym).length;
+    const sym = grab.closest('.wl-tile').dataset.sym;
+    const fromTitle = zone(from).dataset.title, toTitle = zone(to).dataset.title;
+    return { sym, fromTitle, toTitle, fromBefore: count(fromTitle, sym), toBefore: count(toTitle, sym) };
+  }, pts);
+  expect(plan.fromTitle, 'the drop target is a different list').not.toBe(plan.toTitle);
+  const writesBefore = await rosterWrites(page);
   await page.mouse.move(pts.from.x, pts.from.y);
   await page.mouse.down();
   await page.mouse.move(pts.from.x + 40, pts.from.y + 20, { steps: 5 });
@@ -1731,16 +1792,36 @@ test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', asyn
   await page.waitForTimeout(300);
   expect(await page.locator('.wl-ghost').count(), 'the ghost is cleaned up').toBe(0);
   expect(await page.locator('.wl-drop-marker').count(), 'the marker is cleaned up').toBe(0);
+  // ...and the drop MOVED the symbol, as one replace-all: a drag that draws its
+  // ghost and marker and then lands nowhere would pass everything above.
+  await expect.poll(() => rosterWrites(page), { message: 'a drop is exactly one write' })
+    .toBe(writesBefore + 1);
+  const landed = await page.evaluate((p) => {
+    const count = (title) => window.__roster.find(l => l.title === title).symbols.filter(x => x === p.sym).length;
+    return { from: count(p.fromTitle), to: count(p.toTitle) };
+  }, plan);
+  expect(landed.from, `${plan.sym} left the list it was dragged from`).toBe(plan.fromBefore - 1);
+  expect(landed.to, `${plan.sym} arrived in the list it was dropped on`).toBe(plan.toBefore + 1);
 
   // Escape abandons a drag rather than committing it somewhere unintended
-  await page.locator('.mkt-group-tiles[data-band] .wl-tile').first().scrollIntoViewIfNeeded();
-  r = await page.locator('.mkt-group-tiles[data-band] .wl-tile').first().boundingBox();
-  await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
+  // The pointer is held OVER a real drop target when Escape lands, so a
+  // cancelled drag that fell through to a drop would write; a drag abandoned
+  // over its own starting slot commits nothing whether or not Escape works.
+  const writesAtEscape = await rosterWrites(page);
+  const again = await findPts();
+  expect(again, 'a tile and a different band are still on screen for the second drag').not.toBeNull();
+  await page.mouse.move(again.from.x, again.from.y);
   await page.mouse.down();
-  await page.mouse.move(r.x + 60, r.y + 40, { steps: 6 });
+  await page.mouse.move(again.from.x + 40, again.from.y + 20, { steps: 5 });
+  await page.mouse.move(again.to.x, again.to.y, { steps: 8 });
+  expect(await page.locator('.mkt-group-tiles.wl-drop-over').count(),
+    'the drag is over a live drop target when Escape lands').toBe(1);
+  expect(await page.locator('.wl-ghost').count(), 'the drag had begun before Escape').toBe(1);
   await page.keyboard.press('Escape');
   expect(await page.locator('.wl-ghost').count(), 'Escape cancels the drag').toBe(0);
   await page.mouse.up();
+  await page.waitForTimeout(400);
+  expect(await rosterWrites(page), 'an abandoned drag writes nothing').toBe(writesAtEscape);
 
   // ── no staging tray survives anywhere ──────────────────────────────────
   // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,
@@ -1972,9 +2053,20 @@ test('S23: post-market prints render, and only where the instrument trades', asy
   }
   // The extended figure must be a DIFFERENT number than the regular one —
   // if they matched, the second line would be telling the reader nothing.
-  const regular = (await page.locator('#mktTiles .mk-tile').first().locator('.mk-pct').innerText()).trim();
-  const after = (await exts.first().locator('.mk-ext-pct').innerText()).trim();
-  expect(after, 'after-hours must not just repeat the close').not.toContain(regular);
+  // Checked on EVERY tile, and by exact text: the first tile alone let three
+  // proxies repeat the close unseen, and a substring test lets "-0.42%" pass as
+  // different from "0.42%" without being a different number.
+  const tileTexts = await page.evaluate(() => [...document.querySelectorAll('#mktTiles .mk-tile')].map(t => ({
+    regular: (t.querySelector('.mk-pct')?.textContent || '').trim(),
+    // the pill leads with the proxy's name ("SPY +0.42%"); compare the NUMBER
+    after: (t.querySelector('.mk-ext-pct')?.textContent || '').trim().replace(/^[A-Z]+\s+/, ''),
+  })));
+  expect(tileTexts, 'four index tiles').toHaveLength(4);
+  for (const [i, t] of tileTexts.entries()) {
+    expect(t.regular, `tile ${i}: the regular move is a number`).toMatch(/\d\.\d\d%/);
+    expect(t.after, `tile ${i}: the after-hours figure is a number`).toMatch(/^[+\-−]?\d+\.\d\d%$/);
+    expect(t.after, `tile ${i}: after-hours must not just repeat the close`).not.toBe(t.regular);
+  }
 
   // Sector ETFs genuinely trade after the bell, so they need no proxy, and the
   // print is VISIBLE on every row — it was briefly tooltip-only while the
@@ -1985,6 +2077,11 @@ test('S23: post-market prints render, and only where the instrument trades', asy
   expect(await secRows.count(), 'all 11 sectors render').toBe(11);
   expect(await page.locator('#mktSectors .mk-sec-ext').count(),
     'every sector shows its own after-hours move').toBe(11);
+  // ...and each one is a READABLE move, not an empty pill: a node that exists
+  // and says nothing satisfies a count of eleven.
+  expect(await page.locator('#mktSectors .mk-sec-ext').evaluateAll(els => els.map(e => e.textContent.trim())
+      .filter(t => !/\d\.\d\d%/.test(t))),
+    'every sector after-hours pill carries a percentage').toEqual([]);
   // The whole point of the widening is that BOTH fit: a sparkline on every row
   // and the after-hours figure beside the day-%. Losing either silently is the
   // regression this guards.
@@ -2004,6 +2101,39 @@ test('S23: post-market prints render, and only where the instrument trades', asy
   });
   expect(demo.withExt, 'some names carry a post-market print').toBeGreaterThan(0);
   expect(demo.withExt, 'and some genuinely do not — absent, not zero').toBeLessThan(demo.total);
+
+  /* The same claim AS RENDERED. The block above reads the generator's own
+     output, so it stays green if the tooltip prints the line for every name (or
+     for none, or as "+0.00%" where the print is absent). Open the map, enter
+     every tile the way the pointer does, and read the card each one raises: the
+     "After hours" line must be there exactly where the data carries a print. */
+  await page.locator('#heatToggle').click();
+  await expect(page.locator('#heatBody')).toBeVisible();
+  await expect(page.locator('#heatmapSvg text.heat-label').first()).toBeAttached({ timeout: 10000 });
+  const tips = await page.evaluate(() => {
+    const tip = document.getElementById('heatTip');
+    const data = new Map(buildDemoHeatmap().sectors.flatMap(s => s.tiles).map(t => [t.sym, t.extPct]));
+    const seen = new Map();
+    for (const r of document.querySelectorAll('#heatmapSvg rect')) {
+      tip._hide();
+      r.dispatchEvent(new PointerEvent('pointerenter'));
+      if (tip.style.display !== 'block') continue;            // not a tile: no card
+      const sym = tip.querySelector('.tip-sym').textContent;
+      const line = tip.querySelector('.tip-ext');
+      seen.set(sym, { hasLine: !!line, text: line ? line.textContent : '', printed: data.get(sym) != null });
+    }
+    tip._hide();
+    return [...seen].map(([sym, v]) => ({ sym, ...v }));
+  });
+  expect(tips.length, 'tiles raised their cards').toBeGreaterThan(40);
+  expect(tips.filter(t => t.hasLine).length, 'some rendered cards carry the after-hours line').toBeGreaterThan(0);
+  expect(tips.filter(t => !t.hasLine).length, 'and some do not — absent, never a fabricated 0').toBeGreaterThan(0);
+  expect(tips.filter(t => t.hasLine !== t.printed).map(t => t.sym),
+    'the line renders exactly where a print exists').toEqual([]);
+  for (const t of tips.filter(t => t.hasLine)) {
+    expect(t.text, `${t.sym}: the after-hours line names itself and states a move`)
+      .toMatch(/After hours.*\d\.\d\d%/);
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2039,7 +2169,7 @@ async function askDesk(page, q) {
 }
 function assistantGates(page) {
   test.skip(!process.env.RUN_ASSISTANT_TESTS, 'assistant tests are opt-in (real Claude calls) — set RUN_ASSISTANT_TESTS=1');
-  test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
+  test.skip(!AUTH_CREDENTIAL, NO_CREDENTIAL);
   /* The config's 30s test timeout is shorter than ONE askDesk (its own wait is
      90s), so every one of these scenarios died on the clock before an answer
      could arrive, whatever the assistant did. Sized to the longest path, S15:
@@ -2122,28 +2252,49 @@ test('S27: watchlist tiles are half-width, stacked, and never clip a value', asy
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
 
   const m = await page.evaluate(() => {
-    const tile = document.querySelector('.wl-strip .wl-tile');
-    const r = tile.getBoundingClientRect();
+    const KINDS = ['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark'];
+    /* EVERY tile, not the first: a long ticker, a six-figure price or a missing
+       sparkline changes a tile's own shape, and the first tile is the one the
+       layout was tuned on. */
+    const tiles = [...document.querySelectorAll('.wl-strip .wl-tile')];
     // Visual top-to-bottom order. `.wl-vals` is `display: contents`, so it has
     // no box of its own and its children lay out as tile children — that is the
     // mechanism the stacked order depends on, so assert the RENDERED order
     // rather than the DOM order, which still nests them.
-    const parts = [...tile.querySelectorAll('.mkt-name, .mkt-last, .wl-pct, .wl-spark')]
+    const orderOf = tile => [...tile.querySelectorAll('.mkt-name, .mkt-last, .wl-pct, .wl-spark')]
       .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
-      .map(e => [...e.classList].find(c => ['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark'].includes(c)));
+      .map(e => [...e.classList].find(c => KINDS.includes(c))).join(' > ');
     const over = sel => [...document.querySelectorAll('.wl-strip ' + sel)]
       .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent.trim());
-    return { w: Math.round(r.width), order: parts, prices: over('.mkt-last'), names: over('.mkt-name') };
+    return {
+      count: tiles.length,
+      maxW: Math.max(...tiles.map(t => Math.round(t.getBoundingClientRect().width))),
+      orders: [...new Set(tiles.map(orderOf))],
+      prices: over('.mkt-last'), names: over('.mkt-name'),
+      // The pill has no overflow rule of its own, so a too-wide one GROWS past
+      // the tile instead of clipping (scrollWidth never exceeds its own box):
+      // what can be measured is whether it stays inside the tile that owns it.
+      pills: tiles.filter(t => {
+        const p = t.querySelector('.wl-pct');
+        if (!p) return false;
+        const a = p.getBoundingClientRect(), b = t.getBoundingClientRect();
+        return a.right > b.right + 0.5 || a.left < b.left - 0.5;
+      }).map(t => t.dataset.sym),
+    };
   });
 
-  expect(m.w, 'tile should be the half-width 66px, not the old 132px').toBeLessThanOrEqual(80);
-  expect(m.order, 'reading order must be ticker → price → change → line')
-    .toEqual(['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark']);
+  expect(m.count, 'the demo panel carries a real roster').toBeGreaterThan(20);
+  expect(m.maxW, 'no tile should be wider than the half-width 66px layout, not the old 132px').toBeLessThanOrEqual(80);
+  expect(m.orders, 'reading order must be ticker → price → change → line, on every tile')
+    .toEqual(['mkt-name > mkt-last > wl-pct > wl-spark']);
   // The two that matter. Long values step down a font size (wlTile sets
   // `is-long` by string length, since CSS cannot branch on text length); if that
   // ever stops happening, six-figure index prices truncate mid-number.
   expect(m.prices, 'a clipped price is a wrong price').toEqual([]);
   expect(m.names, 'tickers are how this panel is scanned').toEqual([]);
+  // The change pill is the number the panel exists to show, and it was widened to
+  // the price's size (12px) on the promise that nothing clips.
+  expect(m.pills, 'the change pill stays inside its tile').toEqual([]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2303,9 +2454,24 @@ test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', a
   // A daily row offers a clock; an at-the-hour cadence offers minutes only —
   // a clock there would let you set 08:00 and watch it fire at midnight.
   await expect(page.locator('.ask-sched-time'), 'daily gets a clock').toHaveCount(1);
-  await page.locator('.ask-sched-cad').selectOption('h4');
-  await expect(page.locator('.ask-sched-time'), 'every-4-hours has no meaningful hour').toHaveCount(0);
-  await expect(page.locator('.ask-sched-min'), 'it gets a minutes-past-the-hour picker').toHaveCount(1);
+  /* EVERY cadence the control offers, not one representative of each family:
+     the two families are separated by a predicate (askAtTheHour) that names
+     them individually, so a cadence dropped from it — "Every hour" is the easy
+     one to lose — falls into the clock family unnoticed. The offered set is
+     pinned too, so a cadence added later cannot escape this check. */
+  const cadences = { hourly: 'min', h2: 'min', h3: 'min', h4: 'min', h6: 'min', h8: 'min', h12: 'min',
+                     daily: 'time', weekdays: 'time' };
+  expect(await page.locator('.ask-sched-cad option').evaluateAll(os => os.map(o => o.value)),
+    'the cadence control offers exactly the cadences this scenario checks').toEqual(Object.keys(cadences));
+  for (const [key, control] of Object.entries(cadences)) {
+    await page.locator('.ask-sched-cad').selectOption(key);
+    await expect(page.locator('.ask-sched-time'),
+      control === 'time' ? `${key} gets a clock` : `${key} has no meaningful hour`)
+      .toHaveCount(control === 'time' ? 1 : 0);
+    await expect(page.locator('.ask-sched-min'),
+      control === 'min' ? `${key} gets a minutes-past-the-hour picker` : `${key} has no minutes-only picker`)
+      .toHaveCount(control === 'min' ? 1 : 0);
+  }
   await page.locator('.ask-sched-cad').selectOption('daily');
   await page.locator('.ask-sched-time').fill('08:00');
 
@@ -2349,9 +2515,11 @@ test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', a
   });
   await page.locator('#askSchedSave').click();
   await expect(page.locator('#askSchedNote')).toHaveText('Saved');
-  const capped = await page.evaluate(() => ({ sent: window.__writes[2].length, stored: window.__store.length }));
-  expect(capped.sent, 'the cap holds on the wire, not just server-side').toBeLessThanOrEqual(10);
-  expect(capped.stored, 'and in the store').toBeLessThanOrEqual(10);
+  /* EXACTLY ten, off 31 rows: `<= 10` also passes a save that sent nothing.
+     Only the wire is measured — the stand-in RPC above slices to ten itself, so
+     the size of ITS store says nothing about the client. */
+  const sent = await page.evaluate(() => window.__writes[2].length);
+  expect(sent, 'the cap holds on the wire, not just server-side').toBe(10);
 
   // Closing with unsaved edits must not discard them silently — the first ✕
   // warns, the second obeys.
@@ -2491,7 +2659,12 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
   await expect(note).toContainText(/still|appear|history|reload/i);
   /* A deliberate stop is not a failure: the red error line must stay hidden, or
      the owner reads their own action as a fault. */
-  await expect(page.locator('#askBody ~ .lock-error, #askBody .lock-error')).toBeHidden();
+  /* toBeHidden() also passes for an element that is not there, so the error
+     line's existence is pinned first — a renamed class would otherwise turn
+     this whole check into one that cannot fail. */
+  await expect(page.locator('#askBody .lock-error'), 'the panel has its error line').toHaveCount(1);
+  await expect(page.locator('#askBody .lock-error')).toBeHidden();
+  await expect(page.locator('#askBody .lock-error')).toHaveText('');
 
   // And the panel is genuinely reusable, not wedged behind a stuck askBusy.
   const busy = await page.evaluate(() => askBusy);
@@ -2550,7 +2723,20 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
      re-send, and dropping their choice in between is how it gets lost silently. */
   await page.evaluate(() => { window.__askFails = true; });
   await verify.click();
+  await expect(verify).toHaveAttribute('aria-pressed', 'true');
   await send('third question');
+  /* WAIT FOR THE FAILURE TO LAND before reading the arm. The toggle is already
+     armed the instant Send is pressed, so a bare aria-pressed check right after
+     the click passes at once — before deskAsk has rejected and before the code
+     that could wrongly disarm has run — and cannot fail whatever the error path
+     does. The request went out armed, and the panel is idle again with the
+     error line showing: only then is the arm's fate settled. */
+  await expect.poll(() => page.evaluate(() => window.__verifyArgs),
+    'the failing question went out armed').toEqual([true, false, true]);
+  await expect(page.locator('#askBody form button[type=submit]'), 'the failed question has finished')
+    .toHaveText('Ask');
+  await expect(page.locator('#askBody .lock-error'), 'and it surfaced as an error, not an answer')
+    .toBeVisible();
   await expect(verify, 'an error must not disarm — no answer was ever checked')
     .toHaveAttribute('aria-pressed', 'true');
 });
@@ -2712,6 +2898,7 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
      DESK.authed stays false — opening a detail window READS a symbol, so it
      must not depend on an unlock any more than the edits do. */
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  await installFakeRoster(page);   /* the drop below is a real write — see installFakeRoster */
   await expect(page.locator('.wl-strip .wl-tile.wl-removable').first()).toBeVisible();
   const live = page.locator('.wl-strip .wl-tile').first();
 
@@ -2733,17 +2920,29 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
 
   /* A drop delivers a `click` to the tile it started from, so arranging the
      panel would pop a window open on every drag without the suppression. */
+  /* Both ends are on screen first (boundingBox is viewport-relative, and a
+     phone reaches this panel thousands of pixels down the page), and the drag
+     must be PROVEN to have happened: this used to sit behind `if (a && c)` and
+     assert only that no window appeared, which a drag that never began — a tile
+     below the fold, a missing box — satisfies in full. */
+  await live.scrollIntoViewIfNeeded();
+  await page.locator('.wl-strip .wl-tile').nth(3).scrollIntoViewIfNeeded();
+  await live.scrollIntoViewIfNeeded();
   const a = await live.boundingBox();
   const c = await page.locator('.wl-strip .wl-tile').nth(3).boundingBox();
-  if (a && c) {
-    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(a.x + 40, a.y + 10, { steps: 6 });
-    await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2, { steps: 10 });
-    await page.mouse.up();
-    await page.waitForTimeout(700);
-    await expect(detail, 'a drop is not a click').toBeHidden();
-  }
+  expect(a, 'the source tile has a box').not.toBeNull();
+  expect(c, 'the drop tile has a box').not.toBeNull();
+  const writesBefore = await rosterWrites(page);
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 40, a.y + 10, { steps: 6 });
+  await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2, { steps: 10 });
+  expect(await page.locator('.wl-ghost').count(), 'the drag had begun before the drop').toBe(1);
+  await page.mouse.up();
+  await expect.poll(() => rosterWrites(page), { message: 'the drop arranged the panel — it was a drag, not a click' })
+    .toBe(writesBefore + 1);
+  await page.waitForTimeout(700);
+  await expect(detail, 'a drop is not a click').toBeHidden();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3603,6 +3802,11 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   const opts = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.textContent));
   expect(opts[0], 'the charts roster is first').toBe('Charts roster');
   expect(opts.length, 'and every watchlist follows it').toBeGreaterThan(1);
+  /* "every watchlist" is asserted against the panel's own lists, not against
+     "more than one": a picker that stopped repainting after the first list
+     landed would still offer two entries. */
+  expect(opts.slice(1), 'the picker names exactly the panel\'s watchlists, in order')
+    .toEqual(await page.evaluate(() => wlState.payload.lists.map(l => l.title)));
   expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').title),
     'the tooltip carries the human name, never the WB_ROSTER_CHARTS sentinel').toBe('Charts roster');
 
@@ -3627,16 +3831,17 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
     'the column is still exactly 100 slots').toBe(100);
 
   // the chosen roster survives a reload
+  // (unconditional: the picker was just asserted to offer more than one entry,
+  // so an `if (lists.length > 1)` here could only ever be a way to skip silently)
   const lists = await page.evaluate(() => [...document.querySelector('.wb-rail-pick').options].map(o => o.value));
-  if (lists.length > 1) {
-    await page.selectOption('.wb-rail-pick', lists[1]);
-    await page.waitForTimeout(500);
-    await page.reload();
-    await expect(page.locator('.wb-rail-pick')).toBeVisible({ timeout: 15000 });
-    await page.waitForTimeout(1200);
-    expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').value),
-      'the chosen roster survives a reload').toBe(lists[1]);
-  }
+  expect(lists.length, 'there is a watchlist to choose').toBeGreaterThan(1);
+  await page.selectOption('.wb-rail-pick', lists[1]);
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect(page.locator('.wb-rail-pick')).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(1200);
+  expect(await page.evaluate(() => document.querySelector('.wb-rail-pick').value),
+    'the chosen roster survives a reload').toBe(lists[1]);
   expect(errs, 'no page errors').toEqual([]);
 });
 
