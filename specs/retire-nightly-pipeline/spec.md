@@ -1,6 +1,10 @@
 # Spec: Retire the Nightly Pipeline — Live-Delayed Data Everywhere
 
-**Status:** Phase 1 (specify) — awaiting clarification
+> **STATUS (2026-09-29): COMPLETE — CLAUDE.md "Application Architecture" is authoritative; this spec is kept as history.**
+>
+> Shipped 2026-07-13 in PRs #53-#57. Later changes: the scheduled AI brief (`desk-brief`, FR-R6) was retired 2026-07-23 and `keepalive.yml` on 2026-08-22, so references to them below are history.
+
+**Status:** COMPLETE 2026-07-13 — clarified, planned and shipped (PRs #53–#57); see `tasks.md` and `analysis.md`.
 **Owner ruling:** 2026-07-13 — "I want this whole nightly fetch function gone,
 completely deleted," confirmed as the FULL Data Refresh pipeline after an
 explicit everything-it-feeds warning. Supersedes the nightly-batch design in

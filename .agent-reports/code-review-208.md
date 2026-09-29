@@ -1,3 +1,5 @@
+> Historical report (PR #208, 2026-07-31) — not current.
+
 # Code review — PR #208 (merge commit `fa46049`)
 
 **"Get the live UI suite back to green: S11 selector + NAV crawl budget"** — post-merge review, findings only, no edits made.

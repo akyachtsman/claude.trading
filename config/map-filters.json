@@ -1,5 +1,5 @@
 {
-  "comment": "MAP FILTER rosters for the heatmap side panel. Hand-maintained snapshots (index membership changes a few times a year) \u2014 edit freely; unknown symbols are ignored at render time because every cut intersects the fetched dataset. etfCats groups the chart-watchlist ETFs into map bands. themes regroups S&P tiles client-side. extra feeds fetch-maps.js: [yahooSymbol, tileTicker, name, group, weightB] \u2014 crypto sizes by real market cap, futures/world by the hand weight (\u00d7 $1B).",
+  "comment": "MAP FILTER rosters for the heatmap side panel. Hand-maintained snapshots (index membership changes a few times a year) \u2014 edit freely; unknown symbols are ignored at render time because every cut intersects the fetched dataset. etfCats is the ETF map's roster AND its bands (read by both desk-heatmap and the client). themes regroups S&P tiles client-side. extra feeds the desk-maps edge function: [yahooSymbol, tileTicker, name, group, weightB] \u2014 crypto sizes by real market cap, futures/world by the hand weight (\u00d7 $1B).",
   "themes": {
     "AI & semiconductors": [
       "NVDA",

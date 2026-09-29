@@ -1,5 +1,9 @@
 # Tasks: Retire the Nightly Pipeline
 
+> **STATUS (2026-09-29): COMPLETE — CLAUDE.md "Application Architecture" is authoritative; this spec is kept as history.**
+>
+> Shipped 2026-07-13 in PRs #53-#57. Later changes: the scheduled AI brief (`desk-brief`, FR-R6) was retired 2026-07-23 and `keepalive.yml` on 2026-08-22, so references to them below are history.
+
 **Status:** COMPLETE 2026-07-13 — all groups shipped (PRs #53 #54 #55 #56); see analysis.md
 **Phase 0 (done):** PR #53 merged (`1fb7264`) — desk-maps live, pattern set,
 verified 200/38-of-38 via pg_net. `desk_004_enable_pg_net` migration applied.

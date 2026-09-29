@@ -1,6 +1,6 @@
 /* Do the desk's S/R levels actually hold? — re-runnable evidence.
  *
- *   node .agent-reports/sr-level-backtest.mjs
+ *   node tools/sr-level-backtest.mjs
  *
  * Fetches its own daily bars from the public quote-proxy, so it needs no
  * local fixtures and no session-specific paths (Codex review, PR #246 — the

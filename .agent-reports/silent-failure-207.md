@@ -1,3 +1,5 @@
+> Historical report (PR #207, 2026-07-31) — not current.
+
 # Silent-failure audit — merged commit `3cf7b76` (PR #207, "Close the four extended-hours review findings")
 
 Scope: the diff of `3cf7b76` plus the code paths it feeds into. Post-merge review — findings only, no
