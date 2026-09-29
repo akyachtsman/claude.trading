@@ -13,9 +13,10 @@ https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/
 - **Project name:** claude.trading — multi-account trading dashboard
 - **Live URL:** https://akyachtsman.github.io/claude.trading/
 - **Stack:** Static tier — plain HTML + CSS + vanilla JS on GitHub Pages (no
-  build), confirmed. Dynamic data arrives two ways: public JSON committed by a
-  scheduled pipeline, and (when live mode is enabled) private data behind
-  PIN-validated Supabase RPCs.
+  build), confirmed. Dynamic data arrives two ways: public market data from
+  anon-callable Supabase edge functions (session-aware cached; the nightly
+  committed-JSON pipeline was retired 2026-07-13), and (when live mode is enabled)
+  private data behind PIN-validated Supabase RPCs.
 - **Branch policy:** Develop on a `claude/<name>` feature branch; PRs target `main`
 
 ## Design
@@ -23,11 +24,13 @@ This project's look is its own — established at kickoff via `/design-intake`
 (per `directives/design.md`), not a shared company theme. It lives in:
 - `styles/tokens.css` — brand primitives (color, type, spacing, radius, shadow)
 - `styles/components.css` — reusable components
+- `styles/layout.css` — page layout and panel rules (was the inline `<style>` in `index.html`)
 - **Reference page:** `index.html` on demo data (see `specs/multi-account-trading-dashboard/design.md` — "Daylight desk ledger")
 
 ## Application Architecture
-- `index.html` — markup only + 3 script tags; all render-blocking assets share
-  ONE `?v=` cache-bust token (bump them together on every asset change).
+- `index.html` — markup only (one `<main>` landmark) + 3 stylesheet links + 3
+  script tags; all render-blocking assets share ONE `?v=` cache-bust token (bump
+  them together on every asset change).
 - `scripts/config.js` — account roster (`DESK_ACCOUNTS`) + backend endpoints
   (`DESK_DB`). **Empty `DESK_DB.url` ⇒ the whole site runs in DEMO mode.**
   Current state: **LIVE** on the dedicated Supabase project ("trading
@@ -42,7 +45,7 @@ This project's look is its own — established at kickoff via `/design-intake`
   NOT the fetch (owner ruling 2026-07-22): for price feeds (`liveLampFor(...,
   priceBound=true)` — market/heatmap/charts/masthead) once the market is closed
   the stamp reads the session close (`marketCloseInstant` = 16:00 ET / 1:00pm PT
-  on the as-of day) instead of the hourly re-poll clock; intraday and non-price
+  on the as-of day; 13:00 ET / 10:00am PT on a `NYSE_EARLY_CLOSES` half-day) instead of the hourly re-poll clock; intraday and non-price
   feeds (news) keep the fetch clock (≈ now). The price lamp itself reads **EOD**
   (not LIVE) once the market is shut — LIVE shows ONLY while the session is open
   and quotes are streaming (owner ruling 2026-07-22); STALE still flags a genuinely
@@ -51,7 +54,13 @@ This project's look is its own — established at kickoff via `/design-intake`
   wrappers. **Every clock on the desk is pinned to Pacific** (`DESK_TZ`, owner
   ruling 2026-07-22):
   stamps via `fmtClock`, intraday bar times via `fmtBarT`, news row times via
-  `newsWhen` — never the viewer's locale, never raw UTC.
+  `newsWhen` — never the viewer's locale, never raw UTC. The trading calendar is ONE
+  table (`NYSE_HOLIDAYS`, through 2027 — extend it before 2028) plus
+  `NYSE_EARLY_CLOSES`; the settle grace does not fire on a holiday, and
+  `lastTradingDay` is anchored to the Pacific day, so a Tokyo/Auckland viewer no
+  longer lamps a healthy snapshot STALE. Every number formatter answers an em dash
+  for null/undefined/NaN/±Infinity (audit 2026-09-29: `fmtPct(null)` used to print
+  `+0.00%`).
   **A news row DATES itself whenever it is not from today** (`newsWhen`,
   `.news-date`, owner report 2026-08-24). `desk-news` used to emit only a bare
   UTC `HH:mm` and discard the date, and the sweep applies NO maximum age — so a
@@ -391,7 +400,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   wraps both as a **cross-engine belt that is honestly UNFALSIFIABLE here** —
   measured, Chromium's selection calls do not scroll, so removing it changes
   nothing observable. Do not record a measured fault for it; the measured ones
-  are `preventScroll` (1684px) and `overflow-anchor` (31px).
+  are `preventScroll` (1684px) and `overflow-anchor` (31px). `keepPageStill` DOES
+  mask a lone plain-`focus()` regression (it scrolls the page back), which is why
+  S45's guard clicks EMPTY slot 90, asserts the editor is focused and off-screen,
+  and stubs `scrollTo` for that one repaint to isolate the focus call — falsified:
+  scrollY 0 → 2126px on desktop, 4163px on mobile-chrome.
   **What the rewrite ADDED is the blur/repaint interaction** — see the
   `inp.isConnected` rule above. It is the same class as (a)–(c): a repaint the
   owner did not cause quietly changing what their typing does.
@@ -560,6 +573,15 @@ This project's look is its own — established at kickoff via `/design-intake`
   a short stretch right after the close, since Stooq/Yahoo's final settle
   print doesn't always land at the exact closing bell; added 2026-07-27, owner
   report of no confidence in the as-of-close numbers).
+  **A feed lamp AGES even when its poll fails** (audit 2026-09-29): a failed poll
+  used to leave the news/heatmap/charts lamps reading LIVE for as long as the tab
+  stayed open. Every poll tick (success or failure), a return from a hidden tab and
+  the 30s ticker re-lamp them, and the ticker only judges a feed once it is overdue
+  by a full poll cadence plus 90s, so a healthy hourly poller is not lamped STALE
+  at +6 min. **Renders sit OUTSIDE the fetch `try`** (`renderAfterFetch` logs the
+  stack and never lets it escape): a render fault inside it was reported as a FEED
+  failure (STALE on a healthy feed), and one throw in `renderMasthead` stopped
+  market polling after two calls.
   **Extended-hours rule (owner ruling 2026-07-29) — where pre/post bars may and
   may NOT go.** The workbench fetches intraday with `prepost:true`, so
   `wbState.intraday[sym]` holds the full 4am–8pm set; what consumes it differs
@@ -587,7 +609,10 @@ This project's look is its own — established at kickoff via `/design-intake`
   the same reason — its readings must match the panes the owner reads them
   against. `intraTo15()` carries the `x` flag through; 15-min buckets align to
   the session boundaries (9:30 = minute 570, 16:00 = 960) so one never straddles
-  regular and extended. The Markets window is untouched (regular session).
+  regular and extended. The Markets window is untouched (regular session). Pro 3's
+  nav and day labels are formatted by `ptBarStamp` (memoised Intl, Pacific) — they
+  read 13:30–19:45 UTC before — and an intraday fetch that came back empty is no
+  longer re-requested on every render (25 renders had made 25 requests).
   The masthead's
   **"Refresh now" button** (`#refreshNowBtn`, next to the MARKETS lamp, live
   mode only — owner request 2026-07-27) force-bypasses BOTH the poll cooldown
@@ -662,14 +687,15 @@ This project's look is its own — established at kickoff via `/design-intake`
   **A position's day-% is NULL when unknown, never 0** (`desk-ibkr-sync`, owner
   check 2026-08-21). The write was `pct[p.sym] ?? 0`, so any symbol the feeds
   could not price was stored as FLAT — and the client made it worse, because
-  `fmtPct(null)` returns `+0.00%` (`null >= 0` is true). Four option positions
-  read 0.00% on the dashboard while **AVAV was down 38.4% and SPCX 19.5%**: the
+  `fmtPct(null)` returned `+0.00%` (`null >= 0` is true; it now answers an em dash). Four option positions
+  read 0.00% on the dashboard while **one underlying was down 38.4% and another 19.5%**: the
   largest moves in the account were the ones claiming they had not moved. The
   row now renders an **em dash** with no gain/loss class and sorts to the
-  bottom (`-Infinity`), so an unknown never ranks between a loser and a winner —
+  bottom (a BLANK sort key, which `makeSortable` parks last in both directions —
+  `-Infinity` led an ascending click), so an unknown never ranks between a loser and a winner —
   the same rule the watchlist rail already followed.
   **OCC option symbols are stripped of IBKR's padding before the upstream
-  call** (`upstreamSymbol`). Flex pads to fixed width — `AVAV  261002C00180000`
+  call** (`upstreamSymbol`). Flex pads to fixed width — `XXXX  261002C00180000`
   — and Yahoo 404s on that; without the spaces all four resolve, so these
   positions carry a real day-% instead of nothing. The underlying ticker is
   never substituted: an option's move is its own, and reporting the stock's
@@ -682,8 +708,8 @@ This project's look is its own — established at kickoff via `/design-intake`
   already documented the trap and took the prior bar; `desk-news` (news chip
   day-%) and `desk-ibkr-sync` (**the day-% stored for every position in the
   owner's accounts**) both still trusted the field. Measured against Yahoo's own
-  1-day baseline on 16 names, the old form was wrong on **all 16** — GDX read
-  13.12% on a 2.59% day, META −8.26% on a −0.04% day — and the new one matches
+  1-day baseline on 16 names, the old form was wrong on **all 16** — one ETF read
+  13.12% on a 2.59% day, one mega-cap −8.26% on a −0.04% day — and the new one matches
   to 0.00 on 15. Which bar counts as "prior" depends on whether the last one is
   TODAY, decided on the bar's own ET date so half-days and holidays need no
   special case — and read off the QUOTE'S OWN TIMESTAMP
@@ -692,7 +718,7 @@ This project's look is its own — established at kickoff via `/design-intake`
   and shipped, and at 00:48 ET the clock had rolled to the new date while both
   the newest bar and the quote were still the prior session — so it concluded
   the last bar was not today, took that same bar as the baseline, and measured
-  its close against itself. **Every symbol read 0.00%** (caught on FRMI against
+  its close against itself. **Every symbol read 0.00%** (caught on a small-cap against
   a real +3.65% move), and 09:35 UTC — when the sync cron runs — is squarely
   inside that window, so it would have written a zero for every position in the
   account. Comparing the quote's ET date with the last bar's ET date holds at
@@ -767,7 +793,7 @@ This project's look is its own — established at kickoff via `/design-intake`
   request 2026-07-29) — multiple named lists, unbounded symbols each.
   **Rendered as TILES, not a table** (owner request the same day, after seeing
   the table). The band/tile chrome is the shared `.mkt-group`/`.mkt-tile` CSS in
-  `index.html`; `.wl-strip` widens it for a full-page panel.
+  `styles/layout.css`; `.wl-strip` widens it for a full-page panel.
   **EACH CATEGORY IS A COLUMN** (owner request 2026-08-17, replacing the
   full-width horizontal band it had been): list name on top, its tiles stacked
   downward, columns left to right, wrapping onto another row when they outgrow
@@ -1036,6 +1062,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   contradict the `#wlMissing` warning naming those very tickers; and the drag
   invitation is withheld under the lock, since `wlCommitMove` refuses every
   non-trash move there.
+  **A drop commits at the index the insertion marker showed** (audit 2026-09-29): a
+  forward same-band drop landed one slot short (a one-slot drop did nothing)
+  because the code shifted an index that was already post-removal; the marker math,
+  `wlCommitMove` and Alt+Arrow now share one computation, which also counts
+  unresolved symbols.
   **The roster is NOT in this repo.** It lives in `desk_watchlists`
   (`desk_010`): RLS deny-all, reached by anon only through SECURITY DEFINER RPCs — the
   PIN-gated `desk_get_watchlists` / `desk_set_watchlists` and the anon-callable
@@ -1192,6 +1223,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   is what makes it "move as often as our prices" — `scheduleMarketPoll` already
   refreshes that every 60s while prints arrive and `maybeFetchWbInfo` already
   re-renders the workbench on completion, so the tab needed NO clock of its own.
+  The quote is read as `.price`, for the PANE'S OWN symbol (the desk quote is
+  trusted for the desk symbol only — a pane pinned by `cfg.sym` used to show another
+  symbol's price), and an `ok:false` reply never overwrites a good cached quote.
   It falls back to the newest close when there is no quote (demo, or a failed
   live fetch) — real data either way, never fabricated. It indexes
   `bars.c.length - 1`, **NOT `end - 1`**: `end` is the last VISIBLE bar, so
@@ -1243,7 +1277,7 @@ This project's look is its own — established at kickoff via `/design-intake`
   wire AND the per-ticker holdings lookups — rather than only the general feeds.
   The first cut kept the holdings lookups running, reasoning that dropping news
   about a position was the worse surprise; the owner's report (2026-08-17,
-  typed "avav" and saw three FRMI headlines above it) settled it the other way,
+  typed one held ticker and saw three headlines for another above it) settled it the other way,
   because those rows are ranked holdings-first and so land at the TOP, leaving
   the panel not showing what its own box says it shows. Held tickers are still
   read, but only to CHIP a row that names one — `dedupeRank`'s `heldFirst` is
@@ -1386,7 +1420,12 @@ This project's look is its own — established at kickoff via `/design-intake`
   update, since an unconditional seed-update would itself risk overwriting
   the owner's live customizations on a future replay. Web-query privacy
   (never sending real position sizes to search) is system-prompt-enforced,
-  not hard-filtered.
+  not hard-filtered. **A failed system-prompt read disables Save** (audit
+  2026-09-29): the ⚙ modal used to leave an empty editable textarea, so Save
+  overwrote the live prompt with nothing. Likewise the scheduled-ask editor's
+  Add/Save stay off after a failed load (a save from an empty roster would replace
+  it), a failed history load or Clear shows an error instead of an empty thread, and
+  Save is guarded against a double click.
   **THE ASSISTANT IS HANDED TICKERS, NEVER MONEY** (owner ruling 2026-08-12,
   shipped 2026-08-18): `buildAskContext()` sends `label` plus
   `positions:[{sym, dayPct}]` and nothing else — `nav`, `cash`, `dayPnl`,
@@ -1398,13 +1437,13 @@ This project's look is its own — established at kickoff via `/design-intake`
   whereas removing it leaves nothing to weigh; this is why the assistant used
   to answer "your position is the largest thing in the account going in", which
   was correct reasoning over data it should never have had. Symbols stay, so
-  "should I sell my GDX" still knows GDX is held; `dayPct` stays with them
+  "should I sell my <ticker>" still knows that ticker is held; `dayPct` stays with them
   because it is the ticker's own market move, public data about the stock
   rather than a fact about the account. The four stored `desk_chat_memory` rows
   carrying portfolio-aware phrasing were edited IN PLACE on 2026-08-12 (not
-  deleted — they also hold the GDX/META/SPCX/FRMI analysis), and a broad scan
+  deleted — they also hold the per-ticker analysis), and a broad scan
   that flagged 7 of 11 rows was **all false positives**: "balance sheet" and
-  "cash flow" about COMPANIES, and `$145` as a META price target. Deleting on
+  "cash flow" about COMPANIES, and `$145` as a price target. Deleting on
   that scan would have destroyed the analysis the ruling exists to keep.
   **Interrupting a question** (`.ask-stop` + `askAbort`, owner request
   2026-08-01) — the tool loop can reach 12 calls, so a stalled question had no
@@ -1509,8 +1548,13 @@ This project's look is its own — established at kickoff via `/design-intake`
   has not been tested, and `list_migrations` plus PITR remain the authoritative
   history. `desk_007`–`019` each carry a `-- revert:` line. The files target a
   Supabase project or branch (roles `anon`/`authenticated` must exist).
-- `specs/multi-account-trading-dashboard/` — the SDD artifact chain
-  (brief/spec/plan/tasks/design/analysis).
+- `specs/` — one SDD artifact chain per feature (brief/spec/plan/tasks/design/analysis;
+  index in `specs/README.md`). Each doc carries a STATUS banner; where a spec and
+  this file disagree, this file is authoritative.
+- `tools/` — re-runnable measurement scripts (`heatmap-quote-check.mjs`,
+  `sr-level-backtest.mjs`, `sr-swing-variants.mjs`); `strategies/` — the stochastic
+  investing doctrine the panes and the assistant follow; `README.md` — the
+  one-page orientation.
 
 ## Required Commands
 | Purpose | Command |
@@ -1518,6 +1562,9 @@ This project's look is its own — established at kickoff via `/design-intake`
 | Validate HTML | `npx html-validate index.html` |
 | Contrast gate (WCAG AA) | `node .github/scripts/check-contrast.js` |
 | Validate workflow YAML | `python3 -c "import yaml, sys; yaml.safe_load(open('.github/workflows/qa.yml'))"` |
+| CI-only guards (run before touching workflows) | `python3 .github/scripts/check-job-bounds.py`, `check-py-warnings.py`, `workflow-ref-guard.py`; `node .github/scripts/check-ui-viewports.js --tests-dir .github/scripts/ui-tests --declared <file>` |
+
+**Local deviations from the upstream CI templates** (each is marked `LOCAL ADDITION` / `LOCAL NOTE` in the file — keep them on every refresh): `qa.yml`'s `notify` job (a PR-scoped, stale-SHA-guarded "QA green" wake comment; it fires for drafts too and a failed comment is a `::warning::`); job-level `GREP_INVERT` (see UI Test Configuration); the `html-validate` step (pinned through the ui-tests lockfile); the extended secret scan (`git grep` over every tracked file for Anthropic / Supabase-secret / GitHub-token / JWT / private-key shapes — the upstream pattern misses those and skips `*.sql`/`*.py`/`*.jsonl`); the `test-auth-email` LOCAL NOTE in the ui-suite composite. **Known:** `ci-notify.yml` has produced no run for any PR-event `qa.yml` run since 2026-08-26 (`workflow_run` is not being delivered for them, and the `workflows:` names match), so the `notify` job is the only wake signal.
 
 ## Project-Specific Security Constraints
 - **Dedicated Supabase project ONLY** (owner ruling, 2026-07-10; see
@@ -1528,7 +1575,10 @@ This project's look is its own — established at kickoff via `/design-intake`
   DEFINER PIN RPCs are the enforcement boundary (data.md pattern).
 - **Accepted residuals (live mode):** the PIN space is brute-forceable through
   the RPC (RLS cannot rate-limit); the PIN sits in sessionStorage for the tab
-  session. Real balances never enter this repo or the served files. The five
+  session. Real balances never enter this repo or the served files. Position TICKERS are
+  held-name information too: they were scrubbed from the tree on 2026-09-29
+  (comments, tests, demo data), but git history still contains them — rewriting it
+  is an owner decision. The five
   public feed functions are anon-callable by design (public market data,
   rosters fixed server-side / in committed config — not open proxies);
   unauthenticated invocations can burn free-tier quota, bounded by
@@ -1638,7 +1688,10 @@ This project's look is its own — established at kickoff via `/design-intake`
   percentages stay whole.
 - All dynamic DOM text via `textContent` — never `innerHTML`.
 - Series colors/order are CVD-validated (`--color-series-1..3`): do not reorder.
-- Gain/loss colors are P&L-only, never decorative.
+- Gain/loss colors are P&L-only, never decorative. Errors and status use
+  `--color-danger` / `--color-status-live`; dark-context loss TEXT uses
+  `--color-loss-text` (`--color-loss` #e11d1d is 3.87:1 on surface-2 — candles and
+  bands keep `--color-loss`).
 - Every panel carries a data-state lamp + as-of stamp (the design signature);
   new panels must too.
 - **NEVER use `overscroll-behavior: contain` (the shorthand) on this page.**
@@ -1647,9 +1700,9 @@ This project's look is its own — established at kickoff via `/design-intake`
   screen. `contain` stops a scroll chaining to the page — right at the END of a
   long list, but it applies just as hard when the container has NOTHING to
   scroll, and then it simply eats the wheel. **Chromium chains regardless, so
-  this never reproduces in a Chromium harness** (this sandbox has no WebKit
-  build; `playwright install webkit` downloads but its host libraries are
-  missing), which is why two rounds of "verified fixed" were wrong. The last
+  this never reproduces in a Chromium harness** (the sandbox's WebKit —
+  installable through `.github/scripts/browser-ladder.js`, see Sandboxed local runs —
+  has not been used to exercise wheel chaining), which is why two rounds of "verified fixed" were wrong. The last
   holdout was `.ask-thread`, empty before the first question and therefore
   invisible to every scan — it needs a live AUTHED session to exist at all.
   A scan is only meaningful if it checks both axes and every mode: an earlier
@@ -1702,8 +1755,9 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | Key | Value |
 |---|---|
 | App URL | `https://akyachtsman.github.io/claude.trading/` (demo state: append `?demo=1` for deterministic data) |
-| Valid test credential | repo secret `TEST_AUTH_CREDENTIAL` (name only — never commit the value; set — S10 exercises the live unlock path in CI) |
+| Valid test credential | repo secret `TEST_AUTH_CREDENTIAL`, read from the ENVIRONMENT only (name only — never commit the value; never scraped from this file); when unset S2/S10/S15–19 SKIP |
 | Invalid test credential | `000000` |
+| Job env `GREP_INVERT` | Regex of scenario titles to exclude. `qa.yml` sets `live only` for the PR run (S10/S11/S14 need the live backend and run in `qa-live.yml`); `playwright.config.js` turns it into `grepInvert`, which keeps the ui-suite composite a verbatim upstream drop-in |
 | Primary nav button | `Load` (charts-workbench symbol loader) |
 | Primary content selector | `.account .hero-number` |
 | Nav cards | n/a — single-page dashboard (panels: Accounts, Markets, Heatmap, Stochastic charts, Ask the desk, News) |
@@ -1714,17 +1768,16 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 What a local Playwright run in this sandbox **cannot** tell you — record per
 `test.md` → *Sandboxed local runs*, so a green local run is never read as
 broader than it is:
-- **Only the two Chromium projects run.** `tablet` (iPad) and `iphone` are
-  WebKit device descriptors and there is no WebKit build here; forcing a
-  Chromium binary onto them fails at launch, so they are CI-only. Anything
-  WebKit-specific — the `overscroll-behavior` wheel trap, WebKit raising a
-  blocked cross-origin fetch as a `pageerror` where Chromium only logs it —
-  is unreachable locally and must be reasoned about, not tested.
-- **The kit's Playwright wants browser build 1228; only 1194 is installed.**
-  Runs need `launchOptions.executablePath` pointed at
-  `/opt/pw-browsers/chromium-1194/chrome-linux/chrome` plus `--no-sandbox`
-  (Chromium refuses to run as root without it). That is a local override only
-  — never commit it into `playwright.config.js`.
+- **All four projects run locally now** (verified 2026-09-29):
+  `.github/scripts/browser-ladder.js` installs the kit's Chromium build (1243) and
+  WebKit into `/opt/pw-browsers`, so `desktop`, `mobile-chrome`, `tablet` and
+  `iphone` launch with the kit's own `playwright.config.js` and no `executablePath`
+  override (set `APP_URL` to a local `http-server`). Local WebKit is slower and
+  shows failures the CI runners do not (S26 on iphone and S42/S45 on tablet failed
+  identically on the untouched base here), so a red local WebKit run is a question
+  for CI, not a verdict.
+- **Keep run output out of the tree**: set `PLAYWRIGHT_JSON_OUTPUT_FILE` and pass
+  `--output` to a scratch path, or a run wipes and rewrites `.agent-reports/`.
 - **Overlay scrollbars reserve no layout width here**, so the S40 roster-column
   residual (a 9–10 character symbol clipping where a bar takes width) cannot be
   reproduced in this sandbox at all.
@@ -1734,37 +1787,39 @@ broader than it is:
 ## Project-Specific Test Scenarios
 Authoritative list of coverage beyond the generic S1–S4 suite — one
 `app.spec.js` scenario per row, numbered from S5. Live-gated rows skip
-cleanly while `DESK_DB` is empty; with the desk LIVE (current state) S10/S11
-run for real against the dedicated project on every PR.
+cleanly while `DESK_DB` is empty; with the desk LIVE (current state) S10/S11/S14
+run for real in `qa-live.yml` (`qa.yml` excludes them via `GREP_INVERT`: a PR runner cannot reach Supabase).
 | # | Feature | What to verify | Failure indicator |
 |---|---|---|---|
-| S5 | Demo lamps | With `?demo=1`, the desk-state cluster (labeled "MARKETS", Accounts header since 2026-07-22) shows "Demo data" and every panel lamp (news, ask) reads Demo | Any lamp shows LIVE/EOD/LOCKED in demo |
-| S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; first-row value order changes accordingly | Order/aria-sort unchanged after click |
-| S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL`: locked shell pre-auth, valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
-| S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 LONG-TERM / Pro 2 SWING / Pro 3 day-trading EOD — the 2026-08-25 display order; the number is POSITIONAL) and the header bars pair with their own panes (tags PRO 1/2/3 in DOM order, `wbBar-p2` FIRST, and that first bar owning `#chartZoom2`, the LONG-TERM zoom — a bar above the wrong chart silently retimes the wrong pane) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
+| S5 | Demo lamps | With `?demo=1`, the desk-state cluster (labeled "MARKETS", Accounts header since 2026-07-22) shows "Demo data" (plus its own "EOD snapshot" — the one sanctioned exception) and each of the six named panel lamps reads exactly "Demo"; no visible lamp may read LIVE, LOCKED or STALE | Any lamp shows LIVE/EOD/LOCKED in demo |
+| S6 | Positions sort | Clicking a positions header sorts rows and flips `aria-sort`; the WHOLE column is ordered accordingly in both directions | Order/aria-sort unchanged after click |
+| S10 | Locked → login → render (live only) | With a backend configured + `TEST_AUTH_CREDENTIAL` (environment only): the locked shell is asserted first (Locked lamp, no `.hero-number`, `DESK.authed` false), then a valid PIN renders accounts | Skips while demo-only; fails if unlock doesn't render |
+| S12 | Charts workbench | With `?demo=1`, `#wbChart` renders all three pane captions (Pro 1 LONG-TERM / Pro 2 SWING / Pro 3 day-trading EOD — the 2026-08-25 display order; the number is POSITIONAL) and the header bars pair with their own panes (tags PRO 1/2/3 in DOM order, `wbBar-p2` FIRST, and that first bar owning `#chartZoom2`, the LONG-TERM zoom — a bar above the wrong chart silently retimes the wrong pane) with candles + 6 stochastic paths; zoom segs and symbol select redraw; PANE seg maximizes a tier; settings popover opens with per-pane chart-style radios + indicator/SMA/S-R checkboxes, and Pro 3 alone carries the Session → "Extended hours" toggle (the LONG-TERM and SWING gears are opened and checked: no Session group, no toggle) | Missing pane, empty SVG, dead controls, popover missing controls, or the EXT toggle offered on Pro 1/Pro 2 |
 | S25 | Long-term stochastic candles | With `?demo=1`, EVERY LONG-TERM candle's colour matches the **weekly** `%K` vs `%D` (read off the rendered SVG, pane-scoped by title, volume bars excluded — they stay price-coloured). TWO negative controls must both fail the same comparison: the pane's own daily strip, and the SWING pane against its stochastic. Sampling tolerance scales with bar spacing, so it holds at phone width | Any LONG-TERM candle disagreeing with the weekly crossover (a silent fallback to open/close), the daily strip also matching (the wrong series drives the colour), or the SWING pane agreeing everywhere (the rule leaked into the wrong pane) |
 | S34 | Long-term steady candle colour | With `?demo=1` the caption carries NO `(STEADY)` and steady is off. Armed through the gear popover's own checkbox (not by poking `wbState` — a state-only test passes even if the control was never wired): the caption gains `(STEADY)`, the candle colours CHANGE, flip **fewer** times than before **but still more than zero** (a rule that suppressed crossovers generally, rather than only the extreme-zone ones, would pass a fewer-flips assertion by never turning at all), and the same bars keep the same colours across a zoom — read from the NARROW window's OLDEST bars, since that is where a viewport-seeded state machine diverges | A toggle that only stores a flag, a mid-band crossover the colour ignores (the owner's stated rule), a mode the caption doesn't name (crossed lines with old-regime candles then read as a stale render), or a candle that changes colour on zoom (seeded at the visible window instead of the whole series — 20 of the 25 charted symbols repaint, up to 77 bars) |
 | S36 | Sticky Pro 1/Pro 2 spans | With `?demo=1`, the panes open on 3M/6M; picking spans that BOTH differ from those defaults survives a reload **independently** (restoring a pane to its own default would look like success while doing nothing), and a hand-edited `wb_sticky_v1` span falls back to the default | A span lost on reload, only one pane restoring, or a corrupt value sizing a window no seg button matches — every preset then reads unpressed and the pane is at a width nothing in the UI explains |
 | S37 | Last-price tab | With `?demo=1`, all THREE panes carry a price flag and its inverted label (a flag with no number, or a number with no flag, must fail), all three read the SAME price — a per-pane number would mean it is drawn from the visible window — each sits inside its own pane, and after PANNING Pro 1 back through history the number is UNCHANGED | A missing or per-pane tab, a tab drawn outside the pane, or a price that shifts when panned — that is the `end - 1` bug, labelling an old close as the current price |
 | S45 | Symbol column — 100 permanent slots | With `?demo=1`, `.wb-slots` renders exactly 100 rows in their OWN `overflow-y: auto` scroller beneath a head that stays put, with NO `×` and NO live `<input>` at rest (100 inputs rebuilt per animation frame is work the rail cannot afford); a double-click opens a focused editor in the slot that was CLICKED — including a DEEP one reached by scrolling with the rail's top forced above the viewport, where neither the list NOR the page may move; a 60s repaint with an editor open does not yank the page back to the charts; a lower-case entry is normalised into THAT INDEX with slot 0 untouched and the array still exactly 100; a SINGLE click charts IMMEDIATELY and opens no editor, while a DOUBLE click (or F2 from the keyboard) edits — including a pair 300ms apart, and including a jump straight from one filled slot's open editor to another; emptying the text clears the slot and nothing below it moves up; a slot holding an UNRESOLVABLE draft is never sent to the proxy — clicking it opens the editor on that text instead; a padded 10-char symbol survives `maxLength` 24 and commits WHOLE; the half-typed text, focus and a BACKWARD selection survive a mid-entry `renderWbSidebar` **and are still there a TICK LATER**; clicking straight to ANOTHER slot KEEPS what was typed, opens the clicked slot and charts neither — including with the press and release 60ms APART, the timing that made this fail on every CI viewport while passing locally; Escape abandons and stays abandoned; holes come back by index after a reload; the column is ONE tab stop with Arrow keys moving it, the stop follows a click even when nothing repaints, charting from the keyboard keeps focus on the slot and so does settling an editor with Enter or Escape, neither two keyboard activations nor a keyboard press followed by a pointer click opens the editor (both halves of a pair must be pointer clicks), and an edit ends a pending pair so a just-filled slot charts on the next click; slots keep `touch-action: manipulation` (the double-tap is the only way to edit one on a phone); an uncharTable ticker still CLOSES its editor rather than leaving an inert one; and the boot re-fetch asks for the FILLED, VALID, deduped slots only | A stack instead of slots, a `×`, a filled slot only a MOUSE can edit, an editor that opens on the wrong row (the re-render resets the list's scroll, so the second click of a double-click lands elsewhere — clicking 30 opened 28), a commit that reflows the column (`filter()` renumbers every row below a hole), a slow double-click that charts instead of editing (the platform's pairing window and ours must be ONE number), a truncated paste landing as a DIFFERENT instrument, an edit discarded by clicking to the next slot, a slow press that opens NO editor at all (a full rebuild in the blur detaches the button mid-click, so the click never fires), an Escape undone by its own blur, ~100 `deskQuote('')` calls per live boot, or an editor that dies one tick after a repaint — tearing the input out FIRES BLUR, whose deferred commit then saves and charts a half-typed ticker; the synchronous restore passes either way, so only the later check catches it |
 | S40 | Charts rail — roster picker and column shape | With `?demo=1`, `#wbSidebar` renders TWO columns side by side INSIDE `.wb-rail-cols`, both starting on the same line, under a FULL-WIDTH `.wb-rail-top` carrying the picker (it is no longer the roster column's own head — at 68px it could not name the list it had selected); BOTH columns seat a 10-character ticker at the font read off the LIVE element, with nothing clipped; the picker offers "Charts roster" PLUS every watchlist (a one-entry picker means the rail never repainted when the lists landed) and its tooltip carries the HUMAN name, never the `WB_ROSTER_CHARTS` sentinel; clicking a ROSTER name charts it and writes NOTHING into the SYMBOL column; the chosen roster survives a reload | A picker stuck on one entry, an internal token shown as a list name, a roster click that pins (nothing pins any more), the chosen roster lost on reload, the two columns starting on different lines, or a rail width that admits fewer characters than `WL_SYM_RE` accepts — that budget was briefly LOST when this scenario was rewritten for the slot column, and it is the only thing holding the never-clip rule |
-| S42 | Watchlist column paging | With `?demo=1`, NO column is wheel-scrollable (`overflow` hidden on both axes) and none carries `overscroll-behavior` in any form; the wheel over a column moves the PAGE; a ▲/▼ footer renders on exactly the columns that overflow and nowhere else; the paged column's band head is no taller than its neighbours; the ▲ is dead at the top, the ▼ names how many are still below and that count FALLS as you step, and the ▼ dies at the bottom with the last tiles on screen. Then forced live: resting a DRAG on the ▼ steps the column | A column that still eats the wheel, a pager on a list that fits (or missing from one that does not), a control that grows the band head — which pushes every column's tiles down, not just its own — a count that never changes (it is counting the list, not what is hidden), or a drag that cannot reach past the visible rows, leaving most of a long list undroppable |
+| S42 | Watchlist column paging | With `?demo=1`, NO column is wheel-scrollable (`overflow` hidden on both axes) and none carries `overscroll-behavior` in any form; the wheel over a column moves the PAGE; a ▲/▼ footer renders on exactly the columns that overflow and nowhere else; the paged column's band head is no taller than the tallest of its neighbours (asserted against them, not against itself); the ▲ is dead at the top, the ▼ names how many are still below and that count FALLS as you step, and the ▼ dies at the bottom with the last tiles on screen. Then forced live: resting a DRAG on the ▼ steps the column | A column that still eats the wheel, a pager on a list that fits (or missing from one that does not), a control that grows the band head — which pushes every column's tiles down, not just its own — a count that never changes (it is counting the list, not what is hidden), or a drag that cannot reach past the visible rows, leaving most of a long list undroppable |
 | S41 | Watchlists are vertical columns | With `?demo=1`, tiles STACK downward inside a category and the categories sit SIDE BY SIDE; no `role=tab` exists (the columns are the navigation); the panel sits above `.area-charts` and shares its left edge; no sideways page scroll and no inner crop on `.wl-strip`; and in live NO reorder control is a bare `←`/`‹` | Tiles rendering as fixed-height boxes (a row's `flex-basis` governs HEIGHT in a column — it still looks plausible), a panel inset from the chart below it, or a reorder arrow impersonating a back button, which is what the UI crawler's back selector grabs |
 | S39 | Volume average | With `?demo=1`, all THREE panes carry a `path[data-volma]` in the %D yellow with no NaN coordinates, and each daily pane's spans its FULL window — LONG-TERM opens on 6M (126 bars) and SWING on 3M (63), attributed to its own pane by x-band rather than by index, since a set/index check passes even if the two panes swap windows — rather than 63−20 | A missing line, or one that starts 20 bars in — that is an average computed from the visible window, which also shifts every time you zoom |
 | S20 | Watchlist chart timeframe | With `?demo=1`, `#wlTf` offers all 7 spans (1D…5Y) with 1D pressed; picking 1Y flips `aria-pressed`, redraws every tile sparkline to a different path, and survives a reload (persisted, not per-render state) | Control missing/short, the path unchanged after switching, or the choice lost on reload |
-| S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop; Escape cancels; the tray round-trips through `localStorage` across a reload; double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, a tray tile lost on reload, the trash replacing double-click, or any page error during a drag |
+| S26 | Watchlist drag to arrange | With `?demo=1` NO staging tray or + renders. Live: every band carries `data-band`; a drag under a sort key draws no ghost and instead snaps `wlSort` to Manual with a note; a real drag shows ghost + insertion marker + lit target and cleans both up on drop, and a drop is EXACTLY ONE write; Escape over a drop target cancels and writes nothing; there is no staging tray (no tray markup, no `wl_tray_v1` write); double-click removal still opens the confirm dialog | A drag that silently fights a sort key, a ghost or marker left behind, an abandoned drag that writes, the trash replacing double-click, or any page error during a drag |
 | S31 | Create + delete a whole list | With `?demo=1` NO `#wlNewListBtn` and no `.wl-del` render. Forced live+authed against a stateful fake roster: the created list PERSISTS to the store, a case-insensitive duplicate name is refused without writing and without discarding the typed name, **under `wlLocked` the `×` is disabled AND `openWlDelList` refuses even when called directly while `+ list` stays available**, the delete confirm names the list and its symbol count and opens focus on "Keep it", and the deleted list is gone from the store | A write control in demo, a duplicate accepted (it makes both lists unaddressable via `wlPick`), a delete reachable under the lock (the button guard alone is not the rule), a confirm that doesn't say what is being destroyed, or a delete that only repaints |
-| S21 | Watchlist quick add + double-click remove | With `?demo=1` (no backend to write to) NO write control renders and tiles keep native double-tap zoom. Switching to live with `DESK.authed` left **false** must still render one + per band (owner ruling 2026-07-30 — edits do not depend on unlocking); a SINGLE click does NOT open `#wlRmBackdrop` but a double-click does (focus on "Keep it"), the tiles compute `touch-action: manipulation` so a phone double-tap is not eaten by zoom, Delete on a focused tile opens the same dialog, and quick-add rejects junk input | A + offered in demo, edits re-gated on auth, a single click removing, no keyboard path, or junk accepted |
+| S21 | Watchlist quick add + double-click remove | With `?demo=1` (no backend to write to) NO write control renders and tiles keep native double-tap zoom. Switching to live with `DESK.authed` left **false** must still show the ✎ and exactly ONE panel-level `#wlTrayAdd` that files into Radar, with NO per-band + (owner ruling 2026-07-30 — edits do not depend on unlocking); every write goes to a stateful stub roster (`installFakeRoster`) that counts writes — CI must never touch the owner's live roster; a SINGLE click does NOT open `#wlRmBackdrop` but a double-click does (focus on "Keep it"), the tiles compute `touch-action: manipulation` so a phone double-tap is not eaten by zoom, Delete on a focused tile opens the same dialog, and quick-add rejects junk input (message /No usable ticker/, zero writes) | A + offered in demo, edits re-gated on auth, a single click removing, no keyboard path, or junk accepted |
+| S22 | Quick edits resolve the right band | `wlPick` resolves two same-named lists by position (AAA, BBB) and returns null when the roster shifted under the index | A quick add, remove or drop landing in the wrong list, or in a list that is no longer the one pointed at |
+| S24 | A failed accounts load keeps the desk authenticated | With `deskGetDashboard` returning null, `loadPrivate('0000')` keeps `DESK.authed` true and `wlCanEdit()`; the panel says "PIN worked", shows no PIN field and offers a retry, holds no accounts and hands none to the assistant, and the watchlist edit controls still render | A transient dashboard failure that re-locks the desk, discards the PIN, or leaves the assistant holding stale accounts |
 | S23 | Extended hours (post-market) | With `?demo=1`, all four index tiles carry a `.mk-ext` line NAMING their proxy (SPY/QQQ/IWM/DIA) + "after hrs", the extended % differs from the regular one, all 11 sector cells carry `.mk-sec-ext`, and the demo heatmap has SOME tiles with `extPct` and some without (absent = did not trade, never 0) | A tile showing an unattributed second %, the extended figure repeating the close, or every heatmap name carrying a print |
-| S27 | Watchlist tile shape | With `?demo=1`, a tile is ≤80px wide (the half-width 66px layout), its rendered top-to-bottom order is ticker → price → change → line (`.wl-vals` is `display:contents`, so DOM order still nests them), and NO `.mkt-last` or `.mkt-name` overflows its own box | A tile back at 132px, the line between price and pill, or any clipped value — a clipped price is a wrong price and fails silently |
+| S27 | Watchlist tile shape | With `?demo=1`, a tile is ≤80px wide (the half-width 66px layout), its rendered top-to-bottom order is ticker → price → change → line (`.wl-vals` is `display:contents`, so DOM order still nests them), and NO `.mkt-last`, `.mkt-name` or change pill overflows its own tile, for EVERY tile | A tile back at 132px, the line between price and pill, or any clipped value — a clipped price is a wrong price and fails silently |
 | S35 | Symbol detail window | With `?demo=1` a single click opens `#wlDetailBackdrop` on the clicked ticker, the chart draws candles + volume, the span control opens on the panel's own `wlTf` and switching it redraws the chart WITHOUT retiming `wlTf`, and Escape closes. Then forced live (`DESK.authed` left **false** — opening a window READS a symbol and must not need an unlock): a **double-click reaches the removal dialog and leaves the detail window shut** (waited past `WL_CLICK_MS`, so a leaked timer would have fired), a single click still opens it without reaching removal, and a **drag/drop opens nothing** | The window opening under a removal (the deferred-open cancel is broken, and the modal then swallows the second click — removal dies outright), a modal control retiming the whole panel, a drop opening a window on every arrange, or an empty `<svg>` |
-| S28 | Charts quote expires by age | With `?demo=1`, `wbInfoTtlMs()` returns one of the two session cadences (60s / 15 min) and a `wbInfoCache` entry carries both `at` and `info`. Guards the CONTRACT, not the bug: reproducing it needs a tab held open across a session boundary, which CI cannot do | A cache keyed on presence again (the 2026-07-31 SMH report: the prior session's close and move shown under a "delayed by 1 minute" stamp) |
+| S28 | Charts quote expires by age | With `?demo=1`, `wbInfoTtlMs()` returns one of the two session cadences (60s / 15 min) and a `wbInfoCache` entry carries both `at` and `info`. It also drives the real `maybeFetchWbInfo` with `deskQuote` stubbed: a cold miss is fetched once, a fresh entry and one just inside the TTL are not refetched, an older one is refetched and re-stamped. The session-boundary bug itself needs a tab held open across the bell, which CI cannot do | A cache keyed on presence again (the 2026-07-31 SMH report: the prior session's close and move shown under a "delayed by 1 minute" stamp) |
 | S32 | Interrupt a question | With `?demo=1` NO `.ask-stop` renders (nothing to stop). Forced live+authed with `deskAsk` stubbed to hang until aborted: Stop appears only while in flight, the COMPOSER STAYS ENABLED throughout, and after Stop the button returns to "Ask", `askBusy` clears, and a `.ask-a--stopped` note states the answer is still coming — with the red `.lock-error` line staying hidden | A Stop offered in demo, a composer disabled mid-flight, a wedged `askBusy` (the panel is then dead), a silent stop (the answer reappears on reload looking like a bug), or a deliberate stop rendered as an error |
 | S29 | Scheduled asks | With `?demo=1` NO ⏱ renders (no backend to write to). Forced live+authed against a stateful fake roster: the ⏱ opens it, a new row saves and is read BACK WITH ITS ID, a second save of the same row sends that id and updates in place, the cadence control swaps the time control (a clock for daily/weekdays, minutes-past-the-hour for hourly/every-N), the 10-row cap holds on a DIRECT assignment, and the first ✕ over unsaved edits warns instead of discarding | A ⏱ in demo, an id dropped on save (the write is an upsert-by-id and the cron stamps `last_run_at` on those rows — a lost id inserts a twin and re-fires today's summary), an hour offered for a cadence that ignores it, an uncapped roster (each firing is real Claude quota), or edits discarded silently |
 | S33 | Verify-answer toggle | With `?demo=1` NO `.ask-verify` renders. Forced live+authed with `deskAsk` stubbed to RECORD its `verify` argument: off by default, arming sends `true` **on the wire** (not just `aria-pressed`), it disarms itself once an answer lands so the next question sends `false`, and a FAILED question keeps the arm | A toggle that stays on (every follow-up silently bills the check), a reset that's only cosmetic, or an error that disarms — the owner re-sends and their choice is gone |
-| S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked, no data leaks | Skips while demo-only; fails if error absent or data renders |
+| S11 | Wrong-PIN error (live only) | Invalid PIN shows `.panel-lock .lock-error` text, stays locked (the form is still offered, the panel reads Locked, `DESK.authed` false, no `desk_pin` stored), no data leaks | Skips while demo-only; fails if error absent or data renders |
 | S30 | Watchlist write conflict | With `?demo=1`, `deskSetWatchlists` forwards a version it is handed, `wlMutate` echoes back the version its own read returned, and an omitted version serializes as an explicit `null` — `undefined` would be dropped by `JSON.stringify` and silently bind the RPC's no-check default. The refusal itself is server-side (`desk_014`), exercised against the live table rather than in CI | A write with no `expected_version`, a version invented at write time rather than read, or `undefined` on the wire |
-| S43 | News row dating | With `?demo=1`, rows older than today render a `.news-date` reading `Mon D` ABOVE the clock, today's rows carry NO date, the clock survives alongside the date, the exact instant is in the row's `title`, and no when-column clips | Every row dated (twenty identical `Aug 24`s destroy the signal), no row dated (the Jun-29-reads-as-14:19 fault), a date replacing the clock, or a clipped date — a clipped date is a wrong date |
+| S43 | News row dating | With `?demo=1`, rows older than today render a `.news-date` reading `Mon D` ABOVE the clock (compared by bounding box, left-aligned), today's rows carry NO date, the clock survives alongside the date, the exact instant is in the row's `title`, and no when-column clips | Every row dated (twenty identical `Aug 24`s destroy the signal), no row dated (the Jun-29-reads-as-14:19 fault), a date replacing the clock, or a clipped date — a clipped date is a wrong date |
 | S13 | Heatmap map filter | With `?demo=1`, the panel starts COLLAPSED (`#heatBody` hidden, `aria-expanded=false`) and opens on `#heatToggle`; then the MAP FILTER bar cuts the treemap (Dow 30 shrinks tile count); Themes regroups the S&P dataset; live-fed universes (World/Crypto/Futures — `desk-maps`; Russell 2000 — `desk-heatmap` r2k universe) render disabled in demo. On the ETF cut, **every banded ETF gets a tile** — `tiles === Object.keys(etfCats).length`, with NO catch-all band and periods on every tile — read off the dataset via `page.evaluate`, NOT counted in the SVG (tiles are bare `rect`s with no class, sub-3px tiles are skipped by design, and the gloss overlay adds a second rect each, so a DOM count is both ambiguous and flaky at phone width). Live mode additionally unlocks 1W/1M/YTD on stock cuts once the feed's daily 1y period sweep lands (tiles carry `pctW/pctM/pctYtd`) | Cut doesn't re-render, period gating wrong, disabled rows clickable, or a banded ETF with no tile — the 2026-08-06 regression, where the cut drew 25 of 40 because it was built from whatever the charts panel happened to carry |
 | S46 | Heatmap label halo (rendered) | With `?demo=1`, open the heatmap and read the LIVE `#heatmapSvg` **`text.heat-label`** nodes — selection is by a marker `heatText` stamps, NEVER by "has a stroke", which is the property under test. Deriving membership from the haloed set passed with **49 of 101 labels unhaloed** when fill and stroke regressed TOGETHER (proved against the prior version). At least 40 must carry the marker, and EVERY marked one must have a PAINTED halo — fill and stroke both FULLY OPAQUE (a translucent colour has no contrast ratio of its own), `stroke-opacity`/`fill-opacity`/`opacity` all 1, a non-zero width, NO `stroke-dasharray` (`'0 10000'` keeps every colour correct and paints nothing), `paint-order` whose FIRST component is `stroke` (`'fill stroke'` contains "stroke" but paints it OVER the glyph), and ink/halo clearing 4.5 — plus the element actually painting a glyph at all: non-empty text, not `display:none` or `visibility:hidden`, a non-zero box, and NO ANCESTOR carrying a non-1 `opacity` — that last one is the only check that walks UP, because `opacity` neither inherits nor appears in a descendant's computed value, so `#heatmapSvg { opacity: 0 }` paints the whole subtree transparently while every label still reports 1. `visibility` inherits and an ancestor `display:none` zeroes the box, so neither needs the walk — which is exactly why the gap was easy to miss. Every one of those keeps all the COLOURS reading correctly while nothing reaches the screen. **This REPLACED a static assertion in `check-contrast.js`** (PR #283): the tile ramp is dynamic so the halo IS the AA mechanism, and five review rounds produced SEVENTEEN ways for valid source to satisfy a source-reading check while the rendered labels lost their halo — comments, decoy objects, nested keys, `Object.freeze` wrappers, string payloads, duplicate and computed keys, spreads, a renamed `stroke:`, `stroke-width: 0`, and finally an entirely UNUSED object literal of the right shape. The last two are why no source analysis can close this: a check satisfied by dead code is not a check. Retiring it returned `check-contrast.js` to the upstream template byte-for-byte | Fewer than 40 marked labels (the panel did not render, or `heatText` stopped stamping the class the selector depends on), or ANY marked label failing the painted-halo contract. **The enumeration is OPEN, not closed** — that claim was made twice and refuted twice (ancestor `opacity`, which neither inherits nor surfaces in a descendant's computed value; then a `transform` putting a full-size label off-canvas). What is checked is listed above; what is known to defeat it is a filter, mask or clip, which needs pixel sampling. Treat any NEW way to render nothing while every computed value reads correctly as in scope, not as beyond the boundary |
 | S47 | Heatmap labels reach the screen (ADVISORY) | With `?demo=1`, screenshot `#heatmapSvg`, hide `text.heat-label`, screenshot again: **the pixels that change are, by construction, what the labels actually painted** — after rasterization, after compositing, after anything drawn over them. One measurement covers the six cases S46 cannot reach, instead of six invented thresholds. **The pointer must be moved off the map first** (`page.mouse.move(2,2)` + asserting `#heatTip` hidden): `#heatToggle` is clicked to open the panel, the map draws under the resting cursor, and the tooltip then covers BRK.B/JPM/BAC — five false findings every run, measured. Ink/halo are read as COMPOSITED from the changed pixels, at a **5% percentile band** — measured, not guessed: a clean render yields 7 false findings at 20%, 3 at 10%, **0 at 5% and 2%**, and the ratios land on 15.14, which is what `check-contrast` independently computes for `#FFFFFF` on `#23262D`. **Three measures, because each is blind where another sees** (Codex, PR #285): COVERAGE (ink over the footprint), EXTENT (how far paint reaches over that footprint) and composited contrast. Both geometric measures divide by the **untransformed `getBBox()`**, never by `getBoundingClientRect` — that returns the box AFTER transforms, so a shrunken label shrinks its own yardstick and `scale(0.5)` read SILENT. Pixels are attributed to at most ONE label, since label boxes genuinely overlap on a clean render (41 pairs desktop, 18 Pixel 5 — a tile's ticker and its percentage share a stack); contrast alone still samples the whole box, because restricting it biased the bands into a false finding. Per-label findings are **reported, never thrown** (owner ruling 2026-09-01), so antialiasing and per-viewport flake cannot block a merge. What IS blocking is only the harness: ≥40 labels, matching screenshot sizes, and **any non-zero difference at all** — explicitly a ZERO-ONLY gate, NOT a scaled one. A threshold that scales with the label count measures DAMAGE, not instrument health, and hard-failed the one-survivor case in flat contradiction of the advisory contract; do not restore it. Falsified: 19 findings for `stroke-width: 0.01px`, 100 for `mix-blend-mode: multiply`, 101 for `scale(0.5)` and for a 2px clip strip, 98 for `scale(0.7)` and a 60% clip, 33 for a 40% clip, exactly 25 for an off-canvas quarter, 76 with 25 labels left alive (still advisory); a valid darker halo and a clean render stay silent | A silent advisory (it is measuring nothing), or a hard failure on partial damage (that is the flake the non-blocking ruling exists to avoid). Note a TOTAL wipeout — `scale(0.001)` on every label, 0 changed pixels map-wide — DOES fail the harness gate on purpose: an unreadable instrument must stop, not report a confident verdict. **Known residual, stated rather than claimed away:** the floors are global, so sensitivity varies with a label's ink density, and damage milder than roughly a 40% clip can pass. Both were calibrated on the two Chromium viewports only — the WebKit projects cannot run in this sandbox — which is why the margins are not tightened further |
@@ -1777,7 +1832,7 @@ run for real against the dedicated project on every PR.
 
 **S15–S19 are OPT-IN** (gated on `RUN_ASSISTANT_TESTS` on top of the live+auth
 gates) — each makes a real `desk-ask` Claude tool-loop call (slow, nondeterministic,
-costs quota), so they never run in normal CI; run them on demand.
+costs quota), so they never run in normal CI; run them on demand. They carry a 180s timeout.
 
 ## Owner Communication Preferences
 - **Explanations of how things work (data flows, architecture, processes):
@@ -1800,7 +1855,7 @@ costs quota), so they never run in normal CI; run them on demand.
 ## Reporting Requirements
 Agents write evidence to `.agent-reports/`:
 - `implementation-summary.md`, `test-report.md`, `ui-test-report.md`
-- `playwright-results.json`, `screenshots/` (on failure)
+- `playwright-results.json`, `screenshots/` (on failure) — gitignored and regenerated per run; never committed
 - `code-review-report.md`, `test-coverage-report.md`, `security-review-report.md`, `pr-readiness-report.md`
 
 ## Safety Rules for Agents
