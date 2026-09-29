@@ -14,6 +14,8 @@
 --
 -- Source-of-record only; applied to the dedicated project (kwugzhyfjevzwgplhtsd)
 -- via Supabase MCP apply_migration.
+--
+-- revert: select cron.unschedule('desk-cron-ask') (desk_018) first; then drop function public.desk_set_ask_schedule(text, jsonb); drop function public.desk_get_ask_schedule(text); drop table public.desk_ask_schedule — DESTROYS the scheduled-ask roster and its last_run timers (owner approval, backup/PITR only).
 
 -- ── table ───────────────────────────────────────────────────────────────────
 -- Every clock in this table is PACIFIC, like every other clock on the desk

@@ -9,6 +9,8 @@
 --
 -- Source-of-record only; applied to the dedicated project (kwugzhyfjevzwgplhtsd)
 -- via Supabase MCP apply_migration.
+--
+-- revert: drop function public.desk_get_watchlists(text); drop function public.desk_set_watchlists(text, jsonb); drop table public.desk_watchlists — DESTROYS the roster (owner approval, backup/PITR only). desk_011-014 redefine or depend on these objects, so revert them first.
 
 -- ── table ───────────────────────────────────────────────────────────────────
 -- `pos` carries the owner's own ordering of the lists (tab order in the panel).

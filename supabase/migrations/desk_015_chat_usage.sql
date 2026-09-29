@@ -20,6 +20,8 @@
 -- writes the prefix once and reads it back on every later iteration, so
 -- cacheRead should dwarf cacheWrite. Both staying 0 means caching is not
 -- working and the prefix is being re-billed at full price.
+--
+-- revert: alter table public.desk_chat_memory drop column usage — DESTROYS recorded token-usage data (owner approval, backup/PITR only); prefer leaving the column and ignoring it.
 
 begin;
 

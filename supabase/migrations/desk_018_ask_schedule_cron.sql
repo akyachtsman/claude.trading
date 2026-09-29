@@ -16,6 +16,8 @@
 --
 -- Source-of-record only; applied to the dedicated project (kwugzhyfjevzwgplhtsd)
 -- via Supabase MCP apply_migration.
+--
+-- revert: select cron.unschedule('desk-cron-ask');
 
 select cron.schedule(
   'desk-cron-ask',

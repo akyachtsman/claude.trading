@@ -7,6 +7,8 @@
 --
 -- Source-of-record only; applied to the dedicated project (kwugzhyfjevzwgplhtsd)
 -- via Supabase MCP apply_migration.
+--
+-- revert: restore public.desk_set_watchlists(text, jsonb) to the desk_010 grammar '^[A-Z0-9.^-]{1,10}$' (keeping desk_013's `where true`); the seeded lists (Indices, Global & income, Macro, US sectors, Industry & metals, Treasuries) are ordinary rows the owner may have edited since — delete them only with owner approval.
 
 -- ── 1. allow '=' in a ticker ────────────────────────────────────────────────
 -- Futures carry it (GC=F gold, SI=F silver) and Yahoo resolves them fine; only

@@ -32,6 +32,8 @@
 -- predates this migration must keep working rather than be bricked mid-session;
 -- it simply keeps the old last-write-wins behaviour. Every caller in this repo
 -- sends the version.
+--
+-- revert: drop function public.desk_set_watchlists_open(jsonb, timestamptz); recreate desk_set_watchlists_open(jsonb) and restore desk_get_watchlists_open() from desk_012 (no `version` field). The live migration log also carries desk_014b_watchlist_version_never_null, whose 'epoch' coalesce this file already contains — revert both together.
 
 begin;
 

@@ -20,6 +20,8 @@
 -- stored definition rather than restating the bodies, so it cannot drift from
 -- whatever those functions currently are — including the live-edited ones.
 -- It is idempotent: a definition already carrying the WHERE clause is skipped.
+--
+-- revert: no useful inverse — re-declaring desk_set_watchlists / desk_set_watchlists_open with an unqualified `delete from public.desk_watchlists;` restores the 21000 safeupdate failure on every write, so leave this in place (desk_010/011/012 are also corrected at source).
 do $$
 declare
   def  text;

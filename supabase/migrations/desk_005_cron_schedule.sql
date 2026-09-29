@@ -1,0 +1,73 @@
+-- desk_005_cron_schedule — RECONSTRUCTED on 2026-09-29 from the live catalog,
+-- NOT the original text. The original was applied out-of-band through the
+-- Supabase MCP (live migration log: version 20260713213843, name
+-- desk_005_cron_schedule) and was never committed. Rebuilt from cron.job on the
+-- dedicated project (kwugzhyfjevzwgplhtsd): job names, schedules and command
+-- text are as stored. The command text contains NO secret — it reads the anon
+-- key and the cron secret out of Vault at run time, exactly as desk_018 does.
+--
+-- DO NOT APPLY THIS TO THE LIVE PROJECT — the jobs already exist. It exists so a
+-- scratch/fresh database can be rebuilt by replaying supabase/migrations/ in
+-- order.
+--
+-- revert: select cron.unschedule('desk-ibkr-sync-evening'); select cron.unschedule('desk-ibkr-sync-morning');
+--
+-- desk-ibkr-sync pulls the IBKR Flex statement into desk_account_snapshots /
+-- desk_equity_history. It runs DUAL-SLOT, 22:35 and 09:35 UTC, because IBKR
+-- statements roll overnight (CLAUDE.md → supabase/functions).
+--
+-- NOT RECONSTRUCTED, and why:
+--   * The two retired desk-brief jobs (desk-brief-evening / desk-brief-morning)
+--     were most likely scheduled by THIS migration too — live cron job ids 3 and
+--     4 are missing between the sync jobs (1, 2) and desk-cron-ask (5) — but
+--     CLAUDE.md records the brief feature as retired 2026-07-23, and their
+--     schedules survive nowhere in the catalog. They are deliberately NOT
+--     recreated: the feature is retired.
+--   * The pg_cron extension. Live it is installed in pg_catalog (1.6.4); whether
+--     it was enabled by this migration or from the dashboard is unknowable. The
+--     statement below is idempotent and there for scratch databases only.
+--
+-- PREREQUISITES that no migration can supply (values must never be committed):
+-- the Vault secrets these commands read must exist before the first tick, or
+-- the header lookups return NULL and every call is rejected by the function
+-- gateway. Create them once, out of band, in the SQL editor:
+--   select vault.create_secret('<VAULT: anon_key value>',    'anon_key');
+--   select vault.create_secret('<VAULT: cron_secret value>', 'cron_secret');
+-- The function-side counterpart of cron_secret is the CRON_SECRET edge-function
+-- secret; the two must match.
+--
+-- Depends on: desk_004 (net.http_post).
+
+create extension if not exists pg_cron with schema pg_catalog;
+
+select cron.schedule(
+  'desk-ibkr-sync-evening',
+  '35 22 * * *',
+  $$
+  select net.http_post(
+    url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-ibkr-sync',
+    headers := jsonb_build_object(
+      'content-type', 'application/json',
+      'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+      'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+      'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 150000)
+$$
+);
+
+select cron.schedule(
+  'desk-ibkr-sync-morning',
+  '35 9 * * *',
+  $$
+  select net.http_post(
+    url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-ibkr-sync',
+    headers := jsonb_build_object(
+      'content-type', 'application/json',
+      'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+      'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+      'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 150000)
+$$
+);
