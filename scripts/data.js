@@ -3,10 +3,15 @@
    Depends on config.js (DESK_ACCOUNTS, DESK_DB). No DOM access here. */
 
 /* ── formatters ────────────────────────────────────────────────────────── */
-const fmtUsd = v => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtUsd0 = v => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
-const fmtSigned = v => (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtPct = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%';
+/* An unknown value is an em dash, never a number: `null >= 0` is true, so
+   fmtPct(null) used to print "+0.00%" (a flat day for a symbol nobody could
+   price) and fmtUsd(undefined) printed "$NaN". A numeric string still formats,
+   as it always did; null/undefined/''/NaN/±Infinity do not. */
+const fmtToNum = v => (v == null || v === '' ? NaN : Number(v));
+const fmtUsd = v => { const n = fmtToNum(v); return Number.isFinite(n) ? (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; };
+const fmtUsd0 = v => { const n = fmtToNum(v); return Number.isFinite(n) ? (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'; };
+const fmtSigned = v => { const n = fmtToNum(v); return Number.isFinite(n) ? (n >= 0 ? '+' : '−') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; };
+const fmtPct = v => { const n = fmtToNum(v); return Number.isFinite(n) ? (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(2) + '%' : '—'; };
 
 /* ── deterministic demo series ─────────────────────────────────────────── */
 const DEMO_DAYS = 260; /* > 252 so the account cards' 1-year sparkline fills in demo */
@@ -472,10 +477,12 @@ async function deskGetDashboard(pin) {
 
 /* Ask-the-desk conversation memory (desk_008): PIN-gated SECURITY DEFINER RPCs.
    History returns a jsonb array of prior exchanges (oldest→newest); clear wipes
-   all stored history for the desk. Both fail soft — memory is best-effort. */
+   all stored history for the desk. Both fail soft — memory is best-effort — but
+   a failed read is `null`, NOT `[]`: an empty array means "no history" and the
+   thread would read that way for a fault (the caller says so out loud). */
 async function deskChatHistory(pin) {
-  try { const out = await deskRpc('desk_chat_history', pin); return Array.isArray(out) ? out : []; }
-  catch { return []; }
+  try { const out = await deskRpc('desk_chat_history', pin); return Array.isArray(out) ? out : null; }
+  catch { return null; }
 }
 async function deskChatClear(pin) {
   try { return await deskRpc('desk_chat_clear', pin); }

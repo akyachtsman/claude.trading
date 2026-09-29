@@ -506,24 +506,23 @@ function renderAccounts(accounts, lamp) {
     }
     thead.appendChild(hr); table.appendChild(thead);
     const tbody = document.createElement('tbody');
+    const sortKey = v => { const n = fmtToNum(v); return Number.isFinite(n) ? n : ''; };
     for (const p of a.positions) {
       const tr = document.createElement('tr');
       const cells = [
         [p.sym + ' × ' + p.qty, p.sym, ''],
-        [fmtUsd0(p.mkt), p.mkt, ''],
-        /* A missing day-% renders as an em dash, NEVER as 0.00%. `fmtPct(null)`
-           returns "+0.00%" — null >= 0 is true — so an unresolved symbol was
-           claiming the position finished flat. That is the same rule the
-           watchlist rail already follows, and it mattered here: four option
-           positions were reading 0.00% while one of them was down 38%. Sorted
-           to the bottom rather than treated as zero, so an unknown never ranks
-           between a loser and a winner: the sort key is BLANK, which makeSortable
-           keeps last in either direction (a -Infinity sentinel led the column
-           ascending, ahead of the largest losses). */
-        [Number.isFinite(p.dayPct) ? fmtPct(p.dayPct) : '—',
-         Number.isFinite(p.dayPct) ? p.dayPct : '',
+        [fmtUsd0(p.mkt), sortKey(p.mkt), ''],
+        /* A missing day-% renders as an em dash, NEVER as 0.00% (fmtPct used to
+           answer "+0.00%" for null — null >= 0 — so an unresolved symbol claimed
+           the position finished flat: four option positions read 0.00% while one
+           was down 38%). Sorted to the bottom rather than treated as zero, so an
+           unknown never ranks between a loser and a winner. The sort key is
+           BLANK, not -Infinity: makeSortable parks a blank last in BOTH
+           directions (-Infinity led the column on an ascending click and printed
+           "-Infinity" into data-sort). */
+        [fmtPct(p.dayPct), sortKey(p.dayPct),
          p.dayPct > 0 ? 'up' : p.dayPct < 0 ? 'down' : ''],
-        [fmtSigned(p.unrl), p.unrl, p.unrl > 0 ? 'up' : p.unrl < 0 ? 'down' : ''],
+        [fmtSigned(p.unrl), sortKey(p.unrl), p.unrl > 0 ? 'up' : p.unrl < 0 ? 'down' : ''],
       ];
       for (const [text, sort, cls] of cells) {
         const td = document.createElement('td');
@@ -1018,11 +1017,21 @@ async function wlCommitMove(from, to, sym) {
       src.symbols.splice(at, 1);
     }
     if (dst) {
-      /* Same list: the removal above shifted everything after it left, so a
-         drop past the old slot lands one place too far without this. */
-      let idx = to.idx;
-      if (src === dst && from.idx < to.idx) idx -= 1;
-      dst.symbols.splice(Math.max(0, Math.min(idx, dst.symbols.length)), 0, sym);
+      /* `to.idx` is where the insertion marker sat among the DRAWN tiles with
+         the dragged one lifted out — the removal above is already accounted
+         for, so it must NOT be shifted again (a forward drag landed one slot
+         short, and a one-slot forward drop did nothing at all). Saved `symbols`
+         also holds tickers that resolved to nothing and were never drawn, so
+         count only the drawn ones to find the slot in the saved order. */
+      const pl = ((wlState.payload && wlState.payload.lists) || [])[to.band];
+      const drawn = pl && pl.title === to.title ? new Set((pl.rows || []).map(r => r.sym)) : null;
+      const want = Math.max(0, to.idx);
+      let pos = dst.symbols.length;
+      for (let i = 0, n = 0; i < dst.symbols.length; i++) {
+        if (drawn && !drawn.has(dst.symbols[i])) continue;
+        if (n++ === want) { pos = i; break; }
+      }
+      dst.symbols.splice(pos, 0, sym);
     }
     return true;
   });
@@ -1085,7 +1094,7 @@ function wlWireDrag(tile, from, sym) {
     if (d == null && band == null) return;
     ev.preventDefault();
     if (!wlEnsureManual()) return;
-    if (d != null) wlCommitMove(from, { ...from, idx: from.idx + (d > 0 ? 2 : -1) }, sym);
+    if (d != null) wlCommitMove(from, { ...from, idx: from.idx + d }, sym);
     else {
       const lists = (wlState.payload && wlState.payload.lists) || [];
       const t = from.band + band;
@@ -3105,28 +3114,41 @@ function openAskSched(pin) {
     draw(); note('');
   };
 
+  /* One save in flight at a time. A row with no id is an INSERT, so a fast
+     double-click sent the same draft twice and wrote a twin of every new row —
+     and each twin fires (and bills) on its own timer. Cleared in `finally`, so
+     a failed or thrown save cannot leave the button dead. */
+  let saving = false;
   const save = async () => {
-    fail(''); note('Saving…');
-    /* Blank rows are dropped rather than rejected — the RPC skips them too, and
-       failing the whole save over a row the owner has not filled in yet would
-       throw away the edits they did make. `id` goes back UNCHANGED so the
-       server updates in place and each row keeps its own timer. */
-    const payload = askSched
-      .filter(r => r.prompt.trim())
-      .slice(0, ASK_SCHED_MAX)
-      .map(r => ({
-        id: r.id, prompt: r.prompt.trim().slice(0, 500), cadence: r.cadence,
-        everyHours: r.everyHours, atHour: r.atHour, atMin: r.atMin,
-        marketOnly: r.marketOnly, enabled: r.enabled,
-      }));
-    const out = await deskSetAskSchedule(pin, payload);
-    if (!out || !out.ok) {
-      note('');
-      fail('Could not save the schedule — nothing was changed. Check the desk is unlocked and try again.');
-      return;
+    if (saving) return;
+    saving = true;
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      fail(''); note('Saving…');
+      /* Blank rows are dropped rather than rejected — the RPC skips them too, and
+         failing the whole save over a row the owner has not filled in yet would
+         throw away the edits they did make. `id` goes back UNCHANGED so the
+         server updates in place and each row keeps its own timer. */
+      const payload = askSched
+        .filter(r => r.prompt.trim())
+        .slice(0, ASK_SCHED_MAX)
+        .map(r => ({
+          id: r.id, prompt: r.prompt.trim().slice(0, 500), cadence: r.cadence,
+          everyHours: r.everyHours, atHour: r.atHour, atMin: r.atMin,
+          marketOnly: r.marketOnly, enabled: r.enabled,
+        }));
+      const out = await deskSetAskSchedule(pin, payload);
+      if (!out || !out.ok) {
+        note('');
+        fail('Could not save the schedule — nothing was changed. Check the desk is unlocked and try again.');
+        return;
+      }
+      await load();               /* re-read: new rows come back with their ids */
+      note('Saved');
+    } finally {
+      saving = false;
+      if (saveBtn) saveBtn.disabled = false;
     }
-    await load();                 /* re-read: new rows come back with their ids */
-    note('Saved');
   };
 
   const add = document.getElementById('askSchedAdd');
@@ -3267,6 +3289,12 @@ function renderAsk() {
      replayed history and land the transcript out of chronological order. */
   input.disabled = true; btn.disabled = true;
   deskChatHistory(pin).then(rows => {
+    /* A failed read is not an empty history — an empty thread would tell the
+       owner there is nothing saved when it may all still be there. */
+    if (rows === null) {
+      err.textContent = 'Could not load your saved conversation — earlier questions may exist but are not shown.';
+      err.hidden = false;
+    }
     (rows || []).forEach(r => {
       /* Replay the scheduled marker the live path already draws (desk_019).
          The styling and the intent predate this — what was missing is that
@@ -3292,7 +3320,14 @@ function renderAsk() {
     clearBtn.disabled = true;
     const out = await deskChatClear(pin).catch(() => ({ ok: false }));
     clearBtn.disabled = false;
-    if (out && out.ok) { while (thread.firstChild) thread.removeChild(thread.firstChild); clearBtn.hidden = true; }
+    if (out && out.ok) {
+      err.hidden = true;
+      while (thread.firstChild) thread.removeChild(thread.firstChild); clearBtn.hidden = true;
+    } else {
+      /* Say so: nothing was deleted, and a silent no-op reads as a dead button. */
+      err.textContent = 'Could not clear the saved conversation — nothing was deleted. Try again.';
+      err.hidden = false;
+    }
   });
 
   /* ONE send path for a typed question and a scheduled one. They differ only in
@@ -3381,22 +3416,34 @@ function updateSysPromptCounter() {
 function closeSysPromptModal() {
   document.getElementById('sysPromptBackdrop').hidden = true;
 }
+let sysPromptGen = 0;   /* a slow read from an earlier open must not land on a later one */
 async function openSysPromptModal(pin) {
   const backdrop = document.getElementById('sysPromptBackdrop');
   const textEl = document.getElementById('sysPromptText');
   const stamp = document.getElementById('sysPromptStamp');
   const err = document.getElementById('sysPromptErr');
+  const submitBtn = document.getElementById('sysPromptSubmit');
+  const gen = ++sysPromptGen;
   err.hidden = true;
   backdrop.hidden = false;
+  /* Save stays OFF until a read has actually succeeded. This is a replace of the
+     one live row, and the text in the box is only the owner's prompt if the read
+     landed: mid-load it is the word "Loading…", and after a failed read it is
+     whatever they type into an empty box — either way Save would overwrite the
+     real prompt (which exists nowhere else) with the wrong text. */
+  submitBtn.disabled = true;
   textEl.value = 'Loading…'; textEl.disabled = true;
   const out = await deskGetSystemPrompt(pin);
-  textEl.disabled = false;
+  if (gen !== sysPromptGen) return;
   if (!out.ok) {
     textEl.value = '';
-    err.textContent = 'Could not load the system prompt — try again.'; err.hidden = false;
+    stamp.textContent = '—';
+    err.textContent = 'Could not load the system prompt, so Save is off. Close this and reopen it to try again.'; err.hidden = false;
     updateSysPromptCounter();
     return;
   }
+  textEl.disabled = false;
+  submitBtn.disabled = false;
   textEl.value = out.content;
   stamp.textContent = out.updatedAt ? 'Saved ' + fmtClock(out.updatedAt) : '—';
   updateSysPromptCounter();
@@ -3583,7 +3630,7 @@ const heatText = (attrs, fs) => svgEl('text', {
      today; this is what keeps that true. */
   class: ['heat-label', attrs.class].filter(Boolean).join(' '),
 });
-const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
+const fmtCap = v => !Number.isFinite(v) ? '—' : v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
 const fmtPrice = v => Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
 /* Squarified treemap (Bruls et al.): items [{value}] DESC → rects. */
