@@ -24,6 +24,13 @@ const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk news; +https://akyachtsman.github.io/claude.trading/)' };
+// Every outbound call is bounded: one hung feed used to hold the whole
+// Promise.allSettled sweep until the platform killed it. A timeout rejects like
+// any other feed failure, so that source is simply skipped. No UA rides on the
+// Supabase REST calls below (see CLAUDE.md) — tfetch adds only the signal.
+const FETCH_TIMEOUT_MS = 8000;
+const tfetch = (url: string, init: RequestInit = {}) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 const CONFIG_URL = 'https://akyachtsman.github.io/claude.trading/config/news-feeds.json';
 const MAX_TICKERS = 8;
 
@@ -126,7 +133,7 @@ export function parseFeed(xml: string, fallbackSrc: string): Item[] {
 }
 
 async function fetchFeed(url: string, src: string): Promise<Item[]> {
-  const res = await fetch(url, { headers: UA });
+  const res = await tfetch(url, { headers: UA });
   if (!res.ok) throw new Error(`${src} HTTP ${res.status}`);
   return parseFeed(await res.text(), src);
 }
@@ -136,20 +143,27 @@ async function heldTickers(): Promise<string[]> {
   const supaUrl = Deno.env.get('SUPABASE_URL');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supaUrl || !serviceKey) return [];
+  // Degrading to "no held tickers" is intended (rows just lose their chips and
+  // holdings-first rank), but never SILENTLY: a 401 here used to be
+  // indistinguishable from an owner with no positions. Status only, never the key.
   try {
     const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}` };
-    const users = await (await fetch(`${supaUrl}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers })).json();
+    const uRes = await tfetch(`${supaUrl}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers });
+    if (!uRes.ok) { console.warn('desk-news: desk_users read HTTP', uRes.status); return []; }
+    const users = await uRes.json();
     if (!users?.length) return [];
-    const rows = await (await fetch(
+    const sRes = await tfetch(
       `${supaUrl}/rest/v1/desk_account_snapshots?select=account_key,as_of,positions&user_id=eq.${users[0].id}&order=as_of.desc&limit=40`,
       { headers },
-    )).json();
+    );
+    if (!sRes.ok) { console.warn('desk-news: desk_account_snapshots read HTTP', sRes.status); return []; }
+    const rows = await sRes.json();
     const latest = new Map<number, { positions?: { sym?: string; mkt?: number }[] }>();
     for (const r of rows || []) if (!latest.has(r.account_key)) latest.set(r.account_key, r);
     const positions = [...latest.values()].flatMap((s) => Array.isArray(s.positions) ? s.positions : []);
     positions.sort((a, b) => Math.abs(b.mkt || 0) - Math.abs(a.mkt || 0));
     return [...new Set(positions.map((p) => String(p.sym || '').toUpperCase()).filter((s) => /^[A-Z.]{1,6}$/.test(s)))].slice(0, MAX_TICKERS);
-  } catch { return []; }
+  } catch (e) { console.warn('desk-news: held-ticker read failed —', (e as Error)?.name); return []; }
 }
 
 // ── ranking (verbatim port of dedupeRank) ───────────────────────────────────
@@ -210,7 +224,7 @@ export function dedupeRank(items: Item[], held: string[], maxItems = 20, heldFir
    adjusted figure on the handful of days a year a name goes ex. */
 async function yahooDayPct(symbol: string): Promise<number | null> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
-  const res = await fetch(url, { headers: UA });
+  const res = await tfetch(url, { headers: UA });
   if (!res.ok) return null;
   const j = await res.json().catch(() => null);
   // deno-lint-ignore no-explicit-any
@@ -257,7 +271,7 @@ async function yahooDayPct(symbol: string): Promise<number | null> {
 async function stooqDayPct(symbol: string): Promise<number | null> {
   const ymd = (d: Date) => d.toISOString().slice(0, 10).replaceAll('-', '');
   const d2 = new Date(), d1 = new Date(d2.getTime() - 14 * 86400000);
-  const res = await fetch(`https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA });
+  const res = await tfetch(`https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA });
   const closes = (await res.text()).trim().split('\n').slice(1)
     .map((l) => Number(l.split(',')[4]))
     .filter((n) => Number.isFinite(n) && n > 0);
@@ -305,7 +319,7 @@ const inflight = new Map<string, Promise<unknown>>();
 
 async function refresh(topic: string): Promise<unknown> {
   {
-    const cfgRes = await fetch(CONFIG_URL, { headers: UA }).catch(() => null);
+    const cfgRes = await tfetch(CONFIG_URL, { headers: UA }).catch(() => null);
     const cfg = mergeFeedConfig(cfgRes && cfgRes.ok ? await cfgRes.json().catch(() => null) : null);
     const held = cfg.perTicker.enabled ? await heldTickers() : [];
 
@@ -390,6 +404,13 @@ async function refresh(topic: string): Promise<unknown> {
   }
 }
 
+// `force` is anon-callable and an honoured one re-runs the whole feed sweep, so
+// a loop of them is a free upstream burner. Honour it at most once per 30s per
+// instance (all topics share the gap); inside the window it is a normal cached
+// read, and the data it would have fetched is <30s old anyway.
+let lastForceAt = 0;
+const FORCE_MIN_GAP_MS = 30_000;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
@@ -401,6 +422,11 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     force = body?.force === true;
     topic = cleanTopic(body?.topic);
+  }
+  if (force) {
+    const now = Date.now();
+    if (now - lastForceAt >= FORCE_MIN_GAP_MS) lastForceAt = now;
+    else force = false;
   }
 
   const hit = cache.get(topic);
