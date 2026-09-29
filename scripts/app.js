@@ -7320,12 +7320,19 @@ function wireNewsTopic() {
   const box = document.getElementById('newsTopic');
   const clear = document.getElementById('newsTopicClear');
   if (!box || !clear) return;
-  box.value = readNewsTopic();
+  /* The box always shows the CLEANED topic — what is actually searched. A topic of
+     only unsupported characters (`???`, non-ASCII) cleans to '' and the server runs
+     the unfiltered sweep, so leaving the raw text in the box would present broad
+     headlines as though a filter were active. Older saves are re-cleaned here too. */
+  const saved = cleanNewsTopic(readNewsTopic());
+  if (saved !== readNewsTopic()) writeNewsTopic(saved);
+  box.value = saved;
   const paint = () => { clear.hidden = !box.value.trim(); };
   paint();
 
   const commit = () => {
-    const next = box.value.trim().slice(0, 60);
+    const next = cleanNewsTopic(box.value);
+    box.value = next;
     if (next === readNewsTopic()) { paint(); return; }   /* nothing changed — don't re-sweep */
     writeNewsTopic(next);
     paint();
