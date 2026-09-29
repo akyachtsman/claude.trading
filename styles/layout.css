@@ -640,6 +640,11 @@
     --color-loss: #e11d1d;   /* down candle / stoch bands / quote change — a
                                 deeper, richer red (owner request 2026-07-16;
                                 was #ff3333, #ef4444 before that) */
+    /* The SAME meaning, for TEXT. #e11d1d is a graphic here (3:1 needed, 3.87
+       worst case) and stays the owner's deep red, but 3.87:1 on --color-surface-2
+       and ~4.2 on the panel fail the 4.5 that text needs. Nearest hue that
+       clears it through #wbTip's .95 opacity: 4.63 there, 5.00 on surface-2. */
+    --color-loss-text: #eb4c4c;
     --color-series-1: #eb3434;   /* stoch %K — red, deepened to match candles */
     --color-series-2: #f5c518;   /* stoch %D — yellow */
     --color-series-3: #b06cf0;   /* SMA fast — purple */
@@ -647,6 +652,10 @@
                                         (owner request 2026-07-16: no orange,
                                         "more yellow"; was #f5a623 → #eab308) */
     --color-accent-bright: #f5c518;  /* SMA mid — yellow */
+    --color-accent-light: #3d3110;   /* pressed-seg / focus-halo tint. The light
+                                        theme's cream #F3E8CC was inherited here,
+                                        so a pressed "6M" read yellow-on-cream at
+                                        1.34:1; on this dark amber it is 7.83:1 */
     /* Re-declare the inherited text color inside the dark scope: token
        overrides alone don't re-resolve `color` inherited from body, so any
        unstyled text (settings-popover labels) rendered near-black on navy. */
@@ -845,11 +854,11 @@
   .wb-side-btn:hover { background: var(--color-surface-2); }
   .wb-side-btn[aria-current="true"] { background: var(--color-surface-2); font-weight: 700; }
   .wb-side-btn .up { color: var(--color-gain); }
-  .wb-side-btn .down { color: var(--color-loss); }
+  .wb-side-btn .down { color: var(--color-loss-text); }
   #wbChart { display: block; width: 100%; height: 600px; }
   #wbChart text { pointer-events: none; }
   #wbTip .up { color: var(--color-gain); }
-  #wbTip .down { color: var(--color-loss); }
+  #wbTip .down { color: var(--color-loss-text); }
   .wb-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
   /* per-symbol fundamentals strip (earnings + key stats, live mode) — sits on
      its own full-width line inside the toolbar, in place of the old load note */
@@ -877,7 +886,7 @@
   .wb-quote-last { font-weight: 700; font-size: var(--font-sm); }
   .wb-quote-chg { font-weight: 600; }
   .wb-info .up { color: var(--color-gain); }
-  .wb-info .down { color: var(--color-loss); }
+  .wb-info .down { color: var(--color-loss-text); }
   .wb-zoom-pair { display: inline-flex; align-items: center; gap: 6px; }
   .wb-seg-tag { font: 600 10px/1.4 var(--font-mono); letter-spacing: .08em; color: var(--color-text-secondary); }
   .wb-seg-note { font: 400 10px/1.4 var(--font-mono); letter-spacing: .03em; color: var(--color-text-secondary); opacity: .75; }
