@@ -8,8 +8,9 @@
 //   r2k — small-cap proxy for the Russell 2000: every US common stock from
 //     the same screener call, ranked by market cap; skip the top 1000
 //     (≈ Russell 1000 territory), take the next 2000 — the FULL index,
-//     finviz-style. Screener-only (the roster and quotes come from one
-//     bulk call); stale-but-honest cache when the screener is down.
+//     finviz-style. The roster and caps come from that one bulk call; the
+//     day-% is overlaid from Yahoo v7 like sp500 (the screener's own is a
+//     session behind); stale-but-honest cache when the screener is down.
 // Periods: tiles carry pctW / pctM / pctYtd from a once-a-day Yahoo spark
 // 1y sweep per universe (EOD data — intraday refresh would be noise). The
 // sweep advances in small AWAITED steps (~4 spark batches per invocation)
@@ -33,6 +34,16 @@ const reply = (status: number, body: unknown) =>
 const UA_BROWSER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const UA = { 'user-agent': UA_BROWSER };
 const CONSTITUENTS_URL = 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv';
+
+/* Deno's fetch has no default timeout, so every upstream call carries its own
+   AbortSignal: a host that accepts the connection and then stalls must cost
+   THAT call, never the invocation — an un-bounded await here runs the worker to
+   its wall clock and ends in WORKER_RESOURCE_LIMIT (the 546s). The signal also
+   covers the body read. Each call site then degrades exactly as it already did
+   on a failed call: crumb -> spark fallback, screener -> cached / last-good. */
+const CRUMB_TIMEOUT_MS = 4000;     // fc.yahoo.com + getcrumb share ONE deadline
+const SCREENER_TIMEOUT_MS = 6000;  // the one bulk ~7k-row download
+const FETCH_TIMEOUT_MS = 5000;     // any single other call: quote/spark batch, roster, ledger
 
 // ETF cut roster. Read from the SAME committed file the client groups the
 // tiles with (map-filters.json → etfCats), so band membership and roster can
@@ -97,12 +108,17 @@ const NYSE_HOLIDAYS = new Set([
   '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31',
   '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24',
 ]);
+/* ONE formatter for the three session-clock predicates below. They used to
+   build a fresh Intl.DateTimeFormat per call — three per request through
+   ttlMs() — and the ICU construction is the expensive part (see NY_DATE). The
+   superset of fields is safe: each predicate reads only the parts it needs. */
+const ET_CLOCK = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', weekday: 'short',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
 function marketSessionOpen(now = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', weekday: 'short',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now);
+  const parts = ET_CLOCK.formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
   const dow = get('weekday');
   if (dow === 'Sat' || dow === 'Sun') return false;
@@ -117,9 +133,7 @@ function marketSessionOpen(now = new Date()): boolean {
 // after the close so the real settle print gets picked up quickly.
 const CLOSE_SETTLE_GRACE_MIN = 15;
 function withinCloseSettleGrace(now = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now);
+  const parts = ET_CLOCK.formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
   const dow = get('weekday');
   if (dow === 'Sat' || dow === 'Sun') return false;
@@ -131,11 +145,7 @@ function withinCloseSettleGrace(now = new Date()): boolean {
    rule as desk-market's copy. Weekends and holidays never qualify: the regular
    session has to have happened for there to be an after-hours session. */
 function withinPostMarket(now = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', weekday: 'short',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now);
+  const parts = ET_CLOCK.formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
   const dow = get('weekday');
   if (dow === 'Sat' || dow === 'Sun') return false;
@@ -240,27 +250,34 @@ async function nasdaqScreener(): Promise<Map<string, Quote>> {
   const url = 'https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=25&download=true';
   const res = await fetch(url, {
     headers: { 'user-agent': UA_BROWSER, accept: 'application/json, text/plain, */*', 'accept-language': 'en-US,en;q=0.9' },
+    signal: AbortSignal.timeout(SCREENER_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`screener HTTP ${res.status}`);
   return parseScreener(await res.json());
 }
 
 async function getCrumb(): Promise<{ cookie: string; crumb: string }> {
-  const init = await fetch('https://fc.yahoo.com/', { headers: UA, redirect: 'manual' });
+  const signal = AbortSignal.timeout(CRUMB_TIMEOUT_MS);  // one deadline for the whole handshake
+  const init = await fetch('https://fc.yahoo.com/', { headers: UA, redirect: 'manual', signal });
   const cookie = (init.headers.get('set-cookie') || '').split(';')[0];
   if (!cookie) throw new Error('no Yahoo session cookie issued');
-  const res = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, cookie } });
+  const res = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, cookie }, signal });
   if (!res.ok) throw new Error(`getcrumb HTTP ${res.status}`);
   const crumb = (await res.text()).trim();
   if (!crumb || crumb.length > 32 || crumb.includes('<')) throw new Error('no Yahoo crumb issued');
   return { cookie, crumb };
 }
 
-async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: string }, batchSize = 150): Promise<Map<string, Quote>> {
+/* `deadline` (epoch ms) is the same device periodSweep uses: stop starting
+   batches and return what has landed. It matters on the r2k path, where 2000
+   names are ~14 sequential batches and an all-or-nothing race would throw away
+   every batch that had already answered. */
+async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: string }, batchSize = 150, deadline = Infinity): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   let deadStreak = 0;
   for (let i = 0; i < symbols.length; i += batchSize) {
     if (deadStreak >= 2) break;
+    if (Date.now() > deadline) break;
     const chunk = symbols.slice(i, i + batchSize);
     // postMarket* added 2026-07-30 (owner request: extended hours everywhere it
     // exists). Stocks genuinely trade after the bell, so a heatmap tile can
@@ -274,7 +291,10 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
     // Both are additive — the stock cuts read neither.
     const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${chunk.map(yahooTicker).join(',')}&fields=symbol,regularMarketChangePercent,regularMarketPrice,marketCap,averageDailyVolume3Month,shortName,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent&crumb=${encodeURIComponent(auth.crumb)}`;
     try {
-      const res = await fetch(url, { headers: { ...UA, cookie: auth.cookie } });
+      const res = await fetch(url, {
+        headers: { ...UA, cookie: auth.cookie },
+        signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, Math.max(250, deadline - Date.now()))),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const before = out.size;
       // deno-lint-ignore no-explicit-any
@@ -321,13 +341,17 @@ function parseSpark(json: Record<string, { close?: number[] }> | null): Map<stri
   return out;
 }
 
-async function sparkBatch(symbols: string[], batchSize = 20): Promise<Map<string, Quote>> {
+async function sparkBatch(symbols: string[], batchSize = 20, deadline = Infinity): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   for (let i = 0; i < symbols.length; i += batchSize) {
+    if (Date.now() > deadline) break;   // ~25 sequential batches for sp500: bound the SUM, not just each call
     const chunk = symbols.slice(i, i + batchSize);
     const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=5d&interval=1d`;
-    const res = await fetch(url, { headers: UA });
-    if (!res.ok) continue;
+    const res = await fetch(url, {
+      headers: UA,
+      signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, Math.max(250, deadline - Date.now()))),
+    }).catch(() => null);
+    if (!res || !res.ok) continue;   // a stalled/failed batch is a coverage gap, which the callers' floors already judge
     const json = await res.json().catch(() => null);
     for (const [sym, v] of parseSpark(json)) if (!out.has(sym)) out.set(sym, v);
   }
@@ -560,6 +584,14 @@ let constituentsCache: { at: number; list: Constituent[] } | null = null;  // 24
 let capCache: { at: number; caps: Map<string, number> } | null = null;     // 24h, sp500
 const payloadCache = new Map<string, { at: number; body: unknown }>();     // session-aware
 const inflight = new Map<string, Promise<unknown>>();                      // single-flight
+/* `force:true` skips every cache and this function is anon-callable, so honouring
+   it unconditionally lets any caller buy a full upstream sweep per request.
+   Honour it at most once per FORCE_MIN_GAP_MS per universe per isolate; inside
+   the window it is treated as an ordinary (cached) call. Tradeoff: "Refresh now"
+   is click-rate-limited, so a second click within 30s costs at most a <=30s-old
+   answer. Per-isolate only — a speed-bump on egress, not a fleet-wide wall. */
+const FORCE_MIN_GAP_MS = 30_000;
+const lastForcedAt = new Map<string, number>();
 const periodCache = new Map<string, { at: number; map: Map<string, Periods> }>(); // module mirror
 const periodInflight = new Map<string, Promise<void>>();
 let etfCatsCache: { at: number; cats: Record<string, string> } | null = null;  // 1h
@@ -573,7 +605,7 @@ let etfCatsCache: { at: number; cats: Record<string, string> } | null = null;  /
 async function loadEtfCats(): Promise<Record<string, string>> {
   if (etfCatsCache && Date.now() - etfCatsCache.at < 3_600_000) return etfCatsCache.cats;
   try {
-    const res = await fetch(MAP_FILTERS_URL, { headers: UA });
+    const res = await fetch(MAP_FILTERS_URL, { headers: UA, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (res.ok) {
       const json = await res.json();
       const raw = json?.etfCats;
@@ -625,28 +657,54 @@ function feedCacheHeaders() {
   return { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' };
 }
 type SweepRow = { at: number; done: number; total: number; map: Record<string, Periods> };
+/* Logs must never carry the service key: a PostgREST error body can echo
+   request context, so scrub before printing. */
+function scrubbed(s: unknown): string {
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const t = String(s);
+  return key ? t.split(key).join('[key]') : t;
+}
+/* Resolves null ONLY for "the ledger has no row yet". A failed read THROWS
+   instead: returning null for a 5xx / timeout / bad JSON made advanceSweep
+   believe there was no ledger, sweep 160 names from scratch and OVERWRITE a
+   complete 2000/2000 row with 160/2000 — one blip regressing days of work.
+   loadPeriods catches it (no periods this call); advanceSweep lets it reach
+   kickPeriodSweep's catch, which skips the write. */
 async function readSweepRow(universe: string): Promise<SweepRow | null> {
-  try {
-    const url = Deno.env.get('SUPABASE_URL')!;
-    const rows = await (await fetch(
-      `${url}/rest/v1/desk_feed_cache?select=at,payload&key=eq.periods:${universe}`,
-      { headers: feedCacheHeaders() },
-    )).json();
-    if (!rows?.length) return null;
-    const p = rows[0].payload || {};
-    return { at: new Date(rows[0].at).getTime(), done: Number(p.done) || 0, total: Number(p.total) || 0, map: p.map || {} };
-  } catch { return null; }
+  const url = Deno.env.get('SUPABASE_URL')!;
+  const res = await fetch(
+    `${url}/rest/v1/desk_feed_cache?select=at,payload&key=eq.periods:${universe}`,
+    { headers: feedCacheHeaders(), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
+  );
+  if (!res.ok) throw new Error(`ledger read HTTP ${res.status}`);
+  const rows = await res.json();
+  if (!Array.isArray(rows)) throw new Error('ledger read: unexpected body');
+  if (!rows.length) return null;
+  const p = rows[0].payload || {};
+  return { at: new Date(rows[0].at).getTime(), done: Number(p.done) || 0, total: Number(p.total) || 0, map: p.map || {} };
 }
 async function writeSweepRow(universe: string, row: SweepRow): Promise<void> {
   const url = Deno.env.get('SUPABASE_URL')!;
-  await fetch(`${url}/rest/v1/desk_feed_cache?on_conflict=key`, {
-    method: 'POST',
-    headers: { ...feedCacheHeaders(), prefer: 'resolution=merge-duplicates' },
-    body: JSON.stringify([{
-      key: `periods:${universe}`, at: new Date(row.at).toISOString(),
-      payload: { done: row.done, total: row.total, map: row.map },
-    }]),
-  }).catch(() => { /* next step retries */ });
+  try {
+    const res = await fetch(`${url}/rest/v1/desk_feed_cache?on_conflict=key`, {
+      method: 'POST',
+      headers: { ...feedCacheHeaders(), prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify([{
+        key: `periods:${universe}`, at: new Date(row.at).toISOString(),
+        payload: { done: row.done, total: row.total, map: row.map },
+      }]),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    /* fetch RESOLVES on 401/403/409/5xx, so the old `.catch` never saw a
+       rejected write: the ledger silently stopped advancing and nothing said so.
+       Still not fatal — the next request retries — but it is now visible. */
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.error(`desk-heatmap: ledger write periods:${universe} failed HTTP ${res.status} ${scrubbed(detail).slice(0, 200)}`);
+    }
+  } catch (e) {
+    console.error(`desk-heatmap: ledger write periods:${universe} failed ${scrubbed((e as Error)?.name || e)}`);  // next step retries
+  }
 }
 const sweepComplete = (r: SweepRow | null): r is SweepRow =>
   Boolean(r && r.total > 0 && r.done >= r.total && Date.now() - r.at < 86_400_000);
@@ -654,7 +712,7 @@ const sweepComplete = (r: SweepRow | null): r is SweepRow =>
 async function loadPeriods(universe: string): Promise<{ at: number; map: Map<string, Periods> } | null> {
   const hit = periodCache.get(universe);
   if (hit && Date.now() - hit.at < 86_400_000) return hit;
-  const row = await readSweepRow(universe);
+  const row = await readSweepRow(universe).catch(() => null);  // unreadable ledger = no periods this call
   if (!sweepComplete(row)) return null;
   const entry = { at: row.at, map: new Map<string, Periods>(Object.entries(row.map)) };
   periodCache.set(universe, entry);
@@ -722,15 +780,33 @@ async function kickPeriodSweep(universe: string, symbols: string[]): Promise<voi
   // here (steps never ran post-response). One step is ~4 spark calls, and
   // only requests during an incomplete sweep pay it.
   const work = advanceSweep(universe, symbols)
-    .catch(() => { /* next request retries */ })
+    .catch((e) => { console.error(`desk-heatmap: sweep step ${universe} skipped: ${scrubbed((e as Error)?.message || e)}`); })  // next request retries
     .finally(() => { periodInflight.delete(universe); });
   periodInflight.set(universe, work);
   await work;
 }
 
+/* Overlay Yahoo's live day-% / last / after-hours print onto the screener's
+   quotes and return how many rows were refreshed. Keyed off the CONSTITUENT,
+   not by iterating `fresh`: the two maps use different ticker spellings (BRK.B
+   vs BRK-B) and each registers under its own, so matching by one side's keys
+   alone drops the multi-class names. Shared by sp500 and r2k. */
+function mergeFreshQuotes(constituents: Constituent[], quotes: Map<string, Quote>, fresh: Map<string, Quote>): number {
+  let merged = 0;
+  for (const c of constituents) {
+    const q = fresh.get(yahooTicker(c.sym)) || fresh.get(c.sym);
+    const base = quotes.get(yahooTicker(c.sym)) || quotes.get(c.sym);
+    if (!q || !base) continue;
+    if (Number.isFinite(q.pct)) { base.pct = q.pct; merged++; }
+    if (q.last != null && Number.isFinite(q.last)) base.last = q.last;
+    if (q.extPct != null) { base.extPct = q.extPct; base.extLast = q.extLast ?? null; }
+  }
+  return merged;
+}
+
 async function refreshSp500(): Promise<unknown> {
   if (!constituentsCache || Date.now() - constituentsCache.at > 86_400_000) {
-    const res = await fetch(CONSTITUENTS_URL, { headers: UA });
+    const res = await fetch(CONSTITUENTS_URL, { headers: UA, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`constituents HTTP ${res.status}`);
     const list = parseConstituents(await res.text());
     if (list.length < 400) throw new Error(`only ${list.length} constituents parsed`);
@@ -782,26 +858,15 @@ async function refreshSp500(): Promise<unknown> {
         setTimeout(() => resolve(new Map()), QUOTE_MERGE_TIMEOUT_MS)),
     ]).catch(() => new Map<string, Quote>());
 
-    /* Keyed off the CONSTITUENT, not by iterating `fresh`: the two maps use
-       different ticker spellings (BRK.B vs BRK-B) and each registers under its
-       own, so matching by one side's keys alone drops the multi-class names. */
-    let merged = 0;
-    for (const c of constituents) {
-      const q = fresh.get(yahooTicker(c.sym)) || fresh.get(c.sym);
-      const base = quotes.get(yahooTicker(c.sym)) || quotes.get(c.sym);
-      if (!q || !base) continue;
-      if (Number.isFinite(q.pct)) { base.pct = q.pct; merged++; }
-      if (q.last != null && Number.isFinite(q.last)) base.last = q.last;
-      if (q.extPct != null) { base.extPct = q.extPct; base.extLast = q.extLast ?? null; }
-    }
+    const merged = mergeFreshQuotes(constituents, quotes, fresh);
     source = merged >= 300 ? 'nasdaq-screener+yahoo-quote' : `nasdaq-screener (day% may lag, ${merged} refreshed)`;
   } catch {
     try {
-      quotes = await quoteBatch(constituents.map((c) => c.sym), await getCrumb());
+      quotes = await quoteBatch(constituents.map((c) => c.sym), await getCrumb(), 150, Date.now() + QUOTE_MERGE_TIMEOUT_MS);
       source = 'yahoo-quote';
       if (hits(quotes) < 300) throw new Error(`quote coverage too thin (${hits(quotes)})`);
     } catch {
-      quotes = await sparkBatch(constituents.map((c) => c.sym));
+      quotes = await sparkBatch(constituents.map((c) => c.sym), 20, Date.now() + QUOTE_MERGE_TIMEOUT_MS);
       source = 'yahoo-spark+cap-cache';
       if (hits(quotes) < 300) throw new Error(`spark coverage too thin (${hits(quotes)})`);
     }
@@ -826,9 +891,25 @@ async function refreshSp500(): Promise<unknown> {
 }
 
 async function refreshR2k(): Promise<unknown> {
-  const quotes = await nasdaqScreener(); // roster AND quotes in one call
+  const quotes = await nasdaqScreener(); // roster AND cap/sector/name in one call
   const constituents = r2kConstituents(quotes);
   if (constituents.length < 1200) throw new Error(`r2k roster too thin (${constituents.length})`);
+  /* The screener's day-% is a FULL SESSION BEHIND (see refreshSp500: WMT read
+     -0.78% on a -8.7% day). r2k was left reading it raw, so this universe put a
+     stale pct next to pctW/pctM/pctYtd from the Yahoo sweep that HAS today's
+     bar — two sources, one tile. Same rule as sp500: Yahoo supplies day-% /
+     last / after-hours, the screener supplies roster and caps.
+     Unlike sp500 there is no other quote source to fall back to, so a Yahoo
+     failure here keeps the screener's numbers and SAYS so in `source`, rather
+     than failing a map that was renderable before. The batches are deadline-
+     bounded and a partial merge is kept (a stalled batch costs its own names). */
+  const fresh = await (async () => {
+    try {
+      return await quoteBatch(constituents.map((c) => c.sym), await getCrumb(), 150, Date.now() + QUOTE_MERGE_TIMEOUT_MS);
+    } catch { return new Map<string, Quote>(); }
+  })();
+  const merged = mergeFreshQuotes(constituents, quotes, fresh);
+  const source = merged >= constituents.length * 0.6 ? 'nasdaq-screener+yahoo-quote' : `nasdaq-screener (day% may lag, ${merged} refreshed)`;
   let periods = await loadPeriods('r2k');
   // Periods must cover the roster — a partial map would shrink period views.
   // Count FINITE readings, not map entries: symbols Yahoo has no data for are
@@ -844,7 +925,7 @@ async function refreshR2k(): Promise<unknown> {
   await kickPeriodSweep('r2k', constituents.map((c) => c.sym));
   const body = {
     ok: true, asOf: lastTradingDayIso(), generatedAt: new Date().toISOString(),
-    source: 'nasdaq-screener', universe: 'r2k', count: covered,
+    source, universe: 'r2k', count: covered,
     note: `full small-cap band, ${covered} names (cap ranks ${R2K_SKIP + 1}–${R2K_SKIP + R2K_TAKE})`,
     periodsAsOf: periods ? new Date(periods.at).toISOString() : null, sectors,
   };
@@ -895,6 +976,10 @@ Deno.serve(async (req) => {
     // force (owner request 2026-07-27): the dashboard's manual "Refresh now"
     // button bypasses this cache so a click guarantees a fresh upstream pull.
     force = body?.force === true;
+  }
+  if (force) {
+    if (Date.now() - (lastForcedAt.get(universe) ?? 0) < FORCE_MIN_GAP_MS) force = false;
+    else lastForcedAt.set(universe, Date.now());
   }
 
   const cached = payloadCache.get(universe);

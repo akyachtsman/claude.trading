@@ -34,6 +34,13 @@ const MIN_COVERAGE = 0.6;   // below this fraction of the roster → ok:false
 const HISTORY_TTL_MS = 1_800_000; // EOD bars don't change intraday
 const BATCH = 8;
 const FIRST_RESPONSE_BUDGET_MS = 4_000;
+// Deno's fetch has no default timeout. A symbol whose upstream stalls would never
+// resolve its Promise.all batch, so sweepInflight (module state) never cleared: the
+// later batches never ran and waitUntil(work) held the worker to its wall clock.
+// One deadline per symbol covers both legs (Yahoo, then the Stooq fallback) and the
+// body reads; longer than FIRST_RESPONSE_BUDGET_MS, so stragglers still finish.
+const SYMBOL_TIMEOUT_MS = 10_000;
+const ROSTER_TIMEOUT_MS = 5_000;
 
 type Row = { date: string; o: number; h: number; l: number; c: number; v: number };
 type Packed = { t: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
@@ -102,19 +109,19 @@ export function parseYahooChartOHLC(json: unknown): Row[] {
   return rows;
 }
 
-async function stooqOHLC(ticker: string, days = 1200): Promise<Row[]> {
+async function stooqOHLC(ticker: string, signal?: AbortSignal, days = 1200): Promise<Row[]> {
   const ymd = (d: Date) => d.toISOString().slice(0, 10).replaceAll('-', '');
   const d2 = new Date();
   const d1 = new Date(d2.getTime() - days * 86400000);
   const sym = ticker.toLowerCase() + '.us';
-  const res = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA });
+  const res = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA, signal });
   const rows = parseStooqOHLC(await res.text());
   if (rows.length < 40) throw new Error(`Stooq: ${rows.length} usable OHLC rows for ${sym}`);
   return rows;
 }
 
-async function yahooOHLC(ticker: string): Promise<Row[]> {
-  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5y&interval=1d`, { headers: UA });
+async function yahooOHLC(ticker: string, signal?: AbortSignal): Promise<Row[]> {
+  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5y&interval=1d`, { headers: UA, signal });
   const rows = parseYahooChartOHLC(await res.json().catch(() => null));
   if (rows.length < 40) throw new Error(`Yahoo: ${rows.length} usable OHLC rows for ${ticker}`);
   return rows;
@@ -125,7 +132,7 @@ async function yahooOHLC(ticker: string): Promise<Row[]> {
 // for every symbol, so the Stooq leg was a guaranteed miss that ran before the
 // Yahoo fetch on all 25 watchlist symbols. Stooq stays wired as the fallback
 // so it resumes automatically if the challenge ever lifts.
-const dailyOHLC = (ticker: string) => yahooOHLC(ticker).catch(() => stooqOHLC(ticker));
+const dailyOHLC = (ticker: string, signal?: AbortSignal) => yahooOHLC(ticker, signal).catch(() => stooqOHLC(ticker, signal));
 
 export function packSeries(rows: Row[]): Packed {
   const s: Packed = { t: [], o: [], h: [], l: [], c: [], v: [] };
@@ -159,11 +166,19 @@ let rosterCache: { at: number; list: string[] } | null = null;                  
 // do not re-credit it with fixing the 546s.
 const seriesCache = new Map<string, { at: number; json: string; last: string }>(); // per symbol, 30 min
 let sweepInflight: Promise<void> | null = null;
+/* `force:true` marks the whole roster stale and this function is anon-callable, so
+   honouring it unconditionally lets any caller buy a full ~25-fetch sweep per
+   request. Honour it at most once per FORCE_MIN_GAP_MS per isolate; inside the
+   window it is an ordinary cached call. Tradeoff: "Refresh now" is click-rate-
+   limited, so a second click within 30s costs at most a <=30s-old answer.
+   Per-isolate only: an egress speed-bump, not a fleet-wide wall. */
+const FORCE_MIN_GAP_MS = 30_000;
+let lastForcedAt = 0;
 
 async function loadWatchlist(): Promise<string[]> {
   if (rosterCache && Date.now() - rosterCache.at < 3_600_000) return rosterCache.list;
   try {
-    const res = await fetch(CONFIG_URL, { headers: UA });
+    const res = await fetch(CONFIG_URL, { headers: UA, signal: AbortSignal.timeout(ROSTER_TIMEOUT_MS) });
     if (res.ok) {
       const list = await res.json();
       if (Array.isArray(list) && list.length && list.every((s) => typeof s === 'string')) {
@@ -193,7 +208,7 @@ async function loadWatchlist(): Promise<string[]> {
 
 async function primeSymbol(ticker: string): Promise<void> {
   try {
-    const rows = await dailyOHLC(ticker);
+    const rows = await dailyOHLC(ticker, AbortSignal.timeout(SYMBOL_TIMEOUT_MS));
     // Serialize HERE, inside the sweep, not per request — see the seriesCache note.
     seriesCache.set(ticker, {
       at: Date.now(),
@@ -214,6 +229,10 @@ Deno.serve(async (req) => {
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
     force = body?.force === true;
+  }
+  if (force) {
+    if (Date.now() - lastForcedAt < FORCE_MIN_GAP_MS) force = false;
+    else lastForcedAt = Date.now();
   }
 
   const watchlist = await loadWatchlist();
