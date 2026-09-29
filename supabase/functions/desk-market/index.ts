@@ -564,7 +564,9 @@ async function refresh(): Promise<unknown> {
 // `force` is anon-callable and an honoured one re-sweeps ~30 Yahoo symbols, so a
 // loop of them is a free upstream burner. Honour it at most once per 30s per
 // instance; inside the window it is a normal cached read (the data is <30s old
-// by definition, so a second "Refresh now" click loses nothing).
+// by definition, so a second "Refresh now" click loses nothing). The stamp is
+// handed back when the forced refresh FAILS, so a click that only got stale
+// cache does not also lock out the retry.
 let lastForceAt = 0;
 const FORCE_MIN_GAP_MS = 30_000;
 
@@ -579,9 +581,10 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     force = body?.force === true;
   }
+  let stampedFrom: number | null = null;   // the stamp this request replaced, so a failure can restore it
   if (force) {
     const now = Date.now();
-    if (now - lastForceAt >= FORCE_MIN_GAP_MS) lastForceAt = now;
+    if (now - lastForceAt >= FORCE_MIN_GAP_MS) { stampedFrom = lastForceAt; lastForceAt = now; }
     else force = false;
   }
 
@@ -595,6 +598,7 @@ Deno.serve(async (req) => {
     inflight ??= refresh().finally(() => { inflight = null; });
     return reply(200, await inflight);
   } catch (e) {
+    if (stampedFrom !== null) lastForceAt = stampedFrom;  // failed forced refresh: don't lock out the retry
     if (cache) return reply(200, cache.body); // stale-but-honest beats a dead strip
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });
   }

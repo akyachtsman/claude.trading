@@ -40,34 +40,41 @@
 
 create extension if not exists pg_cron with schema pg_catalog;
 
-select cron.schedule(
-  'desk-ibkr-sync-evening',
-  '35 22 * * *',
-  $$
-  select net.http_post(
-    url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-ibkr-sync',
-    headers := jsonb_build_object(
-      'content-type', 'application/json',
-      'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
-      'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
-      'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
-    body := '{}'::jsonb,
-    timeout_milliseconds := 150000)
-$$
-);
+-- The two cron.schedule calls below are COMMENTED OUT on purpose. They carry
+-- the LIVE project's function URL, so executing them on a scratch database would
+-- make that database's pg_cron call the LIVE desk-ibkr-sync twice a day and
+-- spend real IBKR/quota. Kept as SQL for reference: to schedule on another
+-- project, substitute that project's own URL and create its Vault secrets first
+-- (see PREREQUISITES). Deliberately not executed on replay.
 
-select cron.schedule(
-  'desk-ibkr-sync-morning',
-  '35 9 * * *',
-  $$
-  select net.http_post(
-    url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-ibkr-sync',
-    headers := jsonb_build_object(
-      'content-type', 'application/json',
-      'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
-      'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
-      'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
-    body := '{}'::jsonb,
-    timeout_milliseconds := 150000)
-$$
-);
+-- select cron.schedule(
+--   'desk-ibkr-sync-evening',
+--   '35 22 * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-ibkr-sync',
+--     headers := jsonb_build_object(
+--       'content-type', 'application/json',
+--       'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+--       'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+--       'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
+--     body := '{}'::jsonb,
+--     timeout_milliseconds := 150000)
+-- $$
+-- );
+--
+-- select cron.schedule(
+--   'desk-ibkr-sync-morning',
+--   '35 9 * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-ibkr-sync',
+--     headers := jsonb_build_object(
+--       'content-type', 'application/json',
+--       'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+--       'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+--       'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
+--     body := '{}'::jsonb,
+--     timeout_milliseconds := 150000)
+-- $$
+-- );

@@ -1,3 +1,4 @@
+-- TARGET: a Supabase project or branch (the anon/authenticated roles must already exist for the revokes below), NOT vanilla Postgres.
 -- desk_001_tables — RECONSTRUCTED on 2026-09-29 from the live catalog, NOT the
 -- original text. The original was applied out-of-band through the Supabase MCP
 -- (live migration log: version 20260710215033, name desk_001_tables) and was
@@ -30,9 +31,11 @@
 --     before anything (desk_002, desk_007/008) reads it.
 --   * the pgcrypto statement below — Supabase pre-installs pgcrypto in the
 --     `extensions` schema, so the original probably had no such line. It is
---     idempotent and only matters on a non-Supabase scratch database, where
+--     idempotent and only matters on a scratch database that lacks it, where
 --     desk_002's extensions.digest() calls would otherwise fail to resolve.
+--     The `extensions` schema is created first for the same reason.
 
+create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 
 -- ── desk_users ──────────────────────────────────────────────────────────────

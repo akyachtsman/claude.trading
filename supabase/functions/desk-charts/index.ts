@@ -171,7 +171,9 @@ let sweepInflight: Promise<void> | null = null;
    request. Honour it at most once per FORCE_MIN_GAP_MS per isolate; inside the
    window it is an ordinary cached call. Tradeoff: "Refresh now" is click-rate-
    limited, so a second click within 30s costs at most a <=30s-old answer.
-   Per-isolate only: an egress speed-bump, not a fleet-wide wall. */
+   Per-isolate only: an egress speed-bump, not a fleet-wide wall. The stamp is
+   HANDED BACK when the forced sweep refreshed too few symbols (below), so a
+   click that only got stale cache does not also lock out the retry. */
 const FORCE_MIN_GAP_MS = 30_000;
 let lastForcedAt = 0;
 
@@ -230,10 +232,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     force = body?.force === true;
   }
+  let stampedFrom: number | null = null;   // the stamp this request replaced, so a failed sweep can restore it
   if (force) {
     if (Date.now() - lastForcedAt < FORCE_MIN_GAP_MS) force = false;
-    else lastForcedAt = Date.now();
+    else { stampedFrom = lastForcedAt; lastForcedAt = Date.now(); }
   }
+  const forcedAt = lastForcedAt;
 
   const watchlist = await loadWatchlist();
   const stale = watchlist.filter((t) => {
@@ -252,6 +256,13 @@ Deno.serve(async (req) => {
       }
     })().finally(() => { sweepInflight = null; });
     const work = sweepInflight;
+    if (stampedFrom !== null) {
+      const prev = stampedFrom;   // a forced sweep that refreshed almost nothing was a failed refresh: give the click back
+      work.then(() => {
+        const refreshed = watchlist.filter((t) => (seriesCache.get(t)?.at ?? 0) >= forcedAt).length;
+        if (refreshed < Math.ceil(watchlist.length * MIN_COVERAGE) && lastForcedAt === forcedAt) lastForcedAt = prev;
+      }, () => { if (lastForcedAt === forcedAt) lastForcedAt = prev; });
+    }
     await Promise.race([work, new Promise((r) => setTimeout(r, FIRST_RESPONSE_BUDGET_MS))]);
     // deno-lint-ignore no-explicit-any
     (globalThis as any).EdgeRuntime?.waitUntil?.(work); // let stragglers finish filling the cache

@@ -42,7 +42,7 @@ const CONSTITUENTS_URL = 'https://raw.githubusercontent.com/datasets/s-and-p-500
    covers the body read. Each call site then degrades exactly as it already did
    on a failed call: crumb -> spark fallback, screener -> cached / last-good. */
 const CRUMB_TIMEOUT_MS = 4000;     // fc.yahoo.com + getcrumb share ONE deadline
-const SCREENER_TIMEOUT_MS = 6000;  // the one bulk ~7k-row download
+const SCREENER_TIMEOUT_MS = 10000; // the one bulk ~7k-row download; the signal also covers a multi-MB body read
 const FETCH_TIMEOUT_MS = 5000;     // any single other call: quote/spark batch, roster, ledger
 
 // ETF cut roster. Read from the SAME committed file the client groups the
@@ -173,6 +173,30 @@ const EXT_QUOTE_TIMEOUT_MS = 4000;
    that is the 546s lesson. */
 const QUOTE_MERGE_TIMEOUT_MS = 9000;
 
+/* The batch loops below run through QUOTE_LANES parallel lanes, not one after
+   another: r2k's ~14 quote batches and sp500's last-resort ~26 spark batches
+   cannot land inside a 9s deadline back to back, so the tail of the roster was
+   silently left on the screener's session-behind day-%. Bounded, not unbounded:
+   an all-at-once fan-out only moves the stall into Yahoo's rate limiter. */
+const QUOTE_LANES = 4;
+/* Own deadlines for the two big cases (each still bounds the invocation). */
+const R2K_QUOTE_MERGE_TIMEOUT_MS = 20000;   // ~14 batches of 150 / 4 lanes
+const SPARK_FALLBACK_TIMEOUT_MS = 25000;    // ~26 batches of 20 / 4 lanes: the last resort must be able to finish
+/* A day-% overlay is only "fresh" when nearly every tile got it: at 60% the map
+   is a mix of two sessions' numbers under a label that says otherwise. */
+const FRESH_MERGE_FRACTION = 0.95;
+
+async function inLanes<T>(items: T[], work: (item: T) => Promise<void>, halt: () => boolean): Promise<void> {
+  let next = 0;
+  const lane = async () => { while (next < items.length && !halt()) await work(items[next++]); };
+  await Promise.all(Array.from({ length: Math.min(QUOTE_LANES, items.length) }, lane));
+}
+const chunked = <T>(xs: T[], n: number): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+};
+
 // extPct/extLast: the post-market print, prior-close basis (owner request
 // 2026-07-30). Null whenever the symbol has no extended session or none has
 // printed yet — never silently 0, which would read as "flat after hours".
@@ -270,15 +294,12 @@ async function getCrumb(): Promise<{ cookie: string; crumb: string }> {
 
 /* `deadline` (epoch ms) is the same device periodSweep uses: stop starting
    batches and return what has landed. It matters on the r2k path, where 2000
-   names are ~14 sequential batches and an all-or-nothing race would throw away
-   every batch that had already answered. */
+   names are ~14 batches and an all-or-nothing race would throw away every batch
+   that had already answered. Batches run in QUOTE_LANES parallel lanes. */
 async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: string }, batchSize = 150, deadline = Infinity): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   let deadStreak = 0;
-  for (let i = 0; i < symbols.length; i += batchSize) {
-    if (deadStreak >= 2) break;
-    if (Date.now() > deadline) break;
-    const chunk = symbols.slice(i, i + batchSize);
+  await inLanes(chunked(symbols, batchSize), async (chunk) => {
     // postMarket* added 2026-07-30 (owner request: extended hours everywhere it
     // exists). Stocks genuinely trade after the bell, so a heatmap tile can
     // carry its own extended move — unlike an index, which has no extended
@@ -296,7 +317,7 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
         signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, Math.max(250, deadline - Date.now()))),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const before = out.size;
+      let got = 0;   // this batch's own count: other lanes grow `out` while it awaits
       // deno-lint-ignore no-explicit-any
       for (const q of ((await res.json()) as any)?.quoteResponse?.result || []) {
         const pct = Number(q.regularMarketChangePercent);
@@ -312,6 +333,7 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
           const postPx = Number(q.postMarketPrice);
           const hasPost = Number.isFinite(postPx) && postPx > 0 && Number.isFinite(postPct);
           const extPct = hasPost ? ((1 + pct / 100) * (1 + postPct / 100) - 1) * 100 : null;
+          got++;
           out.set(String(q.symbol), {
             pct: Number(pct.toFixed(2)),
             cap: Number(q.marketCap) || null,
@@ -323,9 +345,9 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
           });
         }
       }
-      deadStreak = out.size > before ? 0 : deadStreak + 1;
+      deadStreak = got > 0 ? 0 : deadStreak + 1;
     } catch { deadStreak++; }
-  }
+  }, () => deadStreak >= 2 || Date.now() > deadline);
   return out;
 }
 
@@ -343,18 +365,20 @@ function parseSpark(json: Record<string, { close?: number[] }> | null): Map<stri
 
 async function sparkBatch(symbols: string[], batchSize = 20, deadline = Infinity): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
-  for (let i = 0; i < symbols.length; i += batchSize) {
-    if (Date.now() > deadline) break;   // ~25 sequential batches for sp500: bound the SUM, not just each call
-    const chunk = symbols.slice(i, i + batchSize);
+  let deadStreak = 0;   // consecutive empty batches: a dead Yahoo must not hold the invocation to the whole deadline
+  // ~25 batches for sp500, in lanes: bound the SUM (the deadline), not just each call
+  await inLanes(chunked(symbols, batchSize), async (chunk) => {
     const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=5d&interval=1d`;
     const res = await fetch(url, {
       headers: UA,
       signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, Math.max(250, deadline - Date.now()))),
     }).catch(() => null);
-    if (!res || !res.ok) continue;   // a stalled/failed batch is a coverage gap, which the callers' floors already judge
-    const json = await res.json().catch(() => null);
-    for (const [sym, v] of parseSpark(json)) if (!out.has(sym)) out.set(sym, v);
-  }
+    // a stalled/failed batch is a coverage gap, which the callers' floors already judge
+    const json = res && res.ok ? await res.json().catch(() => null) : null;
+    const got = parseSpark(json);
+    deadStreak = got.size > 0 ? 0 : deadStreak + 1;
+    for (const [sym, v] of got) if (!out.has(sym)) out.set(sym, v);
+  }, () => deadStreak >= QUOTE_LANES || Date.now() > deadline);
   return out;
 }
 
@@ -589,7 +613,9 @@ const inflight = new Map<string, Promise<unknown>>();                      // si
    Honour it at most once per FORCE_MIN_GAP_MS per universe per isolate; inside
    the window it is treated as an ordinary (cached) call. Tradeoff: "Refresh now"
    is click-rate-limited, so a second click within 30s costs at most a <=30s-old
-   answer. Per-isolate only — a speed-bump on egress, not a fleet-wide wall. */
+   answer. Per-isolate only — a speed-bump on egress, not a fleet-wide wall.
+   The stamp is HANDED BACK if the forced refresh fails (the handler's catch),
+   so a click that only got stale cache does not also lock out the retry. */
 const FORCE_MIN_GAP_MS = 30_000;
 const lastForcedAt = new Map<string, number>();
 const periodCache = new Map<string, { at: number; map: Map<string, Periods> }>(); // module mirror
@@ -848,25 +874,23 @@ async function refreshSp500(): Promise<unknown> {
        Bounded, and it says so when it fails. A REJECTING Yahoo was already
        handled; a STALLING one is the shape that kills the invocation after the
        screener has already succeeded — the documented 546 -> blank map + STALE
-       lamp path. Promise.race resolves an empty map instead. But a thin merge
-       must not pass silently as fresh: `source` records which numbers the
-       payload is actually carrying, so a lagging day-% is visible in the
-       response rather than only on a chart. */
-    const fresh: Map<string, Quote> = await Promise.race([
-      quoteBatch(constituents.map((c) => c.sym), await getCrumb()),
-      new Promise<Map<string, Quote>>((resolve) =>
-        setTimeout(() => resolve(new Map()), QUOTE_MERGE_TIMEOUT_MS)),
-    ]).catch(() => new Map<string, Quote>());
+       lamp path. The deadline is passed INTO quoteBatch (not raced against it),
+       so batches that landed before it are kept instead of discarded with the
+       rest. But a thin merge must not pass silently as fresh: `source` records
+       which numbers the payload is actually carrying, so a lagging day-% is
+       visible in the response rather than only on a chart. */
+    const auth = await getCrumb();   // a crumb failure still falls through to the outer catch, as before
+    const fresh = await quoteBatch(constituents.map((c) => c.sym), auth, 150, Date.now() + QUOTE_MERGE_TIMEOUT_MS);
 
     const merged = mergeFreshQuotes(constituents, quotes, fresh);
-    source = merged >= 300 ? 'nasdaq-screener+yahoo-quote' : `nasdaq-screener (day% may lag, ${merged} refreshed)`;
+    source = merged >= constituents.length * FRESH_MERGE_FRACTION ? 'nasdaq-screener+yahoo-quote' : `nasdaq-screener (day% may lag, ${merged} refreshed)`;
   } catch {
     try {
       quotes = await quoteBatch(constituents.map((c) => c.sym), await getCrumb(), 150, Date.now() + QUOTE_MERGE_TIMEOUT_MS);
       source = 'yahoo-quote';
       if (hits(quotes) < 300) throw new Error(`quote coverage too thin (${hits(quotes)})`);
     } catch {
-      quotes = await sparkBatch(constituents.map((c) => c.sym), 20, Date.now() + QUOTE_MERGE_TIMEOUT_MS);
+      quotes = await sparkBatch(constituents.map((c) => c.sym), 20, Date.now() + SPARK_FALLBACK_TIMEOUT_MS);
       source = 'yahoo-spark+cap-cache';
       if (hits(quotes) < 300) throw new Error(`spark coverage too thin (${hits(quotes)})`);
     }
@@ -901,15 +925,16 @@ async function refreshR2k(): Promise<unknown> {
      last / after-hours, the screener supplies roster and caps.
      Unlike sp500 there is no other quote source to fall back to, so a Yahoo
      failure here keeps the screener's numbers and SAYS so in `source`, rather
-     than failing a map that was renderable before. The batches are deadline-
-     bounded and a partial merge is kept (a stalled batch costs its own names). */
+     than failing a map that was renderable before. The batches run in lanes
+     under their own deadline and a partial merge is kept (a stalled batch costs
+     its own names); only a near-complete merge is labelled fresh. */
   const fresh = await (async () => {
     try {
-      return await quoteBatch(constituents.map((c) => c.sym), await getCrumb(), 150, Date.now() + QUOTE_MERGE_TIMEOUT_MS);
+      return await quoteBatch(constituents.map((c) => c.sym), await getCrumb(), 150, Date.now() + R2K_QUOTE_MERGE_TIMEOUT_MS);
     } catch { return new Map<string, Quote>(); }
   })();
   const merged = mergeFreshQuotes(constituents, quotes, fresh);
-  const source = merged >= constituents.length * 0.6 ? 'nasdaq-screener+yahoo-quote' : `nasdaq-screener (day% may lag, ${merged} refreshed)`;
+  const source = merged >= constituents.length * FRESH_MERGE_FRACTION ? 'nasdaq-screener+yahoo-quote' : `nasdaq-screener (day% may lag, ${merged} refreshed)`;
   let periods = await loadPeriods('r2k');
   // Periods must cover the roster — a partial map would shrink period views.
   // Count FINITE readings, not map entries: symbols Yahoo has no data for are
@@ -977,9 +1002,11 @@ Deno.serve(async (req) => {
     // button bypasses this cache so a click guarantees a fresh upstream pull.
     force = body?.force === true;
   }
+  let stampedFrom: number | null = null;   // the stamp this request replaced, so a failure can restore it
   if (force) {
-    if (Date.now() - (lastForcedAt.get(universe) ?? 0) < FORCE_MIN_GAP_MS) force = false;
-    else lastForcedAt.set(universe, Date.now());
+    const prev = lastForcedAt.get(universe) ?? 0;
+    if (Date.now() - prev < FORCE_MIN_GAP_MS) force = false;
+    else { stampedFrom = prev; lastForcedAt.set(universe, Date.now()); }
   }
 
   const cached = payloadCache.get(universe);
@@ -1000,6 +1027,7 @@ Deno.serve(async (req) => {
     }
     return reply(200, await inflight.get(universe)!);
   } catch (e) {
+    if (stampedFrom !== null) lastForcedAt.set(universe, stampedFrom);  // failed forced refresh: don't lock out the retry
     if (cached) return reply(200, cached.body); // stale-but-honest
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });
   }

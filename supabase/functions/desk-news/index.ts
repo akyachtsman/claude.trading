@@ -406,9 +406,13 @@ async function refresh(topic: string): Promise<unknown> {
 
 // `force` is anon-callable and an honoured one re-runs the whole feed sweep, so
 // a loop of them is a free upstream burner. Honour it at most once per 30s per
-// instance (all topics share the gap); inside the window it is a normal cached
-// read, and the data it would have fetched is <30s old anyway.
-let lastForceAt = 0;
+// instance PER TOPIC (a shared gap re-served a different topic's cache slot to a
+// Refresh-now typed within 30s of another's); inside the window it is a normal
+// cached read, and the data it would have fetched is <30s old anyway. The stamp
+// is handed back when the forced refresh FAILS, so a click that only got stale
+// cache does not also lock out the retry. Bounded like `cache`: stamps are
+// dropped with the slot they belong to.
+const lastForceAt = new Map<string, number>();
 const FORCE_MIN_GAP_MS = 30_000;
 
 Deno.serve(async (req) => {
@@ -423,9 +427,10 @@ Deno.serve(async (req) => {
     force = body?.force === true;
     topic = cleanTopic(body?.topic);
   }
+  let stampedFrom: number | null = null;   // the stamp this request replaced, so a failure can restore it
   if (force) {
-    const now = Date.now();
-    if (now - lastForceAt >= FORCE_MIN_GAP_MS) lastForceAt = now;
+    const now = Date.now(), prev = lastForceAt.get(topic) ?? 0;
+    if (now - prev >= FORCE_MIN_GAP_MS) { stampedFrom = prev; lastForceAt.set(topic, now); }
     else force = false;
   }
 
@@ -443,9 +448,16 @@ Deno.serve(async (req) => {
     /* Evict oldest-inserted once over the cap. Map preserves insertion order,
        so the first key is the oldest — re-set on write would make this LRU, but
        the roster here is one or two topics and the extra churn buys nothing. */
-    while (cache.size > MAX_SLOTS) cache.delete(cache.keys().next().value as string);
+    while (cache.size > MAX_SLOTS) {
+      const evicted = cache.keys().next().value as string;
+      cache.delete(evicted);
+      lastForceAt.delete(evicted);
+    }
     return reply(200, body);
   } catch (e) {
+    if (stampedFrom !== null) {  // failed forced refresh: don't lock out the retry
+      if (stampedFrom > 0) lastForceAt.set(topic, stampedFrom); else lastForceAt.delete(topic);
+    }
     if (hit) return reply(200, hit.body); // stale-but-honest, for THIS topic
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });
   }
