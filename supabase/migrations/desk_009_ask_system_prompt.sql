@@ -9,6 +9,8 @@
 --
 -- Source-of-record only; applied to the dedicated project (kwugzhyfjevzwgplhtsd)
 -- via Supabase MCP apply_migration.
+--
+-- revert: drop function public.desk_get_system_prompt(text); drop function public.desk_set_system_prompt(text, text); drop table public.desk_system_prompt — DESTROYS the owner's live prompt, which exists only in that row (owner approval, backup/PITR only); desk-ask falls back to its DEFAULT_SYSTEM constant if the read fails.
 
 -- ── table (singleton — id is always `true`) ─────────────────────────────────
 create table if not exists public.desk_system_prompt (

@@ -16,22 +16,33 @@
 --
 -- Source-of-record only; applied to the dedicated project (kwugzhyfjevzwgplhtsd)
 -- via Supabase MCP apply_migration.
+--
+-- revert: select cron.unschedule('desk-cron-ask');
 
-select cron.schedule(
-  'desk-cron-ask',
-  '*/5 * * * *',
-  $$
-  select net.http_post(
-    url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-cron-ask',
-    headers := jsonb_build_object(
-      'content-type', 'application/json',
-      'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
-      'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
-      'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
-    body := '{}'::jsonb,
-    -- Generous, because a firing runs a full desk-ask tool loop end to end. The
-    -- function stamps last_run_at BEFORE that call, so a timeout here cannot
-    -- make the next tick start the same question again.
-    timeout_milliseconds := 240000)
-  $$
-);
+-- The cron.schedule call below is COMMENTED OUT on purpose. It carries the LIVE
+-- project's function URL, so executing it on a scratch database would make that
+-- database's pg_cron call the LIVE desk-cron-ask every 5 minutes and spend real
+-- Claude quota and email. Kept as SQL for reference: to schedule on another
+-- project, substitute that project's own URL and create its Vault secrets first
+-- (see desk_005's PREREQUISITES). Deliberately not executed on replay.
+-- The function's ask wait (ASK_TIMEOUT_MS / CRON_WALL_MS in desk-cron-ask) is
+-- sized UNDER the timeout_milliseconds below: raise them together.
+
+-- select cron.schedule(
+--   'desk-cron-ask',
+--   '*/5 * * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://kwugzhyfjevzwgplhtsd.supabase.co/functions/v1/desk-cron-ask',
+--     headers := jsonb_build_object(
+--       'content-type', 'application/json',
+--       'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+--       'authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+--       'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret')),
+--     body := '{}'::jsonb,
+--     -- Generous, because a firing runs a full desk-ask tool loop end to end. The
+--     -- function stamps last_run_at BEFORE that call, so a timeout here cannot
+--     -- make the next tick start the same question again.
+--     timeout_milliseconds := 240000)
+--   $$
+-- );

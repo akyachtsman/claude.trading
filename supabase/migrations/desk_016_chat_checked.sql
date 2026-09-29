@@ -27,6 +27,8 @@
 -- Anything reading this column must keep those apart — treating null as false
 -- would report the whole pre-desk_016 history as having failed a check that was
 -- never run on it.
+--
+-- revert: alter table public.desk_chat_memory drop column checked — DESTROYS recorded grounding metadata (owner approval, backup/PITR only); prefer leaving the column and ignoring it.
 
 begin;
 

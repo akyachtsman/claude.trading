@@ -1,0 +1,33 @@
+-- desk_003_seed — PLACEHOLDER, NOT a reconstruction. RECONSTRUCTED on 2026-09-29
+-- from the live catalog's migration log only; the original text is unrecoverable
+-- and this file deliberately contains NO data. The original was applied
+-- out-of-band through the Supabase MCP (live migration log: version
+-- 20260710215120, name desk_003_seed) and was never committed.
+--
+-- WHAT IT DID (inferred from its name and from what desk_001 left empty): it
+-- seeded the initial `public.desk_users` row(s) — label, salt and salted-SHA256
+-- PIN hash, plus the `is_test` flag that marks the CI/test user. The live table
+-- holds 2 rows today; which of them this migration inserted, versus rows added
+-- later out-of-band, cannot be determined without reading row data, which this
+-- reconstruction deliberately does not do (the hash column is a credential).
+-- It may also have seeded starting rows in desk_account_snapshots /
+-- desk_equity_history; that is likewise unknowable from the catalog. Those two
+-- tables are otherwise filled by the desk-ibkr-sync edge function (desk_005).
+--
+-- WHY NOTHING IS INSERTED HERE: PIN hashes, salts and balances must never enter
+-- this repo (CLAUDE.md → Project-Specific Security Constraints). On a fresh
+-- database an operator creates the owner row by hand, never through a committed
+-- file. Template, to be run once in the SQL editor with real values substituted
+-- (the hash is computed exactly as desk_login/desk_get_dashboard verify it):
+--
+--   insert into public.desk_users (label, salt, pin_hash, is_test)
+--   values (
+--     '<label>',
+--     '<random salt>',
+--     encode(extensions.digest('<random salt>' || '<PIN>', 'sha256'), 'hex'),
+--     false          -- true only for the CI test user (repo secret TEST_AUTH_CREDENTIAL)
+--   );
+--
+-- revert: nothing to undo — this file executes no statements. To remove the originally seeded owner row from a live database: delete dependent rows in desk_ai_briefs, desk_equity_history, desk_account_snapshots and desk_chat_memory first (foreign keys are NO ACTION except desk_chat_memory's CASCADE), then delete from public.desk_users where id = '<uuid>' — owner approval required, this destroys the PIN.
+--
+-- Depends on: desk_001 (public.desk_users).

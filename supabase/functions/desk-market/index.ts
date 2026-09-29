@@ -25,6 +25,25 @@ const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk market; +https://akyachtsman.github.io/claude.trading/)' };
+// Every upstream call is bounded. bestEffort() below only stops WAITING on a slow
+// extra; it never cancels the socket, and the core six had no bound at all, so
+// one stalled Yahoo connection held the whole sweep until the platform killed it.
+const FETCH_TIMEOUT_MS = 8000;
+const tfetch = (url: string, init: RequestInit = {}, ms = FETCH_TIMEOUT_MS) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+
+// ONE hoisted formatter for every ET calendar date below. `toLocaleDateString`
+// with a timeZone builds and discards an ICU formatter per call (measured in
+// desk-charts: 31,000 calls = 2611 ms of CPU, 52x slower than reusing one), and
+// parseYahooChart runs it per bar — ~63 bars x 29 symbols per sweep. Same
+// output byte for byte, but `format` THROWS RangeError on an invalid instant
+// where toLocaleDateString returned the string "Invalid Date" (which then sorted
+// LAST and became a tile's asOf), so nyDate() returns null and the bar is skipped.
+const NY_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
+const nyDate = (sec: number): string | null => {
+  const d = new Date(sec * 1000);
+  return Number.isNaN(d.getTime()) ? null : NY_DATE.format(d);
+};
 
 const MARKET_SYMBOLS: { sym: string; name: string }[] = [
   { sym: '^spx', name: 'S&P 500' },
@@ -179,7 +198,7 @@ async function stooqDaily(symbol: string): Promise<Series> {
   const d2 = new Date();
   const d1 = new Date(d2.getTime() - 90 * 86400000);
   const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol)}&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`;
-  const res = await fetch(url, { headers: UA });
+  const res = await tfetch(url, { headers: UA });
   const rows = parseStooqDaily(await res.text());
   if (rows.length < 2) throw new Error(`Stooq: ${rows.length} usable rows for ${symbol}`);
   // Stooq's daily CSV carries no intraday quote clock, so no quoteTs — the
@@ -202,7 +221,8 @@ export function parseYahooChart(json: unknown): Row[] {
   for (let i = 0; i < ts.length; i++) {
     const close = Number(closes[i]);
     if (!Number.isFinite(close) || close <= 0) continue;
-    const date = new Date(ts[i] * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const date = nyDate(ts[i]);
+    if (date === null) continue; // malformed timestamp: skip the bar, never the symbol
     rows.push({ date, close });
   }
   rows.sort((a, b) => a.date.localeCompare(b.date));
@@ -212,7 +232,7 @@ export function parseYahooChart(json: unknown): Row[] {
 async function yahooDaily(stooqSym: string): Promise<Series> {
   const sym = yahooSymbol(stooqSym);
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d`;
-  const res = await fetch(url, { headers: UA });
+  const res = await tfetch(url, { headers: UA });
   const json = await res.json().catch(() => null);
   const rows = parseYahooChart(json);
   if (rows.length < 2) throw new Error(`Yahoo: ${rows.length} usable rows for ${sym}`);
@@ -232,8 +252,8 @@ async function yahooDaily(stooqSym: string): Promise<Series> {
   // yesterday's real 24,876.91). The baseline stays the second-to-last daily
   // bar, which is the actual prior session.
   if (Number.isFinite(price) && price > 0 && Number.isFinite(ts)) {
-    const quoteDate = new Date(ts * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-    if (quoteDate === last.date) {
+    const quoteDate = nyDate(ts);
+    if (quoteDate !== null && quoteDate === last.date) {
       last.close = price;
       return { rows, quoteTs: ts };
     }
@@ -268,13 +288,13 @@ const YAUTH_TTL_MS = 3_600_000;
 
 async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string } | null> {
   if (!force && yauth && Date.now() - yauth.at < YAUTH_TTL_MS) return yauth;
-  const c = await fetch('https://fc.yahoo.com/', { headers: UA });
+  const c = await tfetch('https://fc.yahoo.com/', { headers: UA }, EXT_QUOTE_TIMEOUT_MS);
   // deno-lint-ignore no-explicit-any
   const setCookies: string[] = (c.headers as any).getSetCookie?.() ?? [];
   let cookie = setCookies.map((s) => s.split(';')[0]).filter(Boolean).join('; ');
   if (!cookie) { const one = c.headers.get('set-cookie'); if (one) cookie = one.split(';')[0]; }
   if (!cookie) return null;
-  const cr = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } });
+  const cr = await tfetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } }, EXT_QUOTE_TIMEOUT_MS);
   if (!cr.ok) return null;
   const crumb = (await cr.text()).trim();
   if (!crumb || crumb.length > 32 || crumb.includes('<')) return null;
@@ -291,7 +311,7 @@ async function quoteBatch(yahooSyms: string[]): Promise<Map<string, any>> {
     const q = yahooSyms.slice(i, i + 50).map(encodeURIComponent).join(',');
     const url = (crumb: string) =>
       `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${q}&crumb=${encodeURIComponent(crumb)}`;
-    let res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }).catch(() => null);
+    let res = await tfetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }, EXT_QUOTE_TIMEOUT_MS).catch(() => null);
     // A crumb can be invalidated before YAUTH_TTL_MS expires, and silently
     // skipping the batch meant the extended lines vanished for a whole closed-
     // market TTL — the empty result gets cached (Codex review, PR #199). Retry
@@ -299,7 +319,7 @@ async function quoteBatch(yahooSyms: string[]): Promise<Map<string, any>> {
     if (res && res.status === 401) {
       auth = await yahooAuth(true);
       if (!auth) return out as Map<string, any>;
-      res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }).catch(() => null);
+      res = await tfetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } }, EXT_QUOTE_TIMEOUT_MS).catch(() => null);
     }
     if (!res || !res.ok) continue;
     const json = await res.json().catch(() => null);
@@ -451,7 +471,7 @@ async function refresh(): Promise<unknown> {
     // the whole sweep and then threw — measured live at 61s for a 48-byte
     // `{"ok":false,"error":"FRED DGS10: 0 usable rows"}`. Every tile the desk
     // could actually price was discarded because ONE optional row was missing.
-    bestEffort(fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }).then((r) => r.text()), 4000),
+    bestEffort(tfetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${cosd}`, { headers: UA }, 4000).then((r) => r.text()), 4000),
     // best-effort with a latency cap (see bestEffort): a slow/rejected extra → null
     Promise.all(EXTRA_SYMBOLS.map((m) => bestEffort(dailyCloses(m.sym), 4000))),
   ]);
@@ -541,6 +561,15 @@ async function refresh(): Promise<unknown> {
   return body;
 }
 
+// `force` is anon-callable and an honoured one re-sweeps ~30 Yahoo symbols, so a
+// loop of them is a free upstream burner. Honour it at most once per 30s per
+// instance; inside the window it is a normal cached read (the data is <30s old
+// by definition, so a second "Refresh now" click loses nothing). The stamp is
+// handed back when the forced refresh FAILS, so a click that only got stale
+// cache does not also lock out the retry.
+let lastForceAt = 0;
+const FORCE_MIN_GAP_MS = 30_000;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
@@ -551,6 +580,12 @@ Deno.serve(async (req) => {
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
     force = body?.force === true;
+  }
+  let stampedFrom: number | null = null;   // the stamp this request replaced, so a failure can restore it
+  if (force) {
+    const now = Date.now();
+    if (now - lastForceAt >= FORCE_MIN_GAP_MS) { stampedFrom = lastForceAt; lastForceAt = now; }
+    else force = false;
   }
 
   // A body captured during the open session is discarded once the session is
@@ -563,6 +598,7 @@ Deno.serve(async (req) => {
     inflight ??= refresh().finally(() => { inflight = null; });
     return reply(200, await inflight);
   } catch (e) {
+    if (stampedFrom !== null) lastForceAt = stampedFrom;  // failed forced refresh: don't lock out the retry
     if (cache) return reply(200, cache.body); // stale-but-honest beats a dead strip
     return reply(502, { ok: false, error: String((e as Error)?.message || e) });
   }

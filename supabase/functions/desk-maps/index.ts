@@ -26,6 +26,12 @@ const UA = { 'user-agent': 'Mozilla/5.0 (desk maps; +https://akyachtsman.github.
 const CONFIG_URL = 'https://akyachtsman.github.io/claude.trading/config/map-filters.json';
 const QUOTE_TTL_MS = 120_000; // one Yahoo batch per warm instance per 2 min
 const CONFIG_TTL_MS = 3_600_000; // roster edits are rare; picked up within the hour
+// Deno's fetch has no default timeout: every upstream call is bounded so a stalled
+// host costs that call (or, for the spark sweep, its remaining budget), never the
+// whole invocation (WORKER_RESOURCE_LIMIT). A short sweep is judged by the
+// half-coverage rule below, exactly like a batch that answered non-OK.
+const FETCH_TIMEOUT_MS = 5000;
+const SPARK_BUDGET_MS = 9000;
 
 type RosterRow = [string, string, string, string, number?]; // [yahooSym, sym, name, group, weight]
 type Quote = { pct: number; last: number };
@@ -79,25 +85,35 @@ function parseSpark(json: Record<string, { close?: number[] }> | null): Map<stri
   return out;
 }
 
-async function sparkBatch(symbols: string[], batchSize = 20): Promise<Map<string, Quote>> {
+async function sparkBatch(symbols: string[], batchSize = 20, deadline = Infinity): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   for (let i = 0; i < symbols.length; i += batchSize) {
+    if (Date.now() > deadline) break; // hand back partial progress; the half-coverage rule judges it
     const chunk = symbols.slice(i, i + batchSize);
     const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=5d&interval=1d`;
-    const res = await fetch(url, { headers: UA });
-    if (!res.ok) continue; // partial coverage is handled by the half-coverage rule
+    const res = await fetch(url, {
+      headers: UA,
+      signal: AbortSignal.timeout(Math.min(FETCH_TIMEOUT_MS, Math.max(250, deadline - Date.now()))),
+    }).catch(() => null);
+    if (!res || !res.ok) continue; // partial coverage is handled by the half-coverage rule
     const json = await res.json().catch(() => null);
     for (const [sym, v] of parseSpark(json)) out.set(sym, v);
   }
   return out;
 }
 
+// ONE hoisted formatter (same as desk-heatmap/desk-charts' NY_DATE): the
+// toLocaleDateString('en-CA', { timeZone }) form builds an ICU formatter per call.
+const NY_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
 // EOD date stamp for the payload — anchored to the US market's calendar day
 // (Eastern time), NOT UTC: after ~20:00 ET the UTC date rolls to "tomorrow", so
 // a UTC stamp read a day ahead for evening US viewers. Weekends roll back to
 // Friday. Informational; the client lamps this feed as LIVE off generatedAt.
 function lastTradingDayIso(): string {
-  const etIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD in ET
+  const etIso = NY_DATE.format(new Date()); // YYYY-MM-DD in ET
   const d = new Date(etIso + 'T12:00:00Z'); // noon-UTC anchor keeps DOW math on the ET date
   const dow = d.getUTCDay();
   if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);
@@ -111,7 +127,7 @@ let inflight: Promise<Response> | null = null; // single-flight: one batch per b
 
 async function refresh(): Promise<Response> {
   if (!configCache || Date.now() - configCache.at > CONFIG_TTL_MS) {
-    const res = await fetch(CONFIG_URL, { headers: UA }).catch(() => null);
+    const res = await fetch(CONFIG_URL, { headers: UA, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }).catch(() => null);
     const cfg = res && res.ok ? await res.json().catch(() => null) : null;
     if (cfg?.extra && Object.keys(cfg.extra).length) {
       configCache = { at: Date.now(), extra: cfg.extra };
@@ -121,7 +137,7 @@ async function refresh(): Promise<Response> {
   }
 
   const symbols = Object.values(configCache.extra).flat().map((r) => r[0]);
-  const quotes = await sparkBatch(symbols);
+  const quotes = await sparkBatch(symbols, 20, Date.now() + SPARK_BUDGET_MS);
   const cuts = buildMapCuts(configCache.extra, quotes);
   if (!Object.keys(cuts).length) {
     return reply(502, { ok: false, error: `all cuts below half coverage (${quotes.size}/${symbols.length} quotes)` });
@@ -139,6 +155,14 @@ Deno.serve(async (req) => {
   if (quoteCache && Date.now() - quoteCache.at < QUOTE_TTL_MS) return reply(200, quoteCache.body);
 
   inflight ??= refresh().finally(() => { inflight = null; });
-  const res = await inflight;
-  return res.clone();
+  /* An unhandled throw here surfaced as a bare HTTP 500 with NO CORS headers,
+     which the browser reports as a CORS failure rather than a feed failure. Answer
+     like the sibling feeds do: JSON ok:false + CORS, 502, so the client lamps the
+     panel STALE and keeps its last good render. */
+  try {
+    const res = await inflight;
+    return res.clone();
+  } catch (e) {
+    return reply(502, { ok: false, error: String((e as Error)?.message || e) });
+  }
 });

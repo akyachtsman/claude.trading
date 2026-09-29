@@ -17,6 +17,8 @@
 -- is the question today, but the honest shape is "where did this come from",
 -- and a future third source (an email reply, a webhook) would otherwise need a
 -- second boolean and a rule about which wins.
+--
+-- revert: restore public.desk_chat_history(text) from desk_008 (select list without `c.origin`) FIRST, then alter table public.desk_chat_memory drop column origin — DESTROYS scheduled/typed provenance tags (owner approval, backup/PITR only); prefer leaving the column and ignoring it.
 
 begin;
 

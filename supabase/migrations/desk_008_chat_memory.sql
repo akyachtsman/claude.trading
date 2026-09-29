@@ -9,6 +9,8 @@
 -- Source-of-record only; applied to the dedicated project (kwugzhyfjevzwgplhtsd)
 -- via Supabase MCP apply_migration (earlier desk_00N migrations were applied
 -- out-of-band and are tracked in the project's supabase_migrations table).
+--
+-- revert: drop function public.desk_chat_clear(text); drop function public.desk_chat_history(text); drop table public.desk_chat_memory — the table holds stored Ask-the-desk history, so dropping it DESTROYS data (owner approval, backup/PITR only); safer to drop just the two RPCs and leave the table. desk_015/016/019 add columns to it and desk_019 redefines desk_chat_history, so revert those first.
 
 -- ── table ──────────────────────────────────────────────────────────────────
 create table if not exists public.desk_chat_memory (

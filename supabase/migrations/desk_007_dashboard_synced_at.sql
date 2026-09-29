@@ -6,6 +6,8 @@
 -- apply_migration; committed here as the source-of-record for the schema change
 -- (earlier desk_00N migrations were applied out-of-band and are tracked in the
 -- project's supabase_migrations table).
+--
+-- revert: restore the pre-desk_007 public.desk_get_dashboard(text) body — the current body minus `s.created_at` in the `latest` CTE select list (reconstructed in desk_002_rpcs.sql); no other object changed.
 CREATE OR REPLACE FUNCTION public.desk_get_dashboard(pin text)
  RETURNS jsonb
  LANGUAGE sql

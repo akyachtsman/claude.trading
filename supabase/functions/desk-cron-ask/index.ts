@@ -40,6 +40,32 @@ const CATCHUP_MIN = 90;
 // tick, which is invisible against a schedule measured in hours.
 const MAX_PER_TICK = 1;
 
+// Every fetch is bounded, so a hung upstream costs its own section (or its own
+// row) rather than the whole tick. The ask call gets the longest leash: desk-ask
+// runs the full agentic tool loop.
+const FEED_TIMEOUT_MS = 25000;
+const REST_TIMEOUT_MS = 15000;
+const MAIL_TIMEOUT_MS = 15000;
+/* THE CEILING IS pg_net's, NOT the platform's. desk_018 invokes this function
+   with `timeout_milliseconds := 240000`: after 240s pg_net stops waiting for the
+   response, so a tick that runs longer has nobody listening — the email and the
+   final status stamp would land after the caller has given up. Everything here
+   therefore has to finish under that, and the ask wait is CLAMPED to what is
+   left of CRON_WALL_MS after the steps before it, keeping room for the two
+   writes after it (email, stamp): worst case 15+15+25+15 before and 15+15 after
+   still sums to 230s, under the 240s ceiling. In practice the clamp, not
+   ASK_TIMEOUT_MS, is what binds (~200s). A legitimate run is 4-6 Claude calls of 30-90s and can
+   outlast that: desk-ask carries on regardless and archives the answer, and
+   this row is stamped as a timed-out ask (below) — the email is what such a run
+   loses. RAISING EITHER NUMBER REQUIRES RAISING desk_018's pg_net timeout too, a
+   migration the owner must apply; it is deliberately NOT changed here. */
+const ASK_TIMEOUT_MS = 215000;
+const CRON_WALL_MS = 230000;
+const ASK_TIMED_OUT = 'failed: ask timed out; answer may still land in the thread';
+// AbortSignal.timeout raises TimeoutError; a body read cut off by it can surface as AbortError on some runtimes.
+// Every signal here is one of our own timeouts, so both mean "timed out".
+const isTimeout = (e: unknown) => ['TimeoutError', 'AbortError'].includes((e as { name?: string })?.name ?? '');
+
 type Row = {
   id: number;
   prompt: string;
@@ -141,10 +167,71 @@ async function liveFeed(name: string, body: Record<string, unknown> = {}): Promi
       method: 'POST',
       headers: { 'content-type': 'application/json', apikey: anon, authorization: `Bearer ${anon}` },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
     });
     const out = await res.json().catch(() => null);
-    return out?.ok ? out : null;
-  } catch { return null; }
+    if (out?.ok) return out;
+    console.error(`desk-cron-ask feed ${name} unavailable: HTTP ${res.status}`);
+    return null;
+  } catch (e) {
+    console.error(`desk-cron-ask feed ${name} unavailable: ${(e as Any)?.name ?? 'error'}`);
+    return null;
+  }
+}
+
+/* PROMPT-INJECTION BOUNDARY. `desk_get_watchlists_open` / `desk_set_watchlists_open`
+   (desk_012 / desk_014) are granted to ANON, so anyone holding the public anon
+   key can create and rename lists — and this context is read by an assistant
+   that has web tools and whose answer is EMAILED to the owner. A list TITLE is
+   therefore attacker-controlled text on its way into an LLM with an outbound
+   channel, so no title (and no other free text from the roster) is ever copied
+   in: lists are labelled by POSITION and only strictly-validated tickers pass.
+   The pattern is the RPC's own (`^[A-Z0-9.^=-]{1,10}$`, after trim + upper). */
+const TICKER_RE = /^[A-Z0-9.^=-]{1,10}$/;
+const WL_MAX_LISTS = 50;      // the RPC's own cap
+/* The RPC has NO per-list symbol cap, so 50 lists x 400 junk tickers (~280KB)
+   used to fill desk-ask's whole 80k context cap, whose slice then cut the LATER
+   sections (heatmap, technicals, feedsUnavailable) off mid-string — the
+   scheduled brief lost them silently. The cap is on the TOTAL, unresolved names
+   ride as a bounded list plus a count, and `watchlist` is emitted LAST. Kept in
+   step with desk-ask's sanitizeContext (separate deployments, no shared module). */
+const WL_MAX_TOTAL_SYMS = 300;
+const WL_MAX_UNRESOLVED = 25;   // names kept per list; the rest ride as `unresolvedTotal`
+function cleanSym(v: Any): string | null {
+  const s = String(v ?? '').trim().toUpperCase();
+  return TICKER_RE.test(s) ? s : null;
+}
+const finiteOrNull = (v: Any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+function watchlistContext(lists: Any): Any[] {
+  if (!Array.isArray(lists)) return [];
+  let remaining = WL_MAX_TOTAL_SYMS;
+  return lists.slice(0, WL_MAX_LISTS).map((l: Any, i: number) => {
+    const resolved = new Set<string>();
+    const symbols: Any[] = [];
+    let omitted = 0;   // valid names dropped by the total cap
+    for (const r of Array.isArray(l?.rows) ? l.rows : []) {
+      const sym = cleanSym(r?.sym);
+      if (!sym || resolved.has(sym)) continue;
+      resolved.add(sym);
+      if (remaining <= 0) { omitted++; continue; }   // counted, and kept out of `unresolved` via `resolved`
+      remaining--;
+      symbols.push({ sym, last: finiteOrNull(r?.last), dayChgPct: finiteOrNull(r?.pct), extended: r?.ext === true });
+    }
+    // Saved but not quoted — named so an unresolved ticker is visible as such.
+    const unresolved = new Set<string>();
+    for (const s of Array.isArray(l?.symbols) ? l.symbols : []) {
+      const sym = cleanSym(s);
+      if (sym && !resolved.has(sym)) unresolved.add(sym);
+    }
+    const shown = [...unresolved].slice(0, WL_MAX_UNRESOLVED);
+    return {
+      list: `List ${i + 1}`, symbols,
+      ...(omitted ? { symbolsOmitted: omitted } : {}),
+      unresolved: shown,
+      ...(unresolved.size > shown.length ? { unresolvedTotal: unresolved.size } : {}),
+    };
+  });
 }
 
 // Stochastic 14-3-3 (the SWING read) and 92-15-15 (the LONG-TERM weekly-scale read),
@@ -303,6 +390,7 @@ async function sendBrief(prompt: string, answer: string, pt: Any): Promise<strin
         // bug turning a price into markup.
         text: answer,
       }),
+      signal: AbortSignal.timeout(MAIL_TIMEOUT_MS),
     });
     if (!res.ok) return `ok, email failed: HTTP ${res.status} ${(await res.text()).slice(0, 90)}`;
     return 'ok (emailed)';
@@ -316,15 +404,19 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
 
   const snapshots = (async () => {
     try {
-      const rows = await (await fetch(
+      const sres = await fetch(
         `${url}/rest/v1/desk_account_snapshots?select=account_key,label,as_of,nav,day_pnl,total_unrl,cash,positions` +
         `&user_id=eq.${userId}&order=as_of.desc&limit=40`,
-        { headers },
-      )).json();
+        { headers, signal: AbortSignal.timeout(REST_TIMEOUT_MS) },
+      );
+      // A rejected read answers with an error OBJECT, which the loop below
+      // would only trip over (and swallow) as "not iterable".
+      if (!sres.ok) { console.error(`desk-cron-ask snapshots read failed: HTTP ${sres.status}`); return null; }
+      const rows = await sres.json();
       const latest = new Map<number, Any>();
       for (const r of rows || []) if (!latest.has(r.account_key)) latest.set(r.account_key, r);
       return [...latest.values()].sort((a, b) => a.account_key - b.account_key);
-    } catch { return []; }
+    } catch (e) { console.error(`desk-cron-ask snapshots read failed: ${(e as Any)?.name ?? 'error'}`); return null; }
   })();
 
   const [accounts, market, news, watchlist, heat, charts] = await Promise.all([
@@ -346,13 +438,15 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
     // stock, not a read on their liquidity, and withholding the numbers is the
     // enforcement point rather than a line in the system prompt. dayPct stays
     // because it is the ticker's own market move, not a fact about the account.
-    accounts: (accounts || []).map((s: Any) => ({
+    // null (not []) when the read FAILED, so "unavailable" never reads as "no
+    // holdings"; it is also named in feedsUnavailable below.
+    accounts: accounts ? accounts.map((s: Any) => ({
       account: 'Account ' + s.account_key,
       label: s.label ?? null,
       asOf: s.as_of,
       positions: (Array.isArray(s.positions) ? s.positions : [])
         .map((p: Any) => ({ sym: p.sym, dayPct: p.dayPct })),
-    })),
+    })) : null,
     /* Extended-hours prints carried through (Codex review, PR #241). desk-market
        puts the later price in `ext` (the instrument's own after-hours trade) or
        `extProxy` (an index naming the ETF that stands in for it, since indices
@@ -386,21 +480,26 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
       at: n.t ?? null,
       symbols: (Array.isArray(n.chips) ? n.chips : []).map((c: Any) => ({ sym: c[0], dayPct: c[1] ?? null })),
     })),
-    // The watchlist goes in FULL — it is the curated focus list, and summarising
-    // it would defeat the point of curating it (the PR #241 ruling).
-    watchlist: (watchlist?.lists || []).map((l: Any) => ({
-      title: l.title,
-      symbols: (l.rows || []).map((r: Any) => ({ sym: r.sym, last: r.last, dayChgPct: r.pct, extended: r.ext === true })),
-      unresolved: (l.symbols || []).filter((s: string) => !(l.rows || []).some((r: Any) => r.sym === s)),
-    })),
     heatmap: heatmapFrom(heat),
     // The oscillator readings the Pro panes draw, for the whole charted roster.
     technicals: technicalsFrom(charts),
+    // Best-effort feeds that did not answer — said out loud, since a missing
+    // section is otherwise indistinguishable from an empty one.
+    feedsUnavailable: [['accounts', accounts], ['desk-market', market], ['desk-news', news], ['desk-watchlist', watchlist],
+      ['desk-heatmap', heat], ['desk-charts', charts]].filter(([, v]) => !v).map(([n]) => n),
+    // The watchlist goes in FULL up to WL_MAX_TOTAL_SYMS — it is the curated focus
+    // list, and summarising it would defeat the point of curating it (the PR #241
+    // ruling); the cap is far above any real roster. Symbols only, lists numbered
+    // rather than titled: see watchlistContext. null (not []) when the feed was
+    // down, so "unavailable" never reads as "empty". LAST on purpose: it is the
+    // one section a caller can inflate, so residual truncation must eat it first.
+    watchlist: watchlist ? watchlistContext(watchlist.lists) : null,
   };
 }
 
 // ── entrypoint ──────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
+  const t0 = Date.now();
   if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST only' });
   const secret = Deno.env.get('CRON_SECRET');
   if (!secret || req.headers.get('x-cron-secret') !== secret) {
@@ -417,7 +516,7 @@ Deno.serve(async (req) => {
   try {
     const res = await fetch(
       `${url}/rest/v1/desk_ask_schedule?select=*&enabled=eq.true&order=pos,id`,
-      { headers },
+      { headers, signal: AbortSignal.timeout(REST_TIMEOUT_MS) },
     );
     if (!res.ok) throw new Error(`schedule read ${res.status}: ${(await res.text()).slice(0, 120)}`);
     const rows: Row[] = await res.json();
@@ -431,7 +530,9 @@ Deno.serve(async (req) => {
 
     if (!due.length) return reply(200, { ok: true, status: 'idle', checked: rows.length, pt: `${pt.date} ${pt.hour}:${String(pt.min).padStart(2, '0')}` });
 
-    const users = await (await fetch(`${url}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers })).json();
+    const ures = await fetch(`${url}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
+    if (!ures.ok) throw new Error(`owner read ${ures.status}`);
+    const users = await ures.json();
     if (!users?.length) throw new Error('no owner row in desk_users');
     const userId = users[0].id;
 
@@ -449,9 +550,14 @@ Deno.serve(async (req) => {
           method: 'PATCH',
           headers,
           body: JSON.stringify({ last_run_at: new Date().toISOString(), last_status: status.slice(0, 200) }),
+          signal: AbortSignal.timeout(REST_TIMEOUT_MS),
         });
+        if (!res.ok) console.error(`desk-cron-ask stamp failed: row ${id}, HTTP ${res.status}`);
         return res.ok;
-      } catch { return false; }
+      } catch (e) {
+        console.error(`desk-cron-ask stamp failed: row ${id}, ${(e as Any)?.name ?? 'error'}`);
+        return false;
+      }
     };
 
     const context = await buildContext(userId, headers);
@@ -468,28 +574,45 @@ Deno.serve(async (req) => {
       // above rests on last_run_at having been written, so running anyway would
       // send the brief AND leave the row due to send it again five minutes
       // later. Skipping costs one delayed brief; proceeding costs up to 18
-      // duplicates. The next tick retries the claim, so a transient PostgREST
-      // blip self-heals well inside the catch-up window.
+      // duplicates. A claim that genuinely did not land is retried by the next
+      // tick, well inside the catch-up window. A claim that DID land but whose
+      // reply was lost (a timeout) reads the same here, yet last_run_at is
+      // already written, so the next tick will NOT retry it: that slot's brief
+      // is skipped, never duplicated.
       if (!await stamp(r.id, 'running')) {
-        out.push({ id: r.id, status: 'skipped: could not claim the slot' });
+        out.push({ id: r.id, ok: false, status: 'skipped: could not claim the slot' });
         continue;
       }
       let status = 'ok';
       try {
+        // Clamped to what is left of the wall clock, keeping room for the email and the stamp after it.
+        const askMs = Math.min(ASK_TIMEOUT_MS, CRON_WALL_MS - (Date.now() - t0) - MAIL_TIMEOUT_MS - REST_TIMEOUT_MS);
         const ar = await fetch(`${url}/functions/v1/desk-ask`, {
           method: 'POST',
           headers: { ...headers, 'x-cron-secret': secret },
           body: JSON.stringify({ question: r.prompt, context }),
+          signal: AbortSignal.timeout(askMs),
         });
-        const aj = await ar.json().catch(() => null);
-        if (!ar.ok || !aj?.ok) status = `failed: ${String(aj?.error ?? `HTTP ${ar.status}`).slice(0, 160)}`;
+        // A body that stalls after the headers aborts HERE, with the ask's own timeout: that must reach
+        // the catch below as a timed-out ask, not be swallowed into a null body ("failed: HTTP 200").
+        const aj = await ar.json().catch((e) => { if (isTimeout(e)) throw e; return null; });
+        // A gateway 504 carries no error of ours (desk-ask's own 504 does): the request outlived the gateway, not the ask.
+        if (ar.status === 504 && !aj?.error) status = ASK_TIMED_OUT;
+        else if (!ar.ok || !aj?.ok) status = `failed: ${String(aj?.error ?? `HTTP ${ar.status}`).slice(0, 160)}`;
         // Deliver it. The thread copy is the archive; the email is what reaches
         // the owner when they are not at the desk — which is the whole point of
         // a scheduled ask. Only on a real answer: mailing a blank on a failed
         // run would train the owner to ignore the 8am message.
-        else if (aj.answer) status = await sendBrief(r.prompt, aj.answer, pt);
+        else if (aj.answer) {
+          status = await sendBrief(r.prompt, aj.answer, pt);
+          // desk-ask answered but could not archive the exchange (memoryStored
+          // is absent on a desk-ask that predates the field, hence `=== false`).
+          if (aj.memoryStored === false) status += '; not saved to the thread';
+        }
       } catch (e) {
-        status = 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
+        // Our own wait ran out: desk-ask carries on regardless and archives the
+        // answer, so this is NOT a failed ask — say so, rather than a bare abort message.
+        status = isTimeout(e) ? ASK_TIMED_OUT : 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
       }
       /* The post-run stamp is best-effort, unlike the claim above: last_run_at
          was already written, so a failure here cannot re-fire the row — it only
@@ -500,7 +623,7 @@ Deno.serve(async (req) => {
       out.push(recorded ? { id: r.id, status } : { id: r.id, status, statusNotRecorded: true });
     }
 
-    return reply(200, { ok: true, status: 'ran', ran: out });
+    return reply(200, { ok: out.every((o) => o.ok !== false), status: 'ran', ran: out });
   } catch (e) {
     const detail = String((e as Any)?.message ?? e);
     console.error('desk-cron-ask failed:', detail);

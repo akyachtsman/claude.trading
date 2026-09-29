@@ -593,8 +593,14 @@ This project's look is its own — established at kickoff via `/design-intake`
   mode only — owner request 2026-07-27) force-bypasses BOTH the poll cooldown
   and every desk-market/desk-news/desk-heatmap/desk-charts in-memory cache in
   one click (`force:true` in the POST body; each edge function's cache-read
-  skips its TTL check when set) — the guaranteed-fresh escape hatch for when
-  the owner doesn't trust the current numbers. The **Markets window** (`renderMarkets()` +
+  skips its TTL check when set, but only ONCE per 30s per isolate — desk-heatmap
+  per universe, desk-news per topic, desk-watchlist exempting a roster edit (detected by a ~3KB `id,pos,updated_at`
+  fingerprint read, not a full-roster compare) — since
+  these feeds are anon-callable and an unthrottled `force` would let any caller start
+  a full upstream sweep per request; a forced refresh that FAILS hands its stamp back
+  so a retry is not locked out; `quote-proxy`'s stays unthrottled behind its Origin
+  guard) — the guaranteed-fresh escape hatch for when the owner doesn't trust the
+  current numbers. The **Markets window** (`renderMarkets()` +
   `drawMktChart()` + `mktSecTint()`, owner request 2026-07-20) is a compact
   trading-app-style panel beside Ask-the-desk: region tabs (U.S. live; Europe/
   Asia/FX disabled placeholders), four index tiles (S&P 500 / Nasdaq Composite /
@@ -1031,9 +1037,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   invitation is withheld under the lock, since `wlCommitMove` refuses every
   non-trash move there.
   **The roster is NOT in this repo.** It lives in `desk_watchlists`
-  (`desk_010`): RLS deny-all, reached by anon only through the SECURITY DEFINER
-  PIN RPCs `desk_get_watchlists` / `desk_set_watchlists`, and read server-side
-  by `desk-watchlist` with the service key. `config/watchlists.json` is a
+  (`desk_010`): RLS deny-all, reached by anon only through SECURITY DEFINER RPCs — the
+  PIN-gated `desk_get_watchlists` / `desk_set_watchlists` and the anon-callable
+  `_open` variants the panel actually uses (`desk_012`/`desk_014`; see the accepted
+  residual under Security Constraints) — and read server-side by `desk-watchlist`
+  with the service key. `config/watchlists.json` is a
   BOOTSTRAP FALLBACK ONLY — editing it does nothing once the table is
   populated, and it says so in its own `_note`. `desk_set_watchlists` takes the
   COMPLETE desired state, so add/remove symbol and create/rename/reorder/delete
@@ -1097,7 +1105,8 @@ This project's look is its own — established at kickoff via `/design-intake`
   P&L-only). Unresolved tickers render in `#wlMissing` rather than vanishing:
   splitting a pasted table on whitespace turns "BRK B" into BRK + B, both of
   which *look* like tickers, so naming what didn't resolve is the only honest
-  signal.
+  signal. A tile whose post print arrives with no post-% shows NO percentage rather
+  than the regular move beside an after-hours price (audit 2026-09-29).
   **Quick add / double-click remove** (owner request 2026-07-30) — per-list edits
   without opening the full ✎ editor. A small round **+** sits in each band's
   gutter beside the list name (`.wl-band-head`) and opens a dialog that adds
@@ -1110,8 +1119,8 @@ This project's look is its own — established at kickoff via `/design-intake`
   works on a desktop and silently does nothing on a phone. A locked-state
   signpost (a disabled ✎ pointing at the PIN field) was built and removed the
   same day — **owner ruling: the edit controls are not to be tied to unlock
-  messaging.** The auth gate itself stays, because `desk_set_watchlists` takes
-  the PIN and there is no write path without one.
+  messaging.** (The PIN-gated `desk_set_watchlists` still exists, but the
+  panel writes through `desk_set_watchlists_open`, which is anon-callable.)
   Both are gated on
   `wlCanEdit()` (live + authed) exactly like the ✎ — the roster lives behind the
   PIN RPCs, so unauthenticated there is nothing to write to and NO write control
@@ -1274,6 +1283,15 @@ This project's look is its own — established at kickoff via `/design-intake`
   here (it lists common stocks, not funds); a crumb failure degrades to the 5-day
   spark, losing only the weighting, so every tile hits the floor together and the
   map stays readable.
+  **r2k day-% is overlaid from Yahoo v7/quote exactly like sp500** (audit
+  2026-09-29): the screener's raw pct is a session behind, and tiles that kept it
+  beside merged ones mixed two vintages on one map. The overlay runs in 4 bounded
+  lanes under its own 20s deadline (the sp500 spark fallback 25s), and `source`
+  says `+yahoo-quote` only at ≥95% merged, else "day% may lag". Every upstream fetch
+  in the three map functions is bounded by an `AbortSignal` (crumb 4s, screener
+  10s, the rest 5s), and `readSweepRow` THROWS on a failed ledger read — `null`
+  means "no row" — because a failed read used to look like an empty ledger and one
+  nudge overwrote a full one.
   **`desk-charts` formats bar dates with ONE HOISTED `Intl.DateTimeFormat`**
   (`NY_DATE`) — this is the fix for the 546s (owner report 2026-08-05, charts
   panel blank on 20–50% of loads). `parseYahooChartOHLC` had called
@@ -1321,8 +1339,11 @@ This project's look is its own — established at kickoff via `/design-intake`
   than the charts one: a `RangeError` escapes `periodSweep` into
   `advanceSweep`'s `.catch(() => {})`, discarding the whole nudge before
   `writeSweepRow` — re-entering the exact ledger loss `SWEEP_BUDGET_MS` exists
-  to prevent, through a different door. The pattern also survives, harmlessly,
-  in `desk-market` (~63 bars × a few symbols). PIN-gated: `desk-ask` — an **agentic**
+  to prevent, through a different door. The per-request date/clock formatters in
+  `desk-market` (34×), `desk-maps`, `desk-heatmap`, `desk-ibkr-sync` and
+  `desk-cron-ask` are hoisted the same way (audit 2026-09-29; byte-identical over
+  >1M instants incl. every DST day), and a malformed bar timestamp is skipped, never
+  rendered as `Invalid Date`. PIN-gated: `desk-ask` — an **agentic**
   desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`
   (≤20 turns / ≤30d / ~8k-char budget), runs a bounded tool loop (≤12 calls,
   ≤3 pause resumes) with `web_search`/`web_fetch` + `get_quote` (calls
@@ -1404,7 +1425,12 @@ This project's look is its own — established at kickoff via `/design-intake`
   bid / ask) plus fundamentals (next earnings date + market cap / P/E /
   52-week range / dividend yield) from Yahoo v7/quote via a cached cookie+crumb
   handshake — powers the charts panel's quote readout + fundamentals strip
-  (bid/ask are market-hours-only; Yahoo returns 0 when closed).
+  (bid/ask are market-hours-only; Yahoo returns 0 when closed). It always
+  answers JSON with the Origin-allowlist CORS headers (a throw used to surface as a
+  bare 500 the browser reports as a CORS error); a miss (404/empty) is cached ≤30s so
+  a transient Yahoo failure cannot pin a symbol as "not found" for a full TTL; the
+  cache is bounded at 500 keys (the ticker is arbitrary); upstream calls carry 8s
+  timeouts.
   **Extended hours (owner ruling 2026-07-29):** `kind:'intraday'` accepts
   `prepost:true`, widening the fetch to the 4:00am–8:00pm ET session; the
   `prepost` flag is part of the cache key (two different bar sets, never
@@ -1423,7 +1449,10 @@ This project's look is its own — established at kickoff via `/design-intake`
   report `hasPrePostMarketData:false` and simply repeat their close (^GSPC held
   7428.78 flat from 16:00 to 17:10), which is why the Markets index tiles stay
   at-close and the Markets chart keeps fetching regular-session only.
-  Cron-secret-gated: `desk-ibkr-sync` (Flex → tables). Scheduled by pg_cron
+  Cron-secret-gated: `desk-ibkr-sync` (Flex → tables; the token never appears in
+  a log, error or reply — `scrub()` — a Flex statement URL is followed only on https
+  + `interactivebrokers.com`, and a network/timeout/5xx from Flex is "not-ready", not
+  "failed"). Scheduled by pg_cron
   (`desk_005` migration): sync 22:35/09:35 UTC — dual-slot because IBKR
   statements roll overnight. Also cron-secret-gated: **`desk-cron-ask`**
   (`desk_018`, owner ruling 2026-08-11) — **the desk waking ITSELF up.** The
@@ -1456,12 +1485,30 @@ This project's look is its own — established at kickoff via `/design-intake`
   `desk-ask` went 30k → **80k characters** at the same time: PR #241's watchlist
   + heatmap + stochastics had quietly outgrown it, and the slice was cutting the
   snapshot off mid-string with the last sections (heatmap, chart readings) the
-  first to vanish. (The scheduled twice-daily AI brief — `desk-brief`,
+  first to vanish. The watchlist is capped at 300 symbols total (25 unresolved names
+  per list, plus counts) and is emitted LAST, so any residual truncation eats it
+  first. `desk-ask` has a 350s turn deadline (each model call gets min(150s, what
+  remains)) and answers a JSON+CORS 504 when it runs out; `desk-cron-ask` waits about 200s
+  (kept under `desk_018`'s 240s pg_net timeout — raising both needs a migration the
+  owner applies) and records "ask timed out; answer may
+  still land in the thread" — the exchange is still archived. The memory append
+  checks its response (`memoryStored`/`memoryError`), `checked.verified` is true only
+  when the grounding check actually COMPLETED (`verifyIncomplete` otherwise — a timed-out
+  or skipped check used to be stored as verified), and a failed snapshot read
+  lists `accounts` in `feedsUnavailable` instead of reading as "no holdings".
+  (The scheduled twice-daily AI brief — `desk-brief`,
   its `desk-brief-evening`/`desk-brief-morning` cron jobs, and the dashboard
   panel that rendered it — was retired 2026-07-23, owner request: Ask-the-desk
   already covers the same ground on demand. The edge function and
   `desk_ai_briefs` table are left in place, unscheduled, in case the feature
   returns.)
+- `supabase/migrations/` — `desk_001`–`desk_006` were applied out-of-band and are
+  RECONSTRUCTED from the live catalog (not the original text; `desk_003_seed` is a
+  data-free placeholder; `desk_005`'s and `desk_018`'s `cron.schedule` calls are commented out so a
+  replay cannot point a scratch DB at the live functions). A replay of the directory
+  has not been tested, and `list_migrations` plus PITR remain the authoritative
+  history. `desk_007`–`019` each carry a `-- revert:` line. The files target a
+  Supabase project or branch (roles `anon`/`authenticated` must exist).
 - `specs/multi-account-trading-dashboard/` — the SDD artifact chain
   (brief/spec/plan/tasks/design/analysis).
 
@@ -1497,6 +1544,16 @@ This project's look is its own — established at kickoff via `/design-intake`
   public news.json. `desk-heatmap` holds it too, solely for the
   `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
   multi-period sweep — public market percentages only.
+- **Accepted residual — anonymous watchlist writes (audit 2026-09-29, C1).**
+  `desk_get_watchlists_open` / `desk_set_watchlists_open` (`desk_012`/`desk_014`)
+  are granted to ANON, per the owner ruling that watchlist edits do not depend on
+  unlocking — so anyone holding the public anon key can read and rewrite the roster.
+  The grants are unchanged. What is enforced instead is that **anon-writable text
+  never reaches the assistant**: `desk-cron-ask` and `desk-ask` send only
+  regex-validated tickers under positional `List N` labels (titles and free text
+  are withheld, so the assistant can no longer refer to a list by name), capped at
+  300 symbols with the block emitted last, and wrap the snapshot as untrusted data.
+  Headlines and ticker chips remain third-party text, delimited only.
 - **Third-party widget embeds — RETIRED 2026-08-07 (owner ruling).**
   `config/widgets.json` is `[]`, so nothing renders and **the desk runs no vendor
   JS and carries zero iframes**; this whole class of exposure is currently

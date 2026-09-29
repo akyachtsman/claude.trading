@@ -18,6 +18,8 @@
 --
 -- The PIN versions are deliberately LEFT IN PLACE and untouched: reverting is a
 -- client-side switch back to them plus dropping these two, no data migration.
+--
+-- revert: drop function public.desk_get_watchlists_open(); drop function public.desk_set_watchlists_open(jsonb, timestamptz) (the desk_014 signature; the 1-arg form no longer exists) and point the client back at the PIN RPCs desk_get_watchlists / desk_set_watchlists, which were left in place; no data change.
 
 create or replace function public.desk_get_watchlists_open()
  returns jsonb

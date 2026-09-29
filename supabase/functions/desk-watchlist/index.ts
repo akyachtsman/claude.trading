@@ -30,6 +30,12 @@ const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk watchlist; +https://akyachtsman.github.io/claude.trading/)' };
+// Every outbound call is bounded, so one stalled socket cannot hold a sweep
+// until the platform kills it (that would be a bare 5xx, not the stale-body
+// fallback in the handler). A timeout throws like any other network failure.
+const FETCH_TIMEOUT_MS = 8000;
+const tfetch = (url: string, init: RequestInit = {}) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 const CONFIG_URL = 'https://akyachtsman.github.io/claude.trading/config/watchlists.json';
 const CHUNK = 50;          // symbols per upstream call (v7/quote)
 // v7/finance/spark is a SEPARATE, stricter endpoint: 20 symbols works, 30 is a
@@ -82,13 +88,13 @@ const YAUTH_TTL_MS = 3_600_000;
 
 async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string } | null> {
   if (!force && yauth && Date.now() - yauth.at < YAUTH_TTL_MS) return yauth;
-  const c = await fetch('https://fc.yahoo.com/', { headers: UA });
+  const c = await tfetch('https://fc.yahoo.com/', { headers: UA });
   // deno-lint-ignore no-explicit-any
   const setCookies: string[] = (c.headers as any).getSetCookie?.() ?? [];
   let cookie = setCookies.map((s) => s.split(';')[0]).filter(Boolean).join('; ');
   if (!cookie) { const one = c.headers.get('set-cookie'); if (one) cookie = one.split(';')[0]; }
   if (!cookie) return null;
-  const cr = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } });
+  const cr = await tfetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } });
   if (!cr.ok) return null;
   const crumb = (await cr.text()).trim();
   if (!crumb || crumb.length > 32 || crumb.includes('<')) return null; // reject HTML/error bodies
@@ -111,11 +117,11 @@ async function quoteChunk(symbols: string[]): Promise<any[]> {
     `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${q}&crumb=${encodeURIComponent(crumb)}`;
   let auth = await yahooAuth();
   if (!auth) throw new Error('yahoo auth handshake failed');
-  let res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
+  let res = await tfetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
   if (res.status === 401) { // stale crumb → refresh once
     auth = await yahooAuth(true);
     if (!auth) throw new Error('yahoo auth refresh failed');
-    res = await fetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
+    res = await tfetch(url(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
   }
   if (!res.ok) throw new Error(`yahoo quote HTTP ${res.status}`);
   const json = await res.json().catch(() => null);
@@ -132,7 +138,7 @@ async function sparkChunk(symbols: string[], tf: string): Promise<Map<string, nu
   const q = symbols.map(toYahoo).map(encodeURIComponent).join(',');
   // Both come from WL_RANGES (see rangeKey) — never from the request body.
   const { range, interval } = WL_RANGES[tf] ?? WL_RANGES[DEFAULT_RANGE];
-  const res = await fetch(
+  const res = await tfetch(
     `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${q}&range=${range}&interval=${interval}`,
     { headers: UA },
   ).catch(() => null);
@@ -183,7 +189,11 @@ function priceRow(sym: string, q: any, spark: number[] | undefined, intraday: bo
   let at = num(q.regularMarketTime);
   if (post != null) {
     last = post;
-    pct = postPct != null && regPct != null ? ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100 : regPct;
+    // BOTH components or no percentage (same rule as quote-proxy's extInfo and
+    // desk-market's extFrom, Codex PR #199). Falling back to regPct printed the
+    // REGULAR session's move beside an after-hours price, so the pill and the
+    // price described different instants; null renders no pill, never a wrong one.
+    pct = postPct != null && regPct != null ? ((1 + regPct / 100) * (1 + postPct / 100) - 1) * 100 : null;
     ext = true;
     extKind = 'post';
     at = num(q.postMarketTime) ?? at;
@@ -280,40 +290,59 @@ function normalizeLists(raw: any[]): List[] {
 // user-agent is enough to trip it, and the reply is a 401 "Forbidden use of
 // secret API key in browser" that this function's .catch would swallow into a
 // silent empty roster. UA belongs on the OUTBOUND Yahoo calls only.
-async function listsFromTable(): Promise<List[] | null> {
+async function listsFromTable(): Promise<{ lists: List[]; fp: string } | null> {
   const url = Deno.env.get('SUPABASE_URL');
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!url || !key) return null;
-  const res = await fetch(
-    `${url}/rest/v1/desk_watchlists?select=title,symbols,pos&order=pos.asc,id.asc`,
+  const res = await tfetch(
+    `${url}/rest/v1/desk_watchlists?select=id,title,symbols,pos,updated_at&order=pos.asc,id.asc`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` } },
-  ).catch(() => null);
-  if (!res || !res.ok) return null;
+  ).catch((e) => { console.warn('desk-watchlist: desk_watchlists read did not complete —', (e as Error)?.name); return null; });
+  // Falling back to the bootstrap config is the intended degrade, but it must
+  // not be SILENT: the 2026-07-29 401 (browser UA on a secret key) looked like
+  // an empty roster for a whole debugging round. Status only — never the key.
+  if (!res) return null;
+  if (!res.ok) { console.warn('desk-watchlist: desk_watchlists read HTTP', res.status); return null; }
   const rows = await res.json().catch(() => null);
-  if (!Array.isArray(rows)) return null;
+  if (!Array.isArray(rows)) { console.warn('desk-watchlist: desk_watchlists read returned a non-array body'); return null; }
   // An EMPTY array is a successful read of a deliberately empty roster, not a
   // failure (Codex review, PR #188). Returning null here would fall through to
   // the bootstrap config, so deleting every list would appear not to persist —
   // the owner's save would silently resurrect the seeded ETFs. Only an
   // unreachable/!ok/non-array response counts as failure.
-  return normalizeLists(rows);
+  return { lists: normalizeLists(rows), fp: rosterFp(rows) };
+}
+
+/* Fingerprint of the roster TABLE STATE: row count + per-row id/pos/updated_at,
+   no symbol arrays. Every write (desk_set_watchlists_open is a replace-all)
+   deletes and re-inserts, so an edit changes the id set and updated_at — adds,
+   renames, reorders and DELETES included. It is recorded from the SAME read the
+   sweep is built from, and compared against a tiny read (rosterFpNow), so
+   detecting an edit never reads or serialises a roster. */
+const ROSTER_FP_ROWS = 51;   // the RPC caps the roster at 50 lists; +1 so an overflow still reads as a change
+// deno-lint-ignore no-explicit-any
+function rosterFp(rows: any[]): string {
+  // By id and capped, so the sweep's full read (ordered by pos) and the tiny
+  // check read (ordered by id, LIMIT) fingerprint identically.
+  const r = [...rows].sort((a, b) => Number(a?.id) - Number(b?.id)).slice(0, ROSTER_FP_ROWS);
+  return `${r.length}|` + r.map((x) => `${x?.id}:${x?.pos}:${x?.updated_at}`).join(',');
 }
 
 // Bootstrap fallback — the committed config, used only if the table read fails.
 async function listsFromConfig(): Promise<List[] | null> {
-  const res = await fetch(CONFIG_URL, { headers: UA }).catch(() => null);
+  const res = await tfetch(CONFIG_URL, { headers: UA }).catch(() => null);
   if (!res || !res.ok) return null;
   const cfg = await res.json().catch(() => null);
   const lists = normalizeLists(Array.isArray(cfg?.lists) ? cfg.lists : []);
   return lists.length ? lists : null;
 }
 
-async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config' }> {
+async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config'; fp: string | null }> {
   const fromTable = await listsFromTable();
   // null = read failed; [] = read succeeded and the owner has no lists.
-  if (fromTable !== null) return { lists: fromTable, source: 'table' };
+  if (fromTable !== null) return { lists: fromTable.lists, source: 'table', fp: fromTable.fp };
   const fromConfig = await listsFromConfig();
-  if (fromConfig) return { lists: fromConfig, source: 'config' };
+  if (fromConfig) return { lists: fromConfig, source: 'config', fp: null };
   throw new Error('no watchlists available from desk_watchlists or config');
 }
 
@@ -335,12 +364,12 @@ const inflight = new Map<string, Promise<unknown>>(); // single-flight, per rang
 // reachable anonymously without `force`. Now a burst costs ONE quote sweep plus
 // one spark sweep per range.
 // deno-lint-ignore no-explicit-any
-type Sweep = { lists: List[]; source: 'table' | 'config'; uniq: string[]; truncated: string[]; byYahoo: Map<string, any>; quoted: number };
+type Sweep = { lists: List[]; source: 'table' | 'config'; fp: string | null; uniq: string[]; truncated: string[]; byYahoo: Map<string, any>; quoted: number };
 let quoteCache: { at: number; data: Sweep } | null = null;
 let quoteInflight: Promise<Sweep> | null = null;
 
 async function quoteSweep(): Promise<Sweep> {
-  const { lists, source } = await loadLists();
+  const { lists, source, fp } = await loadLists();
   // One fetch per unique symbol no matter how many lists repeat it.
   const all = [...new Set(lists.flatMap((l) => l.symbols))];
   const uniq = all.slice(0, MAX_SYMBOLS);
@@ -356,7 +385,7 @@ async function quoteSweep(): Promise<Sweep> {
   // deno-lint-ignore no-explicit-any
   const byYahoo = new Map<string, any>();
   for (const q of results.flat()) if (q?.symbol) byYahoo.set(String(q.symbol).toUpperCase(), q);
-  return { lists, source, uniq, truncated, byYahoo, quoted: results.flat().length };
+  return { lists, source, fp, uniq, truncated, byYahoo, quoted: results.flat().length };
 }
 
 function sharedSweep(): Promise<Sweep> {
@@ -444,6 +473,45 @@ async function refresh(tf: string): Promise<unknown> {
   return body;
 }
 
+// `force` is anon-callable and each honoured one clears every cache and re-sweeps
+// Yahoo (20 quote + 50 spark calls at the 1000-symbol cap), so a loop of them is a
+// free upstream burner. Honour it at most once per 30s per instance; inside the
+// window it degrades to a normal cached read. The trade: a second "Refresh now"
+// within 30s of the first is a no-op — the data is by definition <30s old.
+let lastForceAt = 0;
+const FORCE_MIN_GAP_MS = 30_000;
+
+// A roster edit forces too (see below) and must NOT be throttled: a second drag
+// or add inside the window would otherwise repaint the pre-edit roster and look
+// like the save failed. `force` is anonymous and the open RPC lets any caller
+// inflate the roster, so THIS CHECK must be cheap however big the roster is: it
+// reads only id/pos/updated_at (LIMIT ROSTER_FP_ROWS), compares against the fingerprint recorded when the cached sweep was built, and
+// concurrent callers share one read. Yahoo is not touched.
+let fpInflight: Promise<string | null> | null = null;
+function rosterFpNow(): Promise<string | null> {
+  fpInflight ??= (async () => {
+    const url = Deno.env.get('SUPABASE_URL');
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !key) return null;
+    const res = await tfetch(
+      `${url}/rest/v1/desk_watchlists?select=id,pos,updated_at&order=id.asc&limit=${ROSTER_FP_ROWS}`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    ).catch(() => null);
+    if (!res || !res.ok) return null;
+    const rows = await res.json().catch(() => null);
+    return Array.isArray(rows) ? rosterFp(rows) : null;
+  })().finally(() => { fpInflight = null; });
+  return fpInflight;
+}
+async function rosterChanged(): Promise<boolean> {
+  const cached = quoteCache?.data;
+  if (!cached) return false; // nothing cached, so the request sweeps anyway
+  const fresh = await rosterFpNow();
+  if (fresh === null) return false; // unreadable: keep the throttle rather than sweep on a guess
+  // A config-sourced sweep has no fingerprint: the table is readable now, which is itself a change.
+  return cached.fp === null || fresh !== cached.fp;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
@@ -458,6 +526,13 @@ Deno.serve(async (req) => {
     // cached client asking for a range this deploy doesn't know should still
     // get a working panel.
     tf = rangeKey(body?.range);
+  }
+
+  if (force) {
+    const now = Date.now();
+    if (now - lastForceAt >= FORCE_MIN_GAP_MS) lastForceAt = now;
+    else if (await rosterChanged()) lastForceAt = now;
+    else force = false;
   }
 
   // A force is either the manual "Refresh now" or a roster edit that just
