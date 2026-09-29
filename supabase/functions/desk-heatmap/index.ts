@@ -186,9 +186,22 @@ const SPARK_FALLBACK_TIMEOUT_MS = 25000;    // ~26 batches of 20 / 4 lanes: the 
    is a mix of two sessions' numbers under a label that says otherwise. */
 const FRESH_MERGE_FRACTION = 0.95;
 
-async function inLanes<T>(items: T[], work: (item: T) => Promise<void>, halt: () => boolean): Promise<void> {
+/* `work` resolves true when its batch produced data. Failure is tracked PER
+   LANE: a lane retires after ITS OWN two consecutive failures (any success of
+   its own resets the count), so two failed batches beside two healthy lanes cost
+   those batches — not the sweep, which a single shared streak would have stopped
+   for everyone the moment two failures happened to complete back to back. A real
+   outage still ends fast: every lane retires after two failures each, the same
+   two-batch wall time the old sequential cutoff cost. `stop` is the deadline. */
+async function inLanes<T>(items: T[], work: (item: T) => Promise<boolean>, stop: () => boolean): Promise<void> {
   let next = 0;
-  const lane = async () => { while (next < items.length && !halt()) await work(items[next++]); };
+  const lane = async () => {
+    let fails = 0;
+    while (next < items.length && !stop()) {
+      if (await work(items[next++])) fails = 0;
+      else if (++fails >= 2) return;
+    }
+  };
   await Promise.all(Array.from({ length: Math.min(QUOTE_LANES, items.length) }, lane));
 }
 const chunked = <T>(xs: T[], n: number): T[][] => {
@@ -298,7 +311,6 @@ async function getCrumb(): Promise<{ cookie: string; crumb: string }> {
    that had already answered. Batches run in QUOTE_LANES parallel lanes. */
 async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: string }, batchSize = 150, deadline = Infinity): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
-  let deadStreak = 0;
   await inLanes(chunked(symbols, batchSize), async (chunk) => {
     // postMarket* added 2026-07-30 (owner request: extended hours everywhere it
     // exists). Stocks genuinely trade after the bell, so a heatmap tile can
@@ -345,9 +357,9 @@ async function quoteBatch(symbols: string[], auth: { cookie: string; crumb: stri
           });
         }
       }
-      deadStreak = got > 0 ? 0 : deadStreak + 1;
-    } catch { deadStreak++; }
-  }, () => deadStreak >= 2 || Date.now() > deadline);
+      return got > 0;
+    } catch { return false; }
+  }, () => Date.now() > deadline);
   return out;
 }
 
@@ -365,7 +377,6 @@ function parseSpark(json: Record<string, { close?: number[] }> | null): Map<stri
 
 async function sparkBatch(symbols: string[], batchSize = 20, deadline = Infinity): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
-  let deadStreak = 0;   // consecutive empty batches: a dead Yahoo must not hold the invocation to the whole deadline
   // ~25 batches for sp500, in lanes: bound the SUM (the deadline), not just each call
   await inLanes(chunked(symbols, batchSize), async (chunk) => {
     const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${chunk.map(yahooTicker).join(',')}&range=5d&interval=1d`;
@@ -376,9 +387,9 @@ async function sparkBatch(symbols: string[], batchSize = 20, deadline = Infinity
     // a stalled/failed batch is a coverage gap, which the callers' floors already judge
     const json = res && res.ok ? await res.json().catch(() => null) : null;
     const got = parseSpark(json);
-    deadStreak = got.size > 0 ? 0 : deadStreak + 1;
     for (const [sym, v] of got) if (!out.has(sym)) out.set(sym, v);
-  }, () => deadStreak >= QUOTE_LANES || Date.now() > deadline);
+    return got.size > 0;
+  }, () => Date.now() > deadline);
   return out;
 }
 

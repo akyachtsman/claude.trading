@@ -145,6 +145,7 @@ const REST_TIMEOUT_MS = 15000;     // PostgREST
 const RUN_BUDGET_MS = 350_000;
 const MODEL_CALL_MAX_MS = 150_000;
 const MIN_CALL_BUDGET_MS = 20_000;
+const MIN_TOOL_BUDGET_MS = 1_000;   // below this a tool fetch is not started at all
 
 /* PROMPT-INJECTION BOUNDARY, server side, for BOTH callers (the browser's PIN
    path and desk-cron-ask). `desk_get_watchlists_open` / `desk_set_watchlists_open`
@@ -321,14 +322,28 @@ async function handle(req: Request): Promise<Response> {
     }
   } catch (_e) { /* replay is best-effort; continue without history */ }
 
+  /* Every tool fetch is clamped to what is left of the TURN, not just to its own
+     cap: get_technicals makes two sequential fetches (daily, then the intraday
+     graft), and 20s + 20s started with 21s remaining ran the turn ~20s past its
+     deadline before the 504. The budget is read again before each fetch, so the
+     two share it. null = nothing usable left: the helper answers a tool error
+     (or skips a best-effort graft) instead of starting a fetch. */
+  const toolBudget = (): number | null => {
+    const b = Math.min(TOOL_TIMEOUT_MS, deadline - Date.now());
+    return b >= MIN_TOOL_BUDGET_MS ? b : null;
+  };
+  const NO_TIME = { ok: false, error: 'out of time for this turn — answer with what you have and note it' };
+
   // Live get_quote via quote-proxy (server-side; forge the site Origin to pass its gate).
   async function getQuote(symbol: string): Promise<Record<string, unknown>> {
+    const budget = toolBudget();
+    if (budget === null) return NO_TIME;
     try {
       const qr = await fetch(`${supaUrl}/functions/v1/quote-proxy`, {
         method: 'POST',
         headers: { ...svc, 'content-type': 'application/json', origin: SITE_ORIGIN },
         body: JSON.stringify({ symbol, kind: 'info' }),
-        signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
+        signal: AbortSignal.timeout(budget),
       });
       const j = await qr.json();
       if (!qr.ok || !j.ok) return { ok: false, error: j.error || `quote fetch failed (HTTP ${qr.status})` };
@@ -403,18 +418,23 @@ async function handle(req: Request): Promise<Response> {
     };
   }
   async function getTechnicals(symbol: string): Promise<Record<string, unknown>> {
+    const dailyBudget = toolBudget();
+    if (dailyBudget === null) return NO_TIME;
     try {
       const qr = await fetch(`${supaUrl}/functions/v1/quote-proxy`, {
         method: 'POST',
         headers: { ...svc, 'content-type': 'application/json', origin: SITE_ORIGIN },
         body: JSON.stringify({ symbol, kind: 'daily' }),
-        signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
+        signal: AbortSignal.timeout(dailyBudget),
       });
       const j = await qr.json();
       if (!qr.ok || !j.ok) return { ok: false, error: j.error || `daily bars fetch failed (HTTP ${qr.status})` };
       let s = j.series as Series;
       let live = false;
       try {
+        // Best-effort, so no budget left just means no graft (the completed-session series stands).
+        const graftBudget = toolBudget();
+        if (graftBudget === null) throw new Error('no turn budget left for the intraday graft');
         // No `prepost` here, deliberately: quote-proxy defaults to the regular
         // session, and this graft must stay byte-for-byte the same bar set
         // app.js's graftTodayBar() uses (which drops pre/post via regularOnly).
@@ -425,7 +445,7 @@ async function handle(req: Request): Promise<Response> {
           method: 'POST',
           headers: { ...svc, 'content-type': 'application/json', origin: SITE_ORIGIN },
           body: JSON.stringify({ symbol, kind: 'intraday' }),
-          signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
+          signal: AbortSignal.timeout(graftBudget),
         });
         const ij = await ir.json();
         if (ir.ok && ij.ok && ij.series?.t?.length) {
