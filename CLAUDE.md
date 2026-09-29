@@ -305,6 +305,7 @@ real-data rules stay in Project-Specific Coding Standards below.
   deliberate exception to the editorial whole-number rule; allocation-style
   percentages stay whole.
 - All dynamic DOM text via `textContent` — never `innerHTML`.
+- **All dialogs open through `openModal()`/`closeModal()` in `app.js`** (focus trap, Escape via the dialog's own close so a veto such as the dirty scheduled-ask warning still applies, backdrop click on the backdrop element, focus returned to the opener). Never add a per-dialog Escape or backdrop listener. No `inert` on the background yet — `aria-modal` alone declares it.
 - Series colors/order are CVD-validated (`--color-series-1..3`): do not reorder.
 - Gain/loss colors are P&L-only, never decorative. Errors and status use
   `--color-danger` / `--color-status-live`; dark-context loss TEXT uses
