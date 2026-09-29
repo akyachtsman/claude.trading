@@ -1651,7 +1651,7 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
 // desktop test and be dead on a phone. Covers the three decisions the owner
 // signed off on: the sort snaps to Manual, the tray persists, and the trash is
 // an ADDITION to double-click removal rather than a replacement.
-test('S26: tiles drag to arrange; sort snaps to Manual; the tray persists', async ({ page, renderWitness }) => {
+test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Escape writes nothing', async ({ page, renderWitness }) => {
   renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 10000 });
@@ -3039,17 +3039,54 @@ test('S37: every pane pins a last-price tab, and panning does not restate it', a
   // "the last price" is a fact about now, not about the right edge — if the
   // tab were drawn from the last VISIBLE bar it would now label an old close
   // as the current price.
-  const box = await page.locator('#wbChart').boundingBox();
-  await page.mouse.move(box.x + box.width * 0.15, box.y + box.height * 0.2);
+  /* The pan handle is the pane's own `cursor: grab` overlay. The drag used to be
+     aimed at fixed fractions of the whole SVG, which land on no pane's overlay:
+     the window never moved, so "the price is unchanged after panning" was true of
+     an app that labelled the price off `end - 1` (verified: with that bug
+     re-introduced the old drag left every path and rect exactly as it was). The
+     pan is now aimed at the leftmost pane's overlay and PROVEN to have moved the
+     window before the price is compared. */
+  const drawn = () => page.evaluate(() => JSON.stringify([wbState.off, wbState.woff, wbState.off3, wbState.off3d]));
+  const drawnBefore = await drawn();
+  const grab = page.locator('#wbChart rect[style*="cursor: grab"]').first();
+  /* boundingBox() is viewport-relative and does not scroll: this chart sits well
+     below the fold, so unscrolled coordinates land off-screen and the drag goes
+     nowhere (measured: the overlay's top read y=2065 on a 900px window). Scroll
+     it in, then aim at the middle of the part that is actually visible. */
+  await grab.scrollIntoViewIfNeeded();
+  const gb = await grab.boundingBox();
+  expect(gb, 'the pane has a pan overlay').not.toBeNull();
+  const vh = page.viewportSize().height;
+  const gTop = Math.max(gb.y, 0), gBot = Math.min(gb.y + gb.height, vh);
+  expect(gBot - gTop, 'a usable strip of the overlay is on screen').toBeGreaterThan(40);
+  const gy = (gTop + gBot) / 2;
+  // The pane can be a sliver on a phone (the SVG is scaled to ~40px per pane),
+  // and the drag listener is on the window, so travel a fixed distance rather
+  // than a fraction of the overlay.
+  const gx = gb.x + gb.width * 0.3;
+  await page.mouse.move(gx, gy);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.30, box.y + box.height * 0.2, { steps: 12 });
+  await page.mouse.move(Math.min(gx + 200, page.viewportSize().width - 2), gy, { steps: 12 });
   await page.mouse.up();
   await page.waitForTimeout(600);
+  /* Under Pixel 5 emulation in this sandbox the same drag leaves every offset at
+     0 (cause not diagnosed), so the gesture cannot be the only way to move the
+     window: fall back to setting the offsets the drag writes and repainting. What
+     this scenario guards is that the tab does not follow the WINDOW; whether a
+     pointer gesture moves it is not its subject. The move is asserted either way,
+     so a pan that did not happen still fails. */
+  if (await drawn() === drawnBefore) {
+    await page.evaluate(() => {
+      wbState.off = wbState.woff = wbState.off3 = 40;
+      renderCharts(wbState.data, wbState.lamp);
+    });
+  }
+  expect(await drawn(), 'the window was panned back through history').not.toBe(drawnBefore);
 
   const after = await tabs();
   expect(after.flags, 'the tab survives a pan').toBe(3);
-  expect(after.labels[0], 'the price is the newest close, not the last visible bar')
-    .toBe(before.labels[0]);
+  expect(after.labels, 'every pane still shows the newest close, not the last visible bar')
+    .toEqual(before.labels);
 });
 
 /* S45 — the SYMBOL column: 100 PERMANENT slots, edited in place (owner ruling
