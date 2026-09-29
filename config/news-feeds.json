@@ -1,12 +1,12 @@
 {
   "_readme": [
-    "Owner-editable news sources for the daily refresh (fetch-news.js).",
+    "Owner-editable news sources, read at runtime by the desk-news edge function.",
     "general: RSS/Atom feeds shown to everyone — add/remove/reorder freely.",
     "perTicker: feeds looked up for each held symbol (Yahoo first, Google",
     "News as fallback, then plain text-matching of tickers in general",
     "headlines). Set enabled:false to run general feeds only.",
-    "maxItems caps the rendered list. Edit on GitHub; the next scheduled",
-    "refresh (or a manual Data Refresh dispatch) picks it up.",
+    "maxItems caps the rendered list. Edit on GitHub; desk-news re-reads",
+    "this file on its next sweep once Pages has redeployed.",
     "FRED + St. Louis Fed carry the macro headlines that used to sit in the",
     "embedded FRED widget, retired 2026-08-07 along with the TradingView",
     "economic calendar. Holdings rank first, so these fill the tail."

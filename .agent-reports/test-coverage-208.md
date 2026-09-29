@@ -1,3 +1,5 @@
+> Historical report (PR #208, 2026-07-31) — not current.
+
 # Test-coverage analysis — commit `fa46049` (PR #208)
 
 **Scope:** the Playwright suite itself, not application code. The question is whether

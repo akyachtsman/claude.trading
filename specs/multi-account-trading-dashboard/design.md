@@ -1,5 +1,7 @@
 # Design record — claude.trading
 
+> **STATUS (2026-09-29): SUPERSEDED IN PART — the "Daylight desk ledger" look and token contract below are still current (`styles/tokens.css` matches), but the "Reference page" inventory and component list are history: the market-summary strip and AI daily brief (`.brief-section`) no longer exist. CLAUDE.md "Application Architecture" is authoritative for layout.**
+
 ## Look: "Daylight desk ledger" (v2 — user feedback at look-gate)
 A private trading desk instrument on paper: white panels on a warm paper
 ground, warm near-black ink, and a brass/amber accent nodding to classic
@@ -58,6 +60,6 @@ provenance footer.
 
 ## Status
 Look approved at the gate (white/light revision) and live on Pages. The
-build proceeds via `/sdd-loop` against `styles/tokens.css` +
-`styles/components.css`. Phase A added `.lamp--locked`/`.lamp--stale` and
+build was completed via `/sdd-loop` against `styles/tokens.css` +
+`styles/components.css` (see `tasks.md`). Phase A added `.lamp--locked`/`.lamp--stale` and
 the `.panel-lock` PIN form to the contract (token-based, AA-checked).

@@ -3,7 +3,7 @@
    Re-runnable evidence for the 2026-08-20 report that WMT read -0.78% while it
    was down ~9%. Run it any time the heatmap looks wrong:
 
-     node .agent-reports/heatmap-quote-check.mjs [SYM SYM ...]
+     node tools/heatmap-quote-check.mjs [SYM SYM ...]
 
    Yahoo is the reference because its chartPreviousClose is the same basis the
    rest of the desk computes against; the Nasdaq screener's own pctchange was

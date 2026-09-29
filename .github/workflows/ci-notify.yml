@@ -43,8 +43,9 @@
 # ⚠️ "From then on the webhook covers completion" USED TO FOLLOW HERE, and it is
 # wrong — the install PR is not the only gap. This job is gated on
 # `conclusion == 'success'` and watches three workflows BY NAME, so a cancelled
-# run and a dispatched run outside that list both emit nothing. git.md →
-# *PR Lifecycle* carries the full list and the rule: arm a check-in for any
+# run and a dispatched run outside that list both emit nothing.
+# docs/standards/pr-mechanics.md → *Wakes that never arrive* carries the full
+# list, and git.md → *PR Lifecycle* the rule: arm a check-in for any
 # outcome that can end without emitting a wake, and drop it when THAT OUTCOME is
 # terminal, not when any wake arrives. Heartbeats per global.md → Status Line on
 # Every Stop still apply to waits over five minutes.

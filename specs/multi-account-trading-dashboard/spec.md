@@ -1,5 +1,9 @@
 # Spec — Multi-Account Trading Dashboard (v1)
 
+> **STATUS (2026-09-29): SUPERSEDED IN PART — CLAUDE.md "Application Architecture" is authoritative; this spec is kept as history.**
+>
+> Shipped as v1 (every task ticked), then changed by later owner rulings: the nightly `data/*.json` pipeline and `data-refresh.yml` were retired 2026-07-13 (see `specs/retire-nightly-pipeline/`); the AI daily-brief panel was retired 2026-07-23; the market-summary strip was replaced by the Watchlists panel 2026-07-29; the TradingView/FRED widgets were retired 2026-08-07; the Nasdaq tile tracks the Composite (2026-07-27); accounts now sit in the desk row beside Ask (2026-08-20).
+
 WHAT and WHY only. HOW lives in `plan.md`. Constitution: the four imported
 directives. Inputs: `brief.md` (approved ambition: terminal-grade),
 `research.md` (binding polish bar), `design.md` (approved daylight-ledger

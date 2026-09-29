@@ -1,3 +1,5 @@
+> Historical report (PR #207, 2026-07-31) — not current.
+
 # Code review — commit `3cf7b76` (PR #207, "Close the four extended-hours review findings")
 
 **Post-merge review.** The code is on `main` and deployed. No edits made; every item

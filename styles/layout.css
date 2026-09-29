@@ -1,0 +1,1072 @@
+  * { box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: var(--color-bg); color: var(--color-text-primary);
+    font: 400 var(--font-base)/1.5 var(--font-sans);
+  }
+  /* The shell is full-bleed (no cap) so the charts panel can widen to the full
+     viewport; content blocks (watchlists, layout, footer) keep the readable
+     1560px column via the cap below — .area-charts and .heat-panel opt out
+     (owner ruling 2026-07-16: "lengthen the charts window to full screen"),
+     and so does the MASTHEAD (owner request 2026-07-22): on wide monitors the
+     capped, centered header left the LIVE/Lock cluster floating mid-page —
+     the header now spans the full width so it pins to the true upper-right,
+     flush with the full-bleed panels' edge. */
+  .shell { margin: 0 auto; padding: var(--space-4) var(--space-4) var(--space-8); }
+  /* 1560 → 1880 (owner ruling 2026-08-07), so Markets | Watchlists | Ask can
+     sit in ONE row: at the widths the owner set that row needs 1844px, and the
+     old cap left 180px of dead margin each side of a 1920 monitor. The gain is
+     REAL ONLY ON A ≥1900px BROWSER WINDOW — every current MacBook (1440 / 1512 /
+     1728 logical) is below it — so the three-across layout is opted into by a
+     min-width query rather than imposed, and everything narrower keeps exactly
+     the layout it had. */
+  /* `.wl-area` joined the opt-out 2026-08-17: it now sits directly on top of
+     `.area-charts`, and a capped-and-centred panel above a full-bleed one would
+     be visibly inset from the chart it is meant to feed. */
+  /* Both selectors weigh the same (0,5,0) as the one they replace. `main` (the
+     landmark between masthead and footer) is a plain block that must NOT take the
+     cap itself — that would cap the full-bleed panels inside it — so the cap goes
+     to its children exactly as it went to .shell's own before. */
+  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area):not(:where(main)),
+  .shell > :where(main) > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
+
+  /* masthead */
+  .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
+  .wordmark { margin: 0; font: 600 var(--font-xl)/1.1 var(--font-mono); letter-spacing: .04em; }
+  .wordmark .tld { color: var(--color-accent-bright); }
+  .tagline { margin: 2px 0 0; font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .12em; }
+  .masthead-state { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+  .masthead-label { font: 600 var(--font-2xs)/1.4 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
+
+  /* Labelled band + half-size tile — the shared chrome behind the Watchlists
+     panel. It began as the market strip's own look (owner rulings 2026-07-16
+     through 07-22); the STRIP ITSELF was removed 2026-07-29 once the Watchlists
+     panel carried the same categories with live prices, at which point the two
+     surfaces were showing the same thing twice (owner ruling). The chrome stays
+     because Watchlists renders in exactly this idiom: each .mkt-group is a
+     full-width band, its label in the left gutter, tiles packed left-to-right
+     with collapsed borders (gap:0 + a -1px top margin fuses the shared edges
+     into one hairline). Widening for a full-page panel lives in
+     styles/components.css under .wl-strip. */
+  /* Watchlists lead the page (owner request 2026-07-29) — the panel sits
+     between the masthead and the top band, OUTSIDE .layout, so it carries its
+     own bottom margin instead of inheriting that grid's gap. */
+  .area-watchlist { margin-bottom: var(--space-4); }
+  /* wrap rather than overflow: the desk must never scroll sideways, so when the
+     three columns don't fit they stack instead of spilling. */
+  /* ONE DESK ROW (owner request 2026-08-18): Markets | News | Ask | Accounts on
+     a single line. Below the wide gate it is a plain block, so the two inner
+     rows stack exactly as they did before and nothing narrower changes. */
+  .desk-row { min-width: 0; }
+  .desk-row > .top-band, .desk-row > .top-boxes { min-width: 0; }
+  .top-band { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-4); }
+  /* Watchlists LEFT the band (owner request 2026-08-17) and now sits full-width
+     directly above the charts panel — the two panels it pairs with in use are
+     the two it sits between, so choosing what to look at and looking at it are
+     one eye movement. It full-bleeds like `.area-charts` (see the shell cap
+     above): the panel it is stacked on opts out of the 1880 cap, and a
+     watchlist stopping 180px short of the chart below it would read as a
+     misalignment rather than a margin. */
+  .wl-area { min-width: 0; margin-block: 0.5in 0; margin-inline: calc(0.5in - var(--space-4)); }
+  .wl-area > .area-watchlist { margin-bottom: 0; }
+  /* Top row: Markets | Ask-the-desk. Was strip | Markets | Ask until the strip
+     came out 2026-07-29. Markets renders at 90% — a genuine 10% shrink via
+     `zoom`, which reflows the box (unlike transform:scale, which would leave a
+     gap); Ask fills the remaining space. Reset to full size when the row stacks
+     (media query below).
+     The basis went 420 → 860 when the strip was removed: left at 420 the row
+     was a narrow Markets column beside a ~1160px Ask panel that had nothing to
+     put in the space. 860 (×0.9 zoom ≈ 774px rendered) splits the row about
+     evenly, which the Markets chart and its 11-cell sector grid both want more
+     than the chat does. */
+  .top-band > .col-markets { flex: 0 0 860px; zoom: .9; }
+  /* Basis 380, not auto. With the band now allowed to wrap, an `auto` basis let
+     the rail measure its own content and break to a row of its own at 1440–1728
+     — beside Markets is where it belongs, and that is the layout these widths
+     had before. A small basis keeps it on the line; `1 1` still grows it into
+     whatever Markets leaves. */
+  .top-band > .col-news { flex: 1 1 380px; min-width: 0; align-self: stretch; }
+  /* ── three across: Markets | Watchlists | Ask (owner request 2026-08-07) ────
+     Markets and Ask are narrow fixed rails; Watchlists is the fluid column that
+     absorbs everything else. Opted into at 1400px — below that the rule above
+     stands and the page keeps the layout it has today.
+     Widths (owner request 2026-08-07, second pass): Markets came down a THIRD,
+     387 → 258 rendered, and Ask was matched to it at 258 so the two rails frame
+     the page symmetrically. Markets keeps its 0.9 zoom, so its basis is the
+     PRE-zoom figure: 287 × 0.9 ≈ 258. Ask carries no zoom, so its basis IS the
+     rendered width. Watchlists gains the whole ~256px that frees up.
+     HEIGHT: none of the three is pinned any more. Watchlists runs at its FULL
+     length (owner request — a capped panel hid lists behind an inner scrollbar),
+     and `align-items: stretch` makes the other two match whichever column is
+     tallest, which is what "same height as watchlist" asks for. Pinning Markets
+     to a number instead would re-break the moment a list is added or removed. */
+  /* The four-across gate is its OWN breakpoint, deliberately higher than the
+     1400 the inner rows use. Markets (311) + News (420 min) + the two 200px
+     Markets (311) + News (300) + gaps is ~650, so Ask still clears 470px at a
+     1152 browser — which is the width the owner's own window measures, and the
+     reason this gate is 1120 rather than the 1400 the inner rows use. News was
+     narrowed again to buy that room (owner request 2026-08-19: put Ask to the
+     right of News and narrow News to fit it). It was set higher while
+     the accounts still sat in this row; once they moved beside the heatmap the
+     row lost ~580px of demand and the higher gate was just holding the layout
+     back. Below 1400 the two rows stack exactly as before. */
+  @media (min-width: 1120px) {
+    /* STRETCH, not flex-start (owner request 2026-08-21: "I want all of these
+       windows to be as tall as the bottom of the Real Estate XLRE box"). The
+       band is the taller half — Markets runs to its last sector row — and with
+       flex-start the boxes half stopped at its own content and left ~690px of
+       empty page beside the news. Stretching hands that height to Ask instead
+       of to nothing. */
+    .desk-row { display: flex; align-items: stretch; gap: var(--space-4); }
+    /* Markets + News keep their intrinsic widths; the accounts half takes the
+       remainder, because Ask is the panel that actually benefits from slack —
+       it holds a conversation, while the other three hold fixed-shape data. */
+    .desk-row > .top-band { flex: 0 1 auto; margin-bottom: 0; }
+    .desk-row > .top-boxes { flex: 1 1 0; margin-bottom: 0; }
+    /* Both inner rows already carry their own bottom margin; the row supplies
+       one for the pair so the spacing below matches every other block. */
+  }
+  @media (min-width: 1120px) { .desk-row { margin-bottom: var(--space-4); } }
+
+  /* ── ONE BOTTOM LINE FOR THE WHOLE ROW ────────────────────────────────────
+     Owner request 2026-08-21: "I want all of these windows to be as tall as
+     the bottom of the Real Estate XLRE box." MARKETS is the measuring column —
+     its content is fixed (four index tiles, a chart, eleven sector rows), so it
+     is the one panel whose height is a property of the desk rather than of
+     whatever the feeds returned today. Everything else is fitted to it.
+
+     NEWS is taken OUT OF FLOW to achieve that. An absolutely-positioned panel
+     contributes nothing to the line's cross size, so the only column still
+     measuring its own content is Markets, and News resolves against whatever
+     height that lands on. No flex alignment can express "let the SHORTER column
+     drive the taller one" — `stretch` gives the row to the tallest, which is
+     the wrong way round here: demo carries 8 headlines and the owner's live
+     feed 20, so News is the column that runs past XLRE.
+     Its list keeps `overflow-y: auto` and, deliberately, NO `overscroll-behavior`
+     — reaching the end of the headlines carries on scrolling the page. That is
+     the one body on this row that genuinely has more content than column. */
+  @media (min-width: 1120px) {
+    /* The panel below goes OUT OF FLOW so Markets alone sets the row height —
+       but that leaves this column with no in-flow content, and the collapse
+       lands one level up from where it looks: `.top-band` is itself
+       `flex: 0 1 auto` inside the desk row, so it sizes to ITS content, which
+       is now Markets alone. Measured on main: the band shrank to 327px, this
+       column rendered 2px wide with a headline width of 0, and Ask grew to 894
+       to fill the gap — the news feed was effectively gone from the desk.
+       An explicit non-shrinking basis is not enough on its own (measured); the
+       zero-height in-flow child is what restores the width contribution, and it
+       adds nothing visible and no height for the out-of-flow panel to resolve
+       against. */
+    .top-band > .col-news { position: relative; align-self: stretch; flex: 0 0 300px; max-width: 340px; }
+    .top-band > .col-news::before { content: ''; display: block; width: 300px; height: 0; }
+    .top-band > .col-news > .panel { position: absolute; inset: 0; display: flex; flex-direction: column; margin: 0; }
+    .top-band > .col-news > .panel > .panel-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .top-band > .col-news #newsList { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+
+  }
+
+  @media (min-width: 1120px) {
+    .top-band { flex-wrap: nowrap; align-items: stretch; }
+    /* 345 pre-zoom = 311 rendered (owner request 2026-08-07: "expand it a
+       little and make both visible"). A sector row needs its label + price +
+       sparkline + day-% AND the after-hours print on one line; measured at
+       1512, clipping only reaches zero at a 330 basis, so 345 is the first
+       width with real headroom rather than a value that only just fits — live
+       prices run longer than demo's. */
+    .top-band > .col-markets { flex: 0 0 345px; }
+    /* The Markets grids are `repeat(4, 1fr)` and drop to 2 only under a
+       max-width:520px VIEWPORT query — which never fires here, since this narrow
+       column exists only on a wide screen. At 287px pre-zoom a 4-up sector cell
+       is ~63px and its 10px label and mono % spill their box, so the row is set
+       by the COLUMN's width rather than the viewport's.
+       Only the index tiles need this now: each carries a `--font-lg` mono
+       percentage, the widest thing in the panel, and forcing them 3-up clips
+       5–6 elements (that % plus the `.mk-ext` proxy line). The sectors used to
+       need a 3-up rule and a 9px label here too; both went when the grid became
+       a stacked strip, which gives every name its full width at full size. */
+    .top-band > .col-markets .mk-tiles { grid-template-columns: repeat(2, 1fr); }
+    /* NEWS IS BOUNDED, not merely fluid (owner request 2026-08-18: resize the
+       news so the others fit). Making it the fluid column when Watchlists left
+       the band was right at 1512 and wrong on a wide monitor: "take whatever is
+       left" meant ~2000px of headlines beside a 311px Markets, so Markets read
+       as an afterthought next to a wall of text. It still absorbs slack, but
+       within a range — past 560px extra column width buys nothing, since a
+       headline is one line either way. */
+    .top-band > .col-news { flex: 0 1 300px; min-width: 0; max-width: 340px; }
+    /* News took Ask's slot (owner request 2026-08-07) and inherits its width.
+       `#newsList` carries a 460px max-height for the stacked layout; here the
+       column is stretch-sized, so the cap would leave the list ending well
+       short of the panel it sits in — flex bounds it to the column instead.
+       This is the ONE top-band body that genuinely scrolls (there are always
+       more headlines than column), so it keeps `overflow-y` — but chaining is
+       re-enabled, so reaching the end of the list carries on scrolling the
+       page rather than dead-ending under the cursor. */
+    .top-band > .col-news #newsList { max-height: none; }
+    /* The columns are stretch-sized rather than pinned, so a panel fills the
+       row's height and its content sets that height in the first place.
+       These panel-bodies deliberately carry NO `overflow`/`overscroll-behavior`
+       (owner report 2026-08-07: the mouse wheel did nothing over any of the
+       three columns, and the page only scrolled from the far edges of the
+       screen). The pair dated from when every column was cropped to 600px and
+       genuinely needed an inner scrollbar. Once heights became content-driven
+       there was nothing left to scroll — but the elements stayed scroll
+       CONTAINERS, and `overscroll-behavior: contain` on a container that cannot
+       scroll swallows the wheel instead of chaining it to the page. Chromium
+       chains anyway, which is why this reproduced on the owner's machine and
+       not in a Chromium harness; WebKit honours it and the page freezes.
+       Anything here that really must scroll opts in for itself (see #newsList
+       below, and .ask-thread) — never blanket-applied to every panel. */
+    .top-band > aside > .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+    .top-band > aside > .panel > .panel-body { flex: 1 1 auto; min-height: 0; }
+    /* The out-of-flow treatment of Markets and News is GONE (2026-08-17), and
+       deleted rather than ported. It existed for exactly one reason: to let the
+       SHORTER watchlist column drive the row's height while the other two
+       resolved `inset: 0` against it — something no flex alignment can express.
+       With Watchlists out of the band there is no third column to defer to, so
+       the row is two panels and plain `align-items: stretch` is correct again:
+       the taller of the pair sets the height and the other fills it.
+       That also retires the inner `overflow-y: auto` those two carried. Neither
+       panel is cropped any more, so nothing needs to scroll inside it — and an
+       element that is a scroll container without having anything to scroll is
+       precisely the shape that ate the mouse wheel on 2026-08-07. */
+  }
+  /* Ask-the-desk: scroll the conversation INSIDE instead of letting the panel
+     grow with the thread (owner request 2026-07-21). The panel fills its
+     stretched column; the thread is the only flexible/scrolling part, so the
+     form + disclaimer stay pinned and reachable however long the thread gets.
+     Ask swapped down into `.top-boxes` when News took its place in the top band
+     (owner request 2026-08-07); these rules moved with it, because the
+     behaviour belongs to the panel, not to the row it happens to sit in. */
+  /* Ask is pinned SHORT (owner request 2026-08-07: "reduce the height of desk
+     AI to one inch"). 158px, not the 96px that 1in actually is — measured, 1in
+     is BELOW this panel's structural minimum and produces a box you cannot type
+     into. The composer alone is 100px (a 48px input, its button, and the
+     not-financial-advice line that has to stay) under a 42px header, so the
+     floor is 158px; at 96px the form’s bottom lands 62px outside the panel and
+     the input is reachable only by scrolling a 53px box. 158px is the measured
+     floor at which the WHOLE composer sits inside the panel.
+     It is a MIN, not a fixed height (owner report 2026-08-09: "cant see my
+     results"). At a fixed 158 the header, composer and disclaimer consume the
+     whole panel and `.ask-thread` resolves to ZERO height — measured, 255px of
+     answer rendered into a 0px box. The answers were there and invisible, which
+     is worse than a visibly broken panel. So the panel is 158 while the thread
+     is empty and grows with the conversation up to 420, past which the thread
+     scrolls inside. That keeps the compact idle panel that was asked for
+     without making the assistant unusable the moment it replies.
+     Both the 420 cap and the `align-self: start` that went with it are LIFTED
+     at the desk-row breakpoint (owner request 2026-08-21) — see the override
+     below. They still apply on a narrow screen, where the panels are stacked
+     and there is no row height to fill. */
+  .top-boxes > .col-rail { align-self: start; }
+  .top-boxes > .col-rail > .panel { min-height: 158px; max-height: 420px; flex: 0 0 auto; display: flex; flex-direction: column; }
+  /* `.top-boxes .panel-body` caps its children at 320px and scrolls them — right
+     for a news list, wrong for Ask: capping askBody scrolls the COMPOSER out of
+     view instead of the thread. Ask opts out and delegates scrolling downward. */
+  .top-boxes > .col-rail #askBody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; max-height: none; overflow: visible; }
+  /* ── No `overscroll-behavior: contain` anywhere on this page ───────────────
+     Owner report 2026-08-07, the THIRD sighting of the same fault: the mouse
+     wheel dies over a panel and the page only scrolls from the far edges of the
+     screen. `contain` stops a scroll from chaining to the page — which is what
+     you want at the END of a long list, but the same rule applies when the
+     container has NOTHING to scroll, and then it simply eats the wheel.
+     Chromium chains regardless, so none of this reproduces in a Chromium
+     harness; WebKit honours it and the page freezes under the cursor.
+     Every container that carried it here can legitimately be short: an empty
+     `.ask-thread` before the first question (the reported case, and invisible
+     to every scan I ran because it needs a live authed session), a news list
+     with few headlines, a settings popover, a tooltip. `contain` is only ever
+     safe on something GUARANTEED to overflow, and nothing here is. The cost of
+     dropping it is that reaching the bottom of a long thread carries on
+     scrolling the page — ordinary web behaviour, and far better than a dead
+     wheel. (The watchlist's old axis-scoped `overscroll-behavior-x` went with
+     the horizontal bands themselves; nothing on the page carries the property
+     now. Its columns answer the chaining a different way — they do not scroll
+     under the wheel AT ALL, and are paged by a button instead, 2026-08-20.) */
+  .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  /* accounts / news shifted DOWN into their own band under the top row */
+  .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
+  .top-boxes > .area-accounts { flex: 2 1 0; min-width: 0; }
+  .top-boxes > .col-rail { flex: 1 1 0; min-width: 0; }
+  .top-boxes .account-grid { grid-template-columns: 1fr 1fr; }
+  .top-boxes .account .hero-number { font-size: var(--font-xl); }
+  /* Stats stay STACKED by default. The 1-up rule exists for narrow cards, where
+     two columns of currency figures do not fit: making it 2-up unconditionally
+     put 409px of content in a 390px viewport and failed S4 on WebKit only
+     (mobile-chrome passed, so a Chromium harness does not catch it). The 2-up
+     cut the owner asked for is opted into at the desktop breakpoint below,
+     where the accounts column is ~980px and has ample room. */
+  .top-boxes .acct-stats { grid-template-columns: 1fr; }
+  /* The accounts-area cut (owner request 2026-08-07) is opted into at the
+     desktop breakpoint, NOT globally: the stacked stats exist for narrow cards,
+     and forcing 2-up at every width put 409px of content in a 390px viewport
+     and failed S4 on WebKit. This block sits AFTER the 1-up default on purpose
+     — a media query adds no specificity, so placing it earlier let the later
+     rule win and the 2-up silently never applied. */
+  @media (min-width: 1400px) { .top-boxes .acct-stats { grid-template-columns: 1fr 1fr; } }
+  /* The equity sparkline goes too — it is 40px, and the 70% target is not
+     reachable with it. The one-year trend is still on the Markets chart and in
+     the symbol detail window; this was the least load-bearing of the card's
+     five blocks, which is why it went before anything numeric. */
+  .top-boxes .acct-spark { display: none; }
+  .acct-pos-toggle { appearance: none; border: 0; background: none; margin: 0 var(--space-4) var(--space-3); padding: 4px 0; font: 600 var(--font-xs)/1.2 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; text-align: left; }
+  .acct-pos-toggle:hover { color: var(--color-text-primary); }
+  .acct-pos-toggle:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
+  .top-boxes .panel-body { max-height: 320px; overflow-y: auto; }
+  /* ── Desk row, wide screens only: Ask | Account A | Account B ──────────────
+     Owner request 2026-08-08. Scoped to the desktop breakpoint because BOTH of
+     its numbers break a narrow screen: two 242px cards need 484px plus gaps,
+     which overflows a 390px viewport outright, and below 1400 the stats drop to
+     1-up (they must — 2-up clips the values in a narrow card) so the content no
+     longer fits 158px. Under 1400 the row keeps exactly the layout it had.
+     Ask moves to the far left with `order`, NOT by moving the markup: the
+     accounts section carries the desk's masthead state and the Refresh/Lock
+     controls, and reordering the DOM would drag those out of the reading order
+     that keyboard and screen-reader users follow. `order` is purely visual,
+     which is all that was asked for.
+     The card is SCALED rather than re-typeset ("reduce font to fit"): at full
+     size it needs 331px of height, and shrinking individual fonts would leave
+     the padding and gaps at their old size, so the card would read as starved
+     rather than smaller. `zoom` takes type, padding and borders together — the
+     same device the Markets column uses.
+     .62 is the LARGEST scale that fits; .66 still overflows by 10px. Note the
+     asymmetry, which is easy to get wrong: the width comes from the grid track
+     and so is already in rendered pixels, while `height` is set inside the
+     zoomed box and must be divided by the scale to render at 158. */
+  /* Gated at 1120, the SAME breakpoint the desk row itself uses. The two must
+     agree: the row's gate was lowered to 1120 precisely because the accounts
+     had moved out of it, and now that they are back a higher gate here would
+     leave 1120–1400 running the old share-the-row rules — measured, that put
+     Ask at 198px at a 1280 viewport, which is not a panel you can hold a
+     conversation in. It also matters that the owner's browser reports
+     innerWidth 1152 (a 1512 laptop with DevTools docked), so a 1400 gate would
+     never engage on the machine this was built for — the same trap the
+     watchlist column layout hit at 1900. */
+  @media (min-width: 1120px) {
+    .top-boxes > .col-rail { order: -1; flex: 1 1 auto; min-width: 0; }
+    /* Accounts return to this row, SQUEEZED to the right of Ask (owner request
+       2026-08-20), and the heatmap gets the full width back. 232 = one 200px
+       card plus the grid gutters, STACKED one per row: a column beside Ask
+       rather than a second mini-row of cards. Ask is the elastic half and
+       simply takes what is left — which is what "reducing the width of that
+       guy" buys the cards. */
+    .top-boxes > .area-accounts { order: 0; flex: 0 0 232px; align-self: start; }
+    .top-boxes .account-grid { grid-template-columns: 1fr; justify-content: stretch; }
+    /* Full size, and the header sits ABOVE the cards again. Both of the rules
+       that used to be here — `zoom: .62` and a 150px header column beside the
+       grid — existed for one constraint: Ask / Account A / Account B all had to
+       start on the same 158px line. The cards are a COLUMN now, with no line to
+       match and a width of their own, so the scale and the side header were
+       solving a problem that no longer exists. */
+    .top-boxes .account { zoom: 1; min-height: 0; height: auto; width: auto; }
+    .accounts-side { width: auto; }
+    .top-boxes .account-grid { margin-top: var(--space-3); }
+    /* LOCKED state must keep the row's shape (owner report 2026-08-08: the row
+       grew from 158 to 247 the moment the desk locked). The lock panel replaces
+       BOTH cards in the grid, so it spans both tracks and takes the same 158px
+       — the row is then the same height whether the desk is locked or not.
+       Deliberately NOT zoomed like `.account`: the cards are scaled because
+       they carry a lot of figures, whereas this panel is a PIN field, and
+       shrinking a text input people have to type into to 62% would be a
+       usability cost paid for nothing — spanning two tracks already gives it
+       ample room at full size.
+       `min-height`, NOT `height`: the wrong-PIN error renders below the form,
+       and at a fixed 158 it landed 8px OUTSIDE the panel — a failed unlock
+       would have shown no visible reason, and S11 would not have caught it
+       because the element still exists and still has its text. The row is 158
+       whenever the desk is simply locked; it grows ~20px only while an error is
+       on screen, which is the one moment that matters more than the row. */
+    .top-boxes .panel-lock { grid-column: 1 / -1; min-height: 158px; }
+    /* the explainer is the only elastic part; trimming its type and the gap
+       under it is what buys the 17px, so the panel sits at the cards' 158
+       without losing a word of the copy */
+    .top-boxes .panel-lock .lock-explain { font-size: var(--font-sm); line-height: 1.35; margin: 0 0 var(--space-2); }
+    .top-boxes .panel-lock .panel-body { padding-top: var(--space-2); }
+  }
+
+  /* Placed AFTER the block above on purpose: these lift that block's own
+     `align-self: start` and the 420px cap set further up the file, and a rule
+     of equal specificity only wins by coming later. */
+  @media (min-width: 1120px) {
+    /* Ask fills the row instead of stopping at 420 and leaving ~690px of empty
+       page beside the news. The cap and the `align-self: start` that went with
+       it were written when this panel sat above open space; with a row height
+       to fill, the extra goes to the thread, which is the part that was
+       reported unreadable when it was starved. */
+    /* Ask is taken OUT OF FLOW inside its column, exactly as News is in the
+       band beside it, and for the same reason: a flex line's height is the MAX
+       of its items, so a long answer would drag the whole row down past the
+       Markets column and the panel would run on down the page (owner report
+       2026-08-21: "anything below the real estate should be cut off"). Stretch
+       alone cannot express "fill this row but never set it" — an
+       absolutely-positioned panel contributes nothing to the line's cross size,
+       so Markets stays the ruler and Ask resolves against it.
+       Demo never showed this: `.ask-thread:empty` is `display: none`, so with
+       no conversation there is nothing to overflow. It needs a live authed
+       session with a real answer in the thread. */
+    .top-boxes > .col-rail { align-self: stretch; position: relative; min-height: 0; }
+    .top-boxes > .col-rail > .panel { position: absolute; inset: 0; max-height: none; min-height: 0; margin: 0; }
+
+    /* The account cards stretch to the same line rather than stopping 204px
+       short. The grid rows share the height, so two cards split it. */
+    .top-boxes > .area-accounts { align-self: stretch; }
+    .top-boxes .account-grid { flex: 1 1 auto; min-height: 0; align-content: stretch; }
+  }
+  /* the label column is 78px (long names wrap to 2 lines) and the band padding
+     is trimmed, so a band stays one tile-height tall. */
+  .mkt-group { min-width: 0; margin-top: -1px; display: flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-2); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 0; }
+  .mkt-group-label { flex: 0 0 78px; font: 600 9px/1.25 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em; }
+  /* No row cap here any more. The strip capped rows at 4 tiles (477px) because
+     it sat in a narrow left column; with the strip gone the only consumer is the
+     full-width Watchlists panel, which was already overriding the cap. */
+  .mkt-group-tiles { flex: 0 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 0; }
+  .mkt-tile { flex: 0 0 120px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 0; padding: var(--space-2); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .mkt-tile + .mkt-tile { margin-left: -1px; }
+  /* narrow screens: the fixed label gutter + a 120px tile can't fit a phone
+     width, so stack the label back on top and let the tiles wrap (Codex #127). */
+  @media (max-width: 640px) {
+    .mkt-group { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+    .mkt-group-label { flex-basis: auto; }
+  }
+  .mkt-name { font: 500 10px/1.2 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mkt-last { font: 600 var(--font-sm)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
+  /* price + % on ONE line so the tile is genuinely half-height */
+  .mkt-vals { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
+  .mkt-vals .pill { font-size: 10px; padding: 1px 5px; }
+
+  /* layout: news is a full-height column on the RIGHT. The heatmap and the
+     stochastic-charts panel widen across the main + brief/ask area up to the
+     news reel's LEFT edge — not underneath it (owner ruling 2026-07-14: "only
+     go up to the newsreel"). Accounts + brief/ask sit in the top band;
+     heat/charts span that full left width below. (Equity-curves panel removed
+     2026-07-16 — the per-account card sparklines cover the trend.) */
+  /* Lower band: heatmap (left) + Ask-the-desk (right); the owner-editable widget
+     row spans beneath (accounts + news moved up to .top-boxes 2026-07-18). */
+  /* Lower band is now just the widget frames + Ask-the-desk side by side (owner
+     request 2026-07-18: Ask next to the FRED frame). The heatmap moved out below
+     the charts (full-width). */
+  .layout { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-start; }
+  .widget-strip  { display: none; }
+  .acct-widgets-wrap { flex: 0 1 auto; min-width: 0; }
+  .col-rail { flex: 0 1 360px; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+  /* heatmap: full-width below the charts, SAME footprint as the stochastic panel
+     (owner request 2026-07-18) — identical half-inch inset all around; the SVG
+     height is set in JS to match the chart canvas exactly. The shell's own
+     var(--space-4) padding is subtracted so the gap to the viewport edge is a
+     true 0.5in, and the 0.5in top margin collapses with the chart's 0.5in
+     bottom margin into one half-inch seam between the two panels. */
+  .heat-panel { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
+  /* News is halved to a fixed reel with its own scrollbar (owner ruling
+     2026-07-16): the holdings-first list scrolls in place instead of running
+     the full page height. */
+  #newsList { max-height: 460px; overflow-y: auto; }
+  #newsList:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
+
+  /* Charts break out of the centered column to the full viewport width — a
+     sibling of .layout inside the full-bleed shell (owner ruling 2026-07-16). */
+  /* Half-inch breathing margin all around so the panel sits within the screen
+     with a true 0.5in gap on every side (owner request 2026-07-18, was 0.25in);
+     the JS-set canvas height keeps the whole panel inside one viewport. The
+     shell's var(--space-4) padding is subtracted so the side gap is exactly
+     0.5in. */
+  .area-charts { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
+
+  /* accounts */
+  .accounts-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+  .accounts-head h2 { margin: 0; font: 600 var(--font-lg)/1.2 var(--font-sans); }
+  /* Refresh/Lock much smaller (owner request 2026-08-08). The shared `.btn` is
+     44px tall with 20px padding — right for a form's primary action, far too
+     heavy for two secondary controls sitting in a panel header, where they were
+     wide enough to wrap the header onto three lines. Applied at every width, so
+     the narrow layout gets the same relief. */
+  .accounts-head .btn { min-height: 26px; padding: 3px 10px; font-size: var(--font-xs); border-radius: var(--radius-sm); box-shadow: none; }
+  /* Half-width account cards in a tight 2×2 stack with the widgets below
+     (owner ruling 2026-07-16): fixed 245px columns hug the top-left; freed
+     width stays empty up to the rail. Interior compacts to match. */
+  .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 245px)); gap: var(--space-4); margin-top: var(--space-3); }
+  .account .hero-number { font-size: var(--font-2xl); }
+  .account .acct-spark { height: 40px; }
+  #accountsStamp { margin: 4px 0 0; }
+  #accountsStamp:empty { display: none; }
+  .account .panel-header { gap: var(--space-2); }
+  .acct-code { font: 400 var(--font-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
+  .acct-nav { padding: var(--space-3) var(--space-4) 0; }
+  .acct-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-4); }
+  .acct-spark { display: block; width: 100%; height: 56px; }
+  /* Capped so an account with 30 holdings does not make its card 30 rows tall
+     (owner request 2026-08-20) — three rows plus the header, with the rest
+     reached by the ▲/▼ that wlSyncPaging appends to the card. Three rather
+     than a roomier six because the owner's own account holds five and their
+     screenshot already showed the panel outrunning the block beside it: a cap
+     that only bites at seven would have changed nothing they can see. `hidden` on
+     the y axis, never `auto`: the wheel belongs to the page here for exactly
+     the reason set out at the top of this file. The x axis keeps its scroller,
+     which predates this and is how a wide table stays readable in a narrow
+     card. */
+  /* A REAL SCROLLBAR, not the ▲/▼ pager this first shipped with (owner request
+     2026-08-21: "need scroll bar inside so I can look at the rest of the
+     positions"). The cap is the part that was actually asked for — the card
+     must not grow with the holdings — and it stays; only the mechanism for
+     reaching the rest changes. The pager rendered correctly (measured: ▲▼2,
+     three of five rows shown) but a 20px button bar under a row sliced in half
+     is not how anyone expects to read a table.
+     `overflow-y: auto` with NO `overscroll-behavior`, so reaching the last
+     position carries on scrolling the page — the same configuration #newsList
+     uses, and the one that avoids the wheel-eating fault documented at the top
+     of this file. `scrollbar-gutter: stable` reserves the track so the columns
+     do not shift the moment an account gains a sixth holding. */
+  .acct-positions {
+    padding: 0 var(--space-4) var(--space-3);
+    overflow-x: auto; overflow-y: auto; max-height: 120px;
+    scrollbar-width: thin; scrollbar-gutter: stable;
+  }
+
+  /* shared chart chrome — crosshair tip + wrap, used by the heatmap and the
+     stochastic-charts workbench (the equity-curves panel that also used these
+     was removed 2026-07-16) */
+  .chart-wrap { position: relative; }
+  .chart-tip {
+    position: absolute; pointer-events: none; display: none; z-index: 2;
+    background: var(--color-surface-2); border: 1px solid var(--color-border-hover);
+    border-radius: var(--radius-sm); padding: 6px 10px; box-shadow: var(--shadow-md);
+    font: 400 var(--font-xs)/1.6 var(--font-mono); white-space: nowrap;
+  }
+  .chart-tip .tip-date { color: var(--color-text-secondary); }
+  /* charts-workbench crosshair readout: ONE line docked in a fixed box BELOW
+     the chart (owner request 2026-07-22) — a constant spot that never covers
+     the canvas. It stays in the flow with visibility toggling, so the dock's
+     height is reserved and hover on/off never shifts the layout. */
+  /* min-height = the POPULATED box (15px line + 6px padding + 2px borders,
+     border-box), so emptying it on pointerleave can't shrink the dock; the
+     ellipsis lives on .tip-row — the block that actually overflows (#152) */
+  #wbTip { position: static; display: block; visibility: hidden; width: max-content; max-width: 100%; margin: 6px 0 0 6px; font-size: 10px; line-height: 1.5; min-height: 23px; padding: 3px 8px; border-radius: var(--radius-sm); opacity: .95; }
+  #wbTip .tip-date { font-weight: 600; letter-spacing: .02em; }
+  #wbTip .tip-row { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  /* own scroll container: closed <details> content still participates in layout
+     (content-visibility), so a wide movers table must never widen the body */
+  .chart-data { overflow-x: auto; }
+  .chart-data summary { cursor: pointer; font: 500 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); min-height: 44px; display: flex; align-items: center; }
+  .chart-data summary:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
+
+  .ml-auto { margin-left: auto; }
+
+  /* market widgets: embedded third-party (TradingView + FRED) widgets, each
+     isolated in its own sandboxed iframe so their code never touches the desk. */
+  .widget-strip { min-width: 0; }
+  .widget-strip:empty { display: none; }
+  .widget-strip .widget-frame { height: 78px; }
+  .widget-frame { width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); display: block; }
+  /* Calendar + FRED: bare hairline frames in a compact left-packed row directly
+     under the account cards — no panel, no caption (owner mock, 2026-07-16).
+     Per-widget width arrives as --widget-w from the spec (owner-editable). */
+  .acct-widgets { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: var(--space-4); margin-top: var(--space-4); align-items: flex-start; }
+  .acct-widgets .widget-frame { width: var(--widget-w, 260px); box-shadow: var(--shadow-sm); }
+  /* no widgets rendered (e.g. config unreachable) → hide the row + its stamp */
+  .acct-widgets:empty { display: none; }
+  .acct-widgets:empty + .stamp { display: none; }
+
+  /* Markets window (owner request 2026-07-20) — a compact markets tab like a
+     trading app: region tabs, index tiles, a normalized multi-index % chart with
+     timeframe toggles, and a sector-performance grid. Daylight theme (fits the
+     desk); the three index series carry their own blue/purple/orange identity. */
+  .col-markets { flex: 1 1 420px; min-width: 0; }
+  .markets-panel { min-width: 0; }
+  .mk-regions { display: flex; gap: var(--space-4); border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-3); }
+  .mk-region { appearance: none; border: 0; background: none; padding: 6px 0; font: 600 var(--font-sm)/1 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .mk-region[aria-selected="true"] { color: var(--color-text-primary); border-bottom-color: var(--color-accent-bright); }
+  .mk-region:disabled { opacity: .4; cursor: default; }
+  .mk-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); margin-bottom: var(--space-3); }
+  .mk-tile { border-left: 4px solid var(--mk-c, var(--color-border)); padding: 2px 0 2px var(--space-2); min-width: 0; }
+  .mk-tile .mk-name { font: 600 var(--font-xs)/1.2 var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mk-tile .mk-pct { font: 700 var(--font-lg)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .mk-tile .mk-last { font: 400 var(--font-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
+  .mk-tile .up { color: var(--color-gain); } .mk-tile .down { color: var(--color-loss); }
+  .mk-chart-wrap { position: relative; }
+  #mktChart { display: block; width: 100%; height: 150px; }
+  #mktChart text { pointer-events: none; }
+  .mk-tf { display: inline-flex; gap: 2px; margin: var(--space-2) auto var(--space-3); }
+  .mk-tf-wrap { display: flex; justify-content: center; }
+  .mk-tf button { appearance: none; border: 0; background: none; padding: 4px 10px; font: 600 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); border-radius: var(--radius-sm); cursor: pointer; min-height: 32px; }
+  .mk-tf button[aria-pressed="true"] { background: var(--color-surface-2); color: var(--color-accent); }
+  .mk-sec-head { font: 600 var(--font-base)/1.2 var(--font-sans); margin: var(--space-2) 0 var(--space-2); }
+  /* Sector strip: the watchlist tile idiom, stacked one per row (owner request
+     2026-08-07). Wide and short rather than a grid cell, so the sector NAME can
+     be spelled out at full size beside its ticker and the price + sparkline sit
+     on the same line as the move. `.mkt-tile` supplies the shared chrome; these
+     rules only re-flow it from a column into a row, the same way `.wl-strip`
+     restyles it for the watchlist. */
+  .mk-sectors { display: flex; flex-direction: column; }
+  .mk-sectors .mk-sec { flex: 0 0 auto; flex-direction: row; align-items: center; gap: var(--space-2); padding: 4px var(--space-2); min-width: 0; }
+  /* collapse the shared border between stacked rows into one hairline, exactly
+     as `.mkt-tile + .mkt-tile` does for the horizontal strips */
+  .mk-sectors .mk-sec + .mk-sec { margin-top: -1px; margin-left: 0; }
+  /* the label takes the slack so price/spark/pill stay right-aligned and the
+     numbers line up down the column */
+  .mk-sec-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+  .mk-sec .mk-sec-name { font: 600 11px/1.25 var(--font-sans); color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mk-sec .mkt-name { font-size: 9px; }
+  .mk-sec .mkt-last { flex: 0 0 auto; font-size: 12px; }
+  /* `.wl-spark` sizing is scoped under `.wl-strip`, so outside it the inline
+     SVG has a viewBox and no intrinsic size and lands at the UA default. These
+     match the WL_SPARK_W/H the sparkline is generated at. */
+  .mk-sec .wl-spark { flex: 0 0 auto; display: block; opacity: .9; }
+  .mk-sec .wl-spark svg { display: block; width: 48px; height: 18px; }
+  .mk-sec .mk-sec-pct { flex: 0 0 auto; font-size: 10px; }
+  /* The after-hours move, to the right of the regular day-% pill. Deliberately
+     NOT pill-shaped: a second pill would read as a second answer to the same
+     question, where this is a different session's number. */
+  .mk-sec .mk-sec-ext { flex: 0 0 auto; font: 600 10px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mk-sec .mk-sec-ext.up { color: var(--color-gain); }
+  .mk-sec .mk-sec-ext.down { color: var(--color-loss); }
+  .mk-sec .mk-sec-pct--none { color: var(--color-text-secondary); font-family: var(--font-mono); }
+  /* narrow: tiles + sectors reflow to fewer columns */
+  /* `.mk-sectors` is no longer a grid, so only the index tiles re-column here */
+  @media (max-width: 520px) { .mk-tiles { grid-template-columns: repeat(2, 1fr); } }
+
+  /* Stochastic charts — dark trading-terminal sub-theme (owner ruling
+     2026-07-14: match the reference platform, easier to read). A scoped token
+     override flips ONLY this panel — SVG, toolbar, sidebar, tooltip, popovers
+     all inherit it; the rest of the desk stays daylight. Reference palette:
+     green/red candles, red %K + yellow %D stochastics, purple/yellow/white
+     SMAs, deep-yellow-R/green-S pivots, on near-black navy. */
+  .area-charts {
+    --color-bg: #020305;     /* near-pure-black terminal canvas — blacker so the
+                                candles, pivots, and yellow lines pop off the
+                                ground (owner request 2026-07-16: "make the
+                                background more black"; was #05080e ← #08111c) */
+    --color-surface: #06090f;
+    --color-surface-2: #0d141d;
+    --color-text-primary: #eef2f7;
+    --color-text-secondary: #93a6ba;
+    --color-border: #1e2c3b;
+    --color-border-hover: #37506a;
+    --color-gain: #2ecb57;   /* up candle / S pivots — brighter green to match
+                                the reference terminal's neon candles */
+    --color-status-live: #2ecb57;   /* LIVE lamp dot — same neon green as the candles here */
+    --color-loss: #e11d1d;   /* down candle / stoch bands / quote change — a
+                                deeper, richer red (owner request 2026-07-16;
+                                was #ff3333, #ef4444 before that) */
+    /* The SAME meaning, for TEXT. #e11d1d is a graphic here (3:1 needed, 3.87
+       worst case) and stays the owner's deep red, but 3.87:1 on --color-surface-2
+       and ~4.2 on the panel fail the 4.5 that text needs. Nearest hue that
+       clears it through #wbTip's .95 opacity: 4.63 there, 5.00 on surface-2. */
+    --color-loss-text: #eb4c4c;
+    --color-series-1: #eb3434;   /* stoch %K — red, deepened to match candles */
+    --color-series-2: #f5c518;   /* stoch %D — yellow */
+    --color-series-3: #b06cf0;   /* SMA fast — purple */
+    --color-accent: #ffd21a;         /* R pivots · navigator — bright yellow
+                                        (owner request 2026-07-16: no orange,
+                                        "more yellow"; was #f5a623 → #eab308) */
+    --color-accent-bright: #f5c518;  /* SMA mid — yellow */
+    --color-accent-light: #3d3110;   /* pressed-seg / focus-halo tint. The light
+                                        theme's cream #F3E8CC was inherited here,
+                                        so a pressed "6M" read yellow-on-cream at
+                                        1.34:1; on this dark amber it is 7.83:1 */
+    /* Re-declare the inherited text color inside the dark scope: token
+       overrides alone don't re-resolve `color` inherited from body, so any
+       unstyled text (settings-popover labels) rendered near-black on navy. */
+    color: var(--color-text-primary);
+  }
+
+  /* watchlist charts (two-pane workbench + symbol rail) */
+  /* 96 → 200 → 154px. The rail is TWO columns (owner request 2026-08-17) — a
+     manual stack the owner types into and a picker-headed roster column — and
+     its width has been re-cut three times. History matters here because the
+     SAME mistake is available every time: 240 came from the owner seeing
+     4-letter names render as `AV…` (2026-08-20), and 160 was tried and rejected
+     in review on 2026-08-25 for re-creating that clip.
+
+     THE RULE IS NOT A NUMBER, IT IS: the ticker must never abbreviate, at the
+     FULL length WL_SYM_RE accepts (TEN characters — DX-Y.NYB and BTC-USD are
+     already in the roster). A clipped symbol names no instrument on a rail
+     whose whole purpose is being clicked by ticker. Every width below is
+     derived from that, never chosen.
+
+     154 (owner request 2026-08-25, "reduce the width of these two columns to a
+     min and give more space to the pro charts") is reached WITHOUT touching the
+     rule, by making the glyphs and the chrome cheaper rather than the budget
+     tighter. Three savings, all measured, none of them a squeeze on the ticker:
+       · the two columns are NO LONGER EQUAL — the SYMBOL column is the wider
+         one. See .wb-rail-manual / .wb-rail-roster below for what pays for the
+         difference (originally a `×` it no longer has; now its own scrollbar).
+       · the row font goes 12px → 10px mono, so ten characters cost 60.2px
+         instead of 72.3.
+       · row padding 4px → 2px a side.
+     Measured at 1512: rail 200 → 154, chart 1170 → 1216 (+46px). The type drop
+     is the biggest single contributor and is the part to reconsider FIRST if
+     this ever needs to grow back — it is a legibility cost, where the unequal
+     split and the padding are pure waste removed. */
+  .wb-grid { display: grid; grid-template-columns: 154px minmax(0, 1fr); gap: var(--space-3); }
+  /* Below 860px the rail goes ABOVE the chart instead of beside it. At a 393px
+     phone width a 200px rail leaves the canvas ~150px — the three pane bars
+     then wrap so far that #wbBar-p3 overlaps Pro 1's gear and swallows clicks
+     meant for it. One flat rail cost 96px and survived that; two columns do
+     not, so the split has to stop being a side rail on a narrow screen. Its own
+     two columns stay side by side — they are the point — and the chart gets the
+     full width back. */
+  @media (max-width: 860px) {
+    .wb-grid { grid-template-columns: minmax(0, 1fr); }
+    #wbSidebar { max-height: 220px; }
+    /* The stacked rail's equal column split lives AFTER the base rules that
+       set the side-rail widths — see the second 860px block below. */
+  }
+  /* The rail is a ROW of two columns; each column scrolls on its own so a
+     40-name watchlist cannot push the manual stack off the bottom. The
+     max-height is overwritten per render to match the chart's height (see the
+     note in renderCharts), so this value is only the pre-measure default. */
+  /* A COLUMN now: the roster picker is a full-width header over both symbol
+     columns (see renderWbSidebar). It was a row of two columns until
+     2026-08-25, when the 154px rail left the picker too narrow to name the
+     list it had selected. */
+  #wbSidebar { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); max-height: 600px; }
+  /* `min-height: 0` is load-bearing: a flex ITEM defaults to min-height auto,
+     so without it this row refuses to shrink below its content and the rail's
+     max-height (set per render to the chart's height) stops capping anything —
+     the columns' own overflow-y never engages and a long roster grows the grid
+     row instead of scrolling. */
+  .wb-rail-cols { display: flex; flex-direction: row; align-items: stretch; gap: var(--space-2); flex: 1 1 auto; min-height: 0; }
+  /* SCROLL ANCHORING OFF for the whole rail. renderWbSidebar empties #wbSidebar
+     and rebuilds it, and Chromium compensates for that content change by
+     adjusting the scroll position of the nearest scroller — the PAGE. Measured:
+     with the rail's top above the viewport (ordinary, since this panel sits far
+     down the page), opening a slot editor scrolled the page 31px, which moved a
+     different row under the pointer. It cannot be caught by restoring scrollY in
+     JS around the render: the adjustment happens during LAYOUT, after the
+     synchronous block has already read an unchanged value. Excluding this
+     subtree from anchor selection stops it at the source. */
+  #wbSidebar, #wbSidebar * { overflow-anchor: none; }
+  .wb-rail-top { flex: 0 0 auto; }
+  /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
+     scroll both columns together and defeat the split. `auto`, never `contain`:
+     reaching the end of a column must carry on scrolling the page. */
+  /* THE WIDTH BUDGET, measured at 1440. Ten characters of 10px IBM Plex Mono
+     cost 60.2px (12px cost 72.3 — that drop is what paid for most of the
+     200 → 154 cut).
+
+       SYMBOL  = 60.2 ticker + 4 padding = 64.2 needed, 74 of text room in 78
+       ROSTER  = 60.2 ticker + 4 padding = 64.2 needed, 64 of text room in 68
+       rail    = 78 + 68 + 8 gap = 154
+
+     THE COLUMNS ARE DELIBERATELY UNEQUAL, and what pays for the difference has
+     CHANGED — the number is the same, the reason is not. It used to be the `×`
+     on every manual row: `flex: 1 1 0` on both made the roster carry a ~10px
+     allowance for a control it does not have. The 2026-08-26 slot rewrite
+     removed the `×` (a slot is cleared by emptying it), and the same ~10px is
+     now the SYMBOL column's SCROLLBAR allowance instead.
+
+     That is a real difference between the two columns, not bookkeeping. The
+     SYMBOL column is 100 permanent slots, so `.wb-slots` ALWAYS overflows —
+     unlike the old 40-row stack, which usually did not. Where a thin scrollbar
+     takes layout width (~11-12px) it leaves 74 - 12 = 62px against the 60.2 a
+     ten-character ticker needs, so the SYMBOL column now CLEARS that case
+     rather than accepting it. Narrowing it to the roster's 68 would leave 52
+     and clip — the 10px is no longer slack.
+
+     The ROSTER column keeps the ACCEPTED, bounded residual: 3.8px of headroom
+     and no scrollbar allowance, so where a bar reserves width a 9- or
+     10-character symbol would clip while 8 (DX-Y.NYB, the roster's longest)
+     still fits. This sandbox's Chromium uses OVERLAY scrollbars and reserves 0,
+     so it CANNOT reproduce the case — it must be reasoned about, not tested
+     here. The owner has twice chosen chart space over covering it, and their
+     own machine (macOS, overlay scrollbars) never sees it; covering it costs
+     ~12px. Trigger to revisit: a 9-10 character symbol entering a WATCHLIST, or
+     the desk being used where scrollbars take layout width. S40 budgets against
+     the VALIDATOR's ten characters, never against demo's short names. */
+  .wb-rail-col { min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; scrollbar-width: thin; }
+  /* Sized to what each column actually holds — see the budget above. The SYMBOL
+     column is the wider one because its 100-slot list always scrolls. */
+  .wb-rail-manual { flex: 0 0 78px; }
+  .wb-rail-roster { flex: 1 1 0; }
+  /* MUST sit after the two rules above, not with the other 860px rules further
+     up: identical specificity, so SOURCE ORDER is the whole mechanism and an
+     earlier copy silently does nothing (Codex P2 — measured at 393px, the rail
+     was 263px with SYMBOL still pinned to 78 and ROSTER taking 177).
+     The unequal split is a SIDE-RAIL rule and must not survive the stack: 78px
+     is a floor while the rail is 154px wide, and becomes a CAP once the rail
+     spans the viewport. The scrollbar allowance it buys is only worth paying
+     for where width is scarce. Width is only scarce in the side rail, so the stacked
+     rail shares evenly. This is the same trap the .top-boxes overrides carry a
+     warning about — equal-specificity overrides placed before what they lift. */
+  @media (max-width: 860px) {
+    .wb-rail-manual { flex: 1 1 0; }
+  }
+  .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
+  .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
+  /* The picker inherits the dark charts scope, so it is styled here rather than
+     left to the browser's own light-on-white select chrome. */
+  .wb-rail-pick { width: 100%; padding: 2px 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 600 9px/1.6 var(--font-sans); text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
+  .wb-rail-pick:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
+  .wb-rail-empty { margin: 4px 2px 0; font: 400 9px/1.4 var(--font-sans); font-style: italic; color: var(--color-text-secondary); }
+  /* Section labels inside the SYMBOL column — ACTIVE (owner request 2026-08-26,
+     matching a reference platform). Dimmer and smaller than the
+     column's own title so the hierarchy reads title > section > rows, and
+     `sticky` is deliberately NOT set: only .wb-rail-head pins, or two labels
+     would stack on top of each other as the column scrolls. */
+  .wb-rail-sub { display: block; margin: 6px 0 1px; font: 600 8px/1.5 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
+  .wb-rail-sub:first-of-type { margin-top: 2px; }
+  /* The 100 slots scroll on their OWN, so the SYMBOL title and the ACTIVE row
+     stay put while the list moves under them ("100 slots accessible via scroll
+     just for the list"). `min-height: 0` is what lets it actually shrink and
+     scroll inside the flex column — a flex item defaults to min-height auto and
+     would otherwise grow to its full 100-row content height and take the rail
+     with it. `scrollbar-width: thin` is part of the width budget, not
+     decoration. */
+  .wb-slots { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 1px; }
+  /* An EMPTY slot is still a slot — it keeps its height and stays clickable, so
+     the column reads as 100 addressable rows rather than a short list with
+     blank space under it. The dotted rule is what makes an empty row legible as
+     something you can type into. */
+  /* `touch-action: manipulation` is load-bearing here for the same reason it is
+     on .wl-tile: mobile browsers reserve the double-tap for zoom and would
+     SWALLOW the edit gesture. On a touch-only phone that is the ONLY way to edit
+     a filled slot — F2 needs a keyboard — so without this an owner can fill an
+     empty slot once and then never change or clear it (Codex P1). */
+  .wb-slot { min-height: 15px; touch-action: manipulation; }
+  .wb-slot--empty { border-bottom: 1px dotted var(--color-border); border-radius: 0; }
+  .wb-slot--empty:hover { background: var(--color-surface-2); border-bottom-color: transparent; border-radius: var(--radius-sm); }
+  /* Sized to sit exactly where the button it replaces sat, so opening an editor
+     does not shift the rows below it. `min-width: 0` matters: an input's default
+     intrinsic width (~20 characters) would otherwise push the column past its
+     78px flex basis and undo the 154px rail. */
+  .wb-slot-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 3px 2px; border: 1px solid var(--color-accent-bright); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; }
+  /* Suppressing the outline is safe HERE and would not be anywhere else on this
+     page: this input exists ONLY while it is being edited, and its accent border
+     above is the focus indicator. A default outline on top of that border, in a
+     78px column, reads as a rendering fault rather than as focus. */
+  .wb-slot-input:focus-visible { outline: none; }
+  .wb-rail-row { display: flex; align-items: stretch; gap: 0; }
+  .wb-rail-row .wb-side-btn { flex: 1 1 auto; min-width: 0; }
+  /* The SYMBOL must never be abbreviated at the budgeted size — `AV…` names no
+     instrument, and this rail exists to be clicked by ticker. The budget above
+     guarantees that, so the ellipsis here NEVER fires in normal rendering
+     (~3.9px of headroom at ten characters).
+     It is a LAST RESORT for the one case the budget cannot see: a browser
+     MINIMUM FONT SIZE. A user who sets one of 12px or more has the nominal 10px
+     silently enlarged while the 154px rail and its 78px column stay put, and
+     `.wb-side-sym` was `flex: 0 0 auto` with no overflow — so the ticker did not
+     shrink, did not clip, and SPILLED UNDER the `×`, where it is both unreadable
+     and sitting on another control (Codex P2). Under a forced enlargement
+     something has to give, and a truncated ticker beats two overlapping ones.
+     This also makes S40's `scrollWidth > clientWidth` assertion LIVE: with no
+     overflow constraint that check could never fire, so the scenario rested on
+     its width assertion alone. */
+  .wb-side-sym { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 10px, not the --font-xs 12px it was: ten characters at 12px cost 72.3px
+     of ticker alone, which is what pinned the rail at 200. Sized literally
+     rather than via a token because no token is 10px and inventing one for a
+     single rail would imply a scale that does not exist. Side padding 4 → 2:
+     it insets the hover highlight and nothing else. */
+  .wb-side-btn { display: flex; justify-content: space-between; gap: 4px; align-items: baseline; width: 100%; padding: 4px 2px; border: 0; background: none; border-radius: var(--radius-sm); font: 500 10px/1.4 var(--font-mono); color: var(--color-text-primary); cursor: pointer; }
+  .wb-side-btn:hover { background: var(--color-surface-2); }
+  .wb-side-btn[aria-current="true"] { background: var(--color-surface-2); font-weight: 700; }
+  .wb-side-btn .up { color: var(--color-gain); }
+  .wb-side-btn .down { color: var(--color-loss-text); }
+  #wbChart { display: block; width: 100%; height: 600px; }
+  #wbChart text { pointer-events: none; }
+  #wbTip .up { color: var(--color-gain); }
+  #wbTip .down { color: var(--color-loss-text); }
+  .wb-toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  /* per-symbol fundamentals strip (earnings + key stats, live mode) — sits on
+     its own full-width line inside the toolbar, in place of the old load note */
+  /* One step up from --font-xs (owner request 2026-08-20). This strip carries
+     the last, the day move and the fundamentals — the numbers read off the
+     workbench most often — and at 12px mono they sat below the pane captions
+     around them. The label caps move with it so the pair keeps its ratio. */
+  .wb-info { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 0; font: 500 var(--font-sm)/1.5 var(--font-mono); font-variant-numeric: tabular-nums; min-height: 20px; }
+  .wb-info:empty { display: none; }
+  .wb-info-item { color: var(--color-text-primary); white-space: nowrap; }
+  .wb-info-item b { color: var(--color-text-secondary); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 10px; margin-right: 4px; }
+  .wb-info-muted { color: var(--color-text-secondary); opacity: .8; }
+  .wb-info-warn { color: var(--color-accent); }
+  /* quote readout — symbol ahead of price (owner request 2026-07-23), last
+     price bold, day change coloured (owner request 2026-07-16) */
+  .wb-quote-sym { font: 700 var(--font-sm)/1.4 var(--font-mono); letter-spacing: .04em; color: var(--color-text-primary); }
+  /* Secondary to the ticker and the numbers: a label, not a datum. Truncates
+     rather than wrapping — a long fund name must never push the price onto a
+     second line, since the price is what the row exists for. */
+  .wb-quote-name {
+    font: 400 var(--font-sm)/1.4 var(--font-sans);
+    color: var(--color-text-secondary);
+    max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .wb-quote-last { font-weight: 700; font-size: var(--font-sm); }
+  .wb-quote-chg { font-weight: 600; }
+  .wb-info .up { color: var(--color-gain); }
+  .wb-info .down { color: var(--color-loss-text); }
+  .wb-zoom-pair { display: inline-flex; align-items: center; gap: 6px; }
+  .wb-seg-tag { font: 600 10px/1.4 var(--font-mono); letter-spacing: .08em; color: var(--color-text-secondary); }
+  .wb-seg-note { font: 400 10px/1.4 var(--font-mono); letter-spacing: .03em; color: var(--color-text-secondary); opacity: .75; }
+  .wb-any { display: inline-flex; align-items: center; gap: 6px; position: relative; }
+  .wb-any-input { width: 118px; min-height: 44px; padding: 4px 10px; font: 600 var(--font-xs)/1.4 var(--font-mono); text-transform: uppercase; }
+  /* ticker typeahead listbox — anchored under the symbol box (owner request 2026-07-16) */
+  .wb-suggest { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; margin: 0; padding: 4px; list-style: none;
+    min-width: 240px; max-height: 280px; overflow-y: auto;
+    background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: var(--radius-sm); box-shadow: var(--shadow-md); }
+  .wb-suggest[hidden] { display: none; }
+  .wb-suggest li { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; white-space: nowrap; }
+  .wb-suggest .wb-suggest-sym { font: 600 var(--font-xs)/1.3 var(--font-mono); color: var(--color-text-primary); }
+  .wb-suggest .wb-suggest-name { font: 400 11px/1.3 var(--font-sans); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; }
+  .wb-suggest li[aria-selected="true"], .wb-suggest li:hover { background: var(--color-surface-2); }
+  .wb-gear { min-height: 44px; padding: 8px 14px; font: 500 var(--font-xs)/1.4 var(--font-sans); }
+  /* symbol box + Load + PANE control moved INTO the panel header (owner
+     request 2026-07-23) — beside the EOD/LIVE lamp, before the as-of stamp
+     (which keeps its ml-auto and stays pinned to the far right). Shrunk to
+     the header's own compact scale so the thin title bar can hold them;
+     flex-wrap lets the row wrap on narrow screens instead of overflowing. */
+  .wb-panel-header { flex-wrap: wrap; row-gap: var(--space-2); }
+  .wb-panel-header .wb-any-input { width: 84px; min-height: 24px; padding: 2px 6px; font-size: 10px; }
+  .wb-panel-header .wb-gear { min-height: 24px; padding: 2px 8px; font-size: 10px; }
+  .wb-panel-header .wb-seg-tag { font-size: 9px; }
+  .wb-panel-header .seg button { min-height: 24px; padding: 2px 7px; font-size: 9px; }
+  .wb-pane-controls { display: flex; gap: 6px; margin-left: auto; }
+  .wb-pane-gear, .wb-pane-lock { min-height: 44px; min-width: 44px; padding: 4px 10px; font-size: 15px; line-height: 1; }
+  /* one header bar per visible pane, widths matching the pane split below.
+     One row (owner request 2026-07-22): tier tag, then a compact zoom-preset
+     strip right beside it — matching the reference terminal's small inline
+     "Zoom" pill row — then the gear pushed to the far end. flex-wrap lets the
+     preset strip drop to its own line when a pane column is too narrow to fit
+     all three on one line (e.g. the 3-way split on a phone width) instead of
+     forcing an overlapping/overflowing row. */
+  .wb-pane-bars { display: flex; gap: 16px; margin-bottom: 6px; }
+  .wb-pane-bar { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; position: relative; }
+  .wb-pane-bar[hidden] { display: none; }
+  /* max-width + min-width:0 keep a narrow pane from being widened by its zoom
+     presets; the seg scrolls instead */
+  .wb-pane-bar .seg { max-width: 100%; min-width: 0; overflow-x: auto; }
+  .wb-pane-bar .seg button { min-height: 22px; padding: 2px 7px; font-size: 9px; }
+  .wb-pane-bar .wb-pane-gear, .wb-pane-bar .wb-pane-lock { min-height: 22px; min-width: 22px; padding: 2px 6px; font-size: 12px; }
+  .wb-pane-lock[aria-pressed="true"] { background: var(--color-surface-2); color: var(--color-accent); }
+  .wb-settings {
+    position: absolute; left: 0; top: calc(100% + 4px); z-index: 6; width: 236px;
+    background: var(--color-surface); border: 1px solid var(--color-border-hover);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-md); padding: var(--space-3);
+  }
+  .wb-pane-bar:last-child .wb-settings { left: auto; right: 0; }
+  .wb-set-cols { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
+  .wb-set-title { margin: 0 0 2px; font: 600 10px/1.4 var(--font-sans); letter-spacing: .08em; color: var(--color-text-secondary); }
+  .wb-set-group { margin: 8px 0 2px; font: 600 var(--font-xs)/1.4 var(--font-sans); }
+  .wb-set-row { display: flex; align-items: center; gap: 8px; min-height: 26px; font: 400 var(--font-xs)/1.5 var(--font-sans); cursor: pointer; }
+  .wb-set-row input { accent-color: var(--color-accent); width: 14px; height: 14px; }
+  .wb-set-sym { width: 100%; min-height: 36px; padding: 4px 8px; font: 600 var(--font-xs)/1.4 var(--font-mono); }
+  .wb-set-reset {
+    margin-top: var(--space-3); width: 100%; min-height: 44px; cursor: pointer;
+    background: var(--color-surface-2); color: var(--color-text-primary);
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    font: 500 var(--font-xs)/1.4 var(--font-sans);
+  }
+  .wb-set-reset:hover, .wb-set-reset:focus-visible { border-color: var(--color-border-hover); }
+  .wb-set-reset:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
+
+  /* heatmap MAP FILTER — horizontal bar above the map (owner ruling
+     2026-07-13: the 128px side rail shrank the treemap in BOTH axes, since
+     its height tracks width — map size outranks finviz rail parity; this is
+     the layout the rail already used under 900px) */
+  .heat-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); align-items: start; }
+  .map-filter { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+  .map-filter-title { margin: 0; font: 600 10px/1.4 var(--font-sans); letter-spacing: .1em; text-transform: uppercase; color: var(--color-text-secondary); }
+  #mapFilterNav { display: flex; flex-direction: row; flex-wrap: wrap; gap: 2px; }
+  .map-filter-btn { display: block; padding: 5px 8px; border: 0; background: none; font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-accent); cursor: pointer; }
+  .map-filter-btn:hover { color: var(--color-accent-bright); }
+  .map-filter-btn[aria-current="true"] { color: var(--color-text-primary); font-weight: 700; }
+  .map-filter-btn:disabled { color: var(--color-text-secondary); opacity: .55; cursor: default; }
+  .map-period { width: auto; margin-left: auto; min-height: 32px; padding: 4px 6px; font: 500 var(--font-xs)/1.4 var(--font-sans); }
+
+  /* heatmap (in the main column; height set by JS to match render size) */
+  .heat-wrap { position: relative; }
+  /* Placeholder floor only — renderHeatmap() sets an inline style.height that
+     matches the width-derived viewBox H (420–700px), so 1 viewBox unit = 1px
+     and preserveAspectRatio="none" never stretches the tiles (Codex #130 P2). */
+  /* Placeholder floor only, and kept at/below deskChartHeight()'s canvas floor
+     so it can never exceed the JS-set inline height on a short viewport (that
+     would clamp the SVG taller than its viewBox and stretch the map — Codex
+     #131). renderHeatmap sets the real height inline. */
+  #heatmapSvg { display: block; width: 100%; min-height: 240px; }
+  /* Reserve the legend row's height even before it's populated, so the panel's
+     below-canvas chrome is measured correctly on the very first render. */
+  /* The footer is ONE row: legend on the left, the movers disclosure on the
+     right (owner request 2026-08-20). `min-height` on the legend reserves its
+     height before it is populated, so the panel's below-canvas chrome measures
+     correctly on the very first render. */
+  .heat-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+  .heat-foot .chart-data { flex: 0 0 auto; }
+  /* 44px is the standalone-control touch target; inside a row beside the
+     legend the whole line is the target's height, and 44 was most of the space
+     the owner was pointing at. */
+  .heat-foot .chart-data summary { min-height: 24px; }
+  .heat-note:empty { display: none; }
+  .heat-note { margin: var(--space-1) 0 0; }
+  .heat-legend { min-height: 20px; }
+  #heatmapSvg text { pointer-events: none; }
+  .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
+  /* the peer list shows EVERY member of the framed group (owner ruling
+     2026-07-14) — tall groups scroll; pointer-events restored so the wheel
+     works while hovering the tip */
+  #heatTip { min-width: 248px; padding: 0 0 6px; overflow-y: auto; max-height: 470px; pointer-events: auto; }
+  #heatTip .tip-head { background: var(--color-surface-2); border-bottom: 1px solid var(--color-border); padding: 5px 10px; font: 600 10px/1.4 var(--font-sans); letter-spacing: .06em; color: var(--color-text-secondary); }
+  #heatTip .tip-main { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px 0; font: 700 var(--font-base)/1.4 var(--font-mono); }
+  #heatTip .tip-main .tip-sym { font-size: var(--font-lg); }
+  #heatTip .tip-name { padding: 0 10px 4px; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border); margin-bottom: 4px; }
+  #heatTip .tip-row { display: flex; align-items: baseline; gap: 10px; padding: 0 10px; }
+  #heatTip .tip-row > span:first-child { min-width: 48px; }
+  #heatTip .tip-row + .tip-row { border-top: 1px solid var(--color-border); }
+  #heatTip .tip-row.tip-cur { font-weight: 700; background: var(--color-surface-2); }
+  #heatTip .tip-price { margin-left: auto; }
+  #heatTip .tip-row > span:last-child, #heatTip .tip-main > span:last-child { min-width: 58px; text-align: right; }
+  #heatTip .up { color: var(--color-gain); }
+  #heatTip .down { color: var(--color-loss); }
+  .heat-legend .swatch { width: 26px; height: 12px; border-radius: 2px; display: inline-block; }
+
+  /* footer */
+  .site-footer { margin-top: var(--space-8); border-top: 1px solid var(--color-border); padding-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+  .site-footer p { margin: 0; font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); }
+
+  /* 1280 -> 1119 (owner request 2026-08-19). The band stacked below 1280 back
+     when it carried three wide columns; it is Markets + News now, and Markets
+     is 311 against News's 300, so the pair fits comfortably from ~1120 — which
+     matters because the owner's own browser measures 1152 and was getting the
+     stacked layout. The boundary is set one pixel under the .desk-row gate so
+     the two never disagree about which arrangement is in force. */
+  @media (max-width: 1119px) {
+    /* below this the top boxes are too cramped beside the band, so stack it
+       (band full-width above, boxes wrap below)
+       — also fixes phone-width horizontal overflow (Codex #128 P1) */
+    /* nowrap is load-bearing next to flex-direction:column — a column-wrap
+       container spills into EXTRA COLUMNS when its content is taller than the
+       box, which sent the panels to 2822px at a 1280 viewport and scrolled the
+       page sideways. The band is a plain stack here, so it must never wrap. */
+    .top-band { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+    /* stacked: drop the 10% shrink and let Markets/Ask span the full width */
+    .top-band > .col-markets { zoom: 1; }
+    .top-band > .col-markets, .top-band > .col-news { flex-basis: auto; }
+    .top-boxes { flex-wrap: wrap; }
+    .top-boxes > .area-accounts { flex: 2 1 320px; }
+    .top-boxes > .col-rail { flex: 1 1 240px; }
+    /* stacked: Ask no longer inherits a stretched column height, so the thread
+       would grow to fit every replayed exchange — cap it so it scrolls. */
+    .top-boxes > .col-rail .ask-thread { max-height: 320px; }
+  }
+  @media (max-width: 1160px) {
+    .account-grid { grid-template-columns: 1fr; }
+    /* single column: widgets stretch, Ask drops below them (.layout is flex-wrap).
+       The wrapper needs a full basis too, else it keeps its content-sized width
+       and the stretched frames stay narrower than the full-width Ask rail below
+       (Codex #130 P2). */
+    .acct-widgets-wrap { flex-basis: 100%; }
+    .acct-widgets .widget-frame { width: 100%; }
+    .col-rail { flex-basis: 100%; }
+  }
+
+  /* Touch targets. The icon controls below are 18–26px on purpose — dense, mouse
+     first. A coarse pointer (phone, tablet) gets the 44px target design.md asks
+     for; `pointer: fine` (every desktop) never matches, so nothing here moves a
+     desktop pixel. Deliberately NOT covered: the band gutter's «/»/× cluster and
+     the ▲/▼ pager (three 18px controls share a ~90px column — 44px each cannot
+     fit without redesigning the gutter), the symbol rail's rows (a 100-slot
+     scroller whose S40/S45 geometry is measured at these sizes), and the pane
+     bars' ⚙/🔓 (three bars share ~390px on a phone: two 44px buttons per ~85px
+     bar measured as overflowing the row, the overlap S12's comments warn about). */
+  @media (pointer: coarse) {
+    .wl-edit, .wl-add--tray, .wl-trash, .wl-lock, .wl-newlist, .news-topic-x { min-width: 44px; min-height: 44px; }
+    .wl-add--tray, .wl-trash, .wl-lock, .news-topic-x { width: 44px; height: 44px; }
+    .wl-newlist { height: 44px; }
+  }

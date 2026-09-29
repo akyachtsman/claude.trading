@@ -1,3 +1,5 @@
+> Historical report (PR #12, 2026-07-09) — not current.
+
 # Test report — Phase C data pipeline
 
 Date: 2026-07-09 · Workflow: `.github/workflows/data-refresh.yml`

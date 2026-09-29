@@ -118,21 +118,6 @@ inputs:
       tests a release blocker, so leaving this empty is a claim, not a default.
     required: false
     default: ''
-  grep-invert:
-    description: >
-      ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
-      Playwright --grep-invert pattern excluding scenarios by title. Empty (the
-      default) runs everything, so an unset caller behaves exactly as upstream.
-      qa.yml passes 'live only' because this project's live-gated scenarios do
-      NOT self-skip against a local server: they gate on liveBackendConfigured(),
-      which reads the COMMITTED scripts/config.js, and this desk is live — so the
-      check returns true even on localhost and S14 then asserts the market lamp
-      reads LIVE/EOD within 20s against a CI runner that cannot reach Supabase.
-      Without this input the local UI job goes red, since it runs blocking
-      (advisory-run 'false'). qa-live.yml leaves it unset — it is the live gate
-      and must run those scenarios for real.
-    required: false
-    default: ''
   advisory-run:
     description: "Set 'true' to make ONLY the run step advisory; setup/install/server/upload stay blocking."
     required: false
@@ -361,11 +346,6 @@ runs:
         APP_PAGES: ${{ inputs.app-pages }}
         REPORT_PATH: ${{ steps.report-path.outputs.relative }}
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
-        # ⚠️ LOCAL ADDITION — same sequence-parity reasoning as REPORT_PATH
-        # above: this step's own `rm` does not read it, but it must still match
-        # what the run step (and the two config-evaluating steps either side of
-        # it) sees, per this file's own env-parity rule.
-        GREP_INVERT: ${{ inputs.grep-invert }}
       # `--` ENDS OPTION PARSING. A report-path beginning with `-` is a valid
       # relative filename that GNU rm reads as a flag: `rm -f "--preserve-root"`
       # exits 0 and deletes NOTHING, so the stale report survives and the
@@ -415,10 +395,6 @@ runs:
         # requires identical env, and two of these steps import the config. See
         # the run step for why this variable is pinned at all (#347 round 18).
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
-        # ⚠️ LOCAL ADDITION — this step IMPORTS the config, same as the run step
-        # below; missing this here is exactly the divergence this file's own
-        # env-parity comments warn about (Codex, PR #286).
-        GREP_INVERT: ${{ inputs.grep-invert }}
       run: node "$GITHUB_WORKSPACE/.github/scripts/check-ui-viewports.js" --tests-dir . --declared "$RUNNER_TEMP/ui-viewports-declared.json"
 
     - name: Run Playwright tests
@@ -463,22 +439,10 @@ runs:
         # (Resolved against the process cwd, measured — which is this step's
         # working-directory, the same base the gate resolves `--report` against.)
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
-        # ⚠️ LOCAL ADDITION — see the grep-invert input's description.
-        GREP_INVERT: ${{ inputs.grep-invert }}
       # No --reporter flag: a CLI reporter REPLACES the config's list, which
       # would drop the json reporter and leave playwright-results.json unwritten
       # while the upload step below still claims to publish it.
-      #
-      # ⚠️ LOCAL ADDITION (grep-invert) — see the input's description. The pattern
-      # goes through an env var and is quoted at the point of use — never
-      # interpolated into the command line — so a title containing spaces or
-      # shell metacharacters stays one argument.
-      run: |
-        if [ -n "$GREP_INVERT" ]; then
-          npx playwright test --grep-invert "$GREP_INVERT"
-        else
-          npx playwright test
-        fi
+      run: npx playwright test
       working-directory: ${{ inputs.tests-dir }}
 
     # THE COVERAGE CLAIM COMES FROM THE RUN, not from anything predicted before
@@ -539,9 +503,6 @@ runs:
         # requires identical env, and two of these steps import the config. See
         # the run step for why this variable is pinned at all (#347 round 18).
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
-        # ⚠️ LOCAL ADDITION — same env-parity reasoning as the declared-only
-        # check above: this step re-imports the config too.
-        GREP_INVERT: ${{ inputs.grep-invert }}
       # THROUGH THE ENVIRONMENT, NOT INTERPOLATED. `${{ }}` is substituted into
       # the script source before bash parses it, so a report-path carrying a
       # quote and a shell operator would execute — the same template-injection

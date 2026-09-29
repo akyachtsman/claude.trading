@@ -1,5 +1,9 @@
 # Spec — Live Desk Assistant (Ask-the-desk upgrade, v1)
 
+> **STATUS (2026-09-29): SUPERSEDED IN PART — CLAUDE.md "Application Architecture" is authoritative; this spec is kept as history.**
+>
+> Shipped in PR #142 (2026-07-21), then extended: the tool loop now allows up to 12 client tool calls per turn (this spec says ~6), the system prompt is owner-editable at runtime (`desk_system_prompt`), scheduled asks run from `desk-cron-ask`, and the assistant is handed tickers, never balances or sizes (owner ruling 2026-08-12).
+
 WHAT and WHY only. HOW lives in `plan.md`. Constitution: the five imported
 directives (`global.md`, `git.md`, `design.md`, `test.md`, `data.md`).
 Supersedes the behavior of the current stateless Ask-the-desk panel; does not

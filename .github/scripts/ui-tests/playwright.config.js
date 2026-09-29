@@ -8,6 +8,11 @@ export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
   retries: 1,
+  // LOCAL ADDITION: scenario-title exclusion, set by qa.yml's ui-tests job env
+  // (`GREP_INVERT: live only`) — the ui-suite composite is a verbatim upstream
+  // drop-in with no such input. Unset = run everything. 'i' matches the CLI's
+  // --grep-invert, which is what qa.yml used to pass through the composite.
+  grepInvert: process.env.GREP_INVERT ? new RegExp(process.env.GREP_INVERT, 'i') : undefined,
   reporter: [['list'], ['json', { outputFile: '../../../.agent-reports/playwright-results.json' }]],
   use: {
     baseURL: (process.env.APP_URL || 'https://akyachtsman.github.io/claude.trading/').replace(/\/?$/, '/'),

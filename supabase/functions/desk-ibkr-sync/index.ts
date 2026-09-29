@@ -256,7 +256,7 @@ async function yahooDayPct(symbol: string): Promise<number | null> {
      the quote are both still the previous session, so a clock comparison
      concluded the last bar was not today, took that same bar as the baseline,
      and measured its close against itself — every symbol read 0.00%, verified
-     on FRMI against a real +3.65% move. Overnight is precisely when the sync
+     on a small-cap against a real +3.65% move. Overnight is precisely when the sync
      cron runs (09:35 UTC), so this would have written a zero for every
      position in the account.
      Comparing the quote's ET date with the last bar's ET date is true at every
@@ -293,10 +293,10 @@ async function stooqDayPct(symbol: string): Promise<number | null> {
   if (closes.length < 2) return null;
   return Number(((closes[closes.length - 1] / closes[closes.length - 2] - 1) * 100).toFixed(2));
 }
-/* IBKR's Flex feed pads an OCC option symbol to fixed width — "AVAV
+/* IBKR's Flex feed pads an OCC option symbol to fixed width — "XXXX
    261002C00180000" with two spaces — and Yahoo 404s on that. Stripping the
    internal whitespace resolves all four of the owner's option positions
-   (verified 2026-08-21: AVAV, LULU, NFLX and SPCX all priced), so these stop
+   (verified 2026-08-21: all four underlyings priced), so these stop
    being unquotable and start carrying a real day-%. The underlying ticker is
    never guessed from the option symbol: an option's move is its own, and
    reporting the stock's percentage against a contract would be a wrong number

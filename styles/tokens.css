@@ -34,6 +34,9 @@
   --color-gain-dim:       #E3F2E9;
   --color-loss-dim:       #FAE8E8;
   --color-danger:         #C13636;
+  /* STATUS, not P&L: the LIVE lamp's dot. Same green as --color-gain today, but
+     its own token so a data-state light never moves with (or is read as) a gain. */
+  --color-status-live:    #177C4B;
 
   /* color — account series (categorical, fixed order, CVD-validated) */
   --color-series-1:       #2A78D6;
@@ -56,4 +59,7 @@
   /* shadow — hairline lift on paper */
   --shadow-sm: 0 1px 2px rgba(29,26,19,.07), 0 1px 1px rgba(29,26,19,.04);
   --shadow-md: 0 4px 12px rgba(29,26,19,.10);
+  /* a lifted, pointer-following element (the watchlist drag ghost) — it has to
+     read against tiles and paper alike, so it is far darker than --shadow-md */
+  --shadow-raised: 0 4px 14px rgba(0,0,0,.35);
 }

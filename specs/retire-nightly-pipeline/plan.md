@@ -1,7 +1,11 @@
 # Plan: Retire the Nightly Pipeline — Live-Delayed Data Everywhere
 
-**Status:** Phase 3 (plan) — revised after the fresh-context reviewer pass
-(scores A7/B8/C5/D7 → all ten findings addressed); pending owner approval
+> **STATUS (2026-09-29): COMPLETE — CLAUDE.md "Application Architecture" is authoritative; this spec is kept as history.**
+>
+> Shipped 2026-07-13 in PRs #53-#57. Later changes: the scheduled AI brief (`desk-brief`, FR-R6) was retired 2026-07-23 and `keepalive.yml` on 2026-08-22, so references to them below are history.
+
+**Status:** COMPLETE 2026-07-13 — approved and shipped (PRs #53–#57); revised after the
+fresh-context reviewer pass (scores A7/B8/C5/D7 → all ten findings addressed)
 **Spec:** `spec.md` (FR-R1..R12, clarified 2026-07-13)
 **Constitution:** global.md (no local build, free-tier), data.md (dedicated
 project only, RLS, reversible-by-design), design.md (lamps + as-of stamps),

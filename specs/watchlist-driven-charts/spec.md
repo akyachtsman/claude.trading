@@ -1,6 +1,10 @@
 # Spec — Watchlist-driven charts workbench
 
-**Status:** specify complete — clarifications resolved, ready for `plan`
+> **STATUS (2026-09-29): SUPERSEDED IN PART — CLAUDE.md "Application Architecture" is authoritative; this spec is kept as history.**
+>
+> Overhaul 1's manual column (40-name stack with a per-row x, add box and pinning) shipped in PR #248 and was replaced by the 100-slot editable SYMBOL column (PR #282, 2026-08-26); FR-2 to FR-6 and the manual-column parts of the plan no longer describe the code. Overhaul 2 (the Watchlists panel above the charts, as vertical columns) is still current.
+
+**Status:** SHIPPED 2026-08-18 (PR #248); Overhaul 1's manual column later replaced by the 100-slot SYMBOL column (PR #282, 2026-08-26). Originally: specify complete, ready for `plan`.
 **Requested:** 2026-08-17, owner, two overhauls given minutes apart and treated
 as one feature because they serve one workflow.
 **Slug:** `watchlist-driven-charts`

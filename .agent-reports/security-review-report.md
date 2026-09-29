@@ -1,3 +1,5 @@
+> Historical report (PR #54, 2026-07-13) — not current.
+
 # Security Review — retire-nightly-pipeline Group A (origin/main...HEAD)
 
 **Branch:** `claude/hello-kccc26` · **Date:** 2026-07-13 · **Reviewer:** security-review agent

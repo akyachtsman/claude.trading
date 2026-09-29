@@ -75,7 +75,7 @@ function renderMasthead() {
       /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
          leaving them live after a lock would let a drag change the order and
          then silently revert (Codex review, PR #190) */
-      lock.addEventListener('click', () => { sessionStorage.removeItem('desk_pin'); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
+      lock.addEventListener('click', () => { try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ } DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
       wrap.appendChild(lock);
     }
   }
@@ -506,24 +506,23 @@ function renderAccounts(accounts, lamp) {
     }
     thead.appendChild(hr); table.appendChild(thead);
     const tbody = document.createElement('tbody');
+    const sortKey = v => { const n = fmtToNum(v); return Number.isFinite(n) ? n : ''; };
     for (const p of a.positions) {
       const tr = document.createElement('tr');
       const cells = [
         [p.sym + ' × ' + p.qty, p.sym, ''],
-        [fmtUsd0(p.mkt), p.mkt, ''],
-        /* A missing day-% renders as an em dash, NEVER as 0.00%. `fmtPct(null)`
-           returns "+0.00%" — null >= 0 is true — so an unresolved symbol was
-           claiming the position finished flat. That is the same rule the
-           watchlist rail already follows, and it mattered here: four option
-           positions were reading 0.00% while one of them was down 38%. Sorted
-           to the bottom rather than treated as zero, so an unknown never ranks
-           between a loser and a winner: the sort key is BLANK, which makeSortable
-           keeps last in either direction (a -Infinity sentinel led the column
-           ascending, ahead of the largest losses). */
-        [Number.isFinite(p.dayPct) ? fmtPct(p.dayPct) : '—',
-         Number.isFinite(p.dayPct) ? p.dayPct : '',
+        [fmtUsd0(p.mkt), sortKey(p.mkt), ''],
+        /* A missing day-% renders as an em dash, NEVER as 0.00% (fmtPct used to
+           answer "+0.00%" for null — null >= 0 — so an unresolved symbol claimed
+           the position finished flat: four option positions read 0.00% while one
+           was down 38%). Sorted to the bottom rather than treated as zero, so an
+           unknown never ranks between a loser and a winner. The sort key is
+           BLANK, not -Infinity: makeSortable parks a blank last in BOTH
+           directions (-Infinity led the column on an ascending click and printed
+           "-Infinity" into data-sort). */
+        [fmtPct(p.dayPct), sortKey(p.dayPct),
          p.dayPct > 0 ? 'up' : p.dayPct < 0 ? 'down' : ''],
-        [fmtSigned(p.unrl), p.unrl, p.unrl > 0 ? 'up' : p.unrl < 0 ? 'down' : ''],
+        [fmtSigned(p.unrl), sortKey(p.unrl), p.unrl > 0 ? 'up' : p.unrl < 0 ? 'down' : ''],
       ];
       for (const [text, sort, cls] of cells) {
         const td = document.createElement('td');
@@ -1018,11 +1017,21 @@ async function wlCommitMove(from, to, sym) {
       src.symbols.splice(at, 1);
     }
     if (dst) {
-      /* Same list: the removal above shifted everything after it left, so a
-         drop past the old slot lands one place too far without this. */
-      let idx = to.idx;
-      if (src === dst && from.idx < to.idx) idx -= 1;
-      dst.symbols.splice(Math.max(0, Math.min(idx, dst.symbols.length)), 0, sym);
+      /* `to.idx` is where the insertion marker sat among the DRAWN tiles with
+         the dragged one lifted out — the removal above is already accounted
+         for, so it must NOT be shifted again (a forward drag landed one slot
+         short, and a one-slot forward drop did nothing at all). Saved `symbols`
+         also holds tickers that resolved to nothing and were never drawn, so
+         count only the drawn ones to find the slot in the saved order. */
+      const pl = ((wlState.payload && wlState.payload.lists) || [])[to.band];
+      const drawn = pl && pl.title === to.title ? new Set((pl.rows || []).map(r => r.sym)) : null;
+      const want = Math.max(0, to.idx);
+      let pos = dst.symbols.length;
+      for (let i = 0, n = 0; i < dst.symbols.length; i++) {
+        if (drawn && !drawn.has(dst.symbols[i])) continue;
+        if (n++ === want) { pos = i; break; }
+      }
+      dst.symbols.splice(pos, 0, sym);
     }
     return true;
   });
@@ -1085,7 +1094,7 @@ function wlWireDrag(tile, from, sym) {
     if (d == null && band == null) return;
     ev.preventDefault();
     if (!wlEnsureManual()) return;
-    if (d != null) wlCommitMove(from, { ...from, idx: from.idx + (d > 0 ? 2 : -1) }, sym);
+    if (d != null) wlCommitMove(from, { ...from, idx: from.idx + d }, sym);
     else {
       const lists = (wlState.payload && wlState.payload.lists) || [];
       const t = from.band + band;
@@ -1996,7 +2005,7 @@ async function loadWlDetail() {
     wlDetail.bars = buildDemoDetailBars(sym, tf);
     const q = demoWlQuote(sym);
     wlDetail.info = { name: q.name, price: q.last, changePct: q.pct, change: q.last - q.last / (1 + q.pct / 100) };
-    wlDetail.asOf = lastTradingDay(new Date()).toISOString().slice(0, 10);
+    wlDetail.asOf = isoDate(lastTradingDay(new Date()));   /* not toISOString(): that is the UTC date of a local midnight */
     wlDetail.at = null;
     renderWlDetail();
     return;
@@ -3091,42 +3100,66 @@ function openAskSched(pin) {
     });
   };
 
+  /* A write REPLACES the whole roster, so it is only allowed on top of a read
+     that landed: after a failed load the draft is an empty list that never
+     reflected the real one, and Save (or Add, then Save) would wipe every
+     scheduled question — the same rule the watchlist editor follows (PR #188). */
+  let loaded = false;
+  let saving = false;
+  const syncButtons = () => {
+    if (saveBtn) saveBtn.disabled = saving || !loaded;
+    if (add) add.disabled = !loaded;
+  };
   const load = async () => {
     fail(''); note('Loading…');
+    loaded = false; syncButtons();
     const out = await deskGetAskSchedule(pin);
     if (!out || !out.ok) {
       askSched = []; draw();
       note('');
-      fail('Could not load the schedule. Unlock the desk and try again.');
+      fail('Could not load the schedule, so Save is off. Unlock the desk, then close this and reopen it.');
       return;
     }
     askSched = (out.rows || []).map(askSchedRow);
     dirty = false; closeArmed = false;
+    loaded = true; syncButtons();
     draw(); note('');
   };
 
+  /* One save in flight at a time. A row with no id is an INSERT, so a fast
+     double-click sent the same draft twice and wrote a twin of every new row —
+     and each twin fires (and bills) on its own timer. Cleared in `finally`, so
+     a failed or thrown save cannot leave the button dead. */
   const save = async () => {
-    fail(''); note('Saving…');
-    /* Blank rows are dropped rather than rejected — the RPC skips them too, and
-       failing the whole save over a row the owner has not filled in yet would
-       throw away the edits they did make. `id` goes back UNCHANGED so the
-       server updates in place and each row keeps its own timer. */
-    const payload = askSched
-      .filter(r => r.prompt.trim())
-      .slice(0, ASK_SCHED_MAX)
-      .map(r => ({
-        id: r.id, prompt: r.prompt.trim().slice(0, 500), cadence: r.cadence,
-        everyHours: r.everyHours, atHour: r.atHour, atMin: r.atMin,
-        marketOnly: r.marketOnly, enabled: r.enabled,
-      }));
-    const out = await deskSetAskSchedule(pin, payload);
-    if (!out || !out.ok) {
-      note('');
-      fail('Could not save the schedule — nothing was changed. Check the desk is unlocked and try again.');
-      return;
+    if (saving || !loaded) return;
+    saving = true;
+    syncButtons();
+    try {
+      fail(''); note('Saving…');
+      /* Blank rows are dropped rather than rejected — the RPC skips them too, and
+         failing the whole save over a row the owner has not filled in yet would
+         throw away the edits they did make. `id` goes back UNCHANGED so the
+         server updates in place and each row keeps its own timer. */
+      const payload = askSched
+        .filter(r => r.prompt.trim())
+        .slice(0, ASK_SCHED_MAX)
+        .map(r => ({
+          id: r.id, prompt: r.prompt.trim().slice(0, 500), cadence: r.cadence,
+          everyHours: r.everyHours, atHour: r.atHour, atMin: r.atMin,
+          marketOnly: r.marketOnly, enabled: r.enabled,
+        }));
+      const out = await deskSetAskSchedule(pin, payload);
+      if (!out || !out.ok) {
+        note('');
+        fail('Could not save the schedule — nothing was changed. Check the desk is unlocked and try again.');
+        return;
+      }
+      await load();               /* re-read: new rows come back with their ids */
+      note('Saved');
+    } finally {
+      saving = false;
+      syncButtons();
     }
-    await load();                 /* re-read: new rows come back with their ids */
-    note('Saved');
   };
 
   const add = document.getElementById('askSchedAdd');
@@ -3137,6 +3170,7 @@ function openAskSched(pin) {
      open's closure. */
   if (add) {
     add.onclick = () => {
+      if (!loaded) return;
       if (askSched.length >= ASK_SCHED_MAX) { fail(`Ten scheduled questions is the limit — each firing costs real quota.`); return; }
       fail('');
       askSched.push(askSchedRow({ cadence: 'daily', atHour: 8, atMin: 0, enabled: true }));
@@ -3267,6 +3301,12 @@ function renderAsk() {
      replayed history and land the transcript out of chronological order. */
   input.disabled = true; btn.disabled = true;
   deskChatHistory(pin).then(rows => {
+    /* A failed read is not an empty history — an empty thread would tell the
+       owner there is nothing saved when it may all still be there. */
+    if (rows === null) {
+      err.textContent = 'Could not load your saved conversation — earlier questions may exist but are not shown.';
+      err.hidden = false;
+    }
     (rows || []).forEach(r => {
       /* Replay the scheduled marker the live path already draws (desk_019).
          The styling and the intent predate this — what was missing is that
@@ -3292,7 +3332,14 @@ function renderAsk() {
     clearBtn.disabled = true;
     const out = await deskChatClear(pin).catch(() => ({ ok: false }));
     clearBtn.disabled = false;
-    if (out && out.ok) { while (thread.firstChild) thread.removeChild(thread.firstChild); clearBtn.hidden = true; }
+    if (out && out.ok) {
+      err.hidden = true;
+      while (thread.firstChild) thread.removeChild(thread.firstChild); clearBtn.hidden = true;
+    } else {
+      /* Say so: nothing was deleted, and a silent no-op reads as a dead button. */
+      err.textContent = 'Could not clear the saved conversation — nothing was deleted. Try again.';
+      err.hidden = false;
+    }
   });
 
   /* ONE send path for a typed question and a scheduled one. They differ only in
@@ -3381,22 +3428,34 @@ function updateSysPromptCounter() {
 function closeSysPromptModal() {
   document.getElementById('sysPromptBackdrop').hidden = true;
 }
+let sysPromptGen = 0;   /* a slow read from an earlier open must not land on a later one */
 async function openSysPromptModal(pin) {
   const backdrop = document.getElementById('sysPromptBackdrop');
   const textEl = document.getElementById('sysPromptText');
   const stamp = document.getElementById('sysPromptStamp');
   const err = document.getElementById('sysPromptErr');
+  const submitBtn = document.getElementById('sysPromptSubmit');
+  const gen = ++sysPromptGen;
   err.hidden = true;
   backdrop.hidden = false;
+  /* Save stays OFF until a read has actually succeeded. This is a replace of the
+     one live row, and the text in the box is only the owner's prompt if the read
+     landed: mid-load it is the word "Loading…", and after a failed read it is
+     whatever they type into an empty box — either way Save would overwrite the
+     real prompt (which exists nowhere else) with the wrong text. */
+  submitBtn.disabled = true;
   textEl.value = 'Loading…'; textEl.disabled = true;
   const out = await deskGetSystemPrompt(pin);
-  textEl.disabled = false;
+  if (gen !== sysPromptGen) return;
   if (!out.ok) {
     textEl.value = '';
-    err.textContent = 'Could not load the system prompt — try again.'; err.hidden = false;
+    stamp.textContent = '—';
+    err.textContent = 'Could not load the system prompt, so Save is off. Close this and reopen it to try again.'; err.hidden = false;
     updateSysPromptCounter();
     return;
   }
+  textEl.disabled = false;
+  submitBtn.disabled = false;
   textEl.value = out.content;
   stamp.textContent = out.updatedAt ? 'Saved ' + fmtClock(out.updatedAt) : '—';
   updateSysPromptCounter();
@@ -3583,7 +3642,7 @@ const heatText = (attrs, fs) => svgEl('text', {
      today; this is what keeps that true. */
   class: ['heat-label', attrs.class].filter(Boolean).join(' '),
 });
-const fmtCap = v => v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
+const fmtCap = v => !Number.isFinite(v) ? '—' : v >= 1e12 ? '$' + (v / 1e12).toFixed(1) + 'T' : v >= 1e9 ? '$' + Math.round(v / 1e9) + 'B' : '$' + Math.round(v / 1e6) + 'M';
 const fmtPrice = v => Number.isFinite(v) ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
 /* Squarified treemap (Bruls et al.): items [{value}] DESC → rects. */
@@ -4254,10 +4313,14 @@ async function loadHeatmap(force) {
       const hm = await deskFeed('desk-heatmap', force ? { force: true } : undefined);
       clearTimeout(heatRetry.timer); heatRetry.wait = 0;
       heatBase = { hm, lamp: liveLampFor(hm.generatedAt, hm.asOf, true) };
-      applyMapView();
+      feedLanded.heat = Date.now();
+      renderAfterFetch(applyMapView);
       return;
     } catch { /* failure paths below */ }
-    if (heatBase) return; /* poller failure: keep the last good map */
+    if (heatBase) {   /* poller failure: keep the last good map, under a lamp that has aged with it */
+      renderAfterFetch(relampHeat);
+      return;
+    }
     /* LIVE first-load failure: real data or NOTHING (owner ruling 2026-07-22
        — the old silent buildDemoHeatmap() fallback put FABRICATED prices on a
        live desk). Blank canvas + STALE lamp + a fast retry chain (15s → 30s →
@@ -4418,7 +4481,9 @@ function readWbSticky() {
            and a pre-2026-08-26 stack migrates by landing in slots 0..n-1 in the
            order it was already displayed. */
         syms: wbSlotArray(raw.syms),
-        sel: typeof raw.sel === 'string' ? raw.sel : '',
+        /* validated like every slot: this is localStorage, and restoreStickySymbols
+           posts it to quote-proxy on every live boot */
+        sel: typeof raw.sel === 'string' && WL_SYM_RE.test(raw.sel) ? raw.sel : '',
         /* Which roster the rail's second column is showing. A watchlist TITLE
            or the WB_ROSTER_CHARTS sentinel; validated at render against the
            lists that actually exist, since a saved name can be renamed or
@@ -4502,31 +4567,35 @@ async function wbLoadSymbol(sym) {
     return false;
   }
   say('Loading ' + sym + '…');
+  let out;
   try {
-    const out = await deskQuote(sym, 'daily');
-    /* Superseded while this was in flight — return WITHOUT charting, pinning or
-       saying anything, so a slower earlier request cannot pull the chart back off
-       the symbol the owner asked for last, and cannot repaint its status over a
-       newer one. Silent on purpose: this is not a failure the owner should read
-       about, it is a request they replaced. */
-    if (gen !== wbLoadGen) return WB_SUPERSEDED;
-    if (!out.ok || !out.series || out.series.c.length < 30) {
-      say(out.error || 'No data found for ' + sym);
-      return false;
-    }
-    wbState.data.symbols[sym] = out.series;
-    wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
-    wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
-    return true;
+    out = await deskQuote(sym, 'daily');
   } catch {
     /* The same guard, on the exception path. A rejected await jumps straight
-       here, skipping the check above, so a superseded load that fails to reach
+       here, skipping the check below, so a superseded load that fails to reach
        the network would still have painted its connectivity error over a newer
        request's status (Codex P2, round 3). */
     if (gen !== wbLoadGen) return WB_SUPERSEDED;
     say('Quote service unreachable — try again');
     return false;
   }
+  /* Superseded while this was in flight — return WITHOUT charting, pinning or
+     saying anything, so a slower earlier request cannot pull the chart back off
+     the symbol the owner asked for last, and cannot repaint its status over a
+     newer one. Silent on purpose: this is not a failure the owner should read
+     about, it is a request they replaced. */
+  if (gen !== wbLoadGen) return WB_SUPERSEDED;
+  if (!out.ok || !out.series || out.series.c.length < 30) {
+    say(out.error || 'No data found for ' + sym);
+    return false;
+  }
+  wbState.data.symbols[sym] = out.series;
+  wbRealSyms.add(sym);          /* real quote-proxy data → eligible for fundamentals */
+  /* OUTSIDE the try above: a render fault used to land in its catch, where
+     wbPick's own generation bump made it read as "superseded" — swallowed with
+     no message and no log, the note stuck on "Loading…". */
+  wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
+  return true;
 }
 /* single choke point for switching the active symbol: resets pan, remembers
    the selection so it sticks across reloads, and repaints */
@@ -4712,12 +4781,12 @@ const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6)
    series. Period is per pane (owner ruling 2026-08-13): a pane's levels should
    be drawn over the horizon that pane trades. Every pane used to get the
    prior-CALENDAR-MONTH set, which on a fast mover strands them far from price —
-   SPCX on 2026-08-12 put R3 at 212.80 with the stock at 146.15, because July
+   One symbol on 2026-08-12 put R3 at 212.80 with the stock at 146.15, because July
    contained a 171 -> 107 collapse. The day-trading pane in particular was
    reading month-old levels.
 
    NOT the reference terminal's model. That was investigated at length the same
-   day against four of its symbols (SPCX/SPY/EEM/GLD): its levels are EVENLY
+   day against four of its symbols (XXXX/SPY/EEM/GLD): its levels are EVENLY
    spaced about the prior day's CLOSE — P +/- n*D — whereas classic pivot gaps
    alternate (P-L, H-P) and coincide only when the close sits exactly at the
    range midpoint. Its step D could not be reproduced by ATR (any length or
@@ -4757,7 +4826,7 @@ const fmtVol = v => v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : v >= 1e6 ? (v / 1e6)
    caught on PR #246: it assigned each level's role from the touch day's close
    rather than preserving it, so breakouts scored as holds; and its null always
    touched, comparing a selected subset of days against all of them. Both are
-   fixed in .agent-reports/sr-level-backtest.mjs, which fetches its own bars
+   fixed in tools/sr-level-backtest.mjs, which fetches its own bars
    and reproduces the whole table — re-run it rather than trusting these
    numbers.
 
@@ -4800,10 +4869,10 @@ function periodPivots(s, period) {
    preferred framing (2026-08-15), and what the reference terminal says its own
    levels are "based on". Opt-in per pane; pivots remain the default because
    they measure better (+3.09 pts vs +0.70 against a matched null — see the
-   note on periodPivots, and .agent-reports/sr-level-backtest.mjs to re-run it).
+   note on periodPivots, and tools/sr-level-backtest.mjs to re-run it).
 
    These parameters come from a 20-variant sweep against the same matched null
-   (.agent-reports/sr-swing-variants.mjs): swing depth k=3, cluster within
+   (tools/sr-swing-variants.mjs): swing depth k=3, cluster within
    0.25 ATR, and require TWO separate turns to confirm a level. A price the
    market turned at once is an accident of one session; a price it turned at
    twice is the thing traders mean by a level.
@@ -4972,7 +5041,10 @@ function maybeFetchWbInfo(sym, force) {
   if (!force && hit && Date.now() - hit.at < wbInfoTtlMs()) return;
   wbInfoPending.add(sym);
   deskQuote(sym, 'info', false, force ? { force: true } : undefined)
-    .then(out => { wbInfoCache[sym] = { at: Date.now(), info: (out && out.ok && out.info) ? out.info : null }; })
+    /* An ok:false REPLY (a Yahoo hiccup, a 404) is a failed refresh exactly as a
+       thrown one is — it used to overwrite the entry with null, blanking a
+       populated strip and dropping the price back to the bars' close. */
+    .then(out => { wbInfoCache[sym] = { at: Date.now(), info: (out && out.ok && out.info) ? out.info : (hit ? hit.info : null) }; })
     /* Keep the last good reading on a failed refresh rather than blanking a
        populated strip, but stamp it so the next tick retries instead of
        treating the failure as a fresh answer. */
@@ -5653,6 +5725,30 @@ const WB_P3_BARS_REG = 26;
 const WB_P3_BARS_EXT = 64;
 const p3Window = ext => 2 * (ext ? WB_P3_BARS_EXT : WB_P3_BARS_REG);
 
+/* A UTC 'YYYY-MM-DD HH:mm' intraday bar stamp as PACIFIC 'MM-DD HH:mm' — every
+   clock on the desk is Pacific, and fmtBarT already does this for the crosshair
+   readout; the Pro 3 axis labels were slicing the raw UTC string instead (a 6:30
+   open read 13:30, and a winter post-market bar past 00:00 UTC was dated the
+   next day). One hoisted formatter plus a memo, never a formatter per call: that
+   per-bar construction is what cost this project the 546s. */
+const PT_BAR_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: DESK_TZ, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const ptBarMemo = new Map();
+function ptBarStamp(t) {
+  let out = ptBarMemo.get(t);
+  if (out === undefined) {
+    const d = /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(t) ? new Date(t.replace(' ', 'T') + ':00Z') : null;
+    if (!d || isNaN(d.getTime())) out = String(t).slice(5);
+    else {
+      const p = {};
+      for (const x of PT_BAR_FMT.formatToParts(d)) p[x.type] = x.value;
+      out = p.month + '-' + p.day + ' ' + p.hour + ':' + p.minute;
+    }
+    if (ptBarMemo.size > 5000) ptBarMemo.clear();
+    ptBarMemo.set(t, out);
+  }
+  return out;
+}
+
 /* Session boundaries land on exact 15-minute marks (9:30 = minute 570, 4:00pm =
    960), so a bucket never straddles the regular/extended line — the first bar's
    x flag describes the whole bucket. */
@@ -5772,17 +5868,26 @@ function renderCharts(data, lamp) {
 
      Null falls through to the pane's own newest close — real data in every
      branch, never a fabricated price. */
-  const wbCurPx = (() => {
-    const q = (wbInfoCache[wbState.sym] && wbInfoCache[wbState.sym].info || {}).last;
+  /* Per SYMBOL, not one number for the desk: a pane can be pinned to another
+     ticker (cfg.sym → effSym), and the desk symbol's price on that pane's own
+     scale is a wrong number wearing a plausible flag. The quote is read from
+     `.price` — the field quote-proxy's info payload carries; `.last` never
+     existed, so this fell through to the intraday close every time and the
+     flag was not the live quote it documents. It is trusted for the DESK symbol
+     only, because that is the one symbol whose quote is kept fresh (a pinned
+     ticker's cache entry can be arbitrarily old). */
+  const wbCurPx = sym => {
+    const q = sym === wbState.sym && wbSymLive(sym)
+      ? ((wbInfoCache[sym] && wbInfoCache[sym].info) || {}).price : null;
     if (Number.isFinite(q)) return q;
-    const intra = wbState.intraday && wbState.intraday[wbState.sym];
+    const intra = wbState.intraday && wbState.intraday[sym];
     if (intra && intra.c && intra.c.length) {
       const reg = regularOnly(intra);
       const c = reg.c[reg.c.length - 1];
       if (Number.isFinite(c)) return c;
     }
     return null;
-  })();
+  };
 
   const svg = document.getElementById('wbChart');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -6282,8 +6387,9 @@ function renderCharts(data, lamp) {
        still shows where each trading day started — drawn at every boundary
        regardless of label spacing, since it's a sparse marker (one per day),
        not a dense grid. */
-    const gridKey = opts.intraday ? (t => t.slice(0, 10)) : (t => t.slice(0, 7));
-    const gridLabel = opts.intraday ? (t => t.slice(5, 10)) : (t => t.slice(0, 7));
+    /* intraday: the PACIFIC trading date (ptBarStamp), not the UTC slice of the raw stamp */
+    const gridKey = opts.intraday ? (t => ptBarStamp(t).slice(0, 5)) : (t => t.slice(0, 7));
+    const gridLabel = opts.intraday ? (t => ptBarStamp(t).slice(0, 5)) : (t => t.slice(0, 7));
     let lastLabelX = -Infinity;
     for (let i = i0 + 1; i < end; i++) {
       if (gridKey(bars.t[i]) !== gridKey(bars.t[i - 1])) {
@@ -6317,7 +6423,8 @@ function renderCharts(data, lamp) {
        sits, so the tab is clamped into the pane instead of scrolling out of
        it — matching the reference, which keeps the flag against the top or
        bottom edge once the tape leaves the drawn range. */
-    const lastPx = Number.isFinite(wbCurPx) ? wbCurPx : bars.c[bars.c.length - 1];
+    const curPx = wbCurPx(opts.sym);
+    const lastPx = Number.isFinite(curPx) ? curPx : bars.c[bars.c.length - 1];
     if (Number.isFinite(lastPx)) {
       const lpY = py(Math.min(hi, Math.max(lo, lastPx)));
       /* tagH/font raised with the ladder (2026-08-13). The tag was 8px beside a
@@ -6529,7 +6636,7 @@ function renderCharts(data, lamp) {
       }
 
       /* window start/end dates under each handle */
-      const dLabel = t => opts.intraday ? t.slice(5) : t;
+      const dLabel = t => opts.intraday ? ptBarStamp(t) + ' PT' : t;
       text(dLabel(bars.t[i0]), navX, H - 4, { 'font-size': 8, fill: 'var(--color-text-secondary)' });
       const endLbl = dLabel(bars.t[end - 1]);
       text(endLbl, navX + navW, H - 4, { 'font-size': 8, fill: 'var(--color-text-secondary)', 'text-anchor': 'end' });
@@ -6551,17 +6658,22 @@ function renderCharts(data, lamp) {
        on the first snapshot when the 5-min poller refreshes bars in place
        (Codex #120). The stale snapshot stays visible until the refetch lands. */
     const fresh = wbState.intradayAt[sym] && Date.now() - wbState.intradayAt[sym] < INTRADAY_TTL_MS;
-    if (wbIntradayPending.has(sym) || (wbState.intraday[sym] && fresh)) return;
+    /* A FAILED or empty fetch is stamped too. It used to leave no trace, so every
+       render — one per animation frame of a drag — fired a new request at an
+       endpoint that had just refused, one in flight at a time. Same minute as a
+       success; the stale snapshot (or EOD) stays on screen meanwhile. */
+    wbState.intradayFailAt = wbState.intradayFailAt || {};
+    const failedRecently = wbState.intradayFailAt[sym] && Date.now() - wbState.intradayFailAt[sym] < INTRADAY_TTL_MS;
+    if (wbIntradayPending.has(sym) || (wbState.intraday[sym] && fresh) || failedRecently) return;
     wbIntradayPending.add(sym);
     deskQuote(sym, 'intraday', true)
-      .then(out => {
-        if (out.ok && out.series && out.series.c.length >= 30) {
-          wbState.intraday[sym] = out.series;
-          wbState.intradayAt[sym] = Date.now();
-          renderCharts(wbState.data, wbState.lamp);
-        }
+      .then(out => (out.ok && out.series && out.series.c.length >= 30 ? out.series : null), () => null)
+      .then(series => {
+        if (!series) { wbState.intradayFailAt[sym] = Date.now(); return; }   /* keep EOD */
+        wbState.intraday[sym] = series;
+        wbState.intradayAt[sym] = Date.now();
+        renderCharts(wbState.data, wbState.lamp);   /* a render fault surfaces; it is not a fetch failure */
       })
-      .catch(() => { /* keep EOD */ })
       .finally(() => wbIntradayPending.delete(sym));
   };
   /* each pane may pin its own ticker (cfg.sym); empty = follow the desk
@@ -7085,24 +7197,28 @@ async function loadCharts(force) {
       const data = await deskFeed('desk-charts', force ? { force: true } : undefined);
       clearTimeout(chartsRetry.timer); chartsRetry.wait = 0;
       for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); }
-      if (wbState) {
-        /* poller path: refresh bars in place so the user's selected symbol,
-           zoom, and pan survive — renderCharts keys state on data identity.
-           MERGE (not replace) so ad-hoc tickers the user loaded via
-           quote-proxy aren't dropped when the watchlist feed refreshes. */
-        wbState.data.symbols = { ...wbState.data.symbols, ...data.symbols };
-        wbState.data.asOf = data.asOf;
-        renderCharts(wbState.data, liveLampFor(data.generatedAt, data.asOf, true));
-      } else {
-        renderCharts(data, liveLampFor(data.generatedAt, data.asOf, true));
-      }
+      chartsStamp = { generatedAt: data.generatedAt, asOf: data.asOf };
+      feedLanded.charts = Date.now();
+      renderAfterFetch(() => {
+        if (wbState) {
+          /* poller path: refresh bars in place so the user's selected symbol,
+             zoom, and pan survive — renderCharts keys state on data identity.
+             MERGE (not replace) so ad-hoc tickers the user loaded via
+             quote-proxy aren't dropped when the watchlist feed refreshes. */
+          wbState.data.symbols = { ...wbState.data.symbols, ...data.symbols };
+          wbState.data.asOf = data.asOf;
+          renderCharts(wbState.data, liveLampFor(data.generatedAt, data.asOf, true));
+        } else {
+          renderCharts(data, liveLampFor(data.generatedAt, data.asOf, true));
+        }
+      });
       /* re-hydrate manual entries once, on the first LIVE feed — keyed on this
          one-shot rather than wbState creation so a transient first-load outage
          (which renders the demo fallback) still restores after recovery */
       if (!wbStickyRestored) { wbStickyRestored = true; restoreStickySymbols(); }
       return;
     } catch { /* failure paths below */ }
-    if (wbState) return; /* poller failure: keep the last good workbench */
+    if (wbState) { renderAfterFetch(relampCharts); return; } /* poller failure: keep the last good workbench, under an aged lamp */
     /* LIVE first-load failure: blank + STALE + fast retry — never the demo
        generator on a live desk. */
     renderChartsUnavailable();
@@ -7145,16 +7261,17 @@ async function restoreStickySymbols() {
        for a sticky ticker that collides with the demo roster (e.g. GLD); those
        must still be re-fetched so real bars + fundamentals replace the fakes */
     if (wbRealSyms.has(sym)) return;
-    try {
-      const out = await deskQuote(sym, 'daily');
-      if (out.ok && out.series && out.series.c.length >= 30) {
-        wbState.data.symbols[sym] = out.series;
-        wbRealSyms.add(sym);        /* re-hydrated ad-hoc ticker is real → eligible for fundamentals */
-        if (saved.sel === sym && !wbUserPicked) wbState.sym = sym;
-        if (isSel) renderCharts(wbState.data, wbState.lamp);
-        else repaintSoon();
-      }
-    } catch { /* skip a ticker the proxy can't serve */ }
+    let out;
+    try { out = await deskQuote(sym, 'daily'); } catch { return; /* skip a ticker the proxy can't serve */ }
+    if (out.ok && out.series && out.series.c.length >= 30) {
+      wbState.data.symbols[sym] = out.series;
+      wbRealSyms.add(sym);        /* re-hydrated ad-hoc ticker is real → eligible for fundamentals */
+      if (saved.sel === sym && !wbUserPicked) wbState.sym = sym;
+      /* a render fault is logged, not filed under "proxy can't serve" — and must
+         not abort the rest of the restore */
+      if (isSel) renderAfterFetch(() => renderCharts(wbState.data, wbState.lamp));
+      else repaintSoon();
+    }
   };
 
   /* Coalesced repaint for the pool. Rendering per response was fine at one
@@ -7258,15 +7375,79 @@ async function loadPrivate(pin) {
    the panel lamps Stale rather than showing demo data as real. */
 let marketLive = false, newsLive = false;
 
+/* A render that throws AFTER a successful fetch is a RENDER fault, not a feed
+   outage. It used to share the fetch's try, so the catch filed it under "feed
+   failed": the stack was swallowed and the panel was lamped (or left) as if a
+   healthy feed were down. Log it — loud, with its stack — and keep the caller
+   alive: an escape would abort boot() or end the poll chain. */
+function renderAfterFetch(fn) {
+  try { fn(); } catch (e) { console.error(e); }
+}
+
+/* LAMP AGING for the poller feeds. A lamp is only ever computed inside a
+   render, so a poll that FAILS (or never returns, or a tab that sat hidden)
+   leaves it claiming whatever it last said beside a frozen number. Each feed
+   keeps the inputs its lamp was built from, so relampX() can re-read
+   liveLampFor against Date.now() with no fetch. It runs on a failed poll, on
+   returning to a hidden tab, and — `timerOnly` — from the 30s stamp ticker,
+   where a feed is judged only once it is OVERDUE (a full poll cadence plus
+   slack since it last landed): liveLampFor ages a lamp 6 minutes after the
+   server's generatedAt, the off-hours cadence is 60, so an unconditional timer
+   would lamp a healthy hourly poller STALE five minutes into every hour. */
+const feedLanded = {};                       /* key → Date.now() when that feed last landed */
+let newsStamp = null, chartsStamp = null;    /* {generatedAt, asOf} the news/charts lamps were built from */
+const FEED_OVERDUE_SLACK_MS = 90000;
+const pollCadenceMs = () => (marketSessionOpen() || withinCloseSettleGrace() ? 5 : 60) * 60000;
+const marketCadenceMs = () => (marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen() ? MARKET_POLL_MS : 60 * 60000);
+const feedOverdue = (key, cadenceMs) => Date.now() - (feedLanded[key] || 0) > cadenceMs + FEED_OVERDUE_SLACK_MS;
+
 /* Re-evaluate the Markets lamp against the age of the data ALREADY on screen,
-   without fetching. The lamp is only ever computed inside a render, so any
-   stretch where rendering stops — a failing poll, a hidden tab — freezes the
-   lamp along with the prices, and a frozen lamp keeps claiming whatever it last
-   said. Calling this re-reads liveLampFor against Date.now(), so stale data
-   starts admitting it is stale even while nothing new is arriving. */
-function relampMarket() {
+   without fetching (see LAMP AGING above). Calling this re-reads liveLampFor
+   against Date.now(), so stale data starts admitting it is stale even while
+   nothing new is arriving. The ticker (`timerOnly`) repaints only when the
+   verdict CHANGES, so it never rebuilds the tiles every 30s. */
+function relampMarket(timerOnly) {
   if (!marketLive || !DESK.liveStamp) return;
-  renderMarkets(DESK.data.market, liveLampFor(DESK.liveStamp.generatedAt, DESK.liveStamp.asOf, true, DESK.liveStamp.quoteAt, DESK.liveStamp.extAt));
+  if (timerOnly && !feedOverdue('market', marketCadenceMs())) return;
+  const s = DESK.liveStamp;
+  const lamp = liveLampFor(s.generatedAt, s.asOf, true, s.quoteAt, s.extAt);
+  if (timerOnly && mktState.lamp.text === lamp.text) return;
+  renderMarkets(DESK.data.market, lamp);
+  /* the masthead lamp reads the same stamp — but never rebuild its Refresh
+     button under a pending click, which is what re-enables it */
+  if (timerOnly && !refreshNowPending) renderMasthead();
+}
+/* News is non-price, so its lamp is the plain fetch-age one. Lamp + stamp only:
+   the rows themselves are still the last good ones. */
+function relampNews(timerOnly) {
+  if (!newsLive || !newsStamp) return;
+  if (timerOnly && !feedOverdue('news', pollCadenceMs())) return;
+  const lamp = liveLampFor(newsStamp.generatedAt, newsStamp.asOf);
+  const lampEl = document.getElementById('newsLamp');
+  if (!lampEl || lampEl.textContent === lamp.text) return;
+  lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text;
+  applyLampStamp(document.getElementById('newsStamp'), lamp);
+}
+/* The heatmap and charts lamps ride their renders (they draw the lamp and the
+   stamp together), so a verdict change re-renders once. A collapsed heatmap is
+   skipped: nothing is drawn, and opening it refetches. */
+function relampHeat(timerOnly) {
+  if (DESK.mode === 'demo' || !heatBase || !hmOpen) return;
+  if (timerOnly && !feedOverdue('heat', pollCadenceMs())) return;
+  const lamp = liveLampFor(heatBase.hm.generatedAt, heatBase.hm.asOf, true);
+  if (heatBase.lamp.text === lamp.text) return;
+  heatBase.lamp = lamp;
+  applyMapView();
+}
+function relampCharts(timerOnly) {
+  if (DESK.mode === 'demo' || !wbState || !chartsStamp) return;
+  if (timerOnly && !feedOverdue('charts', pollCadenceMs())) return;
+  const lamp = liveLampFor(chartsStamp.generatedAt, chartsStamp.asOf, true);
+  if (wbState.lamp && wbState.lamp.text === lamp.text) return;
+  renderCharts(wbState.data, lamp);
+}
+function relampFeeds(timerOnly) {
+  for (const f of [relampMarket, relampNews, relampHeat, relampCharts]) renderAfterFetch(() => f(timerOnly));
 }
 
 async function refreshMarket(force) {
@@ -7275,9 +7456,12 @@ async function refreshMarket(force) {
     clearTimeout(marketRetry.timer); marketRetry.wait = 0;
     DESK.data.market = market.tiles || []; /* real tiles feed the ask context too */
     DESK.liveStamp = { generatedAt: market.generatedAt, asOf: market.asOf, quoteAt: market.quoteAt || null, extAt: market.extAt || null };
-    renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true, market.quoteAt, market.extAt));
-    fetchMktSeries();   /* one-shot: hydrate the index chart series (self-guarded) */
+    feedLanded.market = Date.now();
     marketLive = true;
+    renderAfterFetch(() => {
+      renderMarkets(DESK.data.market, liveLampFor(market.generatedAt, market.asOf, true, market.quoteAt, market.extAt));
+      fetchMktSeries();   /* hydrates the index chart series (self-guarded) */
+    });
     return;
   } catch { /* keep last good — but re-lamp it below, never leave it claiming LIVE */ }
   if (marketLive) {
@@ -7291,7 +7475,7 @@ async function refreshMarket(force) {
        liveLampFor's 6-minute threshold it flips to STALE on its own.
        (Owner report 2026-07-29: a NASDAQ tile read −0.95% against IBKR's
        −0.58% — the same index ~28 minutes apart, under a LIVE lamp.) */
-    relampMarket();
+    renderAfterFetch(relampMarket);
   } else {
     /* first-load failure: dash tiles (the live boot blanked the demo
        placeholder) — and retry fast rather than waiting out the poller */
@@ -7385,11 +7569,15 @@ async function refreshNews(force) {
     DESK.data.news = (news.items || []).map(it => ({ ...it, ...newsWhen(it.ts, it.t) }));
     /* the topic THESE rows came back for — what the empty state names */
     DESK.data.newsTopic = news.topic || topic;
-    renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf));
+    newsStamp = { generatedAt: news.generatedAt, asOf: news.asOf };
+    feedLanded.news = Date.now();
     newsLive = true;
+    renderAfterFetch(() => renderNews(DESK.data.news, liveLampFor(news.generatedAt, news.asOf)));
     return;
   } catch { /* keep last good */ }
-  if (!newsLive) {
+  if (newsLive) {
+    renderAfterFetch(relampNews);   /* the rows stay; the lamp must not keep saying LIVE over them */
+  } else {
     renderNews(DESK.data.news, { cls: 'lamp--stale', text: 'Stale' });
     armLiveRetry(newsRetry, refreshNews, () => newsLive);
   }
@@ -7447,6 +7635,7 @@ function retickStamps() {
       + (el.dataset.stampSuffix || '');
   }
   retickNewsDate();
+  relampFeeds(true);   /* a poller that stopped landing lamps STALE by age, not never */
 }
 setInterval(retickStamps, STAMP_TICK_MS);
 
@@ -7481,7 +7670,9 @@ function scheduleFeedPoll() {
   clearTimeout(feedPollTimer);
   if (document.hidden) return; /* visibilitychange rearms */
   const openCadence = marketSessionOpen() || withinCloseSettleGrace();
-  feedPollTimer = setTimeout(async () => { await feedPollTick(false); scheduleFeedPoll(); }, openCadence ? 5 * 60000 : 60 * 60000);
+  /* finally: a throw in the tick (a render fault, a rejected feed) used to skip
+     the re-arm, ending the poll chain silently for the life of the tab */
+  feedPollTimer = setTimeout(async () => { try { await feedPollTick(false); } finally { scheduleFeedPoll(); } }, openCadence ? 5 * 60000 : 60 * 60000);
 }
 
 /* Prices move far faster than headlines, sector sweeps or watchlist OHLC, so
@@ -7506,10 +7697,11 @@ function scheduleMarketPoll() {
   /* postMarketOpen(): 16:00–20:00 ET, when extended prints are still arriving */
   if (!(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return;
   marketPollTimer = setTimeout(async () => {
-    await refreshMarket(false);
-    refreshWbQuote(false); /* same cadence as the tiles — it is the same kind of number */
-    renderMasthead();
-    scheduleMarketPoll();
+    try {
+      await refreshMarket(false);
+      refreshWbQuote(false); /* same cadence as the tiles — it is the same kind of number */
+      renderMasthead();
+    } finally { scheduleMarketPoll(); }
   }, MARKET_POLL_MS);
 }
 function startFeedPolling() {
@@ -7523,9 +7715,9 @@ function startFeedPolling() {
          LIVE. The refetch fixes that, but only once it lands; until then the
          first thing the owner sees is a stale number claiming to be current,
          which is exactly the moment a figure gets compared against a broker
-         screen and lands wrong. */
-      relampMarket();
-      feedPollTick(false).then(() => { scheduleFeedPoll(); scheduleMarketPoll(); });
+         screen and lands wrong. Every poller feed, not just the market one. */
+      relampFeeds();
+      feedPollTick(false).finally(() => { scheduleFeedPoll(); scheduleMarketPoll(); });
     }
   });
   scheduleFeedPoll();
@@ -7545,9 +7737,10 @@ async function refreshNowClicked() {
   const btn = document.getElementById('refreshNowBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
-  await feedPollTick(true);
-  refreshNowPending = false;
-  scheduleFeedPoll(); scheduleMarketPoll();
+  try { await feedPollTick(true); } finally {
+    refreshNowPending = false;
+    scheduleFeedPoll(); scheduleMarketPoll();
+  }
 }
 
 /* ── market widgets: embedded third-party (TradingView) widgets. Each loads as
@@ -7568,13 +7761,11 @@ const WIDGET_PATHS = {
   'timeline': 'timeline',
   'screener': 'screener',
 };
-const WIDGET_DEFAULTS = [
-  { type: 'events', title: 'Economic calendar', width: 245, height: 305, config: {
-    colorTheme: 'light', isTransparent: true, width: '100%', height: '100%', locale: 'en',
-    importanceFilter: '0,1', countryFilter: 'us,eu,gb,jp,cn',
-  } },
-  { type: 'fred-glance', title: 'Economy at a glance — FRED', width: 245, height: 305 },
-];
+/* Fallback when config/widgets.json cannot be read. EMPTY on purpose since the embeds
+   were retired (owner ruling 2026-08-07): the old TradingView + FRED pair here meant a
+   transient fetch failure brought vendor iframes — and their JS — back onto a desk
+   that promises to run none. Re-adding a widget is a config edit, not a code edit. */
+const WIDGET_DEFAULTS = [];
 
 function widgetSrc(path, config) {
   /* the URL TradingView's own loader builds: widget name in the path, the
@@ -7704,41 +7895,43 @@ async function loadWatchlist(force) {
   }
   if (!DESK_DB.url) return;
   const asked = wlTf;
+  let out;
   try {
-    const out = await deskWatchlist(force, asked);
-    /* Two switches in quick succession race: a 5Y sweep is slower than a 1D
-       cache hit, so the older reply can land last and repaint every tile with
-       the wrong window under the right label. The feed echoes what it drew, so
-       drop anything that isn't the range still selected. */
-    if (wlTf !== asked) return;
-    if (out && out.range && out.range !== asked) return;
-    /* Version skew (Codex review, PR #195). Pages publishes automatically but
-       the edge function is deployed by hand, so between a merge and that deploy
-       the PREVIOUS desk-watchlist is live — and it ignores `range` entirely,
-       answering a 5Y request with a perfectly successful 1D payload that has no
-       `range` field. Rendering that would put today's line under a 5Y label,
-       which is exactly the class of quiet mislabelling this panel keeps getting
-       bitten by. A missing `range` on a non-1D ask means the backend predates
-       the control, so refuse it. */
-    if (out && out.ok && !out.range && asked !== '1d') {
-      renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
-      return;
-    }
-    if (out && out.ok) {
-      /* Price-bound lamps read EOD + "at close" the moment the regular session
-         ends — correct for every other panel, wrong here: this feed keeps
-         quoting through pre/post, so an EXT price would sit beside an "at
-         close" stamp (Codex review, PR #188). Only relax it when BOTH hold —
-         we're inside the 4am–8pm window AND rows really carry extended prints.
-         Yahoo still returns last night's postMarketPrice at 2am, so the clock
-         alone would lie. */
-      const anyExt = (out.lists || []).some(l => (l.rows || []).some(r => r.ext));
-      const streaming = anyExt && extendedSessionOpen();
-      renderWatchlist(out, liveLampFor(out.generatedAt, out.asOf, !streaming));
-    } else renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+    out = await deskWatchlist(force, asked);
   } catch {
     renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+    return;
   }
+  /* Two switches in quick succession race: a 5Y sweep is slower than a 1D
+     cache hit, so the older reply can land last and repaint every tile with
+     the wrong window under the right label. The feed echoes what it drew, so
+     drop anything that isn't the range still selected. */
+  if (wlTf !== asked) return;
+  if (out && out.range && out.range !== asked) return;
+  /* Version skew (Codex review, PR #195). Pages publishes automatically but
+     the edge function is deployed by hand, so between a merge and that deploy
+     the PREVIOUS desk-watchlist is live — and it ignores `range` entirely,
+     answering a 5Y request with a perfectly successful 1D payload that has no
+     `range` field. Rendering that would put today's line under a 5Y label,
+     which is exactly the class of quiet mislabelling this panel keeps getting
+     bitten by. A missing `range` on a non-1D ask means the backend predates
+     the control, so refuse it. */
+  if (out && out.ok && !out.range && asked !== '1d') {
+    renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
+    return;
+  }
+  if (out && out.ok) {
+    /* Price-bound lamps read EOD + "at close" the moment the regular session
+       ends — correct for every other panel, wrong here: this feed keeps
+       quoting through pre/post, so an EXT price would sit beside an "at
+       close" stamp (Codex review, PR #188). Only relax it when BOTH hold —
+       we're inside the 4am–8pm window AND rows really carry extended prints.
+       Yahoo still returns last night's postMarketPrice at 2am, so the clock
+       alone would lie. */
+    const anyExt = (out.lists || []).some(l => (l.rows || []).some(r => r.ext));
+    const streaming = anyExt && extendedSessionOpen();
+    renderAfterFetch(() => renderWatchlist(out, liveLampFor(out.generatedAt, out.asOf, !streaming)));
+  } else renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
 }
 
 async function boot() {
@@ -7783,11 +7976,15 @@ async function boot() {
   loadWatchlist();
   loadWidgets();
   startFeedPolling();
-  const pin = sessionStorage.getItem('desk_pin');
+  let pin = null;
+  try { pin = sessionStorage.getItem('desk_pin'); } catch { /* storage blocked — the locked shell below */ }
   if (pin) {
-    const res = await deskLogin(pin).catch(() => ({ ok: false }));
+    /* null = the login call itself failed (network, HTTP). That is NOT a wrong
+       PIN: only a definite {ok:false} discards the stored one, or a blip at
+       reload would sign the owner out. */
+    const res = await deskLogin(pin).catch(() => null);
     if (res && res.ok) { DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return; }
-    sessionStorage.removeItem('desk_pin');
+    if (res) { try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ } }
   }
   renderLockedPanels();
 }

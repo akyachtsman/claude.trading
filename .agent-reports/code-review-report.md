@@ -1,3 +1,5 @@
+> Historical report (PR #142, 2026-07-21) — not current.
+
 # Code Review — Live Desk Assistant
 
 Branch `claude/claude-md-architecture-update-j3pwsc` vs `origin/main`.

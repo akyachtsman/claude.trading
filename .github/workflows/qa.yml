@@ -70,6 +70,37 @@ jobs:
       # ── Secret scan (composite — single source of truth for the pattern) ────
       - uses: ./.github/actions/secret-scan
 
+      # ⚠️ LOCAL ADDITION: extended secret scan (upstream pattern gap, reported for the Downstream-Finding Loop)
+      # The composite above is byte-locked to the canonical pattern, which has no
+      # entry for this project's own token shapes (Anthropic, Supabase secret,
+      # GitHub PATs, JWTs, private keys) and skips *.sql/*.py/*.jsonl by extension.
+      # `git grep` covers every TRACKED file whatever its type, and its exit codes
+      # separate clean (1) from a failed run (>=2), which `xargs grep` cannot.
+      # `-l` is a security property, as in the composite: a committed token is not a
+      # registered secret, so echoing the matched line would publish it in the log.
+      # The public Supabase key is `sb_publishable_…`, which matches none of these,
+      # so nothing needs excluding; a legacy JWT-format anon key would trip the JWT
+      # alternative and fail loudly rather than be waved through — the safe direction.
+      - name: Extended secret scan (all tracked files)
+        run: |
+          rc=0
+          hits=$(git grep -IlE \
+            -e 'sk-ant-[A-Za-z0-9_-]{20,}' \
+            -e 'sb_secret_[A-Za-z0-9_-]{20,}' \
+            -e 'ghp_[A-Za-z0-9]{30,}' \
+            -e 'github_pat_[A-Za-z0-9_]{30,}' \
+            -e 'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}' \
+            -e '-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----') || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "ERROR: potential secret found in these tracked files:"
+            printf '%s\n' "$hits"
+            echo "The matching line is deliberately not printed — a committed token is not masked in logs."
+            exit 1
+          elif [ "$rc" -ge 2 ]; then
+            echo "ERROR: extended secret scan did not run (git grep exit $rc)"
+            exit 1
+          fi
+
       # ── Contrast guardrail ───────────────────────────────────────────────────
       # WCAG AA check against this project's design tokens — styles/tokens.css or
       # css/tokens.css by default; elsewhere, append `--tokens <file>` (repeat it
@@ -104,6 +135,22 @@ jobs:
         # tracked .py with warnings promoted to errors, so the class cannot come
         # back silently on a future interpreter. Cheap: no imports, no execution.
         run: python3 .github/scripts/check-py-warnings.py
+
+      # ⚠️ LOCAL ADDITION — CLAUDE.md → Required Commands lists `npx html-validate
+      # index.html`, but no CI step ran it. Pinned through the ui-tests lockfile
+      # (devDependency) rather than `npx html-validate@x`, so the whole tool tree is
+      # reproducible; `--ignore-scripts` because nothing here needs a postinstall.
+      # Node 22 is required by html-validate 11 (engines ^22.22.0) and last in the job
+      # so it cannot change the runtime of the guards above.
+      - name: Setup Node (html-validate)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate HTML
+        run: |
+          npm ci --ignore-scripts --prefix "$UI_TESTS_DIR"
+          npx --prefix "$UI_TESTS_DIR" html-validate index.html
+
   ui-changes:
     name: Detect UI-relevant changes
     runs-on: ubuntu-latest
@@ -325,6 +372,19 @@ jobs:
     # instantiated and a live gate nobody watched. Raise this BEFORE adding
     # projects, never after.
     timeout-minutes: 120
+    # ⚠️ LOCAL ADDITION — replaces a local `grep-invert` input on the ui-suite
+    # composite, which is now a verbatim upstream drop-in (that input made it fail
+    # upstream's check-ui-suite-env.py: the run step is pinned to `npx playwright
+    # test`). Job env reaches every composite step, so the config-evaluating gates
+    # and the run all see the same value (the parity that guard exists to protect);
+    # playwright.config.js turns it into `grepInvert`. The live-gated scenarios do
+    # NOT self-skip on a local server: they gate on liveBackendConfigured(), which
+    # reads the COMMITTED scripts/config.js, and this desk is live — so S14 would
+    # assert the market lamp reads LIVE/EOD against a runner that cannot reach
+    # Supabase, and this blocking job would go red. qa-live.yml leaves it unset:
+    # it is the live gate and must run those scenarios for real.
+    env:
+      GREP_INVERT: 'live only'
 
     steps:
       - name: Checkout
@@ -352,21 +412,23 @@ jobs:
           artifact-name: playwright-results-local
           app-pages: ${{ vars.APP_PAGES }}
           start-local-server: 'true'
-          # ⚠️ LOCAL — see the input's description in the composite.
-          grep-invert: 'live only'
           advisory-run: 'false'
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # A precise, PR-scoped, stale-SHA-guarded "green" wake comment — distinct from
   # ci-notify.yml's workflow_run watcher, which fires on any push (not just
-  # PRs), doesn't check draft state, and can name a superseded commit on its
-  # branch-fallback match. This job re-reads the PR's current head via `gh pr
-  # view` immediately before posting, so a comment consumed as an auto-merge
-  # signal never names a commit the PR has since moved past.
+  # PRs) and can name a superseded commit on its branch-fallback match. It fires
+  # for DRAFT PRs too: the draft-PR-immediately flow means most PRs are drafts
+  # while CI runs, and a draft gate would silence the very signal this job is for.
+  # A failed comment is a visible ::warning::, never a red job — the comment is a
+  # wake-up, not the gate — and never silent (a bare `|| true` hid failures).
+  # This job re-reads the PR's current head via `gh pr view` immediately before
+  # posting, so a comment consumed as an auto-merge signal never names a commit
+  # the PR has since moved past.
   notify:
     name: Notify PR on green
     needs: [static-checks, ui-changes, ui-tests]
-    if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') }}
+    if: ${{ always() && github.event_name == 'pull_request' && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -390,4 +452,4 @@ jobs:
             exit 0
           fi
           gh pr comment "$PR" --repo "$REPO" \
-            --body "$(printf '✅ QA green @ %s — [run](%s)\n\n_Automated wake signal (qa.yml notify job); no action needed._' "${SHA:0:7}" "$RUN_URL")" || true
+            --body "$(printf '✅ QA green @ %s — [run](%s)\n\n_Automated wake signal (qa.yml notify job); no action needed._' "${SHA:0:7}" "$RUN_URL")" || echo "::warning::notify failed"
