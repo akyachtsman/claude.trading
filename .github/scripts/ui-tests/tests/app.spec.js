@@ -2040,6 +2040,14 @@ async function askDesk(page, q) {
 function assistantGates(page) {
   test.skip(!process.env.RUN_ASSISTANT_TESTS, 'assistant tests are opt-in (real Claude calls) — set RUN_ASSISTANT_TESTS=1');
   test.skip(!AUTH_CREDENTIAL, 'TEST_AUTH_CREDENTIAL not available');
+  /* The config's 30s test timeout is shorter than ONE askDesk (its own wait is
+     90s), so every one of these scenarios died on the clock before an answer
+     could arrive, whatever the assistant did. Sized to the longest path, S15:
+     unlockDesk (its waits sum to 40s) + askDesk (90s) + a second unlockDesk
+     (40s) + the 10s replay check is 180s only if every wait runs to its limit,
+     so a healthy run has headroom. Set here rather than per test because all
+     five call this gate first, and a sixth added later gets it for free. */
+  test.setTimeout(180_000);
 }
 
 test('S15: assistant remembers across a reload (opt-in, live only)', async ({ page, renderWitness }) => {
@@ -2145,33 +2153,100 @@ test('S27: watchlist tiles are half-width, stacked, and never clip a value', asy
 // because `wbInfoCache` was keyed on presence and the first fetch of a symbol
 // was the last one for the life of the tab.
 //
-// This asserts the two properties that make staleness impossible rather than
-// trying to reproduce it: entries carry a timestamp, and the TTL follows the
-// session. Reproducing the bug itself would need a tab held open across a
-// session boundary, which no CI run can do — so the contract is what gets
-// guarded. Both values are read from the live page's own globals (classic
-// scripts, so top-level consts are in scope inside evaluate).
+// This asserts the properties that make staleness impossible rather than trying
+// to reproduce it: the REAL fetch path stamps what it caches, the TTL follows
+// the session, and the read path actually HONOURS that TTL. Reproducing the bug
+// itself would need a tab held open across a session boundary, which no CI run
+// can do — so the contract is what gets guarded, by driving the real
+// maybeFetchWbInfo against a stubbed deskQuote and moving the entry's age.
+//
+// An earlier version wrote `wbInfoCache.__probe = { at, info }` itself and read
+// it back, so `hasAt`/`hasInfo` were assertions about the test's own literal and
+// could not fail whatever the app did; only the TTL value check was real, and
+// nothing checked that the cache was ever CONSULTED against it. The old bug — a
+// cache keyed on presence — passed all of it. Both values are read from the live
+// page's own globals (classic scripts, so top-level bindings are in scope inside
+// evaluate).
 // ─────────────────────────────────────────────────────────────────────────────
 test('S28: the charts quote cache is timestamped and its TTL is session-aware', async ({ page, renderWitness }) => {
   renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#wbChart')).toBeVisible({ timeout: 15000 });
 
-  const shape = await page.evaluate(() => {
-    if (typeof wbInfoTtlMs !== 'function') return { missing: true };
+  const run = await page.evaluate(async () => {
+    if (typeof wbInfoTtlMs !== 'function' || typeof maybeFetchWbInfo !== 'function') return { missing: true };
     const open = typeof marketSessionOpen === 'function' ? marketSessionOpen() : null;
-    // Seed one entry through the real code path's own shape and read it back.
-    wbInfoCache.__probe = { at: Date.now(), info: null };
-    const e = wbInfoCache.__probe;
-    delete wbInfoCache.__probe;
-    return { ttl: wbInfoTtlMs(), open, hasAt: typeof e.at === 'number', hasInfo: 'info' in e };
+    const ttl = wbInfoTtlMs();
+
+    /* maybeFetchWbInfo is a no-op unless the symbol counts as LIVE (not demo,
+       a backend configured, and the symbol backed by real data), so all three are
+       forced for the duration and put back. A symbol other than the charted one
+       is used, so the fetch's own re-render of the workbench never runs. A
+       deployment with an empty DESK_DB still exercises this: the stub below means
+       nothing is ever sent, so a placeholder URL is enough. */
+    const realMode = DESK.mode, realQ = window.deskQuote, realUrl = DESK_DB.url;
+    const sym = Object.keys(wbState.data.symbols).find(s => s !== wbState.sym);
+    const hadReal = wbRealSyms.has(sym), hadEntry = Object.prototype.hasOwnProperty.call(wbInfoCache, sym);
+    const prior = wbInfoCache[sym];
+    const calls = [];
+    const stubInfo = { price: 123.45, change: 1.5, changePct: 1.23 };
+    const settle = () => new Promise(r => setTimeout(r, 60));
+    const out = { ttl, open, sym };
+    try {
+      DESK.mode = 'live';
+      if (!DESK_DB.url) DESK_DB.url = 'https://stub.invalid';
+      wbRealSyms.add(sym);
+      delete wbInfoCache[sym];
+      window.deskQuote = async (s, kind) => { if (s === sym && kind === 'info') calls.push(Date.now()); return { ok: true, info: stubInfo }; };
+
+      /* 1 — a cold miss goes to the network and STAMPS what comes back */
+      const t0 = Date.now();
+      maybeFetchWbInfo(sym);
+      await settle();
+      const e = wbInfoCache[sym];
+      out.afterCold = calls.length;
+      out.hasAt = !!e && typeof e.at === 'number' && e.at >= t0 && e.at <= Date.now();
+      out.hasInfo = !!e && 'info' in e && !!e.info && e.info.price === stubInfo.price;
+
+      /* 2 — a fresh entry is served from cache, not re-fetched */
+      maybeFetchWbInfo(sym);
+      await settle();
+      out.afterFresh = calls.length;
+
+      /* 3 — one that is old but still INSIDE the TTL is also served from cache,
+         which is what stops this being "always refetch" */
+      wbInfoCache[sym].at = Date.now() - (ttl - 5000);
+      maybeFetchWbInfo(sym);
+      await settle();
+      out.afterInside = calls.length;
+
+      /* 4 — one older than the TTL is fetched AGAIN and re-stamped. This is the
+         step the presence-keyed cache failed: the entry existed, so it was
+         believed for the life of the tab. */
+      const stale = Date.now() - ttl - 1000;
+      wbInfoCache[sym].at = stale;
+      maybeFetchWbInfo(sym);
+      await settle();
+      out.afterExpired = calls.length;
+      out.restamped = wbInfoCache[sym].at > stale + ttl;
+    } finally {
+      window.deskQuote = realQ; DESK.mode = realMode; DESK_DB.url = realUrl;
+      if (!hadReal) wbRealSyms.delete(sym);
+      if (hadEntry) wbInfoCache[sym] = prior; else delete wbInfoCache[sym];
+    }
+    return out;
   });
 
-  expect(shape.missing, 'wbInfoTtlMs must exist — it is what expires the quote').toBeFalsy();
-  expect(shape.hasAt, 'cache entries must carry `at`, or expiry is impossible').toBe(true);
-  expect(shape.hasInfo, 'cache entries must keep `info` alongside the stamp').toBe(true);
+  expect(run.missing, 'wbInfoTtlMs and maybeFetchWbInfo must exist — they are what expires the quote').toBeFalsy();
+  expect(run.afterCold, 'a cold symbol is fetched once (the stub was reached, so the rest is measuring the real path)').toBe(1);
+  expect(run.hasAt, 'the entry the real fetch wrote carries `at`, stamped when it landed, or expiry is impossible').toBe(true);
+  expect(run.hasInfo, 'and keeps the fetched `info` alongside the stamp').toBe(true);
+  expect(run.afterFresh, 'a fresh entry is not fetched again').toBe(1);
+  expect(run.afterInside, 'nor one that is aged but still inside the TTL').toBe(1);
+  expect(run.afterExpired, 'an entry older than the TTL IS fetched again — age, not presence, expires it').toBe(2);
+  expect(run.restamped, 'and the refetch re-stamps it, so it does not refetch on every tick after').toBe(true);
   // 60s while prints arrive, 15 min once the tape is frozen. Never unbounded.
-  expect([60000, 900000], 'TTL must be one of the two session cadences').toContain(shape.ttl);
+  expect([60000, 900000], 'TTL must be one of the two session cadences').toContain(run.ttl);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3167,14 +3242,57 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      focus() drags an owner reading another panel back to the charts —
      falsified here at 1684px. focus({preventScroll:true}) is what stops it, and
      this scenario had no guard for it until now. */
-  await page.evaluate(() => { document.querySelector('.wb-slots [data-slot="3"] .wb-slot').click(); });
+  /* The slot has to be one that OPENS AN EDITOR on a bare click — and nothing
+     else will do. This used to click slot 3, which holds QQQ by now: a filled,
+     chartable slot CHARTS on a click instead, so no editor was ever open, the
+     repaint below had no input to restore focus to, `renderWbSidebar` never
+     called focus() at all, and scrollY stayed 0 whether or not preventScroll
+     was there. The guard could not fail. An EMPTY slot has nothing to chart, so
+     its click opens the editor irrespective of the click's `detail` (a JS
+     .click() carries 0). Slot 90 is never touched by any step above; it is
+     asserted empty rather than assumed, and the editor is asserted OPEN and
+     FOCUSED before anything is measured, so this cannot pass by never having
+     armed the thing it guards. */
+  await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
   await page.waitForTimeout(200);
+  expect(await page.evaluate(() =>
+    document.querySelector('.wb-slots [data-slot="90"] .wb-side-sym').textContent),
+    'slot 90 is empty, so a click on it opens the editor rather than charting').toBe('');
+  await page.evaluate(() => { document.querySelector('.wb-slots [data-slot="90"] .wb-slot').click(); });
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && { slot: i.closest('.wb-rail-row').dataset.slot, focused: document.activeElement === i };
+  }), 'the editor is open on slot 90 and holds focus before the repaint').toEqual({ slot: '90', focused: true });
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(250);
-  await page.evaluate(() => renderWbSidebar(wbState.data));
+  /* The input must sit BELOW the fold, or a plain focus() has nothing to scroll
+     to and the check below passes on a guard that is not there. */
+  expect(await page.evaluate(() => {
+    const r = document.querySelector('.wb-slot-input').getBoundingClientRect();
+    return r.top >= window.innerHeight || r.bottom <= 0;
+  }), 'the open editor is off-screen, so restoring focus to it WOULD scroll the page unless told not to')
+    .toBe(true);
+  /* `keepPageStill` wraps that focus() and scrolls the page back if it moved, so
+     with it in place a lone regression to a plain focus() is INVISIBLE from
+     outside — measured: swapping preventScroll out left this scenario green. The
+     page-still wrapper is the belt and `{preventScroll:true}` is the braces, and
+     a scenario that lets the belt catch the fall proves neither. scrollTo is
+     neutralised for the length of the repaint so what is measured is the focus
+     call itself, which is the guard CLAUDE.md names as the proven one. */
+  await page.evaluate(() => {
+    const realScrollTo = window.scrollTo;
+    window.scrollTo = () => {};
+    try { renderWbSidebar(wbState.data); } finally { window.scrollTo = realScrollTo; }
+  });
   await page.waitForTimeout(350);
   expect(await page.evaluate(() => Math.round(window.scrollY)),
     'the 60s repaint does not yank the page back to the charts').toBe(0);
+  expect(await page.evaluate(() => {
+    const i = document.querySelector('.wb-slot-input');
+    return i && { slot: i.closest('.wb-rail-row').dataset.slot, focused: document.activeElement === i };
+  }), 'and the repaint restored focus to the editor — the branch that could have scrolled did run')
+    .toEqual({ slot: '90', focused: true });
   await page.evaluate(() => { wbEditSlot = -1; renderWbSidebar(wbState.data); });
   await page.waitForTimeout(200);
 
@@ -3588,8 +3706,15 @@ test('S42: watchlist columns page instead of scrolling', async ({ page, browserN
   const heads = await page.evaluate(() =>
     [...document.querySelectorAll('.wl-strip .wl-band-head')].map(h => Math.round(h.getBoundingClientRect().height)));
   const paged = state.findIndex(s => s.over);
+  /* Compared against the OTHER columns. The max over ALL of them includes the
+     paged column itself, so `heads[paged] <= max(heads)` holds whatever that
+     head measures — it could not fail, and a footer that grew the head would
+     have sailed through. There must be a neighbour to compare with, or the max
+     of nothing is -Infinity and the assertion means something else entirely. */
+  const neighbours = heads.filter((_, i) => i !== paged);
+  expect(neighbours.length, 'there are other columns to compare the paged one against').toBeGreaterThan(0);
   expect(heads[paged], 'the paged column\'s head is no taller than its neighbours')
-    .toBeLessThanOrEqual(Math.max(...heads));
+    .toBeLessThanOrEqual(Math.max(...neighbours));
 
   // Stepping: ▲ dead at the top, the ▼ states how many are still below, and the
   // count FALLS as you step — a static number would mean it counts the list
