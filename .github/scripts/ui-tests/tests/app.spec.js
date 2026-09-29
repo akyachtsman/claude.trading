@@ -4973,3 +4973,146 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
     contentType: 'application/json',
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S48 — every dialog on the desk honours ONE contract: focus moves in, Tab and
+// Shift+Tab stay in, Escape closes, and focus goes back to the opener.
+//
+// All eight dialogs open through the shared openModal()/closeModal(). aria-modal
+// only DECLARES the page behind inert — browsers do not enforce it for Tab — so
+// focus used to walk out of an open dialog into the desk behind it, the ⚙
+// system-prompt editor never handed focus back, and the ⏱ roster ignored Escape.
+// None of that fails a test that merely opens and closes a dialog, which is why
+// each dialog is driven through the whole contract here.
+//
+// TWO checks keep the trap honest. The ring is walked past its own length in
+// BOTH directions, so a wrap that fails at either end is reached. And it must
+// VISIT every control: "focus never leaves the dialog" is also true of a trap
+// that pins focus to one button, and that is the failure a guard which cannot
+// fail would wave through.
+//
+// Demo mode, no network. The watchlist dialogs run forced-live WITHOUT auth (as
+// S21 does — edits need no unlock) on the stateful fake roster, with roster
+// writes blocked besides: nothing here may reach the owner's real roster. The
+// Ask dialogs need the authed desk, so those run after and on stubbed RPCs.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S48: dialogs trap focus, close on Escape and return focus to their opener', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(240_000);
+  await blockRosterWrites(page);   // the forced-live dialogs below must never reach the real roster
+  await gotoDemo(page, '.wl-strip .wl-tile', 15000);
+
+  const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]';
+  /* The dialog's controls as the browser would tab them, and where focus is now:
+     `at` is the index of the focused control, -1 for anything else inside the
+     panel (the panel itself), and `in` is false once focus is outside it. */
+  const ring = (panel) => page.evaluate(({ p, sel }) => {
+    const root = document.querySelector(p);
+    const ctl = [...root.querySelectorAll(sel)].filter(n => !n.matches(':disabled') && n.tabIndex >= 0
+      && n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden');
+    return { n: ctl.length, in: root.contains(document.activeElement), at: ctl.indexOf(document.activeElement) };
+  }, { p: panel, sel: FOCUSABLE });
+
+  const contract = async (name, { opener, open, backdrop, panel, keep, dirty }) => {
+    const back = page.locator(backdrop);
+    const from = await page.evaluateHandle(opener);   // the element focus must come back to
+    await open();
+    await expect(back, `${name}: opens`).toBeVisible();
+    await page.waitForTimeout(250);   // the dialog's own async content (roster, prompt) has landed
+    const start = await ring(panel);
+    expect(start.in, `${name}: opening moves focus INSIDE the dialog`).toBe(true);
+    if (keep) {
+      expect(await page.evaluate(() => document.activeElement && document.activeElement.id),
+        `${name}: a destructive dialog opens on "Keep it"`).toBe(keep);
+    }
+
+    // N large enough to wrap the ring in either direction, and every control reached
+    expect(start.n, `${name}: has controls to cycle through`).toBeGreaterThan(1);
+    for (const key of ['Tab', 'Shift+Tab']) {
+      const lost = [], seen = new Set();
+      for (let i = 1; i <= 2 * start.n + 2; i++) {
+        await page.keyboard.press(key);
+        const s = await ring(panel);
+        if (s.in) seen.add(s.at); else lost.push(`${key}#${i}`);
+      }
+      expect(lost, `${name}: ${key} never moves focus out of the dialog`).toEqual([]);
+      seen.delete(-1);
+      expect(seen.size, `${name}: ${key} visits every one of its ${start.n} controls, so the trap is a ring and not a pin`)
+        .toBe(start.n);
+    }
+
+    if (dirty) {
+      await dirty.edit();
+      await page.keyboard.press('Escape');
+      await expect(back, `${name}: the first Escape only warns`).toBeVisible();
+      await expect(page.locator(dirty.note), `${name}: and says why`).toHaveText(/Unsaved changes/);
+    }
+    await page.keyboard.press('Escape');
+    await expect(back, `${name}: Escape closes it`).toBeHidden();
+    expect(await page.evaluate((el) => document.activeElement === el, from),
+      `${name}: focus returns to the element that opened it`).toBe(true);
+  };
+
+  // ── demo: a single click opens the detail window at once (no removal wired to defer for)
+  await contract('symbol detail', {
+    opener: () => document.querySelector('.wl-strip .wl-tile'),
+    open: () => page.locator('.wl-strip .wl-tile').first().click(),
+    backdrop: '#wlDetailBackdrop', panel: '#wlDetailPanel',
+  });
+
+  // ── forced live WITHOUT auth: the watchlist's own dialogs
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
+  await installFakeRoster(page);
+  await expect(page.locator('#wlEditBtn')).toBeVisible();
+  await contract('remove confirm', {
+    opener: () => document.querySelector('.wl-strip .wl-tile'),
+    open: async () => { await page.locator('.wl-strip .wl-tile').first().focus(); await page.keyboard.press('Delete'); },
+    backdrop: '#wlRmBackdrop', panel: '#wlRmPanel', keep: 'wlRmCancelBtn',
+  });
+  await contract('quick add', {
+    opener: () => document.getElementById('wlTrayAdd'),
+    open: () => page.locator('#wlTrayAdd').click(),
+    backdrop: '#wlQuickBackdrop', panel: '#wlQuickPanel',
+  });
+  await contract('new list', {
+    opener: () => document.getElementById('wlNewListBtn'),
+    open: () => page.locator('#wlNewListBtn').click(),
+    backdrop: '#wlNewBackdrop', panel: '#wlNewPanel',
+  });
+  await contract('delete list', {
+    opener: () => document.querySelector('.wl-del'),
+    open: () => page.locator('.wl-del').first().click(),
+    backdrop: '#wlDelBackdrop', panel: '#wlDelPanel', keep: 'wlDelCancelBtn',
+  });
+  await contract('watchlist editor', {
+    opener: () => document.getElementById('wlEditBtn'),
+    open: () => page.locator('#wlEditBtn').click(),
+    backdrop: '#wlEditBackdrop', panel: '#wlEditPanel',
+  });
+
+  // ── the authed desk, every RPC stubbed: the two Ask dialogs
+  await page.evaluate(() => {
+    window.deskGetSystemPrompt = async () => ({ ok: true, content: 'You are the desk.', updatedAt: null });
+    window.deskGetAskSchedule = async () => ({ ok: true, rows: [] });
+    window.deskSetAskSchedule = async () => ({ ok: true, rows: 0 });
+    window.deskChatHistory = () => Promise.resolve([]);
+    DESK.authed = true; renderAsk();
+  });
+  await contract('system prompt', {
+    opener: () => document.querySelector('button[aria-label="Edit the Ask-the-desk system prompt"]'),
+    open: () => page.locator('button[aria-label="Edit the Ask-the-desk system prompt"]').click(),
+    backdrop: '#sysPromptBackdrop', panel: '#sysPromptPanel',
+  });
+  await contract('scheduled asks', {
+    opener: () => document.querySelector('.ask-sched-btn'),
+    open: () => page.locator('.ask-sched-btn').click(),
+    backdrop: '#askSchedBackdrop', panel: '#askSchedPanel',
+  });
+  // Unsaved edits: the first Escape warns and keeps the dialog, the second closes it.
+  await contract('scheduled asks with unsaved edits', {
+    opener: () => document.querySelector('.ask-sched-btn'),
+    open: async () => { await page.locator('.ask-sched-btn').click(); await page.locator('#askSchedAdd').click(); },
+    backdrop: '#askSchedBackdrop', panel: '#askSchedPanel',
+    dirty: { edit: () => page.locator('.ask-sched-q').fill('an unsaved edit'), note: '#askSchedNote' },
+  });
+});
