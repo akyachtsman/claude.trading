@@ -34,6 +34,9 @@
   --color-gain-dim:       #E3F2E9;
   --color-loss-dim:       #FAE8E8;
   --color-danger:         #C13636;
+  /* STATUS, not P&L: the LIVE lamp's dot. Same green as --color-gain today, but
+     its own token so a data-state light never moves with (or is read as) a gain. */
+  --color-status-live:    #177C4B;
 
   /* color — account series (categorical, fixed order, CVD-validated) */
   --color-series-1:       #2A78D6;

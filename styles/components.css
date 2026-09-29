@@ -73,7 +73,7 @@
   content: ""; width: 8px; height: 8px; border-radius: 50%;
   background: var(--color-text-secondary); flex: none;
 }
-.lamp--live::before  { background: var(--color-gain); box-shadow: 0 0 6px var(--color-gain); }
+.lamp--live::before  { background: var(--color-status-live); box-shadow: 0 0 6px var(--color-status-live); }
 .lamp--eod::before   { background: var(--color-accent-bright); box-shadow: 0 0 6px var(--color-accent-bright); }
 .lamp--demo::before  { background: var(--color-series-3); box-shadow: 0 0 6px var(--color-series-3); }
 .lamp--locked::before { background: var(--color-text-secondary); }
@@ -194,14 +194,14 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 }
 .sys-prompt-text:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
 .sys-prompt-counter { font: 400 var(--font-2xs)/1.4 var(--font-mono); color: var(--color-text-secondary); text-align: right; margin: 4px 0 0; }
-.sys-prompt-counter.sys-prompt-counter--low { color: var(--color-loss); }
+.sys-prompt-counter.sys-prompt-counter--low { color: var(--color-danger); }
 .sys-prompt-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
 
 /* locked panel (PIN gate) — .lock-explain also serves the equity/ask shells */
 .lock-explain { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0 0 var(--space-3); }
 .lock-form { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .lock-form .input { flex: 1 1 160px; max-width: 240px; }
-.lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-loss); margin: var(--space-2) 0 0; }
+.lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-danger); margin: var(--space-2) 0 0; }
 
 /* ask-the-desk (PIN-gated Claude Q&A) */
 /* height is capped by the panel (col-rail stretches to the Markets tile); the
@@ -225,7 +225,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-toolbar { display: flex; justify-content: flex-end; margin: 0 0 var(--space-2); }
 .ask-toolbar:has(.ask-clear[hidden]) { display: none; }
 .ask-clear { appearance: none; border: 0; background: none; font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; padding: 4px 6px; border-radius: var(--radius-sm); }
-.ask-clear:hover, .ask-clear:focus-visible { color: var(--color-loss); }
+.ask-clear:hover, .ask-clear:focus-visible { color: var(--color-danger); }
 .ask-sources { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 var(--space-2); padding-left: var(--space-3); }
 .ask-sources a { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-accent); text-decoration: none; }
 .ask-sources a:hover, .ask-sources a:focus-visible { text-decoration: underline; }
@@ -656,7 +656,7 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 .wl-edit-title:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 .wl-edit-count { font: 400 var(--font-2xs)/1 var(--font-mono); color: var(--color-text-secondary); white-space: nowrap; }
 .wl-edit-del { appearance: none; border: 0; background: none; cursor: pointer; font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); padding: 6px 8px; border-radius: var(--radius-sm); }
-.wl-edit-del:hover, .wl-edit-del:focus-visible { color: var(--color-loss); background: var(--color-surface-2); }
+.wl-edit-del:hover, .wl-edit-del:focus-visible { color: var(--color-danger); background: var(--color-surface-2); }
 .wl-edit-syms { width: 100%; font: 400 var(--font-xs)/1.5 var(--font-mono); padding: 8px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-primary); resize: vertical; }
 .wl-edit-syms:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 .wl-edit-actions { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-3); }

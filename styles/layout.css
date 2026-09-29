@@ -637,6 +637,7 @@
     --color-border-hover: #37506a;
     --color-gain: #2ecb57;   /* up candle / S pivots — brighter green to match
                                 the reference terminal's neon candles */
+    --color-status-live: #2ecb57;   /* LIVE lamp dot — same neon green as the candles here */
     --color-loss: #e11d1d;   /* down candle / stoch bands / quote change — a
                                 deeper, richer red (owner request 2026-07-16;
                                 was #ff3333, #ef4444 before that) */
