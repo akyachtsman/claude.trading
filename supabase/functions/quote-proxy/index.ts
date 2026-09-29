@@ -34,6 +34,12 @@ const reply = (status: number, body: unknown, cors: Record<string, string>) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json' } });
 
 const UA = { 'user-agent': 'Mozilla/5.0 (desk quote-proxy; +https://akyachtsman.github.io/claude.trading/)' };
+// Every upstream call is bounded. An unanswered Yahoo/Stooq socket otherwise
+// holds the request until the platform kills it, and that kill is a bare 5xx
+// with NO CORS headers — the browser reports a CORS failure, not a timeout.
+const UPSTREAM_TIMEOUT_MS = 8000;
+const tfetch = (url: string, init: RequestInit = {}) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
 const KEEP_BARS = 800; // ~3 years of daily view + weekly-stoch warmup (owner ruling 2026-07-14)
 // Intraday needs its own, larger cap. A 5-day extended-hours response is ~961
 // 5-minute bars (4:00am–8:00pm ET × 5 sessions), so the 800 daily cap would
@@ -71,6 +77,20 @@ const ttlFor = (kind: 'daily' | 'intraday' | 'info') =>
   (kind === 'info' && pricesMoving() ? 60_000 : CACHE_TTL_MS[kind]);
 type Cached = { at: number; status: number; body: unknown };
 const CACHE = new Map<string, Cached>();
+// A miss is cached only briefly. This endpoint takes an ARBITRARY ticker and a
+// 404 conflates "no such symbol" with "Yahoo hiccuped / rate-limited us", so
+// caching it for the kind's full TTL (up to 15 min for `info`) pinned a real
+// ticker as "not found" long after upstream recovered. 30s still blunts a
+// junk-ticker loop.
+const NEG_TTL_MS = 30_000;
+// The key is caller-typed, so the map is bounded by count: oldest-inserted
+// entries go first (re-inserting on write keeps a hot key young).
+const CACHE_MAX = 500;
+function cacheSet(key: string, entry: Cached) {
+  CACHE.delete(key);
+  CACHE.set(key, entry);
+  while (CACHE.size > CACHE_MAX) CACHE.delete(CACHE.keys().next().value as string);
+}
 
 // `x` marks each bar's session: 0 = regular, 1 = extended (pre/post). Always
 // present, so callers can split the two without re-deriving ET/DST rules — but
@@ -90,7 +110,7 @@ function pack(rows: { t: string; o: number; h: number; l: number; c: number; v: 
 // Stooq daily CSV: Date,Open,High,Low,Close,Volume (US listings need a .us suffix).
 async function stooqDaily(symbol: string): Promise<Series | null> {
   const s = symbol.toLowerCase().replace(/[.^]/g, '-');
-  const res = await fetch(`https://stooq.com/q/d/l/?s=${s}.us&i=d`, { headers: UA });
+  const res = await tfetch(`https://stooq.com/q/d/l/?s=${s}.us&i=d`, { headers: UA });
   if (!res.ok) return null;
   const text = await res.text();
   const lines = text.trim().split('\n');
@@ -158,7 +178,7 @@ const toYahoo = (s: string) => s.replace(/\.([A-Z])$/, '-$1');
 // extended via `x`, so callers can drop them rather than draw a dead flat tail.
 async function yahooChart(symbol: string, range: string, interval: string, intraday: boolean, prepost = false): Promise<Series | null> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(toYahoo(symbol))}?range=${range}&interval=${interval}&includePrePost=${prepost ? 'true' : 'false'}`;
-  const res = await fetch(url, { headers: UA });
+  const res = await tfetch(url, { headers: UA });
   if (!res.ok) return null;
   const json = await res.json().catch(() => null);
   const r = json?.chart?.result?.[0];
@@ -255,13 +275,13 @@ const YAUTH_TTL_MS = 3_600_000;
 
 async function yahooAuth(force = false): Promise<{ cookie: string; crumb: string } | null> {
   if (!force && yauth && Date.now() - yauth.at < YAUTH_TTL_MS) return yauth;
-  const c = await fetch('https://fc.yahoo.com/', { headers: UA });
+  const c = await tfetch('https://fc.yahoo.com/', { headers: UA });
   // deno-lint-ignore no-explicit-any
   const setCookies: string[] = (c.headers as any).getSetCookie?.() ?? [];
   let cookie = setCookies.map((s) => s.split(';')[0]).filter(Boolean).join('; ');
   if (!cookie) { const one = c.headers.get('set-cookie'); if (one) cookie = one.split(';')[0]; }
   if (!cookie) return null;
-  const cr = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } });
+  const cr = await tfetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { ...UA, Cookie: cookie } });
   if (!cr.ok) return null;
   const crumb = (await cr.text()).trim();
   if (!crumb || crumb.length > 32 || crumb.includes('<')) return null; // reject HTML/error bodies
@@ -276,11 +296,11 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
     `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}&crumb=${encodeURIComponent(crumb)}`;
   let auth = await yahooAuth();
   if (!auth) return null;
-  let res = await fetch(quoteUrl(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
+  let res = await tfetch(quoteUrl(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
   if (res.status === 401) { // stale crumb → refresh once
     auth = await yahooAuth(true);
     if (!auth) return null;
-    res = await fetch(quoteUrl(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
+    res = await tfetch(quoteUrl(auth.crumb), { headers: { ...UA, Cookie: auth.cookie } });
   }
   if (!res.ok) return null;
   const json = await res.json().catch(() => null);
@@ -327,11 +347,7 @@ async function yahooInfo(symbol: string): Promise<Info | null> {
   };
 }
 
-Deno.serve(async (req) => {
-  const origin = req.headers.get('origin') ?? '';
-  const allowed = ALLOWED_ORIGINS.has(origin);
-  const cors = corsHeaders(origin, allowed);
-
+async function handle(req: Request, allowed: boolean, cors: Record<string, string>): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   // Origin allowlist is the gate now that the PIN is gone.
   if (!allowed) return reply(403, { ok: false, error: 'forbidden origin' }, cors);
@@ -339,6 +355,8 @@ Deno.serve(async (req) => {
 
   let payload: { symbol?: unknown; kind?: unknown; prepost?: unknown; force?: unknown };
   try { payload = await req.json(); } catch { return reply(400, { ok: false, error: 'invalid JSON body' }, cors); }
+  // `null` / a bare number parse fine but have no fields to read.
+  if (payload === null || typeof payload !== 'object') return reply(400, { ok: false, error: 'invalid JSON body' }, cors);
   const symbol = String(payload.symbol ?? '').trim().toUpperCase();
   const kind = payload.kind === 'intraday' ? 'intraday' : payload.kind === 'info' ? 'info' : 'daily';
   // Extended hours are intraday-only: daily bars are whole regular sessions.
@@ -359,18 +377,20 @@ Deno.serve(async (req) => {
   // returns a cached body and the owner's distrust of the number is confirmed
   // rather than resolved.
   const force = payload.force === true;
-  if (!force && hit && Date.now() - hit.at < ttlFor(kind)) return reply(hit.status, hit.body, cors);
+  if (!force && hit && Date.now() - hit.at < (hit.status === 200 ? ttlFor(kind) : Math.min(NEG_TTL_MS, ttlFor(kind)))) {
+    return reply(hit.status, hit.body, cors);
+  }
 
   // Fundamentals: earnings date + key stats (Yahoo v7/quote, crumb-gated).
   if (kind === 'info') {
     const info = await yahooInfo(symbol);
     if (!info) {
       const body = { ok: false, error: `no info found for ${symbol}` };
-      CACHE.set(cacheKey, { at: Date.now(), status: 404, body });
+      cacheSet(cacheKey, { at: Date.now(), status: 404, body });
       return reply(404, body, cors);
     }
     const body = { ok: true, symbol, kind, info, asOf: new Date().toISOString() };
-    CACHE.set(cacheKey, { at: Date.now(), status: 200, body });
+    cacheSet(cacheKey, { at: Date.now(), status: 200, body });
     return reply(200, body, cors);
   }
 
@@ -383,15 +403,32 @@ Deno.serve(async (req) => {
     // as HTTP 200, so stooqDaily's shape checks reject it and every daily
     // request paid for that round-trip before reaching Yahoo anyway.
     series = await yahooChart(symbol, '5y', '1d', false);
-    if (!series) series = await stooqDaily(symbol);
+    // Fallback only: its failure must not turn a plain not-found into a 502.
+    if (!series) series = await stooqDaily(symbol).catch(() => null);
   }
   if (!series) {
     const body = { ok: false, error: `no ${kind} data found for ${symbol} — check the ticker` };
-    CACHE.set(cacheKey, { at: Date.now(), status: 404, body }); // cache the miss too — blunts junk-ticker repeats
+    cacheSet(cacheKey, { at: Date.now(), status: 404, body }); // cache the miss too (briefly — see NEG_TTL_MS)
     return reply(404, body, cors);
   }
 
   const body = { ok: true, symbol, kind, prepost, asOf: series.t[series.t.length - 1], series };
-  CACHE.set(cacheKey, { at: Date.now(), status: 200, body });
+  cacheSet(cacheKey, { at: Date.now(), status: 200, body });
   return reply(200, body, cors);
+}
+
+Deno.serve(async (req) => {
+  const origin = req.headers.get('origin') ?? '';
+  const allowed = ALLOWED_ORIGINS.has(origin);
+  const cors = corsHeaders(origin, allowed);
+  try {
+    return await handle(req, allowed, cors);
+  } catch (e) {
+    // A throw (upstream timeout, network error, bad JSON shape) used to escape
+    // as a bare 500 with NO CORS headers, which the browser shows as a CORS
+    // error and the panel cannot tell from a blocked origin. Always answer JSON
+    // with the same CORS headers; never cached, since the next call may work.
+    console.error('quote-proxy: unhandled', String((e as Error)?.message ?? e));
+    return reply(502, { ok: false, error: 'upstream lookup failed — try again' }, cors);
+  }
 });
