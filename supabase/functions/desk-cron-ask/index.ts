@@ -40,6 +40,14 @@ const CATCHUP_MIN = 90;
 // tick, which is invisible against a schedule measured in hours.
 const MAX_PER_TICK = 1;
 
+// Every fetch is bounded, so a hung upstream costs its own section (or its own
+// row) rather than the whole tick. The ask call gets the longest leash: desk-ask
+// runs the full agentic tool loop, and pg_net gives this function 240s (desk_018).
+const FEED_TIMEOUT_MS = 25000;
+const REST_TIMEOUT_MS = 15000;
+const MAIL_TIMEOUT_MS = 15000;
+const ASK_TIMEOUT_MS = 200000;
+
 type Row = {
   id: number;
   prompt: string;
@@ -141,10 +149,56 @@ async function liveFeed(name: string, body: Record<string, unknown> = {}): Promi
       method: 'POST',
       headers: { 'content-type': 'application/json', apikey: anon, authorization: `Bearer ${anon}` },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
     });
     const out = await res.json().catch(() => null);
-    return out?.ok ? out : null;
-  } catch { return null; }
+    if (out?.ok) return out;
+    console.error(`desk-cron-ask feed ${name} unavailable: HTTP ${res.status}`);
+    return null;
+  } catch (e) {
+    console.error(`desk-cron-ask feed ${name} unavailable: ${(e as Any)?.name ?? 'error'}`);
+    return null;
+  }
+}
+
+/* PROMPT-INJECTION BOUNDARY. `desk_get_watchlists_open` / `desk_set_watchlists_open`
+   (desk_012 / desk_014) are granted to ANON, so anyone holding the public anon
+   key can create and rename lists — and this context is read by an assistant
+   that has web tools and whose answer is EMAILED to the owner. A list TITLE is
+   therefore attacker-controlled text on its way into an LLM with an outbound
+   channel, so no title (and no other free text from the roster) is ever copied
+   in: lists are labelled by POSITION and only strictly-validated tickers pass.
+   The pattern is the RPC's own (`^[A-Z0-9.^=-]{1,10}$`, after trim + upper). */
+const TICKER_RE = /^[A-Z0-9.^=-]{1,10}$/;
+const WL_MAX_LISTS = 50;      // the RPC's own cap
+const WL_MAX_SYMS = 400;      // per list, per group — the 80k context cap is the backstop
+function cleanSym(v: Any): string | null {
+  const s = String(v ?? '').trim().toUpperCase();
+  return TICKER_RE.test(s) ? s : null;
+}
+const finiteOrNull = (v: Any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+function watchlistContext(lists: Any): Any[] {
+  if (!Array.isArray(lists)) return [];
+  return lists.slice(0, WL_MAX_LISTS).map((l: Any, i: number) => {
+    const resolved = new Set<string>();
+    const symbols: Any[] = [];
+    for (const r of Array.isArray(l?.rows) ? l.rows : []) {
+      const sym = cleanSym(r?.sym);
+      if (!sym || resolved.has(sym)) continue;
+      resolved.add(sym);
+      symbols.push({ sym, last: finiteOrNull(r?.last), dayChgPct: finiteOrNull(r?.pct), extended: r?.ext === true });
+      if (symbols.length >= WL_MAX_SYMS) break;
+    }
+    // Saved but not quoted — named so an unresolved ticker is visible as such.
+    const unresolved = new Set<string>();
+    for (const s of Array.isArray(l?.symbols) ? l.symbols : []) {
+      const sym = cleanSym(s);
+      if (sym && !resolved.has(sym)) unresolved.add(sym);
+      if (unresolved.size >= WL_MAX_SYMS) break;
+    }
+    return { list: `List ${i + 1}`, symbols, unresolved: [...unresolved] };
+  });
 }
 
 // Stochastic 14-3-3 (the SWING read) and 92-15-15 (the LONG-TERM weekly-scale read),
@@ -303,6 +357,7 @@ async function sendBrief(prompt: string, answer: string, pt: Any): Promise<strin
         // bug turning a price into markup.
         text: answer,
       }),
+      signal: AbortSignal.timeout(MAIL_TIMEOUT_MS),
     });
     if (!res.ok) return `ok, email failed: HTTP ${res.status} ${(await res.text()).slice(0, 90)}`;
     return 'ok (emailed)';
@@ -316,15 +371,19 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
 
   const snapshots = (async () => {
     try {
-      const rows = await (await fetch(
+      const sres = await fetch(
         `${url}/rest/v1/desk_account_snapshots?select=account_key,label,as_of,nav,day_pnl,total_unrl,cash,positions` +
         `&user_id=eq.${userId}&order=as_of.desc&limit=40`,
-        { headers },
-      )).json();
+        { headers, signal: AbortSignal.timeout(REST_TIMEOUT_MS) },
+      );
+      // A rejected read answers with an error OBJECT, which the loop below
+      // would only trip over (and swallow) as "not iterable".
+      if (!sres.ok) { console.error(`desk-cron-ask snapshots read failed: HTTP ${sres.status}`); return []; }
+      const rows = await sres.json();
       const latest = new Map<number, Any>();
       for (const r of rows || []) if (!latest.has(r.account_key)) latest.set(r.account_key, r);
       return [...latest.values()].sort((a, b) => a.account_key - b.account_key);
-    } catch { return []; }
+    } catch (e) { console.error(`desk-cron-ask snapshots read failed: ${(e as Any)?.name ?? 'error'}`); return []; }
   })();
 
   const [accounts, market, news, watchlist, heat, charts] = await Promise.all([
@@ -387,15 +446,17 @@ async function buildContext(userId: string, headers: Record<string, string>): Pr
       symbols: (Array.isArray(n.chips) ? n.chips : []).map((c: Any) => ({ sym: c[0], dayPct: c[1] ?? null })),
     })),
     // The watchlist goes in FULL — it is the curated focus list, and summarising
-    // it would defeat the point of curating it (the PR #241 ruling).
-    watchlist: (watchlist?.lists || []).map((l: Any) => ({
-      title: l.title,
-      symbols: (l.rows || []).map((r: Any) => ({ sym: r.sym, last: r.last, dayChgPct: r.pct, extended: r.ext === true })),
-      unresolved: (l.symbols || []).filter((s: string) => !(l.rows || []).some((r: Any) => r.sym === s)),
-    })),
+    // it would defeat the point of curating it (the PR #241 ruling). Symbols
+    // only, lists numbered rather than titled: see watchlistContext. null (not
+    // []) when the feed was down, so "unavailable" never reads as "empty".
+    watchlist: watchlist ? watchlistContext(watchlist.lists) : null,
     heatmap: heatmapFrom(heat),
     // The oscillator readings the Pro panes draw, for the whole charted roster.
     technicals: technicalsFrom(charts),
+    // Best-effort feeds that did not answer — said out loud, since a missing
+    // section is otherwise indistinguishable from an empty one.
+    feedsUnavailable: [['desk-market', market], ['desk-news', news], ['desk-watchlist', watchlist],
+      ['desk-heatmap', heat], ['desk-charts', charts]].filter(([, v]) => !v).map(([n]) => n),
   };
 }
 
@@ -417,7 +478,7 @@ Deno.serve(async (req) => {
   try {
     const res = await fetch(
       `${url}/rest/v1/desk_ask_schedule?select=*&enabled=eq.true&order=pos,id`,
-      { headers },
+      { headers, signal: AbortSignal.timeout(REST_TIMEOUT_MS) },
     );
     if (!res.ok) throw new Error(`schedule read ${res.status}: ${(await res.text()).slice(0, 120)}`);
     const rows: Row[] = await res.json();
@@ -431,7 +492,9 @@ Deno.serve(async (req) => {
 
     if (!due.length) return reply(200, { ok: true, status: 'idle', checked: rows.length, pt: `${pt.date} ${pt.hour}:${String(pt.min).padStart(2, '0')}` });
 
-    const users = await (await fetch(`${url}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers })).json();
+    const ures = await fetch(`${url}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
+    if (!ures.ok) throw new Error(`owner read ${ures.status}`);
+    const users = await ures.json();
     if (!users?.length) throw new Error('no owner row in desk_users');
     const userId = users[0].id;
 
@@ -449,9 +512,14 @@ Deno.serve(async (req) => {
           method: 'PATCH',
           headers,
           body: JSON.stringify({ last_run_at: new Date().toISOString(), last_status: status.slice(0, 200) }),
+          signal: AbortSignal.timeout(REST_TIMEOUT_MS),
         });
+        if (!res.ok) console.error(`desk-cron-ask stamp failed: row ${id}, HTTP ${res.status}`);
         return res.ok;
-      } catch { return false; }
+      } catch (e) {
+        console.error(`desk-cron-ask stamp failed: row ${id}, ${(e as Any)?.name ?? 'error'}`);
+        return false;
+      }
     };
 
     const context = await buildContext(userId, headers);
@@ -471,7 +539,7 @@ Deno.serve(async (req) => {
       // duplicates. The next tick retries the claim, so a transient PostgREST
       // blip self-heals well inside the catch-up window.
       if (!await stamp(r.id, 'running')) {
-        out.push({ id: r.id, status: 'skipped: could not claim the slot' });
+        out.push({ id: r.id, ok: false, status: 'skipped: could not claim the slot' });
         continue;
       }
       let status = 'ok';
@@ -480,6 +548,7 @@ Deno.serve(async (req) => {
           method: 'POST',
           headers: { ...headers, 'x-cron-secret': secret },
           body: JSON.stringify({ question: r.prompt, context }),
+          signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
         });
         const aj = await ar.json().catch(() => null);
         if (!ar.ok || !aj?.ok) status = `failed: ${String(aj?.error ?? `HTTP ${ar.status}`).slice(0, 160)}`;
@@ -487,7 +556,12 @@ Deno.serve(async (req) => {
         // the owner when they are not at the desk — which is the whole point of
         // a scheduled ask. Only on a real answer: mailing a blank on a failed
         // run would train the owner to ignore the 8am message.
-        else if (aj.answer) status = await sendBrief(r.prompt, aj.answer, pt);
+        else if (aj.answer) {
+          status = await sendBrief(r.prompt, aj.answer, pt);
+          // desk-ask answered but could not archive the exchange (memoryStored
+          // is absent on a desk-ask that predates the field, hence `=== false`).
+          if (aj.memoryStored === false) status += '; not saved to the thread';
+        }
       } catch (e) {
         status = 'failed: ' + String((e as Any)?.message ?? e).slice(0, 160);
       }
@@ -500,7 +574,7 @@ Deno.serve(async (req) => {
       out.push(recorded ? { id: r.id, status } : { id: r.id, status, statusNotRecorded: true });
     }
 
-    return reply(200, { ok: true, status: 'ran', ran: out });
+    return reply(200, { ok: out.every((o) => o.ok !== false), status: 'ran', ran: out });
   } catch (e) {
     const detail = String((e as Any)?.message ?? e);
     console.error('desk-cron-ask failed:', detail);

@@ -26,6 +26,37 @@ const UA = { 'user-agent': 'claude.trading desk-ibkr-sync' };
 const maskId = (id: string) => String(id).slice(0, 2) + '***' + String(id).slice(-2);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Every upstream fetch is bounded: an unanswered Flex/Yahoo/Stooq/PostgREST call
+// would otherwise hold the worker until the platform kills it, and the cron's
+// second slot would find no trace of why.
+const FLEX_TIMEOUT_MS = 15000;
+const QUOTE_TIMEOUT_MS = 8000;
+const SUPA_TIMEOUT_MS = 15000;
+
+/* The Flex Web Service takes the token and query id IN THE URL (`t=`, `q=`), and
+   Deno's own fetch errors embed the full request URL ("error sending request for
+   url (…?t=TOKEN&q=…)") — so any thrown message that reaches console.error or
+   the JSON reply can carry the credential. Everything that leaves this function
+   goes through here: the secrets themselves, then any `t=`/`q=`/`token=` value,
+   then the query string of any URL that remains. */
+function scrub(msg: unknown): string {
+  let s = String(msg ?? '');
+  for (const v of [Deno.env.get('IBKR_FLEX_TOKEN'), Deno.env.get('IBKR_FLEX_QUERY_ID')]) {
+    if (v && v.length >= 4) s = s.split(v).join('[redacted]');
+  }
+  return s
+    .replace(/([?&](?:t|q|token)=)[^&\s)"']*/gi, '$1[redacted]')
+    .replace(/(https?:\/\/[^\s)"'?]+)\?[^\s)"']*/gi, '$1');
+}
+
+// ONE hoisted formatter per shape — building an ICU formatter per call is what
+// cost desk-charts its whole CPU budget (NY_DATE there, 2026-08-05).
+const ET_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
+const ET_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit',
+  day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+});
+
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 // deno-lint-ignore no-explicit-any
 const asArray = (x: any) => (x === undefined || x === null ? [] : Array.isArray(x) ? x : [x]);
@@ -44,7 +75,19 @@ export function flexError(doc: any): FlexErr | null {
 
 // deno-lint-ignore no-explicit-any
 async function flexCall(url: string): Promise<any> {
-  const res = await fetch(url, { headers: UA });
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(FLEX_TIMEOUT_MS) });
+  } catch (e) {
+    // NEVER rethrow `e`: its message names the URL, token included. A network
+    // fault or timeout is retryable by the next cron slot, so it is transient.
+    throw Object.assign(new Error(`Flex request failed (${e instanceof Error ? e.name : 'error'})`), { transient: true });
+  }
+  // A 5xx/429 body is an HTML page that parses to "no error", i.e. it used to be
+  // read as a successful (empty) statement.
+  if (!res.ok) {
+    throw Object.assign(new Error(`Flex HTTP ${res.status}`), { transient: res.status >= 500 || res.status === 429 });
+  }
   return parser.parse(await res.text());
 }
 
@@ -65,7 +108,9 @@ async function requestStatement(token: string, queryId: string): Promise<any> {
     if (!isTransientFlex(err)) throw Object.assign(new Error(`Flex SendRequest ${err.code}: ${err.message}`), { flex: err });
   }
   if (err) throw Object.assign(new Error(`Flex SendRequest ${err.code}: ${err.message}`), { flex: err, transient: true });
-  const ref = send.FlexStatementResponse.ReferenceCode;
+  // The reference code goes straight into the next URL, so it must look like one.
+  const ref = String(send?.FlexStatementResponse?.ReferenceCode ?? '');
+  if (!/^[A-Za-z0-9]{1,64}$/.test(ref)) throw new Error('Flex SendRequest returned no usable reference code');
   const getUrl = send.FlexStatementResponse.Url || `${FLEX_BASE}.GetStatement`;
 
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -159,7 +204,7 @@ export function accountKeyMap(accountIds: string[]): (id: string) => number | nu
    adjusted figure on the handful of days a year a name goes ex. */
 async function yahooDayPct(symbol: string): Promise<number | null> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
-  const res = await fetch(url, { headers: UA });
+  const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(QUOTE_TIMEOUT_MS) });
   if (!res.ok) return null;
   const j = await res.json().catch(() => null);
   // deno-lint-ignore no-explicit-any
@@ -189,8 +234,14 @@ async function yahooDayPct(symbol: string): Promise<number | null> {
      Comparing the quote's ET date with the last bar's ET date is true at every
      hour: mid-session both are today, after the close both are still today,
      and before the next session's bar exists both are still the prior day. */
-  const etDate = (sec: number) =>
-    new Date(sec * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  // `Intl…format` THROWS on an out-of-range instant where toLocaleDateString
+  // returned the string "Invalid Date" — keep that string so the comparison
+  // below behaves exactly as it did (dayPctFor's catch would otherwise fall
+  // through to Stooq for what is a plain value-test case).
+  const etDate = (sec: number) => {
+    const d = new Date(sec * 1000);
+    return Number.isNaN(d.getTime()) ? 'Invalid Date' : ET_DATE.format(d);
+  };
   const quoteTs = Number(r?.meta?.regularMarketTime);
   const lastTs = stamps[stamps.length - 1];
   /* No usable timestamp on either side falls back to a VALUE test, which
@@ -206,7 +257,8 @@ async function yahooDayPct(symbol: string): Promise<number | null> {
 async function stooqDayPct(symbol: string): Promise<number | null> {
   const ymd = (d: Date) => d.toISOString().slice(0, 10).replaceAll('-', '');
   const d2 = new Date(), d1 = new Date(d2.getTime() - 14 * 86400000);
-  const res = await fetch(`https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA });
+  const res = await fetch(`https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d&d1=${ymd(d1)}&d2=${ymd(d2)}`, { headers: UA, signal: AbortSignal.timeout(QUOTE_TIMEOUT_MS) });
+  if (!res.ok) return null;
   const closes = (await res.text()).trim().split('\n').slice(1)
     .map((l) => Number(l.split(',')[4]))
     .filter((n) => Number.isFinite(n) && n > 0);
@@ -250,10 +302,7 @@ const NYSE_HOLIDAYS = new Set([
 // current UTC day, which hasn't closed, so it rejected the valid prior-day
 // statement forever.
 function lastTradingDayIso(now = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', year: 'numeric', month: '2-digit',
-    day: '2-digit', hour: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now);
+  const parts = ET_PARTS.formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
   // start at the ET calendar date; if the 16:00 ET close hasn't passed, the
   // last completed session is the prior day
@@ -276,7 +325,7 @@ function supa() {
   return {
     // deno-lint-ignore no-explicit-any
     select: async (path: string): Promise<any[]> => {
-      const res = await fetch(`${url}/rest/v1/${path}`, { headers });
+      const res = await fetch(`${url}/rest/v1/${path}`, { headers, signal: AbortSignal.timeout(SUPA_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`supa select ${res.status}`);
       return res.json();
     },
@@ -286,8 +335,15 @@ function supa() {
         method: 'POST',
         headers: { ...headers, prefer: 'resolution=merge-duplicates' },
         body: JSON.stringify(rows),
+        signal: AbortSignal.timeout(SUPA_TIMEOUT_MS),
       });
-      if (!res.ok) throw new Error(`supa upsert ${table} ${res.status}: ${(await res.text()).slice(0, 120)}`);
+      if (!res.ok) {
+        // PostgREST's `details` field quotes the FAILING ROW (nav, cash, …), so
+        // only its error code and message are surfaced — never the raw body.
+        const j = await res.json().catch(() => null);
+        const why = j && typeof j === 'object' ? `${j.code ?? ''} ${String(j.message ?? '').slice(0, 100)}`.trim() : '';
+        throw new Error(`supa upsert ${table} ${res.status}${why ? ': ' + why : ''}`);
+      }
     },
   };
 }
@@ -311,10 +367,13 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
     } catch (err: any) {
       if (err.flex && (TOKEN_ERROR_CODES.has(err.flex.code) || /token/i.test(err.flex.message))) {
-        console.error('IBKR Flex token invalid/expired:', err.message);
+        console.error('IBKR Flex token invalid/expired:', scrub(err.message));
         return reply(200, { ok: false, status: 'failed-token', detail: 'Flex token invalid/expired — renew in IBKR Client Portal, update the function secret' });
       }
-      if (err.transient) return reply(200, { ok: false, status: 'not-ready', detail: err.message });
+      if (err.transient) {
+        console.error('desk-ibkr-sync not ready:', scrub(err.message));
+        return reply(200, { ok: false, status: 'not-ready', detail: scrub(err.message) });
+      }
       throw err;
     }
 
@@ -383,7 +442,8 @@ Deno.serve(async (req) => {
     return reply(200, { ok: true, status: 'ok', asOf: accounts[0].asOf, snapshots: snapshots.length, equityRows: equity.length });
     // deno-lint-ignore no-explicit-any
   } catch (e: any) {
-    console.error('desk-ibkr-sync failed:', String(e?.message || e));
-    return reply(200, { ok: false, status: 'failed', detail: String(e?.message || e) });
+    const detail = scrub(e?.message || e);
+    console.error('desk-ibkr-sync failed:', detail);
+    return reply(200, { ok: false, status: 'failed', detail });
   }
 });
