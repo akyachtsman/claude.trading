@@ -1,6 +1,6 @@
 # claude.trading
 
-A private multi-account trading dashboard: account cards, market and heatmap panels, a stochastic charts workbench, watchlists, news and an "ask the desk" assistant. Architecture, owner rulings and the test-scenario table live in `CLAUDE.md`.
+A private multi-account trading dashboard: account cards, market and heatmap panels, a stochastic charts workbench, watchlists, news and an "ask the desk" assistant. The project rules, the test-scenario table and a map of the architecture live in `CLAUDE.md`; the per-panel architecture notes and owner rulings live in `docs/architecture/`.
 
 **Live:** https://akyachtsman.github.io/claude.trading/ (append `?demo=1` for deterministic demo data)
 
@@ -12,6 +12,8 @@ Plain HTML + CSS + vanilla JS served from GitHub Pages, with no build step. Live
 
 | Path | Purpose |
 |---|---|
+| `CLAUDE.md` | Always-loaded project instructions: security constraints, coding standards, the test-scenario table, workflow, and a compact architecture map with a checklist of load-bearing rules |
+| `docs/architecture/` | Per-panel architecture notes and owner rulings, moved verbatim out of `CLAUDE.md` (charts rail, panes, watchlists, edge functions, ...); start at its `README.md` index |
 | `index.html` | Markup only, plus three script tags |
 | `scripts/` | `config.js` (accounts, backend endpoints), `data.js` (formatters, demo data, feed wrappers), `app.js` (all rendering) |
 | `styles/` | `tokens.css` (design primitives), `components.css` (reusable components) |

@@ -914,7 +914,7 @@ function marketSessionOpen(now) {
 }
 /* Extended US session — 4:00am–8:00pm ET on a trading weekday (to 5:00pm on an
    early-close day: the post-market is the 4h after the close either way).
-   CLAUDE.md's 2026-07-22 lamp ruling anticipated this: "a future extended-hours
+   The 2026-07-22 lamp ruling (docs/architecture/data-and-clocks.md) anticipated this: "a future extended-hours
    quote feed would widen the LIVE window". The watchlist IS that feed, so while
    pre/post prints are actually flowing its lamp may read LIVE rather than EOD.
    Panels without an extended feed keep the regular-session rule. */

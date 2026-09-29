@@ -4,7 +4,7 @@ before any shrink was applied. Captured with:
 
   select content from desk_system_prompt where id = true;
 
-This file exists because CLAUDE.md documents a real gap: the owner's live
+This file exists because docs/architecture/desk-ask-and-cron.md (moved out of CLAUDE.md) documents a real gap: the owner's live
 prompt has diverged from the desk_009 migration seed, and every rule added
 or edited since then lives ONLY in that single database row. A from-scratch
 migration replay would silently restore the day-one text, not this. Until
