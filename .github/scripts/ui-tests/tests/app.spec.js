@@ -978,9 +978,32 @@ test('S5: demo mode shows DEMO lamps on every panel', async ({ page, renderWitne
   renderWitness();
   await page.goto('./?demo=1');
   await expect(page.locator('#mastheadState')).toContainText(/demo data/i);
-  for (const id of ['#newsLamp', '#askLamp']) {
-    await expect(page.locator(id), `${id} must read Demo in demo mode`).toHaveText(/demo/i);
+  // The account cards render after boot; their lamps are part of "every panel".
+  await expect(page.locator('#accountGrid .lamp').first()).toBeVisible({ timeout: 10000 });
+
+  // Every panel's own lamp, by name — this used to check news and ask only, so
+  // the Markets, Watchlists, Charts and Heatmap lamps could read LIVE unseen.
+  for (const id of ['#mktLamp', '#newsLamp', '#askLamp', '#wlLamp', '#chartsLamp', '#heatLamp']) {
+    await expect(page.locator(id), `${id} must read exactly Demo in demo mode`).toHaveText(/^demo$/i);
   }
+
+  // ...and then EVERY visible lamp on the page, so a lamp nobody named cannot
+  // slip through. `lamp--demo` is the state class, so the text and the colour
+  // are both held to Demo. The one exception is the masthead's second lamp: the
+  // desk cluster deliberately reads "Demo data" + "EOD snapshot" in demo
+  // (renderMasthead), which the row's "EOD in demo" failure indicator does not
+  // account for — so it is pinned by name rather than waved through.
+  const lamps = await page.evaluate(() => [...document.querySelectorAll('.lamp')]
+    .filter(e => e.offsetWidth || e.offsetHeight)
+    .map(e => ({ text: e.textContent.trim(), cls: e.className, id: e.id,
+                 masthead: !!e.closest('#mastheadState') })));
+  expect(lamps.length, 'the page carries its panel lamps').toBeGreaterThanOrEqual(9);
+  expect(lamps.filter(l => /\b(live|locked|stale)\b/i.test(l.text)).map(l => l.text),
+    'no lamp reads LIVE, LOCKED or STALE in demo').toEqual([]);
+  expect(lamps.filter(l => /\beod\b/i.test(l.text) && !(l.masthead && l.text === 'EOD snapshot')).map(l => l.text),
+    'the only EOD lamp is the masthead\'s "EOD snapshot"').toEqual([]);
+  expect(lamps.filter(l => !l.cls.includes('lamp--demo') && !(l.masthead && l.text === 'EOD snapshot')).map(l => `${l.id || l.cls}: ${l.text}`),
+    'every other lamp is a Demo lamp').toEqual([]);
 });
 
 // S6 — Positions sort: header click reorders rows and flips aria-sort.
@@ -999,15 +1022,27 @@ test('S6: positions table sorts on header click', async ({ page, renderWitness }
   const table = page.locator('#accountGrid table').first();
   await expect(table).toBeVisible();
   const header = table.locator('th', { hasText: 'Unrl P&L' });
-  const firstCell = () => table.locator('tbody tr').first().locator('td').nth(3).getAttribute('data-sort');
+  // The WHOLE column, in row order — comparing only the first cell passes for
+  // any reshuffle that happens to move a different row to the top.
+  const column = () => table.locator('tbody tr').evaluateAll(
+    rows => rows.map(r => Number(r.querySelectorAll('td')[3].getAttribute('data-sort'))));
   await header.click();
   const dir1 = await header.getAttribute('aria-sort');
-  const v1 = Number(await firstCell());
+  const col1 = await column();
   await header.click();
   const dir2 = await header.getAttribute('aria-sort');
-  const v2 = Number(await firstCell());
+  const col2 = await column();
   expect([dir1, dir2].sort()).toEqual(['ascending', 'descending']);
-  expect(v1, 'row order must flip between ascending and descending').not.toBe(v2);
+  expect(col1.length, 'a table with rows to order').toBeGreaterThan(2);
+  expect(col1.every(Number.isFinite), 'every row carries a numeric sort key').toBe(true);
+  // each click leaves the rows in the order aria-sort claims
+  const ordered = (col, dir) => col.every((v, i) => i === 0 || (dir === 'ascending' ? col[i - 1] <= v : col[i - 1] >= v));
+  expect(ordered(col1, dir1), `after the first click the rows run ${dir1}`).toBe(true);
+  expect(ordered(col2, dir2), `after the second click the rows run ${dir2}`).toBe(true);
+  // ...and it is the same rows both times, flipped, not a different selection
+  expect([...col1].sort((a, b) => a - b), 'the same values in both orders')
+    .toEqual([...col2].sort((a, b) => a - b));
+  expect(col1, 'the second click reverses the first').not.toEqual(col2);
 });
 
 // Live-only scenarios (S10/S11) skip cleanly while the site is demo-only
@@ -1028,6 +1063,13 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness
   await page.goto('./');
   const pinInput = page.locator('.lock-form input.input');
   await expect(pinInput).toBeVisible();
+  // The LOCKED shell, asserted before any credential is offered: a desk that
+  // rendered its accounts (or believed itself authenticated) without a PIN would
+  // still "unlock" below, so the pre-state is half of what this scenario proves.
+  await expect(page.locator('#accountGrid .panel-lock .lamp'), 'the accounts panel starts locked')
+    .toHaveText(/locked/i);
+  await expect(page.locator('#accountGrid .hero-number'), 'no account data before unlocking').toHaveCount(0);
+  expect(await page.evaluate(() => DESK.authed), 'not authenticated before the PIN is entered').toBe(false);
   await pinInput.fill(AUTH_CREDENTIAL);
   await page.locator('.lock-form button').click();
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
@@ -1049,7 +1091,16 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   // Playwright's strict mode rejected it before the assertion ever ran and S11
   // failed on a live desk that was behaving correctly. The next modal would have
   // made it 6; scoping to the panel under test is what keeps this stable.
-  await expect(page.locator('.panel-lock .lock-error')).toBeVisible({ timeout: 15000 });
+  const lockError = page.locator('.panel-lock .lock-error');
+  await expect(lockError).toBeVisible({ timeout: 15000 });
+  // ...with WORDS in it: a visible, empty error line is an unexplained failure.
+  await expect(lockError, 'the error line says something').toHaveText(/\S/);
+  // Still locked, not merely "an error appeared": the form is still there to try
+  // again, the panel still reads Locked, nothing was kept, no data rendered.
+  await expect(page.locator('.panel-lock .lock-form input.input'), 'the PIN form is still offered').toBeVisible();
+  await expect(page.locator('#accountGrid .panel-lock .lamp'), 'the panel still reads Locked').toHaveText(/locked/i);
+  expect(await page.evaluate(() => DESK.authed), 'a wrong PIN authenticates nothing').toBe(false);
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'and a wrong PIN is not remembered').toBeNull();
   await expect(page.locator('#accountGrid .hero-number')).toHaveCount(0);
 });
 
@@ -1235,8 +1286,34 @@ test('S12: charts workbench renders panes and controls respond', async ({ page, 
   await expect(page.locator('#wbSettings-p1', { hasText: 'Moving averages' })).toBeVisible();
   expect(await page.locator('#wbSettings-p1 .wb-set-group', { hasText: 'SMA price display' }).count(),
     'SMA price display was removed from every pane').toBe(0);
+  /* "Pro 3 ALONE carries the Extended-hours toggle" is a claim about the other
+     two popovers as much as about Pro 3, and only Pro 3's was ever opened for it.
+     The SWING popover (wbGear-p1, captioned PRO 2) is open right now; the
+     LONG-TERM one (wbGear-p2, captioned PRO 1) was never opened at all. Titles
+     are read too, since the popover title map is one of the three places the
+     positional PRO number crosses the config key. */
+  const noExt = async (id, why) => {
+    expect(await page.locator(`#${id} label`, { hasText: /extended hours/i }).count(), `${why}: no Extended-hours toggle`).toBe(0);
+    expect(await page.locator(`#${id} .wb-set-group`, { hasText: /^Session/ }).count(), `${why}: no Session group`).toBe(0);
+  };
+  await expect(page.locator('#wbSettings-p1')).toContainText('PRO 2 · SWING');
+  await noExt('wbSettings-p1', 'SWING (Pro 2)');
+  expect(await page.locator('#wbSettings-p1 label', { hasText: 'Stochastic (weekly)' }).count(),
+    'the weekly overlay is the LONG-TERM pane\'s alone').toBe(0);
+  await page.locator('#wbGear-p2').click();
+  await expect(page.locator('#wbSettings-p2')).toBeVisible();
+  await expect(page.locator('#wbSettings-p1'), 'opening a second gear closes the first').toBeHidden();
+  await expect(page.locator('#wbSettings-p2')).toContainText('PRO 1 · LONG-TERM');
+  expect(await page.locator('#wbSettings-p2 input[type=radio]').count(), 'chart-style radios').toBe(2);
+  expect(await page.locator('#wbSettings-p2 input[type=checkbox]').count(), 'indicator, SMA, S/R and weekly-stochastic boxes').toBe(14);
+  await expect(page.locator('#wbSettings-p2 label', { hasText: 'Stochastic (weekly)' }),
+    'the weekly overlay toggle lives on the LONG-TERM pane').toBeVisible();
+  await noExt('wbSettings-p2', 'LONG-TERM (Pro 1)');
   await page.locator('#wbGear-p3').click();
-  await expect(page.locator('#wbSettings-p1')).toBeHidden();
+  await expect(page.locator('#wbSettings-p2')).toBeHidden();
+  await expect(page.locator('#wbSettings-p3')).toContainText('PRO 3 · DAY TRADING');
+  expect(await page.locator('#wbSettings-p3 .wb-set-group', { hasText: /^Session/ }).count(),
+    'Pro 3 carries the Session group').toBe(1);
   expect(await page.locator('#wbSettings-p3 input[type=checkbox]').count()).toBe(4);
   // The extended-hours control is present, OFF by default, and actually toggles.
   // Off since 2026-08-20 — owner: "remove the off market candles, I just wanna
@@ -1342,26 +1419,39 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
   renderWitness();
   await page.goto('./?demo=1');
   const tf = page.locator('#wlTf');
-  await expect(tf.locator('button')).toHaveCount(7);      // 1D 1M 3M 6M 1Y 2Y 5Y
+  // The seven spans, by name and in order — a count of 7 is also satisfied by
+  // seven of the wrong buttons.
+  await expect(tf.locator('button')).toHaveText(['1D', '1M', '3M', '6M', '1Y', '2Y', '5Y']);
 
-  // 1D is the default and is the pressed one
+  // 1D is the default and is the ONLY pressed one
   await expect(tf.locator('button', { hasText: '1D' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(tf.locator('button[aria-pressed="true"]'), 'exactly one span is pressed').toHaveCount(1);
 
   const firstPath = page.locator('.wl-strip .wl-spark svg path').first();
   await expect(firstPath).toBeVisible({ timeout: 10000 });
-  const dayPath = await firstPath.getAttribute('d');
+  // EVERY tile's line, keyed by symbol. The row promises "every tile sparkline";
+  // the first one alone stays green if the redraw only reaches the first tile.
+  const lines = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.wl-strip .wl-tile')]
+    .map(t => { const p = t.querySelector('.wl-spark svg path'); return [t.dataset.sym, p ? p.getAttribute('d') : null]; })
+    .filter(([, d]) => d)));
+  const dayLines = await lines();
+  expect(Object.keys(dayLines).length, 'the demo panel draws a sparkline per tile').toBeGreaterThan(20);
 
   // switching redraws: a different window is a different line
   await tf.locator('button', { hasText: '1Y' }).click();
   await expect(tf.locator('button', { hasText: '1Y' })).toHaveAttribute('aria-pressed', 'true');
   await expect(tf.locator('button', { hasText: '1D' })).toHaveAttribute('aria-pressed', 'false');
-  await expect
-    .poll(() => firstPath.getAttribute('d'), { message: '1Y must draw a different path than 1D' })
-    .not.toBe(dayPath);
+  await expect(tf.locator('button[aria-pressed="true"]'), 'and still exactly one').toHaveCount(1);
+  await expect.poll(async () => {
+    const yearLines = await lines();
+    return Object.keys(dayLines).filter(sym => yearLines[sym] === dayLines[sym]);
+  }, { message: 'every tile\'s line changed with the span' }).toEqual([]);
 
   // and it survives a reload — the control is persisted, not per-render state
   await page.reload();
   await expect(page.locator('#wlTf button', { hasText: '1Y' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#wlTf button', { hasText: '1D' }), 'the default is not also pressed').toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#wlTf button[aria-pressed="true"]'), 'exactly one span is pressed after the reload').toHaveCount(1);
 });
 
 /* A stateful stand-in for the PIN-free roster RPCs (desk_get/set_watchlists_open)
@@ -4209,6 +4299,15 @@ test('S43: news rows date anything that is not from today', async ({ page, rende
       title: when ? (when.getAttribute('title') || '') : '',
       // a clipped date is a wrong date: it must fit its own column
       clipped: when ? when.scrollWidth > when.clientWidth + 1 : false,
+      // GEOMETRY of the stack: the date's box must end where the clock's begins
+      // (the row promises "Mon D ABOVE the clock"), and both share a left edge.
+      // Text order in the DOM says nothing about which is drawn on top — a
+      // `flex-direction: row` puts them side by side and every text check passes.
+      above: (() => {
+        if (!dateEl) return null;
+        const clock = when.lastElementChild, d = dateEl.getBoundingClientRect(), c = clock.getBoundingClientRect();
+        return { stacked: d.bottom <= c.top + 1, aligned: Math.abs(d.left - c.left) < 2, dh: d.height, ch: c.height };
+      })(),
     };
   }));
 
@@ -4223,6 +4322,9 @@ test('S43: news rows date anything that is not from today', async ({ page, rende
     .toBeGreaterThan(0);
 
   for (const r of dated) {
+    expect(r.above.dh, 'the date has a real box').toBeGreaterThan(0);
+    expect(r.above.stacked, `the date sits ABOVE the clock (${r.text})`).toBe(true);
+    expect(r.above.aligned, `and shares its left edge (${r.text})`).toBe(true);
     expect(r.date, 'the date reads as "Mon D"').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
     expect(r.text, 'the clock is kept alongside the date').toMatch(/\d\d:\d\d/);
     expect(r.title, 'the exact instant is recoverable from the tooltip').toMatch(/\d{4}-\d{2}-\d{2}/);
