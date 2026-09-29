@@ -557,9 +557,6 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* Transient note in the panel header (replaces the staging row's hint line). */
 .wl-note { font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
 .wl-note[hidden] { display: none; }
-/* The destination picker in the quick-add dialog. */
-.wl-quick-list { display: block; width: 100%; margin-bottom: 8px; }
-.wl-quick-list[hidden], #wlQuickListLabel[hidden] { display: none; }
 /* Header-resident now (owner ruling 2026-07-31), so NO `margin-left: auto` —
    that pushed it to the far edge when it lived on its own row, and in the
    header it would shove the as-of stamp off its own `ml-auto` anchor. Sized to
