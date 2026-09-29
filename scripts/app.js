@@ -294,7 +294,10 @@ function drawMktChart() {
   const padR = 46, plotW = W - padR - 6, plotH = H - 14;
   if (!lines.length) {
     const tx = svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', 'font-family': 'var(--font-sans)', 'font-size': 11, fill: 'var(--color-text-secondary)' });
-    tx.textContent = 'Loading index series…';
+    /* failure is tracked PER LEG: Today/5D read the intraday leg, 1M/1Y/2Y the daily
+       one, so a partial outage must not leave the dead leg's timeframes on "Loading…" */
+    const leg = (mktState.tf === 'today' || mktState.tf === '5d') ? 'intra' : 'daily';
+    tx.textContent = mktState.legFailed && mktState.legFailed[leg] ? 'Index series unavailable — retrying with the next refresh' : 'Loading index series…';
     svg.appendChild(tx); return;
   }
   const all = lines.flatMap(l => l.vals);
@@ -330,7 +333,7 @@ function drawMktChart() {
    the line always agrees with the tile even as the tile ticks through the day.
    Runs after the first live market render; tiles + sectors already show, so a
    failure just leaves the chart in its loading state. */
-let mktSeriesPending = false, mktSeriesDone = false;
+let mktSeriesPending = false, mktSeriesDone = false, mktPer = null;
 function normPct(closes, start) {
   const base = closes[start];
   if (!base) return [];
@@ -371,19 +374,39 @@ function pinEnd(raw, target) {
   const drift = target - raw[m];
   return raw.map((v, i) => Number((v + drift * (i / m)).toFixed(3)));
 }
+/* Hydrates the index chart series, and KEEPS the intraday leg fresh. It used to be a
+   true one-shot (mktSeriesDone never reset), so the Today line was frozen at whatever
+   the page loaded with while pinEnd() re-tilted that frozen path onto the ticking tile
+   — by afternoon the drawn shape was fabricated. Now: while the session is open (or in
+   the close-settle grace), or while a leg is still missing, each market poll re-pulls
+   the INTRADAY leg only; the daily leg is fetched once and reused, and a failed leg
+   keeps its last good series rather than blanking. */
 async function fetchMktSeries() {
-  if (mktSeriesPending || mktSeriesDone || DESK.mode === 'demo' || !DESK_DB.url) return;
+  if (mktSeriesPending || DESK.mode === 'demo' || !DESK_DB.url) return;
+  const live = marketSessionOpen() || withinCloseSettleGrace();
+  const incomplete = !!mktPer && mktPer.some(p => !p.intra || !p.daily);
+  if (mktSeriesDone && !live && !incomplete) return;
   mktSeriesPending = true;
   try {
     const per = await Promise.all(MKT_INDEX.map(async ix => {
+      const prev = (mktPer || []).find(p => p.key === ix.key);
       const [daily, intra] = await Promise.all([
-        deskQuote(ix.proxy, 'daily').catch(() => null),
+        prev && prev.daily ? null : deskQuote(ix.proxy, 'daily').catch(() => null),
         deskQuote(ix.proxy, 'intraday').catch(() => null),
       ]);
-      return { key: ix.key, daily: daily && daily.ok ? daily.series : null, intra: intra && intra.ok ? intra.series : null };
+      return {
+        key: ix.key,
+        daily: daily && daily.ok ? daily.series : (prev ? prev.daily : null),
+        intra: intra && intra.ok ? intra.series : (prev ? prev.intra : null),
+      };
     }));
-    if (per.some(p => p.daily || p.intra)) { mktState.series = buildMktSeries(per); mktSeriesDone = true; renderMarkets(DESK.data.market); }
-  } catch { /* keep the loading state; tiles + sectors are unaffected */ }
+    if (per.some(p => p.daily || p.intra)) {
+      mktPer = per; mktState.series = buildMktSeries(per);
+      mktState.legFailed = { intra: per.every(p => !p.intra), daily: per.every(p => !p.daily) };
+      const first = !mktSeriesDone; mktSeriesDone = true;
+      if (first) renderMarkets(DESK.data.market); else drawMktChart();
+    } else if (!mktSeriesDone) { mktState.legFailed = { intra: true, daily: true }; drawMktChart(); }
+  } catch { if (!mktSeriesDone) { mktState.legFailed = { intra: true, daily: true }; drawMktChart(); } }
   finally { mktSeriesPending = false; }
 }
 
@@ -494,9 +517,11 @@ function renderAccounts(accounts, lamp) {
            watchlist rail already follows, and it mattered here: four option
            positions were reading 0.00% while one of them was down 38%. Sorted
            to the bottom rather than treated as zero, so an unknown never ranks
-           between a loser and a winner. */
+           between a loser and a winner: the sort key is BLANK, which makeSortable
+           keeps last in either direction (a -Infinity sentinel led the column
+           ascending, ahead of the largest losses). */
         [Number.isFinite(p.dayPct) ? fmtPct(p.dayPct) : '—',
-         Number.isFinite(p.dayPct) ? p.dayPct : -Infinity,
+         Number.isFinite(p.dayPct) ? p.dayPct : '',
          p.dayPct > 0 ? 'up' : p.dayPct < 0 ? 'down' : ''],
         [fmtSigned(p.unrl), p.unrl, p.unrl > 0 ? 'up' : p.unrl < 0 ? 'down' : ''],
       ];
@@ -3903,7 +3928,10 @@ function renderHeatTable(hm) {
     .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 12);
   const thead = document.createElement('thead');
   const hr = document.createElement('tr');
-  for (const name of ['Symbol', 'Sector', 'Last', 'Mkt cap', 'Day %']) {
+  /* recolorForPeriod() rewrites each tile's `pct` to the selected period, so the
+     column must name that period — a 1M return under "Day %" reads as a daily move. */
+  const pctHead = ({ '1w': '1W %', '1m': '1M %', ytd: 'YTD %' })[mapView.period] || 'Day %';
+  for (const name of ['Symbol', 'Sector', 'Last', 'Mkt cap', pctHead]) {
     const th = document.createElement('th'); th.textContent = name; th.setAttribute('scope', 'col');
     hr.appendChild(th);
   }
@@ -4064,9 +4092,11 @@ function applyMapView() {
       : heatExtraErr ? 'Delayed quotes unavailable right now — click again in a minute'
       : 'Loading delayed quotes…';
   }
-  /* stock cuts re-color by period from the feed's pctW/pctM/pctYtd fields
-     (the ETF cut computes its own periods from bar history above) */
-  if (mapView.key !== 'etf') out = recolorForPeriod(out, mapView.period);
+  /* every cut re-colors by period from the feed's pctW/pctM/pctYtd fields —
+     the ETF cut included: desk-heatmap's etf universe carries them, and multiOk
+     above already unlocks 1W/1M/YTD for it (a guard here left the map coloured by
+     day-% under a "1-Month Performance" label) */
+  out = recolorForPeriod(out, mapView.period);
   if (out) out.scaleCap = HEAT_CAP_FOR(mapView.key); /* small caps get the wider ±5% ramp */
   document.getElementById('heatTitle').textContent = 'Heatmap — ' + label;
   renderHeatmap(out, lamp);
@@ -4371,7 +4401,7 @@ let wbEditDraft = '';
 /* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
    deliberately not a plausible watchlist title, since the picker's values are
    otherwise list titles the owner types. */
-const WB_ROSTER_CHARTS = ' charts';
+const WB_ROSTER_CHARTS = '\u0000charts';
 const wbFeedRoster = new Set();  /* symbols served by the desk-charts feed; anything else is a manual entry */
 let wbStickyRestored = false;    /* one-shot: restore runs on the first LIVE feed, even after a demo-fallback reload */
 let wbUserPicked = false;        /* the user has chosen a symbol → a slow background restore must not override it */
@@ -7278,6 +7308,14 @@ const NEWS_TOPIC_KEY = 'news_topic_v1';
 function readNewsTopic() {
   try { return (localStorage.getItem(NEWS_TOPIC_KEY) || '').slice(0, 60); } catch { return ''; }
 }
+/* Mirror of desk-news's cleanTopic(): the function echoes the CLEANED topic, so a
+   reply can only be matched against the box after the same cleaning. Comparing the
+   echo to the raw text made any topic with `$ ? : ( "`, non-ASCII or a double space
+   look like a stale reply and drop silently. Keep the character class, the
+   whitespace collapse and the 60 cap identical to the function's. */
+function cleanNewsTopic(raw) {
+  return String(raw || '').replace(/[^A-Za-z0-9 &.,'+-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+}
 function writeNewsTopic(v) {
   try { v ? localStorage.setItem(NEWS_TOPIC_KEY, v) : localStorage.removeItem(NEWS_TOPIC_KEY); } catch { /* private mode */ }
 }
@@ -7291,12 +7329,19 @@ function wireNewsTopic() {
   const box = document.getElementById('newsTopic');
   const clear = document.getElementById('newsTopicClear');
   if (!box || !clear) return;
-  box.value = readNewsTopic();
+  /* The box always shows the CLEANED topic — what is actually searched. A topic of
+     only unsupported characters (`???`, non-ASCII) cleans to '' and the server runs
+     the unfiltered sweep, so leaving the raw text in the box would present broad
+     headlines as though a filter were active. Older saves are re-cleaned here too. */
+  const saved = cleanNewsTopic(readNewsTopic());
+  if (saved !== readNewsTopic()) writeNewsTopic(saved);
+  box.value = saved;
   const paint = () => { clear.hidden = !box.value.trim(); };
   paint();
 
   const commit = () => {
-    const next = box.value.trim().slice(0, 60);
+    const next = cleanNewsTopic(box.value);
+    box.value = next;
     if (next === readNewsTopic()) { paint(); return; }   /* nothing changed — don't re-sweep */
     writeNewsTopic(next);
     paint();
@@ -7325,8 +7370,11 @@ async function refreshNews(force) {
        search can otherwise land after the owner has retyped and repaint the
        panel with the abandoned query's headlines. The server echoes `topic`
        for exactly this. Demo has no server echo, so an undefined topic is
-       treated as agreeing rather than as a mismatch. */
-    if (news.topic !== undefined && (news.topic || '') !== topic) return;
+       treated as agreeing rather than as a mismatch. Compared against the topic
+       CURRENT WHEN THE REPLY LANDS, not the one captured at call time — a stale
+       reply always agrees with its own request, so that comparison could never
+       drop one. */
+    if (news.topic !== undefined && (news.topic || '') !== cleanNewsTopic(readNewsTopic())) return;
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
     /* newsWhen() overwrites `t` with the Pacific clock and adds `d`/`full`.

@@ -427,6 +427,12 @@ This project's look is its own — established at kickoff via `/design-intake`
   `WB_ROSTER_CHARTS` sentinel, a NUL-prefixed token, so the obvious
   `sel.title = sel.value` would show the owner an internal string instead of a
   list name (verified in the browser, where it renders "Charts roster").
+  **The sentinel is written as the escape `'\u0000charts'`, NEVER a literal NUL
+  byte** (audit 2026-09-29): a raw one sat in `app.js` from #248 (2026-08-18) and
+  made ripgrep/the Grep tool treat the whole file as binary, silently skipping it
+  on every directory search for six weeks — exactly the searches "is there already
+  an implementation of this?" depends on. No raw control byte belongs in a source
+  file; `rg -c renderWbSidebar scripts/` returning `app.js` is the quick check.
   **S40 budgets against the VALIDATOR, not against demo.** Demo carries ten
   three-letter symbols, so a five-character budget passed on a 160px rail that a
   real supported symbol would have broken — a budget that admits less than the
