@@ -2005,7 +2005,7 @@ async function loadWlDetail() {
     wlDetail.bars = buildDemoDetailBars(sym, tf);
     const q = demoWlQuote(sym);
     wlDetail.info = { name: q.name, price: q.last, changePct: q.pct, change: q.last - q.last / (1 + q.pct / 100) };
-    wlDetail.asOf = lastTradingDay(new Date()).toISOString().slice(0, 10);
+    wlDetail.asOf = isoDate(lastTradingDay(new Date()));   /* not toISOString(): that is the UTC date of a local midnight */
     wlDetail.at = null;
     renderWlDetail();
     return;
@@ -3100,17 +3100,29 @@ function openAskSched(pin) {
     });
   };
 
+  /* A write REPLACES the whole roster, so it is only allowed on top of a read
+     that landed: after a failed load the draft is an empty list that never
+     reflected the real one, and Save (or Add, then Save) would wipe every
+     scheduled question — the same rule the watchlist editor follows (PR #188). */
+  let loaded = false;
+  let saving = false;
+  const syncButtons = () => {
+    if (saveBtn) saveBtn.disabled = saving || !loaded;
+    if (add) add.disabled = !loaded;
+  };
   const load = async () => {
     fail(''); note('Loading…');
+    loaded = false; syncButtons();
     const out = await deskGetAskSchedule(pin);
     if (!out || !out.ok) {
       askSched = []; draw();
       note('');
-      fail('Could not load the schedule. Unlock the desk and try again.');
+      fail('Could not load the schedule, so Save is off. Unlock the desk, then close this and reopen it.');
       return;
     }
     askSched = (out.rows || []).map(askSchedRow);
     dirty = false; closeArmed = false;
+    loaded = true; syncButtons();
     draw(); note('');
   };
 
@@ -3118,11 +3130,10 @@ function openAskSched(pin) {
      double-click sent the same draft twice and wrote a twin of every new row —
      and each twin fires (and bills) on its own timer. Cleared in `finally`, so
      a failed or thrown save cannot leave the button dead. */
-  let saving = false;
   const save = async () => {
-    if (saving) return;
+    if (saving || !loaded) return;
     saving = true;
-    if (saveBtn) saveBtn.disabled = true;
+    syncButtons();
     try {
       fail(''); note('Saving…');
       /* Blank rows are dropped rather than rejected — the RPC skips them too, and
@@ -3147,7 +3158,7 @@ function openAskSched(pin) {
       note('Saved');
     } finally {
       saving = false;
-      if (saveBtn) saveBtn.disabled = false;
+      syncButtons();
     }
   };
 
@@ -3159,6 +3170,7 @@ function openAskSched(pin) {
      open's closure. */
   if (add) {
     add.onclick = () => {
+      if (!loaded) return;
       if (askSched.length >= ASK_SCHED_MAX) { fail(`Ten scheduled questions is the limit — each firing costs real quota.`); return; }
       fail('');
       askSched.push(askSchedRow({ cadence: 'daily', atHour: 8, atMin: 0, enabled: true }));

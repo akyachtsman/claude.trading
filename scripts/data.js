@@ -25,20 +25,51 @@ function walk(seed, start, drift, vol, n, end) {
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-/* Observed US market holidays covering the label window (extend yearly). */
-const US_HOLIDAYS = new Set([
-  '2025-07-04','2025-09-01','2025-11-27','2025-12-25',
-  '2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25',
-  '2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25',
-  '2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31',
+/* THE one NYSE calendar (extend yearly; the Deno copies in supabase/functions/
+   desk-* keep their own). Full-day closures, observed dates — a Saturday holiday
+   closes the Friday before it (2027-06-18, 2027-12-24), a Sunday one the Monday
+   after (2027-07-05). It used to be two tables (`US_HOLIDAYS` for the demo
+   calendar, `NYSE_HOLIDAYS` for the session gate) that had already drifted. */
+const NYSE_HOLIDAYS = new Set([
+  '2025-07-04', '2025-09-01', '2025-11-27', '2025-12-25',
+  '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03', '2026-05-25',
+  '2026-06-19', '2026-07-03', '2026-09-07', '2026-11-26', '2026-12-25',
+  '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31',
+  '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24',
+]);
+/* Early closes: the regular session ends 13:00 ET instead of 16:00, and the
+   post-market runs 13:00-17:00. By rule — the day after Thanksgiving; Dec 24
+   when it is a weekday and not itself the observed Christmas holiday; Jul 3
+   when it is a weekday and not the observed Independence Day (Jul 4 on a
+   Saturday closes Fri Jul 3 outright, on a Sunday leaves Fri Jul 2 a full day).
+   2026-07-02 and 2027-07-02 are therefore full days, and Dec 24 2027 is a
+   holiday, not an early close. */
+const NYSE_EARLY_CLOSES = new Set([
+  '2025-07-03', '2025-11-28', '2025-12-24',
+  '2026-11-27', '2026-12-24',
+  '2027-11-26',
 ]);
 const isoDate = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-const isTradingDay = d => d.getDay() !== 0 && d.getDay() !== 6 && !US_HOLIDAYS.has(isoDate(d));
-function lastTradingDay(from) {
-  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+const isTradingDay = d => d.getDay() !== 0 && d.getDay() !== 6 && !NYSE_HOLIDAYS.has(isoDate(d));
+/* The trading calendar keys off the DESK's calendar day — Pacific, like every
+   clock on this desk — never the viewer's locale: `from.getDate()` on a viewer
+   ten hours ahead of Pacific is already tomorrow, and the demo/lamp "last
+   trading day" then reads a day early or late. The result is a local-midnight
+   Date for that calendar day, so isoDate()/getDay() above keep working. */
+let ptDayFmt = null;
+function ptCalendarDay(from) {
+  ptDayFmt = ptDayFmt || new Intl.DateTimeFormat('en-CA', { timeZone: DESK_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const [y, m, d] = ptDayFmt.format(from).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+/* `cal` is already a calendar day (a local-midnight Date); `from` in
+   lastTradingDay() is an INSTANT — do not feed one to the other. */
+function tradingDayOnOrBefore(cal) {
+  const d = new Date(cal.getFullYear(), cal.getMonth(), cal.getDate());
   while (!isTradingDay(d)) d.setDate(d.getDate() - 1);
   return d;
 }
+function lastTradingDay(from) { return tradingDayOnOrBefore(ptCalendarDay(from)); }
 function tradingDayLabels(n, endDate) {
   const out = []; const d = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
   while (out.length < n) {
@@ -416,7 +447,7 @@ function accountsLampFor(asOfIso, syncedAtIso, now) {
   if (!asOfIso) return { cls: 'lamp--stale', text: 'NO DATA', stamp: '—' };
   const n = now || new Date();
   const ltd = lastTradingDay(n);
-  const prevTd = lastTradingDay(new Date(ltd.getFullYear(), ltd.getMonth(), ltd.getDate() - 1));
+  const prevTd = tradingDayOnOrBefore(new Date(ltd.getFullYear(), ltd.getMonth(), ltd.getDate() - 1));
   const fresh = asOfIso >= isoDate(prevTd);   /* allow the overnight-roll lag */
   /* "Accounts synced" (not "Last updated" — owner request 2026-07-22): this
      stamp sits directly under the MARKETS-labeled masthead cluster, which now
@@ -660,7 +691,7 @@ function buildDemoWatchlist(lists, tf) {
   return {
     ok: true,
     source: 'demo',
-    asOf: lastTradingDay(new Date()).toISOString(),
+    asOf: isoDate(lastTradingDay(new Date())),
     /* Mirrors the live payload's echo so the renderer's "is this the window I
        asked for?" check works identically in demo. */
     range: tf || '1d',
@@ -845,61 +876,62 @@ async function deskFeed(name, params) {
 
 /* US equities session gate for the feed poller cadence (spec Clarification
    6). Mirrors the Deno copies in supabase/functions/desk-* — keep the
-   holiday list in sync there when refreshing it annually (2026–2027). */
-const NYSE_HOLIDAYS = new Set([
-  '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03', '2026-05-25',
-  '2026-06-19', '2026-07-03', '2026-09-07', '2026-11-26', '2026-12-25',
-  '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31',
-  '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24',
-]);
-function marketSessionOpen(now) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
+   holiday list in sync there when refreshing it annually (2026–2027). The
+   holiday and early-close tables live at the top of this file. */
+let etClockFmt = null;
+/* The NYSE wall clock at an instant: { date: 'YYYY-MM-DD', weekend, minutes }.
+   One hoisted formatter — marketSessionOpen() runs per index tile on every
+   watchlist paint, and building an Intl.DateTimeFormat each call was the cost. */
+function etClock(now) {
+  etClockFmt = etClockFmt || new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', weekday: 'short',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now || new Date());
+  });
+  const parts = etClockFmt.formatToParts(now || new Date());
   const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
   const dow = get('weekday');
-  if (dow === 'Sat' || dow === 'Sun') return false;
-  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
-  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
-  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+  return {
+    date: get('year') + '-' + get('month') + '-' + get('day'),
+    weekend: dow === 'Sat' || dow === 'Sun',
+    minutes: Number(get('hour')) * 60 + Number(get('minute')),
+  };
 }
-/* Extended US session — 4:00am–8:00pm ET on a trading weekday. CLAUDE.md's
-   2026-07-22 lamp ruling anticipated this: "a future extended-hours quote feed
-   would widen the LIVE window". The watchlist IS that feed, so while pre/post
-   prints are actually flowing its lamp may read LIVE rather than EOD. Panels
-   without an extended feed keep the regular-session rule. */
+/* Regular-session close in ET minutes for an ET date: 13:00 on an early-close
+   day, 16:00 otherwise. Everything below — open/closed, the post-market and
+   extended windows, the settle grace, marketCloseInstant — hangs off this, so a
+   half-day (the Friday after Thanksgiving, Dec 24) reads closed at 13:00 rather
+   than three hours late. */
+const nyseCloseMin = iso => (NYSE_EARLY_CLOSES.has(iso) ? 13 * 60 : 16 * 60);
+/* The clock on a trading weekday; null on a weekend or a full-day holiday. */
+function etTradingClock(now) {
+  const c = etClock(now);
+  return c.weekend || NYSE_HOLIDAYS.has(c.date) ? null : c;
+}
+function marketSessionOpen(now) {
+  const c = etTradingClock(now);
+  return !!c && c.minutes >= 9 * 60 + 30 && c.minutes < nyseCloseMin(c.date);
+}
+/* Extended US session — 4:00am–8:00pm ET on a trading weekday (to 5:00pm on an
+   early-close day: the post-market is the 4h after the close either way).
+   CLAUDE.md's 2026-07-22 lamp ruling anticipated this: "a future extended-hours
+   quote feed would widen the LIVE window". The watchlist IS that feed, so while
+   pre/post prints are actually flowing its lamp may read LIVE rather than EOD.
+   Panels without an extended feed keep the regular-session rule. */
 /* POST-market only, 16:00–20:00 ET (Codex review, PR #199). Distinct from
    extendedSessionOpen() below, which spans the whole 4am–8pm extended day: the
    desk shows post-market prints but deliberately not pre-market ones, so the
    poller has to wake for the second half of that window and not the first. */
 function postMarketOpen(now) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', weekday: 'short',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now || new Date());
-  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
-  const dow = get('weekday');
-  if (dow === 'Sat' || dow === 'Sun') return false;
-  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
-  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
-  return minutes >= 16 * 60 && minutes < 20 * 60;
+  const c = etTradingClock(now);
+  if (!c) return false;
+  const close = nyseCloseMin(c.date);
+  return c.minutes >= close && c.minutes < close + 4 * 60;
 }
 
 function extendedSessionOpen(now) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', weekday: 'short',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now || new Date());
-  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
-  const dow = get('weekday');
-  if (dow === 'Sat' || dow === 'Sun') return false;
-  if (NYSE_HOLIDAYS.has(get('year') + '-' + get('month') + '-' + get('day'))) return false;
-  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
-  return minutes >= 4 * 60 && minutes < 20 * 60;
+  const c = etTradingClock(now);
+  return !!c && c.minutes >= 4 * 60 && c.minutes < nyseCloseMin(c.date) + 4 * 60;
 }
 /* Owner report 2026-07-27: both the client poll cadence and every session-aware
    edge-function cache jump from 5-min to 60-min the INSTANT the session is
@@ -908,18 +940,15 @@ function extendedSessionOpen(now) {
    near-final number can get locked in as "EOD" for up to an hour with no
    staleness flag (liveLampFor intentionally skips the freshness check once
    priceBound && !marketSessionOpen()). Keep the 5-min cadence for a short grace
-   window right after the close so the real settle print gets picked up quickly. */
+   window right after the close so the real settle print gets picked up quickly.
+   Measured from THAT DAY's close (13:00 on an early-close day) and never on a
+   holiday, when there is no close to settle. */
 const CLOSE_SETTLE_GRACE_MIN = 15;
 function withinCloseSettleGrace(now) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now || new Date());
-  const get = t => { const p = parts.find(x => x.type === t); return p ? p.value : ''; };
-  const dow = get('weekday');
-  if (dow === 'Sat' || dow === 'Sun') return false;
-  const minutes = Number(get('hour')) * 60 + Number(get('minute'));
-  const closeMin = 16 * 60;
-  return minutes >= closeMin && minutes < closeMin + CLOSE_SETTLE_GRACE_MIN;
+  const c = etTradingClock(now);
+  if (!c) return false;
+  const close = nyseCloseMin(c.date);
+  return c.minutes >= close && c.minutes < close + CLOSE_SETTLE_GRACE_MIN;
 }
 
 /* Display clocks in the VIEWER'S local timezone (owner ruling 2026-07-15):
@@ -1052,13 +1081,15 @@ function fmtUpdated(atIso, asOfDate, tail) {
   return 'Last updated ' + parts.concat(suffix ? [suffix] : []).join(', ');
 }
 
-/* UTC instant of the regular-session close (16:00 America/New_York = 1:00pm PT)
-   on a given trading day. Robust across DST via the standard wall-clock→instant
-   correction. Null if the date can't be parsed. */
+/* UTC instant of the regular-session close (16:00 America/New_York = 1:00pm PT,
+   or 13:00 ET = 10:00am PT on an early-close day) on a given trading day.
+   Robust across DST via the standard wall-clock→instant correction. Null if the
+   date can't be parsed. */
 function marketCloseInstant(asOfDate) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(asOfDate || ''));
   if (!m) return null;
-  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], 16, 0, 0);   /* 16:00 as if UTC */
+  const closeMin = nyseCloseMin(m[0]);
+  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], Math.floor(closeMin / 60), closeMin % 60, 0);   /* close as if UTC */
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', hourCycle: 'h23',
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -1161,6 +1192,7 @@ function liveLampFor(generatedAt, dataAsOf, priceBound, quoteAt, extAt) {
 /* Map the RPC payload into the render model app.js uses (same shape demo
    mode builds). Equity series are aligned on dates present for EVERY
    account so the consolidated sum is well-defined. */
+const numOrNull = v => (v == null || v === '' ? null : Number(v));
 function mapDashboardPayload(payload) {
   const byDate = new Map();
   for (const row of payload.equity) {
@@ -1179,10 +1211,11 @@ function mapDashboardPayload(payload) {
     label: a.label || (cfgByKey[a.account_key] || {}).label || 'Account ' + a.account_key,
     code: (cfgByKey[a.account_key] || {}).code || '',
     nav: Number(a.nav), day: Number(a.day_pnl), total: Number(a.total_unrl), cash: Number(a.cash),
-    /* dayPct stays NULL when the sync could not price the symbol: Number(null) is 0,
-       which every consumer reads as a real flat day (app.js's em-dash branch keys
-       on Number.isFinite, and buildAskContext hands the assistant this value). */
-    positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: Number(p.mkt), dayPct: p.dayPct == null ? null : Number(p.dayPct), unrl: Number(p.unrl) })),
+    /* null stays null: Number(null) is 0, which turned the sync's "could not
+       price this" day-% into a flat +0.00% before the renderer could dash it
+       (and buildAskContext hands the assistant dayPct — a fabricated flat 0
+       there reads as a real move of nothing). */
+    positions: (a.positions || []).map(p => ({ sym: p.sym, qty: p.qty, mkt: numOrNull(p.mkt), dayPct: numOrNull(p.dayPct), unrl: numOrNull(p.unrl) })),
     equity: dates.map(d => byDate.get(d)[a.account_key]),
     asOf: a.as_of,
     syncedAt: a.created_at || null,   /* when the sync wrote this snapshot (desk_007) */
