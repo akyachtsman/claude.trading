@@ -208,8 +208,8 @@ real-data rules stay in Project-Specific Coding Standards below.
   the RPC (RLS cannot rate-limit); the PIN sits in sessionStorage for the tab
   session. Real balances never enter this repo or the served files. Position TICKERS are
   held-name information too: they were scrubbed from the tree on 2026-09-29
-  (comments, tests, demo data), but git history still contains them — rewriting it
-  is an owner decision. The five
+  (comments, tests, demo data), but git history still contains them — the owner
+  declined a rewrite (2026-09-30; see Settled owner rulings). The five
   public feed functions are anon-callable by design (public market data,
   rosters fixed server-side / in committed config — not open proxies);
   unauthenticated invocations can burn function/egress quota, bounded by
@@ -475,6 +475,19 @@ run for real in `qa-live.yml` (`qa.yml` excludes them via `GREP_INVERT`: a PR ru
 **S15–S19 are OPT-IN** (gated on `RUN_ASSISTANT_TESTS` on top of the live+auth
 gates) — each makes a real `desk-ask` Claude tool-loop call (slow, nondeterministic,
 costs quota), so they never run in normal CI; run them on demand. They carry a 180s timeout.
+
+## Settled owner rulings — do not re-raise as findings
+Decided by the owner at the close of the 2026-09-29/30 audit. An audit or review that
+meets one of these reports it as SETTLED, not as a finding; reopen one only when its
+revisit trigger fires or the owner asks.
+
+| Item | Ruling (2026-09-30) | Why it is safe to leave | Revisit when |
+|---|---|---|---|
+| Git-history position tickers | **Leave.** No history rewrite. | The tree is scrubbed; a rewrite force-pushes `main` and breaks every clone and fork. The exposure is held-name tickers only, never balances. | The owner decides the held names must not be discoverable. |
+| `desk_018` cron timeout | **Skip.** No migration to raise the `pg_net` timeout. | `desk-cron-ask` waits at most ~200s under `desk_018`'s 240s ceiling. A longer scheduled turn is recorded there as timed out, yet `desk-ask` carries on and still archives the answer in the thread. | Timed-out scheduled asks are actually seen and matter. |
+| Shared `_shared/` edge module | **Skip.** Each edge function stays one self-contained file. | Deploys are one function per call from a single file, and the shared logic (the day-% baseline, `NY_DATE`) is kept in step by the load-bearing rules above rather than by a shared import. | A bug traced to the copies drifting apart. |
+| Splitting `scripts/app.js` | **Skip.** | No user-visible gain for a large change; the topic files under `docs/architecture/` already map it. | The file blocks a feature that cannot be done in place. |
+| LIVE lamp colour | **Stays green.** | `--color-status-live` is `#177C4B` (light) and `#2ecb57` (dark charts scope). It is its own token, not `--color-gain`, so a data-state light never moves with, or is read as, a gain. | The owner asks for a different colour: change the token, nothing else. |
 
 ## Owner Communication Preferences
 - **Explanations of how things work (data flows, architecture, processes):
