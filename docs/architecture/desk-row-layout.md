@@ -135,9 +135,8 @@ How the desk row (Markets | News | Ask | Economy), the accounts block at the bot
   that was asked for** and it stays; only the mechanism for reaching the rest
   changed. NO `overscroll-behavior` here, so the last position chains on to
   scrolling the page — the same configuration `#newsList` uses, and the one
-  that avoids the wheel-eating fault. This is the one place a scrollbar beat
-  the paging idiom: the watchlist columns keep theirs, because there the wheel
-  had nowhere to chain from six short containers. Capping the whole
+  that avoids the wheel-eating fault. (The watchlist columns were paged by this same idiom until 2026-09-30, when the
+  watchlists went back to horizontal bands and the paging was deleted.) Capping the whole
   accounts column was built first and is WRONG — the header takes most of a
   short column, so the cards themselves were left a **31px sliver**, which stops
   the growth by hiding the thing the panel exists for. Three rows rather than a
