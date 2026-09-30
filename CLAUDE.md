@@ -122,17 +122,18 @@ its topic file** — the reasoning behind each rule is there, not here.
     Treasury same-day tail is dormant, opt-in per row); roster in
     `config/econ-indicators.json`; spans are slices of one cached history; it tells the
     client when to ask again (`refreshInSec`, tight around 08:30 and the afternoon
-    yield window). **Built, NOT deployed.**
+    yield window). **Deployed 2026-09-30** (v1, `verify_jwt` ON, from `f78a03f`).
     → details: `docs/architecture/economy-panel.md`
   - **Deploying** (owner approval required every time): the Supabase MCP
     `deploy_edge_function`, one function per call, **`verify_jwt` preserved** — it is set
-    ON for `desk-maps`/`desk-heatmap`/`desk-watchlist`/`desk-ibkr-sync`/`desk-cron-ask`
+    ON for `desk-maps`/`desk-heatmap`/`desk-watchlist`/`desk-ibkr-sync`/`desk-cron-ask`/`desk-econ`
     and OFF for `desk-ask`/`quote-proxy`/`desk-market`/`desk-charts`/`desk-news`; the
     flags live nowhere else, so read `list_edge_functions` first. Last full deploy
     2026-09-30 from `d0ca48e`; rollback = redeploy that file from `dd7cf5f` (the
-    pre-audit source live matched) with the same flag. `desk-econ` is not deployed yet;
-    when it is, `verify_jwt` ON like `desk-maps`/`desk-heatmap`, smoke-tested with the anon
-    key plus the site Origin.
+    pre-audit source live matched) with the same flag. `desk-econ` (new, v1, 2026-09-30,
+    owner-approved) is also `verify_jwt` ON and has no earlier version to roll back to;
+    taking it out of service means deleting it (owner approval), after which the panel
+    lamps STALE with an empty state.
     → details: `docs/architecture/edge-feeds-and-heatmap.md` (Deploying)
 - `supabase/migrations/` — `desk_001`–`desk_006` were applied out-of-band and are
   RECONSTRUCTED from the live catalog (not the original text; `desk_003_seed` is a

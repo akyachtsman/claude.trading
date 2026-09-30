@@ -68,6 +68,17 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   stubbed `fetch`, settable clock, real FRED captures + constructed Treasury
   fixtures under `tools/fixtures/econ/`); `--mutants` proves 27 single-line
   mutants are each caught (27/27 on 2026-09-30).
-- **Deploying.** Not deployed. Suggested `verify_jwt` **ON**, like `desk-maps` /
-  `desk-heatmap` / `desk-watchlist`, which serve the browser's `deskPost` headers
-  today; smoke-test with the anon key AND `Origin: https://akyachtsman.github.io`.
+- **Deploying.** Deployed 2026-09-30 (owner-approved, project
+  `kwugzhyfjevzwgplhtsd`, version 1, `verify_jwt` **ON**, like `desk-maps` /
+  `desk-heatmap` / `desk-watchlist`, which serve the browser's `deskPost` headers).
+  Smoke test after deploy, anon key + `Origin: https://akyachtsman.github.io`:
+  POST `{range:'3m'}` 200 with 7 rows, all `source:"fred"` (zero Treasury calls);
+  `{range:'bogus'}` and a non-JSON body degrade to `3m`; `1w`/`1y`/`5y` slice the cached
+  history; no Origin and a foreign Origin 403; GET 405; OPTIONS 200 with the allowlisted
+  `Access-Control-Allow-Origin`; no `Authorization` header 401 (the `verify_jwt` gate).
+  Values agreed with direct FRED pulls (10Y 5.24 on 2026-09-28; CPI YoY 3.397 against
+  the 3.4 served). Logs read clean (no 5xx). Until `config/econ-indicators.json` is on
+  Pages (first merge to `main`) the function reports `roster.source:"default"` — the
+  built-in roster is identical, so the rows are the same.
+  The repo spells the BOM strip `/^\uFEFF/`; the payload sent used the same escape, and
+  the read-back may show the literal character instead — the same regex either way.

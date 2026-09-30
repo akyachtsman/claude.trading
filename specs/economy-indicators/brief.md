@@ -1,6 +1,6 @@
 # Brief — Economy indicators panel
 
-> **STATUS (2026-09-30): BACKEND BUILT, NOT DEPLOYED; UI NOT STARTED.** `desk-econ`, its roster and its checks are committed; the panel is `tasks.md`. Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
+> **STATUS (2026-09-30): BACKEND BUILT AND DEPLOYED (v1, `verify_jwt` ON); UI IN PROGRESS.** `desk-econ`, its roster and its checks are committed and the function is live; the panel is `tasks.md`. Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
 
 ## Problem (one sentence)
 The desk shows prices but none of the macro numbers the owner trades against — Treasury yields, unemployment, inflation — so reading them means leaving the desk.
