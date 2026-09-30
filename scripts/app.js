@@ -7729,7 +7729,6 @@ function econSeenRead() {
   } catch { return {}; }
 }
 let econSeen = econSeenRead();
-const econSeenSave = () => { try { localStorage.setItem(ECON_SEEN_KEY, JSON.stringify(econSeen)); } catch { /* private mode */ } };
 /* "Pending" = a row flagged NEW by the SERVER's `changed` hint in a browser that had no record of it. The hint is
    per-isolate and transient (the next refresh says `changed:false` for the very same reading), so without this the
    next poll would see "no record, not changed" = first look, seed the record silently, and a NEW chip the user
@@ -7741,7 +7740,25 @@ function econPendingRead() {
   } catch { return {}; }
 }
 let econPending = econPendingRead();
-const econPendingSave = () => { try { localStorage.setItem(ECON_PENDING_KEY, JSON.stringify(econPending)); } catch { /* private mode */ } };
+/* Persist only what THIS tab changed, merged into a FRESH read of the stored map: two tabs that acknowledge different
+   rows would otherwise overwrite each other with their stale whole-object copies and an acknowledged row would come back
+   as NEW on reload (Codex review, PR #294). The `storage` event below keeps the other tab's memory in step. Demo state is
+   NEVER persisted: its synthetic readings would make a real first visit read every row as NEW. */
+function econPersist(key, set, del) {
+  if (DESK.mode === 'demo') return;
+  try {
+    const cur = JSON.parse(localStorage.getItem(key));
+    const base = cur && typeof cur === 'object' && !Array.isArray(cur) ? cur : {};
+    Object.assign(base, set);
+    for (const id of del || []) delete base[id];
+    localStorage.setItem(key, JSON.stringify(base));
+  } catch { /* private mode */ }
+}
+window.addEventListener('storage', (e) => {
+  if (DESK.mode === 'demo' || (e.key !== null && e.key !== ECON_SEEN_KEY && e.key !== ECON_PENDING_KEY)) return;
+  econSeen = econSeenRead(); econPending = econPendingRead();
+  if (econState.shown) renderEcon(econState.shown);   /* an acknowledgement made in another tab clears the chip here too */
+});
 const econSig = r => r.asOf + '|' + r.value;
 
 const econState = {
@@ -7926,15 +7943,14 @@ function econRowIsNew(r) {
 }
 function econAck(ids) {
   const rows = (econState.shown && econState.shown.rows) || [];
-  let dirty = false, pendDirty = false;
+  const seenSet = {}, pendDel = [];
   for (const r of rows) {
     if (!ids.includes(r.id) || !econRowIsNew(r)) continue;
-    econSeen[r.id] = econSig(r);
-    dirty = true;
-    if (Object.hasOwn(econPending, r.id)) { delete econPending[r.id]; pendDirty = true; }
+    econSeen[r.id] = seenSet[r.id] = econSig(r);
+    if (Object.hasOwn(econPending, r.id)) { delete econPending[r.id]; pendDel.push(r.id); }
   }
-  if (dirty) econSeenSave();
-  if (pendDirty) econPendingSave();
+  if (Object.keys(seenSet).length) econPersist(ECON_SEEN_KEY, seenSet);
+  if (pendDel.length) econPersist(ECON_PENDING_KEY, {}, pendDel);
   for (const li of document.querySelectorAll('#econList .econ-row')) {
     if (!ids.includes(li.dataset.id)) continue;
     const chip = li.querySelector('.econ-new');
@@ -7999,20 +8015,20 @@ function renderEcon(payload) {
   /* the charts belong to the span they were fetched for: after a span change whose reply never came,
      the old rows keep their values but NOT a chart labelled with the wrong window */
   const chartsMatch = !payload || !payload.range || payload.range === econTf;
-  let seeded = false, pendDirty = false;
+  const seededSet = {}, pendSet = {};
   for (const r of rows) {
     if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && !Object.hasOwn(econSeen, r.id)) {
       if (r.changed === true) {
         /* the server says it changed and this browser has no record: NEW until acknowledged, even after the hint goes quiet */
-        if (!Object.hasOwn(econPending, r.id)) { econPending[r.id] = econSig(r); pendDirty = true; }
+        if (!Object.hasOwn(econPending, r.id)) econPending[r.id] = pendSet[r.id] = econSig(r);
       } else if (!Object.hasOwn(econPending, r.id)) {
-        econSeen[r.id] = econSig(r); seeded = true;   /* first look: record it, do not announce it */
+        econSeen[r.id] = seededSet[r.id] = econSig(r);   /* first look: record it, do not announce it */
       }
     }
     list.appendChild(econRow(r, chartsMatch));
   }
-  if (seeded) econSeenSave();
-  if (pendDirty) econPendingSave();
+  if (Object.keys(seededSet).length) econPersist(ECON_SEEN_KEY, seededSet);
+  if (Object.keys(pendSet).length) econPersist(ECON_PENDING_KEY, pendSet);
 
   paintEconLamp();
   paintEconStamp();
@@ -8054,7 +8070,7 @@ function econRow(r, chartsMatch) {
   /* the chart, to the RIGHT of the value block */
   const chart = el('div', 'econ-chart');
   const pts = (Array.isArray(r.points) ? r.points : []).filter(p => Array.isArray(p) && Number.isFinite(fmtToNum(p[1])));
-  const svg = missing || !chartsMatch ? null : econSpark(pts, (r.label || r.id) + ', ' + pts.length + ' readings over ' + econTf.toUpperCase());
+  const svg = missing || !chartsMatch ? null : econSpark(pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econTf.toUpperCase()));
   if (svg) chart.appendChild(svg);
   else chart.appendChild(el('span', 'econ-noline'));
   if (svg) {
@@ -8167,6 +8183,9 @@ document.addEventListener('visibilitychange', econVisibility);
 
 /* boot: demo paints the seeded rows once (no network); live paints the loading state and starts polling */
 function startEcon() {
+  /* demo's acknowledgement state is session-only and starts empty; live reads what this browser has stored */
+  econSeen = DESK.mode === 'demo' ? {} : econSeenRead();
+  econPending = DESK.mode === 'demo' ? {} : econPendingRead();
   if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
   if (!DESK_DB.url) return;
   renderEcon(null);

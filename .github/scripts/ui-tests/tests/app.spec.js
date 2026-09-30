@@ -5891,6 +5891,10 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await expect(page.locator('#econStamp'), 'the panel carries an as-of stamp (the design signature)').toHaveText(/Last updated/);
   let rows = await rowsInfo();
   expect(rows.map((r) => r.id), 'the seven default indicators, in order').toEqual(IDS);
+  // demo's acknowledgement state is session-only (Codex review, PR #294): its synthetic readings must never reach the keys a REAL
+  // visit reads, or the first live visit afterwards would mark all seven indicators NEW
+  expect(await page.evaluate(() => [localStorage.getItem('econ_seen_v1'), localStorage.getItem('econ_pending_v1')]),
+    'demo persists no acknowledgement state').toEqual([null, null]);
   expect(rows.map((r) => r.label)).toEqual(['2Y Treasury', '10Y Treasury', '20Y Treasury', 'Unemployment', 'CPI YoY', 'PCE YoY', 'Core PCE YoY']);
   for (const r of rows) {
     const who = `[${r.id}]`;
@@ -5964,6 +5968,12 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     rows = await rowsInfo();
     for (const r of rows.filter((x) => x.cadence === 'monthly')) expect(r.note, `[${r.id}] @${tf}: the caption says why half a year is drawn`).toMatch(/6 latest/);
     for (const r of rows.filter((x) => x.cadence === 'daily')) expect(r.note, `[${r.id}] @${tf}: a daily row has no pointsNote`).toBeNull();
+    // the chart's ACCESSIBLE name says what is drawn (Codex review, PR #294): a monthly row's 6 latest readings are not "over 1W"
+    const names = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-chart svg').getAttribute('aria-label')]));
+    for (const [id, cadence, name] of names) {
+      if (cadence === 'monthly') { expect(name, `[${id}] @${tf}: a fallback chart names the fallback`).toMatch(/\(monthly - 6 latest\)/); expect(name, `[${id}] @${tf}: and does not claim the short span`).not.toMatch(/ over /); }
+      else expect(name, `[${id}] @${tf}: a daily chart names its span`).toContain(` over ${tf.toUpperCase()}`);
+    }
     for (const r of rows) expect(r.hasSvg, `[${r.id}] @${tf}: still drawn`).toBe(true);
   }
   await pick('6m');
@@ -6300,9 +6310,15 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     document.querySelector('#econList .econ-row[data-id="unrate"]').scrollIntoView({ block: 'center' });
   });
   await expect.poll(timers, 'rows in view start their timers').toBe(2);
+  // another tab acknowledges a different row meanwhile (Codex review, PR #294): this tab must MERGE its acknowledgements into what is
+  // stored, not overwrite the whole record with its own stale copy
+  await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('econ_seen_v1') || '{}'); c.__other = 'from another tab'; localStorage.setItem('econ_seen_v1', JSON.stringify(c)); });
   await page.clock.runFor(61_000);
   await expect(page.locator('#econList .econ-new'), 'NEW clears by itself after ~60s IN VIEW').toHaveCount(0);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('econ_seen_v1')).cpi), 'and is remembered').toBe('2099-01-01|9.9');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('econ_seen_v1')).__other), 'without erasing what another tab stored').toBe('from another tab');
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'econ_seen_v1' })));
+  expect(await page.evaluate(() => econSeen.__other), 'and the storage event brings the other tab\'s record into this tab\'s memory').toBe('from another tab');
 
   // 7h. a span change asks for the new range, dims the old charts meanwhile, and never pushes a due poll out
   await page.evaluate(() => { window.__rowsFn = null; });

@@ -159,6 +159,13 @@ width).
   view drops its timer, and a poll's re-render does NOT restart one — a rebuilt row the observer has
   not yet reported on (`econState.known`) keeps its running timer. Without `IntersectionObserver`
   every row counts as in view.
+  **Storage** (Codex, PR #294): `econPersist()` writes only the ids THIS tab changed, merged into a
+  fresh read of the stored map, so two tabs acknowledging different rows do not overwrite each
+  other; a `storage` listener re-reads both maps and re-renders, so an acknowledgement made in
+  another tab clears the chip here. **Demo state is never persisted** (session-only, empty at
+  `startEcon`): its synthetic readings would otherwise make the first real visit read every row
+  as NEW. Each chart's accessible name says what is drawn — `pointsNote` ("monthly - 6 latest")
+  when the span fell back, else "over 3M" — never a short span over a half-year of readings.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
   real FRED rows. If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
