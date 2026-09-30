@@ -265,7 +265,7 @@ function shiftDays(iso: string, k: number): string {
 // `2025-10-01,` for the shutdown month's CPI and unemployment). Number('') is 0,
 // so both markers are caught BEFORE Number(): a hole is a hole, never a 0% yield.
 export function parseFredCsv(text: string): Obs[] {
-  const lines = String(text).replace(/^﻿/, '').split(/\r?\n/);
+  const lines = String(text).replace(/^\uFEFF/, '').split(/\r?\n/);
   const head = (lines[0] ?? '').split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
   if (head.length < 2 || !/^(observation_date|date)$/i.test(head[0])) throw new Error('FRED: not a series CSV');
   const byDate = new Map<string, number>();
@@ -313,7 +313,7 @@ function treasuryDate(s: string | undefined): string | null {
 // dated after `today` (NY) is dropped (a day/month swap produces exactly that),
 // as is any value outside a plausible yield range.
 export function parseTreasuryCsv(text: string, today: string): Map<string, Obs[]> {
-  const lines = String(text).replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
+  const lines = String(text).replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.trim());
   const head = splitCsv(lines[0] ?? '');
   if ((head[0] ?? '').toLowerCase() !== 'date') throw new Error('Treasury: not a par-yield CSV');
   const idx = new Map(head.map((h, i) => [h, i] as [string, number]));
