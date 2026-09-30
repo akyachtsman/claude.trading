@@ -15,8 +15,11 @@
   (not LIVE) once the market is shut — LIVE shows ONLY while the session is open
   and quotes are streaming (owner ruling 2026-07-22); STALE still flags a genuinely
   stalled open-hours poller, and non-price feeds keep LIVE/STALE by fetch. (A
-  future extended-hours quote feed would widen the LIVE window.) Supabase RPC fetch
-  wrappers. **Every clock on the desk is pinned to Pacific** (`DESK_TZ`, owner
+  future extended-hours quote feed would widen the LIVE window.) Every backend
+  call (RPC and edge function alike) goes through `deskPost()` — POST plus the
+  anon-key headers, returning fetch's own promise, so keep it NON-async or every
+  wrapper's settle timing shifts; `deskRpcOk()` maps the PIN RPCs whose panel only
+  needs "did it work" to `{ok:false}`. **Every clock on the desk is pinned to Pacific** (`DESK_TZ`, owner
   ruling 2026-07-22):
   stamps via `fmtClock`, intraday bar times via `fmtBarT`, news row times via
   `newsWhen` — never the viewer's locale, never raw UTC. The trading calendar is ONE

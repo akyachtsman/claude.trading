@@ -206,7 +206,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* ask-the-desk (PIN-gated Claude Q&A) */
 /* height is capped by the panel (col-rail stretches to the Markets tile); the
    thread flex-fills and scrolls inside — no hard max-height here */
-.ask-thread { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; margin: 0 0 var(--space-3); }
+.ask-thread { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-3); }
 .ask-thread:empty { display: none; }
 .ask-q {
   font: 500 var(--font-sm)/1.5 var(--font-sans); color: var(--color-text-primary); margin: 0;
@@ -265,8 +265,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    No `overscroll-behavior` of any kind here: there is nothing to scroll, and a
    container that cannot scroll is exactly where `contain` eats the wheel. */
 .wl-strip .mkt-group-tiles {
-  max-width: none; flex-direction: column; flex-wrap: nowrap;
-  overflow: visible; padding-bottom: 0;
+  max-width: none; flex-direction: column; padding-bottom: 0;
 }
 /* Placeholder for a list with no symbols. Height is a tile's height so the
    band keeps its shape and stays a drop target; muted and italic so it never

@@ -139,9 +139,10 @@ const REST_TIMEOUT_MS = 15000;     // PostgREST
    legitimate 121s+ call (adaptive thinking, high effort, web_search) used to be
    thrown away whole at the old flat 120s. So each model call gets whatever is
    LEFT, up to MODEL_CALL_MAX_MS, and the loop stops cleanly once a further call
-   could not finish. desk-cron-ask waits ~330s for this function, so a scheduled
-   turn that runs right up to this deadline is recorded there as a timed-out ask
-   (its answer still lands in the thread). */
+   could not finish. desk-cron-ask waits at most ~200s for this function (it is
+   clamped under pg_net's 240s ceiling), so a scheduled turn longer than that is
+   recorded there as a timed-out ask while this function carries on to its own
+   deadline and still archives the answer in the thread. */
 const RUN_BUDGET_MS = 350_000;
 const MODEL_CALL_MAX_MS = 150_000;
 const MIN_CALL_BUDGET_MS = 20_000;

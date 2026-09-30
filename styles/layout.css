@@ -158,11 +158,11 @@
        zero-height in-flow child is what restores the width contribution, and it
        adds nothing visible and no height for the out-of-flow panel to resolve
        against. */
-    .top-band > .col-news { position: relative; align-self: stretch; flex: 0 0 300px; max-width: 340px; }
+    .top-band > .col-news { position: relative; align-self: stretch; }
     .top-band > .col-news::before { content: ''; display: block; width: 300px; height: 0; }
     .top-band > .col-news > .panel { position: absolute; inset: 0; display: flex; flex-direction: column; margin: 0; }
     .top-band > .col-news > .panel > .panel-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-    .top-band > .col-news #newsList { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+    .top-band > .col-news #newsList { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
   }
 
@@ -995,9 +995,8 @@
   .heat-foot .chart-data summary { min-height: 24px; }
   .heat-note:empty { display: none; }
   .heat-note { margin: var(--space-1) 0 0; }
-  .heat-legend { min-height: 20px; }
   #heatmapSvg text { pointer-events: none; }
-  .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
+  .heat-legend { min-height: 20px; display: flex; align-items: center; gap: 6px; margin-top: var(--space-2); font: 400 var(--font-xs)/1.4 var(--font-mono); color: var(--color-text-secondary); flex-wrap: wrap; }
   /* the peer list shows EVERY member of the framed group (owner ruling
      2026-07-14) — tall groups scroll; pointer-events restored so the wheel
      works while hovering the tip */
