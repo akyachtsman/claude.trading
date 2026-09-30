@@ -7701,7 +7701,7 @@ async function refreshNowClicked() {
    Live is REAL DATA OR NOTHING: a failed poll keeps the last good rows under a
    STALE lamp, or (none yet) an honest empty state — demo rows exist only under
    ?demo=1, and ?demo=1 never calls the network for this panel. */
-const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1';
+const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1', ECON_PENDING_KEY = 'econ_pending_v1';
 const ECON_TFS = [['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
   ['6m', '6M', '6 months'], ['1y', '1Y', '1 year'], ['5y', '5Y', '5 years']];
 const ECON_DEFAULT_TF = '3m';
@@ -7730,6 +7730,18 @@ function econSeenRead() {
 }
 let econSeen = econSeenRead();
 const econSeenSave = () => { try { localStorage.setItem(ECON_SEEN_KEY, JSON.stringify(econSeen)); } catch { /* private mode */ } };
+/* "Pending" = a row flagged NEW by the SERVER's `changed` hint in a browser that had no record of it. The hint is
+   per-isolate and transient (the next refresh says `changed:false` for the very same reading), so without this the
+   next poll would see "no record, not changed" = first look, seed the record silently, and a NEW chip the user
+   never saw would vanish (Codex review, PR #294). It stays pending until the row is acknowledged. */
+function econPendingRead() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ECON_PENDING_KEY));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch { return {}; }
+}
+let econPending = econPendingRead();
+const econPendingSave = () => { try { localStorage.setItem(ECON_PENDING_KEY, JSON.stringify(econPending)); } catch { /* private mode */ } };
 const econSig = r => r.asOf + '|' + r.value;
 
 const econState = {
@@ -7909,18 +7921,20 @@ setInterval(relampEcon, STAMP_TICK_MS);
    A chip clears on hover/click of its row, or once ITS ROW has been in view ~60s with the tab visible. */
 function econRowIsNew(r) {
   if (r.status === 'missing' || !Number.isFinite(fmtToNum(r.value)) || !r.asOf) return false;   /* no reading, nothing to be new */
-  if (!Object.hasOwn(econSeen, r.id)) return r.changed === true;
+  if (!Object.hasOwn(econSeen, r.id)) return r.changed === true || Object.hasOwn(econPending, r.id);
   return econSeen[r.id] !== econSig(r);
 }
 function econAck(ids) {
   const rows = (econState.shown && econState.shown.rows) || [];
-  let dirty = false;
+  let dirty = false, pendDirty = false;
   for (const r of rows) {
     if (!ids.includes(r.id) || !econRowIsNew(r)) continue;
     econSeen[r.id] = econSig(r);
     dirty = true;
+    if (Object.hasOwn(econPending, r.id)) { delete econPending[r.id]; pendDirty = true; }
   }
   if (dirty) econSeenSave();
+  if (pendDirty) econPendingSave();
   for (const li of document.querySelectorAll('#econList .econ-row')) {
     if (!ids.includes(li.dataset.id)) continue;
     const chip = li.querySelector('.econ-new');
@@ -7985,14 +7999,20 @@ function renderEcon(payload) {
   /* the charts belong to the span they were fetched for: after a span change whose reply never came,
      the old rows keep their values but NOT a chart labelled with the wrong window */
   const chartsMatch = !payload || !payload.range || payload.range === econTf;
-  let seeded = false;
+  let seeded = false, pendDirty = false;
   for (const r of rows) {
-    if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && r.changed !== true && !Object.hasOwn(econSeen, r.id)) {
-      econSeen[r.id] = econSig(r); seeded = true;   /* first look: record it, do not announce it */
+    if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && !Object.hasOwn(econSeen, r.id)) {
+      if (r.changed === true) {
+        /* the server says it changed and this browser has no record: NEW until acknowledged, even after the hint goes quiet */
+        if (!Object.hasOwn(econPending, r.id)) { econPending[r.id] = econSig(r); pendDirty = true; }
+      } else if (!Object.hasOwn(econPending, r.id)) {
+        econSeen[r.id] = econSig(r); seeded = true;   /* first look: record it, do not announce it */
+      }
     }
     list.appendChild(econRow(r, chartsMatch));
   }
   if (seeded) econSeenSave();
+  if (pendDirty) econPendingSave();
 
   paintEconLamp();
   paintEconStamp();

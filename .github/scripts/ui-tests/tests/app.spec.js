@@ -6054,7 +6054,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await page.evaluate(() => {
     DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
     DESK.mode = 'live';
-    localStorage.removeItem('econ_seen_v1'); econSeen = {};
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
     // the real deskEcon's request and failure mapping (before it is stubbed): the function has no 1D, `force` only when true
     const realFetch = window.fetch;
     window.__wire = [];
@@ -6263,7 +6263,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
 
   // 7g. NEW: the first look seeds silently except rows the server says changed; data that moves is NEW; it clears
   await setMode('ok');
-  await page.evaluate(() => { localStorage.removeItem('econ_seen_v1'); econSeen = {}; });
+  await page.evaluate(() => { localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {}; });
   await refresh();
   rows = await rowsInfo();
   expect(rows.filter((r) => r.isNew).map((r) => r.id), 'a fresh browser: only the rows the server flagged `changed`').toEqual(['ust10y', 'unrate']);
@@ -6273,6 +6273,13 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-new'), 'hovering its row clears NEW').toHaveCount(0);
   await refresh();
   expect((await rowsInfo()).find((r) => r.id === 'ust10y').isNew, 'and it stays cleared across the next poll, although the server still says changed').toBe(false);
+  // the server's `changed` hint is per-isolate and TRANSIENT: the next refresh says changed:false for the very same reading. A row
+  // flagged NEW and never acknowledged must keep its chip (and not be seeded as a silent first look) — Codex review, PR #294
+  await page.evaluate(() => { window.__rowsFn = (rs) => rs.map((r) => ({ ...r, changed: false })); });
+  await refresh();
+  expect((await rowsInfo()).find((r) => r.id === 'unrate').isNew, 'unemployment stays NEW after the hint goes quiet (nobody has acknowledged it)').toBe(true);
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('econ_seen_v1') || '{}')).includes('unrate')), 'and it was not seeded as a silent first look').toBe(false);
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('econ_pending_v1') || '{}'))), 'it is pending in storage, so a reload keeps it too').toEqual(['unrate']);
   await page.evaluate(() => { window.__rowsFn = (rs) => rs.map((r) => (r.id === 'cpi' ? { ...r, asOf: '2099-01-01', value: 9.9, prev: r.value, delta: 0.1, changed: false } : r)); });
   await setMode('ok');
   await refresh();

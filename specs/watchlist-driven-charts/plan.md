@@ -2,7 +2,7 @@
 
 > **STATUS (2026-09-29): SUPERSEDED IN PART — CLAUDE.md "Application Architecture" is authoritative; this spec is kept as history.**
 >
-> Overhaul 1's manual column (40-name stack with a per-row x, add box and pinning) shipped in PR #248 and was replaced by the 100-slot editable SYMBOL column (PR #282, 2026-08-26); FR-2 to FR-6 and the manual-column parts of the plan no longer describe the code. Overhaul 2 (the Watchlists panel above the charts, as vertical columns) is still current.
+> Overhaul 1's manual column (40-name stack with a per-row x, add box and pinning) shipped in PR #248 and was replaced by the 100-slot editable SYMBOL column (PR #282, 2026-08-26); FR-2 to FR-6 and the manual-column parts of the plan no longer describe the code. Overhaul 2 (the Watchlists panel above the charts) is still current EXCEPT that its vertical-column layout is **SUPERSEDED** (owner request 2026-09-30): each list is a horizontal BAND again, the column and paging requirements are withdrawn and historical, and `docs/architecture/watchlists-panel.md` is authoritative.
 
 Reads `spec.md`. HOW only. Constitution: the inherited directives + `CLAUDE.md`.
 

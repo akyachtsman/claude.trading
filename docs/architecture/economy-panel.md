@@ -148,7 +148,10 @@ width).
   rows (first load: empty state + `Loading`, then `STALE` and a 60s retry if it fails).
 - **NEW.** `econ_seen_v1` = `{ id: 'asOf|value' }`. A row is NEW when its newest reading
   differs from the recorded one, or — with nothing recorded — when the server says `changed`
-  (per-isolate best effort, so never the only source). The first look seeds silently (no wall
+  (per-isolate best effort, so never the only source). That hint is TRANSIENT (the next refresh
+  says `changed:false` for the same reading), so a hinted row is also written to `econ_pending_v1`
+  and stays NEW until acknowledged; without it the next poll would read "no record, not changed"
+  as a first look and seed it silently, losing a chip nobody had seen (Codex, PR #294). The first look seeds silently (no wall
   of chips). A chip clears on hover/click of its row, or once ITS ROW has been IN VIEW for ~60s with
   the tab visible (Codex, PR #294: a chip on a row nobody has scrolled to must not be cleared
   unseen). Visibility is an `IntersectionObserver` (half the row; it accounts for the page scroll
