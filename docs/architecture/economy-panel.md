@@ -31,6 +31,15 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   spine = `stale` or `missing`), a validated print is kept 72h so a flaky host cannot flip a
   yield back to T-2, and a failed fetch (5xx, block page, timeout) backs off 10 min. Columns
   are looked up BY NAME (Treasury inserted `1.5 Month` in 2025, shifting every later column).
+  **Known residuals** (found when the tail went ON, 2026-09-30; accepted, not fixed): (a) the
+  72h "never flip back" store is per server INSTANCE, so a fresh instance whose own Treasury
+  fetch fails can serve FRED's older date while a warm one serves today's — a yield row can
+  then step back a day between two replies, and its NEW chip (keyed on date + value) can
+  re-flag; the clean fix is a client rule that ignores a daily row whose date goes backwards,
+  or a shared store; (b) a single date where Treasury and FRED disagree (a revision FRED has
+  not picked up) makes that row drop the whole Treasury tail until FRED catches up; (c)
+  `home.treasury.gov` may refuse data-centre addresses (403 "Access Denied") or be slower
+  than the 5s timeout — either is a silent FRED fallback visible only in the function log.
 - **FRED holes are holes.** The documented missing marker is `.`, but MEASURED
   2026-09-30 the endpoint writes an EMPTY field (`2026-09-07,` Labor Day;
   `2025-10-01,` the shutdown month for CPI and UNRATE). `Number('')` is `0`, so
