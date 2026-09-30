@@ -146,3 +146,34 @@ The anon-callable feed functions (`desk-market`, `desk-news`, `desk-heatmap`, `d
   report `hasPrePostMarketData:false` and simply repeat their close (^GSPC held
   7428.78 flat from 16:00 to 17:10), which is why the Markets index tiles stay
   at-close and the Markets chart keeps fetching regular-session only.
+
+## Deploying (added 2026-09-30, after the audit deploy)
+
+The edge functions are single-file (`supabase/functions/<name>/index.ts`, no shared module) and
+deploy through the Supabase MCP `deploy_edge_function`, one call per function, with the file
+content passed whole. There is no Deno here, so nothing is type-checked locally.
+
+What made the 2026-09-30 deploy safe, and should be repeated:
+
+1. **Read the live state first.** `list_edge_functions` gives each function's `verify_jwt`
+   and version; `get_edge_function` gives the live source. Diff the live source against the
+   repo commit you believe is deployed BEFORE overwriting it (on 2026-09-30 `desk-heatmap`
+   was byte-identical to the pre-audit repo, which proved the deploy delta was exactly the
+   reviewed diff).
+2. **Preserve `verify_jwt`.** ON: `desk-maps`, `desk-heatmap`, `desk-watchlist`,
+   `desk-ibkr-sync`, `desk-cron-ask`. OFF: `desk-ask`, `quote-proxy`, `desk-market`,
+   `desk-charts`, `desk-news`. The tool defaults to ON; deploying an OFF function without
+   passing `false` would 401 every browser call.
+3. **Syntax-check the source** (`esbuild --loader=ts < index.ts` parses it), **then verify what
+   was actually sent**: compile the repo file and the deployed payload with `esbuild --minify`
+   and compare — comments are stripped, so any transcription slip in code shows up. Do this
+   for every function; a one-character typo in a 56 KB file otherwise ships silently.
+4. **Deploy public feeds first, smoke-test each, PIN/cron functions last.** Public feeds can be
+   called with the anon key and the site `Origin`; the cron-secret and PIN functions can only
+   be boot-tested (401 without the secret, 405 on GET, 400/401 on `desk-ask`) — their real
+   runs are the first live exercise.
+5. **Read the logs afterwards** (`query_logs`, source `function_edge_logs`, group by
+   `request.pathname`): no 5xx, and every 4xx should be one of your own guard tests.
+
+Rollback: redeploy the file from the last known-good commit (`dd7cf5f` for the audit deploy)
+with the same `verify_jwt`. Migrations are separate and are never part of a function deploy.

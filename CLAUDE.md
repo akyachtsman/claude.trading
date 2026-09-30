@@ -116,13 +116,25 @@ its topic file** — the reasoning behind each rule is there, not here.
     **`desk-cron-ask`** (the desk waking ITSELF up; `desk-ask` takes TWO auth paths). The
     scheduled `desk-brief` was retired 2026-07-23.
     → details: `docs/architecture/desk-ask-and-cron.md`
+  - **Deploying** (owner approval required every time): the Supabase MCP
+    `deploy_edge_function`, one function per call, **`verify_jwt` preserved** — it is set
+    ON for `desk-maps`/`desk-heatmap`/`desk-watchlist`/`desk-ibkr-sync`/`desk-cron-ask`
+    and OFF for `desk-ask`/`quote-proxy`/`desk-market`/`desk-charts`/`desk-news`; the
+    flags live nowhere else, so read `list_edge_functions` first. Last full deploy
+    2026-09-30 from `d0ca48e`; rollback = redeploy that file from `dd7cf5f` (the
+    pre-audit source live matched) with the same flag.
+    → details: `docs/architecture/edge-feeds-and-heatmap.md` (Deploying)
 - `supabase/migrations/` — `desk_001`–`desk_006` were applied out-of-band and are
   RECONSTRUCTED from the live catalog (not the original text; `desk_003_seed` is a
   data-free placeholder; `desk_005`'s and `desk_018`'s `cron.schedule` calls are commented out so a
   replay cannot point a scratch DB at the live functions). A replay of the directory
   has not been tested, and `list_migrations` plus PITR remain the authoritative
   history. `desk_007`–`019` each carry a `-- revert:` line. The files target a
-  Supabase project or branch (roles `anon`/`authenticated` must exist).
+  Supabase project or branch (roles `anon`/`authenticated` must exist). Two log/file
+  mismatches are benign and understood (checked 2026-09-30): live's log carries
+  `desk_014b_watchlist_version_never_null`, which `desk_014`'s file already folds in
+  (same function bodies), and `desk_015_chat_usage` has no log row but its
+  `desk_chat_memory.usage` column exists live (applied out-of-band).
 - `specs/` — one SDD artifact chain per feature (brief/spec/plan/tasks/design/analysis;
   index in `specs/README.md`). Each doc carries a STATUS banner; where a spec and
   this file disagree, this file is authoritative.
@@ -199,7 +211,7 @@ real-data rules stay in Project-Specific Coding Standards below.
   is an owner decision. The five
   public feed functions are anon-callable by design (public market data,
   rosters fixed server-side / in committed config — not open proxies);
-  unauthenticated invocations can burn free-tier quota, bounded by
+  unauthenticated invocations can burn function/egress quota, bounded by
   session-aware caches + single-flight. `quote-proxy` (owner ruling
   2026-07-14) takes an **arbitrary** ticker, so it is not roster-bounded like
   the five feeds; its guard is an **Origin allowlist** (site origin only) plus
@@ -289,11 +301,15 @@ real-data rules stay in Project-Specific Coding Standards below.
   door; but it does mean `CRON_SECRET` now unlocks the assistant as the owner,
   not just the sync jobs — treat it as a credential of the same weight as the
   PIN, and never expose it to a client or a repo.
-- **Supabase free-tier auto-pause runbook:** if live panels lamp STALE and
-  login fails, the project likely auto-paused — restore it from the Supabase
-  dashboard. Early-warning signals: the S14 canary failing in CI and
-  `cron.job_run_details` gaps. The IBKR Flex token expires **2027-06-14**
-  (renew in Client Portal → update the `IBKR_FLEX_TOKEN` function secret).
+- **Outage runbook (live panels lamp STALE and/or login fails):** the org is on the
+  **Pro plan** (verified 2026-09-30 via the Supabase MCP `get_organization`), and Pro
+  projects are not auto-paused for inactivity — the old "free-tier auto-pause" theory
+  does not apply. Check in order: the project's status in the Supabase dashboard
+  (a paused or unhealthy project is a billing/restore action), the edge-function logs
+  (`function_edge_logs`: 5xx or `WORKER_RESOURCE_LIMIT` per function), then upstream
+  Yahoo/Nasdaq reachability. Early-warning signals: the S14 canary failing in
+  `qa-live.yml` and `cron.job_run_details` gaps. The IBKR Flex token expires
+  **2027-06-14** (renew in Client Portal → update the `IBKR_FLEX_TOKEN` function secret).
 
 ## Project-Specific Coding Standards
 - **Live mode is REAL DATA OR NOTHING (owner ruling 2026-07-22):** no panel
