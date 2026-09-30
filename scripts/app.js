@@ -5939,8 +5939,15 @@ function renderCharts(data, lamp) {
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: WB.canvas }));  /* dark terminal canvas */
   /* Now cap the rail to the chart column (pane-bars + canvas) so a long
      watchlist scrolls internally and the chart — not the rail — defines the grid
-     row, so the panes fill to the frame bottom (owner 2026-07-19). */
-  if (rail) rail.style.maxHeight = ((paneBars ? paneBars.offsetHeight : 0) + H) + 'px';
+     row, so the panes fill to the frame bottom (owner 2026-07-19). Published as
+     a custom property, NOT an inline max-height: inline would beat the stacked
+     rail's 220px cap in layout.css, and below 861px the rail is ABOVE the chart,
+     so the chart's height is the wrong cap there. The 0px collapse above is
+     cleared here so the stylesheet decides. */
+  if (rail) {
+    rail.style.maxHeight = '';
+    rail.style.setProperty('--wb-rail-h', ((paneBars ? paneBars.offsetHeight : 0) + H) + 'px');
+  }
 
   const GAP = 16;
   /* crispEdges snaps every axis-aligned mark to the device-pixel grid, killing

@@ -389,3 +389,44 @@
   add the scrollbar to S40's budget. Note this is the same class as the
   `overscroll-behavior` trap below — a Chromium harness cannot reproduce it, so
   it must be reasoned about rather than tested here.
+
+## Rail height: two layouts, two caps (fixed 2026-09-30)
+
+`#wbSidebar` is capped differently depending on where it stands, and the two caps
+come from different places on purpose.
+
+| Layout | Where the rail is | Cap | Where it lives |
+|---|---|---|---|
+| Beside the chart (861px and up) | left of the pane bars | the chart column's height (pane bars + canvas) | `renderCharts` publishes it as the custom property `--wb-rail-h`; the base `#wbSidebar` rule reads `max-height: var(--wb-rail-h, 600px)` |
+| Stacked (860px and down) | ABOVE the chart | a fixed 220px | `#wbSidebar { max-height: 220px }` in the SECOND `@media (max-width: 860px)` block, after the base rule |
+
+Why it is a custom property and not an inline `max-height`: an inline style beats
+every stylesheet rule, so while `renderCharts` wrote the chart's height inline the
+stacked cap could not apply however it was written. The 220px rule also sat in the
+FIRST 860px block, BEFORE the base rule at equal specificity, so it lost on source
+order too — two independent reasons it did nothing, and nothing failed. Measured
+before the fix: a 460px list over a phone's chart (393px wide), 734px at 860px, and
+**891px over an iPad's** (810px). After: 220px at every stacked width (the slot list
+window inside it is 130px, about eight rows of the 100); the side rail (746px) and
+every chart height (356 / 451 / 815 / 658 / 670 / 694 across the widths measured) are unchanged.
+
+Keep three things:
+- **Never write the cap inline.** `renderCharts` collapses the rail with an inline
+  `max-height: 0px` BEFORE it measures (a long roster would otherwise stretch the
+  grid row and shorten the chart), and clears it (`''`) once `--wb-rail-h` is set.
+  Clearing it is what lets the stylesheet decide.
+- **The stacked rule must stay AFTER `#wbSidebar`'s base rule** — the same
+  equal-specificity source-order trap as the stacked column split and the
+  `.top-boxes` overrides.
+- **The 0px collapse stays**, because the chart's height is measured with the rail
+  out of the way. Removing it would make the stacked chart shorter by the rail's height.
+
+S53 guards it at each project's OWN width (desktop beside; tablet, mobile-chrome
+and iphone stacked): computed cap and rendered height in both layouts, and an
+EMPTY inline `max-height`. S45's deep-slot check seats slot 60 three-quarters of the
+way down the list's own scroll window rather than at a fixed offset, because the
+stacked list is only ~130px tall — a fixed "rail top 70px above the viewport"
+pushed the slot off screen there (the pointer landed on nothing). Falsified: with
+`overflow-anchor: none` removed S45 still fails (slot 58 under a pointer aimed at
+60) in both layouts.
+
