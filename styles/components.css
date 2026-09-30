@@ -234,18 +234,23 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    Rendered as TILES, not a table (owner request, same day): each list is a
    labelled band. The idiom came from the market strip, which this panel then
    replaced outright later the same day; the band/tile chrome still lives with
-   .mkt-group in index.html and these rules only widen it for a full-width
+   .mkt-group in styles/layout.css and these rules only widen it for a full-width
    panel. Class-plus-class beats those single-class rules on specificity, so
    source order is irrelevant. */
-/* EACH CATEGORY IS A COLUMN (owner request 2026-08-17), not a full-width band.
-   The list's name sits on top and its tiles stack downward; the columns run
-   left to right and wrap onto another row when they outgrow the panel. Every
-   list is still on screen at once, so the columns remain the navigation and
-   there are still no tabs.
-   The band MARKUP is untouched — .mkt-group > .wl-band-head + .mkt-group-tiles
-   — because drag-to-arrange, quick add, double-click removal, the detail window
-   and the create/delete controls all hang off it. Only the axis flips. */
-.wl-strip { display: flex; flex-direction: row; flex-wrap: wrap; align-items: flex-start; gap: 0; }
+/* EACH LIST IS A HORIZONTAL BAND again (owner request 2026-09-30: "I need each
+   of the watch list to go back to displaying horizontal. I don't like the
+   vertical anymore."). That WITHDRAWS two rulings: the 2026-08-17 one that made
+   every category a COLUMN, and the 2026-08-20 one that PAGED the columns — the
+   pager existed only to tame a column's vertical overflow, so it went with the
+   columns it served.
+   Bands stack top to bottom, ONE per list, every list still on screen at once
+   (the bands ARE the navigation, there are still no tabs). Inside a band the
+   head (name + controls) sits in a fixed block on the LEFT and the tiles run
+   in ONE row to its right.
+   The band MARKUP never changed — .mkt-group > .wl-band-head + .mkt-group-tiles
+   — so drag-to-arrange, quick add, double-click removal, the detail window and
+   the create/delete controls needed nothing; only the axis flipped back. */
+.wl-strip { display: flex; flex-direction: column; gap: 0; }
 /* ONE row per list (owner request 2026-07-29): tiles never wrap, the row scrolls
    sideways instead, and the scrollbar is always visible so it is obvious there
    is more list off-screen. `overflow-x: scroll` (not auto) keeps the track
@@ -257,95 +262,42 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    instead of the overlay one macOS/Chrome fade out by default. Setting both
    cancels the always-visible behaviour the owner asked for. Firefox has no
    equivalent override and keeps its own overlay bar. */
-/* Tiles now stack DOWNWARD and nothing scrolls sideways, so the always-visible
-   horizontal scrollbar that used to sit under every band is gone with the row
-   it belonged to — a persistent 8px track under each COLUMN would be chrome
-   marking an overflow that can no longer happen. The list is as long as it is
-   and the column simply runs to its end (FR-19: no inner height cap).
-   No `overscroll-behavior` of any kind here: there is nothing to scroll, and a
-   container that cannot scroll is exactly where `contain` eats the wheel. */
+/* `overscroll-behavior-x` — the AXIS-SCOPED form, and only that one. A sideways
+   swipe that runs off the end of a band must not chain to the browser's
+   back-navigation gesture, and a long list makes that swipe easy to make by
+   accident. The shorthand `overscroll-behavior: contain` stays banned on this
+   page (CLAUDE.md): on a container with nothing to scroll it eats the mouse
+   wheel. Here the VERTICAL axis is left at its default — `overflow-y: hidden`
+   gives the wheel nothing to grab on this box — so a wheel over a band always
+   moves the PAGE, and only a horizontal gesture is contained. No `-y` form and
+   no shorthand, ever: S42 reads both axes off the computed style. */
 .wl-strip .mkt-group-tiles {
-  max-width: none; flex-direction: column; padding-bottom: 0;
+  max-width: none; flex-wrap: nowrap; overflow-x: scroll; overflow-y: hidden;
+  overscroll-behavior-x: contain; padding-bottom: 2px;
 }
+.wl-strip .mkt-group-tiles::-webkit-scrollbar { height: 8px; }
+.wl-strip .mkt-group-tiles::-webkit-scrollbar-track { background: var(--color-bg); border-radius: 4px; }
+.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb { background: var(--color-border-hover); border-radius: 4px; }
+.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
 /* Placeholder for a list with no symbols. Height is a tile's height so the
    band keeps its shape and stays a drop target; muted and italic so it never
-   reads as a ticker. */
-/* `white-space: normal`, not the row layout's `nowrap`: the placeholder now
-   sits in a 92px column, where a single unbroken line would run straight out of
-   the panel. It keeps a tile's height so an empty list still holds its shape
-   and stays a drop target (FR-18). */
+   reads as a ticker. One line, never wrapped: it is a row again, and a wrapped
+   placeholder would make an empty band taller than a full one. */
 .wl-band-empty {
   display: flex; align-items: center;
-  min-height: 66px; padding: var(--space-2) var(--space-2);
+  min-height: 66px; padding: 0 var(--space-3);
   font-size: var(--font-xs); font-style: italic;
-  color: var(--color-text-secondary); white-space: normal;
+  color: var(--color-text-secondary); white-space: nowrap;
 }
-/* One column per list. 92px = a 66px tile + its 5px side padding either side +
-   the group's own var(--space-2) gutters, so a tile fills the column exactly
-   and the collapsed borders line up down the whole panel. */
-.wl-strip .mkt-group {
-  /* ONE column per list. A fixed width again — the wrap-into-sub-columns
-     experiment is gone (see .mkt-group-tiles). 100px rather than 92: the tile
-     box now carries a thin scrollbar, and the extra 8px keeps it off the
-     tiles instead of crowding a 74px tile. */
-  flex: 0 0 100px; flex-direction: column; align-items: stretch;
-  /* borders collapse SIDEWAYS now that the bands sit side by side; the -1px
-     top margin the stacked layout used would fuse the wrong pair of edges */
-  margin-top: 0; margin-left: -1px;
-}
-/* EACH LIST SCROLLS; the height is capped, not the list (owner ruling
-   2026-08-19: "All I wanted you to do was to cut the height in half instead of
-   splitting it. And since the lists have a scroll bar, I can always go through
-   all the list. I do not need to see the entire list of stocks at once.")
-
-   THIS SUPERSEDES the older rule that every list must be visible at once,
-   which is why the first attempt wrapped a long list into extra sub-columns
-   rather than scrolling it. That rule came from the days of a 600px cap on the
-   WHOLE panel, where a scrollbar hid entire lists behind it; a per-list scroll
-   hides nothing but the tail of one list, and the owner has said outright that
-   is what they want. The split was honouring an obsolete constraint over a
-   stated request.
-
-   A column is NOT wheel-scrollable (owner request 2026-08-20: "as soon as the
-   scroll ends, it scrolls up the screen … maybe we need a different mechanism
-   to move the symbols up and down"). `overflow: hidden` leaves the wheel with
-   nothing to grab anywhere on this panel, so it always moves the PAGE, and the
-   long columns are paged by the ▲/▼ in their header instead (wlSyncPaging).
-   That is the reason this is `hidden` rather than `overscroll-behavior:
-   contain`, which stops the chaining but is the exact rule that ate the mouse
-   wheel three times in August: it applies just as hard over a column with
-   nothing to scroll, and six of the seven columns here are that column.
-   Programmatic `scrollTop` still works on an `overflow: hidden` box, which is
-   what the paging drives — nothing is unreachable, only un-wheelable. No
-   scrollbar reservation is needed any more either: with no bar in any column,
-   the tiles are the same width whether the list overflows or not. */
-.wl-strip .mkt-group-tiles {
-  flex: 0 0 auto; min-width: 0; flex-wrap: nowrap;
-  max-height: 700px; overflow: hidden;
-}
-/* flex-basis governs HEIGHT inside a column, so the 104px the row layout used
-   for the label gutter would reserve 104px of empty vertical space above every
-   list — the same trap the ≤640px block below already documents for the tile
-   row. The head is sized by min-height instead. */
-.wl-strip .mkt-group-label { flex-basis: auto; }
-/* Every column's tiles start on the same line, so the panel reads as a grid
-   rather than a ragged set of stacks. Two lines of the 9px uppercase label,
-   which is what the longest names ("Industry & metals") wrap to at 92px. */
-/* the band head's layout is defined once, further down under .wl-strip */
-/* (the tile's own flex is reset where it is declared, further down) */
-/* Under 640px .mkt-group turns into a COLUMN, where flex-basis governs height —
-   so the label would reserve ~104px of empty vertical space. The shared rule
-   resets it to auto, but this two-class selector outranks it, so the reset has
-   to be repeated at equal specificity (Codex review, PR #189). */
-/* Shorter still on a phone, so a list is not taller than the window and its
-   neighbour is reachable — a drag between two lists has to be makeable in one
-   gesture, which needs both ends on screen. The list scrolls; nothing is lost. */
-@media (max-width: 900px) {
-  .wl-strip .mkt-group-tiles { max-height: 420px; }
-}
+/* the band must be free to shrink, or a 41-tile row would stretch it instead */
+.wl-strip .mkt-group { align-items: stretch; }
+.wl-strip .mkt-group-tiles { flex: 1 1 0; min-width: 0; }
+/* Under 640px .mkt-group turns into a COLUMN (styles/layout.css): the head sits
+   above the tiles and the tile row takes the band's full width, still scrolling
+   sideways. In a column flex-basis governs HEIGHT, so the head's fixed 104px
+   block resets to its content height (see .wl-band-head below). */
 @media (max-width: 640px) {
-  .wl-strip .mkt-group-label { flex-basis: auto; }
-  /* .mkt-group turns into a COLUMN here, so `flex: 1 1 0` below would set a
+  /* .mkt-group turns into a COLUMN here, so `flex: 1 1 0` above would set a
      ZERO HEIGHT basis on the tile row instead of a width one — and because that
      row is also an overflow container, its automatic minimum does not rescue
      the tiles' height, collapsing the band to its padding and clipping every
@@ -409,17 +361,15 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    ordered below the pill — which is a SIBLING of the wrapper — while the
    wrapper generated a box. Dissolving it promotes both to direct flex children
    of the tile, and `order` can then place all four. */
-/* `flex: 0 0 auto`, NOT the old `0 0 66px`: the tile row is a COLUMN now, so a
-   66px basis would set the tile's HEIGHT rather than its width and every tile
-   would render as a 66px-tall box regardless of its contents. Width comes from
-   the column (FR-17 — a short list ends rather than stretching). */
-/* The tile is PINNED at its half-width, not left to take whatever the column
-   gives it. Widening the column to 100px for the scrollbar pushed the tile to
-   82px and broke the half-width rule S27 guards — and `scrollbar-gutter` is not
-   universal, so relying on it alone would make the width engine-dependent. A
-   max-width holds the contract on every engine; any slack lands in the gutter,
-   which is where it belongs. */
-.wl-strip .wl-tile { flex: 0 0 auto; max-width: 76px; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
+/* `flex: 0 0 76px`: in a ROW flex-basis is the tile's WIDTH, so the tile has a
+   fixed usable width and the band scrolls sideways instead of squeezing it —
+   `flex: 0 0 auto` would size every tile to its own content. 76px, not the
+   66px this rule carried before the column layout: the tile measures 76 x 63
+   today (owner 2026-08-21: "try to not resize the boxes", see the pill note
+   below) and S27 holds it to <= 80.
+   (The column era's trap was the mirror image: there flex-basis set the HEIGHT,
+   so a 66px basis would have drawn every tile as a 66px-tall box.) */
+.wl-strip .wl-tile { flex: 0 0 76px; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
 .wl-strip .wl-vals { display: contents; }
 .wl-strip .mkt-name { order: 1; font-size: 9px; }
 .wl-strip .mkt-last { order: 2; font-size: 12px; line-height: 1.15; }
@@ -477,33 +427,35 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
 /* ── quick add / hold-to-remove (owner request 2026-07-30) ─────────────────
-   The list name and its + share the band's gutter. The gutter widens from the
-   bare label's 78px to fit the button; the label inside gives up its own
-   flex-basis so a long name still wraps rather than shoving the + out of view.
-   Scoped under .wl-strip because .mkt-group-label lives in index.html's inline
-   <style>, which loads after this sheet and would otherwise win on source
-   order. */
+   The list name and its controls share the band's LEFT block. It is a fixed
+   104px (the bare label's old 78px widened to fit the controls); the label
+   inside gives up its own flex-basis so a long name still wraps rather than
+   shoving the controls out of view.
+   Scoped under .wl-strip so these two-class rules outrank the shared
+   `.mkt-group-label` in styles/layout.css without depending on source order. */
 /* CONTROLS ON TOP, NAME BENEATH, packed tight (owner report 2026-08-20: "a lot
    of wasted space in the heading of watchlist — put the name below the little
-   icons and compact it as much as possible").
-
-   The head had become three stacked rows: the name shared line one with the
-   arrows, the × wrapped to line two, and the min-height reserved more than
-   either needed. In a 100px column three 18px buttons and a name cannot share a
-   line, so something wraps whatever the order; putting the CONTROLS first means
-   what wraps is the name, which is the item that reads fine on its own line and
-   is the only one that can use the full width.
+   icons and compact it as much as possible"). That report was made against the
+   column layout; it holds in the band's 104px block just as well, where three
+   18px controls and a name cannot share a line either, so something wraps
+   whatever the order. Putting the CONTROLS first means what wraps is the name,
+   which reads fine on its own line and is the only item that can use the full
+   width.
 
    `order` rather than moving the markup: the label is the group's accessible
    name via aria-label on .mkt-group, and the buttons' labels reference the list
    by title — reordering the DOM would put the controls before the thing they
    are named after, for anyone reading it linearly.
 
-   No min-height: the head is exactly as tall as one button row plus the name,
-   which is the compaction asked for. */
+   No min-height: the head is as tall as one control row plus the name, and the
+   two lines sit centred in the band (`align-content`, because the head is
+   stretched to the band's height and a wrapped flex container would otherwise
+   spread its lines apart to fill it).
+   `flex: 0 0 104px` is a WIDTH here — the band is a row — and is reset to the
+   content height in the stacked mobile block below. */
 .wl-strip .wl-band-head {
-  flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center;
-  gap: 1px 2px; min-width: 0; padding-bottom: 2px;
+  flex: 0 0 104px; display: flex; flex-wrap: wrap; align-items: center; align-content: center;
+  gap: 1px 2px; min-width: 0;
 }
 .wl-strip .wl-band-head .wl-move, .wl-strip .wl-band-head .wl-del { order: 1; }
 .wl-strip .wl-band-head .mkt-group-label {
@@ -709,20 +661,6 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   font: 500 10px/1 var(--font-sans); cursor: pointer;
 }
 .wl-move:disabled { opacity: .35; cursor: default; }
-/* Column paging (owner request 2026-08-20). A right-aligned strip UNDER the
-   tiles of a column that overflows — six of seven lists render nothing at all,
-   which is what keeps a compacted panel compact. Shaped like .wl-move so the
-   two read as one family, but wider: the ▼ carries the count of what is still
-   below it, so "▼30" must not be squeezed. */
-.wl-page-bar { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 2px; padding-top: 2px; }
-.wl-page {
-  height: 18px; min-width: 18px; flex: 0 0 auto; padding: 0 3px; margin-left: 2px;
-  display: inline-flex; align-items: center; justify-content: center; gap: 1px;
-  border: 1px solid var(--color-border); border-radius: 4px;
-  background: var(--color-surface); color: var(--color-text-secondary);
-  font: 500 10px/1 var(--font-sans); font-variant-numeric: tabular-nums; cursor: pointer;
-}
-.wl-page:disabled { opacity: .35; cursor: default; }
 .wl-lock { width: 26px; height: 26px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px dashed var(--color-border); border-radius: 6px;
@@ -805,3 +743,67 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   font-size: 11px; cursor: pointer;
 }
 .news-topic-x:hover { border-color: var(--color-border-hover); color: var(--color-text-primary); }
+
+/* ── Economy panel (.econ-*) — owner request 2026-09-30 ──────────────────────
+   A table of seven indicators, each row: [label / value + change / date] at the
+   left and ITS OWN chart to the right. The left block is a fixed 104px so the
+   chart column starts on one line down the panel, and every value fits it with
+   room to spare (a clipped yield is a wrong yield). The chart takes whatever
+   width the column has: ~94px in the 232px slot, ~200px at 320.
+   Colour: green and red are P&L-ONLY on this desk, and a yield or an inflation
+   rate rising is not a gain — the change is neutral ink with an arrow, the line
+   is the brass accent. Stale/missing rows go MUTED through the ink token, never
+   through `opacity` on text (that would dodge the contrast gate's pairs). */
+.econ-bar { flex: 0 0 auto; margin: 0 0 var(--space-2); }
+.econ-tf { display: flex; width: 100%; }
+.econ-tf button {
+  flex: 1 1 0; min-width: 0; min-height: 28px; padding: 4px 0;
+  font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
+}
+.econ-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
+/* rows share the height the panel is given (beside Markets it is a lot) but never grow past
+   ~104px, and never shrink below 52px: then the BODY scrolls rather than the rows squashing. The list
+   deliberately keeps the default `min-height: auto` (its rows' minimum) — `min-height: 0` let it shrink
+   below its rows and the source note then painted over the last one. */
+.econ-row {
+  flex: 1 1 56px; min-height: 52px; max-height: 104px;
+  display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: var(--space-2); align-items: stretch;
+  padding: 6px 0; border-top: 1px solid var(--color-border);
+}
+.econ-row:first-child { border-top: 0; }
+.econ-info { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
+.econ-sub { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.econ-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary);
+}
+.econ-figs { display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; }
+.econ-val { font: 600 var(--font-base)/1.2 var(--font-mono); color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.econ-delta { font: 500 var(--font-2xs)/1.2 var(--font-mono); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+/* the date the reading is FOR: FRED posts a yield about a business day late, so this is the honest signal */
+.econ-date { font: 500 var(--font-2xs)/1.3 var(--font-mono); color: var(--color-text-primary); }
+.econ-new, .econ-tag {
+  flex: none; padding: 1px 4px; border-radius: 3px;
+  font: 700 9px/1.1 var(--font-sans); letter-spacing: .06em; text-transform: uppercase;
+}
+.econ-new { background: var(--color-accent-light); color: var(--color-accent-bright); }
+.econ-tag { border: 1px solid var(--color-border-hover); color: var(--color-text-secondary); }
+.is-stale .econ-val, .is-missing .econ-val, .is-missing .econ-date, .is-missing .econ-delta { color: var(--color-text-secondary); }
+.econ-chart { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; transition: opacity .15s ease; }
+.econ-chart svg { display: block; width: 100%; flex: 1 1 0; min-height: 26px; }
+.econ-line { stroke: var(--color-accent-bright); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.econ-area { fill: var(--color-accent-bright); fill-opacity: .10; stroke: none; }
+.is-stale .econ-chart svg { opacity: .55; }
+/* no readings to draw: a dashed level line, never an invented one */
+.econ-noline {
+  flex: 1 1 0; min-height: 26px;
+  background: repeating-linear-gradient(90deg, var(--color-border-hover) 0 4px, transparent 4px 8px) center / 100% 1px no-repeat;
+}
+.econ-cap {
+  flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+  font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary);
+}
+/* a span change whose reply is on the way: the old charts stay, dimmed, under the new label */
+.econ-list.is-pending .econ-chart { opacity: .35; }
+.econ-empty { padding: var(--space-4) 0; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); }
+.econ-foot { flex: none; margin: var(--space-2) 0 0; font: 400 10px/1.4 var(--font-sans); color: var(--color-text-secondary); }

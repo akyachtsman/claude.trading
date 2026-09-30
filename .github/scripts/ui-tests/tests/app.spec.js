@@ -395,7 +395,15 @@ async function discoverElements(page) {
              Deliberately `hidden`/`clip` ONLY. An `auto`/`scroll` ancestor —
              the news reel, the ask thread — CAN be scrolled to the element, and
              those have always swept fine; excluding them too would quietly drop
-             real coverage. */
+             real coverage.
+             KNOWN GAP (2026-09-30, watchlists back to horizontal bands): a band
+             is `overflow-x: scroll; overflow-y: hidden`, and the test below
+             treats EITHER axis hiding as clipping, so a tile beyond a band's
+             visible width is counted in `clippedSkipped` instead of swept, though
+             it could be scrolled to. Testing each axis only against its own
+             overflow would restore that coverage. NOT done: S3 only sweeps with a
+             live credential (locally it skips at the auth gate), so the wider
+             sweep's runtime against the live roster could not be checked. */
           for (let p = el.parentElement; p; p = p.parentElement) {
             const o = getComputedStyle(p);
             const hides = /hidden|clip/.test(o.overflowY) || /hidden|clip/.test(o.overflowX);
@@ -1101,7 +1109,8 @@ test('S5: demo mode shows DEMO lamps on every panel', async ({ page, renderWitne
 
   // Every panel's own lamp, by name — this used to check news and ask only, so
   // the Markets, Watchlists, Charts and Heatmap lamps could read LIVE unseen.
-  for (const id of ['#mktLamp', '#newsLamp', '#askLamp', '#wlLamp', '#chartsLamp', '#heatLamp']) {
+  // #econLamp (the Economy panel, 2026-09-30) makes seven.
+  for (const id of ['#mktLamp', '#newsLamp', '#askLamp', '#wlLamp', '#chartsLamp', '#heatLamp', '#econLamp']) {
     await expect(page.locator(id), `${id} must read exactly Demo in demo mode`).toHaveText(/^demo$/i);
   }
 
@@ -1890,37 +1899,35 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   expect(await page.evaluate(() => wlSort.key), 'the drag snapped the sort to Manual').toBe('manual');
   await expect(page.locator('#wlNote')).toContainText(/Manual/i);
   await page.mouse.up();
+  // The note above is TIMED (wlNote clears it after 4s) and sits in the panel
+  // header, which wraps on a phone: when it disappears the whole panel moves up by
+  // the height of a line. A band is a 74px-tall target now, so a drag aimed from
+  // positions read before that moment lands on the band head instead — the Escape
+  // step below read 0 drop targets on [iphone] under load for exactly this reason.
+  // Let the layout settle before any drag measures where things are.
+  await expect(page.locator('#wlNote'), 'the timed note is gone, so the layout has stopped moving').toBeHidden({ timeout: 8000 });
 
   // ── a real drag, now that Manual is active ──────────────────────────────
   // The drop target is CHOSEN IN THE PAGE, not computed from bounding boxes.
-  // Since lists became vertical columns a band can be taller than the viewport,
-  // so a fixed offset into "the next band" lands off-screen — elementFromPoint
-  // returns null, no drop zone is found, and the marker assertion fails for a
-  // reason unrelated to what it tests. That is also true of the real gesture:
-  // you cannot drag to somewhere you cannot see.
+  // A fixed offset into "the next band" can land off-screen on a short viewport —
+  // elementFromPoint then returns null, no drop zone is found, and the marker
+  // assertion fails for a reason unrelated to what it tests. That is also true of
+  // the real gesture: you cannot drag to somewhere you cannot see.
   // Picking the point by asking the DOM what is actually under it makes this
   // independent of viewport height, which matters because the two mobile
   // projects differ by ~60px and a hand-tuned offset passes on one and fails on
   // the other. The point returned is guaranteed to hit a band that is not the
   // source's, or the test says so plainly instead of failing downstream.
-  // Scroll to the BOUNDARY between two bands first. On a phone a single list can
-  // be ~700px tall in a 664px viewport — that is the content, not the styling:
-  // at 390px only about four sub-columns fit across, so a 41-symbol list cannot
-  // be shorter without overflowing sideways. So no two whole bands are ever on
-  // screen together there, and the drag has to happen where they meet: the last
-  // tile of one band into the top of the next.
+  // Scroll to the BOUNDARY between two bands first, so the last tile of one band
+  // and the top of the next are on screen together.
   await page.locator('.mkt-group-tiles[data-band]').nth(1).scrollIntoViewIfNeeded();
   await page.waitForTimeout(200);
-  // BOTH ENDS are chosen by hit-testing the page, not from bounding boxes.
-  // Two reasons, both learned the hard way. A band can now be taller than the
-  // viewport — on a phone a single list runs ~700px in a 664px window, which is
-  // the content rather than the styling, since at 390px only about four
-  // sub-columns fit across and a 41-symbol list cannot be shorter without
-  // overflowing sideways. And because the tiles WRAP into sub-columns, the last
-  // tile in DOM order sits at the foot of the last sub-column, which is not the
-  // lowest point on screen — picking it by index put the grab off-screen and no
-  // drag began at all. Asking the DOM what is actually under a point is the only
-  // form that holds on both mobile projects, whose viewports differ by ~60px.
+  // BOTH ENDS are chosen by hit-testing the page, not from bounding boxes: a tile
+  // is only a grab point if it is actually on screen and nothing covers it (a long
+  // band's later tiles are scrolled out of its own row, and on a phone only about
+  // three are inside it), and the drop point must hit a band that is not the
+  // source's. Asking the DOM what is actually under a point is the only form that
+  // holds on both mobile projects, whose viewports differ by ~60px.
   const findPts = () => page.evaluate(() => {
     const vw = window.innerWidth, vh = window.innerHeight;
     const visible = (el) => {
@@ -2008,6 +2015,141 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.mouse.up();
   await page.waitForTimeout(400);
   expect(await rosterWrites(page), 'an abandoned drag writes nothing').toBe(writesAtEscape);
+
+  // ── an in-band drop is decided by the pointer's X, not its Y ─────────────
+  // A band is ONE row that never wraps, so the slot is where the pointer is ALONG
+  // the row. The pointer is held 1px under the tiles — still inside the drop zone
+  // (over the row's padding, or its scrollbar where the browser draws one) but
+  // BELOW every tile — because a slot worked out from Y as well counts every tile
+  // as passed there and drops at the END of the list wherever you aimed. Not the
+  // zone's own last pixel: bands overlap by 1px (collapsed borders), so the next
+  // band's border can sit exactly there and WebKit rounds the pointer onto it.
+  // Dragged: the band's first tile. Aimed at: the right half of its THIRD tile, so
+  // it must land after the second and third and before the fourth.
+  const inBand = await page.evaluate(() => {
+    const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
+    const i = zones.findIndex(z => z.querySelectorAll('.wl-tile').length >= 6);
+    return i < 0 ? null : i;
+  });
+  expect(inBand, 'some band has enough tiles to reorder within').not.toBeNull();
+  await page.locator('.mkt-group-tiles[data-band]').nth(inBand).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
+  const aim = await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    const tiles = [...zone.querySelectorAll('.wl-tile')];
+    const z = zone.getBoundingClientRect();
+    const grab = tiles[0].getBoundingClientRect(), third = tiles[2].getBoundingClientRect();
+    const to = { x: third.left + third.width * 0.75, y: third.bottom + 1 };
+    const hit = document.elementFromPoint(to.x, to.y);
+    return {
+      from: { x: grab.left + grab.width / 2, y: grab.top + grab.height / 2 }, to,
+      inZone: !!hit && hit.closest('.mkt-group-tiles[data-band]') === zone,
+      belowTiles: to.y > third.bottom,
+      syms: tiles.slice(0, 4).map(t => t.dataset.sym), title: zone.dataset.title,
+    };
+  }, inBand);
+  expect(aim.inZone, 'the aim point is inside the band\'s drop zone').toBe(true);
+  expect(aim.belowTiles, 'and below its tiles, where a Y comparison would pass them all').toBe(true);
+  await page.mouse.move(aim.from.x, aim.from.y);
+  await page.mouse.down();
+  await page.mouse.move(aim.from.x + 40, aim.from.y + 20, { steps: 5 });
+  await page.mouse.move(aim.to.x, aim.to.y, { steps: 8 });
+  const markerAt = await page.evaluate(() => {
+    const m = document.querySelector('.wl-drop-marker');
+    const next = m && m.nextElementSibling;
+    return next ? next.dataset.sym : null;
+  });
+  expect(markerAt, 'the insertion marker sits before the FOURTH tile, following the pointer along the row')
+    .toBe(aim.syms[3]);
+  const writesInBand = await rosterWrites(page);
+  await page.mouse.up();
+  await expect.poll(() => rosterWrites(page), { message: 'the in-band drop is exactly one write' })
+    .toBe(writesInBand + 1);
+  const order = await page.evaluate((t) => window.__roster.find(l => l.title === t).symbols, aim.title);
+  expect(order.indexOf(aim.syms[0]), 'the dragged tile landed after the third…')
+    .toBe(order.indexOf(aim.syms[2]) + 1);
+  expect(order.indexOf(aim.syms[3]), '…and immediately before the fourth')
+    .toBe(order.indexOf(aim.syms[0]) + 1);
+
+  // ── a long band auto-scrolls at its edges, so every slot is reachable (Codex review, PR #294) ──
+  // The pointer owns the drag, so the row's scrollbar cannot be used at the same time: without help a tile could
+  // only be dropped among the slots on screen. Holding the pointer near the row's right edge scrolls it, near the
+  // left edge scrolls it back, and a drop at the far end lands at a slot that was off screen when the drag began.
+  const longBand = await page.evaluate(() => {
+    const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
+    const i = zones.findIndex(z => z.scrollWidth > z.clientWidth + 150 && z.querySelectorAll('.wl-tile').length >= 6);
+    return i < 0 ? null : i;
+  });
+  expect(longBand, 'some band is wider than its row').not.toBeNull();
+  await page.locator('.mkt-group-tiles[data-band]').nth(longBand).scrollIntoViewIfNeeded();
+  await page.evaluate((i) => { document.querySelectorAll('.mkt-group-tiles[data-band]')[i].scrollLeft = 0; }, longBand);
+  await page.waitForTimeout(200);
+  const edge = await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    const z = zone.getBoundingClientRect(), t = zone.querySelector('.wl-tile').getBoundingClientRect();
+    const y = t.top + t.height / 2;
+    return { grab: { x: t.left + t.width / 2, y }, right: { x: z.right - 6, y }, left: { x: z.left + 6, y }, mid: { x: z.left + z.width / 2, y },
+      symsAtStart: [...zone.querySelectorAll('.wl-tile')].map(x => x.dataset.sym), title: zone.dataset.title };
+  }, longBand);
+  const scrollLeftOf = () => page.evaluate((i) => document.querySelectorAll('.mkt-group-tiles[data-band]')[i].scrollLeft, longBand);
+  const writesEdge = await rosterWrites(page);
+  await page.mouse.move(edge.grab.x, edge.grab.y);
+  await page.mouse.down();
+  await page.mouse.move(edge.mid.x, edge.mid.y, { steps: 6 });
+  expect(await scrollLeftOf(), 'in the middle of the row nothing scrolls').toBe(0);
+  await page.mouse.move(edge.right.x, edge.right.y, { steps: 4 });
+  await expect.poll(scrollLeftOf, { message: 'holding the pointer at the right edge scrolls the row', timeout: 6000 }).toBeGreaterThan(120);
+  const markerAfterScroll = await page.evaluate(() => {
+    const m = document.querySelector('.wl-drop-marker'), next = m && m.nextElementSibling;
+    return { marker: !!m, before: next ? next.dataset.sym : null };
+  });
+  expect(markerAfterScroll.marker, 'the insertion marker follows the tiles as the row scrolls').toBe(true);
+  const markerSlot = markerAfterScroll.before === null ? edge.symsAtStart.length : edge.symsAtStart.indexOf(markerAfterScroll.before);   // null = the end of the list
+  expect(markerSlot, 'the marker now sits at a slot that was OFF screen when the drag began').toBeGreaterThan(2);
+  // Hold at the right edge until the row runs out, then it must STOP. The insertion marker is a 3px flex child, so
+  // with it in the row the row can scroll 3px past its last tile; repainting the marker clamps it back and the next
+  // frame "moves" again — a loop of DOM mutation and layout that never ends at the boundary (Codex review, PR #294).
+  // The pointer has not moved, so the loop is still running: put the row a few frames short of its end (waiting out
+  // 2400px at a slow frame rate proves nothing more) and let the LOOP finish the job. It must then queue no further
+  // frame, and a settled row must be left alone — not rewritten every frame.
+  await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    zone.scrollLeft = zone.scrollWidth - zone.clientWidth - 60;
+  }, longBand);
+  await expect.poll(() => page.evaluate(() => wlDrag.raf), {
+    message: 'the auto-scroll loop stops queuing frames once the row has run out (an unsettled loop keeps one queued forever)',
+    timeout: 15000,
+  }).toBe(0);
+  const atEnd = await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    const last = [...zone.querySelectorAll('.wl-tile')].pop().getBoundingClientRect(), z = zone.getBoundingClientRect();
+    window.__edgeMut = 0;
+    window.__edgeObs = new MutationObserver(list => { window.__edgeMut += list.length; });
+    window.__edgeObs.observe(zone, { childList: true });
+    return { lastTileInView: last.right <= z.right + 1, pointerHeld: wlDrag.on, marker: !!zone.querySelector('.wl-drop-marker'),
+      numbers: { lastRight: last.right, zoneRight: z.right, scrollLeft: zone.scrollLeft, scrollWidth: zone.scrollWidth, clientWidth: zone.clientWidth } };
+  }, longBand);
+  expect(atEnd.pointerHeld, 'the drag is still in progress while the row sits at its end').toBe(true);
+  expect(atEnd.lastTileInView, 'the row really did scroll as far as its last tile ' + JSON.stringify(atEnd.numbers)).toBe(true);
+  expect(atEnd.marker, 'and the insertion marker is still painted at the end of the row').toBe(true);
+  await page.waitForTimeout(450);
+  const idle = await page.evaluate(() => {
+    window.__edgeObs.disconnect();
+    return { mutations: window.__edgeMut, raf: wlDrag.raf };
+  });
+  expect(idle.mutations, 'a row held at its end is not rewritten every frame (the marker is not re-inserted in a loop)').toBe(0);
+  expect(idle.raf, 'and no animation frame is left queued at the end').toBe(0);
+  const restedAt = await scrollLeftOf();
+  await page.mouse.move(edge.left.x, edge.left.y, { steps: 6 });
+  await expect.poll(scrollLeftOf, { message: 'and the left edge scrolls it back (and wakes the loop the end had stopped)', timeout: 10000 }).toBeLessThan(restedAt - 100);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  expect(await page.locator('.wl-ghost').count(), 'Escape ended the drag').toBe(0);
+  expect(await rosterWrites(page), 'an abandoned auto-scroll drag writes nothing').toBe(writesEdge);
+  const scrollAtRest = await scrollLeftOf();
+  await page.waitForTimeout(250);
+  expect(await scrollLeftOf(), 'the auto-scroll loop stopped with the drag').toBe(scrollAtRest);
 
   // ── no staging tray survives anywhere ──────────────────────────────────
   // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,
@@ -3053,18 +3195,22 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
      must be PROVEN to have happened: this used to sit behind `if (a && c)` and
      assert only that no window appeared, which a drag that never began — a tile
      below the fold, a missing box — satisfies in full. */
-  await live.scrollIntoViewIfNeeded();
-  await page.locator('.wl-strip .wl-tile').nth(3).scrollIntoViewIfNeeded();
+  /* The drop target is the THIRD tile's right half, not the fourth tile's centre:
+     a band is a row again, and on a phone only about three tiles are inside the
+     row's own width — a fourth tile sits half clipped, so aiming at its centre
+     drops outside the band and no write happens. The right half (not the centre)
+     because a drop at a tile's exact middle has not yet passed it, which for a
+     neighbour would put the tile back where it started. */
   await live.scrollIntoViewIfNeeded();
   const a = await live.boundingBox();
-  const c = await page.locator('.wl-strip .wl-tile').nth(3).boundingBox();
+  const c = await page.locator('.wl-strip .wl-tile').nth(2).boundingBox();
   expect(a, 'the source tile has a box').not.toBeNull();
   expect(c, 'the drop tile has a box').not.toBeNull();
   const writesBefore = await rosterWrites(page);
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();
   await page.mouse.move(a.x + 40, a.y + 10, { steps: 6 });
-  await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2, { steps: 10 });
+  await page.mouse.move(c.x + c.width * 0.75, c.y + c.height / 2, { steps: 10 });
   expect(await page.locator('.wl-ghost').count(), 'the drag had begun before the drop').toBe(1);
   await page.mouse.up();
   await expect.poll(() => rosterWrites(page), { message: 'the drop arranged the panel — it was a drag, not a click' })
@@ -3949,240 +4095,280 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   expect(errs, 'no page errors').toEqual([]);
 });
 
-/* S42 — the watchlist columns are PAGED, not scrolled (owner request
-   2026-08-20: reaching the end of a list carried straight on into the page).
-   The rule this guards is that the wheel belongs to the PAGE everywhere on this
-   panel, which is why the fix is `overflow: hidden` and not `overscroll-
-   behavior: contain` — the property this project has banned outright after it
-   ate the mouse wheel three times. */
-test('S42: watchlist columns page instead of scrolling', async ({ page, browserName, renderWitness }) => {
+/* S42 — each watchlist band is a SIDEWAYS scroller, the PAGE stays the page, and
+   nothing is paged. Owner request 2026-09-30 put the bands back to horizontal,
+   which WITHDREW the 2026-08-20 ruling this scenario used to guard ("the columns
+   are paged, not scrolled"): the ▲/▼ pager, its footer and the drag-rests-on-▼
+   stepping existed only to tame a column's VERTICAL overflow and went with it.
+
+   What still has to hold, because the owner's original complaint (2026-08-07,
+   three times) was a wheel that died over a panel:
+     - the wheel belongs to the PAGE. The row is `overflow-y: hidden`, so a
+       vertical wheel over a band has nothing to grab and moves the page;
+     - the ONLY `overscroll-behavior` on the page is the axis-scoped
+       `overscroll-behavior-x: contain` on these rows (a sideways swipe off the
+       end of a band must not trigger browser back-navigation). The shorthand
+       and the `-y` form stay banned: they apply just as hard to a container with
+       nothing to scroll, and then they eat the wheel. */
+test('S42: watchlist bands scroll sideways, the page never does, and nothing is paged', async ({ page, browserName, renderWitness }) => {
   renderWitness();
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
-  await blockRosterWrites(page);   // the forced-live drag below must never reach the real roster
+  await blockRosterWrites(page);   // the forced-live render below must never reach the real roster
   await gotoDemo(page, '.wl-strip .wl-tile', 15000);
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
 
-  // No column may be wheel-scrollable, and none may carry overscroll-behavior
-  // in ANY form — the axis-scoped variants included, since a future edit that
-  // reaches for the vertical one re-creates the dead-wheel fault exactly.
-  const rules = await page.evaluate(() =>
+  // ── every band's tile row is a sideways scroller ─────────────────────────
+  const rows = await page.evaluate(() =>
     [...document.querySelectorAll('.wl-strip .mkt-group-tiles')].map(b => {
       const cs = getComputedStyle(b);
-      return { y: cs.overflowY, x: cs.overflowX, os: cs.overscrollBehaviorY + '/' + cs.overscrollBehaviorX };
+      return {
+        x: cs.overflowX, y: cs.overflowY, wrap: cs.flexWrap,
+        osx: cs.overscrollBehaviorX, osy: cs.overscrollBehaviorY, sbw: cs.scrollbarWidth,
+        bar: getComputedStyle(b, '::-webkit-scrollbar').height,
+        fits: b.scrollWidth <= b.clientWidth + 1,
+        tiles: b.querySelectorAll('.wl-tile').length,
+      };
     }));
-  expect(rules.every(r => r.y === 'hidden' && r.x === 'hidden'), 'no column scrolls under the wheel').toBe(true);
-  // Phrased as "not contain", not "=== auto". A browser that does not implement
-  // the property reports an empty string, which is not a failure — it cannot be
-  // containing anything — and asserting the positive value would fail on the
-  // engine rather than on the page.
-  expect(rules.filter(r => /contain|none/.test(r.os)), 'no column carries overscroll-behavior').toEqual([]);
+  expect(rows.length, 'there are several bands to check').toBeGreaterThan(1);
+  // `scroll`, not `auto`: the track stays present even where a short list would
+  // fit, so bands do not change height as symbols come and go.
+  expect(rows.every(r => r.x === 'scroll' && r.y === 'hidden'),
+    'every band scrolls sideways and never vertically').toBe(true);
+  expect(rows.every(r => r.wrap === 'nowrap'), 'tiles never wrap onto a second row').toBe(true);
+  // From Chrome 121 `scrollbar-width` takes precedence over the ::-webkit-
+  // scrollbar rules and would switch the always-visible bar off. Phrased as "not
+  // thin/none": an engine without the property reports '' or 'auto', which is
+  // not a failure.
+  expect(rows.filter(r => /thin|none/.test(r.sbw)),
+    'no `scrollbar-width` — it would cancel the always-visible bar').toEqual([]);
+  expect(rows.every(r => r.bar === '8px'), 'the 8px scrollbar is styled on every band').toBe(true);
+  // The row must actually RESERVE that track where the browser draws classic
+  // scrollbars. Headless Chromium hides them (--hide-scrollbars), which makes the
+  // reserved height 0 whatever the CSS says — so whether this browser draws one is
+  // probed first, and the measurement is skipped, aloud, where it cannot be made.
+  const track = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;left:-9999px;width:50px;height:50px;overflow:scroll';
+    document.body.appendChild(probe);
+    const drawn = probe.offsetHeight - probe.clientHeight > 0;
+    probe.remove();
+    const b = document.querySelector('.wl-strip .mkt-group-tiles');
+    return { drawn, reserved: b.offsetHeight - b.clientHeight };
+  });
+  if (track.drawn) expect(track.reserved, 'the row reserves the 8px track under its tiles').toBe(8);
+  else test.info().annotations.push({ type: 'note',
+    description: 'this browser draws no classic scrollbar, so the reserved track height cannot be measured here; the computed overflow-x and the styled ::-webkit-scrollbar height above carry the rule' });
+  // One band fits and one does not: a scroller on BOTH is what `scroll` means.
+  expect(rows.some(r => !r.fits), 'demo has a list wider than its band').toBe(true);
+  expect(rows.some(r => r.fits), 'and a short one that fits, which still carries the scroller').toBe(true);
 
-  // The wheel over a column moves the PAGE. This is the owner's actual
-  // complaint, so where it can be driven it is asserted on the GESTURE, not on
-  // the CSS above.
-  // Chromium only: the other project is Mobile Safari, and a mobile WebKit
-  // context has no mouse wheel to dispatch — page.mouse.wheel there does not
-  // scroll, so the assertion would be measuring the emulated input device
-  // rather than the panel. The CSS check above is what carries the rule on that
-  // project, and it is the stronger half anyway: `overflow: hidden` cannot
-  // chain on any engine.
+  // ── overscroll-behavior: the axis-scoped x form and nothing else ─────────
+  const xSupported = await page.evaluate(() => CSS.supports('overscroll-behavior-x', 'contain'));
+  if (xSupported) {
+    expect(rows.every(r => r.osx === 'contain'),
+      'a sideways swipe off the end of a band is contained (no browser back-nav)').toBe(true);
+  }
+  // Phrased as "not contain/none" for the vertical axis: an engine without the
+  // property reports '' , which is not a failure.
+  expect(rows.filter(r => /contain|none/.test(r.osy)),
+    'no band carries a VERTICAL overscroll-behavior — that is what eats the wheel').toEqual([]);
+  // The whole PAGE, not only this panel: the ban is page-wide. Any rule setting
+  // the shorthand expands to `overscroll-behavior-y` in the CSSOM, so reading the
+  // -y longhand catches both the shorthand and the -y form, and leaves `-x` alone.
+  const offenders = await page.evaluate(() => {
+    const out = [];
+    const walk = (list) => {
+      for (const r of list) {
+        if (r.cssRules && r.cssRules.length) walk(r.cssRules);   // @media / @supports
+        if (r.style && (r.style.getPropertyValue('overscroll-behavior-y')
+                        || r.style.getPropertyValue('overscroll-behavior'))) {
+          out.push(r.selectorText || r.cssText.slice(0, 60));
+        }
+      }
+    };
+    for (const sh of document.styleSheets) {
+      let list; try { list = sh.cssRules; } catch { continue; }   // cross-origin sheet
+      walk(list);
+    }
+    for (const e of document.querySelectorAll('[style]')) {
+      if (/overscroll-behavior(?!-x)/.test(e.getAttribute('style'))) out.push('[style] ' + e.tagName);
+    }
+    return out;
+  });
+  expect(offenders, 'no overscroll-behavior shorthand or -y form anywhere on the page').toEqual([]);
+
+  // ── a long list scrolls sideways, and the PAGE does not ──────────────────
+  const longest = await page.evaluate(() => {
+    const bands = [...document.querySelectorAll('.wl-strip .mkt-group-tiles')];
+    let k = 0;
+    bands.forEach((b, i) => { if (b.querySelectorAll('.wl-tile').length > bands[k].querySelectorAll('.wl-tile').length) k = i; });
+    const b = bands[k];
+    return { k, over: b.scrollWidth - b.clientWidth };
+  });
+  expect(longest.over, 'the longest demo list runs past its band').toBeGreaterThan(20);
+  const band = page.locator('.wl-strip .mkt-group-tiles').nth(longest.k);
+  const after = await band.evaluate(b => { b.scrollLeft = 300; return b.scrollLeft; });
+  expect(after, 'the row scrolls sideways').toBeGreaterThan(0);
+  const pageX = await page.evaluate(() => ({
+    scrollX: window.scrollX,
+    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  }));
+  expect(pageX, 'and the page itself never scrolls sideways').toEqual({ scrollX: 0, sideways: false });
+  await band.evaluate(b => { b.scrollLeft = 0; });
+
+  // The wheel, where it can be driven. Chromium only: a mobile WebKit context has
+  // no mouse wheel to dispatch (page.mouse.wheel does not scroll there), so on that
+  // project the computed-style checks above carry the rule.
   if (browserName === 'chromium') {
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.locator('.wl-strip .mkt-group-tiles').first().hover();
+    // A VERTICAL wheel over a band moves the PAGE. Measured from wherever hover()
+    // left the page — it scrolls the band into view first, so an absolute
+    // threshold would be met before the wheel turned at all.
+    await band.hover();
+    const y0 = await page.evaluate(() => window.scrollY);
     await page.mouse.wheel(0, 400);
     await page.waitForTimeout(300);
-    expect(await page.evaluate(() => window.scrollY), 'the wheel scrolls the page, not the list')
-      .toBeGreaterThan(100);
+    expect(await page.evaluate(() => window.scrollY) - y0,
+      'the vertical wheel scrolls the page, not the list').toBeGreaterThan(100);
+    expect(await band.evaluate(b => b.scrollLeft), 'and leaves the band where it was').toBe(0);
+    // A HORIZONTAL wheel over the same band moves the BAND, not the page.
+    await band.hover();
+    await page.mouse.wheel(300, 0);
+    await page.waitForTimeout(300);
+    expect(await band.evaluate(b => b.scrollLeft), 'the horizontal wheel scrolls the band').toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.scrollX), 'and never the page').toBe(0);
   }
 
-  // Controls appear ONLY where a column overflows. A pair on every column would
-  // be the clutter the owner asked to avoid, and one on a column that fits
-  // would be a control that does nothing.
-  const state = await page.evaluate(() =>
-    [...document.querySelectorAll('.wl-strip .mkt-group')].map(g => {
-      const b = g.querySelector('.mkt-group-tiles');
-      return { over: b.scrollHeight - b.clientHeight > 2, bars: g.querySelectorAll('.wl-page-bar').length };
-    }));
-  expect(state.some(s => s.over), 'demo has a list long enough to page').toBe(true);
-  expect(state.every(s => s.bars === (s.over ? 1 : 0)), 'a bar exactly where one is needed').toBe(true);
-
-  // A paged column must not push the other columns' tiles down — every column's
-  // tiles start on the same line, so a control that grew the band head would
-  // cost all seven of them for the sake of one. That is why the bar is a footer.
-  const heads = await page.evaluate(() =>
-    [...document.querySelectorAll('.wl-strip .wl-band-head')].map(h => Math.round(h.getBoundingClientRect().height)));
-  const paged = state.findIndex(s => s.over);
-  /* Compared against the OTHER columns. The max over ALL of them includes the
-     paged column itself, so `heads[paged] <= max(heads)` holds whatever that
-     head measures — it could not fail, and a footer that grew the head would
-     have sailed through. There must be a neighbour to compare with, or the max
-     of nothing is -Infinity and the assertion means something else entirely. */
-  const neighbours = heads.filter((_, i) => i !== paged);
-  expect(neighbours.length, 'there are other columns to compare the paged one against').toBeGreaterThan(0);
-  expect(heads[paged], 'the paged column\'s head is no taller than its neighbours')
-    .toBeLessThanOrEqual(Math.max(...neighbours));
-
-  // Stepping: ▲ dead at the top, the ▼ states how many are still below, and the
-  // count FALLS as you step — a static number would mean it counts the list
-  // rather than what is hidden.
-  const col = page.locator('.wl-strip .mkt-group').nth(paged);
-  const up = col.locator('.wl-page').nth(0), down = col.locator('.wl-page').nth(1);
-  /* Read the pair's state in one shot rather than through `expect(locator)
-     .toBeDisabled()`. Those retry for the full expect timeout before reporting,
-     so one wrong state costs 5s per assertion and the message names only the
-     selector — whereas this fails instantly and prints the scroll position and
-     both labels, which is what a diagnosis actually needs. */
-  const pager = () => page.evaluate(i => {
-    const g = [...document.querySelectorAll('.wl-strip .mkt-group')][i];
-    const [u, d] = g.querySelectorAll('.wl-page');
-    return {
-      up: u.disabled, down: d.disabled, label: d.textContent,
-      below: Number((d.textContent || '').replace(/\D/g, '') || 0),
-      top: Math.round(g.querySelector('.mkt-group-tiles').scrollTop),
-    };
-  }, paged);
-
-  const atTop = await pager();
-  expect(atTop, 'the ▲ is dead at the top and the ▼ names how many are below')
-    .toMatchObject({ up: true, down: false });
-  expect(atTop.below, 'the ▼ names how many are still below').toBeGreaterThan(0);
-
-  await down.click();
-  await page.waitForTimeout(200);
-  const stepped = await pager();
-  expect(stepped.below, `the count falls as you step (was ${atTop.below})`).toBeLessThan(atTop.below);
-  expect(stepped.up, 'the ▲ comes alive once there is something above').toBe(false);
-
-  // The end is reachable and terminal in both directions.
-  for (let i = 0; i < 12 && !(await pager()).down; i++) { await down.click(); await page.waitForTimeout(120); }
-  const atEnd = await pager();
-  expect(atEnd, 'the ▼ dies at the bottom and claims nothing is left below')
-    .toMatchObject({ down: true, label: '▼' });
-  const tiles = await col.locator('.wl-tile').count();
-  const seen = await page.evaluate(i => {
-    const b = [...document.querySelectorAll('.wl-strip .mkt-group')][i].querySelector('.mkt-group-tiles');
-    const r = b.getBoundingClientRect();
-    return [...b.querySelectorAll('.wl-tile')].filter(t => {
-      const q = t.getBoundingClientRect();
-      return q.bottom > r.top + 1 && q.top < r.bottom - 1;
-    }).map(t => t.textContent);
-  }, paged);
-  expect(seen.length, 'the last tiles are on screen at the bottom').toBeGreaterThan(0);
-  expect(tiles, 'and nothing was removed to get there').toBeGreaterThan(seen.length);
-
-  // A DRAG must be able to reach the part of a list that is off-box. With no
-  // wheel and no scrollbar this is the only way, so a tile could otherwise only
-  // ever be dropped among the rows that happen to be showing. Driven from
-  // wlDragMove, not from a listener on the button: a drag owns the pointer, so
-  // the button gets no pointer events of its own — a `pointerenter` handler was
-  // tried here and fired exactly never.
+  // ── nothing is paged, in demo or live ────────────────────────────────────
+  const noPager = () => page.evaluate(() => ({
+    bars: document.querySelectorAll('.wl-page-bar, .wl-page').length,
+    glyphs: [...document.querySelectorAll('.area-watchlist button')]
+      .filter(b => /^[▲▼]/.test(b.textContent.trim())).length,
+    code: typeof wlSyncPaging + '/' + typeof attachPaging,
+  }));
+  expect(await noPager(), 'demo: no pager, no ▲/▼ control, no paging code left behind')
+    .toEqual({ bars: 0, glyphs: 0, code: 'undefined/undefined' });
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; wlSort = { key: 'manual', dir: 1 }; renderWatchlist(); });
-  await page.waitForTimeout(400);
-  // The bar and a tile must be on screen TOGETHER: elementFromPoint returns
-  // null outside the viewport, so a below-the-fold button reports no hover and
-  // the check passes or fails on where the page happens to be scrolled.
-  /* SCOPED to the watchlist strip. `.wl-page-bar` is no longer unique to this
-     panel: the accounts positions table pages with the same shared control, so
-     a bare selector resolves to two elements and strict mode rejects it. This
-     scenario is about the watchlist columns, so it must say so. */
-  await page.locator('.wl-strip .wl-page-bar').first().scrollIntoViewIfNeeded();
-  await page.waitForTimeout(200);
-  const bar = await page.locator('.wl-strip .wl-page-bar .wl-page').nth(1).boundingBox();
-  const grab = await page.evaluate(() => {
-    const t = [...document.querySelectorAll('.wl-strip .mkt-group .wl-tile')]
-      .find(e => { const r = e.getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; });
-    if (!t) return null;
-    const r = t.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  });
-  expect(grab, 'a tile and the pager are both on screen').not.toBeNull();
-  const startTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
-  await page.mouse.move(grab.x, grab.y);
-  await page.mouse.down();
-  await page.mouse.move(grab.x + 30, grab.y + 30, { steps: 6 });
-  await page.waitForTimeout(120);
-  expect(await page.evaluate(() => wlDrag.on), 'the drag started').toBe(true);
-  for (let i = 0; i < 6; i++) {
-    await page.mouse.move(bar.x + bar.width / 2 + (i % 2), bar.y + bar.height / 2, { steps: 2 });
-    await page.waitForTimeout(170);
-  }
-  const dragTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
-  await page.keyboard.press('Escape');
-  await page.mouse.up();
-  expect(dragTop, 'resting on the ▼ mid-drag steps the column').toBeGreaterThan(startTop);
+  await page.waitForTimeout(300);
+  expect(await noPager(), 'live: still none')
+    .toEqual({ bars: 0, glyphs: 0, code: 'undefined/undefined' });
 
   expect(errs, 'no page errors').toEqual([]);
 });
 
-test('S41: watchlists are vertical columns above the charts', async ({ page, renderWitness }) => {
+/* S41 — each watchlist is ONE horizontal band: the list's name and controls in
+   a block on the left, its tiles in a single row to their right, the bands
+   stacked top to bottom. Owner request 2026-09-30 ("I need each of the watch list
+   to go back to displaying horizontal"), reversing the 2026-08-17 vertical-column
+   layout this scenario used to assert. */
+test('S41: each watchlist is one horizontal band, stacked above the charts', async ({ page, renderWitness }) => {
   renderWitness();
-  // Sized to a DESK, not a phone. Columns-side-by-side is the wide-screen
-  // design; at 393px a long list legitimately spreads its own sub-columns
-  // across the full width and pushes the next list onto a row below, which is
-  // the readable arrangement there and not a failure of this rule. Asserting it
-  // at phone width tested the breakpoint, not the layout. The narrow behaviour
-  // that actually matters — no sideways page scroll — is checked separately
-  // below, at the project's own viewport.
+  // Sized to a DESK, not a phone: the head-beside-the-tiles arrangement is the
+  // wide-screen design (under 640px it stacks head-over-tiles, asserted at the
+  // end), so asserting it at phone width would test the breakpoint, not the layout.
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
   await gotoDemo(page, '.wl-strip .wl-tile', 15000);
 
   const shape = await page.evaluate(() => {
+    const rect = e => e.getBoundingClientRect();
     const groups = [...document.querySelectorAll('.wl-strip .mkt-group')];
-    const tiles = [...groups[0].querySelectorAll('.wl-tile')];
-    const wl = document.querySelector('.wl-area').getBoundingClientRect();
-    const ch = document.querySelector('.area-charts').getBoundingClientRect();
+    const strip = document.querySelector('.wl-strip');
+    const wl = rect(document.querySelector('.wl-area'));
+    const ch = rect(document.querySelector('.area-charts'));
+    const bands = groups.map(g => {
+      const tiles = [...g.querySelectorAll('.wl-tile')];
+      const head = rect(g.querySelector('.wl-band-head')), box = rect(g.querySelector('.mkt-group-tiles'));
+      return {
+        n: tiles.length,
+        // ONE row: every tile of the band sits on the first tile's line. A wrapped
+        // or stacked band puts some of them on another.
+        oneRow: tiles.every(t => Math.abs(rect(t).top - rect(tiles[0]).top) < 2),
+        // and they run LEFT TO RIGHT
+        leftToRight: tiles.every((t, i) => i === 0 || rect(t).left > rect(tiles[i - 1]).left + 5),
+        left: Math.round(rect(g).left), width: Math.round(rect(g).width),
+        top: rect(g).top, bottom: rect(g).bottom,
+        // the head is a block to the LEFT of the tiles, level with them
+        headLeftOfTiles: head.right <= box.left + 1 && head.left < box.left,
+        headLevel: head.top < box.bottom && head.bottom > box.top,
+        headW: Math.round(head.width),
+      };
+    });
     return {
-      groups: groups.length,
-      // a column: its own tiles stack downward
-      tilesStack: tiles.length > 1 && tiles[1].getBoundingClientRect().top > tiles[0].getBoundingClientRect().top + 5,
-      // and the lists sit beside each other
-      sideBySide: groups.length > 1
-        && groups[1].getBoundingClientRect().left > groups[0].getBoundingClientRect().left + 5,
+      bands,
+      stripW: Math.round(rect(strip).width),
       wlBottom: Math.round(wl.bottom), chartsTop: Math.round(ch.top),
       wlLeft: Math.round(wl.left), chartsLeft: Math.round(ch.left),
       sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      innerScroll: (() => { const s = document.querySelector('.wl-strip'); return s.scrollHeight > s.clientHeight + 2; })(),
+      innerScroll: strip.scrollHeight > strip.clientHeight + 2 || strip.scrollWidth > strip.clientWidth + 1,
       // no tab strip: every list is on screen at once
       tabs: document.querySelectorAll('.wl-strip [role="tab"]').length,
     };
   });
 
-  expect(shape.groups, 'every list renders').toBeGreaterThan(1);
-  expect(shape.tilesStack, 'tiles stack downward inside a category').toBe(true);
-  expect(shape.sideBySide, 'categories sit side by side as columns').toBe(true);
-  expect(shape.tabs, 'the columns ARE the navigation — no tabs').toBe(0);
+  expect(shape.bands.length, 'every list renders').toBeGreaterThan(1);
+  expect(shape.bands.filter(b => !b.oneRow).length, 'every band is a single row of tiles').toBe(0);
+  expect(shape.bands.filter(b => b.n > 1 && !b.leftToRight).length, 'tiles sit side by side, left to right').toBe(0);
+  expect(Math.max(...shape.bands.map(b => b.n)), 'including a long list, which does not wrap').toBeGreaterThan(20);
+  // Bands STACK top to bottom, each the full width of the panel and lined up on
+  // one left edge — not columns sitting side by side.
+  expect(shape.bands.every((b, i) => i === 0 || b.top > shape.bands[i - 1].top + 20
+    && b.top >= shape.bands[i - 1].bottom - 2), 'bands stack top to bottom').toBe(true);
+  expect(shape.bands.every(b => b.left === shape.bands[0].left && Math.abs(b.width - shape.stripW) <= 2),
+    'each band is the full width of the panel').toBe(true);
+  expect(shape.bands.every(b => b.headLeftOfTiles && b.headLevel),
+    'the name and controls sit in a block on the LEFT, level with the tiles').toBe(true);
+  expect(Math.max(...shape.bands.map(b => b.headW)), 'a block, not a header across the top').toBeLessThanOrEqual(120);
+  expect(shape.tabs, 'the bands ARE the navigation — no tabs').toBe(0);
   expect(shape.wlBottom, 'watchlists sit above the charts panel').toBeLessThanOrEqual(shape.chartsTop);
   expect(shape.wlLeft, 'and share its left edge, both full-bleed').toBe(shape.chartsLeft);
   expect(shape.sideways, 'the page never scrolls sideways').toBe(false);
   expect(shape.innerScroll, 'the panel runs at full length, no inner crop').toBe(false);
 
-  // The reorder control must not impersonate a back button — a bare ← on a
-  // button reads as navigation to people and to crawlers alike.
+  // The reorder controls now move a list UP or DOWN the stack, and must not
+  // impersonate a back button — a bare ← on a button reads as navigation to
+  // people and to crawlers alike. ↑/↓ are in no crawler selector.
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
-  const glyphs = await page.evaluate(() =>
-    [...document.querySelectorAll('.wl-move')].map(b => b.textContent));
-  expect(glyphs.length, 'the reorder controls render in live').toBeGreaterThan(0);
-  expect(glyphs.some(g => g === '←' || g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
+  const moves = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-move')].map(b => ({ g: b.textContent, label: b.getAttribute('aria-label') })));
+  expect(moves.length, 'the reorder controls render in live').toBeGreaterThan(0);
+  expect(moves.some(m => m.g === '←' || m.g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
+  expect(moves.every(m => m.g === '↑' || m.g === '↓'), 'the bands stack vertically, so the controls point up and down').toBe(true);
+  expect(moves.every(m => /^Move .+ (earlier|later)$/.test(m.label)), 'and keep their earlier/later labels').toBe(true);
 
-  // Narrow width: the columns may wrap onto more than one row, but the PAGE
-  // must never scroll sideways and the panel must never be cropped.
+  // Phone width: the page never scrolls sideways, the panel is never cropped, and
+  // the band keeps its one sideways-scrolling row — with its head now ABOVE the
+  // tiles (under 640px the band stacks, as it always did).
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '390' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
-  const narrow = await page.evaluate(() => ({
-    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    innerScroll: (() => { const s = document.querySelector('.wl-strip'); return s.scrollHeight > s.clientHeight + 2; })(),
-    tiles: document.querySelectorAll('.wl-strip .wl-tile').length,
-  }));
+  const narrow = await page.evaluate(() => {
+    const rect = e => e.getBoundingClientRect();
+    const strip = document.querySelector('.wl-strip');
+    const groups = [...document.querySelectorAll('.wl-strip .mkt-group')];
+    const first = groups[0];
+    const box = first.querySelector('.mkt-group-tiles');
+    return {
+      sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      innerScroll: strip.scrollHeight > strip.clientHeight + 2,
+      tiles: document.querySelectorAll('.wl-strip .wl-tile').length,
+      headAbove: rect(first.querySelector('.wl-band-head')).bottom <= rect(box).top + 2,
+      oneRow: groups.every(g => { const t = [...g.querySelectorAll('.wl-tile')]; return t.every(x => Math.abs(rect(x).top - rect(t[0]).top) < 2); }),
+      rowScrolls: getComputedStyle(box).overflowX === 'scroll' && box.scrollWidth > box.clientWidth + 2,
+      stacked: groups.every((g, i) => i === 0 || rect(g).top >= rect(groups[i - 1]).bottom - 2),
+    };
+  });
   expect(narrow.sideways, 'no sideways page scroll at phone width').toBe(false);
   expect(narrow.innerScroll, 'the panel is not cropped at phone width').toBe(false);
   expect(narrow.tiles, 'every tile still renders at phone width').toBeGreaterThan(0);
+  expect(narrow.headAbove, 'under 640px the head stacks above its tiles').toBe(true);
+  expect(narrow.oneRow, 'tiles still never wrap at phone width').toBe(true);
+  expect(narrow.rowScrolls, 'the long list scrolls sideways inside its band').toBe(true);
+  expect(narrow.stacked, 'bands still stack').toBe(true);
 });
 
 /* S39 — the volume average. The failure it guards is quiet: an average computed
@@ -5533,4 +5719,654 @@ test('S53: the charts rail is capped at 220px when stacked and at the chart colu
       .toBeLessThanOrEqual(m.chartColumn + 1);
     expect(m.rail, 'and fills it rather than collapsing').toBeGreaterThan(m.chartColumn * 0.9);
   }
+});
+
+// S54 — Accounts at the bottom, cards side by side (owner request 2026-09-30).
+// The accounts used to be a 232px column at the right of the desk row with the
+// cards stacked one per row. That column is now the Economy placeholder
+// (`.area-econ`, now the Economy panel — see S55), and the WHOLE `.area-accounts`
+// section — title, desk lamp, Refresh/Lock, stamp and the cards — is the last block in <main>.
+test('S54: the accounts sit at the bottom of the page, side by side, in line with the panels above', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  await gotoDemo(page, '#accountGrid .account', 15000);
+
+  // Everything is read off the LIVE layout (rects, computed widths, DOM position), never off the
+  // stylesheet's text, so it holds for any implementation that puts the page in this shape.
+  const measure = () => page.evaluate(() => {
+    const rc = (el) => { const b = el.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; };
+    const one = (sel) => document.querySelector(sel);
+    const main = document.getElementById('main');
+    const acc = one('.area-accounts');
+    const heat = one('.heat-panel');
+    const charts = one('.area-charts');
+    const grid = document.getElementById('accountGrid');
+    const cards = [...grid.querySelectorAll(':scope > .account')].map(rc);
+    const head = one('.accounts-side');
+    const econ = one('.area-econ');
+    const ask = one('.col-rail > .panel');
+    const mkt = one('.col-markets > .panel');
+    const row = one('.desk-row');
+    return {
+      vw: window.innerWidth,
+      scrollW: document.documentElement.scrollWidth,
+      lastIsAccounts: main.lastElementChild === acc,
+      accountsInMain: !!acc && acc.parentElement === main,
+      accountsAfterHeat: !!(heat && acc && (heat.compareDocumentPosition(acc) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      accountsInDeskRow: !!(acc && row && row.contains(acc)),
+      inside: Object.fromEntries(['#mastheadState', '#accountsStamp', '#accountsTitle', '#accountGrid']
+        .map((s) => [s, !!(acc && acc.querySelector(s))])),
+      acc: acc && rc(acc), heat: heat && rc(heat), charts: charts && rc(charts),
+      grid: rc(grid), head: head && rc(head), cards,
+      title: rc(document.getElementById('accountsTitle')),
+      state: rc(document.getElementById('mastheadState')),
+      stamp: rc(document.getElementById('accountsStamp')),
+      econInRow: !!(econ && row && row.contains(econ)),
+      econ: econ && rc(econ), ask: ask && rc(ask), mkt: mkt && rc(mkt), row: row && rc(row),
+      boxes: rc(one('.top-boxes')),   /* Ask + the 12px gap + Economy */
+    };
+  });
+
+  const check = (m, where) => {
+    const tag = `[${where} @${m.vw}px]`;
+    // ── position in the document
+    expect(m.accountsInMain && m.lastIsAccounts, `${tag} the accounts section is the LAST child of <main>`).toBe(true);
+    expect(m.accountsAfterHeat, `${tag} it follows the heatmap panel in document order (visual order = DOM order, no CSS order)`).toBe(true);
+    expect(m.accountsInDeskRow, `${tag} it is no longer inside the desk row`).toBe(false);
+    expect(m.acc.t, `${tag} it is painted BELOW the heatmap panel`).toBeGreaterThanOrEqual(m.heat.b - 1);
+    for (const [sel, ok] of Object.entries(m.inside)) expect(ok, `${tag} ${sel} travels with the section`).toBe(true);
+    // ── edges line up with the full-bleed panels above it
+    expect(Math.abs(m.acc.l - m.charts.l), `${tag} left edge matches .area-charts`).toBeLessThanOrEqual(1);
+    expect(Math.abs(m.acc.r - m.charts.r), `${tag} right edge matches .area-charts`).toBeLessThanOrEqual(1);
+    expect(Math.abs(m.acc.l - m.heat.l) + Math.abs(m.acc.r - m.heat.r), `${tag} and matches .heat-panel`).toBeLessThanOrEqual(2);
+    expect(m.scrollW, `${tag} the page does not scroll sideways`).toBeLessThanOrEqual(m.vw + 1);
+    // ── the cards
+    expect(m.cards.length, `${tag} demo shows the two accounts`).toBe(2);
+    const [a, b] = m.cards;
+    expect(a.l, `${tag} the first card starts at the section's left edge`).toBeGreaterThanOrEqual(m.acc.l - 1);
+    expect(Math.max(a.r, b.r), `${tag} no card runs past the section's right edge`).toBeLessThanOrEqual(m.acc.r + 1);
+    expect(m.head.b, `${tag} the header row sits ABOVE the cards`).toBeLessThanOrEqual(a.t + 1);
+    if (m.vw >= 800) {
+      expect(Math.abs(a.t - b.t), `${tag} side by side: the two cards' tops are equal`).toBeLessThanOrEqual(1);
+      expect(a.r, `${tag} and they do not overlap`).toBeLessThanOrEqual(b.l + 1);
+      expect(Math.abs(a.w - b.w), `${tag} and share the width equally`).toBeLessThanOrEqual(1);
+      expect(a.w + b.w, `${tag} and fill the section`).toBeGreaterThan(m.acc.w * 0.9);
+    } else if (m.vw <= 720) {
+      expect(b.t, `${tag} stacked: the second card is BELOW the first`).toBeGreaterThanOrEqual(a.b - 1);
+      expect(Math.abs(a.l - b.l), `${tag} and they share a left edge`).toBeLessThanOrEqual(1);
+      expect(a.w, `${tag} and each takes the full width`).toBeGreaterThan(m.acc.w * 0.95);
+    }
+    // ── the header row is ONE line on a wide screen (title, desk lamp and stamp level)
+    if (m.vw >= 1120) {
+      const cy = (r) => (r.t + r.b) / 2;
+      expect(Math.abs(cy(m.title) - cy(m.state)), `${tag} title and desk lamp share a line`).toBeLessThanOrEqual(4);
+      expect(Math.abs(cy(m.title) - cy(m.stamp)), `${tag} and so does the synced stamp`).toBeLessThanOrEqual(4);
+      expect(m.head.h, `${tag} the header row is one line tall`).toBeLessThan(40);
+    }
+    // ── the freed desk-row slot holds the Economy panel, right of Ask
+    expect(m.econInRow, `${tag} .area-econ is in the top desk row`).toBe(true);
+    if (m.vw >= 1120) {
+      expect(m.econ.l, `${tag} Economy sits to the RIGHT of Ask`).toBeGreaterThanOrEqual(m.ask.r - 1);
+      /* The Economy basis is FLUID — clamp(232px, 100vw - 1067px, 320px): 232 (the accounts column's old
+         width) while Ask cannot spare more, growing to 320 only with width Ask can give up, so that
+         Ask keeps >= 380px wherever Economy is wider than 232. A fixed 320 would have left Ask at
+         146px in the owner's 1152 browser. Read off the LIVE layout, not the stylesheet's text. */
+      const want = Math.min(320, Math.max(232, m.vw - 1067));
+      expect(Math.abs(m.econ.w - want), `${tag} Economy is clamp(232, vw-1067, 320) = ${want}px wide, got ${m.econ.w}`).toBeLessThanOrEqual(1);
+      /* Ask keeps the smaller of 380px and what the old 232px column left it — read off THIS layout's own
+         Ask+Economy box (WebKit sets the Markets column ~11px wider than Chromium, so a width computed
+         from the viewport would be wrong there) */
+      const askFloor = Math.min(379, m.boxes.w - 12 - 232 - 2);
+      expect(m.ask.w, `${tag} Economy only takes width Ask can spare: Ask keeps >= ${askFloor}px, got ${m.ask.w}`).toBeGreaterThanOrEqual(askFloor);
+      expect(Math.abs(m.econ.b - m.mkt.b), `${tag} and ends on Markets' bottom line`).toBeLessThanOrEqual(2);
+      expect(Math.abs(m.ask.b - m.mkt.b), `${tag} as Ask does`).toBeLessThanOrEqual(2);
+      expect(Math.abs(m.econ.t - m.ask.t), `${tag} starting on Ask's top line`).toBeLessThanOrEqual(2);
+    } else {
+      const apart = m.econ.r <= m.ask.l + 1 || m.econ.l >= m.ask.r - 1 || m.econ.t >= m.ask.b - 1 || m.econ.b <= m.ask.t + 1;
+      expect(apart, `${tag} stacked: Economy and Ask do not overlap`).toBe(true);
+    }
+  };
+
+  // 1) this project's own width
+  check(await measure(), 'own width');
+
+  // 2) the desk lamp, Refresh and Lock are in the section (forced live + authed — demo renders neither)
+  await page.evaluate(() => { DESK_DB.url = DESK_DB.url || 'https://example.invalid'; DESK.mode = 'live'; DESK.authed = true; renderMasthead(); });
+  await expect(page.locator('.area-accounts #mastheadState #refreshNowBtn'), 'Refresh now travels with the section').toHaveCount(1);
+  await expect(page.locator('.area-accounts #mastheadState button', { hasText: /^Lock$/ }), 'and so does Lock').toHaveCount(1);
+  // ...and the locked panel spans every card track, with its wrong-PIN line INSIDE it (min-height, not height)
+  await page.evaluate(() => { DESK.authed = false; renderLockedPanels(); const e = document.querySelector('.panel-lock .lock-error'); e.textContent = 'PIN not recognized — try again.'; e.hidden = false; });
+  const lock = await page.evaluate(() => {
+    const p = document.querySelector('#accountGrid > .panel-lock').getBoundingClientRect();
+    const g = document.getElementById('accountGrid').getBoundingClientRect();
+    const e = document.querySelector('.panel-lock .lock-error').getBoundingClientRect();
+    return { pl: p.left, pr: p.right, gl: g.left, gr: g.right, pb: p.bottom, eb: e.bottom };
+  });
+  expect(Math.abs(lock.pl - lock.gl) + Math.abs(lock.pr - lock.gr), 'the PIN lock spans the whole card grid').toBeLessThanOrEqual(2);
+  expect(lock.eb, 'and the wrong-PIN line stays inside the panel').toBeLessThanOrEqual(lock.pb + 0.5);
+  await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; renderMasthead(); renderPrivate(); });
+  await expect(page.locator('#accountGrid .account')).toHaveCount(2);
+
+  // 3) Economy cannot push the desk row: Markets is still the ruler when it holds a lot (wide layout only)
+  if (await page.evaluate(() => window.innerWidth) >= 1120) {
+    const before = await measure();
+    await page.evaluate(() => {
+      const body = document.getElementById('econBody');
+      for (let i = 0; i < 80; i++) { const p = document.createElement('p'); p.className = 's54-probe'; p.textContent = 'Indicator ' + i; body.appendChild(p); }
+    });
+    const after = await measure();
+    await page.evaluate(() => document.querySelectorAll('.s54-probe').forEach((n) => n.remove()));
+    expect(Math.abs(after.row.h - before.row.h), 'eighty rows of content do not grow the desk row').toBeLessThanOrEqual(1);
+    expect(Math.abs(after.econ.b - after.mkt.b), 'Economy still ends on Markets\' bottom line').toBeLessThanOrEqual(2);
+  }
+
+  // 4) other widths: the owner's 1152 browser, and a window wider than the 1880 shell cap — the section
+  //    must opt out of that cap with the charts and heatmap or it would be inset from them
+  //    A resize is measured once the layout has SETTLED (two identical reads 250ms apart, with no sideways
+  //    scroll): WebKit holds the previous width's band for a few hundred ms after setViewportSize
+  //    (measured on the untouched base too: scrollWidth 1291 at a 1152 viewport, gone by the next read),
+  //    and a check taken inside that window reports a transient rather than the layout. A layout that
+  //    NEVER settles returns its last read, and check() then fails on what is actually wrong with it.
+  const settle = async () => {
+    let prev = null, m;
+    for (let i = 0; i < 16; i++) {
+      m = await measure();
+      if (prev === JSON.stringify(m) && m.scrollW <= m.vw + 1) return m;
+      prev = JSON.stringify(m);
+      await page.waitForTimeout(250);
+    }
+    return m;
+  };
+  for (const w of [1152, 2000]) {
+    test.info().annotations.push({ type: 'viewport-override', description: String(w) });
+    await page.setViewportSize({ width: w, height: 900 });
+    check(await settle(), `resized to ${w}`);
+  }
+});
+
+// S55 — The Economy panel (owner request 2026-09-30): the desk row's 4th column. Seven indicators —
+// 2Y/10Y/20Y Treasury, unemployment, CPI, PCE, core PCE — each row a value, a change, the date the
+// reading is FOR and ITS OWN chart to the right, over a span the owner picks (1W 1M 3M 6M 1Y 5Y; there
+// is no 1D — the data is one reading per business day or per month).
+//
+// Everything is read off the LIVE layout and the LIVE DOM. The second half forces live mode and drives
+// the real poller through a stubbed `deskEcon` on Playwright's clock (installed BEFORE navigation so the
+// page's own 30s lamp ticker is faked too), so "the next fetch follows refreshInSec" is asserted in
+// fake seconds, never by sleeping.
+test('S55: the Economy panel — seven rows, each with its own chart to the right, over a selectable span', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await page.clock.install();
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  const IDS = ['ust2y', 'ust10y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'];
+  const rowsInfo = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const q = (s) => li.querySelector(s);
+    const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
+    const clipped = (e) => e.scrollWidth > e.clientWidth + 1;
+    const svg = q('.econ-chart svg');
+    const line = svg && svg.querySelector('path.econ-line');
+    return {
+      id: li.dataset.id, cadence: li.dataset.cadence, status: li.dataset.status,
+      label: q('.econ-label').textContent, val: q('.econ-val').textContent, delta: q('.econ-delta').textContent,
+      date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
+      isNew: !!q('.econ-new'), note: q('.econ-note') ? q('.econ-note').textContent : null,
+      hasSvg: !!svg, d: line ? line.getAttribute('d') : null, noline: !!q('.econ-noline'),
+      li: box(li), info: box(q('.econ-info')), val$: box(q('.econ-val')), delta$: box(q('.econ-delta')), chart: svg ? box(svg) : null,
+      clip: { label: clipped(q('.econ-label')), val: clipped(q('.econ-val')), delta: clipped(q('.econ-delta')), date: clipped(q('.econ-date')) },
+    };
+  }));
+  const pressed = () => page.evaluate(() => [...document.querySelectorAll('#econTf button[aria-pressed="true"]')].map((b) => b.dataset.tf));
+  const pick = async (tf) => { await page.locator(`#econTf button[data-tf="${tf}"]`).click(); await expect.poll(pressed).toEqual([tf]); };
+
+  // ── 1. DEMO: seven rows, each complete, each chart to the RIGHT of its value
+  await expect(page.locator('#econLamp'), '#econLamp must read exactly Demo in demo mode').toHaveText(/^demo$/i);
+  await expect(page.locator('#econStamp'), 'the panel carries an as-of stamp (the design signature)').toHaveText(/Last updated/);
+  let rows = await rowsInfo();
+  expect(rows.map((r) => r.id), 'the seven default indicators, in order').toEqual(IDS);
+  // demo's acknowledgement state is session-only (Codex review, PR #294): its synthetic readings must never reach the keys a REAL
+  // visit reads, or the first live visit afterwards would mark all seven indicators NEW
+  expect(await page.evaluate(() => [localStorage.getItem('econ_seen_v1'), localStorage.getItem('econ_pending_v1')]),
+    'demo persists no acknowledgement state').toEqual([null, null]);
+  expect(rows.map((r) => r.label)).toEqual(['2Y Treasury', '10Y Treasury', '20Y Treasury', 'Unemployment', 'CPI YoY', 'PCE YoY', 'Core PCE YoY']);
+  for (const r of rows) {
+    const who = `[${r.id}]`;
+    expect(r.val, `${who} a value with its unit`).toMatch(/^\d+\.\d+%$/);
+    expect(r.delta, `${who} a change: an arrow (or "=") and the size of the move`).toMatch(/^[▲▼=] \d+\.\d+$/);
+    expect(r.date, `${who} carries the date its reading is FOR`).toMatch(/^[A-Z][a-z]{2}( \d{1,2}| \d{4})?$/);
+    expect(r.hasSvg && r.d && r.d.length > 20, `${who} has its own drawn chart`).toBeTruthy();
+    expect(r.d, `${who} no NaN in the path`).not.toMatch(/NaN/);
+    expect(r.chart.l, `${who} the chart starts to the RIGHT of the value block`).toBeGreaterThanOrEqual(Math.max(r.info.r, r.val$.r, r.delta$.r) - 0.5);
+    expect(r.chart.r, `${who} and stays inside its row`).toBeLessThanOrEqual(r.li.r + 1);
+    // a clipped value is a wrong value (a clipped date is a wrong date)
+    expect(r.clip, `${who} nothing on the left block is clipped`).toEqual({ label: false, val: false, delta: false, date: false });
+  }
+  // the value and the change print at the row's own `decimals` (yields 2, unemployment/inflation 1), not one house format
+  const decs = await page.evaluate(() => econState.shown.rows.map((r) => [r.id, r.decimals]));
+  expect(rows.map((r) => [r.id, r.val.replace('%', '').split('.')[1].length]), 'the value prints at its own decimals').toEqual(decs);
+  expect(rows.map((r) => [r.id, r.delta.split('.')[1].length]), 'and so does the change').toEqual(decs);
+  // the arrow agrees with the sign of the payload's own delta, and a yield and an inflation rate both read as neutral ink
+  const sign = await page.evaluate(() => econState.shown.rows.map((r) => [r.id, r.delta > 0 ? '▲' : r.delta < 0 ? '▼' : '=']));
+  expect(rows.map((r) => [r.id, r.delta[0]]), 'the arrow follows the sign of the change').toEqual(sign);
+  // a monthly reading names its MONTH ("Aug"), never "Aug 1" (a stale-looking day) or Jul 31 (UTC midnight read in Pacific)
+  for (const r of rows.filter((x) => x.cadence === 'monthly')) expect(r.date, `[${r.id}] a monthly reading is a month`).toMatch(/^[A-Z][a-z]{2}( \d{4})?$/);
+  for (const r of rows.filter((x) => x.cadence === 'daily')) expect(r.date, `[${r.id}] a daily reading is Mon D`).toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const asOfs = await page.evaluate(() => econState.shown.rows.filter((r) => r.cadence === 'monthly').map((r) => r.asOf));
+  const thisYear = await page.evaluate(() => ptDateKey(new Date()).slice(0, 4));
+  expect(rows.filter((r) => r.cadence === 'monthly').map((r) => r.date), 'rendered month = the asOf month (the year only when it is not this one)')
+    .toEqual(asOfs.map((a) => MON[+a.slice(5, 7) - 1] + (a.slice(0, 4) === thisYear ? '' : ' ' + a.slice(0, 4))));
+  // ...read by SLICING the string. A Date-parse lands on the previous month on any clock west of UTC, and the desk runs on Pacific;
+  // the runner's own zone may not be west of UTC, so make the local-time getters behave as Pacific and the label must not move.
+  const pacific = await page.evaluate((y) => {
+    const real = { m: Date.prototype.getMonth, d: Date.prototype.getDate };
+    const west = (t) => new Date(t - 8 * 3600e3);
+    Date.prototype.getMonth = function () { return west(this.getTime()).getUTCMonth(); };
+    Date.prototype.getDate = function () { return west(this.getTime()).getUTCDate(); };
+    try { return [econDateLabel(`${y}-08-01`, 'monthly'), econDateLabel(`${y}-01-01`, 'monthly'), econDateLabel(`${y}-09-29`, 'daily')]; }
+    finally { Date.prototype.getMonth = real.m; Date.prototype.getDate = real.d; }
+  }, thisYear);
+  expect(pacific, 'the first of a month is that month, not the one before it (Aug 1 is Aug, not Jul 31)').toEqual(['Aug', 'Jan', 'Sep 29']);
+
+  // beside Markets (>=1120) the rows share the column's height: no dead band under the last row, the note on the bottom edge
+  if (await page.evaluate(() => window.innerWidth) >= 1120) {
+    const gap = await page.evaluate(() => document.querySelector('.area-econ').getBoundingClientRect().bottom - document.querySelector('.econ-foot').getBoundingClientRect().bottom);
+    expect(gap, 'the rows fill the column Markets sets (a body capped at 320px leaves ~400px of empty panel)').toBeLessThanOrEqual(40);
+  }
+
+  // ── 2. green and red are P&L-ONLY: nothing in the panel is painted in a gain/loss colour
+  const pl = await page.evaluate(() => {
+    const probe = (c) => { const e = document.createElement('i'); e.style.color = c; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; };
+    const bad = ['--color-gain', '--color-loss', '--color-gain-dim', '--color-loss-dim', '--color-danger', '--color-status-live'].map((t) => probe(`var(${t})`));
+    const offenders = [];
+    for (const n of document.querySelectorAll('#econBody *')) {
+      const cs = getComputedStyle(n);
+      for (const p of ['color', 'backgroundColor', 'borderTopColor']) if (bad.includes(cs[p])) offenders.push(`${n.className || n.tagName}:${p}`);
+      if (n instanceof SVGElement) for (const p of ['stroke', 'fill']) if (bad.includes(cs[p])) offenders.push(`${n.getAttribute('class') || n.tagName}:${p}`);
+      if (/\b(gain|loss|pill|up|down)\b|pill--/.test(n.getAttribute('class') || '')) offenders.push(`class ${n.getAttribute('class')}`);
+    }
+    return offenders;
+  });
+  expect(pl, 'no gain/loss colour or P&L class anywhere in the Economy panel — a rising yield is not a gain').toEqual([]);
+
+  // ── 3. the span control: six presets, 3M pressed, no 1D, and it says why
+  const tfLabels = await page.locator('#econTf button').allTextContents();
+  expect(tfLabels, 'the six presets — no 1D, the data has no intraday series').toEqual(['1W', '1M', '3M', '6M', '1Y', '5Y']);
+  expect(await pressed(), 'default 3M, exactly one pressed').toEqual(['3m']);
+  await expect(page.locator('#econTf'), 'the control says there is no 1-day view').toHaveAttribute('title', /no 1-day view/i);
+
+  // ── 4. a monthly row on a span shorter than 6 readings shows its 6 latest AND says so; a daily one never does
+  for (const tf of ['1w', '1m', '3m']) {
+    await pick(tf);
+    rows = await rowsInfo();
+    for (const r of rows.filter((x) => x.cadence === 'monthly')) expect(r.note, `[${r.id}] @${tf}: the caption says why half a year is drawn`).toMatch(/6 latest/);
+    for (const r of rows.filter((x) => x.cadence === 'daily')) expect(r.note, `[${r.id}] @${tf}: a daily row has no pointsNote`).toBeNull();
+    // the chart's ACCESSIBLE name says what is drawn (Codex review, PR #294): a monthly row's 6 latest readings are not "over 1W"
+    const names = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-chart svg').getAttribute('aria-label')]));
+    for (const [id, cadence, name] of names) {
+      if (cadence === 'monthly') { expect(name, `[${id}] @${tf}: a fallback chart names the fallback`).toMatch(/\(monthly - 6 latest\)/); expect(name, `[${id}] @${tf}: and does not claim the short span`).not.toMatch(/ over /); }
+      else expect(name, `[${id}] @${tf}: a daily chart names its span`).toContain(` over ${tf.toUpperCase()}`);
+    }
+    for (const r of rows) expect(r.hasSvg, `[${r.id}] @${tf}: still drawn`).toBe(true);
+  }
+  await pick('6m');
+  expect((await rowsInfo()).filter((r) => r.note), 'on 6M every monthly row holds >= 6 readings: no caption').toEqual([]);
+
+  // ── 5. picking 1Y redraws every chart to a DIFFERENT path, and survives a reload
+  await pick('3m');
+  const before = Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d]));
+  await pick('1y');
+  const after = Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d]));
+  for (const id of IDS) expect(after[id], `[${id}] 1Y is a different chart from 3M`).not.toBe(before[id]);
+  expect(await page.evaluate(() => localStorage.getItem('econ_tf_v1')), 'persisted under econ_tf_v1').toBe('1y');
+  await page.reload();
+  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  expect(await pressed(), '1Y survives a reload').toEqual(['1y']);
+  expect(Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d])), 'and so does the drawing').toEqual(after);
+  // the caption under each chart names what it covers: on a year-long span a daily row's ends carry the YEAR, so
+  // "Sep 28 – Sep 28" (a five-year chart that reads as one day) can never appear
+  for (const tf of ['1y', '5y']) {
+    await pick(tf);
+    const caps = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-cap').textContent]));
+    for (const [id, cadence, cap] of caps) {
+      const [from, to] = cap.split(' – ');
+      expect(from, `[${id}] @${tf}: the caption's two ends differ (${cap})`).not.toBe(to);
+      expect(cap, `[${id}] @${tf}: both ends carry the year`).toMatch(/^[A-Z][a-z]{2} '\d{2} – [A-Z][a-z]{2} '\d{2}$/);
+    }
+  }
+  await pick('3m');
+  for (const [id, cadence, cap] of await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-cap').textContent]))) {
+    if (cadence === 'daily') expect(cap, `[${id}] @3M a daily caption is Mon D – Mon D (no year needed)`).toMatch(/^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/);
+  }
+  await pick('1y');
+  // a hand-edited / stale stored span falls back to the default instead of pressing nothing
+  await page.evaluate(() => localStorage.setItem('econ_tf_v1', '2y'));
+  await page.reload();
+  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  expect(await pressed(), 'a stored span that is not a preset falls back to 3M').toEqual(['3m']);
+
+  // ── 6. unknown is an em dash, never 0 — forged payloads through the real renderer
+  await page.evaluate(() => {
+    const base = buildDemoEcon(econTf);
+    const r = base.rows.slice(0, 5).map((x) => ({ ...x }));
+    r[0] = { ...r[0], status: 'missing', value: null, prev: null, delta: null, asOf: null, prevAsOf: null, source: null, points: [] };
+    r[1] = { ...r[1], delta: null, prev: null, prevAsOf: null };
+    r[2] = { ...r[2], value: null };
+    r[3] = { ...r[3], points: [['2026-08-01', 3.3]] };
+    r[4] = { ...r[4], status: 'stale', staleSec: 600 };
+    r.push({ ...base.rows[5], points: [0, 1, 2, 3, 4, 5].map((i) => [`2026-0${i + 1}-01`, 3.3]) });   // a constant series
+    renderEcon({ ...base, rows: r });
+  });
+  rows = await rowsInfo();
+  expect([rows[0].val, rows[0].delta, rows[0].date], 'a missing row: value, change and date are all em dashes').toEqual(['—', '—', '—']);
+  expect([rows[0].hasSvg, rows[0].noline, rows[0].tag], 'no chart, a dashed placeholder, an honest tag').toEqual([false, true, 'NO DATA']);
+  expect(rows[1].val, 'a known value stays').toMatch(/^\d+\.\d+%$/);
+  expect(rows[1].delta, 'an unknown change is an em dash — never "= 0.00"').toBe('—');
+  expect(rows[2].val, 'a null value is an em dash, never 0.00%').toBe('—');
+  expect([rows[3].hasSvg, rows[3].noline], 'a single reading cannot draw a line: a dashed placeholder, not a fake one').toEqual([false, true]);
+  expect([rows[4].tag, rows[4].hasSvg], 'a stale row keeps its last good value and chart, tagged STALE').toEqual(['STALE', true]);
+  expect(rows[4].val).toMatch(/^\d+\.\d+%$/);
+  // a constant series is a level line through the middle, not a NaN path (0/0) and not a line glued to the floor
+  expect(rows[5].d, 'a flat series draws a real path').not.toMatch(/NaN|Infinity/);
+  expect([...new Set([...rows[5].d.matchAll(/ ([\d.]+)/g)].map((m) => m[1]))], 'at ONE height, mid-chart').toEqual(['16.0']);
+  for (const r of rows.slice(0, 3)) for (const t of [r.val, r.delta]) expect(t, `[${r.id}] unknown never renders as zero`).not.toMatch(/^[=+−-]?\s*0(\.0+)?%?$/);
+  await page.evaluate(() => renderEcon(buildDemoEcon(econTf)));
+
+  // ── 6b. too little room: seven rows must not be cut off silently. The body is an ORDINARY scroller (no overscroll-behavior,
+  //    which would eat the wheel), the rows keep their height, and the source note never paints over the last row.
+  const tight = await page.evaluate(() => {
+    const body = document.getElementById('econBody');
+    body.style.maxHeight = '260px';
+    const cs = getComputedStyle(body);
+    const rows = [...document.querySelectorAll('#econList .econ-row')];
+    const out = {
+      scrolls: body.scrollHeight > body.clientHeight + 1, overflowY: cs.overflowY, overscroll: [cs.overscrollBehaviorX, cs.overscrollBehaviorY],
+      minRow: Math.min(...rows.map((r) => r.getBoundingClientRect().height)),
+      lastBottom: rows[rows.length - 1].getBoundingClientRect().bottom, footTop: document.querySelector('.econ-foot').getBoundingClientRect().top,
+    };
+    body.style.maxHeight = '';
+    return out;
+  });
+  expect(tight.scrolls, 'with 260px the seven rows do not fit, so the body scrolls').toBe(true);
+  expect(tight.overflowY, 'an ordinary scrollbar').toBe('auto');
+  expect(tight.overscroll, 'and NO overscroll-behavior (it kills the wheel over a short panel)').toEqual(['auto', 'auto']);
+  expect(tight.minRow, 'rows keep at least their 52px rather than squashing').toBeGreaterThanOrEqual(51);
+  expect(tight.lastBottom, 'the source note does not paint over the last row').toBeLessThanOrEqual(tight.footTop + 1);
+
+  // ── 7. LIVE (forced): the real poller, a stubbed desk-econ, Playwright's fake clock
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
+    // the real deskEcon's request and failure mapping (before it is stubbed): the function has no 1D, `force` only when true
+    const realFetch = window.fetch;
+    window.__wire = [];
+    window.fetch = (url, init) => {
+      window.__wire.push({ url: String(url), body: JSON.parse(init.body) });
+      const bad = window.__wire.length === 3;
+      return Promise.resolve({ ok: !bad, status: bad ? 502 : 200, json: () => Promise.resolve(bad ? { ok: false, error: 'no series' } : { ok: true, rows: [] }) });
+    };
+    window.__wireP = Promise.all([deskEcon('1y', true), deskEcon('5y'), deskEcon('3m').then(() => 'resolved', () => 'rejected')])
+      .then((v) => { window.fetch = realFetch; return v; });
+  });
+  const wire = await page.evaluate(() => window.__wireP.then((v) => ({ v: v.slice(2), wire: window.__wire })));
+  expect(wire.wire.map((w) => [w.url.replace(/^.*\/functions/, '/functions'), w.body]), 'desk-econ is POSTed {range} and {force:true} only when forced')
+    .toEqual([['/functions/v1/desk-econ', { range: '1y', force: true }], ['/functions/v1/desk-econ', { range: '5y' }], ['/functions/v1/desk-econ', { range: '3m' }]]);
+  expect(wire.v, 'a 502 {ok:false} THROWS (the caller keeps its last good render), like every other feed').toEqual(['rejected']);
+
+  await page.evaluate(() => {
+    window.__calls = []; window.__mode = 'hang'; window.__refresh = 90; window.__rowsFn = null;
+    window.deskEcon = (range, force) => {
+      window.__calls.push({ range, force: force === true });
+      const m = window.__mode;
+      if (m === 'fail') return Promise.reject(new Error('desk-econ → HTTP 502'));
+      if (m === 'hang') return new Promise(() => {});
+      const p = buildDemoEcon(range);
+      const rows = window.__rowsFn ? window.__rowsFn(p.rows) : p.rows;
+      return Promise.resolve({ ...p, rows, range: m === 'wrongrange' ? (range === '1y' ? '5y' : '1y') : range,
+        generatedAt: new Date().toISOString(), refreshInSec: window.__refresh, stale: m === 'stale' });
+    };
+  });
+  const calls = () => page.evaluate(() => window.__calls.length);
+  const last = () => page.evaluate(() => window.__calls[window.__calls.length - 1]);
+  const due = () => page.evaluate(() => econState.dueAt - Date.now());
+  const lamp = () => page.locator('#econLamp').innerText();
+  const refresh = (force) => page.evaluate((f) => refreshEcon(f), force === true);
+  const setMode = (mode, refreshSec) => page.evaluate(([m, r]) => { window.__mode = m; if (r) window.__refresh = r; }, [mode, refreshSec]);
+
+  // 7a. before the first reply: nothing is drawn and the lamp is not Demo (real data or nothing)
+  await page.evaluate(() => { econState.payload = null; econState.failed = false; econState.shown = null; startEcon(); });
+  await expect(page.locator('#econLamp'), 'live, nothing yet: the lamp is not Demo').not.toHaveText(/^demo$/i);
+  expect(await page.locator('#econList .econ-row').count(), 'live and waiting: NO rows — never demo values').toBe(0);
+  expect(await last(), 'the first ask is the persisted span, not forced').toEqual({ range: '3m', force: false });
+  // ...and a first load that FAILS is an honest empty state under a STALE lamp, still no demo rows
+  await setMode('fail');
+  await refresh();
+  expect(await lamp(), 'first load failed: STALE').toMatch(/^stale$/i);
+  expect(await page.locator('#econList .econ-row').count(), 'and still no rows').toBe(0);
+  await expect(page.locator('#econList .econ-empty')).toContainText(/unavailable/i);
+  expect(await due(), 'a failed first load retries in 60s').toBeGreaterThan(58_000);
+  expect(await due()).toBeLessThanOrEqual(60_000);
+
+  // 7b. a good reply: LIVE, seven rows, the stamp, and the next fetch scheduled from refreshInSec
+  await setMode('ok');
+  await refresh();
+  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  expect(await lamp(), 'last poll ok, not stale: LIVE').toMatch(/^live$/i);
+  await expect(page.locator('#econStamp'), 'live stamp: the Pacific clock of the last check').toHaveText(/^Last updated \d\d:\d\d, [A-Z][a-z]{2} \d{1,2}$/);
+  expect(await due(), 'the next fetch is refreshInSec (90s) away').toBeGreaterThan(88_000);
+  expect(await due()).toBeLessThanOrEqual(90_000);
+  let n = await calls();
+  await page.clock.runFor(86_000);
+  expect(await calls(), '86s in: not asked again yet').toBe(n);
+  await page.clock.runFor(6_000);
+  await expect.poll(calls, 'past 90s the poller asks again').toBe(n + 1);
+  expect(await last(), 'with the current span, unforced').toEqual({ range: '3m', force: false });
+  // the delay is clamped to 30s..3600s whatever the server says
+  await setMode('ok', 5);
+  await refresh();
+  expect(await due(), 'refreshInSec 5 is clamped UP to 30s').toBeGreaterThan(28_000);
+  expect(await due()).toBeLessThanOrEqual(30_000);
+  await setMode('ok', 99999);
+  await refresh();
+  expect(await due(), 'refreshInSec 99999 is clamped DOWN to an hour').toBeGreaterThan(3_598_000);
+  expect(await due()).toBeLessThanOrEqual(3_600_000);
+  await setMode('ok', 90);
+  await refresh(true);
+  expect((await last()).force, 'an explicit refresh forces').toBe(true);
+
+  // 7b2. a FORCED refresh owns the clock while it is in flight (Codex review, PR #294): a poll timer that
+  //      comes due meanwhile must not start a second, unforced request — it would take the newer generation and
+  //      get the forced reply thrown away, leaving "Refresh now" showing the pre-refresh cache. The forced call is
+  //      held open by a gate so the timer's due time can be crossed while it is still pending.
+  await page.evaluate(() => {
+    window.__inner = window.deskEcon;
+    window.deskEcon = (range, force) => {
+      if (force !== true && window.__holdRange === range) {            // an unforced request for this span is held open too
+        window.__calls.push({ range, force: false });
+        return new Promise((res) => { window.__releaseSpan = () => res({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 90, stale: false }); });
+      }
+      if (force !== true) return window.__inner(range, force);
+      window.__calls.push({ range, force: true });
+      return new Promise((res) => { window.__releaseForce = () => res({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 90, stale: false }); });
+    };
+  });
+  await setMode('ok', 90);
+  await refresh();                                                // a normal poll timer is now pending, ~90s out
+  n = await calls();
+  await page.evaluate(() => { window.__forced = refreshEcon(true); });
+  expect(await calls(), 'the forced request is in flight').toBe(n + 1);
+  expect(await page.evaluate(() => econState.dueAt), 'nothing else is pending while it runs').toBe(0);
+  await page.clock.runFor(95_000);                                // past the moment the old timer was due
+  expect(await calls(), 'no second request started while the forced one is pending').toBe(n + 1);
+  const landedBefore = await page.evaluate(() => econState.landedAt);
+  await page.evaluate(() => { window.__releaseForce(); return window.__forced; });
+  await expect.poll(() => page.evaluate((t) => econState.landedAt > t, landedBefore), 'the forced reply LANDED (it was not discarded by a newer generation)').toBe(true);
+  expect(await due(), 'and it re-armed the poll from its own refreshInSec').toBeGreaterThan(88_000);
+  expect(await calls(), 'still exactly one request for the whole forced refresh').toBe(n + 1);
+
+  // 7b2b. a SPAN change while a forced refresh is in flight is serialised behind it (Codex review, PR #294): a request of its
+  //       own would take the newer generation and discard the forced reply, so the span is only recorded, marked pending,
+  //       and asked for the moment the forced reply lands — which is not a failed poll. The forced refresh (what "Refresh now"
+  //       awaits) stays pending until the span SHOWING has landed, however many times it is changed on the way.
+  const cur = await page.evaluate(() => econTf);
+  const [other, third] = ['1y', '6m', '1m'].filter((t) => t !== cur);
+  n = await calls();
+  await page.evaluate(() => { window.__forcedDone = false; window.__forced = refreshEcon(true); window.__forced.then(() => { window.__forcedDone = true; }); });
+  expect(await calls(), 'the forced request is in flight').toBe(n + 1);
+  await pick(other);
+  expect(await calls(), 'a span change during it starts no request of its own').toBe(n + 1);
+  expect(await page.evaluate(() => econState.pending), 'the span is recorded and the list is marked pending').toBe(true);
+  await page.evaluate((r) => { window.__holdRange = r; window.__releaseForce(); }, other);
+  await expect.poll(calls, 'the forced reply landing asks for the span now showing').toBe(n + 2);
+  expect(await last(), 'unforced, for the span that was picked').toEqual({ range: other, force: false });
+  const flush = () => page.evaluate(async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); return window.__forcedDone; });
+  expect(await flush(), 'the forced refresh is still pending while the span request is in flight').toBe(false);
+  // ...and a SECOND span change while that follow-up is in flight is still only recorded: the lock is kept
+  await pick(third);
+  expect(await calls(), 'a second span change during the follow-up starts no request of its own either').toBe(n + 2);
+  await page.evaluate(() => { window.__releaseSpan(); window.__holdRange = null; });
+  await expect.poll(calls, 'the follow-up landing on a span that has moved asks for the one now showing').toBe(n + 3);
+  expect(await last(), 'unforced, for the latest span').toEqual({ range: third, force: false });
+  await expect.poll(() => page.evaluate(() => window.__forcedDone), 'and the forced refresh settles only once THAT has landed').toBe(true);
+  expect(await page.evaluate(() => econState.payload && econState.payload.range), 'the drawn reply is the latest span').toBe(third);
+  expect(await page.evaluate(() => econState.forcing), 'the forced lock is released').toBe(false);
+  expect(await lamp(), 'a span change behind a forced refresh is not a failed poll').toMatch(/^live$/i);
+  await pick(cur);
+  await expect.poll(() => page.evaluate(() => econState.payload && econState.payload.range), 'back on the original span').toBe(cur);
+
+  // 7b3. "Refresh now" stays pending until EVERY request is done: feedPollTick lands first and rebuilds the masthead,
+  //      which used to re-enable a button whose clicks refreshNowClicked then ignored while the economy request ran.
+  const pending = await page.evaluate(() => {
+    const read = () => { const b = document.getElementById('refreshNowBtn'); return { disabled: b.disabled, text: b.textContent }; };
+    refreshNowPending = true; renderMasthead(); const during = read();
+    refreshNowPending = false; renderMasthead(); const after = read();
+    return { during, after };
+  });
+  expect(pending.during, 'a masthead rebuilt under a pending refresh keeps the button disabled and says so').toEqual({ disabled: true, text: 'Refreshing…' });
+  expect(pending.after, 'and a rebuild after it is over restores the normal button').toEqual({ disabled: false, text: 'Refresh now' });
+  await page.evaluate(() => {
+    window.__tick = window.feedPollTick; window.__sf = window.scheduleFeedPoll; window.__sm = window.scheduleMarketPoll;
+    window.feedPollTick = async () => { renderMasthead(); };     // the feeds land at once, rebuilding the masthead
+    window.scheduleFeedPoll = () => {}; window.scheduleMarketPoll = () => {};
+    window.__clicked = refreshNowClicked();
+  });
+  await expect(page.locator('#refreshNowBtn'), 'the feeds are done but the economy request is not: still pending').toBeDisabled();
+  await expect(page.locator('#refreshNowBtn')).toHaveText('Refreshing…');
+  await page.evaluate(() => { window.__releaseForce(); return window.__clicked; });
+  await expect(page.locator('#refreshNowBtn'), 'everything landed: the button is back').toBeEnabled();
+  await expect(page.locator('#refreshNowBtn')).toHaveText('Refresh now');
+  await page.evaluate(() => { window.feedPollTick = window.__tick; window.scheduleFeedPoll = window.__sf; window.scheduleMarketPoll = window.__sm; window.deskEcon = window.__inner; });
+
+  // 7c. a failed poll keeps the last render, flips the lamp to STALE, and retries in a minute
+  const vals = (await rowsInfo()).map((r) => r.val);
+  await setMode('fail');
+  await refresh();
+  expect((await rowsInfo()).map((r) => r.val), 'the last good rows stay on screen').toEqual(vals);
+  expect(await lamp(), 'under a STALE lamp').toMatch(/^stale$/i);
+  n = await calls();
+  await page.clock.runFor(58_000);
+  expect(await calls(), 'the retry is 60s away').toBe(n);
+  await page.clock.runFor(3_000);
+  await expect.poll(calls).toBe(n + 1);
+  await setMode('ok');
+  await page.clock.runFor(61_000);
+  await expect.poll(lamp, 'a good reply brings it back').toMatch(/^live$/i);
+
+  // 7d. a body that SAYS it is stale reads STALE, with the row tagged and its last good value kept
+  await page.evaluate(() => { window.__rowsFn = (rs) => rs.map((r) => (r.id === 'ust10y' ? { ...r, status: 'stale', staleSec: 900 } : r)); });
+  await setMode('stale');
+  await refresh();
+  expect(await lamp(), 'stale:true on a successful poll').toMatch(/^stale$/i);
+  rows = await rowsInfo();
+  const t10 = rows.find((r) => r.id === 'ust10y');
+  expect([t10.tag, t10.val], 'the stale row is tagged and keeps its value').toEqual(['STALE', vals[1]]);
+
+  // 7e. the lamp AGES while nothing lands: LIVE at 100s, STALE past 3 x refreshInSec
+  await page.evaluate(() => { window.__rowsFn = null; });
+  await setMode('ok', 60);
+  await refresh();
+  expect(await lamp()).toMatch(/^live$/i);
+  await setMode('hang');
+  await page.clock.runFor(100_000);
+  expect(await lamp(), '100s of silence on a 60s cadence: still LIVE').toMatch(/^live$/i);
+  // 100s + 140s = 240s > 3 x 60s + one full 30s tick, so a tick is certain to land past the 180s mark whatever its phase
+  await page.clock.runFor(140_000);
+  await expect.poll(lamp, 'past 3 x refreshInSec with nothing landing: STALE, from the 30s ticker alone').toMatch(/^stale$/i);
+
+  // 7f. a reply for a DIFFERENT span than the one asked is dropped, never drawn under the wrong label
+  await setMode('ok', 90);
+  await refresh();
+  expect(await lamp()).toMatch(/^live$/i);
+  const d3 = Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d]));
+  await setMode('wrongrange');
+  await refresh();
+  expect(Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d])), 'the 3M drawing is untouched').toEqual(d3);
+  expect(await lamp(), 'and the desk admits the poll did not deliver').toMatch(/^stale$/i);
+
+  // 7g. NEW: the first look seeds silently except rows the server says changed; data that moves is NEW; it clears
+  await setMode('ok');
+  await page.evaluate(() => { localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {}; });
+  await refresh();
+  rows = await rowsInfo();
+  expect(rows.filter((r) => r.isNew).map((r) => r.id), 'a fresh browser: only the rows the server flagged `changed`').toEqual(['ust10y', 'unrate']);
+  const seenKeys = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('econ_seen_v1') || '{}')).sort());
+  expect(seenKeys, 'the rest were recorded silently (no wall of NEW chips)').toEqual(['corepce', 'cpi', 'pce', 'ust20y', 'ust2y']);
+  await page.locator('#econList .econ-row[data-id="ust10y"]').hover();
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-new'), 'hovering its row clears NEW').toHaveCount(0);
+  await refresh();
+  expect((await rowsInfo()).find((r) => r.id === 'ust10y').isNew, 'and it stays cleared across the next poll, although the server still says changed').toBe(false);
+  // the server's `changed` hint is per-isolate and TRANSIENT: the next refresh says changed:false for the very same reading. A row
+  // flagged NEW and never acknowledged must keep its chip (and not be seeded as a silent first look) — Codex review, PR #294
+  await page.evaluate(() => { window.__rowsFn = (rs) => rs.map((r) => ({ ...r, changed: false })); });
+  await refresh();
+  expect((await rowsInfo()).find((r) => r.id === 'unrate').isNew, 'unemployment stays NEW after the hint goes quiet (nobody has acknowledged it)').toBe(true);
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('econ_seen_v1') || '{}')).includes('unrate')), 'and it was not seeded as a silent first look').toBe(false);
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('econ_pending_v1') || '{}'))), 'it is pending in storage, so a reload keeps it too').toEqual(['unrate']);
+  await page.evaluate(() => { window.__rowsFn = (rs) => rs.map((r) => (r.id === 'cpi' ? { ...r, asOf: '2099-01-01', value: 9.9, prev: r.value, delta: 0.1, changed: false } : r)); });
+  await setMode('ok');
+  await refresh();
+  rows = await rowsInfo();
+  expect(rows.find((r) => r.id === 'cpi').isNew, 'a reading that moved since this browser last saw it is NEW (client-side, from asOf — `changed` was false)').toBe(true);
+  n = await page.locator('#econList .econ-new').count();
+  expect(n, 'CPI and the still-unseen unemployment').toBe(2);
+  // a chip is acknowledged only while ITS ROW has been in view (Codex review, PR #294): shrink the panel body so both rows sit below
+  // its scrollport — out of view whatever the page scroll — and two minutes go by without a chip clearing or a timer running
+  const timers = () => page.evaluate(() => econState.newTimers.size);
+  await page.evaluate(() => { const b = document.getElementById('econBody'); b.style.maxHeight = '140px'; b.scrollTop = 0; });
+  await expect.poll(timers, 'rows out of view hold no acknowledgement timer').toBe(0);
+  await page.clock.runFor(120_000);
+  await expect(page.locator('#econList .econ-new'), 'unseen NEW chips survive 2 minutes').toHaveCount(2);
+  // bring both into view: each row starts its own ~60s
+  await page.evaluate(() => {
+    document.getElementById('econBody').style.maxHeight = '';
+    document.querySelector('#econList .econ-row[data-id="unrate"]').scrollIntoView({ block: 'center' });
+  });
+  await expect.poll(timers, 'rows in view start their timers').toBe(2);
+  // another tab acknowledges a different row meanwhile (Codex review, PR #294): this tab must MERGE its acknowledgements into what is
+  // stored, not overwrite the whole record with its own stale copy
+  await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('econ_seen_v1') || '{}'); c.__other = 'from another tab'; localStorage.setItem('econ_seen_v1', JSON.stringify(c)); });
+  await page.clock.runFor(61_000);
+  await expect(page.locator('#econList .econ-new'), 'NEW clears by itself after ~60s IN VIEW').toHaveCount(0);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('econ_seen_v1')).cpi), 'and is remembered').toBe('2099-01-01|9.9');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('econ_seen_v1')).__other), 'without erasing what another tab stored').toBe('from another tab');
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'econ_seen_v1' })));
+  expect(await page.evaluate(() => econSeen.__other), 'and the storage event brings the other tab\'s record into this tab\'s memory').toBe('from another tab');
+
+  // 7h. a span change asks for the new range, dims the old charts meanwhile, and never pushes a due poll out
+  await page.evaluate(() => { window.__rowsFn = null; });
+  await setMode('ok', 90);
+  await refresh();
+  const dueAt = await page.evaluate(() => econState.dueAt);
+  await page.clock.runFor(5_000);
+  await setMode('hang');
+  await page.locator('#econTf button[data-tf="1y"]').click();
+  expect(await last(), 'the new span is requested (a server-side slice)').toEqual({ range: '1y', force: false });
+  await expect(page.locator('#econList'), 'old charts stay, dimmed, until the reply').toHaveClass(/is-pending/);
+  expect((await rowsInfo()).length, 'rows stay on screen while it is in flight').toBe(7);
+  await setMode('ok');
+  await page.evaluate(() => refreshEcon(false, { span: true }));
+  await expect(page.locator('#econList')).not.toHaveClass(/is-pending/);
+  expect(await page.evaluate(() => econState.dueAt), 'changing the span does not push the pending poll out').toBe(dueAt);
+  expect(await pressed()).toEqual(['1y']);
 });

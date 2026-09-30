@@ -1,40 +1,105 @@
 # Watchlists panel
 
-The Watchlists panel's tile / column rendering, placement, display rules and chart timeframe (`renderWatchlist`, `wlTile`, `#wlTf`; scenarios S20, S26, S27, S41, S42).
+The Watchlists panel's tile / band rendering, placement, display rules and chart timeframe (`renderWatchlist`, `wlTile`, `#wlTf`; scenarios S20, S26, S27, S41, S42).
 
 - **Watchlists panel** (`renderWatchlist()` + `wlTile()` + the editor, owner
   request 2026-07-29) — multiple named lists, unbounded symbols each.
   **Rendered as TILES, not a table** (owner request the same day, after seeing
   the table). The band/tile chrome is the shared `.mkt-group`/`.mkt-tile` CSS in
   `styles/layout.css`; `.wl-strip` widens it for a full-page panel.
-  **EACH CATEGORY IS A COLUMN** (owner request 2026-08-17, replacing the
-  full-width horizontal band it had been): list name on top, its tiles stacked
-  downward, columns left to right, wrapping onto another row when they outgrow
-  the panel. The **markup is unchanged** — `.mkt-group` > `.wl-band-head` +
-  `.mkt-group-tiles` — because drag-to-arrange, quick add, double-click removal,
-  the detail window and create/delete all hang off it; only the CSS axis flips.
-  One trap is load-bearing: `.wl-tile` carried `flex: 0 0 66px`, and inside a
-  COLUMN parent `flex-basis` governs HEIGHT, so every tile would have rendered
-  as a 66px-tall box — it is `0 0 auto` now, with width from the 92px column
-  (66px tile + padding + gutters). The same reasoning retired the per-band
-  horizontal scrollbar (nothing scrolls sideways any more) and let the
-  empty-list placeholder wrap instead of running out of a 92px column. Short
-  columns simply END — never stretched to match the tallest, which would make a
-  3-symbol list look like a 12-symbol one.
-  The reorder controls are **`«`/`»`, NOT a bare `←`/`→`** (2026-08-17). The
-  axis genuinely changed, but a bare `←` on a button is read as BACK by people
-  and machines alike: the UI crawler's back-control selector is literally
-  `button:text-is("←")`, and it grabbed this control the moment it shipped,
-  failing the NAV scenario on a disabled first-list arrow. `‹` is in that
-  selector too. Labels are "Move X earlier/later", which stays true when the
-  columns wrap.
+  **EACH LIST IS A HORIZONTAL BAND** (owner request 2026-09-30: "I need each of
+  the watch list to go back to displaying horizontal. I don't like the vertical
+  anymore."). Bands stack top to bottom, ONE per list, each the full width of the
+  panel; inside a band the head (list name + its controls) is a fixed 104px
+  block on the LEFT and the tiles run in ONE row to its right. **This WITHDRAWS
+  two earlier rulings**: 2026-08-17 ("each category is a COLUMN") and
+  2026-08-20 ("the columns are PAGED, not scrolled") — the pager existed only to
+  tame a column's vertical overflow and went with the columns. The layout is the
+  one the panel had from 2026-07-29 to 2026-08-17. The **markup never changed**
+  through any of it — `.mkt-group` > `.wl-band-head` + `.mkt-group-tiles` —
+  because drag-to-arrange, quick add, double-click removal, the detail window
+  and create/delete all hang off it; only the CSS axis flips.
+  Load-bearing, each with the failure it prevents:
+  - **The row never wraps and scrolls SIDEWAYS**: `.wl-strip .mkt-group-tiles` is
+    `flex-wrap: nowrap; overflow-x: scroll; overflow-y: hidden`. `scroll`, not
+    `auto`, so the 8px track is present even where a short list would fit and
+    bands do not change height as symbols come and go. The bar is styled ONLY by
+    the `::-webkit-scrollbar*` rules and the row carries **NO `scrollbar-width`**:
+    from Chrome 121 that property takes precedence over the pseudo-elements and
+    would switch the always-visible bar off (Firefox keeps its own overlay bar).
+    Playwright's headless Chromium hides scrollbars outright, so the reserved
+    track height is measurable in WebKit only; S42 probes whether the browser
+    draws one and says so when it cannot measure.
+  - **`overscroll-behavior-x: contain` is the ONLY overscroll rule on the page**,
+    the axis-scoped form, so a sideways swipe off the end of a band does not
+    trigger browser back-navigation. The shorthand and every `-y` form stay
+    banned (`CLAUDE.md` → *NEVER use `overscroll-behavior: contain`*): the row is
+    `overflow-y: hidden`, so a vertical wheel over a band has nothing to grab and
+    moves the PAGE — the owner's dead-wheel complaint of 2026-08-07 stays fixed.
+    S42 scans every stylesheet rule (including `@media`) and every inline style
+    for the shorthand and the `-y` longhand.
+  - **`.wl-tile` is `flex: 0 0 76px`**. In a ROW `flex-basis` is the tile's
+    WIDTH, so a fixed basis keeps the tile a fixed size while the band scrolls;
+    `flex: 0 0 auto` (the column-era value) would size every tile to its content.
+    It is 76, not the 66 it carried before 2026-08-17: the tile now measures
+    76 × 63 and the owner asked that it not be resized (2026-08-21, "try to not
+    resize the boxes", when the change pill grew to the price's size); S27 holds
+    it to ≤ 80. The column era's trap was the mirror image: in
+    a COLUMN the same basis set the HEIGHT and drew every tile 66px tall.
+  - **The empty-list placeholder** (`.wl-band-empty`) is a one-line, no-wrap row
+    one tile tall, so an empty band keeps its shape and stays a drop target.
+  - **Under 640px the band stacks**: head above the tiles, the tile row the full
+    width of the band and still scrolling sideways. The shared `.mkt-group` goes
+    to `flex-direction: column` there, where `flex: 1 1 0` on the tile row would
+    set a ZERO HEIGHT basis and collapse the band to its padding (Codex review,
+    PR #190), so the stacked block resets it to `flex: 0 0 auto`, and the head's
+    fixed 104px resets to its content height.
+  - **Drag: the slot is decided by X alone** (`wlDropIndex(zone, x)`); Y only
+    picks WHICH band (the drop zone under the pointer). A band is one row that
+    never wraps, and a comparison on Y as well counts every tile as passed the
+    moment the pointer sits on the row's own scrollbar — dropping at the END of the
+    list wherever you aimed (S26 holds the pointer at the row's bottom edge).
+  - **Drag: a long band auto-scrolls at its edges** (`wlAutoScroll`, `WL_EDGE_PX`
+    56, `WL_EDGE_MAX_STEP` 24; added after Codex's review of PR #294). The pointer
+    owns the drag, so the row's scrollbar cannot be used at the same time and, without
+    this, a tile could only be dropped among the slots already on screen. Holding the
+    pointer within 56px of a row's left/right edge scrolls it (faster nearer the edge)
+    until it runs out; `wlDragPaint` redraws the marker after every step because the
+    tiles move under a STILL pointer; the rAF loop runs only while the pointer sits in
+    an edge zone that can still scroll, is re-armed by every pointer move and is
+    cancelled in `wlDragEnd`. The keyboard path is Alt+←/→.
+    **The end of the row is measured WITHOUT the insertion marker** (second Codex
+    round): the marker is a 3px flex child of the scrolling row, so with it in place
+    the row can scroll 3px past its last tile, `wlDragPaint` removes it, the row clamps
+    back, the marker returns and "did it move?" passes again — a frame loop of DOM
+    mutation and layout that never ended at the boundary (measured: 56–60 child-list
+    mutations in 450ms while holding the pointer at the right edge). `wlAutoScroll`
+    clears the marker, reads `scrollWidth − clientWidth`, clamps its target to it and
+    stops when the target is within 1px of where the row already is, repainting the
+    marker on every path out. S26 holds the pointer at the end and asserts ZERO
+    mutations and no queued frame.
+  - **Removed for good, not dormant**: `wlSyncPaging`, `attachPaging`, the ▲/▼
+    `.wl-page-bar`/`.wl-page` footer and its CSS, the drag-rests-on-▼ stepping
+    (`WL_DRAG_STEP_MS`, `wlDragStepAt`, `_wlStep`), the resize listener that
+    re-measured overflow, and the `max-height` caps on the column. S42 asserts no
+    pager markup and `typeof wlSyncPaging === 'undefined'`.
+  The reorder controls are **`↑`/`↓`, NOT a bare `←`/`→`/`‹`**. The bands stack top
+  to bottom, so up/down names the direction a list actually moves. (They were
+  `«`/`»` from 2026-08-17 to 2026-09-30, when the lists sat side by side; before
+  that `↑`/`↓`.) A bare `←` on a button is read as BACK by people and machines
+  alike on any axis: the UI crawler's back-control selector is literally
+  `button:text-is("←")`, and it grabbed the control the moment that shipped,
+  failing the NAV scenario on a disabled first-list arrow. `‹` is in that selector
+  too; `↑`/`↓` are in none. The aria-labels are "Move X earlier/later", which
+  describes a position in the order and stays true however the lists are laid
+  out. S41 asserts every control is `↑`/`↓` and none is a back arrow.
   **The panel sits FULL-WIDTH DIRECTLY ABOVE the Stochastic charts panel**
   (owner request 2026-08-17) — it was previously a column inside `.top-band`.
   It full-bleeds like `.area-charts` and joins the shell cap's opt-out list,
   since a capped, centred panel sitting on a full-bleed one reads as a
   misalignment rather than a margin. That move also **deleted** the top band's
   out-of-flow arrangement (see below) rather than porting it.
-  Every list renders at once, so **the columns ARE the navigation** and there are
+  Every list renders at once, so **the bands ARE the navigation** and there are
   no tabs. A tile shows ticker / last / day-% pill; bid, ask, volume and the long
   name move to its `title` tooltip rather than being dropped. A long price wraps
   its pill to a second line.

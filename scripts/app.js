@@ -167,7 +167,11 @@ function renderMasthead() {
     /* manual force-refresh (owner request 2026-07-27): market/news/heatmap/
        charts are public feeds, so this shows regardless of PIN-auth state. */
     if (DESK_DB.url) {
-      const refreshBtn = el('button', 'btn btn-secondary', 'Refresh now');
+      /* a rebuild while a forced refresh is still in flight (feedPollTick lands before the
+         slower Economy request) must keep the pending state, not re-enable a button whose
+         clicks would be ignored until the whole refresh finishes (Codex review, PR #294) */
+      const refreshBtn = el('button', 'btn btn-secondary', refreshNowPending ? 'Refreshing…' : 'Refresh now');
+      refreshBtn.disabled = refreshNowPending;
       refreshBtn.type = 'button';
       refreshBtn.id = 'refreshNowBtn';
       refreshBtn.addEventListener('click', refreshNowClicked);
@@ -935,7 +939,7 @@ const WL_DRAG_SLOP = 6;
    is what they objected to, and removal still goes through a dialog. */
 const WL_TOUCH_ARM_MS = 300;
 
-const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null };
+const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null, raf: 0, x: 0, y: 0, zone: null };
 
 /* Transient feedback for a drag that could not be committed. The staging row
    that used to carry this is gone (owner ruling 2026-07-31), so it borrows the
@@ -965,22 +969,21 @@ function wlEnsureManual() {
 
 const wlDropZones = () => [...document.querySelectorAll('.mkt-group-tiles[data-band], #wlTrash')];
 
-/* How often a drag resting on a ▲/▼ steps that column. 300ms is a step you can
-   stop on; the alternative is a list that scrolls past the row you were aiming
-   for before you can lift the pointer. */
-const WL_DRAG_STEP_MS = 300;
-let wlDragStepAt = 0;
-
-/* Which slot the pointer is over, in reading order: a tile counts as "already
-   passed" when the pointer is below its row, or on its row and past its middle.
-   Tiles wrap, so an x-only comparison would put a drop on row 3 at the end of
-   row 1. */
-function wlDropIndex(zone, x, y) {
+/* Which slot the pointer is over: a tile counts as "already passed" once the
+   pointer is past its horizontal middle. A band is ONE row that never wraps, so
+   the index is decided on the X axis alone — the Y axis only picks WHICH band
+   (the drop zone under the pointer, in wlDragMove/wlDragEnd). A comparison on Y
+   as well would count every tile as passed the moment the pointer sat over the
+   row's own scrollbar, dropping at the end of the list wherever you aimed.
+   Rects are read in viewport coordinates, as is the pointer, so a row scrolled
+   sideways needs no correction: tiles scrolled off to the left are simply
+   before it, and tiles off to the right are after it. */
+function wlDropIndex(zone, x) {
   const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
   let i = 0;
   for (const t of tiles) {
     const r = t.getBoundingClientRect();
-    if (y > r.bottom || (y >= r.top && x > r.left + r.width / 2)) i++;
+    if (x > r.left + r.width / 2) i++;
     else break;
   }
   return i;
@@ -992,43 +995,75 @@ function wlClearMarker() {
   for (const z of wlDropZones()) z.classList.remove('wl-drop-over');
 }
 
-function wlDragMove(ev) {
-  if (!wlDrag.on) return;
-  wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
+/* Paint the drop feedback for a pointer at (x, y): the band under it lights up and the
+   insertion marker goes where a drop there would land. Also called from the edge
+   auto-scroll below, because scrolling a row moves its tiles under a STILL pointer. */
+function wlDragPaint(x, y) {
   wlClearMarker();
-  const under = document.elementFromPoint(ev.clientX, ev.clientY);
-  /* Resting over a column's ▲/▼ steps it, so a tile can be dropped anywhere in
-     a list longer than its own box — the columns do not scroll under the wheel
-     any more (owner request 2026-08-20), so this is the only way to reach the
-     part of a list that is off-box mid-drag. Throttled: a pointer sitting still
-     still emits moves, and an unthrottled step would fly to the end of the
-     list. */
-  const pager = under && under.closest('.wl-page');
-  if (pager && pager._wlStep && !pager.disabled && Date.now() - wlDragStepAt > WL_DRAG_STEP_MS) {
-    wlDragStepAt = Date.now();
-    pager._wlStep();
-  }
+  const under = document.elementFromPoint(x, y);
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
+  wlDrag.zone = zone || null;
   if (!zone) return;
   zone.classList.add('wl-drop-over');
   if (zone.id === 'wlTrash') return;
-  const at = wlDropIndex(zone, ev.clientX, ev.clientY);
+  const at = wlDropIndex(zone, x);
   const mark = el('div', 'wl-drop-marker');
   const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
   zone.insertBefore(mark, tiles[at] || null);
   wlDrag.marker = mark;
 }
 
+/* A band is wider than its row once a list is long, and the pointer owns the drag — the
+   scrollbar cannot be used at the same time — so without help a tile could only ever be
+   dropped among the slots already on screen. Holding the pointer within WL_EDGE_PX of a
+   row's left or right edge scrolls it, faster the closer to the edge, until it runs out
+   (Codex review, PR #294). One rAF loop, running only while the pointer sits in an edge
+   zone that can still scroll; every pointer move re-arms it. */
+const WL_EDGE_PX = 56, WL_EDGE_MAX_STEP = 24;
+function wlAutoScroll() {
+  const d = wlDrag;
+  d.raf = 0;
+  const zone = d.zone;
+  if (!d.on || !zone || zone.id === 'wlTrash') return;
+  const r = zone.getBoundingClientRect();
+  const left = 1 - Math.min(1, Math.max(0, d.x - r.left) / WL_EDGE_PX);    /* 0 outside the left edge zone, →1 at the edge */
+  const right = 1 - Math.min(1, Math.max(0, r.right - d.x) / WL_EDGE_PX);
+  const push = right - left;
+  if (!push) return;
+  /* Measure the row WITHOUT the insertion marker. It is a 3px flex child, so with it in place
+     the row can scroll 3px past its last tile; wlDragPaint then removes it, the row clamps
+     back, the marker returns and "did it move?" passes again — a frame loop that never ends
+     at the boundary (Codex review, PR #294). The end is decided here, from the tiles alone,
+     and wlDragPaint puts the marker back on every path out. */
+  wlClearMarker();
+  const before = zone.scrollLeft;
+  const max = Math.max(0, zone.scrollWidth - zone.clientWidth);
+  const to = Math.min(max, Math.max(0, before + Math.sign(push) * Math.max(1, Math.round(Math.abs(push) * WL_EDGE_MAX_STEP))));
+  if (Math.abs(to - before) < 1) { wlDragPaint(d.x, d.y); return; }   /* at the end: stop until the pointer moves again */
+  zone.scrollLeft = to;
+  wlDragPaint(d.x, d.y);
+  d.raf = requestAnimationFrame(wlAutoScroll);
+}
+
+function wlDragMove(ev) {
+  if (!wlDrag.on) return;
+  wlDrag.x = ev.clientX; wlDrag.y = ev.clientY;
+  wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
+  wlDragPaint(ev.clientX, ev.clientY);
+  if (!wlDrag.raf) wlDrag.raf = requestAnimationFrame(wlAutoScroll);
+}
+
 function wlDragEnd(ev, cancelled) {
   const d = wlDrag;
   clearTimeout(d.armed);
+  cancelAnimationFrame(d.raf); d.raf = 0; d.zone = null;
   if (!d.on) { d.sym = null; d.tile = null; return; }
   /* A drop still delivers a `click` to the tile it started from. Without this
      stamp, arranging the panel would open a detail window on every drop. */
   wlDragClickAt = Date.now();
   const under = cancelled ? null : document.elementFromPoint(ev.clientX, ev.clientY);
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
-  const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX, ev.clientY) : 0;
+  const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX) : 0;
   wlClearMarker();
   if (d.ghost) d.ghost.remove();
   if (d.tile) d.tile.classList.remove('wl-dragging');
@@ -1238,114 +1273,6 @@ function wlSyncWriteControls() {
   }
 }
 
-/* ── column paging (owner request 2026-08-20) ──────────────────────────────
-   The columns used to scroll under the wheel, and reaching the end of one
-   chained straight on into the page: "as soon as the scroll ends, it scrolls up
-   the screen … maybe we need a different mechanism to move the symbols up and
-   down in the watch list, and need to scroll to move the entire screen up and
-   down." So the wheel is out of this panel entirely (`overflow: hidden` on the
-   column, see components.css) and a long list is stepped by these buttons.
-
-   Rendered only where a column ACTUALLY overflows — measured, not guessed from
-   the symbol count, since tile height varies with a wrapped long name. In demo
-   that is 1 column of 7, which is the whole reason this can sit in a header the
-   owner asked to keep compact.
-
-   The ▼ carries the number still below the fold. That count is the honest part:
-   with no scrollbar there is otherwise NOTHING on screen saying a list
-   continues, and a silently cropped list is a list the owner will read as
-   complete. The ▲ needs no count — an enabled ▲ already means "there is more
-   above", and the header has no room for a figure that says the same thing. */
-/* One paging implementation, two callers: a watchlist column and the accounts
-   column. Both are boxes with `overflow: hidden` whose content can outrun them,
-   and both must leave the wheel to the page. `box` is what scrolls, `host` is
-   what the ▲/▼ bar is appended to, and `unit` names the rows so a step lands on
-   a whole one. */
-function attachPaging(box, host, name, unit, noun) {
-  /* A full repaint rebuilds these anyway, but this also runs on resize, where
-     the host persists and a second bar would otherwise accumulate. */
-  host.querySelectorAll('.wl-page-bar').forEach((n) => n.remove());
-  const over = box.scrollHeight - box.clientHeight;
-  if (over <= 2) { box.scrollTop = 0; return; }
-
-  const up = el('button', 'wl-page', '▲');
-  const down = el('button', 'wl-page', '▼');
-  const count = el('span', '', '');
-  down.appendChild(count);
-  up.type = down.type = 'button';
-
-  /* A step is a whole number of rows, never a raw pixel height: landing
-     mid-row leaves a sliver at each edge, which reads as a rendering fault
-     rather than as more list. One row of overlap keeps some context across the
-     step, the way a page-down does. */
-  const first = box.querySelector(unit);
-  const th = first ? first.offsetHeight + 4 : 67;
-  const step = Math.max(th, (Math.max(1, Math.floor(box.clientHeight / th)) - 1) * th);
-
-  const sync = () => {
-    const top = box.scrollTop;
-    up.disabled = top <= 1;
-    down.disabled = top >= over - 1;
-    /* Counted from the laid-out rows rather than from `over / th`, which would
-       be wrong for any box holding a row taller than the rest. Compared in
-       VIEWPORT coordinates, not via offsetTop: the box is statically
-       positioned, so offsetTop is measured from some ancestor further up and
-       the sum lands nowhere near the box's own scroll frame — which reported
-       all 41 tiles as below the fold on a list showing 10. */
-    const edge = box.getBoundingClientRect().bottom;
-    const below = [...box.querySelectorAll(unit)]
-      .filter((t) => t.getBoundingClientRect().bottom > edge + 1).length;
-    count.textContent = below ? String(below) : '';
-    up.setAttribute('aria-label', 'Show earlier ' + noun + 's in ' + name);
-    down.setAttribute('aria-label', below
-      ? 'Show ' + below + ' more ' + noun + (below === 1 ? '' : 's') + ' in ' + name
-      : 'Show later ' + noun + 's in ' + name);
-  };
-  const go = (dir) => { box.scrollTop += dir * step; sync(); };
-  up.addEventListener('click', () => go(-1));
-  down.addEventListener('click', () => go(1));
-  /* Stepping DURING a drag: with no wheel and no scrollbar, a tile could
-     otherwise only ever be dropped among the rows that happen to be on screen.
-     Holding the pointer over the button with a tile in hand steps the box.
-     Driven from wlDragMove rather than from a `pointerenter` here, which was
-     tried and never fired once: a drag in progress owns the pointer, so the
-     button receives no pointer events of its own at all. */
-  up._wlStep = () => go(-1);
-  down._wlStep = () => go(1);
-
-  /* BELOW the rows, never in the panel head. In the watchlist the head is where
-     the «/»/× live, and a fourth and fifth control wrapped it onto another line
-     — which is not just clutter: every column's tiles start on the same line by
-     rule, so one taller head pushed the tiles of ALL SEVEN columns down 19px to
-     pay for a control on one of them. A footer costs its own column 18px and
-     nobody else anything, and it sits where the eye already is when the list
-     runs out. */
-  const bar = el('div', 'wl-page-bar');
-  bar.appendChild(up);
-  bar.appendChild(down);
-  host.appendChild(bar);
-  sync();
-}
-
-function wlSyncPaging() {
-  document.querySelectorAll('#wlStrip .mkt-group').forEach((group) => {
-    const box = group.querySelector('.mkt-group-tiles');
-    if (box) attachPaging(box, group, group.getAttribute('aria-label') || 'this list', '.wl-tile', 'symbol');
-  });
-  /* Watchlist columns only. The accounts positions table was paged by this same
-     helper for a few hours on 2026-08-20; it now carries an ordinary scrollbar
-     instead (owner request 2026-08-21) — see the `.acct-positions` rule. */
-}
-
-/* The columns are capped in pixels, so how many tiles fit — and therefore
-   whether a list overflows at all — changes with the window. Debounced because
-   a drag-resize fires this continuously and each pass measures every column. */
-let wlPageResizeT = null;
-addEventListener('resize', () => {
-  clearTimeout(wlPageResizeT);
-  wlPageResizeT = setTimeout(wlSyncPaging, 150);
-});
-
 function renderWatchlist(payload, lamp) {
   const lampEl = document.getElementById('wlLamp');
   const stripEl = document.getElementById('wlStrip');
@@ -1408,16 +1335,16 @@ function renderWatchlist(payload, lamp) {
        DISABLED at the ends and when locked, never hidden — a control that
        vanishes reads as a bug, one that greys out reads as unavailable. */
     if (wlCanEdit()) {
-      /* «/», not ↑/↓ and NOT a bare ←/→ (2026-08-17). The axis changed — these
-         move a list among siblings that now sit side by side, so an up arrow
-         names the wrong one — but a bare ← on a button is universally read as
-         BACK, by people and by machines alike: the UI crawler's back-control
-         selector is literally `button:text-is("←")`, and it grabbed this
-         control the moment it shipped. Guillemets carry the same left/right
-         sense without claiming to be navigation. The wording follows:
-         "earlier"/"later" describes a position in the order without committing
-         to a direction, which stays true on a narrow screen where the columns
-         wrap. `wlMoveBand` itself is unchanged. */
+      /* ↑/↓, NOT a bare ←/→ (and not the «/» of the column era, 2026-08-17 to
+         2026-09-30). The bands stack top to bottom again, so "up" and "down" name
+         the direction a list actually moves. A bare ← would still be wrong on
+         any axis: it is universally read as BACK, by people and by machines
+         alike — the UI crawler's back-control selector is literally
+         `button:text-is("←")`, and it grabbed the control the moment that shipped
+         — and ↑/↓ are in no such selector. The labels keep
+         "earlier"/"later": they describe a position in the order without
+         committing to a direction, and stay true however the lists are laid out.
+         `wlMoveBand` itself has never changed. */
       const mk = (glyph, delta, off) => {
         const b = el('button', 'wl-move', glyph);
         b.type = 'button';
@@ -1426,8 +1353,8 @@ function renderWatchlist(payload, lamp) {
         b.addEventListener('click', () => wlMoveBand(li, delta));
         return b;
       };
-      head.appendChild(mk('«', -1, li === 0));
-      head.appendChild(mk('»', 1, li === lists.length - 1));
+      head.appendChild(mk('↑', -1, li === 0));
+      head.appendChild(mk('↓', 1, li === lists.length - 1));
       /* Delete the WHOLE list (owner request 2026-08-01), GATED ON THE LOCK
          (owner ruling the same day, revising the first cut). The lock had been
          read as position-only — "adding and removing stay available" — and
@@ -1498,10 +1425,6 @@ function renderWatchlist(payload, lamp) {
     stripEl.appendChild(group);
   });
   if (emptyEl) emptyEl.hidden = total > 0;
-  /* AFTER the columns are in the document — it measures them, and a detached
-     node reports every height as zero, so a pre-insert call would decide that
-     nothing overflows and render no controls at all. */
-  wlSyncPaging();
   wlSyncWriteControls();
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn
@@ -7750,10 +7673,11 @@ function startFeedPolling() {
 }
 /* Manual force-refresh (owner request 2026-07-27): bypasses BOTH the client
    poll cooldown and every desk-* edge function's in-memory cache, so a click
-   guarantees a fresh upstream pull for market/news/heatmap/charts at once —
-   the "everything's guaranteed fresh" button. renderMasthead() (inside
-   feedPollTick) rebuilds this very button once fresh data lands, which is what
-   restores its normal enabled label — no separate re-enable needed here.
+   guarantees a fresh upstream pull for market/news/heatmap/charts/economy at once
+   — the "everything's guaranteed fresh" button. renderMasthead() (inside
+   feedPollTick) rebuilds this very button, and while `refreshNowPending` it
+   rebuilds it in the pending state; the finally below rebuilds it once BOTH
+   requests are done, which is what restores the enabled label.
    Re-arms the regular poll afterward. */
 let refreshNowPending = false;
 async function refreshNowClicked() {
@@ -7762,10 +7686,518 @@ async function refreshNowClicked() {
   const btn = document.getElementById('refreshNowBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
-  try { await feedPollTick(true); } finally {
+  try { await Promise.all([feedPollTick(true), refreshEcon(true)]); } finally {
     refreshNowPending = false;
+    renderMasthead();
     scheduleFeedPoll(); scheduleMarketPoll();
   }
+}
+
+/* ── Economy panel (owner request 2026-09-30) ──────────────────────────────
+   The desk row's 4th column (`.area-econ`): 2Y/10Y/20Y Treasury yields,
+   unemployment, CPI, PCE and core PCE, each row a value, a change, the date
+   the reading is FOR and its own chart to the right, over a span the owner
+   picks (1W 1M 3M 6M 1Y 5Y — there is NO 1D: the finest data that exists is
+   one reading per business day, or per month, so a day view would be a dot).
+   Everything for this panel lives in this ONE block; the contract it reads is
+   specs/economy-indicators/spec.md §5 and the rules are in
+   docs/architecture/economy-panel.md.
+
+   Colour: a yield or an inflation rate rising is not a "gain" — green and red
+   are P&L-only on this desk — so every change here is NEUTRAL ink with an arrow,
+   and the chart line is the brass accent.
+   Live is REAL DATA OR NOTHING: a failed poll keeps the last good rows under a
+   STALE lamp, or (none yet) an honest empty state — demo rows exist only under
+   ?demo=1, and ?demo=1 never calls the network for this panel. */
+const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1', ECON_PENDING_KEY = 'econ_pending_v1';
+const ECON_TFS = [['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
+  ['6m', '6M', '6 months'], ['1y', '1Y', '1 year'], ['5y', '5Y', '5 years']];
+const ECON_DEFAULT_TF = '3m';
+const ECON_TF_TITLE = 'Chart span. Daily and monthly data only — there is no 1-day view.';
+const ECON_MIN_S = 30, ECON_MAX_S = 3600;   /* clamp on the server's refreshInSec */
+const ECON_RETRY_S = 60;                    /* fast retry after a failed poll */
+const ECON_STALE_X = 3;                     /* STALE once the last success is older than 3 × refreshInSec */
+const ECON_NEW_MS = 60000;                  /* a NEW chip clears once its row has been IN VIEW this long */
+const ECON_NEW_SEEN = 0.5;                  /* ...half of it counts as in view */
+const ECON_SPARK_W = 100, ECON_SPARK_H = 32;
+
+let econTf = ECON_DEFAULT_TF;
+try {
+  const saved = localStorage.getItem(ECON_TF_KEY);
+  if (ECON_TFS.some(t => t[0] === saved)) econTf = saved;
+} catch { /* private mode — default */ }
+const saveEconTf = () => { try { localStorage.setItem(ECON_TF_KEY, econTf); } catch { /* private mode */ } };
+
+/* "Seen" = the newest reading this browser has already looked at: { id: 'asOf|value' }.
+   Kept in memory as well, so a blocked localStorage still clears a chip for the session. */
+function econSeenRead() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ECON_SEEN_KEY));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch { return {}; }
+}
+let econSeen = econSeenRead();
+/* "Pending" = a row flagged NEW by the SERVER's `changed` hint in a browser that had no record of it. The hint is
+   per-isolate and transient (the next refresh says `changed:false` for the very same reading), so without this the
+   next poll would see "no record, not changed" = first look, seed the record silently, and a NEW chip the user
+   never saw would vanish (Codex review, PR #294). It stays pending until the row is acknowledged. */
+function econPendingRead() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ECON_PENDING_KEY));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch { return {}; }
+}
+let econPending = econPendingRead();
+/* Persist only what THIS tab changed, merged into a FRESH read of the stored map: two tabs that acknowledge different
+   rows would otherwise overwrite each other with their stale whole-object copies and an acknowledged row would come back
+   as NEW on reload (Codex review, PR #294). The `storage` event below keeps the other tab's memory in step. Demo state is
+   NEVER persisted: its synthetic readings would make a real first visit read every row as NEW. */
+function econPersist(key, set, del) {
+  if (DESK.mode === 'demo') return;
+  try {
+    const cur = JSON.parse(localStorage.getItem(key));
+    const base = cur && typeof cur === 'object' && !Array.isArray(cur) ? cur : {};
+    Object.assign(base, set);
+    for (const id of del || []) delete base[id];
+    localStorage.setItem(key, JSON.stringify(base));
+  } catch { /* private mode */ }
+}
+window.addEventListener('storage', (e) => {
+  if (DESK.mode === 'demo' || (e.key !== null && e.key !== ECON_SEEN_KEY && e.key !== ECON_PENDING_KEY)) return;
+  econSeen = econSeenRead(); econPending = econPendingRead();
+  if (econState.shown) renderEcon(econState.shown);   /* an acknowledgement made in another tab clears the chip here too */
+});
+const econSig = r => r.asOf + '|' + r.value;
+
+const econState = {
+  payload: null,     /* the last GOOD payload — what is drawn */
+  shown: null,       /* what renderEcon last painted (demo has no `payload`) */
+  landedAt: 0,       /* Date.now() when it landed */
+  refreshSec: 900,   /* its refreshInSec, clamped */
+  failed: false,     /* the most recent poll failed */
+  pending: false,    /* a span change's reply is in flight */
+  forcing: false,    /* a FORCED refresh ("Refresh now") is in flight: it owns the request slot */
+  gen: 0,            /* each request takes one; only the newest may land */
+  timer: 0, dueAt: 0,
+  newTimers: new Map(),   /* row id → timer: a NEW chip clears once ITS ROW has been in view this long */
+  vis: new WeakSet(),     /* the row elements currently in view (IntersectionObserver) */
+  known: new WeakSet(),   /* the row elements the observer has reported on at least once */
+};
+const econClamp = s => { const n = Number(s); return Math.min(ECON_MAX_S, Math.max(ECON_MIN_S, Number.isFinite(n) && n > 0 ? n : 900)); };
+
+/* ── formatters — null is an em dash, NEVER 0 (the shared rule) ── */
+const econDec = r => (Number.isInteger(r.decimals) && r.decimals >= 0 && r.decimals <= 4 ? r.decimals : 2);
+function econNum(v, dec) {
+  const n = fmtToNum(v);
+  return Number.isFinite(n) ? (n < 0 ? '−' : '') + Math.abs(n).toFixed(dec) : '—';
+}
+function econValueText(r) {
+  const s = econNum(r.value, econDec(r));
+  return s === '—' ? s : s + (r.unit || '');
+}
+/* an arrow and the size of the move, in the row's own unit (percentage points). Neutral ink. */
+function econDeltaText(r) {
+  const n = fmtToNum(r.delta);
+  if (!Number.isFinite(n)) return '—';
+  return (n > 0 ? '▲ ' : n < 0 ? '▼ ' : '= ') + Math.abs(n).toFixed(econDec(r));
+}
+/* The date a reading is FOR, by string slicing — never `new Date('2026-08-01')`, which is UTC
+   midnight and renders as Jul 31 on the Pacific clock. A monthly reading names its MONTH
+   ("Aug", with the year only when it is not this one), never "Aug 1", which would read as a
+   stale daily print; a daily one is "Sep 29". */
+function econDateLabel(iso, cadence) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '—';
+  const yr = ptDateKey(new Date()).slice(0, 4);
+  if (cadence === 'monthly') return MONTHS[+m[2] - 1] + (m[1] === yr ? '' : ' ' + m[1]);
+  if (cadence === 'quarterly') return 'Q' + Math.ceil(+m[2] / 3) + ' ' + m[1];
+  return fmtShortDate(iso);
+}
+/* The compact form for the chart caption's ends. Month readings always keep the year so "Aug '25 – Aug '26"
+   is unambiguous; a daily series keeps it only when the span is long (`withYear`): on 1Y/5Y "Sep 28 – Sep 28"
+   would read as a single day, where "Sep '21 – Sep '26" names what the chart covers. */
+function econEndLabel(iso, cadence, withYear) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  return cadence === 'monthly' || cadence === 'quarterly' || withYear ? MONTHS[+m[2] - 1] + " '" + m[1].slice(2) : fmtShortDate(iso);
+}
+/* the caption under a chart: its first and last date; the year joins a daily caption once the ends are ~a year apart */
+function econSpanCaption(pts, cadence) {
+  const a = pts[0][0], b = pts[pts.length - 1][0];
+  const day = iso => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+  const long = day(b) - day(a) >= 300 * 86400000;
+  return econEndLabel(a, cadence, long) + ' – ' + econEndLabel(b, cadence, long);
+}
+
+/* ── the chart: the watchlist sparkline idiom (an inline SVG path, no axes), drawn from the row's
+   own `points` ([date, value] pairs, oldest first). x is index order; y is the row's own min/max
+   with a little room. A flat series is a level line through the middle, not a line glued to the
+   floor; fewer than two real values is NOT drawn — the caller shows a dashed placeholder. */
+function econSpark(points, label) {
+  const vals = (Array.isArray(points) ? points : []).map(p => fmtToNum(p[1]));
+  if (vals.length < 2) return null;
+  const w = ECON_SPARK_W, h = ECON_SPARK_H, pad = 3;
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo;
+  const pts = vals.map((v, i) => [i / (vals.length - 1) * (w - 2) + 1, span > 0 ? h - pad - (v - lo) / span * (h - 2 * pad) : h / 2]);
+  /* preserveAspectRatio none lets the chart take whatever width the column gives it;
+     non-scaling-stroke keeps the line 1.5px however it is stretched */
+  const svg = svgEl('svg', { viewBox: '0 0 ' + w + ' ' + h, preserveAspectRatio: 'none', role: 'img', 'aria-label': label, focusable: 'false' });
+  const line = pathFrom(pts);
+  svg.appendChild(svgEl('path', { class: 'econ-area', d: line + 'L' + pts[pts.length - 1][0].toFixed(1) + ' ' + h + 'L' + pts[0][0].toFixed(1) + ' ' + h + 'Z' }));
+  svg.appendChild(svgEl('path', { class: 'econ-line', d: line, fill: 'none', 'vector-effect': 'non-scaling-stroke' }));
+  return svg;
+}
+
+/* ── chrome: the span control, the list and the source note are built here (the header's stamp too),
+   once, so index.html keeps the bare placeholder it shipped with. */
+function econChrome() {
+  const body = document.getElementById('econBody');
+  if (!body) return null;
+  if (!document.getElementById('econList')) {
+    const head = document.querySelector('.area-econ .panel-header');
+    if (head && !document.getElementById('econStamp')) {
+      const stamp = el('span', 'stamp ml-auto', '—');
+      stamp.id = 'econStamp';
+      head.appendChild(stamp);
+    }
+    const bar = el('div', 'econ-bar');
+    const tf = el('div', 'seg econ-tf');
+    tf.id = 'econTf';
+    tf.setAttribute('role', 'group');
+    tf.setAttribute('aria-label', 'Chart span');
+    tf.title = ECON_TF_TITLE;
+    for (const [key, label, words] of ECON_TFS) {
+      const b = el('button', '', label);
+      b.type = 'button';
+      b.dataset.tf = key;
+      b.title = 'Charts show the last ' + words;
+      b.addEventListener('click', () => econPickSpan(key));
+      tf.appendChild(b);
+    }
+    bar.appendChild(tf);
+    const list = el('ul', 'econ-list');
+    list.id = 'econList';
+    const foot = el('p', 'econ-foot', 'Source: FRED. Yields post about a business day late; jobs and inflation once a month.');
+    body.append(bar, list, foot);
+    syncEconTf();
+  }
+  return { list: document.getElementById('econList') };
+}
+function syncEconTf() {
+  for (const b of document.querySelectorAll('#econTf button')) b.setAttribute('aria-pressed', String(b.dataset.tf === econTf));
+}
+function econPickSpan(key) {
+  if (key === econTf) return;
+  econTf = key;
+  saveEconTf();
+  syncEconTf();
+  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
+  /* A forced refresh is in flight: a request of our own would take the newer generation and get
+     the forced reply thrown away (or, served by another isolate's cache, show pre-refresh data).
+     So the span is only RECORDED; refreshEcon asks for it the moment the forced reply lands
+     (Codex review, PR #294). */
+  if (econState.forcing) {
+    econState.pending = true;
+    const l = document.getElementById('econList');
+    if (l) l.classList.add('is-pending');
+    return;
+  }
+  /* live: ask for the new span (a slice server-side — no upstream cost). The rows on screen stay,
+     their charts dimmed, until it lands; the poll clock is only ever pulled EARLIER, never reset */
+  refreshEcon(false, { span: true });
+}
+
+/* ── lamp + stamp. Demo: Demo. Live: LIVE when the last poll succeeded, the body is not stale and
+   the success is younger than 3 × refreshInSec; STALE otherwise (and "Loading" until the first
+   reply). No EOD state — these are not prices. */
+function econLamp() {
+  if (DESK.mode === 'demo') return { cls: 'lamp--demo', text: 'Demo' };
+  const s = econState;
+  if (!s.payload) return s.failed ? { cls: 'lamp--stale', text: 'STALE' } : { cls: 'lamp--stale', text: 'Loading' };
+  if (s.failed || s.payload.stale || Date.now() - s.landedAt > ECON_STALE_X * s.refreshSec * 1000) return { cls: 'lamp--stale', text: 'STALE' };
+  return { cls: 'lamp--live', text: 'LIVE' };
+}
+function paintEconLamp() {
+  const lamp = econLamp();
+  const lampEl = document.getElementById('econLamp');
+  if (lampEl) { lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text; }
+}
+/* "Last updated 08:11, Sep 30" — the Pacific clock of the desk's last successful check. The rows
+   carry the dates the DATA is for. Demo has no fetch, so it names the newest reading's date. */
+function paintEconStamp() {
+  const st = document.getElementById('econStamp');
+  if (!st) return;
+  const p = econState.payload;
+  if (DESK.mode === 'demo') {
+    const rows = (econState.shown && econState.shown.rows) || [];
+    applyStamp(st, '', rows.map(r => r.asOf || '').sort().pop() || '', '');
+  } else if (p && fmtClockBare(p.generatedAt)) {
+    applyStamp(st, p.generatedAt, ptDateKey(new Date(p.generatedAt)), '');
+  } else { applyStamp(st, '', '', ''); st.textContent = '—'; }
+}
+/* a lamp AGES even when its poll fails: re-read it against Date.now() with nothing fetched */
+function relampEcon() { paintEconLamp(); }
+setInterval(relampEcon, STAMP_TICK_MS);
+
+/* ── NEW: a reading this browser has not looked at yet. A row is NEW when its newest reading differs
+   from the one recorded in econ_seen_v1, or — with nothing recorded — when the server says it
+   `changed` (per-isolate best effort, so never the ONLY source: a cold isolate says false). The very
+   first look seeds the record silently, so a fresh browser is not greeted by a wall of NEW chips.
+   A chip clears on hover/click of its row, or once ITS ROW has been in view ~60s with the tab visible. */
+function econRowIsNew(r) {
+  if (r.status === 'missing' || !Number.isFinite(fmtToNum(r.value)) || !r.asOf) return false;   /* no reading, nothing to be new */
+  if (!Object.hasOwn(econSeen, r.id)) return r.changed === true || Object.hasOwn(econPending, r.id);
+  return econSeen[r.id] !== econSig(r);
+}
+function econAck(ids) {
+  const rows = (econState.shown && econState.shown.rows) || [];
+  const seenSet = {}, pendDel = [];
+  for (const r of rows) {
+    if (!ids.includes(r.id) || !econRowIsNew(r)) continue;
+    econSeen[r.id] = seenSet[r.id] = econSig(r);
+    if (Object.hasOwn(econPending, r.id)) { delete econPending[r.id]; pendDel.push(r.id); }
+  }
+  if (Object.keys(seenSet).length) econPersist(ECON_SEEN_KEY, seenSet);
+  if (pendDel.length) econPersist(ECON_PENDING_KEY, {}, pendDel);
+  for (const li of document.querySelectorAll('#econList .econ-row')) {
+    if (!ids.includes(li.dataset.id)) continue;
+    const chip = li.querySelector('.econ-new');
+    if (chip) chip.remove();
+    li.classList.remove('is-new');
+  }
+  for (const id of ids) { clearTimeout(econState.newTimers.get(id)); econState.newTimers.delete(id); }
+  econArmNew();
+}
+/* Acknowledgement is per ROW and only while that row is actually IN VIEW (an IntersectionObserver —
+   it accounts for the page scroll AND the panel's own scrollport) with the tab visible: a chip on a
+   row nobody has scrolled to would otherwise be cleared unseen and the change never noticed
+   (Codex review, PR #294). Timers are keyed by row id so a poll's re-render does not restart them;
+   a row that leaves view drops its timer. Without IntersectionObserver every row counts as in view. */
+let econIO = null;
+function econWatch(li) {
+  if (!('IntersectionObserver' in window)) { econState.vis.add(li); econState.known.add(li); return; }
+  if (!econIO) {
+    econIO = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        econState.known.add(e.target);
+        if (e.intersectionRatio >= ECON_NEW_SEEN - 0.01) econState.vis.add(e.target); else econState.vis.delete(e.target);
+      }
+      econArmNew();
+    }, { threshold: [0, ECON_NEW_SEEN, 1] });
+  }
+  econIO.observe(li);
+}
+function econArmNew() {
+  const timers = econState.newTimers, due = new Set(), rows = new Map();
+  for (const li of document.querySelectorAll('#econList .econ-row.is-new')) rows.set(li.dataset.id, li);
+  if (!document.hidden) for (const [id, li] of rows) if (econState.vis.has(li)) due.add(id);
+  for (const [id, h] of timers) {
+    const li = rows.get(id);
+    /* keep a running timer for a row that was just REBUILT by a poll and has not been observed yet:
+       its state is unknown, and restarting the minute on every render would mean a chip never clears */
+    const keep = !document.hidden && li && (due.has(id) || !econState.known.has(li));
+    if (!keep) { clearTimeout(h); timers.delete(id); }
+  }
+  for (const id of due) {
+    if (!timers.has(id)) timers.set(id, setTimeout(() => { timers.delete(id); econAck([id]); }, ECON_NEW_MS));
+  }
+}
+
+/* ── render ── */
+function renderEcon(payload) {
+  const chrome = econChrome();
+  if (!chrome) return;
+  const list = chrome.list;
+  econState.shown = payload || null;
+  list.textContent = '';
+  list.classList.toggle('is-pending', econState.pending);
+  const rows = payload && Array.isArray(payload.rows) ? payload.rows : [];
+
+  if (!rows.length) {
+    const live = DESK.mode !== 'demo';
+    list.appendChild(el('li', 'econ-empty', !live ? 'No indicators configured.'
+      : econState.failed ? 'Economic data is unavailable right now — retrying.'
+      : payload ? 'No indicators configured.' : 'Loading economic data…'));
+  }
+
+  /* the charts belong to the span they were fetched for: after a span change whose reply never came,
+     the old rows keep their values but NOT a chart labelled with the wrong window */
+  const chartsMatch = !payload || !payload.range || payload.range === econTf;
+  const seededSet = {}, pendSet = {};
+  for (const r of rows) {
+    if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && !Object.hasOwn(econSeen, r.id)) {
+      if (r.changed === true) {
+        /* the server says it changed and this browser has no record: NEW until acknowledged, even after the hint goes quiet */
+        if (!Object.hasOwn(econPending, r.id)) econPending[r.id] = pendSet[r.id] = econSig(r);
+      } else if (!Object.hasOwn(econPending, r.id)) {
+        econSeen[r.id] = seededSet[r.id] = econSig(r);   /* first look: record it, do not announce it */
+      }
+    }
+    list.appendChild(econRow(r, chartsMatch));
+  }
+  if (Object.keys(seededSet).length) econPersist(ECON_SEEN_KEY, seededSet);
+  if (Object.keys(pendSet).length) econPersist(ECON_PENDING_KEY, pendSet);
+
+  paintEconLamp();
+  paintEconStamp();
+  /* the rows were rebuilt: watch the NEW ones afresh (their first observation reports whether they are in
+     view and starts their timer; a timer already running for a row that is still in view is left alone) */
+  if (econIO) econIO.disconnect();
+  for (const li of list.querySelectorAll('.econ-row.is-new')) econWatch(li);
+  if (!econIO) econArmNew();
+}
+
+function econRow(r, chartsMatch) {
+  const dec = econDec(r);
+  const missing = r.status === 'missing' || !Number.isFinite(fmtToNum(r.value));
+  const stale = r.status === 'stale';
+  const isNew = econRowIsNew(r);
+  const li = el('li', 'econ-row' + (missing ? ' is-missing' : '') + (stale ? ' is-stale' : '') + (isNew ? ' is-new' : ''));
+  li.dataset.id = String(r.id);
+  li.dataset.status = String(r.status || 'ok');
+  li.dataset.cadence = String(r.cadence || '');
+
+  const info = el('div', 'econ-info');
+  /* the label gets the whole line to itself — a tag beside "Unemployment" truncated it */
+  info.appendChild(el('div', 'econ-label', String(r.label || r.id)));
+
+  const figs = el('div', 'econ-figs');
+  figs.appendChild(el('span', 'econ-val', econValueText(r)));
+  figs.appendChild(el('span', 'econ-delta', missing ? '—' : econDeltaText(r)));
+  info.appendChild(figs);
+  /* the date the reading is FOR — the honest signal, since FRED posts a yield a business day late —
+     with the row's tag (NEW / STALE / NO DATA) beside it */
+  const sub = el('div', 'econ-sub');
+  sub.appendChild(el('span', 'econ-date', missing ? '—' : econDateLabel(r.asOf, r.cadence)));
+  if (isNew) sub.appendChild(el('span', 'econ-new', 'NEW'));
+  if (stale) sub.appendChild(el('span', 'econ-tag', 'STALE'));
+  else if (missing) sub.appendChild(el('span', 'econ-tag', 'NO DATA'));
+  info.appendChild(sub);
+  li.appendChild(info);
+
+  /* the chart, to the RIGHT of the value block */
+  const chart = el('div', 'econ-chart');
+  const pts = (Array.isArray(r.points) ? r.points : []).filter(p => Array.isArray(p) && Number.isFinite(fmtToNum(p[1])));
+  const svg = missing || !chartsMatch ? null : econSpark(pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econTf.toUpperCase()));
+  if (svg) chart.appendChild(svg);
+  else chart.appendChild(el('span', 'econ-noline'));
+  if (svg) {
+    const cap = el('span', 'econ-cap', r.pointsNote ? String(r.pointsNote) : econSpanCaption(pts, r.cadence));
+    if (r.pointsNote) cap.classList.add('econ-note');
+    chart.appendChild(cap);
+  } else if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
+  li.appendChild(chart);
+
+  /* every fact in the tooltip too, including what is not on the row: where the number came from */
+  const why = [
+    (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
+    missing ? '' : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
+    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points',
+    r.source === 'treasury' ? 'source U.S. Treasury, same day' : r.source === 'fred' ? 'source FRED' : '',
+    r.pointsNote ? String(r.pointsNote) : '',
+    stale ? 'STALE' + (Number.isFinite(fmtToNum(r.staleSec)) ? ' — last good reading ' + Math.round(r.staleSec / 60) + ' min ago' : '') : '',
+  ].filter(Boolean).join(' · ');
+  li.title = why;
+  if (isNew) {
+    const ack = () => econAck([String(r.id)]);
+    li.addEventListener('pointerenter', ack);
+    li.addEventListener('click', ack);
+  }
+  return li;
+}
+
+/* ── poller: the response's refreshInSec (clamped 30s..3600s) schedules the next fetch. The function
+   tightens it inside the 08:25–09:15 and 15:25–18:30 ET release windows and relaxes it at weekends,
+   so the panel updates about as soon as a release lands without hammering it the rest of the day.
+   Paused while the tab is hidden, resumed (immediately if it came due meanwhile) on return. A failed
+   poll retries in 60s under a STALE lamp. `keepClock` (a span change) only ever pulls the next fetch
+   EARLIER — changing the span must not push a due poll out. */
+function econArm(sec, keepClock) {
+  const due = Date.now() + sec * 1000;
+  if (keepClock && econState.dueAt > Date.now() && econState.dueAt <= due) return;   /* a due-soon poll stays where it is */
+  clearTimeout(econState.timer);
+  econState.timer = 0;
+  econState.dueAt = due;
+  if (document.hidden) return;   /* visibilitychange rearms */
+  econState.timer = setTimeout(() => { econState.timer = 0; refreshEcon(false); }, sec * 1000);
+}
+/* A FORCED refresh ("Refresh now") owns the request slot until it — and the span showing — has
+   landed. While it does (`econState.forcing`) econPickSpan only RECORDS a span change, so a
+   request of its own can never take the newer generation and throw the forced reply away (or
+   show pre-refresh data from another isolate's cache); the timer is out of play too (dueAt 0,
+   so a visibility return does not refetch either). After the forced reply, `econFetch` keeps
+   asking for the span NOW showing — unforced, the forced sweep has just warmed the server —
+   until the one it asked for is the one showing, so "Refresh now" (refreshNowClicked's
+   Promise.all) stays pending through repeated span changes (Codex review, PR #294, three rounds). */
+async function refreshEcon(force, opts) {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  const forced = force === true;
+  if (forced) { clearTimeout(econState.timer); econState.timer = 0; econState.dueAt = 0; econState.forcing = true; }
+  try {
+    let again = await econFetch(forced, forced, !!(opts && opts.span));
+    while (again) again = await econFetch(false, true, true);
+  } finally {
+    if (forced) econState.forcing = false;
+  }
+}
+/* One request for the span showing. `force` asks the function to bypass its caches; `owned` means a
+   forced refresh holds the request slot, so a span change meanwhile was only recorded and is asked
+   for by the caller (the return value: true = "the span moved, ask again"). */
+async function econFetch(force, owned, keepClock) {
+  const asked = econTf, gen = ++econState.gen;
+  if (keepClock) { econState.pending = true; const l = document.getElementById('econList'); if (l) l.classList.add('is-pending'); }
+  let out = null;
+  try {
+    out = await deskEcon(asked, force);
+  } catch { out = null; }   /* a failed poll: handled below, OUTSIDE the try (renderAfterFetch) */
+  if (gen !== econState.gen) return false;   /* a newer request owns the state now */
+  econState.pending = false;
+  /* the span changed while a forced refresh held the slot: not a failed poll, ask again for the one showing */
+  if (owned && econTf !== asked) return true;
+  /* drop a reply for a span nobody is asking about any more, or one that says it drew another window
+     (version skew: an older deploy would answer a range it does not know with 3m) */
+  if (out && (econTf !== asked || (out.range && out.range !== asked) || !Array.isArray(out.rows))) out = null;
+  if (out) {
+    econState.payload = out;
+    econState.landedAt = Date.now();
+    econState.refreshSec = econClamp(out.refreshInSec);
+    econState.failed = false;
+    renderAfterFetch(() => renderEcon(out));
+    econArm(econState.refreshSec, keepClock);
+  } else {
+    econState.failed = true;
+    /* keep the last good rows (real data or nothing), under an aged lamp — or the honest empty state */
+    renderAfterFetch(() => renderEcon(econState.payload));
+    econArm(ECON_RETRY_S, keepClock);
+  }
+  return false;
+}
+function econVisibility() {
+  if (document.hidden) {
+    clearTimeout(econState.timer); econState.timer = 0;
+    for (const h of econState.newTimers.values()) clearTimeout(h);
+    econState.newTimers.clear();
+    return;
+  }
+  if (DESK.mode !== 'demo' && DESK_DB.url && econState.dueAt) {
+    relampEcon();   /* BEFORE the refetch: a tab that sat hidden must not come back claiming LIVE */
+    const left = econState.dueAt - Date.now();
+    if (left <= 0) refreshEcon(false);
+    else econArm(left / 1000);
+  }
+  econArmNew();
+}
+document.addEventListener('visibilitychange', econVisibility);
+
+/* boot: demo paints the seeded rows once (no network); live paints the loading state and starts polling */
+function startEcon() {
+  /* demo's acknowledgement state is session-only and starts empty; live reads what this browser has stored */
+  econSeen = DESK.mode === 'demo' ? {} : econSeenRead();
+  econPending = DESK.mode === 'demo' ? {} : econPendingRead();
+  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
+  if (!DESK_DB.url) return;
+  renderEcon(null);
+  refreshEcon(false);
 }
 
 /* ── market widgets: embedded third-party (TradingView) widgets. Each loads as
@@ -7972,6 +8404,7 @@ async function boot() {
     loadHeatmap();
     loadCharts();
     loadWatchlist();
+    startEcon();
     loadWidgets();
     return;
   }
@@ -7999,6 +8432,7 @@ async function boot() {
   loadHeatmap();
   loadCharts();
   loadWatchlist();
+  startEcon();
   loadWidgets();
   startFeedPolling();
   let pin = null;

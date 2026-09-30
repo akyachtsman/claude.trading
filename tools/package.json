@@ -1,0 +1,8 @@
+{
+  "name": "claude-trading-tools",
+  "private": true,
+  "description": "Pinned tooling for the re-runnable scripts in this directory (econ-check.mjs transpiles desk-econ with esbuild). Install once: npm ci --prefix tools",
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
