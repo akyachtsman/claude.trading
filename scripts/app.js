@@ -965,22 +965,21 @@ function wlEnsureManual() {
 
 const wlDropZones = () => [...document.querySelectorAll('.mkt-group-tiles[data-band], #wlTrash')];
 
-/* How often a drag resting on a ▲/▼ steps that column. 300ms is a step you can
-   stop on; the alternative is a list that scrolls past the row you were aiming
-   for before you can lift the pointer. */
-const WL_DRAG_STEP_MS = 300;
-let wlDragStepAt = 0;
-
-/* Which slot the pointer is over, in reading order: a tile counts as "already
-   passed" when the pointer is below its row, or on its row and past its middle.
-   Tiles wrap, so an x-only comparison would put a drop on row 3 at the end of
-   row 1. */
-function wlDropIndex(zone, x, y) {
+/* Which slot the pointer is over: a tile counts as "already passed" once the
+   pointer is past its horizontal middle. A band is ONE row that never wraps, so
+   the index is decided on the X axis alone — the Y axis only picks WHICH band
+   (the drop zone under the pointer, in wlDragMove/wlDragEnd). A comparison on Y
+   as well would count every tile as passed the moment the pointer sat over the
+   row's own scrollbar, dropping at the end of the list wherever you aimed.
+   Rects are read in viewport coordinates, as is the pointer, so a row scrolled
+   sideways needs no correction: tiles scrolled off to the left are simply
+   before it, and tiles off to the right are after it. */
+function wlDropIndex(zone, x) {
   const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
   let i = 0;
   for (const t of tiles) {
     const r = t.getBoundingClientRect();
-    if (y > r.bottom || (y >= r.top && x > r.left + r.width / 2)) i++;
+    if (x > r.left + r.width / 2) i++;
     else break;
   }
   return i;
@@ -997,22 +996,11 @@ function wlDragMove(ev) {
   wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
   wlClearMarker();
   const under = document.elementFromPoint(ev.clientX, ev.clientY);
-  /* Resting over a column's ▲/▼ steps it, so a tile can be dropped anywhere in
-     a list longer than its own box — the columns do not scroll under the wheel
-     any more (owner request 2026-08-20), so this is the only way to reach the
-     part of a list that is off-box mid-drag. Throttled: a pointer sitting still
-     still emits moves, and an unthrottled step would fly to the end of the
-     list. */
-  const pager = under && under.closest('.wl-page');
-  if (pager && pager._wlStep && !pager.disabled && Date.now() - wlDragStepAt > WL_DRAG_STEP_MS) {
-    wlDragStepAt = Date.now();
-    pager._wlStep();
-  }
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
   if (!zone) return;
   zone.classList.add('wl-drop-over');
   if (zone.id === 'wlTrash') return;
-  const at = wlDropIndex(zone, ev.clientX, ev.clientY);
+  const at = wlDropIndex(zone, ev.clientX);
   const mark = el('div', 'wl-drop-marker');
   const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
   zone.insertBefore(mark, tiles[at] || null);
@@ -1028,7 +1016,7 @@ function wlDragEnd(ev, cancelled) {
   wlDragClickAt = Date.now();
   const under = cancelled ? null : document.elementFromPoint(ev.clientX, ev.clientY);
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
-  const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX, ev.clientY) : 0;
+  const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX) : 0;
   wlClearMarker();
   if (d.ghost) d.ghost.remove();
   if (d.tile) d.tile.classList.remove('wl-dragging');
@@ -1238,114 +1226,6 @@ function wlSyncWriteControls() {
   }
 }
 
-/* ── column paging (owner request 2026-08-20) ──────────────────────────────
-   The columns used to scroll under the wheel, and reaching the end of one
-   chained straight on into the page: "as soon as the scroll ends, it scrolls up
-   the screen … maybe we need a different mechanism to move the symbols up and
-   down in the watch list, and need to scroll to move the entire screen up and
-   down." So the wheel is out of this panel entirely (`overflow: hidden` on the
-   column, see components.css) and a long list is stepped by these buttons.
-
-   Rendered only where a column ACTUALLY overflows — measured, not guessed from
-   the symbol count, since tile height varies with a wrapped long name. In demo
-   that is 1 column of 7, which is the whole reason this can sit in a header the
-   owner asked to keep compact.
-
-   The ▼ carries the number still below the fold. That count is the honest part:
-   with no scrollbar there is otherwise NOTHING on screen saying a list
-   continues, and a silently cropped list is a list the owner will read as
-   complete. The ▲ needs no count — an enabled ▲ already means "there is more
-   above", and the header has no room for a figure that says the same thing. */
-/* One paging implementation, two callers: a watchlist column and the accounts
-   column. Both are boxes with `overflow: hidden` whose content can outrun them,
-   and both must leave the wheel to the page. `box` is what scrolls, `host` is
-   what the ▲/▼ bar is appended to, and `unit` names the rows so a step lands on
-   a whole one. */
-function attachPaging(box, host, name, unit, noun) {
-  /* A full repaint rebuilds these anyway, but this also runs on resize, where
-     the host persists and a second bar would otherwise accumulate. */
-  host.querySelectorAll('.wl-page-bar').forEach((n) => n.remove());
-  const over = box.scrollHeight - box.clientHeight;
-  if (over <= 2) { box.scrollTop = 0; return; }
-
-  const up = el('button', 'wl-page', '▲');
-  const down = el('button', 'wl-page', '▼');
-  const count = el('span', '', '');
-  down.appendChild(count);
-  up.type = down.type = 'button';
-
-  /* A step is a whole number of rows, never a raw pixel height: landing
-     mid-row leaves a sliver at each edge, which reads as a rendering fault
-     rather than as more list. One row of overlap keeps some context across the
-     step, the way a page-down does. */
-  const first = box.querySelector(unit);
-  const th = first ? first.offsetHeight + 4 : 67;
-  const step = Math.max(th, (Math.max(1, Math.floor(box.clientHeight / th)) - 1) * th);
-
-  const sync = () => {
-    const top = box.scrollTop;
-    up.disabled = top <= 1;
-    down.disabled = top >= over - 1;
-    /* Counted from the laid-out rows rather than from `over / th`, which would
-       be wrong for any box holding a row taller than the rest. Compared in
-       VIEWPORT coordinates, not via offsetTop: the box is statically
-       positioned, so offsetTop is measured from some ancestor further up and
-       the sum lands nowhere near the box's own scroll frame — which reported
-       all 41 tiles as below the fold on a list showing 10. */
-    const edge = box.getBoundingClientRect().bottom;
-    const below = [...box.querySelectorAll(unit)]
-      .filter((t) => t.getBoundingClientRect().bottom > edge + 1).length;
-    count.textContent = below ? String(below) : '';
-    up.setAttribute('aria-label', 'Show earlier ' + noun + 's in ' + name);
-    down.setAttribute('aria-label', below
-      ? 'Show ' + below + ' more ' + noun + (below === 1 ? '' : 's') + ' in ' + name
-      : 'Show later ' + noun + 's in ' + name);
-  };
-  const go = (dir) => { box.scrollTop += dir * step; sync(); };
-  up.addEventListener('click', () => go(-1));
-  down.addEventListener('click', () => go(1));
-  /* Stepping DURING a drag: with no wheel and no scrollbar, a tile could
-     otherwise only ever be dropped among the rows that happen to be on screen.
-     Holding the pointer over the button with a tile in hand steps the box.
-     Driven from wlDragMove rather than from a `pointerenter` here, which was
-     tried and never fired once: a drag in progress owns the pointer, so the
-     button receives no pointer events of its own at all. */
-  up._wlStep = () => go(-1);
-  down._wlStep = () => go(1);
-
-  /* BELOW the rows, never in the panel head. In the watchlist the head is where
-     the «/»/× live, and a fourth and fifth control wrapped it onto another line
-     — which is not just clutter: every column's tiles start on the same line by
-     rule, so one taller head pushed the tiles of ALL SEVEN columns down 19px to
-     pay for a control on one of them. A footer costs its own column 18px and
-     nobody else anything, and it sits where the eye already is when the list
-     runs out. */
-  const bar = el('div', 'wl-page-bar');
-  bar.appendChild(up);
-  bar.appendChild(down);
-  host.appendChild(bar);
-  sync();
-}
-
-function wlSyncPaging() {
-  document.querySelectorAll('#wlStrip .mkt-group').forEach((group) => {
-    const box = group.querySelector('.mkt-group-tiles');
-    if (box) attachPaging(box, group, group.getAttribute('aria-label') || 'this list', '.wl-tile', 'symbol');
-  });
-  /* Watchlist columns only. The accounts positions table was paged by this same
-     helper for a few hours on 2026-08-20; it now carries an ordinary scrollbar
-     instead (owner request 2026-08-21) — see the `.acct-positions` rule. */
-}
-
-/* The columns are capped in pixels, so how many tiles fit — and therefore
-   whether a list overflows at all — changes with the window. Debounced because
-   a drag-resize fires this continuously and each pass measures every column. */
-let wlPageResizeT = null;
-addEventListener('resize', () => {
-  clearTimeout(wlPageResizeT);
-  wlPageResizeT = setTimeout(wlSyncPaging, 150);
-});
-
 function renderWatchlist(payload, lamp) {
   const lampEl = document.getElementById('wlLamp');
   const stripEl = document.getElementById('wlStrip');
@@ -1408,16 +1288,16 @@ function renderWatchlist(payload, lamp) {
        DISABLED at the ends and when locked, never hidden — a control that
        vanishes reads as a bug, one that greys out reads as unavailable. */
     if (wlCanEdit()) {
-      /* «/», not ↑/↓ and NOT a bare ←/→ (2026-08-17). The axis changed — these
-         move a list among siblings that now sit side by side, so an up arrow
-         names the wrong one — but a bare ← on a button is universally read as
-         BACK, by people and by machines alike: the UI crawler's back-control
-         selector is literally `button:text-is("←")`, and it grabbed this
-         control the moment it shipped. Guillemets carry the same left/right
-         sense without claiming to be navigation. The wording follows:
-         "earlier"/"later" describes a position in the order without committing
-         to a direction, which stays true on a narrow screen where the columns
-         wrap. `wlMoveBand` itself is unchanged. */
+      /* ↑/↓, NOT a bare ←/→ (and not the «/» of the column era, 2026-08-17 to
+         2026-09-30). The bands stack top to bottom again, so "up" and "down" name
+         the direction a list actually moves. A bare ← would still be wrong on
+         any axis: it is universally read as BACK, by people and by machines
+         alike — the UI crawler's back-control selector is literally
+         `button:text-is("←")`, and it grabbed the control the moment that shipped
+         — and ↑/↓ are in no such selector. The labels keep
+         "earlier"/"later": they describe a position in the order without
+         committing to a direction, and stay true however the lists are laid out.
+         `wlMoveBand` itself has never changed. */
       const mk = (glyph, delta, off) => {
         const b = el('button', 'wl-move', glyph);
         b.type = 'button';
@@ -1426,8 +1306,8 @@ function renderWatchlist(payload, lamp) {
         b.addEventListener('click', () => wlMoveBand(li, delta));
         return b;
       };
-      head.appendChild(mk('«', -1, li === 0));
-      head.appendChild(mk('»', 1, li === lists.length - 1));
+      head.appendChild(mk('↑', -1, li === 0));
+      head.appendChild(mk('↓', 1, li === lists.length - 1));
       /* Delete the WHOLE list (owner request 2026-08-01), GATED ON THE LOCK
          (owner ruling the same day, revising the first cut). The lock had been
          read as position-only — "adding and removing stay available" — and
@@ -1498,10 +1378,6 @@ function renderWatchlist(payload, lamp) {
     stripEl.appendChild(group);
   });
   if (emptyEl) emptyEl.hidden = total > 0;
-  /* AFTER the columns are in the document — it measures them, and a detached
-     node reports every height as zero, so a pre-insert call would decide that
-     nothing overflows and render no controls at all. */
-  wlSyncPaging();
   wlSyncWriteControls();
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn

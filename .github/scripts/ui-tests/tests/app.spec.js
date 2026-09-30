@@ -395,7 +395,15 @@ async function discoverElements(page) {
              Deliberately `hidden`/`clip` ONLY. An `auto`/`scroll` ancestor —
              the news reel, the ask thread — CAN be scrolled to the element, and
              those have always swept fine; excluding them too would quietly drop
-             real coverage. */
+             real coverage.
+             KNOWN GAP (2026-09-30, watchlists back to horizontal bands): a band
+             is `overflow-x: scroll; overflow-y: hidden`, and the test below
+             treats EITHER axis hiding as clipping, so a tile beyond a band's
+             visible width is counted in `clippedSkipped` instead of swept, though
+             it could be scrolled to. Testing each axis only against its own
+             overflow would restore that coverage. NOT done: S3 only sweeps with a
+             live credential (locally it skips at the auth gate), so the wider
+             sweep's runtime against the live roster could not be checked. */
           for (let p = el.parentElement; p; p = p.parentElement) {
             const o = getComputedStyle(p);
             const hides = /hidden|clip/.test(o.overflowY) || /hidden|clip/.test(o.overflowX);
@@ -1890,37 +1898,35 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   expect(await page.evaluate(() => wlSort.key), 'the drag snapped the sort to Manual').toBe('manual');
   await expect(page.locator('#wlNote')).toContainText(/Manual/i);
   await page.mouse.up();
+  // The note above is TIMED (wlNote clears it after 4s) and sits in the panel
+  // header, which wraps on a phone: when it disappears the whole panel moves up by
+  // the height of a line. A band is a 74px-tall target now, so a drag aimed from
+  // positions read before that moment lands on the band head instead — the Escape
+  // step below read 0 drop targets on [iphone] under load for exactly this reason.
+  // Let the layout settle before any drag measures where things are.
+  await expect(page.locator('#wlNote'), 'the timed note is gone, so the layout has stopped moving').toBeHidden({ timeout: 8000 });
 
   // ── a real drag, now that Manual is active ──────────────────────────────
   // The drop target is CHOSEN IN THE PAGE, not computed from bounding boxes.
-  // Since lists became vertical columns a band can be taller than the viewport,
-  // so a fixed offset into "the next band" lands off-screen — elementFromPoint
-  // returns null, no drop zone is found, and the marker assertion fails for a
-  // reason unrelated to what it tests. That is also true of the real gesture:
-  // you cannot drag to somewhere you cannot see.
+  // A fixed offset into "the next band" can land off-screen on a short viewport —
+  // elementFromPoint then returns null, no drop zone is found, and the marker
+  // assertion fails for a reason unrelated to what it tests. That is also true of
+  // the real gesture: you cannot drag to somewhere you cannot see.
   // Picking the point by asking the DOM what is actually under it makes this
   // independent of viewport height, which matters because the two mobile
   // projects differ by ~60px and a hand-tuned offset passes on one and fails on
   // the other. The point returned is guaranteed to hit a band that is not the
   // source's, or the test says so plainly instead of failing downstream.
-  // Scroll to the BOUNDARY between two bands first. On a phone a single list can
-  // be ~700px tall in a 664px viewport — that is the content, not the styling:
-  // at 390px only about four sub-columns fit across, so a 41-symbol list cannot
-  // be shorter without overflowing sideways. So no two whole bands are ever on
-  // screen together there, and the drag has to happen where they meet: the last
-  // tile of one band into the top of the next.
+  // Scroll to the BOUNDARY between two bands first, so the last tile of one band
+  // and the top of the next are on screen together.
   await page.locator('.mkt-group-tiles[data-band]').nth(1).scrollIntoViewIfNeeded();
   await page.waitForTimeout(200);
-  // BOTH ENDS are chosen by hit-testing the page, not from bounding boxes.
-  // Two reasons, both learned the hard way. A band can now be taller than the
-  // viewport — on a phone a single list runs ~700px in a 664px window, which is
-  // the content rather than the styling, since at 390px only about four
-  // sub-columns fit across and a 41-symbol list cannot be shorter without
-  // overflowing sideways. And because the tiles WRAP into sub-columns, the last
-  // tile in DOM order sits at the foot of the last sub-column, which is not the
-  // lowest point on screen — picking it by index put the grab off-screen and no
-  // drag began at all. Asking the DOM what is actually under a point is the only
-  // form that holds on both mobile projects, whose viewports differ by ~60px.
+  // BOTH ENDS are chosen by hit-testing the page, not from bounding boxes: a tile
+  // is only a grab point if it is actually on screen and nothing covers it (a long
+  // band's later tiles are scrolled out of its own row, and on a phone only about
+  // three are inside it), and the drop point must hit a band that is not the
+  // source's. Asking the DOM what is actually under a point is the only form that
+  // holds on both mobile projects, whose viewports differ by ~60px.
   const findPts = () => page.evaluate(() => {
     const vw = window.innerWidth, vh = window.innerHeight;
     const visible = (el) => {
@@ -2008,6 +2014,61 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.mouse.up();
   await page.waitForTimeout(400);
   expect(await rosterWrites(page), 'an abandoned drag writes nothing').toBe(writesAtEscape);
+
+  // ── an in-band drop is decided by the pointer's X, not its Y ─────────────
+  // A band is ONE row that never wraps, so the slot is where the pointer is ALONG
+  // the row. The pointer is held 1px under the tiles — still inside the drop zone
+  // (over the row's padding, or its scrollbar where the browser draws one) but
+  // BELOW every tile — because a slot worked out from Y as well counts every tile
+  // as passed there and drops at the END of the list wherever you aimed. Not the
+  // zone's own last pixel: bands overlap by 1px (collapsed borders), so the next
+  // band's border can sit exactly there and WebKit rounds the pointer onto it.
+  // Dragged: the band's first tile. Aimed at: the right half of its THIRD tile, so
+  // it must land after the second and third and before the fourth.
+  const inBand = await page.evaluate(() => {
+    const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
+    const i = zones.findIndex(z => z.querySelectorAll('.wl-tile').length >= 6);
+    return i < 0 ? null : i;
+  });
+  expect(inBand, 'some band has enough tiles to reorder within').not.toBeNull();
+  await page.locator('.mkt-group-tiles[data-band]').nth(inBand).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
+  const aim = await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    const tiles = [...zone.querySelectorAll('.wl-tile')];
+    const z = zone.getBoundingClientRect();
+    const grab = tiles[0].getBoundingClientRect(), third = tiles[2].getBoundingClientRect();
+    const to = { x: third.left + third.width * 0.75, y: third.bottom + 1 };
+    const hit = document.elementFromPoint(to.x, to.y);
+    return {
+      from: { x: grab.left + grab.width / 2, y: grab.top + grab.height / 2 }, to,
+      inZone: !!hit && hit.closest('.mkt-group-tiles[data-band]') === zone,
+      belowTiles: to.y > third.bottom,
+      syms: tiles.slice(0, 4).map(t => t.dataset.sym), title: zone.dataset.title,
+    };
+  }, inBand);
+  expect(aim.inZone, 'the aim point is inside the band\'s drop zone').toBe(true);
+  expect(aim.belowTiles, 'and below its tiles, where a Y comparison would pass them all').toBe(true);
+  await page.mouse.move(aim.from.x, aim.from.y);
+  await page.mouse.down();
+  await page.mouse.move(aim.from.x + 40, aim.from.y + 20, { steps: 5 });
+  await page.mouse.move(aim.to.x, aim.to.y, { steps: 8 });
+  const markerAt = await page.evaluate(() => {
+    const m = document.querySelector('.wl-drop-marker');
+    const next = m && m.nextElementSibling;
+    return next ? next.dataset.sym : null;
+  });
+  expect(markerAt, 'the insertion marker sits before the FOURTH tile, following the pointer along the row')
+    .toBe(aim.syms[3]);
+  const writesInBand = await rosterWrites(page);
+  await page.mouse.up();
+  await expect.poll(() => rosterWrites(page), { message: 'the in-band drop is exactly one write' })
+    .toBe(writesInBand + 1);
+  const order = await page.evaluate((t) => window.__roster.find(l => l.title === t).symbols, aim.title);
+  expect(order.indexOf(aim.syms[0]), 'the dragged tile landed after the third…')
+    .toBe(order.indexOf(aim.syms[2]) + 1);
+  expect(order.indexOf(aim.syms[3]), '…and immediately before the fourth')
+    .toBe(order.indexOf(aim.syms[0]) + 1);
 
   // ── no staging tray survives anywhere ──────────────────────────────────
   // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,
@@ -3053,18 +3114,22 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
      must be PROVEN to have happened: this used to sit behind `if (a && c)` and
      assert only that no window appeared, which a drag that never began — a tile
      below the fold, a missing box — satisfies in full. */
-  await live.scrollIntoViewIfNeeded();
-  await page.locator('.wl-strip .wl-tile').nth(3).scrollIntoViewIfNeeded();
+  /* The drop target is the THIRD tile's right half, not the fourth tile's centre:
+     a band is a row again, and on a phone only about three tiles are inside the
+     row's own width — a fourth tile sits half clipped, so aiming at its centre
+     drops outside the band and no write happens. The right half (not the centre)
+     because a drop at a tile's exact middle has not yet passed it, which for a
+     neighbour would put the tile back where it started. */
   await live.scrollIntoViewIfNeeded();
   const a = await live.boundingBox();
-  const c = await page.locator('.wl-strip .wl-tile').nth(3).boundingBox();
+  const c = await page.locator('.wl-strip .wl-tile').nth(2).boundingBox();
   expect(a, 'the source tile has a box').not.toBeNull();
   expect(c, 'the drop tile has a box').not.toBeNull();
   const writesBefore = await rosterWrites(page);
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();
   await page.mouse.move(a.x + 40, a.y + 10, { steps: 6 });
-  await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2, { steps: 10 });
+  await page.mouse.move(c.x + c.width * 0.75, c.y + c.height / 2, { steps: 10 });
   expect(await page.locator('.wl-ghost').count(), 'the drag had begun before the drop').toBe(1);
   await page.mouse.up();
   await expect.poll(() => rosterWrites(page), { message: 'the drop arranged the panel — it was a drag, not a click' })
@@ -3949,240 +4014,280 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   expect(errs, 'no page errors').toEqual([]);
 });
 
-/* S42 — the watchlist columns are PAGED, not scrolled (owner request
-   2026-08-20: reaching the end of a list carried straight on into the page).
-   The rule this guards is that the wheel belongs to the PAGE everywhere on this
-   panel, which is why the fix is `overflow: hidden` and not `overscroll-
-   behavior: contain` — the property this project has banned outright after it
-   ate the mouse wheel three times. */
-test('S42: watchlist columns page instead of scrolling', async ({ page, browserName, renderWitness }) => {
+/* S42 — each watchlist band is a SIDEWAYS scroller, the PAGE stays the page, and
+   nothing is paged. Owner request 2026-09-30 put the bands back to horizontal,
+   which WITHDREW the 2026-08-20 ruling this scenario used to guard ("the columns
+   are paged, not scrolled"): the ▲/▼ pager, its footer and the drag-rests-on-▼
+   stepping existed only to tame a column's VERTICAL overflow and went with it.
+
+   What still has to hold, because the owner's original complaint (2026-08-07,
+   three times) was a wheel that died over a panel:
+     - the wheel belongs to the PAGE. The row is `overflow-y: hidden`, so a
+       vertical wheel over a band has nothing to grab and moves the page;
+     - the ONLY `overscroll-behavior` on the page is the axis-scoped
+       `overscroll-behavior-x: contain` on these rows (a sideways swipe off the
+       end of a band must not trigger browser back-navigation). The shorthand
+       and the `-y` form stay banned: they apply just as hard to a container with
+       nothing to scroll, and then they eat the wheel. */
+test('S42: watchlist bands scroll sideways, the page never does, and nothing is paged', async ({ page, browserName, renderWitness }) => {
   renderWitness();
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
-  await blockRosterWrites(page);   // the forced-live drag below must never reach the real roster
+  await blockRosterWrites(page);   // the forced-live render below must never reach the real roster
   await gotoDemo(page, '.wl-strip .wl-tile', 15000);
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
 
-  // No column may be wheel-scrollable, and none may carry overscroll-behavior
-  // in ANY form — the axis-scoped variants included, since a future edit that
-  // reaches for the vertical one re-creates the dead-wheel fault exactly.
-  const rules = await page.evaluate(() =>
+  // ── every band's tile row is a sideways scroller ─────────────────────────
+  const rows = await page.evaluate(() =>
     [...document.querySelectorAll('.wl-strip .mkt-group-tiles')].map(b => {
       const cs = getComputedStyle(b);
-      return { y: cs.overflowY, x: cs.overflowX, os: cs.overscrollBehaviorY + '/' + cs.overscrollBehaviorX };
+      return {
+        x: cs.overflowX, y: cs.overflowY, wrap: cs.flexWrap,
+        osx: cs.overscrollBehaviorX, osy: cs.overscrollBehaviorY, sbw: cs.scrollbarWidth,
+        bar: getComputedStyle(b, '::-webkit-scrollbar').height,
+        fits: b.scrollWidth <= b.clientWidth + 1,
+        tiles: b.querySelectorAll('.wl-tile').length,
+      };
     }));
-  expect(rules.every(r => r.y === 'hidden' && r.x === 'hidden'), 'no column scrolls under the wheel').toBe(true);
-  // Phrased as "not contain", not "=== auto". A browser that does not implement
-  // the property reports an empty string, which is not a failure — it cannot be
-  // containing anything — and asserting the positive value would fail on the
-  // engine rather than on the page.
-  expect(rules.filter(r => /contain|none/.test(r.os)), 'no column carries overscroll-behavior').toEqual([]);
+  expect(rows.length, 'there are several bands to check').toBeGreaterThan(1);
+  // `scroll`, not `auto`: the track stays present even where a short list would
+  // fit, so bands do not change height as symbols come and go.
+  expect(rows.every(r => r.x === 'scroll' && r.y === 'hidden'),
+    'every band scrolls sideways and never vertically').toBe(true);
+  expect(rows.every(r => r.wrap === 'nowrap'), 'tiles never wrap onto a second row').toBe(true);
+  // From Chrome 121 `scrollbar-width` takes precedence over the ::-webkit-
+  // scrollbar rules and would switch the always-visible bar off. Phrased as "not
+  // thin/none": an engine without the property reports '' or 'auto', which is
+  // not a failure.
+  expect(rows.filter(r => /thin|none/.test(r.sbw)),
+    'no `scrollbar-width` — it would cancel the always-visible bar').toEqual([]);
+  expect(rows.every(r => r.bar === '8px'), 'the 8px scrollbar is styled on every band').toBe(true);
+  // The row must actually RESERVE that track where the browser draws classic
+  // scrollbars. Headless Chromium hides them (--hide-scrollbars), which makes the
+  // reserved height 0 whatever the CSS says — so whether this browser draws one is
+  // probed first, and the measurement is skipped, aloud, where it cannot be made.
+  const track = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;left:-9999px;width:50px;height:50px;overflow:scroll';
+    document.body.appendChild(probe);
+    const drawn = probe.offsetHeight - probe.clientHeight > 0;
+    probe.remove();
+    const b = document.querySelector('.wl-strip .mkt-group-tiles');
+    return { drawn, reserved: b.offsetHeight - b.clientHeight };
+  });
+  if (track.drawn) expect(track.reserved, 'the row reserves the 8px track under its tiles').toBe(8);
+  else test.info().annotations.push({ type: 'note',
+    description: 'this browser draws no classic scrollbar, so the reserved track height cannot be measured here; the computed overflow-x and the styled ::-webkit-scrollbar height above carry the rule' });
+  // One band fits and one does not: a scroller on BOTH is what `scroll` means.
+  expect(rows.some(r => !r.fits), 'demo has a list wider than its band').toBe(true);
+  expect(rows.some(r => r.fits), 'and a short one that fits, which still carries the scroller').toBe(true);
 
-  // The wheel over a column moves the PAGE. This is the owner's actual
-  // complaint, so where it can be driven it is asserted on the GESTURE, not on
-  // the CSS above.
-  // Chromium only: the other project is Mobile Safari, and a mobile WebKit
-  // context has no mouse wheel to dispatch — page.mouse.wheel there does not
-  // scroll, so the assertion would be measuring the emulated input device
-  // rather than the panel. The CSS check above is what carries the rule on that
-  // project, and it is the stronger half anyway: `overflow: hidden` cannot
-  // chain on any engine.
+  // ── overscroll-behavior: the axis-scoped x form and nothing else ─────────
+  const xSupported = await page.evaluate(() => CSS.supports('overscroll-behavior-x', 'contain'));
+  if (xSupported) {
+    expect(rows.every(r => r.osx === 'contain'),
+      'a sideways swipe off the end of a band is contained (no browser back-nav)').toBe(true);
+  }
+  // Phrased as "not contain/none" for the vertical axis: an engine without the
+  // property reports '' , which is not a failure.
+  expect(rows.filter(r => /contain|none/.test(r.osy)),
+    'no band carries a VERTICAL overscroll-behavior — that is what eats the wheel').toEqual([]);
+  // The whole PAGE, not only this panel: the ban is page-wide. Any rule setting
+  // the shorthand expands to `overscroll-behavior-y` in the CSSOM, so reading the
+  // -y longhand catches both the shorthand and the -y form, and leaves `-x` alone.
+  const offenders = await page.evaluate(() => {
+    const out = [];
+    const walk = (list) => {
+      for (const r of list) {
+        if (r.cssRules && r.cssRules.length) walk(r.cssRules);   // @media / @supports
+        if (r.style && (r.style.getPropertyValue('overscroll-behavior-y')
+                        || r.style.getPropertyValue('overscroll-behavior'))) {
+          out.push(r.selectorText || r.cssText.slice(0, 60));
+        }
+      }
+    };
+    for (const sh of document.styleSheets) {
+      let list; try { list = sh.cssRules; } catch { continue; }   // cross-origin sheet
+      walk(list);
+    }
+    for (const e of document.querySelectorAll('[style]')) {
+      if (/overscroll-behavior(?!-x)/.test(e.getAttribute('style'))) out.push('[style] ' + e.tagName);
+    }
+    return out;
+  });
+  expect(offenders, 'no overscroll-behavior shorthand or -y form anywhere on the page').toEqual([]);
+
+  // ── a long list scrolls sideways, and the PAGE does not ──────────────────
+  const longest = await page.evaluate(() => {
+    const bands = [...document.querySelectorAll('.wl-strip .mkt-group-tiles')];
+    let k = 0;
+    bands.forEach((b, i) => { if (b.querySelectorAll('.wl-tile').length > bands[k].querySelectorAll('.wl-tile').length) k = i; });
+    const b = bands[k];
+    return { k, over: b.scrollWidth - b.clientWidth };
+  });
+  expect(longest.over, 'the longest demo list runs past its band').toBeGreaterThan(20);
+  const band = page.locator('.wl-strip .mkt-group-tiles').nth(longest.k);
+  const after = await band.evaluate(b => { b.scrollLeft = 300; return b.scrollLeft; });
+  expect(after, 'the row scrolls sideways').toBeGreaterThan(0);
+  const pageX = await page.evaluate(() => ({
+    scrollX: window.scrollX,
+    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  }));
+  expect(pageX, 'and the page itself never scrolls sideways').toEqual({ scrollX: 0, sideways: false });
+  await band.evaluate(b => { b.scrollLeft = 0; });
+
+  // The wheel, where it can be driven. Chromium only: a mobile WebKit context has
+  // no mouse wheel to dispatch (page.mouse.wheel does not scroll there), so on that
+  // project the computed-style checks above carry the rule.
   if (browserName === 'chromium') {
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.locator('.wl-strip .mkt-group-tiles').first().hover();
+    // A VERTICAL wheel over a band moves the PAGE. Measured from wherever hover()
+    // left the page — it scrolls the band into view first, so an absolute
+    // threshold would be met before the wheel turned at all.
+    await band.hover();
+    const y0 = await page.evaluate(() => window.scrollY);
     await page.mouse.wheel(0, 400);
     await page.waitForTimeout(300);
-    expect(await page.evaluate(() => window.scrollY), 'the wheel scrolls the page, not the list')
-      .toBeGreaterThan(100);
+    expect(await page.evaluate(() => window.scrollY) - y0,
+      'the vertical wheel scrolls the page, not the list').toBeGreaterThan(100);
+    expect(await band.evaluate(b => b.scrollLeft), 'and leaves the band where it was').toBe(0);
+    // A HORIZONTAL wheel over the same band moves the BAND, not the page.
+    await band.hover();
+    await page.mouse.wheel(300, 0);
+    await page.waitForTimeout(300);
+    expect(await band.evaluate(b => b.scrollLeft), 'the horizontal wheel scrolls the band').toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.scrollX), 'and never the page').toBe(0);
   }
 
-  // Controls appear ONLY where a column overflows. A pair on every column would
-  // be the clutter the owner asked to avoid, and one on a column that fits
-  // would be a control that does nothing.
-  const state = await page.evaluate(() =>
-    [...document.querySelectorAll('.wl-strip .mkt-group')].map(g => {
-      const b = g.querySelector('.mkt-group-tiles');
-      return { over: b.scrollHeight - b.clientHeight > 2, bars: g.querySelectorAll('.wl-page-bar').length };
-    }));
-  expect(state.some(s => s.over), 'demo has a list long enough to page').toBe(true);
-  expect(state.every(s => s.bars === (s.over ? 1 : 0)), 'a bar exactly where one is needed').toBe(true);
-
-  // A paged column must not push the other columns' tiles down — every column's
-  // tiles start on the same line, so a control that grew the band head would
-  // cost all seven of them for the sake of one. That is why the bar is a footer.
-  const heads = await page.evaluate(() =>
-    [...document.querySelectorAll('.wl-strip .wl-band-head')].map(h => Math.round(h.getBoundingClientRect().height)));
-  const paged = state.findIndex(s => s.over);
-  /* Compared against the OTHER columns. The max over ALL of them includes the
-     paged column itself, so `heads[paged] <= max(heads)` holds whatever that
-     head measures — it could not fail, and a footer that grew the head would
-     have sailed through. There must be a neighbour to compare with, or the max
-     of nothing is -Infinity and the assertion means something else entirely. */
-  const neighbours = heads.filter((_, i) => i !== paged);
-  expect(neighbours.length, 'there are other columns to compare the paged one against').toBeGreaterThan(0);
-  expect(heads[paged], 'the paged column\'s head is no taller than its neighbours')
-    .toBeLessThanOrEqual(Math.max(...neighbours));
-
-  // Stepping: ▲ dead at the top, the ▼ states how many are still below, and the
-  // count FALLS as you step — a static number would mean it counts the list
-  // rather than what is hidden.
-  const col = page.locator('.wl-strip .mkt-group').nth(paged);
-  const up = col.locator('.wl-page').nth(0), down = col.locator('.wl-page').nth(1);
-  /* Read the pair's state in one shot rather than through `expect(locator)
-     .toBeDisabled()`. Those retry for the full expect timeout before reporting,
-     so one wrong state costs 5s per assertion and the message names only the
-     selector — whereas this fails instantly and prints the scroll position and
-     both labels, which is what a diagnosis actually needs. */
-  const pager = () => page.evaluate(i => {
-    const g = [...document.querySelectorAll('.wl-strip .mkt-group')][i];
-    const [u, d] = g.querySelectorAll('.wl-page');
-    return {
-      up: u.disabled, down: d.disabled, label: d.textContent,
-      below: Number((d.textContent || '').replace(/\D/g, '') || 0),
-      top: Math.round(g.querySelector('.mkt-group-tiles').scrollTop),
-    };
-  }, paged);
-
-  const atTop = await pager();
-  expect(atTop, 'the ▲ is dead at the top and the ▼ names how many are below')
-    .toMatchObject({ up: true, down: false });
-  expect(atTop.below, 'the ▼ names how many are still below').toBeGreaterThan(0);
-
-  await down.click();
-  await page.waitForTimeout(200);
-  const stepped = await pager();
-  expect(stepped.below, `the count falls as you step (was ${atTop.below})`).toBeLessThan(atTop.below);
-  expect(stepped.up, 'the ▲ comes alive once there is something above').toBe(false);
-
-  // The end is reachable and terminal in both directions.
-  for (let i = 0; i < 12 && !(await pager()).down; i++) { await down.click(); await page.waitForTimeout(120); }
-  const atEnd = await pager();
-  expect(atEnd, 'the ▼ dies at the bottom and claims nothing is left below')
-    .toMatchObject({ down: true, label: '▼' });
-  const tiles = await col.locator('.wl-tile').count();
-  const seen = await page.evaluate(i => {
-    const b = [...document.querySelectorAll('.wl-strip .mkt-group')][i].querySelector('.mkt-group-tiles');
-    const r = b.getBoundingClientRect();
-    return [...b.querySelectorAll('.wl-tile')].filter(t => {
-      const q = t.getBoundingClientRect();
-      return q.bottom > r.top + 1 && q.top < r.bottom - 1;
-    }).map(t => t.textContent);
-  }, paged);
-  expect(seen.length, 'the last tiles are on screen at the bottom').toBeGreaterThan(0);
-  expect(tiles, 'and nothing was removed to get there').toBeGreaterThan(seen.length);
-
-  // A DRAG must be able to reach the part of a list that is off-box. With no
-  // wheel and no scrollbar this is the only way, so a tile could otherwise only
-  // ever be dropped among the rows that happen to be showing. Driven from
-  // wlDragMove, not from a listener on the button: a drag owns the pointer, so
-  // the button gets no pointer events of its own — a `pointerenter` handler was
-  // tried here and fired exactly never.
+  // ── nothing is paged, in demo or live ────────────────────────────────────
+  const noPager = () => page.evaluate(() => ({
+    bars: document.querySelectorAll('.wl-page-bar, .wl-page').length,
+    glyphs: [...document.querySelectorAll('.area-watchlist button')]
+      .filter(b => /^[▲▼]/.test(b.textContent.trim())).length,
+    code: typeof wlSyncPaging + '/' + typeof attachPaging,
+  }));
+  expect(await noPager(), 'demo: no pager, no ▲/▼ control, no paging code left behind')
+    .toEqual({ bars: 0, glyphs: 0, code: 'undefined/undefined' });
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; wlSort = { key: 'manual', dir: 1 }; renderWatchlist(); });
-  await page.waitForTimeout(400);
-  // The bar and a tile must be on screen TOGETHER: elementFromPoint returns
-  // null outside the viewport, so a below-the-fold button reports no hover and
-  // the check passes or fails on where the page happens to be scrolled.
-  /* SCOPED to the watchlist strip. `.wl-page-bar` is no longer unique to this
-     panel: the accounts positions table pages with the same shared control, so
-     a bare selector resolves to two elements and strict mode rejects it. This
-     scenario is about the watchlist columns, so it must say so. */
-  await page.locator('.wl-strip .wl-page-bar').first().scrollIntoViewIfNeeded();
-  await page.waitForTimeout(200);
-  const bar = await page.locator('.wl-strip .wl-page-bar .wl-page').nth(1).boundingBox();
-  const grab = await page.evaluate(() => {
-    const t = [...document.querySelectorAll('.wl-strip .mkt-group .wl-tile')]
-      .find(e => { const r = e.getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; });
-    if (!t) return null;
-    const r = t.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  });
-  expect(grab, 'a tile and the pager are both on screen').not.toBeNull();
-  const startTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
-  await page.mouse.move(grab.x, grab.y);
-  await page.mouse.down();
-  await page.mouse.move(grab.x + 30, grab.y + 30, { steps: 6 });
-  await page.waitForTimeout(120);
-  expect(await page.evaluate(() => wlDrag.on), 'the drag started').toBe(true);
-  for (let i = 0; i < 6; i++) {
-    await page.mouse.move(bar.x + bar.width / 2 + (i % 2), bar.y + bar.height / 2, { steps: 2 });
-    await page.waitForTimeout(170);
-  }
-  const dragTop = await page.evaluate(() => document.querySelector('.wl-strip .mkt-group-tiles').scrollTop);
-  await page.keyboard.press('Escape');
-  await page.mouse.up();
-  expect(dragTop, 'resting on the ▼ mid-drag steps the column').toBeGreaterThan(startTop);
+  await page.waitForTimeout(300);
+  expect(await noPager(), 'live: still none')
+    .toEqual({ bars: 0, glyphs: 0, code: 'undefined/undefined' });
 
   expect(errs, 'no page errors').toEqual([]);
 });
 
-test('S41: watchlists are vertical columns above the charts', async ({ page, renderWitness }) => {
+/* S41 — each watchlist is ONE horizontal band: the list's name and controls in
+   a block on the left, its tiles in a single row to their right, the bands
+   stacked top to bottom. Owner request 2026-09-30 ("I need each of the watch list
+   to go back to displaying horizontal"), reversing the 2026-08-17 vertical-column
+   layout this scenario used to assert. */
+test('S41: each watchlist is one horizontal band, stacked above the charts', async ({ page, renderWitness }) => {
   renderWitness();
-  // Sized to a DESK, not a phone. Columns-side-by-side is the wide-screen
-  // design; at 393px a long list legitimately spreads its own sub-columns
-  // across the full width and pushes the next list onto a row below, which is
-  // the readable arrangement there and not a failure of this rule. Asserting it
-  // at phone width tested the breakpoint, not the layout. The narrow behaviour
-  // that actually matters — no sideways page scroll — is checked separately
-  // below, at the project's own viewport.
+  // Sized to a DESK, not a phone: the head-beside-the-tiles arrangement is the
+  // wide-screen design (under 640px it stacks head-over-tiles, asserted at the
+  // end), so asserting it at phone width would test the breakpoint, not the layout.
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
   await page.setViewportSize({ width: 1512, height: 1000 });
   await gotoDemo(page, '.wl-strip .wl-tile', 15000);
 
   const shape = await page.evaluate(() => {
+    const rect = e => e.getBoundingClientRect();
     const groups = [...document.querySelectorAll('.wl-strip .mkt-group')];
-    const tiles = [...groups[0].querySelectorAll('.wl-tile')];
-    const wl = document.querySelector('.wl-area').getBoundingClientRect();
-    const ch = document.querySelector('.area-charts').getBoundingClientRect();
+    const strip = document.querySelector('.wl-strip');
+    const wl = rect(document.querySelector('.wl-area'));
+    const ch = rect(document.querySelector('.area-charts'));
+    const bands = groups.map(g => {
+      const tiles = [...g.querySelectorAll('.wl-tile')];
+      const head = rect(g.querySelector('.wl-band-head')), box = rect(g.querySelector('.mkt-group-tiles'));
+      return {
+        n: tiles.length,
+        // ONE row: every tile of the band sits on the first tile's line. A wrapped
+        // or stacked band puts some of them on another.
+        oneRow: tiles.every(t => Math.abs(rect(t).top - rect(tiles[0]).top) < 2),
+        // and they run LEFT TO RIGHT
+        leftToRight: tiles.every((t, i) => i === 0 || rect(t).left > rect(tiles[i - 1]).left + 5),
+        left: Math.round(rect(g).left), width: Math.round(rect(g).width),
+        top: rect(g).top, bottom: rect(g).bottom,
+        // the head is a block to the LEFT of the tiles, level with them
+        headLeftOfTiles: head.right <= box.left + 1 && head.left < box.left,
+        headLevel: head.top < box.bottom && head.bottom > box.top,
+        headW: Math.round(head.width),
+      };
+    });
     return {
-      groups: groups.length,
-      // a column: its own tiles stack downward
-      tilesStack: tiles.length > 1 && tiles[1].getBoundingClientRect().top > tiles[0].getBoundingClientRect().top + 5,
-      // and the lists sit beside each other
-      sideBySide: groups.length > 1
-        && groups[1].getBoundingClientRect().left > groups[0].getBoundingClientRect().left + 5,
+      bands,
+      stripW: Math.round(rect(strip).width),
       wlBottom: Math.round(wl.bottom), chartsTop: Math.round(ch.top),
       wlLeft: Math.round(wl.left), chartsLeft: Math.round(ch.left),
       sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      innerScroll: (() => { const s = document.querySelector('.wl-strip'); return s.scrollHeight > s.clientHeight + 2; })(),
+      innerScroll: strip.scrollHeight > strip.clientHeight + 2 || strip.scrollWidth > strip.clientWidth + 1,
       // no tab strip: every list is on screen at once
       tabs: document.querySelectorAll('.wl-strip [role="tab"]').length,
     };
   });
 
-  expect(shape.groups, 'every list renders').toBeGreaterThan(1);
-  expect(shape.tilesStack, 'tiles stack downward inside a category').toBe(true);
-  expect(shape.sideBySide, 'categories sit side by side as columns').toBe(true);
-  expect(shape.tabs, 'the columns ARE the navigation — no tabs').toBe(0);
+  expect(shape.bands.length, 'every list renders').toBeGreaterThan(1);
+  expect(shape.bands.filter(b => !b.oneRow).length, 'every band is a single row of tiles').toBe(0);
+  expect(shape.bands.filter(b => b.n > 1 && !b.leftToRight).length, 'tiles sit side by side, left to right').toBe(0);
+  expect(Math.max(...shape.bands.map(b => b.n)), 'including a long list, which does not wrap').toBeGreaterThan(20);
+  // Bands STACK top to bottom, each the full width of the panel and lined up on
+  // one left edge — not columns sitting side by side.
+  expect(shape.bands.every((b, i) => i === 0 || b.top > shape.bands[i - 1].top + 20
+    && b.top >= shape.bands[i - 1].bottom - 2), 'bands stack top to bottom').toBe(true);
+  expect(shape.bands.every(b => b.left === shape.bands[0].left && Math.abs(b.width - shape.stripW) <= 2),
+    'each band is the full width of the panel').toBe(true);
+  expect(shape.bands.every(b => b.headLeftOfTiles && b.headLevel),
+    'the name and controls sit in a block on the LEFT, level with the tiles').toBe(true);
+  expect(Math.max(...shape.bands.map(b => b.headW)), 'a block, not a header across the top').toBeLessThanOrEqual(120);
+  expect(shape.tabs, 'the bands ARE the navigation — no tabs').toBe(0);
   expect(shape.wlBottom, 'watchlists sit above the charts panel').toBeLessThanOrEqual(shape.chartsTop);
   expect(shape.wlLeft, 'and share its left edge, both full-bleed').toBe(shape.chartsLeft);
   expect(shape.sideways, 'the page never scrolls sideways').toBe(false);
   expect(shape.innerScroll, 'the panel runs at full length, no inner crop').toBe(false);
 
-  // The reorder control must not impersonate a back button — a bare ← on a
-  // button reads as navigation to people and to crawlers alike.
+  // The reorder controls now move a list UP or DOWN the stack, and must not
+  // impersonate a back button — a bare ← on a button reads as navigation to
+  // people and to crawlers alike. ↑/↓ are in no crawler selector.
   await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = false; renderWatchlist(); });
-  const glyphs = await page.evaluate(() =>
-    [...document.querySelectorAll('.wl-move')].map(b => b.textContent));
-  expect(glyphs.length, 'the reorder controls render in live').toBeGreaterThan(0);
-  expect(glyphs.some(g => g === '←' || g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
+  const moves = await page.evaluate(() =>
+    [...document.querySelectorAll('.wl-move')].map(b => ({ g: b.textContent, label: b.getAttribute('aria-label') })));
+  expect(moves.length, 'the reorder controls render in live').toBeGreaterThan(0);
+  expect(moves.some(m => m.g === '←' || m.g === '‹'), 'no reorder control is a bare back arrow').toBe(false);
+  expect(moves.every(m => m.g === '↑' || m.g === '↓'), 'the bands stack vertically, so the controls point up and down').toBe(true);
+  expect(moves.every(m => /^Move .+ (earlier|later)$/.test(m.label)), 'and keep their earlier/later labels').toBe(true);
 
-  // Narrow width: the columns may wrap onto more than one row, but the PAGE
-  // must never scroll sideways and the panel must never be cropped.
+  // Phone width: the page never scrolls sideways, the panel is never cropped, and
+  // the band keeps its one sideways-scrolling row — with its head now ABOVE the
+  // tiles (under 640px the band stacks, as it always did).
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '390' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
-  const narrow = await page.evaluate(() => ({
-    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    innerScroll: (() => { const s = document.querySelector('.wl-strip'); return s.scrollHeight > s.clientHeight + 2; })(),
-    tiles: document.querySelectorAll('.wl-strip .wl-tile').length,
-  }));
+  const narrow = await page.evaluate(() => {
+    const rect = e => e.getBoundingClientRect();
+    const strip = document.querySelector('.wl-strip');
+    const groups = [...document.querySelectorAll('.wl-strip .mkt-group')];
+    const first = groups[0];
+    const box = first.querySelector('.mkt-group-tiles');
+    return {
+      sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      innerScroll: strip.scrollHeight > strip.clientHeight + 2,
+      tiles: document.querySelectorAll('.wl-strip .wl-tile').length,
+      headAbove: rect(first.querySelector('.wl-band-head')).bottom <= rect(box).top + 2,
+      oneRow: groups.every(g => { const t = [...g.querySelectorAll('.wl-tile')]; return t.every(x => Math.abs(rect(x).top - rect(t[0]).top) < 2); }),
+      rowScrolls: getComputedStyle(box).overflowX === 'scroll' && box.scrollWidth > box.clientWidth + 2,
+      stacked: groups.every((g, i) => i === 0 || rect(g).top >= rect(groups[i - 1]).bottom - 2),
+    };
+  });
   expect(narrow.sideways, 'no sideways page scroll at phone width').toBe(false);
   expect(narrow.innerScroll, 'the panel is not cropped at phone width').toBe(false);
   expect(narrow.tiles, 'every tile still renders at phone width').toBeGreaterThan(0);
+  expect(narrow.headAbove, 'under 640px the head stacks above its tiles').toBe(true);
+  expect(narrow.oneRow, 'tiles still never wrap at phone width').toBe(true);
+  expect(narrow.rowScrolls, 'the long list scrolls sideways inside its band').toBe(true);
+  expect(narrow.stacked, 'bands still stack').toBe(true);
 });
 
 /* S39 — the volume average. The failure it guards is quiet: an average computed
