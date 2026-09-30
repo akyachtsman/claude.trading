@@ -8069,8 +8069,10 @@ async function refreshEcon(force, opts) {
   if (gen !== econState.gen) return;   /* a newer request owns the state now */
   econState.pending = false;
   /* The span changed while this FORCED refresh was in flight (econPickSpan only recorded it): that is
-     not a failed poll. The forced sweep has just warmed the server, so ask for the span now showing. */
-  if (force === true && econTf !== asked) { refreshEcon(false, { span: true }); return; }
+     not a failed poll. The forced sweep has just warmed the server, so ask for the span now showing —
+     and AWAIT it: "Refresh now" (refreshNowClicked's Promise.all) must stay pending until that span has
+     landed, or another click could start a competing forced request and supersede it. */
+  if (force === true && econTf !== asked) { await refreshEcon(false, { span: true }); return; }
   /* drop a reply for a span nobody is asking about any more, or one that says it drew another window
      (version skew: an older deploy would answer a range it does not know with 3m) */
   if (out && (econTf !== asked || (out.range && out.range !== asked) || !Array.isArray(out.rows))) out = null;

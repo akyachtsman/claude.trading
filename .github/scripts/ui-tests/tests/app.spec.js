@@ -6139,6 +6139,10 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await page.evaluate(() => {
     window.__inner = window.deskEcon;
     window.deskEcon = (range, force) => {
+      if (force !== true && window.__holdRange === range) {            // an unforced request for this span is held open too
+        window.__calls.push({ range, force: false });
+        return new Promise((res) => { window.__releaseSpan = () => res({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 90, stale: false }); });
+      }
       if (force !== true) return window.__inner(range, force);
       window.__calls.push({ range, force: true });
       return new Promise((res) => { window.__releaseForce = () => res({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 90, stale: false }); });
@@ -6164,14 +6168,20 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   const cur = await page.evaluate(() => econTf);
   const other = cur === '1y' ? '6m' : '1y';
   n = await calls();
-  await page.evaluate(() => { window.__forced = refreshEcon(true); });
+  await page.evaluate(() => { window.__forcedDone = false; window.__forced = refreshEcon(true); window.__forced.then(() => { window.__forcedDone = true; }); });
   expect(await calls(), 'the forced request is in flight').toBe(n + 1);
   await pick(other);
   expect(await calls(), 'a span change during it starts no request of its own').toBe(n + 1);
   expect(await page.evaluate(() => econState.pending), 'the span is recorded and the list is marked pending').toBe(true);
-  await page.evaluate(() => { window.__releaseForce(); return window.__forced; });
+  await page.evaluate((r) => { window.__holdRange = r; window.__releaseForce(); }, other);
   await expect.poll(calls, 'the forced reply landing asks for the span now showing').toBe(n + 2);
   expect(await last(), 'unforced, for the span that was picked').toEqual({ range: other, force: false });
+  // the forced refresh — what "Refresh now" awaits — stays PENDING until that follow-up has landed: else the button comes back
+  // and another click could start a competing forced request that supersedes the span reply (Codex review, PR #294)
+  expect(await page.evaluate(async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); return window.__forcedDone; }),
+    'the forced refresh is still pending while the span request is in flight').toBe(false);
+  await page.evaluate(() => { window.__releaseSpan(); window.__holdRange = null; });
+  await expect.poll(() => page.evaluate(() => window.__forcedDone), 'and settles once the span has landed').toBe(true);
   await expect.poll(() => page.evaluate(() => econState.payload && econState.payload.range), 'and that reply is what is drawn').toBe(other);
   expect(await lamp(), 'a span change behind a forced refresh is not a failed poll').toMatch(/^live$/i);
   await pick(cur);
