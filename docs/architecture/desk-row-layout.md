@@ -1,6 +1,67 @@
 # Desk row and page layout
 
-How the desk row (Markets | News | Ask | Accounts), the positions table and the heatmap footer are sized: the measuring column, out-of-flow panels, breakpoints and the caps (`styles/layout.css`).
+How the desk row (Markets | News | Ask | Economy), the accounts block at the bottom of the page, the positions table and the heatmap footer are sized: the measuring column, out-of-flow panels, breakpoints and the caps (`styles/layout.css`; scenarios S4, S11, S54).
+
+  **ACCOUNTS ARE THE LAST BLOCK ON THE PAGE, cards side by side** (owner request
+  2026-09-30: "my accounts information to go at the bottom of the dashboard show
+  side by side"). `<section class="area-accounts">` — the title, the MARKETS desk
+  lamp with Refresh / Lock, the synced stamp and `#accountGrid` — is the LAST
+  child of `<main id="main">`, after the heatmap panel. The MARKUP moved, not a
+  CSS `order`, so visual order is DOM order. The cost is named and accepted: the
+  desk lamp, Refresh and Lock now sit at the bottom of the page and come LAST in
+  the reading order keyboard and screen-reader users follow. Every id and class
+  the renderers use is unchanged (`#accountGrid`, `#mastheadState`,
+  `#accountsStamp`, `#accountsTitle`), so `renderAccounts`, `renderMasthead` and
+  the lock flow needed no change, and nothing in `app.js` selects the old parent.
+  **This WITHDRAWS the 2026-08-20 ruling** (a fixed 232px column beside Ask, the
+  cards stacked one per row) — see the SUPERSEDED banners further down, which keep
+  that history.
+  - **Edges.** The section is a full-bleed sibling of `.area-charts` and
+    `.heat-panel` and takes their exact inline inset
+    (`margin-inline: calc(0.5in - var(--space-4))`), so its left and right edges ARE
+    theirs. It is also on the shell cap's opt-out list (`:not(.area-accounts)` beside
+    `.area-charts`, `.heat-panel`, `.wl-area`, `.masthead`): without that, a window
+    wider than 1880 centres it inside the cap, inset from the heatmap above it. The
+    heatmap's own 0.5in bottom margin is the seam above; the footer's margin the gap
+    below.
+  - **Cards.** `.account-grid` is `repeat(auto-fit, minmax(min(340px, 100%), 1fr))`:
+    two equal columns from ~792px (2 x 340 + the gutter must fit inside the inset
+    section), one column below that with no breakpoint of its own. `min(340px, 100%)`
+    keeps the floor from exceeding a phone's 294px section, where a bare 340 scrolls
+    the page sideways. `auto-fit`, not `auto-fill`, so two accounts share the whole
+    width. The card's stats are 2-up above 520px and 1-up at or below it (2-up at 390
+    is the fault that failed S4 on WebKit alone). The equity sparkline is back — it was
+    hidden in the 232px column. The hacks that only existed to fit that column are
+    DELETED, not disabled: the `zoom` scale, the single-column stat grid, the hidden
+    sparkline, the 150px side header and every `.top-boxes`-scoped card override.
+  - **Header row.** `.accounts-side` puts the title and desk lamp on the left and the
+    stamp on the right, ONE line at desktop; it wraps, never overflows, when the
+    LIVE + Refresh + Lock cluster outgrows a phone. Refresh / Lock stay 26px
+    (`.accounts-head .btn`).
+  - **Locked.** `.account-grid .panel-lock` spans every track (`grid-column: 1 / -1`)
+    with `min-height: 158px` — a floor, NEVER `height`: the wrong-PIN error renders
+    below the form and at a fixed height landed outside the panel (S11 would not
+    catch that, the element still exists and still has its text; S54 asserts the
+    error line is inside the panel). The explainer type trim that used to buy the last
+    17px against the cards' 158 is gone with the row it matched.
+  - **Positions cap unchanged:** `.acct-positions`, 120px, ordinary scrollbar, NO
+    `overscroll-behavior` (next to the heatmap-footer notes below).
+  **The desk row reads Markets | News | Ask | Economy at ≥1120px.** The accounts'
+  old 232px column now holds the **Economy panel** (`<aside class="panel area-econ">`,
+  `#econTitle` / `#econLamp` / `#econBody`; a PLACEHOLDER — the body is filled by a
+  later change, nothing renders into it yet). Ask does NOT grow into the freed
+  width: every rule the accounts column had is re-pointed at `.area-econ` — `flex: 0 0
+  232px`, stretch to Markets' bottom line, the same 1120 gate, `flex: 2 1 320px`
+  beside Ask when the row wraps below 1120 (the old accounts ratio). It stays IN FLOW
+  and is kept from setting the row's height the way the accounts column was: by the
+  existing 320px cap on `.top-boxes .panel-body` (header + body tops out near 365px,
+  well under Markets, which stays the ruler). Two traps: raising that cap past
+  Markets' height hands the row to this panel — take it out of flow like Ask instead;
+  and **`contain: size` was tried to keep its content out of the line and is WRONG** —
+  WebKit does not re-measure it when a resize crosses the 1120 gate (810 → 1152 gave
+  Ask 0px wide and the column 139px past the viewport), so never reach for it here.
+  S54 holds the shape: Economy to the right of Ask, 232px, ending on Markets' bottom
+  line, and eighty injected rows do not grow the row.
 
   **EVERY COLUMN IN THE DESK ROW ENDS ON ONE LINE at ≥1120px** (owner request
   2026-08-21: "I want all of these windows to be as tall as the bottom of the
@@ -10,8 +71,9 @@ How the desk row (Markets | News | Ask | Accounts), the positions table and the 
   Everything else is fitted to it: `.desk-row` goes `align-items: stretch`
   (it was `flex-start`, which let the boxes half stop at its own content and
   leave **~690px of empty page** beside the news), Ask loses its 420px cap and
-  its `align-self: start` so the slack goes to the thread, and the account
-  cards stretch to the same line instead of stopping 204px short.
+  its `align-self: start` so the slack goes to the thread, and the right-hand
+  column (the account cards then, the Economy panel now) stretches to the same
+  line instead of stopping 204px short.
   **ASK is taken out of flow inside its own column too**, for the same reason
   and after the same fault reached the owner: with the 420px cap lifted, a long
   answer dragged the whole row down past Markets and the panel ran on down the
@@ -32,12 +94,15 @@ How the desk row (Markets | News | Ask | Accounts), the positions table and the 
   runs past XLRE. `#newsList` keeps `overflow-y: auto` and deliberately NO
   `overscroll-behavior`, so reaching the last headline carries on scrolling the
   page; it is the one body on this row with genuinely more content than column.
-  One ordering trap: the Ask and accounts overrides must sit **later in the
+  One ordering trap: the Ask overrides (the accounts' went with them) must sit **later in the
   stylesheet** than the base `align-self: start` and `max-height: 420px` they
   lift — equal specificity, so source order is the whole mechanism, and placed
   earlier they silently did nothing (measured: Ask stayed at 158 while News and
   Markets moved). Measured at 1512/1280/1152: all four panels end at 927 with
   XLRE at 912. Below 1120 the row stacks and every one of these rules is inert.
+  **SUPERSEDED 2026-09-30 — history, not current behaviour** (the accounts moved to
+  the bottom of the page and the 232px column is the Economy panel's; see the top
+  of this file). What survives unchanged: the 1120 gate and its reason, below.
   **The desk row (`.top-boxes`) reads Ask | Accounts at ≥1120px** — Ask on the
   left taking whatever is left, the accounts as a fixed **232px column** on its
   right with the cards **stacked one per row** (owner request 2026-08-20:
@@ -56,7 +121,8 @@ How the desk row (Markets | News | Ask | Accounts), the positions table and the 
   left this row, so a higher one here leaves 1120–1400 running the old
   share-the-row rules — measured, that put Ask at **198px** at a 1280 viewport.
   It also matters that the owner's browser reports `innerWidth` 1152, the same
-  trap the watchlist column layout hit at 1900.
+  trap the watchlist column layout hit at 1900. (Both points still govern the
+  Ask | Economy row.)
   **What is capped is the POSITIONS TABLE, not the column** (`.acct-positions`,
   `max-height: 120px` ≈ three rows): "don't allow the accounts to grow with
   positions. Use a scroll button." It carries an **ordinary scrollbar**
@@ -97,6 +163,14 @@ How the desk row (Markets | News | Ask | Accounts), the positions table and the 
   fitted, which it did — the thread silently absorbed the shortfall, so the
   panel looked fine and the assistant was unusable. 192 is what the authed
   panel actually needs at rest.
+  **SUPERSEDED 2026-09-30 — history only, through the `Three across` paragraph
+  below:** the Ask | Account A | Account B row, the `zoom: .62` cards and the 150px
+  side header were withdrawn with the cards' move to the bottom of the page (the
+  earlier 2026-08-20 withdrawal had already dropped the scale). What survives:
+  Refresh / Lock are 26px, demo never renders them, and the lock panel is
+  `min-height`, never `height` (all restated in the current section above). "Ask
+  moves by `order`, not by moving the markup" below is OVERTAKEN: the owner has now
+  asked for the accounts at the bottom, so the markup moved (visual = DOM order).
   Ask is on the FAR LEFT and **fluid** — it takes
   whatever the cards leave (1052 at 1512, 1452 at 1920) — and the two cards are
   **200×158** beside it, matched to Ask's height. They went 485 → 242 → 200 over

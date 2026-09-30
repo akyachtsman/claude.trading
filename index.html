@@ -31,8 +31,8 @@
        shell cap is re-pointed at ITS children, not at it). -->
   <main id="main">
 
-  <!-- Top row: the Markets panel (shrunk 10%) beside Ask-the-desk.
-       Accounts / news sit in their own band below.
+  <!-- Top row: the Markets panel (shrunk 10%) beside News, Ask-the-desk and the
+       Economy column. Accounts are the LAST block on the page, below the heatmap.
        The MARKET STRIP that used to lead this row was removed 2026-07-29 (owner
        ruling): the Watchlists panel above now carries the same categories —
        Global & income, Macro, US sectors, Industry & metals, Treasuries — with
@@ -44,13 +44,11 @@
        in place from here via the PIN RPCs — the ✎ trigger flips the panel into
        edit mode. Quotes arrive batched from desk-watchlist (one upstream call
        per 50 symbols). Tabs are built by renderWatchlist(). -->
-  <!-- ONE DESK ROW (owner request 2026-08-18): Markets | News | Ask |
-       Accounts side by side instead of two stacked rows. The two inner
-       rows keep their own markup and their own internal rules — nesting
-       them as two children of this row is what puts all four panels on one
-       line without reordering the DOM, which matters because the accounts
-       section carries the masthead state and the Refresh/Lock controls that
-       keyboard and screen-reader users reach in reading order. -->
+  <!-- ONE DESK ROW (owner request 2026-08-18): Markets | News | Ask | Economy
+       side by side on a single line. The two inner rows keep their own markup
+       and their own internal rules — nesting them as two children of this row
+       is what puts the panels on one line. The last column held the accounts
+       until they moved to the bottom of the page (2026-09-30). -->
   <div class="desk-row">
   <div class="top-band">
     <aside class="col-markets" aria-label="Markets">
@@ -109,22 +107,17 @@
         <div class="panel-body" id="askBody"></div>
       </section>
     </aside>
-    <section class="area-accounts" aria-labelledby="accountsTitle">
-      <!-- Title, desk lamp, Refresh/Lock and the synced stamp are grouped so
-           they can sit BESIDE the cards on a wide screen instead of stacking
-           above them. Stacked, they pushed the cards ~75px below the Ask panel
-           and the three windows no longer lined up (owner report 2026-08-08).
-           The grouping is inert below the breakpoint — the column layout there
-           is exactly what it was. -->
-      <div class="accounts-side">
-        <div class="accounts-head">
-          <h2 id="accountsTitle">Accounts</h2>
-          <div class="masthead-state" id="mastheadState"></div>
-        </div>
-        <p class="stamp" id="accountsStamp"></p>
+    <!-- Economy (owner request 2026-09-30): takes the 232px column the accounts
+         used to hold at the right of this row, so Ask keeps its width when the
+         accounts move to the bottom of the page. A placeholder for now — the
+         body is filled by a later change; nothing renders into it yet. -->
+    <aside class="panel area-econ" aria-labelledby="econTitle">
+      <div class="panel-header">
+        <h2 class="panel-title" id="econTitle">Economy</h2>
+        <span class="lamp lamp--demo" id="econLamp">Demo</span>
       </div>
-      <div class="account-grid" id="accountGrid"></div>
-    </section>
+      <div class="panel-body" id="econBody"></div>
+    </aside>
   </div>
   </div>
 
@@ -474,13 +467,6 @@
 
   <!-- Heatmap moved below the charts and expanded to the charts' full width
        (owner request 2026-07-18). -->
-  <!-- ACCOUNTS SIT BESIDE THE HEATMAP (owner request 2026-08-18), cards
-       stacked on the right. Moving the markup rather than reordering with CSS
-       is the only way to pair two blocks this far apart in the document — and
-       it has a cost worth naming: this section carries the desk lamp and the
-       Refresh/Lock controls, so those now come late in the reading order that
-       keyboard and screen-reader users follow. Accepted on the owner's
-       explicit instruction; the controls are unchanged and still reachable. -->
   <section class="panel heat-panel" aria-labelledby="heatTitle">
     <div class="panel-header">
       <h2 class="panel-title" id="heatTitle">Heatmap — S&amp;P 500</h2>
@@ -531,6 +517,26 @@
            that message throw on a null node. -->
       <p class="stamp heat-note" id="heatSource"></p>
     </div>
+  </section>
+
+  <!-- ACCOUNTS ARE THE LAST BLOCK ON THE PAGE, cards side by side (owner request
+       2026-09-30: "my accounts information to go at the bottom of the dashboard
+       show side by side"). This REPLACES the 2026-08-20 232px column beside Ask.
+       The MARKUP moved (visual order = DOM order, which is what keyboard and
+       screen-reader users follow; `order` was not used), so the desk lamp and
+       the Refresh / Lock controls in the header row below now come LAST in
+       reading order, after the heatmap. The section is a full-bleed sibling of
+       the charts and heatmap panels and lines up with them (see the shell cap in
+       layout.css). -->
+  <section class="area-accounts" aria-labelledby="accountsTitle">
+    <div class="accounts-side">
+      <div class="accounts-head">
+        <h2 id="accountsTitle">Accounts</h2>
+        <div class="masthead-state" id="mastheadState"></div>
+      </div>
+      <p class="stamp" id="accountsStamp"></p>
+    </div>
+    <div class="account-grid" id="accountGrid"></div>
   </section>
 
   </main>

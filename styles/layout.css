@@ -24,12 +24,18 @@
   /* `.wl-area` joined the opt-out 2026-08-17: it now sits directly on top of
      `.area-charts`, and a capped-and-centred panel above a full-bleed one would
      be visibly inset from the chart it is meant to feed. */
-  /* Both selectors weigh the same (0,5,0) as the one they replace. `main` (the
-     landmark between masthead and footer) is a plain block that must NOT take the
-     cap itself — that would cap the full-bleed panels inside it — so the cap goes
-     to its children exactly as it went to .shell's own before. */
-  .shell > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area):not(:where(main)),
-  .shell > :where(main) > *:not(.area-charts):not(.heat-panel):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
+  /* `.area-accounts` joined the opt-out 2026-09-30, when the accounts moved to
+     the bottom of the page: it sits directly under the heatmap, and a capped,
+     centred block under a full-bleed one would be inset from it on any window
+     wider than 1880.
+     Both selectors weigh one class more than the ones they replaced ((0,6,0)
+     against (0,5,0)); nothing else sets max-width or margin-inline on these
+     elements, so no rule changed sides. `main` (the landmark between masthead and
+     footer) is a plain block that must NOT take the cap itself — that would cap
+     the full-bleed panels inside it — so the cap goes to its children exactly as
+     it went to .shell's own before. */
+  .shell > *:not(.area-charts):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(:where(main)),
+  .shell > :where(main) > *:not(.area-charts):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -55,9 +61,11 @@
   .area-watchlist { margin-bottom: var(--space-4); }
   /* wrap rather than overflow: the desk must never scroll sideways, so when the
      three columns don't fit they stack instead of spilling. */
-  /* ONE DESK ROW (owner request 2026-08-18): Markets | News | Ask | Accounts on
-     a single line. Below the wide gate it is a plain block, so the two inner
-     rows stack exactly as they did before and nothing narrower changes. */
+  /* ONE DESK ROW (owner request 2026-08-18): Markets | News | Ask on a single
+     line — the Accounts column that used to close it moved to the bottom of the
+     page 2026-09-30, and Ask took the width it freed. Below the wide gate it is
+     a plain block, so the two inner rows stack exactly as they did before and
+     nothing narrower changes. */
   .desk-row { min-width: 0; }
   .desk-row > .top-band, .desk-row > .top-boxes { min-width: 0; }
   .top-band { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-4); }
@@ -119,9 +127,9 @@
        empty page beside the news. Stretching hands that height to Ask instead
        of to nothing. */
     .desk-row { display: flex; align-items: stretch; gap: var(--space-4); }
-    /* Markets + News keep their intrinsic widths; the accounts half takes the
-       remainder, because Ask is the panel that actually benefits from slack —
-       it holds a conversation, while the other three hold fixed-shape data. */
+    /* Markets + News keep their intrinsic widths; Ask takes the remainder,
+       because it is the panel that actually benefits from slack — it holds a
+       conversation, while the other two hold fixed-shape data. */
     .desk-row > .top-band { flex: 0 1 auto; margin-bottom: 0; }
     .desk-row > .top-boxes { flex: 1 1 0; margin-bottom: 0; }
     /* Both inner rows already carry their own bottom margin; the row supplies
@@ -284,110 +292,42 @@
      now. Its columns answer the chaining a different way — they do not scroll
      under the wheel AT ALL, and are paged by a button instead, 2026-08-20.) */
   .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-  /* accounts / news shifted DOWN into their own band under the top row */
+  /* Ask | Economy: the last two columns of the desk row. The right-hand column
+     held the ACCOUNTS until 2026-09-30, when they moved to the bottom of the
+     page (see `.area-accounts` below) and the Economy panel took their slot —
+     same 232px basis, same gate, same stretch to Markets' bottom line, so Ask
+     does not grow into the freed width. */
   .top-boxes { min-width: 0; display: flex; gap: var(--space-3); align-items: stretch; margin-bottom: var(--space-4); }
-  .top-boxes > .area-accounts { flex: 2 1 0; min-width: 0; }
+  .top-boxes > .area-econ { flex: 2 1 0; min-width: 0; }
   .top-boxes > .col-rail { flex: 1 1 0; min-width: 0; }
-  .top-boxes .account-grid { grid-template-columns: 1fr 1fr; }
-  .top-boxes .account .hero-number { font-size: var(--font-xl); }
-  /* Stats stay STACKED by default. The 1-up rule exists for narrow cards, where
-     two columns of currency figures do not fit: making it 2-up unconditionally
-     put 409px of content in a 390px viewport and failed S4 on WebKit only
-     (mobile-chrome passed, so a Chromium harness does not catch it). The 2-up
-     cut the owner asked for is opted into at the desktop breakpoint below,
-     where the accounts column is ~980px and has ample room. */
-  .top-boxes .acct-stats { grid-template-columns: 1fr; }
-  /* The accounts-area cut (owner request 2026-08-07) is opted into at the
-     desktop breakpoint, NOT globally: the stacked stats exist for narrow cards,
-     and forcing 2-up at every width put 409px of content in a 390px viewport
-     and failed S4 on WebKit. This block sits AFTER the 1-up default on purpose
-     — a media query adds no specificity, so placing it earlier let the later
-     rule win and the 2-up silently never applied. */
-  @media (min-width: 1400px) { .top-boxes .acct-stats { grid-template-columns: 1fr 1fr; } }
-  /* The equity sparkline goes too — it is 40px, and the 70% target is not
-     reachable with it. The one-year trend is still on the Markets chart and in
-     the symbol detail window; this was the least load-bearing of the card's
-     five blocks, which is why it went before anything numeric. */
-  .top-boxes .acct-spark { display: none; }
-  .acct-pos-toggle { appearance: none; border: 0; background: none; margin: 0 var(--space-4) var(--space-3); padding: 4px 0; font: 600 var(--font-xs)/1.2 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; text-align: left; }
-  .acct-pos-toggle:hover { color: var(--color-text-primary); }
-  .acct-pos-toggle:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
   .top-boxes .panel-body { max-height: 320px; overflow-y: auto; }
-  /* ── Desk row, wide screens only: Ask | Account A | Account B ──────────────
-     Owner request 2026-08-08. Scoped to the desktop breakpoint because BOTH of
-     its numbers break a narrow screen: two 242px cards need 484px plus gaps,
-     which overflows a 390px viewport outright, and below 1400 the stats drop to
-     1-up (they must — 2-up clips the values in a narrow card) so the content no
-     longer fits 158px. Under 1400 the row keeps exactly the layout it had.
-     Ask moves to the far left with `order`, NOT by moving the markup: the
-     accounts section carries the desk's masthead state and the Refresh/Lock
-     controls, and reordering the DOM would drag those out of the reading order
-     that keyboard and screen-reader users follow. `order` is purely visual,
-     which is all that was asked for.
-     The card is SCALED rather than re-typeset ("reduce font to fit"): at full
-     size it needs 331px of height, and shrinking individual fonts would leave
-     the padding and gaps at their old size, so the card would read as starved
-     rather than smaller. `zoom` takes type, padding and borders together — the
-     same device the Markets column uses.
-     .62 is the LARGEST scale that fits; .66 still overflows by 10px. Note the
-     asymmetry, which is easy to get wrong: the width comes from the grid track
-     and so is already in rendered pixels, while `height` is set inside the
-     zoomed box and must be divided by the scale to render at 158. */
-  /* Gated at 1120, the SAME breakpoint the desk row itself uses. The two must
-     agree: the row's gate was lowered to 1120 precisely because the accounts
-     had moved out of it, and now that they are back a higher gate here would
-     leave 1120–1400 running the old share-the-row rules — measured, that put
-     Ask at 198px at a 1280 viewport, which is not a panel you can hold a
-     conversation in. It also matters that the owner's browser reports
-     innerWidth 1152 (a 1512 laptop with DevTools docked), so a 1400 gate would
-     never engage on the machine this was built for — the same trap the
-     watchlist column layout hit at 1900. */
+  /* ── Desk row, wide screens: Markets | News | Ask | Economy ────────────────
+     Gated at 1120, the SAME breakpoint the desk row itself uses — the two must
+     agree, or a window between them runs one arrangement's rules inside the
+     other (measured when the accounts still shared this row: Ask at 198px at a
+     1280 viewport). The owner's browser reports innerWidth 1152 (a 1512 laptop
+     with DevTools docked), so a higher gate would never engage on the machine
+     this was built for — the same trap the watchlist column layout hit at 1900.
+     The Ask | Account A | Account B row, the `zoom` scale and the 150px side
+     header that used to live here are GONE with the cards (they are at the
+     bottom of the page now); the 232px column stayed and is Economy's.
+     Placed AFTER the base `align-self: start` and the 420px cap above on
+     purpose: these lift them, and a rule of equal specificity only wins by
+     coming later. */
   @media (min-width: 1120px) {
-    .top-boxes > .col-rail { order: -1; flex: 1 1 auto; min-width: 0; }
-    /* Accounts return to this row, SQUEEZED to the right of Ask (owner request
-       2026-08-20), and the heatmap gets the full width back. 232 = one 200px
-       card plus the grid gutters, STACKED one per row: a column beside Ask
-       rather than a second mini-row of cards. Ask is the elastic half and
-       simply takes what is left — which is what "reducing the width of that
-       guy" buys the cards. */
-    .top-boxes > .area-accounts { order: 0; flex: 0 0 232px; align-self: start; }
-    .top-boxes .account-grid { grid-template-columns: 1fr; justify-content: stretch; }
-    /* Full size, and the header sits ABOVE the cards again. Both of the rules
-       that used to be here — `zoom: .62` and a 150px header column beside the
-       grid — existed for one constraint: Ask / Account A / Account B all had to
-       start on the same 158px line. The cards are a COLUMN now, with no line to
-       match and a width of their own, so the scale and the side header were
-       solving a problem that no longer exists. */
-    .top-boxes .account { zoom: 1; min-height: 0; height: auto; width: auto; }
-    .accounts-side { width: auto; }
-    .top-boxes .account-grid { margin-top: var(--space-3); }
-    /* LOCKED state must keep the row's shape (owner report 2026-08-08: the row
-       grew from 158 to 247 the moment the desk locked). The lock panel replaces
-       BOTH cards in the grid, so it spans both tracks and takes the same 158px
-       — the row is then the same height whether the desk is locked or not.
-       Deliberately NOT zoomed like `.account`: the cards are scaled because
-       they carry a lot of figures, whereas this panel is a PIN field, and
-       shrinking a text input people have to type into to 62% would be a
-       usability cost paid for nothing — spanning two tracks already gives it
-       ample room at full size.
-       `min-height`, NOT `height`: the wrong-PIN error renders below the form,
-       and at a fixed 158 it landed 8px OUTSIDE the panel — a failed unlock
-       would have shown no visible reason, and S11 would not have caught it
-       because the element still exists and still has its text. The row is 158
-       whenever the desk is simply locked; it grows ~20px only while an error is
-       on screen, which is the one moment that matters more than the row. */
-    .top-boxes .panel-lock { grid-column: 1 / -1; min-height: 158px; }
-    /* the explainer is the only elastic part; trimming its type and the gap
-       under it is what buys the 17px, so the panel sits at the cards' 158
-       without losing a word of the copy */
-    .top-boxes .panel-lock .lock-explain { font-size: var(--font-sm); line-height: 1.35; margin: 0 0 var(--space-2); }
-    .top-boxes .panel-lock .panel-body { padding-top: var(--space-2); }
-  }
-
-  /* Placed AFTER the block above on purpose: these lift that block's own
-     `align-self: start` and the 420px cap set further up the file, and a rule
-     of equal specificity only wins by coming later. */
-  @media (min-width: 1120px) {
+    /* The Economy column: a fixed 232px (the accounts column's basis), Ask
+       takes whatever is left, and the panel stretches to the row's line. It
+       stays IN FLOW, exactly as the accounts column did, and is kept from
+       setting the row's height the same way: `.top-boxes .panel-body` above
+       caps the body at 320px and scrolls it (an ordinary scrollbar, NO
+       `overscroll-behavior`), so header + body tops out near 365px, well under
+       Markets, which remains the ruler. Raising that cap past Markets' height
+       would hand the row to this panel — take it out of flow like Ask instead.
+       (`contain: size` was tried to keep the content out of the line and is
+       WRONG: WebKit does not re-measure it when a resize crosses this gate, and
+       the row came out with Ask at 0px and this column 139px past the
+       viewport.) */
+    .top-boxes > .area-econ { flex: 0 0 232px; align-self: stretch; }
     /* Ask fills the row instead of stopping at 420 and leaving ~690px of empty
        page beside the news. The cap and the `align-self: start` that went with
        it were written when this panel sat above open space; with a row height
@@ -406,11 +346,6 @@
        session with a real answer in the thread. */
     .top-boxes > .col-rail { align-self: stretch; position: relative; min-height: 0; }
     .top-boxes > .col-rail > .panel { position: absolute; inset: 0; max-height: none; min-height: 0; margin: 0; }
-
-    /* The account cards stretch to the same line rather than stopping 204px
-       short. The grid rows share the height, so two cards split it. */
-    .top-boxes > .area-accounts { align-self: stretch; }
-    .top-boxes .account-grid { flex: 1 1 auto; min-height: 0; align-content: stretch; }
   }
   /* the label column is 78px (long names wrap to 2 lines) and the band padding
      is trimmed, so a band stays one tile-height tall. */
@@ -471,28 +406,70 @@
      0.5in. */
   .area-charts { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
 
-  /* accounts */
-  .accounts-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+  /* ── Accounts: the LAST block on the page, cards side by side ──────────────
+     Owner request 2026-09-30: "my accounts information to go at the bottom of
+     the dashboard show side by side". It REPLACES the 2026-08-20 arrangement (a
+     232px column beside Ask with the cards stacked one per row); that column and
+     every rule that existed only to fit a card into it are deleted, not
+     disabled: the `zoom` scale, the single-column stat grid, the hidden
+     sparkline, the 150px side header and the `.top-boxes`-scoped overrides.
+     The section is a full-bleed sibling of `.area-charts` and `.heat-panel` and
+     takes EXACTLY their inline inset, so its left and right edges are theirs
+     (and it opts out of the 1880 shell cap with them — see the top of this
+     file). The heatmap's own 0.5in bottom margin is the seam above it, so this
+     block adds none of its own; the footer's margin is the gap below. */
+  .area-accounts { min-width: 0; margin-inline: calc(0.5in - var(--space-4)); }
+  /* ONE line at desktop: title and desk lamp on the left, the synced stamp on
+     the right; it wraps, never overflows, when the lamp cluster (LIVE + Refresh
+     + Lock) outgrows a phone. */
+  .accounts-side { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+  .accounts-head { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2) var(--space-4); flex-wrap: wrap; min-width: 0; }
   .accounts-head h2 { margin: 0; font: 600 var(--font-lg)/1.2 var(--font-sans); }
   /* Refresh/Lock much smaller (owner request 2026-08-08). The shared `.btn` is
      44px tall with 20px padding — right for a form's primary action, far too
-     heavy for two secondary controls sitting in a panel header, where they were
-     wide enough to wrap the header onto three lines. Applied at every width, so
-     the narrow layout gets the same relief. */
+     heavy for two secondary controls sitting in a header row. Applied at every
+     width. */
   .accounts-head .btn { min-height: 26px; padding: 3px 10px; font-size: var(--font-xs); border-radius: var(--radius-sm); box-shadow: none; }
-  /* Half-width account cards in a tight 2×2 stack with the widgets below
-     (owner ruling 2026-07-16): fixed 245px columns hug the top-left; freed
-     width stays empty up to the rail. Interior compacts to match. */
-  .account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 245px)); gap: var(--space-4); margin-top: var(--space-3); }
+  /* The cards: `auto-fit` tracks of at least 340px, so the owner's two accounts
+     sit side by side from ~792px up (2 × 340 + the gutter must fit inside the
+     inset section) and the row reflows to one column below that with no
+     breakpoint of its own. `min(340px, 100%)` keeps the floor from exceeding a
+     phone's inset section (294px at 390), where a bare 340 would scroll the page
+     sideways. `auto-fit` (not `auto-fill`) so two accounts share the whole width
+     instead of leaving a third empty track. */
+  .account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: var(--space-4); margin-top: var(--space-3); }
   .account .hero-number { font-size: var(--font-2xl); }
-  .account .acct-spark { height: 40px; }
-  #accountsStamp { margin: 4px 0 0; }
+  /* The equity sparkline is back (it was hidden in the 232px column, where the
+     card was too short for it). Inset to the card's own 16px padding so the line
+     does not run into the border. */
+  .account .acct-spark { height: 48px; width: calc(100% - 2 * var(--space-4)); margin: 0 var(--space-4) var(--space-3); }
+  #accountsStamp { margin: 0; }
   #accountsStamp:empty { display: none; }
   .account .panel-header { gap: var(--space-2); }
   .acct-code { font: 400 var(--font-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
   .acct-nav { padding: var(--space-3) var(--space-4) 0; }
   .acct-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-4); }
   .acct-spark { display: block; width: 100%; height: 56px; }
+  /* 2-up stats everywhere but a phone: at ≤520px the card is 294–424px and two
+     columns of currency figures clip (the same 2-up-at-390 fault that failed S4
+     on WebKit only — mobile-chrome passed — when this grid was last forced
+     2-up). Above that the narrowest card is the 349px tablet one, whose 150px
+     columns hold every figure (the long Day P&L wraps its % to a second line). */
+  @media (max-width: 520px) { .acct-stats { grid-template-columns: 1fr; } }
+  .acct-pos-toggle { appearance: none; border: 0; background: none; margin: 0 var(--space-4) var(--space-3); padding: 4px 0; font: 600 var(--font-xs)/1.2 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; text-align: left; }
+  .acct-pos-toggle:hover { color: var(--color-text-primary); }
+  .acct-pos-toggle:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
+  /* The PIN lock (and the "PIN worked, accounts unavailable" retry panel) stands
+     in for BOTH cards, so it spans every track at any width. `min-height`, NOT
+     `height` (owner report 2026-08-08): the wrong-PIN error renders below the
+     form, and at a fixed height it landed 8px OUTSIDE the panel — a failed unlock
+     showed no visible reason, and S11 would not have caught it because the
+     element still exists and still carries its text. The 158px floor is what the
+     panel needed to sit level with the cards when they shared a row with Ask;
+     with no row to match it is now simply a floor, and the panel grows by the
+     error line when one is on screen. The explainer trim that bought the last
+     17px of that row is gone with the row. */
+  .account-grid .panel-lock { grid-column: 1 / -1; min-height: 158px; }
   /* Capped so an account with 30 holdings does not make its card 30 rows tall
      (owner request 2026-08-20) — three rows plus the header, with the rest
      reached by the ▲/▼ that wlSyncPaging appends to the card. Three rather
@@ -1047,14 +1024,13 @@
     .top-band > .col-markets { zoom: 1; }
     .top-band > .col-markets, .top-band > .col-news { flex-basis: auto; }
     .top-boxes { flex-wrap: wrap; }
-    .top-boxes > .area-accounts { flex: 2 1 320px; }
+    .top-boxes > .area-econ { flex: 2 1 320px; }
     .top-boxes > .col-rail { flex: 1 1 240px; }
     /* stacked: Ask no longer inherits a stretched column height, so the thread
        would grow to fit every replayed exchange — cap it so it scrolls. */
     .top-boxes > .col-rail .ask-thread { max-height: 320px; }
   }
   @media (max-width: 1160px) {
-    .account-grid { grid-template-columns: 1fr; }
     /* single column: widgets stretch, Ask drops below them (.layout is flex-wrap).
        The wrapper needs a full basis too, else it keeps its content-sized width
        and the stretched frames stay narrower than the full-width Ask rail below

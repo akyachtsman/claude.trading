@@ -5534,3 +5534,155 @@ test('S53: the charts rail is capped at 220px when stacked and at the chart colu
     expect(m.rail, 'and fills it rather than collapsing').toBeGreaterThan(m.chartColumn * 0.9);
   }
 });
+
+// S54 — Accounts at the bottom, cards side by side (owner request 2026-09-30).
+// The accounts used to be a 232px column at the right of the desk row with the
+// cards stacked one per row. That column is now the Economy placeholder
+// (`.area-econ`), and the WHOLE `.area-accounts` section — title, desk lamp,
+// Refresh/Lock, stamp and the cards — is the last block in <main>.
+test('S54: the accounts sit at the bottom of the page, side by side, in line with the panels above', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  await gotoDemo(page, '#accountGrid .account', 15000);
+
+  // Everything is read off the LIVE layout (rects, computed widths, DOM position), never off the
+  // stylesheet's text, so it holds for any implementation that puts the page in this shape.
+  const measure = () => page.evaluate(() => {
+    const rc = (el) => { const b = el.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; };
+    const one = (sel) => document.querySelector(sel);
+    const main = document.getElementById('main');
+    const acc = one('.area-accounts');
+    const heat = one('.heat-panel');
+    const charts = one('.area-charts');
+    const grid = document.getElementById('accountGrid');
+    const cards = [...grid.querySelectorAll(':scope > .account')].map(rc);
+    const head = one('.accounts-side');
+    const econ = one('.area-econ');
+    const ask = one('.col-rail > .panel');
+    const mkt = one('.col-markets > .panel');
+    const row = one('.desk-row');
+    return {
+      vw: window.innerWidth,
+      scrollW: document.documentElement.scrollWidth,
+      lastIsAccounts: main.lastElementChild === acc,
+      accountsInMain: !!acc && acc.parentElement === main,
+      accountsAfterHeat: !!(heat && acc && (heat.compareDocumentPosition(acc) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      accountsInDeskRow: !!(acc && row && row.contains(acc)),
+      inside: Object.fromEntries(['#mastheadState', '#accountsStamp', '#accountsTitle', '#accountGrid']
+        .map((s) => [s, !!(acc && acc.querySelector(s))])),
+      acc: acc && rc(acc), heat: heat && rc(heat), charts: charts && rc(charts),
+      grid: rc(grid), head: head && rc(head), cards,
+      title: rc(document.getElementById('accountsTitle')),
+      state: rc(document.getElementById('mastheadState')),
+      stamp: rc(document.getElementById('accountsStamp')),
+      econInRow: !!(econ && row && row.contains(econ)),
+      econ: econ && rc(econ), ask: ask && rc(ask), mkt: mkt && rc(mkt), row: row && rc(row),
+    };
+  });
+
+  const check = (m, where) => {
+    const tag = `[${where} @${m.vw}px]`;
+    // ── position in the document
+    expect(m.accountsInMain && m.lastIsAccounts, `${tag} the accounts section is the LAST child of <main>`).toBe(true);
+    expect(m.accountsAfterHeat, `${tag} it follows the heatmap panel in document order (visual order = DOM order, no CSS order)`).toBe(true);
+    expect(m.accountsInDeskRow, `${tag} it is no longer inside the desk row`).toBe(false);
+    expect(m.acc.t, `${tag} it is painted BELOW the heatmap panel`).toBeGreaterThanOrEqual(m.heat.b - 1);
+    for (const [sel, ok] of Object.entries(m.inside)) expect(ok, `${tag} ${sel} travels with the section`).toBe(true);
+    // ── edges line up with the full-bleed panels above it
+    expect(Math.abs(m.acc.l - m.charts.l), `${tag} left edge matches .area-charts`).toBeLessThanOrEqual(1);
+    expect(Math.abs(m.acc.r - m.charts.r), `${tag} right edge matches .area-charts`).toBeLessThanOrEqual(1);
+    expect(Math.abs(m.acc.l - m.heat.l) + Math.abs(m.acc.r - m.heat.r), `${tag} and matches .heat-panel`).toBeLessThanOrEqual(2);
+    expect(m.scrollW, `${tag} the page does not scroll sideways`).toBeLessThanOrEqual(m.vw + 1);
+    // ── the cards
+    expect(m.cards.length, `${tag} demo shows the two accounts`).toBe(2);
+    const [a, b] = m.cards;
+    expect(a.l, `${tag} the first card starts at the section's left edge`).toBeGreaterThanOrEqual(m.acc.l - 1);
+    expect(Math.max(a.r, b.r), `${tag} no card runs past the section's right edge`).toBeLessThanOrEqual(m.acc.r + 1);
+    expect(m.head.b, `${tag} the header row sits ABOVE the cards`).toBeLessThanOrEqual(a.t + 1);
+    if (m.vw >= 800) {
+      expect(Math.abs(a.t - b.t), `${tag} side by side: the two cards' tops are equal`).toBeLessThanOrEqual(1);
+      expect(a.r, `${tag} and they do not overlap`).toBeLessThanOrEqual(b.l + 1);
+      expect(Math.abs(a.w - b.w), `${tag} and share the width equally`).toBeLessThanOrEqual(1);
+      expect(a.w + b.w, `${tag} and fill the section`).toBeGreaterThan(m.acc.w * 0.9);
+    } else if (m.vw <= 720) {
+      expect(b.t, `${tag} stacked: the second card is BELOW the first`).toBeGreaterThanOrEqual(a.b - 1);
+      expect(Math.abs(a.l - b.l), `${tag} and they share a left edge`).toBeLessThanOrEqual(1);
+      expect(a.w, `${tag} and each takes the full width`).toBeGreaterThan(m.acc.w * 0.95);
+    }
+    // ── the header row is ONE line on a wide screen (title, desk lamp and stamp level)
+    if (m.vw >= 1120) {
+      const cy = (r) => (r.t + r.b) / 2;
+      expect(Math.abs(cy(m.title) - cy(m.state)), `${tag} title and desk lamp share a line`).toBeLessThanOrEqual(4);
+      expect(Math.abs(cy(m.title) - cy(m.stamp)), `${tag} and so does the synced stamp`).toBeLessThanOrEqual(4);
+      expect(m.head.h, `${tag} the header row is one line tall`).toBeLessThan(40);
+    }
+    // ── the freed desk-row slot now holds the Economy placeholder, right of Ask
+    expect(m.econInRow, `${tag} .area-econ is in the top desk row`).toBe(true);
+    if (m.vw >= 1120) {
+      expect(m.econ.l, `${tag} Economy sits to the RIGHT of Ask`).toBeGreaterThanOrEqual(m.ask.r - 1);
+      expect(Math.abs(m.econ.w - 232), `${tag} as the same fixed 232px column the accounts had (Ask does not grow into it)`).toBeLessThanOrEqual(1);
+      expect(Math.abs(m.econ.b - m.mkt.b), `${tag} and ends on Markets' bottom line`).toBeLessThanOrEqual(2);
+      expect(Math.abs(m.ask.b - m.mkt.b), `${tag} as Ask does`).toBeLessThanOrEqual(2);
+      expect(Math.abs(m.econ.t - m.ask.t), `${tag} starting on Ask's top line`).toBeLessThanOrEqual(2);
+    } else {
+      const apart = m.econ.r <= m.ask.l + 1 || m.econ.l >= m.ask.r - 1 || m.econ.t >= m.ask.b - 1 || m.econ.b <= m.ask.t + 1;
+      expect(apart, `${tag} stacked: Economy and Ask do not overlap`).toBe(true);
+    }
+  };
+
+  // 1) this project's own width
+  check(await measure(), 'own width');
+
+  // 2) the desk lamp, Refresh and Lock are in the section (forced live + authed — demo renders neither)
+  await page.evaluate(() => { DESK_DB.url = DESK_DB.url || 'https://example.invalid'; DESK.mode = 'live'; DESK.authed = true; renderMasthead(); });
+  await expect(page.locator('.area-accounts #mastheadState #refreshNowBtn'), 'Refresh now travels with the section').toHaveCount(1);
+  await expect(page.locator('.area-accounts #mastheadState button', { hasText: /^Lock$/ }), 'and so does Lock').toHaveCount(1);
+  // ...and the locked panel spans every card track, with its wrong-PIN line INSIDE it (min-height, not height)
+  await page.evaluate(() => { DESK.authed = false; renderLockedPanels(); const e = document.querySelector('.panel-lock .lock-error'); e.textContent = 'PIN not recognized — try again.'; e.hidden = false; });
+  const lock = await page.evaluate(() => {
+    const p = document.querySelector('#accountGrid > .panel-lock').getBoundingClientRect();
+    const g = document.getElementById('accountGrid').getBoundingClientRect();
+    const e = document.querySelector('.panel-lock .lock-error').getBoundingClientRect();
+    return { pl: p.left, pr: p.right, gl: g.left, gr: g.right, pb: p.bottom, eb: e.bottom };
+  });
+  expect(Math.abs(lock.pl - lock.gl) + Math.abs(lock.pr - lock.gr), 'the PIN lock spans the whole card grid').toBeLessThanOrEqual(2);
+  expect(lock.eb, 'and the wrong-PIN line stays inside the panel').toBeLessThanOrEqual(lock.pb + 0.5);
+  await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; renderMasthead(); renderPrivate(); });
+  await expect(page.locator('#accountGrid .account')).toHaveCount(2);
+
+  // 3) Economy cannot push the desk row: Markets is still the ruler when it holds a lot (wide layout only)
+  if (await page.evaluate(() => window.innerWidth) >= 1120) {
+    const before = await measure();
+    await page.evaluate(() => {
+      const body = document.getElementById('econBody');
+      for (let i = 0; i < 80; i++) { const p = document.createElement('p'); p.className = 's54-probe'; p.textContent = 'Indicator ' + i; body.appendChild(p); }
+    });
+    const after = await measure();
+    await page.evaluate(() => document.querySelectorAll('.s54-probe').forEach((n) => n.remove()));
+    expect(Math.abs(after.row.h - before.row.h), 'eighty rows of content do not grow the desk row').toBeLessThanOrEqual(1);
+    expect(Math.abs(after.econ.b - after.mkt.b), 'Economy still ends on Markets\' bottom line').toBeLessThanOrEqual(2);
+  }
+
+  // 4) other widths: the owner's 1152 browser, and a window wider than the 1880 shell cap — the section
+  //    must opt out of that cap with the charts and heatmap or it would be inset from them
+  //    A resize is measured once the layout has SETTLED (two identical reads 250ms apart, with no sideways
+  //    scroll): WebKit holds the previous width's band for a few hundred ms after setViewportSize
+  //    (measured on the untouched base too: scrollWidth 1291 at a 1152 viewport, gone by the next read),
+  //    and a check taken inside that window reports a transient rather than the layout. A layout that
+  //    NEVER settles returns its last read, and check() then fails on what is actually wrong with it.
+  const settle = async () => {
+    let prev = null, m;
+    for (let i = 0; i < 16; i++) {
+      m = await measure();
+      if (prev === JSON.stringify(m) && m.scrollW <= m.vw + 1) return m;
+      prev = JSON.stringify(m);
+      await page.waitForTimeout(250);
+    }
+    return m;
+  };
+  for (const w of [1152, 2000]) {
+    test.info().annotations.push({ type: 'viewport-override', description: String(w) });
+    await page.setViewportSize({ width: w, height: 900 });
+    check(await settle(), `resized to ${w}`);
+  }
+});
