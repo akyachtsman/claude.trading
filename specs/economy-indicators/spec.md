@@ -1,6 +1,6 @@
 # Spec — Economy indicators (`desk-econ`)
 
-> **STATUS (2026-09-30): BACKEND BUILT, NOT DEPLOYED; UI IN PROGRESS. FRED-ONLY TO BEGIN WITH (owner: "can't you just use FRED to begin with?").** `supabase/functions/desk-econ/index.ts`, `config/econ-indicators.json` and `tools/econ-check.mjs` are committed; nothing is deployed. The shipped roster names NO Treasury column, so the Treasury same-day path (§3) is **dormant** — complete and tested on fixtures, **UNVERIFIED-AGAINST-LIVE** (§9), and switched on per row by adding `"treasury": "10 Yr"` to its `sources`. Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
+> **STATUS (2026-09-30): BACKEND DEPLOYED (v1, `verify_jwt` ON) AND UI BUILT (S55). FRED-ONLY TO BEGIN WITH (owner: "can't you just use FRED to begin with?").** `supabase/functions/desk-econ/index.ts`, `config/econ-indicators.json` and `tools/econ-check.mjs` are committed and `desk-econ` is live (owner-approved deploy, 2026-09-30). The shipped roster names NO Treasury column, so the Treasury same-day path (§3) is **dormant** — complete and tested on fixtures, **UNVERIFIED-AGAINST-LIVE** (§9), and switched on per row by adding `"treasury": "10 Yr"` to its `sources`. Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
 
 Requested 2026-09-30 by the owner (see `brief.md`). Slug: `economy-indicators`. This file is the contract the UI codes against (§5); the UI work is `tasks.md`; the operative summary is `docs/architecture/economy-panel.md`.
 

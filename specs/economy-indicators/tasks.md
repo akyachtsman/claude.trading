@@ -1,6 +1,6 @@
 # Tasks — Economy indicators panel (UI)
 
-> **STATUS (2026-09-30): NOT STARTED.** The backend (`desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`) is built and NOT deployed. These tasks are for the agent building the panel against the contract in `spec.md` §5. Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
+> **STATUS (2026-09-30): BUILT** (history — the panel is in `scripts/app.js`'s Economy block, guarded by S55; `desk-econ` is deployed). Where the built panel differs from a task below, the code and `docs/architecture/economy-panel.md` are authoritative: E2 (the column is `clamp(232px, 100vw − 1067px, 320px)`, not a fixed 232px), E3 (default span 3M, not 1Y), E4 (a `deskEcon()` wrapper that calls `deskFeed`), E13 (a chip clears after ~60s on screen, not 10s) and E15 (S54 holds the width, S55 the panel). Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
 
 Gates on any task that touches served files: `npx html-validate index.html`, `node .github/scripts/check-contrast.js`, `node --check scripts/*.js`, and the Playwright suite. Every asset change bumps the ONE shared `?v=` token in `index.html`.
 

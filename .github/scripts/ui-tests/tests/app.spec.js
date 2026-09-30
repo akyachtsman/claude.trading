@@ -5933,6 +5933,22 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await expect(page.locator('#econList .econ-row')).toHaveCount(7);
   expect(await pressed(), '1Y survives a reload').toEqual(['1y']);
   expect(Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d])), 'and so does the drawing').toEqual(after);
+  // the caption under each chart names what it covers: on a year-long span a daily row's ends carry the YEAR, so
+  // "Sep 28 – Sep 28" (a five-year chart that reads as one day) can never appear
+  for (const tf of ['1y', '5y']) {
+    await pick(tf);
+    const caps = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-cap').textContent]));
+    for (const [id, cadence, cap] of caps) {
+      const [from, to] = cap.split(' – ');
+      expect(from, `[${id}] @${tf}: the caption's two ends differ (${cap})`).not.toBe(to);
+      expect(cap, `[${id}] @${tf}: both ends carry the year`).toMatch(/^[A-Z][a-z]{2} '\d{2} – [A-Z][a-z]{2} '\d{2}$/);
+    }
+  }
+  await pick('3m');
+  for (const [id, cadence, cap] of await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-cap').textContent]))) {
+    if (cadence === 'daily') expect(cap, `[${id}] @3M a daily caption is Mon D – Mon D (no year needed)`).toMatch(/^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/);
+  }
+  await pick('1y');
   // a hand-edited / stale stored span falls back to the default instead of pressing nothing
   await page.evaluate(() => localStorage.setItem('econ_tf_v1', '2y'));
   await page.reload();

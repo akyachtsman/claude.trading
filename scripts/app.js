@@ -7731,11 +7731,20 @@ function econDateLabel(iso, cadence) {
   if (cadence === 'quarterly') return 'Q' + Math.ceil(+m[2] / 3) + ' ' + m[1];
   return fmtShortDate(iso);
 }
-/* the compact form for the chart caption's ends: month readings keep the year so "Aug '25 – Aug '26" is unambiguous */
-function econEndLabel(iso, cadence) {
+/* The compact form for the chart caption's ends. Month readings always keep the year so "Aug '25 – Aug '26"
+   is unambiguous; a daily series keeps it only when the span is long (`withYear`): on 1Y/5Y "Sep 28 – Sep 28"
+   would read as a single day, where "Sep '21 – Sep '26" names what the chart covers. */
+function econEndLabel(iso, cadence, withYear) {
   const m = /^(\d{4})-(\d{2})/.exec(String(iso || ''));
   if (!m) return '';
-  return cadence === 'monthly' || cadence === 'quarterly' ? MONTHS[+m[2] - 1] + " '" + m[1].slice(2) : fmtShortDate(iso);
+  return cadence === 'monthly' || cadence === 'quarterly' || withYear ? MONTHS[+m[2] - 1] + " '" + m[1].slice(2) : fmtShortDate(iso);
+}
+/* the caption under a chart: its first and last date; the year joins a daily caption once the ends are ~a year apart */
+function econSpanCaption(pts, cadence) {
+  const a = pts[0][0], b = pts[pts.length - 1][0];
+  const day = iso => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+  const long = day(b) - day(a) >= 300 * 86400000;
+  return econEndLabel(a, cadence, long) + ' – ' + econEndLabel(b, cadence, long);
 }
 
 /* ── the chart: the watchlist sparkline idiom (an inline SVG path, no axes), drawn from the row's
@@ -7950,7 +7959,7 @@ function econRow(r, chartsMatch) {
   if (svg) chart.appendChild(svg);
   else chart.appendChild(el('span', 'econ-noline'));
   if (svg) {
-    const cap = el('span', 'econ-cap', r.pointsNote ? String(r.pointsNote) : econEndLabel(pts[0][0], r.cadence) + ' – ' + econEndLabel(pts[pts.length - 1][0], r.cadence));
+    const cap = el('span', 'econ-cap', r.pointsNote ? String(r.pointsNote) : econSpanCaption(pts, r.cadence));
     if (r.pointsNote) cap.classList.add('econ-note');
     chart.appendChild(cap);
   } else if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
