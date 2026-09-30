@@ -5857,15 +5857,38 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     // a clipped value is a wrong value (a clipped date is a wrong date)
     expect(r.clip, `${who} nothing on the left block is clipped`).toEqual({ label: false, val: false, delta: false, date: false });
   }
+  // the value and the change print at the row's own `decimals` (yields 2, unemployment/inflation 1), not one house format
+  const decs = await page.evaluate(() => econState.shown.rows.map((r) => [r.id, r.decimals]));
+  expect(rows.map((r) => [r.id, r.val.replace('%', '').split('.')[1].length]), 'the value prints at its own decimals').toEqual(decs);
+  expect(rows.map((r) => [r.id, r.delta.split('.')[1].length]), 'and so does the change').toEqual(decs);
   // the arrow agrees with the sign of the payload's own delta, and a yield and an inflation rate both read as neutral ink
   const sign = await page.evaluate(() => econState.shown.rows.map((r) => [r.id, r.delta > 0 ? '▲' : r.delta < 0 ? '▼' : '=']));
   expect(rows.map((r) => [r.id, r.delta[0]]), 'the arrow follows the sign of the change').toEqual(sign);
   // a monthly reading names its MONTH ("Aug"), never "Aug 1" (a stale-looking day) or Jul 31 (UTC midnight read in Pacific)
   for (const r of rows.filter((x) => x.cadence === 'monthly')) expect(r.date, `[${r.id}] a monthly reading is a month`).toMatch(/^[A-Z][a-z]{2}( \d{4})?$/);
   for (const r of rows.filter((x) => x.cadence === 'daily')) expect(r.date, `[${r.id}] a daily reading is Mon D`).toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const asOfs = await page.evaluate(() => econState.shown.rows.filter((r) => r.cadence === 'monthly').map((r) => r.asOf));
-  expect(rows.filter((r) => r.cadence === 'monthly').map((r) => r.date), 'rendered month = the asOf month, sliced not Date-parsed')
-    .toEqual(asOfs.map((a) => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+a.slice(5, 7) - 1]));
+  const thisYear = await page.evaluate(() => ptDateKey(new Date()).slice(0, 4));
+  expect(rows.filter((r) => r.cadence === 'monthly').map((r) => r.date), 'rendered month = the asOf month (the year only when it is not this one)')
+    .toEqual(asOfs.map((a) => MON[+a.slice(5, 7) - 1] + (a.slice(0, 4) === thisYear ? '' : ' ' + a.slice(0, 4))));
+  // ...read by SLICING the string. A Date-parse lands on the previous month on any clock west of UTC, and the desk runs on Pacific;
+  // the runner's own zone may not be west of UTC, so make the local-time getters behave as Pacific and the label must not move.
+  const pacific = await page.evaluate((y) => {
+    const real = { m: Date.prototype.getMonth, d: Date.prototype.getDate };
+    const west = (t) => new Date(t - 8 * 3600e3);
+    Date.prototype.getMonth = function () { return west(this.getTime()).getUTCMonth(); };
+    Date.prototype.getDate = function () { return west(this.getTime()).getUTCDate(); };
+    try { return [econDateLabel(`${y}-08-01`, 'monthly'), econDateLabel(`${y}-01-01`, 'monthly'), econDateLabel(`${y}-09-29`, 'daily')]; }
+    finally { Date.prototype.getMonth = real.m; Date.prototype.getDate = real.d; }
+  }, thisYear);
+  expect(pacific, 'the first of a month is that month, not the one before it (Aug 1 is Aug, not Jul 31)').toEqual(['Aug', 'Jan', 'Sep 29']);
+
+  // beside Markets (>=1120) the rows share the column's height: no dead band under the last row, the note on the bottom edge
+  if (await page.evaluate(() => window.innerWidth) >= 1120) {
+    const gap = await page.evaluate(() => document.querySelector('.area-econ').getBoundingClientRect().bottom - document.querySelector('.econ-foot').getBoundingClientRect().bottom);
+    expect(gap, 'the rows fill the column Markets sets (a body capped at 320px leaves ~400px of empty panel)').toBeLessThanOrEqual(40);
+  }
 
   // ── 2. green and red are P&L-ONLY: nothing in the panel is painted in a gain/loss colour
   const pl = await page.evaluate(() => {
@@ -5925,6 +5948,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     r[2] = { ...r[2], value: null };
     r[3] = { ...r[3], points: [['2026-08-01', 3.3]] };
     r[4] = { ...r[4], status: 'stale', staleSec: 600 };
+    r.push({ ...base.rows[5], points: [0, 1, 2, 3, 4, 5].map((i) => [`2026-0${i + 1}-01`, 3.3]) });   // a constant series
     renderEcon({ ...base, rows: r });
   });
   rows = await rowsInfo();
@@ -5936,8 +5960,32 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   expect([rows[3].hasSvg, rows[3].noline], 'a single reading cannot draw a line: a dashed placeholder, not a fake one').toEqual([false, true]);
   expect([rows[4].tag, rows[4].hasSvg], 'a stale row keeps its last good value and chart, tagged STALE').toEqual(['STALE', true]);
   expect(rows[4].val).toMatch(/^\d+\.\d+%$/);
+  // a constant series is a level line through the middle, not a NaN path (0/0) and not a line glued to the floor
+  expect(rows[5].d, 'a flat series draws a real path').not.toMatch(/NaN|Infinity/);
+  expect([...new Set([...rows[5].d.matchAll(/ ([\d.]+)/g)].map((m) => m[1]))], 'at ONE height, mid-chart').toEqual(['16.0']);
   for (const r of rows.slice(0, 3)) for (const t of [r.val, r.delta]) expect(t, `[${r.id}] unknown never renders as zero`).not.toMatch(/^[=+−-]?\s*0(\.0+)?%?$/);
   await page.evaluate(() => renderEcon(buildDemoEcon(econTf)));
+
+  // ── 6b. too little room: seven rows must not be cut off silently. The body is an ORDINARY scroller (no overscroll-behavior,
+  //    which would eat the wheel), the rows keep their height, and the source note never paints over the last row.
+  const tight = await page.evaluate(() => {
+    const body = document.getElementById('econBody');
+    body.style.maxHeight = '260px';
+    const cs = getComputedStyle(body);
+    const rows = [...document.querySelectorAll('#econList .econ-row')];
+    const out = {
+      scrolls: body.scrollHeight > body.clientHeight + 1, overflowY: cs.overflowY, overscroll: [cs.overscrollBehaviorX, cs.overscrollBehaviorY],
+      minRow: Math.min(...rows.map((r) => r.getBoundingClientRect().height)),
+      lastBottom: rows[rows.length - 1].getBoundingClientRect().bottom, footTop: document.querySelector('.econ-foot').getBoundingClientRect().top,
+    };
+    body.style.maxHeight = '';
+    return out;
+  });
+  expect(tight.scrolls, 'with 260px the seven rows do not fit, so the body scrolls').toBe(true);
+  expect(tight.overflowY, 'an ordinary scrollbar').toBe('auto');
+  expect(tight.overscroll, 'and NO overscroll-behavior (it kills the wheel over a short panel)').toEqual(['auto', 'auto']);
+  expect(tight.minRow, 'rows keep at least their 52px rather than squashing').toBeGreaterThanOrEqual(51);
+  expect(tight.lastBottom, 'the source note does not paint over the last row').toBeLessThanOrEqual(tight.footTop + 1);
 
   // ── 7. LIVE (forced): the real poller, a stubbed desk-econ, Playwright's fake clock
   await page.evaluate(() => {

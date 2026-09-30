@@ -760,9 +760,11 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   flex: 1 1 0; min-width: 0; min-height: 28px; padding: 4px 0;
   font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
 }
-.econ-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.econ-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
 /* rows share the height the panel is given (beside Markets it is a lot) but never grow past
-   ~104px, and never shrink below 52px: then the BODY scrolls rather than the rows squashing */
+   ~104px, and never shrink below 52px: then the BODY scrolls rather than the rows squashing. The list
+   deliberately keeps the default `min-height: auto` (its rows' minimum) — `min-height: 0` let it shrink
+   below its rows and the source note then painted over the last one. */
 .econ-row {
   flex: 1 1 56px; min-height: 52px; max-height: 104px;
   display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: var(--space-2); align-items: stretch;

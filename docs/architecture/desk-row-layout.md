@@ -1,6 +1,6 @@
 # Desk row and page layout
 
-How the desk row (Markets | News | Ask | Economy), the accounts block at the bottom of the page, the positions table and the heatmap footer are sized: the measuring column, out-of-flow panels, breakpoints and the caps (`styles/layout.css`; scenarios S4, S11, S54).
+How the desk row (Markets | News | Ask | Economy), the accounts block at the bottom of the page, the positions table and the heatmap footer are sized: the measuring column, out-of-flow panels, breakpoints and the caps (`styles/layout.css`; scenarios S4, S11, S54, S55).
 
   **ACCOUNTS ARE THE LAST BLOCK ON THE PAGE, cards side by side** (owner request
   2026-09-30: "my accounts information to go at the bottom of the dashboard show
@@ -48,20 +48,39 @@ How the desk row (Markets | News | Ask | Economy), the accounts block at the bot
     `overscroll-behavior` (next to the heatmap-footer notes below).
   **The desk row reads Markets | News | Ask | Economy at ≥1120px.** The accounts'
   old 232px column now holds the **Economy panel** (`<aside class="panel area-econ">`,
-  `#econTitle` / `#econLamp` / `#econBody`; a PLACEHOLDER — the body is filled by a
-  later change, nothing renders into it yet). Ask does NOT grow into the freed
-  width: every rule the accounts column had is re-pointed at `.area-econ` — `flex: 0 0
-  232px`, stretch to Markets' bottom line, the same 1120 gate, `flex: 2 1 320px`
-  beside Ask when the row wraps below 1120 (the old accounts ratio). It stays IN FLOW
-  and is kept from setting the row's height the way the accounts column was: by the
-  existing 320px cap on `.top-boxes .panel-body` (header + body tops out near 365px,
-  well under Markets, which stays the ruler). Two traps: raising that cap past
-  Markets' height hands the row to this panel — take it out of flow like Ask instead;
-  and **`contain: size` was tried to keep its content out of the line and is WRONG** —
-  WebKit does not re-measure it when a resize crosses the 1120 gate (810 → 1152 gave
-  Ask 0px wide and the column 139px past the viewport), so never reach for it here.
-  S54 holds the shape: Economy to the right of Ask, 232px, ending on Markets' bottom
-  line, and eighty injected rows do not grow the row.
+  `#econTitle` / `#econLamp` / `#econBody`; filled by `renderEcon()`, see
+  `economy-panel.md`). Every rule the accounts column had is re-pointed at `.area-econ`:
+  stretch to Markets' bottom line, the same 1120 gate, `flex: 2 1 320px` beside Ask when the
+  row wraps below 1120 (the old accounts ratio). **Its width is FLUID, not the old fixed 232
+  (2026-09-30):** `flex: 0 0 clamp(232px, calc(100vw - 1067px), 320px)`. A row needs label +
+  value + change over a chart, and at 232 the chart is ~94px wide (readable); at 320 it is
+  ~200px. 1067 is the fixed width of everything that is NOT Ask or Economy — Markets 311 +
+  News 300 + three 16px gaps + the page's 32px inset + the 12px gap to Economy + Ask's own
+  380 — so Economy takes only width Ask can spare and **Ask keeps >= 380px wherever Economy is
+  wider than 232**. Measured (Chromium): 1152 → Economy 232 / Ask 234; 1280 → 232 / 362 (both
+  exactly the old widths — Ask was ALREADY under 380 there with the fixed 232, and Economy
+  does not make it worse); 1440 → 320 / 434; 1920 → 320 / 906. A fixed 320 would have left
+  Ask 146px wide in the owner's 1152 browser (a 1512 laptop with DevTools docked) — a
+  composer you cannot type into. WebKit lays Markets ~11px wider, so Ask is ~11px narrower
+  there; S54 therefore reads the floor off the layout's own Ask+Economy box.
+  The panel stays IN FLOW and is kept from setting the row's height — no longer by the
+  320px cap on `.top-boxes .panel-body` (the Economy body opts out of it: seven rows + the
+  span control + the source note need ~420px, and a cap that cut rows off behind a scroller
+  nobody is told about would read as a shorter list) but by the body being
+  **`flex: 1 1 0; min-height: 0`**: its content contributes nothing to the panel's height, so
+  the panel is exactly Markets' height whatever the roster holds, and the body is an ordinary
+  scroll container (plain `overflow-y: auto`, NO `overscroll-behavior`) that scrolls only when
+  the space it is given really is too small. Rows share the height (`flex: 1 1 56px`, capped at
+  104px, floored at 52px). Stacked (<1120) there is no Markets height to match: the body is
+  uncapped and the page scrolls. The panel header WRAPS (title + lamp, then the stamp) because
+  "Last updated 08:11, Sep 30" does not share a line with them at 232px. Two traps: a body
+  that is not `flex: 1 1 0; min-height: 0` hands the row's height to the panel — take it out
+  of flow like Ask instead; and **`contain: size` was tried to keep its content out of the
+  line and is WRONG** — WebKit does not re-measure it when a resize crosses the 1120 gate
+  (810 → 1152 gave Ask 0px wide and the column 139px past the viewport), so never reach for
+  it here. S54 holds the shape (Economy right of Ask, `clamp(232, vw-1067, 320)` wide, Ask's
+  floor, ending on Markets' bottom line, eighty injected rows do not grow the row); S55 holds
+  the panel's content.
 
   **EVERY COLUMN IN THE DESK ROW ENDS ON ONE LINE at ≥1120px** (owner request
   2026-08-21: "I want all of these windows to be as tall as the bottom of the

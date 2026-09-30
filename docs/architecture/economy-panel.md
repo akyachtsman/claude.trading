@@ -82,3 +82,65 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   built-in roster is identical, so the rows are the same.
   The repo spells the BOM strip `/^\uFEFF/`; the payload sent used the same escape, and
   the read-back may show the literal character instead — the same regex either way.
+
+## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`
+
+Built 2026-09-30 into the desk row's 4th slot (`<aside class="panel area-econ">`).
+Everything for it sits in ONE block of `app.js` (before the widgets section) plus
+`deskEcon()` / `buildDemoEcon()` in `data.js`; `index.html` keeps the bare placeholder it
+shipped with — `econChrome()` builds the span control, the list, the source note and the
+header's `#econStamp` itself. Guard: **S55** (S5 also names `#econLamp`; S54 holds the slot's
+width).
+
+- **Rows.** One `<li class="econ-row">` per indicator: label / value / change / the date
+  the reading is FOR at the left (a fixed 104px block, so every chart starts on one line),
+  ITS OWN chart to the right (`econSpark()`: an inline SVG path built with `createElementNS`,
+  the watchlist sparkline idiom, no axes; x = index order, y = the row's own min/max; a flat
+  series is a level line through the middle; fewer than two real values draws a DASHED
+  PLACEHOLDER, never an invented line). `pointsNote` ("monthly - 6 latest") is the caption
+  under the chart (`.econ-note`); otherwise the caption is the chart's first and last date.
+- **Neutral colour.** Green/red are P&L-only on this desk and a yield or inflation rate
+  rising is not a gain: the change is neutral ink with an arrow (`▲` `▼`, `=` for a real
+  zero), the line is the brass accent. S55 scans every element's computed colour against the
+  gain/loss tokens.
+- **Decimals and dates.** Value and change print at the row's own `decimals`; null/NaN is an
+  em dash through `fmtToNum` — never `0.00%`. A daily reading is `Sep 29`; a monthly one names
+  its MONTH (`Aug`, the year only when it is not this one), by string slicing — never
+  `new Date('2026-08-01')`, which is UTC midnight and reads Jul 31 in Pacific. The date is
+  deliberately prominent: the feed is FRED-only, so a yield is about a business day old.
+- **Status.** `missing` (or a null value): em dashes, a dashed placeholder, a `NO DATA` tag.
+  `stale`: the row keeps its last good value and chart (spec §8), muted, tagged `STALE`
+  (the tooltip carries the age).
+- **Span.** `#econTf` is the shared `.seg` chrome: 1W 1M 3M 6M 1Y 5Y, default **3M**,
+  persisted in `localStorage` `econ_tf_v1` and validated against the list on load (a bad
+  value falls back). There is NO 1D (the control's `title` says so). In demo a pick rebuilds
+  from `buildDemoEcon(range)`; live it asks `deskEcon(range)` — a slice server-side — keeping
+  the old rows, dimmed (`.is-pending`), until the reply lands. A reply whose `range` is not
+  the span being asked (version skew: an older deploy answers 3m to anything) is treated as a
+  failed poll, never drawn under the wrong label; after such a failure the rows keep their
+  values but their charts become dashed placeholders ("span unavailable").
+- **Lamp / stamp.** Demo: `Demo`. Live: `Loading` until the first reply; `LIVE` when the last
+  poll succeeded, the body is not `stale:true` and the success is younger than 3 × the
+  reply's `refreshInSec`; `STALE` otherwise (poll failed, stale body, or aged out). There is
+  no EOD state — these are not prices. The lamp AGES even when nothing lands: a 30s
+  `setInterval(relampEcon)` re-reads it against `Date.now()`, and `visibilitychange` re-reads
+  it BEFORE the refetch. The stamp is `fmtUpdated(generatedAt, its Pacific date)`
+  ("Last updated 08:11, Sep 30" — when the desk last checked; the rows carry when the DATA is
+  for); demo names the newest reading's date.
+- **Poller.** The next fetch is `refreshInSec` clamped to 30..3600s (`econClamp`; the
+  function already tightens it to 60s inside the 08:25–09:15 and 15:25–18:30 ET release
+  windows and relaxes it at weekends), scheduled by `econArm()`. A failed poll retries in 60s.
+  Paused while the tab is hidden, resumed on return (at once if it came due meanwhile).
+  Renders sit OUTSIDE the fetch `try` (`renderAfterFetch`). A span change passes `keepClock`:
+  it may only pull the next poll EARLIER, never reset a pending one. `force` is sent only by
+  the desk's "Refresh now" (`refreshNowClicked` → `refreshEcon(true)`, the function honours it
+  once per 30s). `?demo=1` never calls the network for this panel; live never renders demo
+  rows (first load: empty state + `Loading`, then `STALE` and a 60s retry if it fails).
+- **NEW.** `econ_seen_v1` = `{ id: 'asOf|value' }`. A row is NEW when its newest reading
+  differs from the recorded one, or — with nothing recorded — when the server says `changed`
+  (per-isolate best effort, so never the only source). The first look seeds silently (no wall
+  of chips). A chip clears on hover/click of its row, or ~60s after IT appeared with the tab
+  visible (one timer; a chip that arrives later gets its own 60s).
+- **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
+  real FRED rows. If the function is ever down, a live page lamps the panel `STALE` and retries
+  every 60s (the S1/S3 console allowlist already covers feed-origin errors).
