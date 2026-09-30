@@ -743,3 +743,65 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   font-size: 11px; cursor: pointer;
 }
 .news-topic-x:hover { border-color: var(--color-border-hover); color: var(--color-text-primary); }
+
+/* ── Economy panel (.econ-*) — owner request 2026-09-30 ──────────────────────
+   A table of seven indicators, each row: [label / value + change / date] at the
+   left and ITS OWN chart to the right. The left block is a fixed 104px so the
+   chart column starts on one line down the panel, and every value fits it with
+   room to spare (a clipped yield is a wrong yield). The chart takes whatever
+   width the column has: ~94px in the 232px slot, ~200px at 320.
+   Colour: green and red are P&L-ONLY on this desk, and a yield or an inflation
+   rate rising is not a gain — the change is neutral ink with an arrow, the line
+   is the brass accent. Stale/missing rows go MUTED through the ink token, never
+   through `opacity` on text (that would dodge the contrast gate's pairs). */
+.econ-bar { flex: 0 0 auto; margin: 0 0 var(--space-2); }
+.econ-tf { display: flex; width: 100%; }
+.econ-tf button {
+  flex: 1 1 0; min-width: 0; min-height: 28px; padding: 4px 0;
+  font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
+}
+.econ-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+/* rows share the height the panel is given (beside Markets it is a lot) but never grow past
+   ~104px, and never shrink below 52px: then the BODY scrolls rather than the rows squashing */
+.econ-row {
+  flex: 1 1 56px; min-height: 52px; max-height: 104px;
+  display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: var(--space-2); align-items: stretch;
+  padding: 6px 0; border-top: 1px solid var(--color-border);
+}
+.econ-row:first-child { border-top: 0; }
+.econ-info { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
+.econ-sub { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.econ-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary);
+}
+.econ-figs { display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; }
+.econ-val { font: 600 var(--font-base)/1.2 var(--font-mono); color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.econ-delta { font: 500 var(--font-2xs)/1.2 var(--font-mono); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+/* the date the reading is FOR: FRED posts a yield about a business day late, so this is the honest signal */
+.econ-date { font: 500 var(--font-2xs)/1.3 var(--font-mono); color: var(--color-text-primary); }
+.econ-new, .econ-tag {
+  flex: none; padding: 1px 4px; border-radius: 3px;
+  font: 700 9px/1.1 var(--font-sans); letter-spacing: .06em; text-transform: uppercase;
+}
+.econ-new { background: var(--color-accent-light); color: var(--color-accent-bright); }
+.econ-tag { border: 1px solid var(--color-border-hover); color: var(--color-text-secondary); }
+.is-stale .econ-val, .is-missing .econ-val, .is-missing .econ-date, .is-missing .econ-delta { color: var(--color-text-secondary); }
+.econ-chart { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; transition: opacity .15s ease; }
+.econ-chart svg { display: block; width: 100%; flex: 1 1 0; min-height: 26px; }
+.econ-line { stroke: var(--color-accent-bright); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.econ-area { fill: var(--color-accent-bright); fill-opacity: .10; stroke: none; }
+.is-stale .econ-chart svg { opacity: .55; }
+/* no readings to draw: a dashed level line, never an invented one */
+.econ-noline {
+  flex: 1 1 0; min-height: 26px;
+  background: repeating-linear-gradient(90deg, var(--color-border-hover) 0 4px, transparent 4px 8px) center / 100% 1px no-repeat;
+}
+.econ-cap {
+  flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+  font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary);
+}
+/* a span change whose reply is on the way: the old charts stay, dimmed, under the new label */
+.econ-list.is-pending .econ-chart { opacity: .35; }
+.econ-empty { padding: var(--space-4) 0; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); }
+.econ-foot { flex: none; margin: var(--space-2) 0 0; font: 400 10px/1.4 var(--font-sans); color: var(--color-text-secondary); }

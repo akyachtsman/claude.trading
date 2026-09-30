@@ -1109,7 +1109,8 @@ test('S5: demo mode shows DEMO lamps on every panel', async ({ page, renderWitne
 
   // Every panel's own lamp, by name — this used to check news and ask only, so
   // the Markets, Watchlists, Charts and Heatmap lamps could read LIVE unseen.
-  for (const id of ['#mktLamp', '#newsLamp', '#askLamp', '#wlLamp', '#chartsLamp', '#heatLamp']) {
+  // #econLamp (the Economy panel, 2026-09-30) makes seven.
+  for (const id of ['#mktLamp', '#newsLamp', '#askLamp', '#wlLamp', '#chartsLamp', '#heatLamp', '#econLamp']) {
     await expect(page.locator(id), `${id} must read exactly Demo in demo mode`).toHaveText(/^demo$/i);
   }
 
@@ -5643,8 +5644,8 @@ test('S53: the charts rail is capped at 220px when stacked and at the chart colu
 // S54 — Accounts at the bottom, cards side by side (owner request 2026-09-30).
 // The accounts used to be a 232px column at the right of the desk row with the
 // cards stacked one per row. That column is now the Economy placeholder
-// (`.area-econ`), and the WHOLE `.area-accounts` section — title, desk lamp,
-// Refresh/Lock, stamp and the cards — is the last block in <main>.
+// (`.area-econ`, now the Economy panel — see S55), and the WHOLE `.area-accounts`
+// section — title, desk lamp, Refresh/Lock, stamp and the cards — is the last block in <main>.
 test('S54: the accounts sit at the bottom of the page, side by side, in line with the panels above', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(90_000);
@@ -5682,6 +5683,7 @@ test('S54: the accounts sit at the bottom of the page, side by side, in line wit
       stamp: rc(document.getElementById('accountsStamp')),
       econInRow: !!(econ && row && row.contains(econ)),
       econ: econ && rc(econ), ask: ask && rc(ask), mkt: mkt && rc(mkt), row: row && rc(row),
+      boxes: rc(one('.top-boxes')),   /* Ask + the 12px gap + Economy */
     };
   });
 
@@ -5721,11 +5723,21 @@ test('S54: the accounts sit at the bottom of the page, side by side, in line wit
       expect(Math.abs(cy(m.title) - cy(m.stamp)), `${tag} and so does the synced stamp`).toBeLessThanOrEqual(4);
       expect(m.head.h, `${tag} the header row is one line tall`).toBeLessThan(40);
     }
-    // ── the freed desk-row slot now holds the Economy placeholder, right of Ask
+    // ── the freed desk-row slot holds the Economy panel, right of Ask
     expect(m.econInRow, `${tag} .area-econ is in the top desk row`).toBe(true);
     if (m.vw >= 1120) {
       expect(m.econ.l, `${tag} Economy sits to the RIGHT of Ask`).toBeGreaterThanOrEqual(m.ask.r - 1);
-      expect(Math.abs(m.econ.w - 232), `${tag} as the same fixed 232px column the accounts had (Ask does not grow into it)`).toBeLessThanOrEqual(1);
+      /* The Economy basis is FLUID — clamp(232px, 100vw - 1067px, 320px): 232 (the accounts column's old
+         width) while Ask cannot spare more, growing to 320 only with width Ask can give up, so that
+         Ask keeps >= 380px wherever Economy is wider than 232. A fixed 320 would have left Ask at
+         146px in the owner's 1152 browser. Read off the LIVE layout, not the stylesheet's text. */
+      const want = Math.min(320, Math.max(232, m.vw - 1067));
+      expect(Math.abs(m.econ.w - want), `${tag} Economy is clamp(232, vw-1067, 320) = ${want}px wide, got ${m.econ.w}`).toBeLessThanOrEqual(1);
+      /* Ask keeps the smaller of 380px and what the old 232px column left it — read off THIS layout's own
+         Ask+Economy box (WebKit sets the Markets column ~11px wider than Chromium, so a width computed
+         from the viewport would be wrong there) */
+      const askFloor = Math.min(379, m.boxes.w - 12 - 232 - 2);
+      expect(m.ask.w, `${tag} Economy only takes width Ask can spare: Ask keeps >= ${askFloor}px, got ${m.ask.w}`).toBeGreaterThanOrEqual(askFloor);
       expect(Math.abs(m.econ.b - m.mkt.b), `${tag} and ends on Markets' bottom line`).toBeLessThanOrEqual(2);
       expect(Math.abs(m.ask.b - m.mkt.b), `${tag} as Ask does`).toBeLessThanOrEqual(2);
       expect(Math.abs(m.econ.t - m.ask.t), `${tag} starting on Ask's top line`).toBeLessThanOrEqual(2);
@@ -5790,4 +5802,308 @@ test('S54: the accounts sit at the bottom of the page, side by side, in line wit
     await page.setViewportSize({ width: w, height: 900 });
     check(await settle(), `resized to ${w}`);
   }
+});
+
+// S55 — The Economy panel (owner request 2026-09-30): the desk row's 4th column. Seven indicators —
+// 2Y/10Y/20Y Treasury, unemployment, CPI, PCE, core PCE — each row a value, a change, the date the
+// reading is FOR and ITS OWN chart to the right, over a span the owner picks (1W 1M 3M 6M 1Y 5Y; there
+// is no 1D — the data is one reading per business day or per month).
+//
+// Everything is read off the LIVE layout and the LIVE DOM. The second half forces live mode and drives
+// the real poller through a stubbed `deskEcon` on Playwright's clock (installed BEFORE navigation so the
+// page's own 30s lamp ticker is faked too), so "the next fetch follows refreshInSec" is asserted in
+// fake seconds, never by sleeping.
+test('S55: the Economy panel — seven rows, each with its own chart to the right, over a selectable span', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await page.clock.install();
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  const IDS = ['ust2y', 'ust10y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'];
+  const rowsInfo = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const q = (s) => li.querySelector(s);
+    const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
+    const clipped = (e) => e.scrollWidth > e.clientWidth + 1;
+    const svg = q('.econ-chart svg');
+    const line = svg && svg.querySelector('path.econ-line');
+    return {
+      id: li.dataset.id, cadence: li.dataset.cadence, status: li.dataset.status,
+      label: q('.econ-label').textContent, val: q('.econ-val').textContent, delta: q('.econ-delta').textContent,
+      date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
+      isNew: !!q('.econ-new'), note: q('.econ-note') ? q('.econ-note').textContent : null,
+      hasSvg: !!svg, d: line ? line.getAttribute('d') : null, noline: !!q('.econ-noline'),
+      li: box(li), info: box(q('.econ-info')), val$: box(q('.econ-val')), delta$: box(q('.econ-delta')), chart: svg ? box(svg) : null,
+      clip: { label: clipped(q('.econ-label')), val: clipped(q('.econ-val')), delta: clipped(q('.econ-delta')), date: clipped(q('.econ-date')) },
+    };
+  }));
+  const pressed = () => page.evaluate(() => [...document.querySelectorAll('#econTf button[aria-pressed="true"]')].map((b) => b.dataset.tf));
+  const pick = async (tf) => { await page.locator(`#econTf button[data-tf="${tf}"]`).click(); await expect.poll(pressed).toEqual([tf]); };
+
+  // ── 1. DEMO: seven rows, each complete, each chart to the RIGHT of its value
+  await expect(page.locator('#econLamp'), '#econLamp must read exactly Demo in demo mode').toHaveText(/^demo$/i);
+  await expect(page.locator('#econStamp'), 'the panel carries an as-of stamp (the design signature)').toHaveText(/Last updated/);
+  let rows = await rowsInfo();
+  expect(rows.map((r) => r.id), 'the seven default indicators, in order').toEqual(IDS);
+  expect(rows.map((r) => r.label)).toEqual(['2Y Treasury', '10Y Treasury', '20Y Treasury', 'Unemployment', 'CPI YoY', 'PCE YoY', 'Core PCE YoY']);
+  for (const r of rows) {
+    const who = `[${r.id}]`;
+    expect(r.val, `${who} a value with its unit`).toMatch(/^\d+\.\d+%$/);
+    expect(r.delta, `${who} a change: an arrow (or "=") and the size of the move`).toMatch(/^[▲▼=] \d+\.\d+$/);
+    expect(r.date, `${who} carries the date its reading is FOR`).toMatch(/^[A-Z][a-z]{2}( \d{1,2}| \d{4})?$/);
+    expect(r.hasSvg && r.d && r.d.length > 20, `${who} has its own drawn chart`).toBeTruthy();
+    expect(r.d, `${who} no NaN in the path`).not.toMatch(/NaN/);
+    expect(r.chart.l, `${who} the chart starts to the RIGHT of the value block`).toBeGreaterThanOrEqual(Math.max(r.info.r, r.val$.r, r.delta$.r) - 0.5);
+    expect(r.chart.r, `${who} and stays inside its row`).toBeLessThanOrEqual(r.li.r + 1);
+    // a clipped value is a wrong value (a clipped date is a wrong date)
+    expect(r.clip, `${who} nothing on the left block is clipped`).toEqual({ label: false, val: false, delta: false, date: false });
+  }
+  // the arrow agrees with the sign of the payload's own delta, and a yield and an inflation rate both read as neutral ink
+  const sign = await page.evaluate(() => econState.shown.rows.map((r) => [r.id, r.delta > 0 ? '▲' : r.delta < 0 ? '▼' : '=']));
+  expect(rows.map((r) => [r.id, r.delta[0]]), 'the arrow follows the sign of the change').toEqual(sign);
+  // a monthly reading names its MONTH ("Aug"), never "Aug 1" (a stale-looking day) or Jul 31 (UTC midnight read in Pacific)
+  for (const r of rows.filter((x) => x.cadence === 'monthly')) expect(r.date, `[${r.id}] a monthly reading is a month`).toMatch(/^[A-Z][a-z]{2}( \d{4})?$/);
+  for (const r of rows.filter((x) => x.cadence === 'daily')) expect(r.date, `[${r.id}] a daily reading is Mon D`).toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  const asOfs = await page.evaluate(() => econState.shown.rows.filter((r) => r.cadence === 'monthly').map((r) => r.asOf));
+  expect(rows.filter((r) => r.cadence === 'monthly').map((r) => r.date), 'rendered month = the asOf month, sliced not Date-parsed')
+    .toEqual(asOfs.map((a) => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+a.slice(5, 7) - 1]));
+
+  // ── 2. green and red are P&L-ONLY: nothing in the panel is painted in a gain/loss colour
+  const pl = await page.evaluate(() => {
+    const probe = (c) => { const e = document.createElement('i'); e.style.color = c; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; };
+    const bad = ['--color-gain', '--color-loss', '--color-gain-dim', '--color-loss-dim', '--color-danger', '--color-status-live'].map((t) => probe(`var(${t})`));
+    const offenders = [];
+    for (const n of document.querySelectorAll('#econBody *')) {
+      const cs = getComputedStyle(n);
+      for (const p of ['color', 'backgroundColor', 'borderTopColor']) if (bad.includes(cs[p])) offenders.push(`${n.className || n.tagName}:${p}`);
+      if (n instanceof SVGElement) for (const p of ['stroke', 'fill']) if (bad.includes(cs[p])) offenders.push(`${n.getAttribute('class') || n.tagName}:${p}`);
+      if (/\b(gain|loss|pill|up|down)\b|pill--/.test(n.getAttribute('class') || '')) offenders.push(`class ${n.getAttribute('class')}`);
+    }
+    return offenders;
+  });
+  expect(pl, 'no gain/loss colour or P&L class anywhere in the Economy panel — a rising yield is not a gain').toEqual([]);
+
+  // ── 3. the span control: six presets, 3M pressed, no 1D, and it says why
+  const tfLabels = await page.locator('#econTf button').allTextContents();
+  expect(tfLabels, 'the six presets — no 1D, the data has no intraday series').toEqual(['1W', '1M', '3M', '6M', '1Y', '5Y']);
+  expect(await pressed(), 'default 3M, exactly one pressed').toEqual(['3m']);
+  await expect(page.locator('#econTf'), 'the control says there is no 1-day view').toHaveAttribute('title', /no 1-day view/i);
+
+  // ── 4. a monthly row on a span shorter than 6 readings shows its 6 latest AND says so; a daily one never does
+  for (const tf of ['1w', '1m', '3m']) {
+    await pick(tf);
+    rows = await rowsInfo();
+    for (const r of rows.filter((x) => x.cadence === 'monthly')) expect(r.note, `[${r.id}] @${tf}: the caption says why half a year is drawn`).toMatch(/6 latest/);
+    for (const r of rows.filter((x) => x.cadence === 'daily')) expect(r.note, `[${r.id}] @${tf}: a daily row has no pointsNote`).toBeNull();
+    for (const r of rows) expect(r.hasSvg, `[${r.id}] @${tf}: still drawn`).toBe(true);
+  }
+  await pick('6m');
+  expect((await rowsInfo()).filter((r) => r.note), 'on 6M every monthly row holds >= 6 readings: no caption').toEqual([]);
+
+  // ── 5. picking 1Y redraws every chart to a DIFFERENT path, and survives a reload
+  await pick('3m');
+  const before = Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d]));
+  await pick('1y');
+  const after = Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d]));
+  for (const id of IDS) expect(after[id], `[${id}] 1Y is a different chart from 3M`).not.toBe(before[id]);
+  expect(await page.evaluate(() => localStorage.getItem('econ_tf_v1')), 'persisted under econ_tf_v1').toBe('1y');
+  await page.reload();
+  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  expect(await pressed(), '1Y survives a reload').toEqual(['1y']);
+  expect(Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d])), 'and so does the drawing').toEqual(after);
+  // a hand-edited / stale stored span falls back to the default instead of pressing nothing
+  await page.evaluate(() => localStorage.setItem('econ_tf_v1', '2y'));
+  await page.reload();
+  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  expect(await pressed(), 'a stored span that is not a preset falls back to 3M').toEqual(['3m']);
+
+  // ── 6. unknown is an em dash, never 0 — forged payloads through the real renderer
+  await page.evaluate(() => {
+    const base = buildDemoEcon(econTf);
+    const r = base.rows.slice(0, 5).map((x) => ({ ...x }));
+    r[0] = { ...r[0], status: 'missing', value: null, prev: null, delta: null, asOf: null, prevAsOf: null, source: null, points: [] };
+    r[1] = { ...r[1], delta: null, prev: null, prevAsOf: null };
+    r[2] = { ...r[2], value: null };
+    r[3] = { ...r[3], points: [['2026-08-01', 3.3]] };
+    r[4] = { ...r[4], status: 'stale', staleSec: 600 };
+    renderEcon({ ...base, rows: r });
+  });
+  rows = await rowsInfo();
+  expect([rows[0].val, rows[0].delta, rows[0].date], 'a missing row: value, change and date are all em dashes').toEqual(['—', '—', '—']);
+  expect([rows[0].hasSvg, rows[0].noline, rows[0].tag], 'no chart, a dashed placeholder, an honest tag').toEqual([false, true, 'NO DATA']);
+  expect(rows[1].val, 'a known value stays').toMatch(/^\d+\.\d+%$/);
+  expect(rows[1].delta, 'an unknown change is an em dash — never "= 0.00"').toBe('—');
+  expect(rows[2].val, 'a null value is an em dash, never 0.00%').toBe('—');
+  expect([rows[3].hasSvg, rows[3].noline], 'a single reading cannot draw a line: a dashed placeholder, not a fake one').toEqual([false, true]);
+  expect([rows[4].tag, rows[4].hasSvg], 'a stale row keeps its last good value and chart, tagged STALE').toEqual(['STALE', true]);
+  expect(rows[4].val).toMatch(/^\d+\.\d+%$/);
+  for (const r of rows.slice(0, 3)) for (const t of [r.val, r.delta]) expect(t, `[${r.id}] unknown never renders as zero`).not.toMatch(/^[=+−-]?\s*0(\.0+)?%?$/);
+  await page.evaluate(() => renderEcon(buildDemoEcon(econTf)));
+
+  // ── 7. LIVE (forced): the real poller, a stubbed desk-econ, Playwright's fake clock
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); econSeen = {};
+    // the real deskEcon's request and failure mapping (before it is stubbed): the function has no 1D, `force` only when true
+    const realFetch = window.fetch;
+    window.__wire = [];
+    window.fetch = (url, init) => {
+      window.__wire.push({ url: String(url), body: JSON.parse(init.body) });
+      const bad = window.__wire.length === 3;
+      return Promise.resolve({ ok: !bad, status: bad ? 502 : 200, json: () => Promise.resolve(bad ? { ok: false, error: 'no series' } : { ok: true, rows: [] }) });
+    };
+    window.__wireP = Promise.all([deskEcon('1y', true), deskEcon('5y'), deskEcon('3m').then(() => 'resolved', () => 'rejected')])
+      .then((v) => { window.fetch = realFetch; return v; });
+  });
+  const wire = await page.evaluate(() => window.__wireP.then((v) => ({ v: v.slice(2), wire: window.__wire })));
+  expect(wire.wire.map((w) => [w.url.replace(/^.*\/functions/, '/functions'), w.body]), 'desk-econ is POSTed {range} and {force:true} only when forced')
+    .toEqual([['/functions/v1/desk-econ', { range: '1y', force: true }], ['/functions/v1/desk-econ', { range: '5y' }], ['/functions/v1/desk-econ', { range: '3m' }]]);
+  expect(wire.v, 'a 502 {ok:false} THROWS (the caller keeps its last good render), like every other feed').toEqual(['rejected']);
+
+  await page.evaluate(() => {
+    window.__calls = []; window.__mode = 'hang'; window.__refresh = 90; window.__rowsFn = null;
+    window.deskEcon = (range, force) => {
+      window.__calls.push({ range, force: force === true });
+      const m = window.__mode;
+      if (m === 'fail') return Promise.reject(new Error('desk-econ → HTTP 502'));
+      if (m === 'hang') return new Promise(() => {});
+      const p = buildDemoEcon(range);
+      const rows = window.__rowsFn ? window.__rowsFn(p.rows) : p.rows;
+      return Promise.resolve({ ...p, rows, range: m === 'wrongrange' ? (range === '1y' ? '5y' : '1y') : range,
+        generatedAt: new Date().toISOString(), refreshInSec: window.__refresh, stale: m === 'stale' });
+    };
+  });
+  const calls = () => page.evaluate(() => window.__calls.length);
+  const last = () => page.evaluate(() => window.__calls[window.__calls.length - 1]);
+  const due = () => page.evaluate(() => econState.dueAt - Date.now());
+  const lamp = () => page.locator('#econLamp').innerText();
+  const refresh = (force) => page.evaluate((f) => refreshEcon(f), force === true);
+  const setMode = (mode, refreshSec) => page.evaluate(([m, r]) => { window.__mode = m; if (r) window.__refresh = r; }, [mode, refreshSec]);
+
+  // 7a. before the first reply: nothing is drawn and the lamp is not Demo (real data or nothing)
+  await page.evaluate(() => { econState.payload = null; econState.failed = false; econState.shown = null; startEcon(); });
+  await expect(page.locator('#econLamp'), 'live, nothing yet: the lamp is not Demo').not.toHaveText(/^demo$/i);
+  expect(await page.locator('#econList .econ-row').count(), 'live and waiting: NO rows — never demo values').toBe(0);
+  expect(await last(), 'the first ask is the persisted span, not forced').toEqual({ range: '3m', force: false });
+  // ...and a first load that FAILS is an honest empty state under a STALE lamp, still no demo rows
+  await setMode('fail');
+  await refresh();
+  expect(await lamp(), 'first load failed: STALE').toMatch(/^stale$/i);
+  expect(await page.locator('#econList .econ-row').count(), 'and still no rows').toBe(0);
+  await expect(page.locator('#econList .econ-empty')).toContainText(/unavailable/i);
+  expect(await due(), 'a failed first load retries in 60s').toBeGreaterThan(58_000);
+  expect(await due()).toBeLessThanOrEqual(60_000);
+
+  // 7b. a good reply: LIVE, seven rows, the stamp, and the next fetch scheduled from refreshInSec
+  await setMode('ok');
+  await refresh();
+  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  expect(await lamp(), 'last poll ok, not stale: LIVE').toMatch(/^live$/i);
+  await expect(page.locator('#econStamp'), 'live stamp: the Pacific clock of the last check').toHaveText(/^Last updated \d\d:\d\d, [A-Z][a-z]{2} \d{1,2}$/);
+  expect(await due(), 'the next fetch is refreshInSec (90s) away').toBeGreaterThan(88_000);
+  expect(await due()).toBeLessThanOrEqual(90_000);
+  let n = await calls();
+  await page.clock.runFor(86_000);
+  expect(await calls(), '86s in: not asked again yet').toBe(n);
+  await page.clock.runFor(6_000);
+  await expect.poll(calls, 'past 90s the poller asks again').toBe(n + 1);
+  expect(await last(), 'with the current span, unforced').toEqual({ range: '3m', force: false });
+  // the delay is clamped to 30s..3600s whatever the server says
+  await setMode('ok', 5);
+  await refresh();
+  expect(await due(), 'refreshInSec 5 is clamped UP to 30s').toBeGreaterThan(28_000);
+  expect(await due()).toBeLessThanOrEqual(30_000);
+  await setMode('ok', 99999);
+  await refresh();
+  expect(await due(), 'refreshInSec 99999 is clamped DOWN to an hour').toBeGreaterThan(3_598_000);
+  expect(await due()).toBeLessThanOrEqual(3_600_000);
+  await setMode('ok', 90);
+  await refresh(true);
+  expect((await last()).force, 'an explicit refresh forces').toBe(true);
+
+  // 7c. a failed poll keeps the last render, flips the lamp to STALE, and retries in a minute
+  const vals = (await rowsInfo()).map((r) => r.val);
+  await setMode('fail');
+  await refresh();
+  expect((await rowsInfo()).map((r) => r.val), 'the last good rows stay on screen').toEqual(vals);
+  expect(await lamp(), 'under a STALE lamp').toMatch(/^stale$/i);
+  n = await calls();
+  await page.clock.runFor(58_000);
+  expect(await calls(), 'the retry is 60s away').toBe(n);
+  await page.clock.runFor(3_000);
+  await expect.poll(calls).toBe(n + 1);
+  await setMode('ok');
+  await page.clock.runFor(61_000);
+  await expect.poll(lamp, 'a good reply brings it back').toMatch(/^live$/i);
+
+  // 7d. a body that SAYS it is stale reads STALE, with the row tagged and its last good value kept
+  await page.evaluate(() => { window.__rowsFn = (rs) => rs.map((r) => (r.id === 'ust10y' ? { ...r, status: 'stale', staleSec: 900 } : r)); });
+  await setMode('stale');
+  await refresh();
+  expect(await lamp(), 'stale:true on a successful poll').toMatch(/^stale$/i);
+  rows = await rowsInfo();
+  const t10 = rows.find((r) => r.id === 'ust10y');
+  expect([t10.tag, t10.val], 'the stale row is tagged and keeps its value').toEqual(['STALE', vals[1]]);
+
+  // 7e. the lamp AGES while nothing lands: LIVE at 100s, STALE past 3 x refreshInSec
+  await page.evaluate(() => { window.__rowsFn = null; });
+  await setMode('ok', 60);
+  await refresh();
+  expect(await lamp()).toMatch(/^live$/i);
+  await setMode('hang');
+  await page.clock.runFor(100_000);
+  expect(await lamp(), '100s of silence on a 60s cadence: still LIVE').toMatch(/^live$/i);
+  // 100s + 140s = 240s > 3 x 60s + one full 30s tick, so a tick is certain to land past the 180s mark whatever its phase
+  await page.clock.runFor(140_000);
+  await expect.poll(lamp, 'past 3 x refreshInSec with nothing landing: STALE, from the 30s ticker alone').toMatch(/^stale$/i);
+
+  // 7f. a reply for a DIFFERENT span than the one asked is dropped, never drawn under the wrong label
+  await setMode('ok', 90);
+  await refresh();
+  expect(await lamp()).toMatch(/^live$/i);
+  const d3 = Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d]));
+  await setMode('wrongrange');
+  await refresh();
+  expect(Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d])), 'the 3M drawing is untouched').toEqual(d3);
+  expect(await lamp(), 'and the desk admits the poll did not deliver').toMatch(/^stale$/i);
+
+  // 7g. NEW: the first look seeds silently except rows the server says changed; data that moves is NEW; it clears
+  await setMode('ok');
+  await page.evaluate(() => { localStorage.removeItem('econ_seen_v1'); econSeen = {}; });
+  await refresh();
+  rows = await rowsInfo();
+  expect(rows.filter((r) => r.isNew).map((r) => r.id), 'a fresh browser: only the rows the server flagged `changed`').toEqual(['ust10y', 'unrate']);
+  const seenKeys = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('econ_seen_v1') || '{}')).sort());
+  expect(seenKeys, 'the rest were recorded silently (no wall of NEW chips)').toEqual(['corepce', 'cpi', 'pce', 'ust20y', 'ust2y']);
+  await page.locator('#econList .econ-row[data-id="ust10y"]').hover();
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-new'), 'hovering its row clears NEW').toHaveCount(0);
+  await refresh();
+  expect((await rowsInfo()).find((r) => r.id === 'ust10y').isNew, 'and it stays cleared across the next poll, although the server still says changed').toBe(false);
+  await page.evaluate(() => { window.__rowsFn = (rs) => rs.map((r) => (r.id === 'cpi' ? { ...r, asOf: '2099-01-01', value: 9.9, prev: r.value, delta: 0.1, changed: false } : r)); });
+  await setMode('ok');
+  await refresh();
+  rows = await rowsInfo();
+  expect(rows.find((r) => r.id === 'cpi').isNew, 'a reading that moved since this browser last saw it is NEW (client-side, from asOf — `changed` was false)').toBe(true);
+  n = await page.locator('#econList .econ-new').count();
+  expect(n, 'CPI and the still-unseen unemployment').toBe(2);
+  await page.clock.runFor(61_000);
+  await expect(page.locator('#econList .econ-new'), 'NEW clears by itself after ~60s on screen').toHaveCount(0);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('econ_seen_v1')).cpi), 'and is remembered').toBe('2099-01-01|9.9');
+
+  // 7h. a span change asks for the new range, dims the old charts meanwhile, and never pushes a due poll out
+  await page.evaluate(() => { window.__rowsFn = null; });
+  await setMode('ok', 90);
+  await refresh();
+  const dueAt = await page.evaluate(() => econState.dueAt);
+  await page.clock.runFor(5_000);
+  await setMode('hang');
+  await page.locator('#econTf button[data-tf="1y"]').click();
+  expect(await last(), 'the new span is requested (a server-side slice)').toEqual({ range: '1y', force: false });
+  await expect(page.locator('#econList'), 'old charts stay, dimmed, until the reply').toHaveClass(/is-pending/);
+  expect((await rowsInfo()).length, 'rows stay on screen while it is in flight').toBe(7);
+  await setMode('ok');
+  await page.evaluate(() => refreshEcon(false, { span: true }));
+  await expect(page.locator('#econList')).not.toHaveClass(/is-pending/);
+  expect(await page.evaluate(() => econState.dueAt), 'changing the span does not push the pending poll out').toBe(dueAt);
+  expect(await pressed()).toEqual(['1y']);
 });

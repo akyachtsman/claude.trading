@@ -303,6 +303,17 @@
   .top-boxes > .area-econ { flex: 2 1 0; min-width: 0; }
   .top-boxes > .col-rail { flex: 1 1 0; min-width: 0; }
   .top-boxes .panel-body { max-height: 320px; overflow-y: auto; }
+  /* The Economy body is NOT capped at 320: seven rows, the span control and the source note
+     need ~420px, and a cap that cut the last rows off behind a scroller nobody is told about
+     would read as a shorter list. It is an ordinary scroll container (plain `overflow-y: auto`,
+     NO `overscroll-behavior` — the wheel chains to the page like `#newsList`) that scrolls
+     only when the space it is given really is too small. Beside Markets (>=1120) the space is
+     Markets' height, see the next block; stacked, the panel is as tall as its rows. Specificity
+     (0,3,0) beats the generic cap above wherever each happens to sit. */
+  .top-boxes > .area-econ > .panel-body { max-height: none; overflow-y: auto; padding: var(--space-2) var(--space-3) var(--space-3); display: flex; flex-direction: column; }
+  /* the header wraps: title + lamp on one line, the stamp right-aligned on the next when the
+     column is too narrow for both ("Last updated 08:11, Sep 30" is 26 characters) */
+  .area-econ .panel-header { flex-wrap: wrap; row-gap: 2px; }
   /* ── Desk row, wide screens: Markets | News | Ask | Economy ────────────────
      Gated at 1120, the SAME breakpoint the desk row itself uses — the two must
      agree, or a window between them runs one arrangement's rules inside the
@@ -317,19 +328,21 @@
      purpose: these lift them, and a rule of equal specificity only wins by
      coming later. */
   @media (min-width: 1120px) {
-    /* The Economy column: a fixed 232px (the accounts column's basis), Ask
-       takes whatever is left, and the panel stretches to the row's line. It
-       stays IN FLOW, exactly as the accounts column did, and is kept from
-       setting the row's height the same way: `.top-boxes .panel-body` above
-       caps the body at 320px and scrolls it (an ordinary scrollbar, NO
-       `overscroll-behavior`), so header + body tops out near 365px, well under
-       Markets, which remains the ruler. Raising that cap past Markets' height
-       would hand the row to this panel — take it out of flow like Ask instead.
-       (`contain: size` was tried to keep the content out of the line and is
-       WRONG: WebKit does not re-measure it when a resize crosses this gate, and
-       the row came out with Ask at 0px and this column 139px past the
-       viewport.) */
-    .top-boxes > .area-econ { flex: 0 0 232px; align-self: stretch; }
+    /* The Economy column. Its basis is FLUID: 232px (the accounts column's old basis) while
+       Ask cannot spare more, growing to 320px where it can. A row needs label + value + change
+       over a chart, and at 232 the chart is ~94px wide — readable, but at 320 it is ~200px. The
+       growth is exactly what leaves ASK at 380px or more: Markets 311 + News 300 + three 16px
+       gaps + the page's 32px inset + the 12px gap to Economy are fixed (1067px with Ask's 380), so
+       Economy is `100vw - 1067px`, clamped. Measured: at 1152 and 1280 it stays 232 (Ask 234 and
+       362, the widths it had with the 232px column), at 1440 it is 320 and Ask 434. A fixed 320 would
+       have taken Ask to 146px at the owner's 1152 browser — a composer you cannot type into.
+       Ask stays the fluid column. The panel stretches to the row's line and stays IN FLOW, but its
+       BODY is `flex: 1 1 0; min-height: 0` — its content contributes nothing to the panel's height
+       (the row is Markets' height, not whatever the roster holds), and overflows into the body's own
+       ordinary scrollbar. No `contain: size`: WebKit does not re-measure it when a resize crosses
+       this gate (810 -> 1152 gave Ask 0px wide and the column 139px past the viewport). */
+    .top-boxes > .area-econ { flex: 0 0 clamp(232px, calc(100vw - 1067px), 320px); align-self: stretch; }
+    .top-boxes > .area-econ > .panel-body { flex: 1 1 0; min-height: 0; }
     /* Ask fills the row instead of stopping at 420 and leaving ~690px of empty
        page beside the news. The cap and the `align-self: start` that went with
        it were written when this panel sat above open space; with a row height

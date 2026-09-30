@@ -7638,10 +7638,407 @@ async function refreshNowClicked() {
   const btn = document.getElementById('refreshNowBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
-  try { await feedPollTick(true); } finally {
+  try { await Promise.all([feedPollTick(true), refreshEcon(true)]); } finally {
     refreshNowPending = false;
     scheduleFeedPoll(); scheduleMarketPoll();
   }
+}
+
+/* ── Economy panel (owner request 2026-09-30) ──────────────────────────────
+   The desk row's 4th column (`.area-econ`): 2Y/10Y/20Y Treasury yields,
+   unemployment, CPI, PCE and core PCE, each row a value, a change, the date
+   the reading is FOR and its own chart to the right, over a span the owner
+   picks (1W 1M 3M 6M 1Y 5Y — there is NO 1D: the finest data that exists is
+   one reading per business day, or per month, so a day view would be a dot).
+   Everything for this panel lives in this ONE block; the contract it reads is
+   specs/economy-indicators/spec.md §5 and the rules are in
+   docs/architecture/economy-panel.md.
+
+   Colour: a yield or an inflation rate rising is not a "gain" — green and red
+   are P&L-only on this desk — so every change here is NEUTRAL ink with an arrow,
+   and the chart line is the brass accent.
+   Live is REAL DATA OR NOTHING: a failed poll keeps the last good rows under a
+   STALE lamp, or (none yet) an honest empty state — demo rows exist only under
+   ?demo=1, and ?demo=1 never calls the network for this panel. */
+const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1';
+const ECON_TFS = [['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
+  ['6m', '6M', '6 months'], ['1y', '1Y', '1 year'], ['5y', '5Y', '5 years']];
+const ECON_DEFAULT_TF = '3m';
+const ECON_TF_TITLE = 'Chart span. Daily and monthly data only — there is no 1-day view.';
+const ECON_MIN_S = 30, ECON_MAX_S = 3600;   /* clamp on the server's refreshInSec */
+const ECON_RETRY_S = 60;                    /* fast retry after a failed poll */
+const ECON_STALE_X = 3;                     /* STALE once the last success is older than 3 × refreshInSec */
+const ECON_NEW_MS = 60000;                  /* a NEW chip clears once it has been on screen this long */
+const ECON_SPARK_W = 100, ECON_SPARK_H = 32;
+
+let econTf = ECON_DEFAULT_TF;
+try {
+  const saved = localStorage.getItem(ECON_TF_KEY);
+  if (ECON_TFS.some(t => t[0] === saved)) econTf = saved;
+} catch { /* private mode — default */ }
+const saveEconTf = () => { try { localStorage.setItem(ECON_TF_KEY, econTf); } catch { /* private mode */ } };
+
+/* "Seen" = the newest reading this browser has already looked at: { id: 'asOf|value' }.
+   Kept in memory as well, so a blocked localStorage still clears a chip for the session. */
+function econSeenRead() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ECON_SEEN_KEY));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch { return {}; }
+}
+let econSeen = econSeenRead();
+const econSeenSave = () => { try { localStorage.setItem(ECON_SEEN_KEY, JSON.stringify(econSeen)); } catch { /* private mode */ } };
+const econSig = r => r.asOf + '|' + r.value;
+
+const econState = {
+  payload: null,     /* the last GOOD payload — what is drawn */
+  shown: null,       /* what renderEcon last painted (demo has no `payload`) */
+  landedAt: 0,       /* Date.now() when it landed */
+  refreshSec: 900,   /* its refreshInSec, clamped */
+  failed: false,     /* the most recent poll failed */
+  pending: false,    /* a span change's reply is in flight */
+  gen: 0,            /* each request takes one; only the newest may land */
+  timer: 0, dueAt: 0, newTimer: 0,
+  newIds: new Set(),  /* the rows whose NEW chip is on screen */
+};
+const econClamp = s => { const n = Number(s); return Math.min(ECON_MAX_S, Math.max(ECON_MIN_S, Number.isFinite(n) && n > 0 ? n : 900)); };
+
+/* ── formatters — null is an em dash, NEVER 0 (the shared rule) ── */
+const econDec = r => (Number.isInteger(r.decimals) && r.decimals >= 0 && r.decimals <= 4 ? r.decimals : 2);
+function econNum(v, dec) {
+  const n = fmtToNum(v);
+  return Number.isFinite(n) ? (n < 0 ? '−' : '') + Math.abs(n).toFixed(dec) : '—';
+}
+function econValueText(r) {
+  const s = econNum(r.value, econDec(r));
+  return s === '—' ? s : s + (r.unit || '');
+}
+/* an arrow and the size of the move, in the row's own unit (percentage points). Neutral ink. */
+function econDeltaText(r) {
+  const n = fmtToNum(r.delta);
+  if (!Number.isFinite(n)) return '—';
+  return (n > 0 ? '▲ ' : n < 0 ? '▼ ' : '= ') + Math.abs(n).toFixed(econDec(r));
+}
+/* The date a reading is FOR, by string slicing — never `new Date('2026-08-01')`, which is UTC
+   midnight and renders as Jul 31 on the Pacific clock. A monthly reading names its MONTH
+   ("Aug", with the year only when it is not this one), never "Aug 1", which would read as a
+   stale daily print; a daily one is "Sep 29". */
+function econDateLabel(iso, cadence) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '—';
+  const yr = ptDateKey(new Date()).slice(0, 4);
+  if (cadence === 'monthly') return MONTHS[+m[2] - 1] + (m[1] === yr ? '' : ' ' + m[1]);
+  if (cadence === 'quarterly') return 'Q' + Math.ceil(+m[2] / 3) + ' ' + m[1];
+  return fmtShortDate(iso);
+}
+/* the compact form for the chart caption's ends: month readings keep the year so "Aug '25 – Aug '26" is unambiguous */
+function econEndLabel(iso, cadence) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  return cadence === 'monthly' || cadence === 'quarterly' ? MONTHS[+m[2] - 1] + " '" + m[1].slice(2) : fmtShortDate(iso);
+}
+
+/* ── the chart: the watchlist sparkline idiom (an inline SVG path, no axes), drawn from the row's
+   own `points` ([date, value] pairs, oldest first). x is index order; y is the row's own min/max
+   with a little room. A flat series is a level line through the middle, not a line glued to the
+   floor; fewer than two real values is NOT drawn — the caller shows a dashed placeholder. */
+function econSpark(points, label) {
+  const vals = (Array.isArray(points) ? points : []).map(p => fmtToNum(p[1]));
+  if (vals.length < 2) return null;
+  const w = ECON_SPARK_W, h = ECON_SPARK_H, pad = 3;
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo;
+  const pts = vals.map((v, i) => [i / (vals.length - 1) * (w - 2) + 1, span > 0 ? h - pad - (v - lo) / span * (h - 2 * pad) : h / 2]);
+  /* preserveAspectRatio none lets the chart take whatever width the column gives it;
+     non-scaling-stroke keeps the line 1.5px however it is stretched */
+  const svg = svgEl('svg', { viewBox: '0 0 ' + w + ' ' + h, preserveAspectRatio: 'none', role: 'img', 'aria-label': label, focusable: 'false' });
+  const line = pathFrom(pts);
+  svg.appendChild(svgEl('path', { class: 'econ-area', d: line + 'L' + pts[pts.length - 1][0].toFixed(1) + ' ' + h + 'L' + pts[0][0].toFixed(1) + ' ' + h + 'Z' }));
+  svg.appendChild(svgEl('path', { class: 'econ-line', d: line, fill: 'none', 'vector-effect': 'non-scaling-stroke' }));
+  return svg;
+}
+
+/* ── chrome: the span control, the list and the source note are built here (the header's stamp too),
+   once, so index.html keeps the bare placeholder it shipped with. */
+function econChrome() {
+  const body = document.getElementById('econBody');
+  if (!body) return null;
+  if (!document.getElementById('econList')) {
+    const head = document.querySelector('.area-econ .panel-header');
+    if (head && !document.getElementById('econStamp')) {
+      const stamp = el('span', 'stamp ml-auto', '—');
+      stamp.id = 'econStamp';
+      head.appendChild(stamp);
+    }
+    const bar = el('div', 'econ-bar');
+    const tf = el('div', 'seg econ-tf');
+    tf.id = 'econTf';
+    tf.setAttribute('role', 'group');
+    tf.setAttribute('aria-label', 'Chart span');
+    tf.title = ECON_TF_TITLE;
+    for (const [key, label, words] of ECON_TFS) {
+      const b = el('button', '', label);
+      b.type = 'button';
+      b.dataset.tf = key;
+      b.title = 'Charts show the last ' + words;
+      b.addEventListener('click', () => econPickSpan(key));
+      tf.appendChild(b);
+    }
+    bar.appendChild(tf);
+    const list = el('ul', 'econ-list');
+    list.id = 'econList';
+    const foot = el('p', 'econ-foot', 'Source: FRED. Yields post about a business day late; jobs and inflation once a month.');
+    body.append(bar, list, foot);
+    syncEconTf();
+  }
+  return { list: document.getElementById('econList') };
+}
+function syncEconTf() {
+  for (const b of document.querySelectorAll('#econTf button')) b.setAttribute('aria-pressed', String(b.dataset.tf === econTf));
+}
+function econPickSpan(key) {
+  if (key === econTf) return;
+  econTf = key;
+  saveEconTf();
+  syncEconTf();
+  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
+  /* live: ask for the new span (a slice server-side — no upstream cost). The rows on screen stay,
+     their charts dimmed, until it lands; the poll clock is only ever pulled EARLIER, never reset */
+  refreshEcon(false, { span: true });
+}
+
+/* ── lamp + stamp. Demo: Demo. Live: LIVE when the last poll succeeded, the body is not stale and
+   the success is younger than 3 × refreshInSec; STALE otherwise (and "Loading" until the first
+   reply). No EOD state — these are not prices. */
+function econLamp() {
+  if (DESK.mode === 'demo') return { cls: 'lamp--demo', text: 'Demo' };
+  const s = econState;
+  if (!s.payload) return s.failed ? { cls: 'lamp--stale', text: 'STALE' } : { cls: 'lamp--stale', text: 'Loading' };
+  if (s.failed || s.payload.stale || Date.now() - s.landedAt > ECON_STALE_X * s.refreshSec * 1000) return { cls: 'lamp--stale', text: 'STALE' };
+  return { cls: 'lamp--live', text: 'LIVE' };
+}
+function paintEconLamp() {
+  const lamp = econLamp();
+  const lampEl = document.getElementById('econLamp');
+  if (lampEl) { lampEl.className = 'lamp ' + lamp.cls; lampEl.textContent = lamp.text; }
+}
+/* "Last updated 08:11, Sep 30" — the Pacific clock of the desk's last successful check. The rows
+   carry the dates the DATA is for. Demo has no fetch, so it names the newest reading's date. */
+function paintEconStamp() {
+  const st = document.getElementById('econStamp');
+  if (!st) return;
+  const p = econState.payload;
+  if (DESK.mode === 'demo') {
+    const rows = (econState.shown && econState.shown.rows) || [];
+    applyStamp(st, '', rows.map(r => r.asOf || '').sort().pop() || '', '');
+  } else if (p && fmtClockBare(p.generatedAt)) {
+    applyStamp(st, p.generatedAt, ptDateKey(new Date(p.generatedAt)), '');
+  } else { applyStamp(st, '', '', ''); st.textContent = '—'; }
+}
+/* a lamp AGES even when its poll fails: re-read it against Date.now() with nothing fetched */
+function relampEcon() { paintEconLamp(); }
+setInterval(relampEcon, STAMP_TICK_MS);
+
+/* ── NEW: a reading this browser has not looked at yet. A row is NEW when its newest reading differs
+   from the one recorded in econ_seen_v1, or — with nothing recorded — when the server says it
+   `changed` (per-isolate best effort, so never the ONLY source: a cold isolate says false). The very
+   first look seeds the record silently, so a fresh browser is not greeted by a wall of NEW chips.
+   A chip clears on hover/click of its row, or once it has been on screen ~60s with the tab visible. */
+function econRowIsNew(r) {
+  if (r.status === 'missing' || !Number.isFinite(fmtToNum(r.value)) || !r.asOf) return false;   /* no reading, nothing to be new */
+  if (!Object.hasOwn(econSeen, r.id)) return r.changed === true;
+  return econSeen[r.id] !== econSig(r);
+}
+function econAck(ids) {
+  const rows = (econState.shown && econState.shown.rows) || [];
+  let dirty = false;
+  for (const r of rows) {
+    if (!ids.includes(r.id) || !econRowIsNew(r)) continue;
+    econSeen[r.id] = econSig(r);
+    dirty = true;
+  }
+  if (dirty) econSeenSave();
+  for (const li of document.querySelectorAll('#econList .econ-row')) {
+    if (!ids.includes(li.dataset.id)) continue;
+    const chip = li.querySelector('.econ-new');
+    if (chip) chip.remove();
+    li.classList.remove('is-new');
+  }
+  econState.newIds = new Set([...document.querySelectorAll('#econList .econ-row.is-new')].map(li => li.dataset.id));
+  econArmNew();
+}
+/* one timer for the whole panel, running only while a chip is on screen and the tab is visible */
+function econArmNew() {
+  const any = document.querySelector('#econList .econ-new');
+  if (!any || document.hidden) { clearTimeout(econState.newTimer); econState.newTimer = 0; return; }
+  if (econState.newTimer) return;
+  econState.newTimer = setTimeout(() => {
+    econState.newTimer = 0;
+    econAck([...document.querySelectorAll('#econList .econ-row.is-new')].map(li => li.dataset.id));
+  }, ECON_NEW_MS);
+}
+
+/* ── render ── */
+function renderEcon(payload) {
+  const chrome = econChrome();
+  if (!chrome) return;
+  const list = chrome.list;
+  econState.shown = payload || null;
+  list.textContent = '';
+  list.classList.toggle('is-pending', econState.pending);
+  const rows = payload && Array.isArray(payload.rows) ? payload.rows : [];
+
+  if (!rows.length) {
+    const live = DESK.mode !== 'demo';
+    list.appendChild(el('li', 'econ-empty', !live ? 'No indicators configured.'
+      : econState.failed ? 'Economic data is unavailable right now — retrying.'
+      : payload ? 'No indicators configured.' : 'Loading economic data…'));
+  }
+
+  /* the charts belong to the span they were fetched for: after a span change whose reply never came,
+     the old rows keep their values but NOT a chart labelled with the wrong window */
+  const chartsMatch = !payload || !payload.range || payload.range === econTf;
+  let seeded = false;
+  for (const r of rows) {
+    if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && r.changed !== true && !Object.hasOwn(econSeen, r.id)) {
+      econSeen[r.id] = econSig(r); seeded = true;   /* first look: record it, do not announce it */
+    }
+    list.appendChild(econRow(r, chartsMatch));
+  }
+  if (seeded) econSeenSave();
+
+  paintEconLamp();
+  paintEconStamp();
+  /* a chip that was not on screen before gets its OWN ~60s, however long an older one has been there */
+  const ids = new Set([...list.querySelectorAll('.econ-row.is-new')].map(li => li.dataset.id));
+  if ([...ids].some(id => !econState.newIds.has(id))) { clearTimeout(econState.newTimer); econState.newTimer = 0; }
+  econState.newIds = ids;
+  econArmNew();
+}
+
+function econRow(r, chartsMatch) {
+  const dec = econDec(r);
+  const missing = r.status === 'missing' || !Number.isFinite(fmtToNum(r.value));
+  const stale = r.status === 'stale';
+  const isNew = econRowIsNew(r);
+  const li = el('li', 'econ-row' + (missing ? ' is-missing' : '') + (stale ? ' is-stale' : '') + (isNew ? ' is-new' : ''));
+  li.dataset.id = String(r.id);
+  li.dataset.status = String(r.status || 'ok');
+  li.dataset.cadence = String(r.cadence || '');
+
+  const info = el('div', 'econ-info');
+  /* the label gets the whole line to itself — a tag beside "Unemployment" truncated it */
+  info.appendChild(el('div', 'econ-label', String(r.label || r.id)));
+
+  const figs = el('div', 'econ-figs');
+  figs.appendChild(el('span', 'econ-val', econValueText(r)));
+  figs.appendChild(el('span', 'econ-delta', missing ? '—' : econDeltaText(r)));
+  info.appendChild(figs);
+  /* the date the reading is FOR — the honest signal, since FRED posts a yield a business day late —
+     with the row's tag (NEW / STALE / NO DATA) beside it */
+  const sub = el('div', 'econ-sub');
+  sub.appendChild(el('span', 'econ-date', missing ? '—' : econDateLabel(r.asOf, r.cadence)));
+  if (isNew) sub.appendChild(el('span', 'econ-new', 'NEW'));
+  if (stale) sub.appendChild(el('span', 'econ-tag', 'STALE'));
+  else if (missing) sub.appendChild(el('span', 'econ-tag', 'NO DATA'));
+  info.appendChild(sub);
+  li.appendChild(info);
+
+  /* the chart, to the RIGHT of the value block */
+  const chart = el('div', 'econ-chart');
+  const pts = (Array.isArray(r.points) ? r.points : []).filter(p => Array.isArray(p) && Number.isFinite(fmtToNum(p[1])));
+  const svg = missing || !chartsMatch ? null : econSpark(pts, (r.label || r.id) + ', ' + pts.length + ' readings over ' + econTf.toUpperCase());
+  if (svg) chart.appendChild(svg);
+  else chart.appendChild(el('span', 'econ-noline'));
+  if (svg) {
+    const cap = el('span', 'econ-cap', r.pointsNote ? String(r.pointsNote) : econEndLabel(pts[0][0], r.cadence) + ' – ' + econEndLabel(pts[pts.length - 1][0], r.cadence));
+    if (r.pointsNote) cap.classList.add('econ-note');
+    chart.appendChild(cap);
+  } else if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
+  li.appendChild(chart);
+
+  /* every fact in the tooltip too, including what is not on the row: where the number came from */
+  const why = [
+    (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
+    missing ? '' : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
+    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points',
+    r.source === 'treasury' ? 'source U.S. Treasury, same day' : r.source === 'fred' ? 'source FRED' : '',
+    r.pointsNote ? String(r.pointsNote) : '',
+    stale ? 'STALE' + (Number.isFinite(fmtToNum(r.staleSec)) ? ' — last good reading ' + Math.round(r.staleSec / 60) + ' min ago' : '') : '',
+  ].filter(Boolean).join(' · ');
+  li.title = why;
+  if (isNew) {
+    const ack = () => econAck([String(r.id)]);
+    li.addEventListener('pointerenter', ack);
+    li.addEventListener('click', ack);
+  }
+  return li;
+}
+
+/* ── poller: the response's refreshInSec (clamped 30s..3600s) schedules the next fetch. The function
+   tightens it inside the 08:25–09:15 and 15:25–18:30 ET release windows and relaxes it at weekends,
+   so the panel updates about as soon as a release lands without hammering it the rest of the day.
+   Paused while the tab is hidden, resumed (immediately if it came due meanwhile) on return. A failed
+   poll retries in 60s under a STALE lamp. `keepClock` (a span change) only ever pulls the next fetch
+   EARLIER — changing the span must not push a due poll out. */
+function econArm(sec, keepClock) {
+  const due = Date.now() + sec * 1000;
+  if (keepClock && econState.dueAt > Date.now() && econState.dueAt <= due) return;   /* a due-soon poll stays where it is */
+  clearTimeout(econState.timer);
+  econState.timer = 0;
+  econState.dueAt = due;
+  if (document.hidden) return;   /* visibilitychange rearms */
+  econState.timer = setTimeout(() => { econState.timer = 0; refreshEcon(false); }, sec * 1000);
+}
+async function refreshEcon(force, opts) {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  const keepClock = !!(opts && opts.span);
+  const asked = econTf, gen = ++econState.gen;
+  if (keepClock) { econState.pending = true; const l = document.getElementById('econList'); if (l) l.classList.add('is-pending'); }
+  let out = null;
+  try {
+    out = await deskEcon(asked, force === true);
+  } catch { out = null; }   /* a failed poll: handled below, OUTSIDE the try (renderAfterFetch) */
+  if (gen !== econState.gen) return;   /* a newer request owns the state now */
+  econState.pending = false;
+  /* drop a reply for a span nobody is asking about any more, or one that says it drew another window
+     (version skew: an older deploy would answer a range it does not know with 3m) */
+  if (out && (econTf !== asked || (out.range && out.range !== asked) || !Array.isArray(out.rows))) out = null;
+  if (out) {
+    econState.payload = out;
+    econState.landedAt = Date.now();
+    econState.refreshSec = econClamp(out.refreshInSec);
+    econState.failed = false;
+    renderAfterFetch(() => renderEcon(out));
+    econArm(econState.refreshSec, keepClock);
+  } else {
+    econState.failed = true;
+    /* keep the last good rows (real data or nothing), under an aged lamp — or the honest empty state */
+    renderAfterFetch(() => renderEcon(econState.payload));
+    econArm(ECON_RETRY_S, keepClock);
+  }
+}
+function econVisibility() {
+  if (document.hidden) {
+    clearTimeout(econState.timer); econState.timer = 0;
+    clearTimeout(econState.newTimer); econState.newTimer = 0;
+    return;
+  }
+  if (DESK.mode !== 'demo' && DESK_DB.url && econState.dueAt) {
+    relampEcon();   /* BEFORE the refetch: a tab that sat hidden must not come back claiming LIVE */
+    const left = econState.dueAt - Date.now();
+    if (left <= 0) refreshEcon(false);
+    else econArm(left / 1000);
+  }
+  econArmNew();
+}
+document.addEventListener('visibilitychange', econVisibility);
+
+/* boot: demo paints the seeded rows once (no network); live paints the loading state and starts polling */
+function startEcon() {
+  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
+  if (!DESK_DB.url) return;
+  renderEcon(null);
+  refreshEcon(false);
 }
 
 /* ── market widgets: embedded third-party (TradingView) widgets. Each loads as
@@ -7848,6 +8245,7 @@ async function boot() {
     loadHeatmap();
     loadCharts();
     loadWatchlist();
+    startEcon();
     loadWidgets();
     return;
   }
@@ -7875,6 +8273,7 @@ async function boot() {
   loadHeatmap();
   loadCharts();
   loadWatchlist();
+  startEcon();
   loadWidgets();
   startFeedPolling();
   let pin = null;

@@ -833,6 +833,120 @@ async function deskFeed(name, params) {
   return out;
 }
 
+/* ── Economy panel feed + demo rows (owner request 2026-09-30) ───────────────
+   deskEcon() is the ONE live call: desk-econ answers {ok, generatedAt,
+   refreshInSec, range, stale, rows:[…]} (specs/economy-indicators/spec.md §5).
+   It goes through deskFeed so the failure mapping is identical — a 502 body
+   `{ok:false}`, an unparseable reply and a network error all THROW, and the
+   caller keeps its last good render. `range` is one of 1w 1m 3m 6m 1y 5y (the
+   function has NO 1D: the finest data that exists is one reading per business
+   day or per month). `force` is sent only when true.
+
+   buildDemoEcon() is exclusively for ?demo=1 (live is REAL DATA OR NOTHING) and
+   is shaped exactly like the live payload, slicing and thinning included, so
+   renderEcon() is one code path. Dates hang off `now` — daily rows end on the
+   last trading day, monthly rows on the newest month a release would have
+   covered — and the numbers are a seeded walk, so a run is repeatable. */
+function deskEcon(range, force) {
+  const body = { range };
+  if (force === true) body.force = true;
+  return deskFeed('desk-econ', body);
+}
+
+const ECON_RANGES = ['1w', '1m', '3m', '6m', '1y', '5y'];
+const ECON_MAX_POINTS = 120, ECON_MIN_POINTS = 6;   /* mirror desk-econ's MAX_POINTS / MIN_POINTS */
+const econShiftMonths = (iso, k) => {
+  const y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1, d = +iso.slice(8, 10);
+  const t = y * 12 + m + k, ny = Math.floor(t / 12), nm = t - ny * 12;
+  const dim = new Date(Date.UTC(ny, nm + 1, 0)).getUTCDate();
+  return ny + '-' + String(nm + 1).padStart(2, '0') + '-' + String(Math.min(d, dim)).padStart(2, '0');
+};
+const econShiftDays = (iso, k) =>
+  new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) + k * 86400000).toISOString().slice(0, 10);
+
+/* The server's thinning rule (first + last + min/max of 59 buckets): every
+   point stays a REAL observation and a spike survives. */
+function econDownsample(pts, max) {
+  const n = pts.length;
+  if (n <= max) return pts.slice();
+  const keep = new Set([0, n - 1]);
+  const buckets = Math.floor((max - 2) / 2), inner = n - 2;
+  for (let b = 0; b < buckets; b++) {
+    const lo = 1 + Math.floor(b * inner / buckets), hi = 1 + Math.floor((b + 1) * inner / buckets);
+    if (hi <= lo) continue;
+    let mn = lo, mx = lo;
+    for (let i = lo; i < hi; i++) { if (pts[i][1] < pts[mn][1]) mn = i; if (pts[i][1] > pts[mx][1]) mx = i; }
+    keep.add(mn); keep.add(mx);
+  }
+  return [...keep].sort((a, b) => a - b).map(i => pts[i]);
+}
+
+/* [id, label, decimals, cadence, seed, latest value, walk step, mean-reversion].
+   Levels sit near the repo's own FRED captures (tools/fixtures/econ) so the demo
+   reads like the real desk. Yields walk in whole basis points (2 decimals, as
+   Treasury publishes them); the monthly rows are percent. */
+const DEMO_ECON_ROWS = [
+  ['ust2y',   '2Y Treasury',  2, 'daily',   7211, 4.90, 0.055, 0.004],
+  ['ust10y',  '10Y Treasury', 2, 'daily',   7212, 5.22, 0.050, 0.004],
+  ['ust20y',  '20Y Treasury', 2, 'daily',   7213, 5.58, 0.048, 0.004],
+  ['unrate',  'Unemployment', 1, 'monthly', 7214, 4.1,  0.07,  0.12],
+  ['cpi',     'CPI YoY',      1, 'monthly', 7215, 3.4,  0.22,  0.10],
+  ['pce',     'PCE YoY',      1, 'monthly', 7216, 3.0,  0.16,  0.10],
+  ['corepce', 'Core PCE YoY', 1, 'monthly', 7217, 3.2,  0.13,  0.10],
+];
+/* rows whose newest print is "new" in the demo (exercises the NEW chip path) */
+const DEMO_ECON_CHANGED = new Set(['ust10y', 'unrate']);
+
+function buildDemoEcon(range, now) {
+  const rk = ECON_RANGES.indexOf(range) >= 0 ? range : '3m';
+  const at = now || new Date();
+  const today = lastTradingDay(at);
+  const dailyDates = tradingISODates(1330, today);   /* ~5y of business days */
+  /* the newest month a release has covered: CPI/PCE/jobs for month M land in M+1
+     (mid-month), so before the 15th the newest reading is two months back */
+  const cal = ptCalendarDay(at);
+  const back = cal.getDate() >= 15 ? 1 : 2;
+  const newestMonth = isoDate(new Date(cal.getFullYear(), cal.getMonth() - back, 1));
+  const monthDates = Array.from({ length: 76 }, (_, i) => econShiftMonths(newestMonth, i - 75));
+  const rows = DEMO_ECON_ROWS.map(([id, label, dec, cadence, seed, end, step, pull]) => {
+    const monthly = cadence === 'monthly';
+    /* The feed is FRED-only (owner ruling 2026-09-30; Treasury's same-day tail is dormant), and FRED
+       posts a daily yield a business day late — so every daily row here ends on the trading day
+       BEFORE the last one, and every row's source is "fred". The as-of date is the honest signal. */
+    const dates = monthly ? monthDates : dailyDates.slice(0, -1);
+    /* a mean-reverting walk, shifted so the newest reading IS `end` (the same trick
+       walk() uses multiplicatively; additive here — a yield is a level, not a price) */
+    const rnd = lcg(seed), n = dates.length, mean = end;
+    const vals = [mean + (rnd() - 0.5) * step * (monthly ? 8 : 40)];
+    for (let i = 1; i < n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (mean - vals[i - 1]) * (monthly ? pull : pull / 6));
+    const shift = end - vals[n - 1];
+    /* a published level keeps its publication precision (yields 2dp, unemployment 1dp); a YoY is
+       computed, so its points carry 4dp exactly as the function's do and only `value` rounds */
+    const level = !monthly || id === 'unrate';
+    const series = dates.map((d, i) => [d, Number((vals[i] + shift).toFixed(level ? dec : 4))]);
+    const last = series[series.length - 1], prev = series[series.length - 2];
+    const start = rk === '1w' ? econShiftDays(last[0], -7) : econShiftMonths(last[0], -{ '1m': 1, '3m': 3, '6m': 6, '1y': 12, '5y': 60 }[rk]);
+    let slice = series.filter(([d]) => d >= start), note = null;
+    if (slice.length < ECON_MIN_POINTS) { slice = series.slice(-ECON_MIN_POINTS); note = cadence + ' - ' + slice.length + ' latest'; }
+    const row = {
+      id, label, unit: '%', decimals: dec, transform: level ? 'level' : 'yoy', cadence,
+      value: Number(last[1].toFixed(dec)), prev: Number(prev[1].toFixed(dec)),
+      delta: Number((Number(last[1].toFixed(dec)) - Number(prev[1].toFixed(dec))).toFixed(dec)),
+      asOf: last[0], prevAsOf: prev[0],
+      source: 'fred',
+      status: 'ok', changed: DEMO_ECON_CHANGED.has(id), staleSec: null,
+      points: econDownsample(slice, ECON_MAX_POINTS),
+    };
+    if (note) row.pointsNote = note;
+    return row;
+  });
+  const iso = at.toISOString();
+  return {
+    ok: true, generatedAt: iso, fetchedAt: iso, range: rk, refreshInSec: 900, phase: 'quiet',
+    stale: false, staleSec: null, roster: { source: 'demo', count: rows.length, dropped: 0 }, rows,
+  };
+}
+
 /* US equities session gate for the feed poller cadence (spec Clarification
    6). Mirrors the Deno copies in supabase/functions/desk-* — keep the
    holiday list in sync there when refreshing it annually (2026–2027). The
