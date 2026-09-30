@@ -64,7 +64,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   rows dropped and counted (`roster.dropped`), deduped by `id`, capped at 12, the
   FRED id strictly patterned before it reaches a URL, Treasury only on a
   daily-level row.
-- **Checks.** `node tools/econ-check.mjs` (24 checks, fresh `vm` isolate each,
+- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (24 checks, fresh `vm` isolate each,
   stubbed `fetch`, settable clock, real FRED captures + constructed Treasury
   fixtures under `tools/fixtures/econ/`); `--mutants` proves 27 single-line
   mutants are each caught (27/27 on 2026-09-30).
@@ -134,7 +134,12 @@ width).
   Renders sit OUTSIDE the fetch `try` (`renderAfterFetch`). A span change passes `keepClock`:
   it may only pull the next poll EARLIER, never reset a pending one. `force` is sent only by
   the desk's "Refresh now" (`refreshNowClicked` → `refreshEcon(true)`, the function honours it
-  once per 30s). `?demo=1` never calls the network for this panel; live never renders demo
+  once per 30s). A forced refresh OWNS the clock until it lands: it clears the poll timer and
+  `dueAt` first, because a timer coming due meanwhile would start a second, unforced request,
+  take the newer generation and get the forced reply thrown away. "Refresh now" also stays
+  disabled ("Refreshing…") until BOTH the feeds and the economy request are done —
+  `renderMasthead()` renders the pending state, and `refreshNowClicked`'s `finally` rebuilds
+  the button. `?demo=1` never calls the network for this panel; live never renders demo
   rows (first load: empty state + `Loading`, then `STALE` and a 60s retry if it fails).
 - **NEW.** `econ_seen_v1` = `{ id: 'asOf|value' }`. A row is NEW when its newest reading
   differs from the recorded one, or — with nothing recorded — when the server says `changed`

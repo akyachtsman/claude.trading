@@ -58,9 +58,16 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     picks WHICH band (the drop zone under the pointer). A band is one row that
     never wraps, and a comparison on Y as well counts every tile as passed the
     moment the pointer sits on the row's own scrollbar — dropping at the END of the
-    list wherever you aimed (S26 holds the pointer at the row's bottom edge). There
-    is no edge auto-scroll, as there never was in the row layout: with a mouse the
-    wheel still works mid-drag, and Alt+←/→ is the keyboard path.
+    list wherever you aimed (S26 holds the pointer at the row's bottom edge).
+  - **Drag: a long band auto-scrolls at its edges** (`wlAutoScroll`, `WL_EDGE_PX`
+    56, `WL_EDGE_MAX_STEP` 24; added after Codex's review of PR #294). The pointer
+    owns the drag, so the row's scrollbar cannot be used at the same time and, without
+    this, a tile could only be dropped among the slots already on screen. Holding the
+    pointer within 56px of a row's left/right edge scrolls it (faster nearer the edge)
+    until it runs out; `wlDragPaint` redraws the marker after every step because the
+    tiles move under a STILL pointer; the rAF loop runs only while the pointer sits in
+    an edge zone that can still scroll, is re-armed by every pointer move and is
+    cancelled in `wlDragEnd`. The keyboard path is Alt+←/→.
   - **Removed for good, not dormant**: `wlSyncPaging`, `attachPaging`, the ▲/▼
     `.wl-page-bar`/`.wl-page` footer and its CSS, the drag-rests-on-▼ stepping
     (`WL_DRAG_STEP_MS`, `wlDragStepAt`, `_wlStep`), the resize listener that

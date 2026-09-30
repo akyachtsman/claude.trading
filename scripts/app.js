@@ -167,7 +167,11 @@ function renderMasthead() {
     /* manual force-refresh (owner request 2026-07-27): market/news/heatmap/
        charts are public feeds, so this shows regardless of PIN-auth state. */
     if (DESK_DB.url) {
-      const refreshBtn = el('button', 'btn btn-secondary', 'Refresh now');
+      /* a rebuild while a forced refresh is still in flight (feedPollTick lands before the
+         slower Economy request) must keep the pending state, not re-enable a button whose
+         clicks would be ignored until the whole refresh finishes (Codex review, PR #294) */
+      const refreshBtn = el('button', 'btn btn-secondary', refreshNowPending ? 'Refreshing…' : 'Refresh now');
+      refreshBtn.disabled = refreshNowPending;
       refreshBtn.type = 'button';
       refreshBtn.id = 'refreshNowBtn';
       refreshBtn.addEventListener('click', refreshNowClicked);
@@ -935,7 +939,7 @@ const WL_DRAG_SLOP = 6;
    is what they objected to, and removal still goes through a dialog. */
 const WL_TOUCH_ARM_MS = 300;
 
-const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null };
+const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null, raf: 0, x: 0, y: 0, zone: null };
 
 /* Transient feedback for a drag that could not be committed. The staging row
    that used to carry this is gone (owner ruling 2026-07-31), so it borrows the
@@ -991,25 +995,60 @@ function wlClearMarker() {
   for (const z of wlDropZones()) z.classList.remove('wl-drop-over');
 }
 
-function wlDragMove(ev) {
-  if (!wlDrag.on) return;
-  wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
+/* Paint the drop feedback for a pointer at (x, y): the band under it lights up and the
+   insertion marker goes where a drop there would land. Also called from the edge
+   auto-scroll below, because scrolling a row moves its tiles under a STILL pointer. */
+function wlDragPaint(x, y) {
   wlClearMarker();
-  const under = document.elementFromPoint(ev.clientX, ev.clientY);
+  const under = document.elementFromPoint(x, y);
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
+  wlDrag.zone = zone || null;
   if (!zone) return;
   zone.classList.add('wl-drop-over');
   if (zone.id === 'wlTrash') return;
-  const at = wlDropIndex(zone, ev.clientX);
+  const at = wlDropIndex(zone, x);
   const mark = el('div', 'wl-drop-marker');
   const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
   zone.insertBefore(mark, tiles[at] || null);
   wlDrag.marker = mark;
 }
 
+/* A band is wider than its row once a list is long, and the pointer owns the drag — the
+   scrollbar cannot be used at the same time — so without help a tile could only ever be
+   dropped among the slots already on screen. Holding the pointer within WL_EDGE_PX of a
+   row's left or right edge scrolls it, faster the closer to the edge, until it runs out
+   (Codex review, PR #294). One rAF loop, running only while the pointer sits in an edge
+   zone that can still scroll; every pointer move re-arms it. */
+const WL_EDGE_PX = 56, WL_EDGE_MAX_STEP = 24;
+function wlAutoScroll() {
+  const d = wlDrag;
+  d.raf = 0;
+  const zone = d.zone;
+  if (!d.on || !zone || zone.id === 'wlTrash') return;
+  const r = zone.getBoundingClientRect();
+  const left = 1 - Math.min(1, Math.max(0, d.x - r.left) / WL_EDGE_PX);    /* 0 outside the left edge zone, →1 at the edge */
+  const right = 1 - Math.min(1, Math.max(0, r.right - d.x) / WL_EDGE_PX);
+  const push = right - left;
+  if (!push) return;
+  const before = zone.scrollLeft;
+  zone.scrollLeft = before + Math.sign(push) * Math.max(1, Math.round(Math.abs(push) * WL_EDGE_MAX_STEP));
+  if (zone.scrollLeft === before) return;   /* at the end: stop until the pointer moves again */
+  wlDragPaint(d.x, d.y);
+  d.raf = requestAnimationFrame(wlAutoScroll);
+}
+
+function wlDragMove(ev) {
+  if (!wlDrag.on) return;
+  wlDrag.x = ev.clientX; wlDrag.y = ev.clientY;
+  wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
+  wlDragPaint(ev.clientX, ev.clientY);
+  if (!wlDrag.raf) wlDrag.raf = requestAnimationFrame(wlAutoScroll);
+}
+
 function wlDragEnd(ev, cancelled) {
   const d = wlDrag;
   clearTimeout(d.armed);
+  cancelAnimationFrame(d.raf); d.raf = 0; d.zone = null;
   if (!d.on) { d.sym = null; d.tile = null; return; }
   /* A drop still delivers a `click` to the tile it started from. Without this
      stamp, arranging the panel would open a detail window on every drop. */
@@ -7626,10 +7665,11 @@ function startFeedPolling() {
 }
 /* Manual force-refresh (owner request 2026-07-27): bypasses BOTH the client
    poll cooldown and every desk-* edge function's in-memory cache, so a click
-   guarantees a fresh upstream pull for market/news/heatmap/charts at once —
-   the "everything's guaranteed fresh" button. renderMasthead() (inside
-   feedPollTick) rebuilds this very button once fresh data lands, which is what
-   restores its normal enabled label — no separate re-enable needed here.
+   guarantees a fresh upstream pull for market/news/heatmap/charts/economy at once
+   — the "everything's guaranteed fresh" button. renderMasthead() (inside
+   feedPollTick) rebuilds this very button, and while `refreshNowPending` it
+   rebuilds it in the pending state; the finally below rebuilds it once BOTH
+   requests are done, which is what restores the enabled label.
    Re-arms the regular poll afterward. */
 let refreshNowPending = false;
 async function refreshNowClicked() {
@@ -7640,6 +7680,7 @@ async function refreshNowClicked() {
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
   try { await Promise.all([feedPollTick(true), refreshEcon(true)]); } finally {
     refreshNowPending = false;
+    renderMasthead();
     scheduleFeedPoll(); scheduleMarketPoll();
   }
 }
@@ -8000,6 +8041,12 @@ function econArm(sec, keepClock) {
 }
 async function refreshEcon(force, opts) {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  /* A forced refresh owns the clock until it lands: a timer that came due while it is in flight
+     would start a second, unforced request, take the newer generation, and get the forced
+     reply thrown away — "Refresh now" would then show the pre-refresh cache (Codex review, PR
+     #294). Nothing is pending while it runs (dueAt 0, so a visibility return does not refetch
+     either); the landing below re-arms. */
+  if (force === true) { clearTimeout(econState.timer); econState.timer = 0; econState.dueAt = 0; }
   const keepClock = !!(opts && opts.span);
   const asked = econTf, gen = ++econState.gen;
   if (keepClock) { econState.pending = true; const l = document.getElementById('econList'); if (l) l.classList.add('is-pending'); }

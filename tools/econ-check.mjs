@@ -4,8 +4,9 @@
      node tools/econ-check.mjs             # the suite, against the function as committed
      node tools/econ-check.mjs --mutants   # ...then prove each single-line mutant below is CAUGHT
 
-   How: the function is transpiled with esbuild (`npx -y esbuild --loader=ts
-   --format=cjs`; there is no Deno here) and run in a fresh `vm` context per
+   How: the function is transpiled with the PINNED esbuild in tools/package.json
+   (`npm ci --prefix tools` once; there is no Deno here, and the check never
+   downloads anything itself) and run in a fresh `vm` context per
    check, which is a cold isolate: `Deno.serve` is captured, `fetch` is a stub
    that serves the fixtures and records every call, and `Date` runs on a
    settable clock so TTLs and New_York release windows are exercised at chosen
@@ -676,9 +677,13 @@ const MUTANTS = [
   ['degraded feed waits the full quiet TTL','const ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;', 'const ttl = policy.ttlMs;'],
 ];
 
+// The esbuild pinned (exact version + integrity hash) in tools/package.json and its lockfile — NOT
+// `npx -y esbuild`, which fetched whatever release was current and failed outright offline.
+const ESBUILD = path.join(ROOT, 'tools/node_modules/.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild');
 function transpile(ts) {
-  const r = spawnSync('npx', ['-y', 'esbuild', '--loader=ts', '--format=cjs', '--log-level=error'],
+  const r = spawnSync(ESBUILD, ['--loader=ts', '--format=cjs', '--log-level=error'],
     { input: ts, encoding: 'utf8', maxBuffer: 64 << 20 });
+  if (r.error && r.error.code === 'ENOENT') throw new Error('the pinned esbuild is not installed — run: npm ci --prefix tools');
   if (r.status !== 0) throw new Error('esbuild failed: ' + (r.stderr || r.error || 'unknown'));
   return r.stdout;
 }

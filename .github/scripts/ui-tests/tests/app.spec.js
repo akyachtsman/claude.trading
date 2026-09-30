@@ -2071,6 +2071,53 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   expect(order.indexOf(aim.syms[3]), '…and immediately before the fourth')
     .toBe(order.indexOf(aim.syms[0]) + 1);
 
+  // ── a long band auto-scrolls at its edges, so every slot is reachable (Codex review, PR #294) ──
+  // The pointer owns the drag, so the row's scrollbar cannot be used at the same time: without help a tile could
+  // only be dropped among the slots on screen. Holding the pointer near the row's right edge scrolls it, near the
+  // left edge scrolls it back, and a drop at the far end lands at a slot that was off screen when the drag began.
+  const longBand = await page.evaluate(() => {
+    const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
+    const i = zones.findIndex(z => z.scrollWidth > z.clientWidth + 150 && z.querySelectorAll('.wl-tile').length >= 6);
+    return i < 0 ? null : i;
+  });
+  expect(longBand, 'some band is wider than its row').not.toBeNull();
+  await page.locator('.mkt-group-tiles[data-band]').nth(longBand).scrollIntoViewIfNeeded();
+  await page.evaluate((i) => { document.querySelectorAll('.mkt-group-tiles[data-band]')[i].scrollLeft = 0; }, longBand);
+  await page.waitForTimeout(200);
+  const edge = await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    const z = zone.getBoundingClientRect(), t = zone.querySelector('.wl-tile').getBoundingClientRect();
+    const y = t.top + t.height / 2;
+    return { grab: { x: t.left + t.width / 2, y }, right: { x: z.right - 6, y }, left: { x: z.left + 6, y }, mid: { x: z.left + z.width / 2, y },
+      symsAtStart: [...zone.querySelectorAll('.wl-tile')].map(x => x.dataset.sym), title: zone.dataset.title };
+  }, longBand);
+  const scrollLeftOf = () => page.evaluate((i) => document.querySelectorAll('.mkt-group-tiles[data-band]')[i].scrollLeft, longBand);
+  const writesEdge = await rosterWrites(page);
+  await page.mouse.move(edge.grab.x, edge.grab.y);
+  await page.mouse.down();
+  await page.mouse.move(edge.mid.x, edge.mid.y, { steps: 6 });
+  expect(await scrollLeftOf(), 'in the middle of the row nothing scrolls').toBe(0);
+  await page.mouse.move(edge.right.x, edge.right.y, { steps: 4 });
+  await expect.poll(scrollLeftOf, { message: 'holding the pointer at the right edge scrolls the row', timeout: 6000 }).toBeGreaterThan(120);
+  const scrolledTo = await scrollLeftOf();
+  const markerAfterScroll = await page.evaluate(() => {
+    const m = document.querySelector('.wl-drop-marker'), next = m && m.nextElementSibling;
+    return { marker: !!m, before: next ? next.dataset.sym : null };
+  });
+  expect(markerAfterScroll.marker, 'the insertion marker follows the tiles as the row scrolls').toBe(true);
+  const markerSlot = markerAfterScroll.before === null ? edge.symsAtStart.length : edge.symsAtStart.indexOf(markerAfterScroll.before);   // null = the end of the list
+  expect(markerSlot, 'the marker now sits at a slot that was OFF screen when the drag began').toBeGreaterThan(2);
+  await page.mouse.move(edge.left.x, edge.left.y, { steps: 6 });
+  await expect.poll(scrollLeftOf, { message: 'and the left edge scrolls it back', timeout: 6000 }).toBeLessThan(scrolledTo);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  expect(await page.locator('.wl-ghost').count(), 'Escape ended the drag').toBe(0);
+  expect(await rosterWrites(page), 'an abandoned auto-scroll drag writes nothing').toBe(writesEdge);
+  const scrollAtRest = await scrollLeftOf();
+  await page.waitForTimeout(250);
+  expect(await scrollLeftOf(), 'the auto-scroll loop stopped with the drag').toBe(scrollAtRest);
+
   // ── no staging tray survives anywhere ──────────────────────────────────
   // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,
   // its persistence key and its drop zone must ALL be gone — a leftover
@@ -6084,6 +6131,55 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await setMode('ok', 90);
   await refresh(true);
   expect((await last()).force, 'an explicit refresh forces').toBe(true);
+
+  // 7b2. a FORCED refresh owns the clock while it is in flight (Codex review, PR #294): a poll timer that
+  //      comes due meanwhile must not start a second, unforced request — it would take the newer generation and
+  //      get the forced reply thrown away, leaving "Refresh now" showing the pre-refresh cache. The forced call is
+  //      held open by a gate so the timer's due time can be crossed while it is still pending.
+  await page.evaluate(() => {
+    window.__inner = window.deskEcon;
+    window.deskEcon = (range, force) => {
+      if (force !== true) return window.__inner(range, force);
+      window.__calls.push({ range, force: true });
+      return new Promise((res) => { window.__releaseForce = () => res({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 90, stale: false }); });
+    };
+  });
+  await setMode('ok', 90);
+  await refresh();                                                // a normal poll timer is now pending, ~90s out
+  n = await calls();
+  await page.evaluate(() => { window.__forced = refreshEcon(true); });
+  expect(await calls(), 'the forced request is in flight').toBe(n + 1);
+  expect(await page.evaluate(() => econState.dueAt), 'nothing else is pending while it runs').toBe(0);
+  await page.clock.runFor(95_000);                                // past the moment the old timer was due
+  expect(await calls(), 'no second request started while the forced one is pending').toBe(n + 1);
+  const landedBefore = await page.evaluate(() => econState.landedAt);
+  await page.evaluate(() => { window.__releaseForce(); return window.__forced; });
+  await expect.poll(() => page.evaluate((t) => econState.landedAt > t, landedBefore), 'the forced reply LANDED (it was not discarded by a newer generation)').toBe(true);
+  expect(await due(), 'and it re-armed the poll from its own refreshInSec').toBeGreaterThan(88_000);
+  expect(await calls(), 'still exactly one request for the whole forced refresh').toBe(n + 1);
+
+  // 7b3. "Refresh now" stays pending until EVERY request is done: feedPollTick lands first and rebuilds the masthead,
+  //      which used to re-enable a button whose clicks refreshNowClicked then ignored while the economy request ran.
+  const pending = await page.evaluate(() => {
+    const read = () => { const b = document.getElementById('refreshNowBtn'); return { disabled: b.disabled, text: b.textContent }; };
+    refreshNowPending = true; renderMasthead(); const during = read();
+    refreshNowPending = false; renderMasthead(); const after = read();
+    return { during, after };
+  });
+  expect(pending.during, 'a masthead rebuilt under a pending refresh keeps the button disabled and says so').toEqual({ disabled: true, text: 'Refreshing…' });
+  expect(pending.after, 'and a rebuild after it is over restores the normal button').toEqual({ disabled: false, text: 'Refresh now' });
+  await page.evaluate(() => {
+    window.__tick = window.feedPollTick; window.__sf = window.scheduleFeedPoll; window.__sm = window.scheduleMarketPoll;
+    window.feedPollTick = async () => { renderMasthead(); };     // the feeds land at once, rebuilding the masthead
+    window.scheduleFeedPoll = () => {}; window.scheduleMarketPoll = () => {};
+    window.__clicked = refreshNowClicked();
+  });
+  await expect(page.locator('#refreshNowBtn'), 'the feeds are done but the economy request is not: still pending').toBeDisabled();
+  await expect(page.locator('#refreshNowBtn')).toHaveText('Refreshing…');
+  await page.evaluate(() => { window.__releaseForce(); return window.__clicked; });
+  await expect(page.locator('#refreshNowBtn'), 'everything landed: the button is back').toBeEnabled();
+  await expect(page.locator('#refreshNowBtn')).toHaveText('Refresh now');
+  await page.evaluate(() => { window.feedPollTick = window.__tick; window.scheduleFeedPoll = window.__sf; window.scheduleMarketPoll = window.__sm; window.deskEcon = window.__inner; });
 
   // 7c. a failed poll keeps the last render, flips the lamp to STALE, and retries in a minute
   const vals = (await rowsInfo()).map((r) => r.val);
