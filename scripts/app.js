@@ -7738,6 +7738,7 @@ const econState = {
   refreshSec: 900,   /* its refreshInSec, clamped */
   failed: false,     /* the most recent poll failed */
   pending: false,    /* a span change's reply is in flight */
+  forcing: false,    /* a FORCED refresh ("Refresh now") is in flight: it owns the request slot */
   gen: 0,            /* each request takes one; only the newest may land */
   timer: 0, dueAt: 0, newTimer: 0,
   newIds: new Set(),  /* the rows whose NEW chip is on screen */
@@ -7851,6 +7852,16 @@ function econPickSpan(key) {
   saveEconTf();
   syncEconTf();
   if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
+  /* A forced refresh is in flight: a request of our own would take the newer generation and get
+     the forced reply thrown away (or, served by another isolate's cache, show pre-refresh data).
+     So the span is only RECORDED; refreshEcon asks for it the moment the forced reply lands
+     (Codex review, PR #294). */
+  if (econState.forcing) {
+    econState.pending = true;
+    const l = document.getElementById('econList');
+    if (l) l.classList.add('is-pending');
+    return;
+  }
   /* live: ask for the new span (a slice server-side — no upstream cost). The rows on screen stay,
      their charts dimmed, until it lands; the poll clock is only ever pulled EARLIER, never reset */
   refreshEcon(false, { span: true });
@@ -8046,7 +8057,7 @@ async function refreshEcon(force, opts) {
      reply thrown away — "Refresh now" would then show the pre-refresh cache (Codex review, PR
      #294). Nothing is pending while it runs (dueAt 0, so a visibility return does not refetch
      either); the landing below re-arms. */
-  if (force === true) { clearTimeout(econState.timer); econState.timer = 0; econState.dueAt = 0; }
+  if (force === true) { clearTimeout(econState.timer); econState.timer = 0; econState.dueAt = 0; econState.forcing = true; }
   const keepClock = !!(opts && opts.span);
   const asked = econTf, gen = ++econState.gen;
   if (keepClock) { econState.pending = true; const l = document.getElementById('econList'); if (l) l.classList.add('is-pending'); }
@@ -8054,8 +8065,12 @@ async function refreshEcon(force, opts) {
   try {
     out = await deskEcon(asked, force === true);
   } catch { out = null; }   /* a failed poll: handled below, OUTSIDE the try (renderAfterFetch) */
+  if (force === true) econState.forcing = false;
   if (gen !== econState.gen) return;   /* a newer request owns the state now */
   econState.pending = false;
+  /* The span changed while this FORCED refresh was in flight (econPickSpan only recorded it): that is
+     not a failed poll. The forced sweep has just warmed the server, so ask for the span now showing. */
+  if (force === true && econTf !== asked) { refreshEcon(false, { span: true }); return; }
   /* drop a reply for a span nobody is asking about any more, or one that says it drew another window
      (version skew: an older deploy would answer a range it does not know with 3m) */
   if (out && (econTf !== asked || (out.range && out.range !== asked) || !Array.isArray(out.rows))) out = null;

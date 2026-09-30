@@ -6158,6 +6158,25 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   expect(await due(), 'and it re-armed the poll from its own refreshInSec').toBeGreaterThan(88_000);
   expect(await calls(), 'still exactly one request for the whole forced refresh').toBe(n + 1);
 
+  // 7b2b. a SPAN change while a forced refresh is in flight is serialised behind it (Codex review, PR #294): a request of its
+  //       own would take the newer generation and discard the forced reply, so the span is only recorded, marked pending,
+  //       and asked for the moment the forced reply lands — which is not a failed poll.
+  const cur = await page.evaluate(() => econTf);
+  const other = cur === '1y' ? '6m' : '1y';
+  n = await calls();
+  await page.evaluate(() => { window.__forced = refreshEcon(true); });
+  expect(await calls(), 'the forced request is in flight').toBe(n + 1);
+  await pick(other);
+  expect(await calls(), 'a span change during it starts no request of its own').toBe(n + 1);
+  expect(await page.evaluate(() => econState.pending), 'the span is recorded and the list is marked pending').toBe(true);
+  await page.evaluate(() => { window.__releaseForce(); return window.__forced; });
+  await expect.poll(calls, 'the forced reply landing asks for the span now showing').toBe(n + 2);
+  expect(await last(), 'unforced, for the span that was picked').toEqual({ range: other, force: false });
+  await expect.poll(() => page.evaluate(() => econState.payload && econState.payload.range), 'and that reply is what is drawn').toBe(other);
+  expect(await lamp(), 'a span change behind a forced refresh is not a failed poll').toMatch(/^live$/i);
+  await pick(cur);
+  await expect.poll(() => page.evaluate(() => econState.payload && econState.payload.range), 'back on the original span').toBe(cur);
+
   // 7b3. "Refresh now" stays pending until EVERY request is done: feedPollTick lands first and rebuilds the masthead,
   //      which used to re-enable a button whose clicks refreshNowClicked then ignored while the economy request ran.
   const pending = await page.evaluate(() => {

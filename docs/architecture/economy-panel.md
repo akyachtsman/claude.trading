@@ -136,7 +136,10 @@ width).
   the desk's "Refresh now" (`refreshNowClicked` → `refreshEcon(true)`, the function honours it
   once per 30s). A forced refresh OWNS the clock until it lands: it clears the poll timer and
   `dueAt` first, because a timer coming due meanwhile would start a second, unforced request,
-  take the newer generation and get the forced reply thrown away. "Refresh now" also stays
+  take the newer generation and get the forced reply thrown away. The same goes for a SPAN
+  change made while it is in flight: `econPickSpan` only records the span and marks the list
+  pending (`econState.forcing`), and `refreshEcon` asks for that span the moment the forced
+  reply lands (not a failed poll). "Refresh now" also stays
   disabled ("Refreshing…") until BOTH the feeds and the economy request are done —
   `renderMasthead()` renders the pending state, and `refreshNowClicked`'s `finally` rebuilds
   the button. `?demo=1` never calls the network for this panel; live never renders demo
