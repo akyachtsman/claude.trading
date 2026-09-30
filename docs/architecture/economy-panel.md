@@ -138,8 +138,10 @@ width).
   `dueAt` first, because a timer coming due meanwhile would start a second, unforced request,
   take the newer generation and get the forced reply thrown away. The same goes for a SPAN
   change made while it is in flight: `econPickSpan` only records the span and marks the list
-  pending (`econState.forcing`), and `refreshEcon` asks for that span the moment the forced
-  reply lands (not a failed poll). "Refresh now" also stays
+  pending (`econState.forcing`), and `refreshEcon` asks for the span showing the moment the forced
+  reply lands (not a failed poll) — and KEEPS asking (`econFetch` returns "the span moved") until
+  the span it asked for is the one showing, holding the lock through repeated changes, so the
+  forced refresh (and "Refresh now") settles only when that has landed. "Refresh now" also stays
   disabled ("Refreshing…") until BOTH the feeds and the economy request are done —
   `renderMasthead()` renders the pending state, and `refreshNowClicked`'s `finally` rebuilds
   the button. `?demo=1` never calls the network for this panel; live never renders demo
@@ -147,8 +149,13 @@ width).
 - **NEW.** `econ_seen_v1` = `{ id: 'asOf|value' }`. A row is NEW when its newest reading
   differs from the recorded one, or — with nothing recorded — when the server says `changed`
   (per-isolate best effort, so never the only source). The first look seeds silently (no wall
-  of chips). A chip clears on hover/click of its row, or ~60s after IT appeared with the tab
-  visible (one timer; a chip that arrives later gets its own 60s).
+  of chips). A chip clears on hover/click of its row, or once ITS ROW has been IN VIEW for ~60s with
+  the tab visible (Codex, PR #294: a chip on a row nobody has scrolled to must not be cleared
+  unseen). Visibility is an `IntersectionObserver` (half the row; it accounts for the page scroll
+  AND the panel's own scrollport); timers are per row id (`econState.newTimers`), a row that leaves
+  view drops its timer, and a poll's re-render does NOT restart one — a rebuilt row the observer has
+  not yet reported on (`econState.known`) keeps its running timer. Without `IntersectionObserver`
+  every row counts as in view.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
   real FRED rows. If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).

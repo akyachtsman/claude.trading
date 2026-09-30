@@ -7709,7 +7709,8 @@ const ECON_TF_TITLE = 'Chart span. Daily and monthly data only — there is no 1
 const ECON_MIN_S = 30, ECON_MAX_S = 3600;   /* clamp on the server's refreshInSec */
 const ECON_RETRY_S = 60;                    /* fast retry after a failed poll */
 const ECON_STALE_X = 3;                     /* STALE once the last success is older than 3 × refreshInSec */
-const ECON_NEW_MS = 60000;                  /* a NEW chip clears once it has been on screen this long */
+const ECON_NEW_MS = 60000;                  /* a NEW chip clears once its row has been IN VIEW this long */
+const ECON_NEW_SEEN = 0.5;                  /* ...half of it counts as in view */
 const ECON_SPARK_W = 100, ECON_SPARK_H = 32;
 
 let econTf = ECON_DEFAULT_TF;
@@ -7740,8 +7741,10 @@ const econState = {
   pending: false,    /* a span change's reply is in flight */
   forcing: false,    /* a FORCED refresh ("Refresh now") is in flight: it owns the request slot */
   gen: 0,            /* each request takes one; only the newest may land */
-  timer: 0, dueAt: 0, newTimer: 0,
-  newIds: new Set(),  /* the rows whose NEW chip is on screen */
+  timer: 0, dueAt: 0,
+  newTimers: new Map(),   /* row id → timer: a NEW chip clears once ITS ROW has been in view this long */
+  vis: new WeakSet(),     /* the row elements currently in view (IntersectionObserver) */
+  known: new WeakSet(),   /* the row elements the observer has reported on at least once */
 };
 const econClamp = s => { const n = Number(s); return Math.min(ECON_MAX_S, Math.max(ECON_MIN_S, Number.isFinite(n) && n > 0 ? n : 900)); };
 
@@ -7903,7 +7906,7 @@ setInterval(relampEcon, STAMP_TICK_MS);
    from the one recorded in econ_seen_v1, or — with nothing recorded — when the server says it
    `changed` (per-isolate best effort, so never the ONLY source: a cold isolate says false). The very
    first look seeds the record silently, so a fresh browser is not greeted by a wall of NEW chips.
-   A chip clears on hover/click of its row, or once it has been on screen ~60s with the tab visible. */
+   A chip clears on hover/click of its row, or once ITS ROW has been in view ~60s with the tab visible. */
 function econRowIsNew(r) {
   if (r.status === 'missing' || !Number.isFinite(fmtToNum(r.value)) || !r.asOf) return false;   /* no reading, nothing to be new */
   if (!Object.hasOwn(econSeen, r.id)) return r.changed === true;
@@ -7924,18 +7927,42 @@ function econAck(ids) {
     if (chip) chip.remove();
     li.classList.remove('is-new');
   }
-  econState.newIds = new Set([...document.querySelectorAll('#econList .econ-row.is-new')].map(li => li.dataset.id));
+  for (const id of ids) { clearTimeout(econState.newTimers.get(id)); econState.newTimers.delete(id); }
   econArmNew();
 }
-/* one timer for the whole panel, running only while a chip is on screen and the tab is visible */
+/* Acknowledgement is per ROW and only while that row is actually IN VIEW (an IntersectionObserver —
+   it accounts for the page scroll AND the panel's own scrollport) with the tab visible: a chip on a
+   row nobody has scrolled to would otherwise be cleared unseen and the change never noticed
+   (Codex review, PR #294). Timers are keyed by row id so a poll's re-render does not restart them;
+   a row that leaves view drops its timer. Without IntersectionObserver every row counts as in view. */
+let econIO = null;
+function econWatch(li) {
+  if (!('IntersectionObserver' in window)) { econState.vis.add(li); econState.known.add(li); return; }
+  if (!econIO) {
+    econIO = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        econState.known.add(e.target);
+        if (e.intersectionRatio >= ECON_NEW_SEEN - 0.01) econState.vis.add(e.target); else econState.vis.delete(e.target);
+      }
+      econArmNew();
+    }, { threshold: [0, ECON_NEW_SEEN, 1] });
+  }
+  econIO.observe(li);
+}
 function econArmNew() {
-  const any = document.querySelector('#econList .econ-new');
-  if (!any || document.hidden) { clearTimeout(econState.newTimer); econState.newTimer = 0; return; }
-  if (econState.newTimer) return;
-  econState.newTimer = setTimeout(() => {
-    econState.newTimer = 0;
-    econAck([...document.querySelectorAll('#econList .econ-row.is-new')].map(li => li.dataset.id));
-  }, ECON_NEW_MS);
+  const timers = econState.newTimers, due = new Set(), rows = new Map();
+  for (const li of document.querySelectorAll('#econList .econ-row.is-new')) rows.set(li.dataset.id, li);
+  if (!document.hidden) for (const [id, li] of rows) if (econState.vis.has(li)) due.add(id);
+  for (const [id, h] of timers) {
+    const li = rows.get(id);
+    /* keep a running timer for a row that was just REBUILT by a poll and has not been observed yet:
+       its state is unknown, and restarting the minute on every render would mean a chip never clears */
+    const keep = !document.hidden && li && (due.has(id) || !econState.known.has(li));
+    if (!keep) { clearTimeout(h); timers.delete(id); }
+  }
+  for (const id of due) {
+    if (!timers.has(id)) timers.set(id, setTimeout(() => { timers.delete(id); econAck([id]); }, ECON_NEW_MS));
+  }
 }
 
 /* ── render ── */
@@ -7969,11 +7996,11 @@ function renderEcon(payload) {
 
   paintEconLamp();
   paintEconStamp();
-  /* a chip that was not on screen before gets its OWN ~60s, however long an older one has been there */
-  const ids = new Set([...list.querySelectorAll('.econ-row.is-new')].map(li => li.dataset.id));
-  if ([...ids].some(id => !econState.newIds.has(id))) { clearTimeout(econState.newTimer); econState.newTimer = 0; }
-  econState.newIds = ids;
-  econArmNew();
+  /* the rows were rebuilt: watch the NEW ones afresh (their first observation reports whether they are in
+     view and starts their timer; a timer already running for a row that is still in view is left alone) */
+  if (econIO) econIO.disconnect();
+  for (const li of list.querySelectorAll('.econ-row.is-new')) econWatch(li);
+  if (!econIO) econArmNew();
 }
 
 function econRow(r, chartsMatch) {
@@ -8050,29 +8077,39 @@ function econArm(sec, keepClock) {
   if (document.hidden) return;   /* visibilitychange rearms */
   econState.timer = setTimeout(() => { econState.timer = 0; refreshEcon(false); }, sec * 1000);
 }
+/* A FORCED refresh ("Refresh now") owns the request slot until it — and the span showing — has
+   landed. While it does (`econState.forcing`) econPickSpan only RECORDS a span change, so a
+   request of its own can never take the newer generation and throw the forced reply away (or
+   show pre-refresh data from another isolate's cache); the timer is out of play too (dueAt 0,
+   so a visibility return does not refetch either). After the forced reply, `econFetch` keeps
+   asking for the span NOW showing — unforced, the forced sweep has just warmed the server —
+   until the one it asked for is the one showing, so "Refresh now" (refreshNowClicked's
+   Promise.all) stays pending through repeated span changes (Codex review, PR #294, three rounds). */
 async function refreshEcon(force, opts) {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
-  /* A forced refresh owns the clock until it lands: a timer that came due while it is in flight
-     would start a second, unforced request, take the newer generation, and get the forced
-     reply thrown away — "Refresh now" would then show the pre-refresh cache (Codex review, PR
-     #294). Nothing is pending while it runs (dueAt 0, so a visibility return does not refetch
-     either); the landing below re-arms. */
-  if (force === true) { clearTimeout(econState.timer); econState.timer = 0; econState.dueAt = 0; econState.forcing = true; }
-  const keepClock = !!(opts && opts.span);
+  const forced = force === true;
+  if (forced) { clearTimeout(econState.timer); econState.timer = 0; econState.dueAt = 0; econState.forcing = true; }
+  try {
+    let again = await econFetch(forced, forced, !!(opts && opts.span));
+    while (again) again = await econFetch(false, true, true);
+  } finally {
+    if (forced) econState.forcing = false;
+  }
+}
+/* One request for the span showing. `force` asks the function to bypass its caches; `owned` means a
+   forced refresh holds the request slot, so a span change meanwhile was only recorded and is asked
+   for by the caller (the return value: true = "the span moved, ask again"). */
+async function econFetch(force, owned, keepClock) {
   const asked = econTf, gen = ++econState.gen;
   if (keepClock) { econState.pending = true; const l = document.getElementById('econList'); if (l) l.classList.add('is-pending'); }
   let out = null;
   try {
-    out = await deskEcon(asked, force === true);
+    out = await deskEcon(asked, force);
   } catch { out = null; }   /* a failed poll: handled below, OUTSIDE the try (renderAfterFetch) */
-  if (force === true) econState.forcing = false;
-  if (gen !== econState.gen) return;   /* a newer request owns the state now */
+  if (gen !== econState.gen) return false;   /* a newer request owns the state now */
   econState.pending = false;
-  /* The span changed while this FORCED refresh was in flight (econPickSpan only recorded it): that is
-     not a failed poll. The forced sweep has just warmed the server, so ask for the span now showing —
-     and AWAIT it: "Refresh now" (refreshNowClicked's Promise.all) must stay pending until that span has
-     landed, or another click could start a competing forced request and supersede it. */
-  if (force === true && econTf !== asked) { await refreshEcon(false, { span: true }); return; }
+  /* the span changed while a forced refresh held the slot: not a failed poll, ask again for the one showing */
+  if (owned && econTf !== asked) return true;
   /* drop a reply for a span nobody is asking about any more, or one that says it drew another window
      (version skew: an older deploy would answer a range it does not know with 3m) */
   if (out && (econTf !== asked || (out.range && out.range !== asked) || !Array.isArray(out.rows))) out = null;
@@ -8089,11 +8126,13 @@ async function refreshEcon(force, opts) {
     renderAfterFetch(() => renderEcon(econState.payload));
     econArm(ECON_RETRY_S, keepClock);
   }
+  return false;
 }
 function econVisibility() {
   if (document.hidden) {
     clearTimeout(econState.timer); econState.timer = 0;
-    clearTimeout(econState.newTimer); econState.newTimer = 0;
+    for (const h of econState.newTimers.values()) clearTimeout(h);
+    econState.newTimers.clear();
     return;
   }
   if (DESK.mode !== 'demo' && DESK_DB.url && econState.dueAt) {

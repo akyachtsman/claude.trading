@@ -6164,9 +6164,10 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
 
   // 7b2b. a SPAN change while a forced refresh is in flight is serialised behind it (Codex review, PR #294): a request of its
   //       own would take the newer generation and discard the forced reply, so the span is only recorded, marked pending,
-  //       and asked for the moment the forced reply lands — which is not a failed poll.
+  //       and asked for the moment the forced reply lands — which is not a failed poll. The forced refresh (what "Refresh now"
+  //       awaits) stays pending until the span SHOWING has landed, however many times it is changed on the way.
   const cur = await page.evaluate(() => econTf);
-  const other = cur === '1y' ? '6m' : '1y';
+  const [other, third] = ['1y', '6m', '1m'].filter((t) => t !== cur);
   n = await calls();
   await page.evaluate(() => { window.__forcedDone = false; window.__forced = refreshEcon(true); window.__forced.then(() => { window.__forcedDone = true; }); });
   expect(await calls(), 'the forced request is in flight').toBe(n + 1);
@@ -6176,13 +6177,17 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await page.evaluate((r) => { window.__holdRange = r; window.__releaseForce(); }, other);
   await expect.poll(calls, 'the forced reply landing asks for the span now showing').toBe(n + 2);
   expect(await last(), 'unforced, for the span that was picked').toEqual({ range: other, force: false });
-  // the forced refresh — what "Refresh now" awaits — stays PENDING until that follow-up has landed: else the button comes back
-  // and another click could start a competing forced request that supersedes the span reply (Codex review, PR #294)
-  expect(await page.evaluate(async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); return window.__forcedDone; }),
-    'the forced refresh is still pending while the span request is in flight').toBe(false);
+  const flush = () => page.evaluate(async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); return window.__forcedDone; });
+  expect(await flush(), 'the forced refresh is still pending while the span request is in flight').toBe(false);
+  // ...and a SECOND span change while that follow-up is in flight is still only recorded: the lock is kept
+  await pick(third);
+  expect(await calls(), 'a second span change during the follow-up starts no request of its own either').toBe(n + 2);
   await page.evaluate(() => { window.__releaseSpan(); window.__holdRange = null; });
-  await expect.poll(() => page.evaluate(() => window.__forcedDone), 'and settles once the span has landed').toBe(true);
-  await expect.poll(() => page.evaluate(() => econState.payload && econState.payload.range), 'and that reply is what is drawn').toBe(other);
+  await expect.poll(calls, 'the follow-up landing on a span that has moved asks for the one now showing').toBe(n + 3);
+  expect(await last(), 'unforced, for the latest span').toEqual({ range: third, force: false });
+  await expect.poll(() => page.evaluate(() => window.__forcedDone), 'and the forced refresh settles only once THAT has landed').toBe(true);
+  expect(await page.evaluate(() => econState.payload && econState.payload.range), 'the drawn reply is the latest span').toBe(third);
+  expect(await page.evaluate(() => econState.forcing), 'the forced lock is released').toBe(false);
   expect(await lamp(), 'a span change behind a forced refresh is not a failed poll').toMatch(/^live$/i);
   await pick(cur);
   await expect.poll(() => page.evaluate(() => econState.payload && econState.payload.range), 'back on the original span').toBe(cur);
@@ -6275,8 +6280,21 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   expect(rows.find((r) => r.id === 'cpi').isNew, 'a reading that moved since this browser last saw it is NEW (client-side, from asOf — `changed` was false)').toBe(true);
   n = await page.locator('#econList .econ-new').count();
   expect(n, 'CPI and the still-unseen unemployment').toBe(2);
+  // a chip is acknowledged only while ITS ROW has been in view (Codex review, PR #294): shrink the panel body so both rows sit below
+  // its scrollport — out of view whatever the page scroll — and two minutes go by without a chip clearing or a timer running
+  const timers = () => page.evaluate(() => econState.newTimers.size);
+  await page.evaluate(() => { const b = document.getElementById('econBody'); b.style.maxHeight = '140px'; b.scrollTop = 0; });
+  await expect.poll(timers, 'rows out of view hold no acknowledgement timer').toBe(0);
+  await page.clock.runFor(120_000);
+  await expect(page.locator('#econList .econ-new'), 'unseen NEW chips survive 2 minutes').toHaveCount(2);
+  // bring both into view: each row starts its own ~60s
+  await page.evaluate(() => {
+    document.getElementById('econBody').style.maxHeight = '';
+    document.querySelector('#econList .econ-row[data-id="unrate"]').scrollIntoView({ block: 'center' });
+  });
+  await expect.poll(timers, 'rows in view start their timers').toBe(2);
   await page.clock.runFor(61_000);
-  await expect(page.locator('#econList .econ-new'), 'NEW clears by itself after ~60s on screen').toHaveCount(0);
+  await expect(page.locator('#econList .econ-new'), 'NEW clears by itself after ~60s IN VIEW').toHaveCount(0);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('econ_seen_v1')).cpi), 'and is remembered').toBe('2099-01-01|9.9');
 
   // 7h. a span change asks for the new range, dims the old charts meanwhile, and never pushes a due poll out
