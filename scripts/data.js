@@ -464,20 +464,32 @@ function accountsLampFor(asOfIso, syncedAtIso, now) {
     : { cls: 'lamp--stale', text: 'STALE', stamp: stamp + ' — sync overdue' };
 }
 
-/* Auth: PIN-validated Supabase RPCs (SECURITY DEFINER, anon-only EXECUTE).
-   Two plain fetch calls — no client library needed for /rest/v1/rpc. `extra`
-   merges additional named args into the RPC body (e.g. desk_set_system_prompt's
-   new_content) alongside pin. */
-async function deskRpc(fn, pin, extra) {
-  const res = await fetch(DESK_DB.url + '/rest/v1/rpc/' + fn, {
+/* The one request every desk backend call shares (RPC and edge function alike):
+   POST JSON with the public anon key as apikey and bearer. Deliberately NOT
+   async — it hands back fetch's own promise, so each caller keeps its own
+   await, failure mapping and timing. `body` is the object to serialise (an
+   `undefined` member is dropped by JSON.stringify, which is why S30's
+   expected_version is sent as an explicit null); `extra` adds fetch options
+   (deskAsk's abort `signal`). */
+function deskPost(path, body, extra) {
+  return fetch(DESK_DB.url + path, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       apikey: DESK_DB.anonKey,
       authorization: 'Bearer ' + DESK_DB.anonKey,
     },
-    body: JSON.stringify({ pin, ...(extra || {}) }),
+    body: JSON.stringify(body),
+    ...extra,
   });
+}
+
+/* Auth: PIN-validated Supabase RPCs (SECURITY DEFINER, anon-only EXECUTE).
+   Plain POSTs via deskPost — no client library needed for /rest/v1/rpc. `extra`
+   merges additional named args into the RPC body (e.g. desk_set_system_prompt's
+   new_content) alongside pin. */
+async function deskRpc(fn, pin, extra) {
+  const res = await deskPost('/rest/v1/rpc/' + fn, { pin, ...(extra || {}) });
   if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
   return res.json();
 }
@@ -485,17 +497,17 @@ async function deskRpc(fn, pin, extra) {
    one the function would ignore — the body should say what the call actually
    is. Used only by the watchlist's open RPCs. */
 async function deskRpcOpen(fn, extra) {
-  const res = await fetch(DESK_DB.url + '/rest/v1/rpc/' + fn, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      apikey: DESK_DB.anonKey,
-      authorization: 'Bearer ' + DESK_DB.anonKey,
-    },
-    body: JSON.stringify(extra || {}),
-  });
+  const res = await deskPost('/rest/v1/rpc/' + fn, extra || {});
   if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
   return res.json();
+}
+/* The PIN RPCs whose panel only needs "did it work": anything but an `ok:true`
+   reply — a refusal, a non-OK status, bad JSON, a rejected fetch — is
+   `{ok:false}`. The callers below are plain functions returning this promise,
+   so they settle on exactly the same tick the inline try/catch did. */
+async function deskRpcOk(fn, pin, extra) {
+  try { const out = await deskRpc(fn, pin, extra); return out && out.ok ? out : { ok: false }; }
+  catch { return { ok: false }; }
 }
 async function deskLogin(pin) {
   const out = await deskRpc('desk_login', pin);
@@ -524,14 +536,8 @@ async function deskChatClear(pin) {
    text desk-ask sends the model as `system` on every call — the owner's
    self-service alternative to asking Claude Code to edit and redeploy
    supabase/functions/desk-ask/index.ts. */
-async function deskGetSystemPrompt(pin) {
-  try { const out = await deskRpc('desk_get_system_prompt', pin); return out && out.ok ? out : { ok: false }; }
-  catch { return { ok: false }; }
-}
-async function deskSetSystemPrompt(pin, content) {
-  try { const out = await deskRpc('desk_set_system_prompt', pin, { new_content: content }); return out && out.ok ? out : { ok: false }; }
-  catch { return { ok: false }; }
-}
+function deskGetSystemPrompt(pin) { return deskRpcOk('desk_get_system_prompt', pin); }
+function deskSetSystemPrompt(pin, content) { return deskRpcOk('desk_set_system_prompt', pin, { new_content: content }); }
 
 /* desk_017: the scheduled-ask roster. It lives in the DATABASE, not
    localStorage, because pg_cron — not this page — is what fires it: the desk
@@ -539,14 +545,8 @@ async function deskSetSystemPrompt(pin, content) {
    The write is an upsert-by-id, so each row's `lastRunAt` timer survives an
    unrelated edit; `id` is therefore load-bearing and must be sent back
    unchanged for every row that already exists. */
-async function deskGetAskSchedule(pin) {
-  try { const out = await deskRpc('desk_get_ask_schedule', pin); return out && out.ok ? out : { ok: false }; }
-  catch { return { ok: false }; }
-}
-async function deskSetAskSchedule(pin, rows) {
-  try { const out = await deskRpc('desk_set_ask_schedule', pin, { new_rows: rows }); return out && out.ok ? out : { ok: false }; }
-  catch { return { ok: false }; }
-}
+function deskGetAskSchedule(pin) { return deskRpcOk('desk_get_ask_schedule', pin); }
+function deskSetAskSchedule(pin, rows) { return deskRpcOk('desk_set_ask_schedule', pin, { new_rows: rows }); }
 
 /* Ask-the-desk: PIN-gated agentic Claude assistant (memory replay + web research
    + live get_quote). The Anthropic key lives only in the edge function's
@@ -562,16 +562,7 @@ async function deskSetAskSchedule(pin, rows) {
    so nothing about the request plumbing ends up inside the question the model
    reads or the history it replays. */
 async function deskAsk(pin, question, context, signal, verify) {
-  const res = await fetch(DESK_DB.url + '/functions/v1/desk-ask', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      apikey: DESK_DB.anonKey,
-      authorization: 'Bearer ' + DESK_DB.anonKey,
-    },
-    body: JSON.stringify({ pin, question, context, verify: verify === true }),
-    signal,
-  });
+  const res = await deskPost('/functions/v1/desk-ask', { pin, question, context, verify: verify === true }, { signal });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-ask → HTTP ' + res.status);
   return out; /* {ok:true, answer, sources} | {ok:false, error} */
@@ -588,17 +579,9 @@ async function deskAsk(pin, question, context, signal, verify) {
    every cache on the path, or the one it misses is the number the owner is
    staring at. */
 async function deskQuote(symbol, kind, prepost, opts) {
-  const res = await fetch(DESK_DB.url + '/functions/v1/quote-proxy', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      apikey: DESK_DB.anonKey,
-      authorization: 'Bearer ' + DESK_DB.anonKey,
-    },
-    body: JSON.stringify({
-      symbol, kind: kind || 'daily', prepost: prepost === true,
-      ...(opts && opts.force ? { force: true } : {}),
-    }),
+  const res = await deskPost('/functions/v1/quote-proxy', {
+    symbol, kind: kind || 'daily', prepost: prepost === true,
+    ...(opts && opts.force ? { force: true } : {}),
   });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('quote-proxy → HTTP ' + res.status);
@@ -624,18 +607,10 @@ function regularOnly(s) {
    the PIN RPCs; this feed resolves it server-side and returns rows already
    grouped by list, so the panel never fans out per symbol. */
 async function deskWatchlist(force, range) {
-  const res = await fetch(DESK_DB.url + '/functions/v1/desk-watchlist', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      apikey: DESK_DB.anonKey,
-      authorization: 'Bearer ' + DESK_DB.anonKey,
-    },
-    /* `range` picks the tile sparkline's window (owner request 2026-07-30).
-       The function validates it against its own allowlist, so an unknown token
-       degrades to 1d rather than failing the panel. */
-    body: JSON.stringify({ force: force === true, range: range || '1d' }),
-  });
+  /* `range` picks the tile sparkline's window (owner request 2026-07-30).
+     The function validates it against its own allowlist, so an unknown token
+     degrades to 1d rather than failing the panel. */
+  const res = await deskPost('/functions/v1/desk-watchlist', { force: force === true, range: range || '1d' });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-watchlist → HTTP ' + res.status);
   return out; /* {ok, source, asOf, missing, lists:[{title, rows:[…]}]} */
@@ -842,15 +817,7 @@ const DEMO_WL = {
    demand through the desk-maps edge function (fixed server-side roster, no
    PIN — public data; owner ruling 2026-07-13 replaced the nightly batch). */
 async function deskMaps() {
-  const res = await fetch(DESK_DB.url + '/functions/v1/desk-maps', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      apikey: DESK_DB.anonKey,
-      authorization: 'Bearer ' + DESK_DB.anonKey,
-    },
-    body: '{}',
-  });
+  const res = await deskPost('/functions/v1/desk-maps', {});
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-maps → HTTP ' + res.status);
   return out; /* {ok:true, asOf, generatedAt, cuts:{crypto|futures|world}} | {ok:false, error} */
@@ -860,15 +827,7 @@ async function deskMaps() {
    function replaces one committed data/*.json snapshot with the same shape
    plus {ok, generatedAt}. Anon-callable, fixed upstreams server-side. */
 async function deskFeed(name, params) {
-  const res = await fetch(DESK_DB.url + '/functions/v1/' + name, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      apikey: DESK_DB.anonKey,
-      authorization: 'Bearer ' + DESK_DB.anonKey,
-    },
-    body: JSON.stringify(params || {}),
-  });
+  const res = await deskPost('/functions/v1/' + name, params || {});
   const out = await res.json().catch(() => null);
   if (!out || !out.ok) throw new Error(name + ' → ' + (out && out.error ? out.error : 'HTTP ' + res.status));
   return out;
