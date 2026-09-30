@@ -4985,6 +4985,14 @@ test('S47: heatmap labels reach the screen (advisory pixel sampling)', async ({ 
 // None of that fails a test that merely opens and closes a dialog, which is why
 // each dialog is driven through the whole contract here.
 //
+// The page behind is made REALLY inert too (screen-reader browsing, pointer and
+// find-in-page reach an aria-modal background otherwise): every sibling along the
+// dialog's ancestor chain carries `inert`, the chain itself never does (a backdrop
+// sits inside <main>, so inerting <main> would inert the dialog), stacked dialogs
+// leave only the top one live, and closing the last leaves NOTHING inert. The
+// probes TRY to focus controls behind the dialog, so an `inert` attribute that
+// does nothing cannot pass.
+//
 // TWO checks keep the trap honest. The ring is walked past its own length in
 // BOTH directions, so a wrap that fails at either end is reached. And it must
 // VISIT every control: "focus never leaves the dialog" is also true of a trap
@@ -5013,6 +5021,40 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     return { n: ctl.length, in: root.contains(document.activeElement), at: ctl.indexOf(document.activeElement) };
   }, { p: panel, sel: FOCUSABLE });
 
+  /* What the open dialog did to the page behind it, read off the live DOM. The probes are
+     three real controls OUTSIDE the dialog (its own opener among them — it sits in the
+     region that must be inert while the dialog is up) and each is asked to take focus: an
+     inert node refuses, so "reports inert" cannot pass on an attribute that does nothing.
+     Focus is handed back afterwards so the Tab walk starts where the open left it. */
+  const behindDialog = (panel, opener) => page.evaluate(({ p, opener: from }) => {
+    const root = document.querySelector(p);
+    const desc = n => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '.' + String(n.className).split(' ')[0]);
+    const probe = (n) => {
+      if (!n) return { missing: true };
+      const before = document.activeElement;
+      const marked = !!n.closest('[inert]');
+      n.focus();
+      const tookFocus = document.activeElement === n;
+      if (tookFocus && before && before !== n) before.focus();
+      return { marked, tookFocus };
+    };
+    return {
+      count: document.querySelectorAll('[inert]').length,
+      // an inert node that IS the panel, holds it, or sits inside it would freeze the dialog itself
+      hitsDialog: [...document.querySelectorAll('[inert]')]
+        .filter(n => n === root || n.contains(root) || root.contains(n)).map(desc),
+      dialogInert: !!root.closest('[inert]'),
+      // read-only content outside <main> has no control to focus, but a virtual cursor still walks it
+      landmarks: ['.masthead', '.site-footer'].map(q => [q, !!document.querySelector(q).closest('[inert]')]),
+      probes: {
+        opener: probe(from),
+        tile: probe(document.querySelector('.wl-strip .wl-tile')),
+        heatToggle: probe(document.getElementById('heatToggle')),
+      },
+    };
+  }, { p: panel, opener });
+  const inertCount = () => page.evaluate(() => document.querySelectorAll('[inert]').length);
+
   const contract = async (name, { opener, open, backdrop, panel, keep, dirty }) => {
     const back = page.locator(backdrop);
     const from = await page.evaluateHandle(opener);   // the element focus must come back to
@@ -5024,6 +5066,20 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     if (keep) {
       expect(await page.evaluate(() => document.activeElement && document.activeElement.id),
         `${name}: a destructive dialog opens on "Keep it"`).toBe(keep);
+    }
+
+    // the page behind is inert, the dialog and its ancestors are not
+    const behind = await behindDialog(panel, from);
+    expect(behind.count, `${name}: opening puts the page behind it under inert`).toBeGreaterThan(0);
+    expect(behind.hitsDialog, `${name}: no inert node is, holds or sits inside the dialog`).toEqual([]);
+    expect(behind.dialogInert, `${name}: the dialog stays live`).toBe(false);
+    for (const [q, marked] of behind.landmarks) {
+      expect(marked, `${name}: ${q}, outside <main>, is inert too — the walk reaches every ancestor level`).toBe(true);
+    }
+    for (const [what, r] of Object.entries(behind.probes)) {
+      expect(r.missing, `${name}: probe "${what}" exists on the page`).toBeFalsy();
+      expect(r.marked, `${name}: ${what} behind the dialog reports inert`).toBe(true);
+      expect(r.tookFocus, `${name}: ${what} behind the dialog cannot be focused`).toBe(false);
     }
 
     // N large enough to wrap the ring in either direction, and every control reached
@@ -5055,6 +5111,7 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     await expect(back, `${name}: Escape closes it`).toBeHidden();
     expect(await page.evaluate((el) => document.activeElement === el, from),
       `${name}: focus returns to the element that opened it`).toBe(true);
+    expect(await inertCount(), `${name}: closing it leaves NOTHING inert`).toBe(0);
   };
 
   // ── demo: a single click opens the detail window at once (no removal wired to defer for)
@@ -5119,6 +5176,57 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     backdrop: '#askSchedBackdrop', panel: '#askSchedPanel',
     dirty: { edit: () => page.locator('.ask-sched-q').fill('an unsaved edit'), note: '#askSchedNote' },
   });
+
+  // ── stacked dialogs: only the TOP one is live, and each close restores exactly the state under it
+  const live = (sel) => page.evaluate((q) => !document.querySelector(q).closest('[inert]'), sel);
+  const inertList = () => page.evaluate(() => [...document.querySelectorAll('[inert]')]
+    .map(n => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '.' + String(n.className).split(' ')[0])).sort());
+  const heldId = () => page.evaluate(() => document.activeElement && document.activeElement.id);
+  // the second dialog is opened FROM a control inside the editor, as a real nested flow would
+  const openNew = () => page.evaluate(() => openWlNewList(document.getElementById('wlAddListBtn')));
+
+  await page.locator('#wlEditBtn').click();
+  await expect(page.locator('#wlEditBackdrop'), 'stack: the editor opens').toBeVisible();
+  await page.waitForTimeout(250);   // its roster has landed, so + Add list is enabled
+  const underEditor = await inertList();
+  expect(underEditor.length, 'stack: the editor alone puts the page under inert').toBeGreaterThan(0);
+  expect(await live('#wlEditPanel'), 'stack: the editor is live').toBe(true);
+
+  await openNew();
+  await expect(page.locator('#wlNewBackdrop'), 'stack: the second dialog opens over it').toBeVisible();
+  expect(await live('#wlNewPanel'), 'stack: the TOP dialog is live').toBe(true);
+  expect(await live('#wlEditPanel'), 'stack: the dialog UNDER the top one is inert too').toBe(false);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlNewBackdrop'), 'stack: Escape closes the top dialog only').toBeHidden();
+  await expect(page.locator('#wlEditBackdrop'), 'stack: the one beneath stays open').toBeVisible();
+  expect(await inertList(), 'stack: closing the top dialog restores EXACTLY the state under it').toEqual(underEditor);
+  expect(await live('#wlEditPanel'), 'stack: the editor is live again').toBe(true);
+  expect(await heldId(), 'stack: focus went back to the control inside the editor that opened the second dialog — inert had to lift BEFORE focus()')
+    .toBe('wlAddListBtn');
+
+  // closed OUT OF ORDER (the lower one first) and RE-OPENED while open: the survivor stays the only live one
+  await openNew();
+  await openNew();
+  await expect(page.locator('#wlNewBackdrop')).toBeVisible();
+  await page.evaluate(() => closeWlEditor());
+  await expect(page.locator('#wlEditBackdrop'), 'stack: the lower dialog closed underneath').toBeHidden();
+  expect(await live('#wlNewPanel'), 'stack: the survivor is still live').toBe(true);
+  expect(await inertCount(), 'stack: and the page is still inert behind it').toBeGreaterThan(0);
+  expect(await page.evaluate(() => document.getElementById('wlNewPanel').contains(document.activeElement)),
+    'stack: closing a dialog UNDER the top one does not pull focus out of the top one').toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlNewBackdrop')).toBeHidden();
+  expect(await inertCount(), 'stack: closing the last dialog leaves NOTHING inert — a re-open never stacks a second claim').toBe(0);
+
+  // an `inert` that something ELSE set is never ours to strip
+  await page.evaluate(() => document.querySelector('.site-footer').setAttribute('inert', ''));
+  await openNew();
+  await expect(page.locator('#wlNewBackdrop')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlNewBackdrop')).toBeHidden();
+  expect(await inertList(), 'stack: an inert the page had already is left alone when the dialog closes').toEqual(['footer.site-footer']);
+  await page.evaluate(() => document.querySelector('.site-footer').removeAttribute('inert'));
+  expect(await inertCount(), 'stack: and nothing else remains').toBe(0);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

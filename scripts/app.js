@@ -33,19 +33,47 @@ const seriesColor = key => 'var(--color-series-' + key + ')';
    EVERY dialog on the desk opens through openModal() and closes through
    closeModal(), so initial focus, Escape, backdrop click, focus RETURNED to the
    opener and the Tab/Shift+Tab TRAP live once. aria-modal only DECLARES the page
-   behind inert; browsers do not enforce it for Tab, so focus used to walk out of
-   the dialog into the desk behind it.
+   behind inert and enforces nothing, so syncModalInert() makes it REAL: everything
+   outside the top dialog's ancestor chain is `inert` (screen-reader browsing,
+   pointer, find-in-page), and the trap keeps Tab from walking out of the dialog.
    opts: initialFocus (element, else the first control), restoreFocusTo (the
    opener, else whatever held focus), dismissOnBackdrop (default true) and
    onDismiss — what Escape/backdrop DO. Pass the modal's own close function so
    its veto still applies (`wlBusy`, the dirty scheduled-ask warning). */
 const modalStack = [];   /* open dialogs, topmost last — only the top one answers keys */
 const modalWired = new WeakSet();   /* backdrops that already carry their pointer listeners */
+const modalInerted = new Set();   /* the nodes WE made inert — the only ones we ever un-inert */
+const MODAL_NOT_RENDERED = /^(SCRIPT|STYLE|LINK|TEMPLATE|NOSCRIPT)$/;
 const MODAL_TABBABLE = 'a[href], button, input, select, textarea, [tabindex]';
 const modalTop = () => modalStack[modalStack.length - 1];
 function modalTabbables(panel) {
   return [...panel.querySelectorAll(MODAL_TABBABLE)].filter(n =>
     !n.matches(':disabled') && n.tabIndex >= 0 && n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden');
+}
+/* Inert every SIBLING on the way from the top dialog's backdrop up to <body>: the
+   dialog and each ancestor stay live (a backdrop sits inside <main>, so inerting
+   <main> would inert the dialog itself). Recomputed from the stack on every open and
+   close, so a nested dialog leaves the ones under it inert and closing it restores
+   exactly the previous state. An `inert` already on a node is never claimed, so a
+   close cannot strip one that something else set. */
+function syncModalInert() {
+  const want = new Set();
+  const top = modalTop();
+  if (top && top.back.isConnected) {
+    for (let n = top.back; n.parentElement && n !== document.body; n = n.parentElement) {
+      for (const sib of n.parentElement.children) {
+        if (sib !== n && !MODAL_NOT_RENDERED.test(sib.tagName)) want.add(sib);
+      }
+    }
+  }
+  for (const n of [...modalInerted]) {
+    if (!want.has(n)) { n.removeAttribute('inert'); modalInerted.delete(n); }
+  }
+  for (const n of want) {
+    if (n.hasAttribute('inert')) continue;   /* ours already, or someone else's — leave both alone */
+    n.setAttribute('inert', '');
+    modalInerted.add(n);
+  }
 }
 function openModal(back, opts = {}) {
   const panel = back.querySelector('[role="dialog"], [role="alertdialog"]') || back;
@@ -59,6 +87,7 @@ function openModal(back, opts = {}) {
   });
   if (!modalWired.has(back)) { modalWired.add(back); wireBackdrop(back); }
   back.hidden = false;
+  syncModalInert();
   const want = opts.initialFocus && !opts.initialFocus.matches(':disabled') ? opts.initialFocus : modalTabbables(panel)[0];
   if (want) want.focus();
   if (!panel.contains(document.activeElement)) { panel.tabIndex = -1; panel.focus(); }
@@ -69,6 +98,7 @@ function closeModal(back) {
   const at = modalStack.findIndex(m => m.back === back);
   if (at < 0) return;
   const { opener } = modalStack.splice(at, 1)[0];
+  syncModalInert();   /* BEFORE focus(): the opener was inert until this line, and focus() on an inert node silently does nothing */
   /* the opener may have been re-rendered away while the dialog was up, which replaces the node */
   if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
 }
