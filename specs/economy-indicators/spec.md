@@ -1,6 +1,6 @@
 # Spec — Economy indicators (`desk-econ`)
 
-> **STATUS (2026-09-30): BACKEND BUILT, NOT DEPLOYED; UI NOT STARTED.** `supabase/functions/desk-econ/index.ts`, `config/econ-indicators.json` and `tools/econ-check.mjs` are committed; nothing is deployed. The Treasury path is **UNVERIFIED-AGAINST-LIVE** (see §9). Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
+> **STATUS (2026-09-30): BACKEND BUILT, NOT DEPLOYED; UI IN PROGRESS. FRED-ONLY TO BEGIN WITH (owner: "can't you just use FRED to begin with?").** `supabase/functions/desk-econ/index.ts`, `config/econ-indicators.json` and `tools/econ-check.mjs` are committed; nothing is deployed. The shipped roster names NO Treasury column, so the Treasury same-day path (§3) is **dormant** — complete and tested on fixtures, **UNVERIFIED-AGAINST-LIVE** (§9), and switched on per row by adding `"treasury": "10 Yr"` to its `sources`. Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
 
 Requested 2026-09-30 by the owner (see `brief.md`). Slug: `economy-indicators`. This file is the contract the UI codes against (§5); the UI work is `tasks.md`; the operative summary is `docs/architecture/economy-panel.md`.
 
@@ -8,7 +8,7 @@ Requested 2026-09-30 by the owner (see `brief.md`). Slug: `economy-indicators`. 
 
 ## 1. Indicators (the default roster)
 
-| id | label | FRED series | Treasury column | transform | cadence | decimals |
+| id | label | FRED series | Treasury column (dormant — not in the shipped roster) | transform | cadence | decimals |
 |---|---|---|---|---|---|---|
 | `ust2y` | 2Y Treasury | `DGS2` | `2 Yr` | level | daily | 2 |
 | `ust10y` | 10Y Treasury | `DGS10` | `10 Yr` | level | daily | 2 |
@@ -38,7 +38,9 @@ Every upstream fetch carries the desk `UA` and an `AbortSignal` timeout (config 
 
 ## 3. Treasury vs FRED
 
-FRED is the spine of every row. For the three yields, Treasury observations are appended only when **all** of these hold:
+**FRED-only is the default (2026-09-30).** The shipped roster and the built-in default name no Treasury column, so Treasury is never called and every row is `source:"fred"`. The yields therefore arrive with FRED's lag: FRED posts a day's 2Y/10Y/20Y about one business day later (measured 2026-09-30 ~14:00 ET: newest DGS10 was 09-28), so the row's `asOf` is what to trust. Everything below describes the OPT-IN same-day path, kept dormant until it can be checked against the live host after deploy; `econ-check` asserts that the committed roster makes zero Treasury calls.
+
+FRED is the spine of every row. For a row that names a Treasury column, Treasury observations are appended only when **all** of these hold:
 
 1. Treasury's file fetched and parsed (header starts `Date`, the tenor column is found **by name**, values in −5..30, no row dated after today in New York).
 2. It **agrees with FRED on every date both carry** (|Δ| ≤ 0.015 — both publish 2 decimals), and at least one date is shared. A mislabelled or shifted column cannot pass this by accident; it is the guard that makes an unverified parser safe to run.

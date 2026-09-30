@@ -23,7 +23,7 @@ Seven rows — 2Y, 10Y, 20Y Treasury, Unemployment, CPI YoY, PCE YoY, Core PCE Y
 - Nothing is deployed and the live Supabase project is not touched by this work.
 
 ## Approach chosen
-One anon-callable feed function, `desk-econ`, in the same family as `desk-market` / `desk-maps`: FRED's public CSV as the spine for every series (full history, verified reachable), the U.S. Treasury's daily par-yield CSV as a same-day tail for the three yields (FRED lags them 1–2 business days), a committed owner-editable roster (`config/econ-indicators.json`), and a refresh cadence that tightens around the scheduled release times. The history is fetched once (six-plus years) and every span is a slice of it. Detail: `spec.md`.
+One anon-callable feed function, `desk-econ`, in the same family as `desk-market` / `desk-maps`: FRED's public CSV as the spine for every series (full history, verified reachable), and — OFF by default, FRED-only to begin with (owner 2026-09-30) — the U.S. Treasury's daily par-yield CSV as an opt-in same-day tail for the three yields (FRED lags them 1–2 business days), a committed owner-editable roster (`config/econ-indicators.json`), and a refresh cadence that tightens around the scheduled release times. The history is fetched once (six-plus years) and every span is a slice of it. Detail: `spec.md`.
 
 ## Not chosen, and why
 - **BLS / BEA APIs directly**: BLS v2 needs a key; v1 is keyless but tightly rate-limited, and `api.bls.gov` was unreachable from the build sandbox. FRED republishes both within minutes to an hour of the 08:30 release, keyless.

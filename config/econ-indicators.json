@@ -1,9 +1,9 @@
 [
-  { "id": "ust2y", "label": "2Y Treasury", "sources": { "fred": "DGS2", "treasury": "2 Yr" }, "unit": "%", "transform": "level", "cadence": "daily", "decimals": 2 },
-  { "id": "ust10y", "label": "10Y Treasury", "sources": { "fred": "DGS10", "treasury": "10 Yr" }, "unit": "%", "transform": "level", "cadence": "daily", "decimals": 2 },
-  { "id": "ust20y", "label": "20Y Treasury", "sources": { "fred": "DGS20", "treasury": "20 Yr" }, "unit": "%", "transform": "level", "cadence": "daily", "decimals": 2 },
-  { "id": "unrate", "label": "Unemployment", "sources": { "fred": "UNRATE" }, "unit": "%", "transform": "level", "cadence": "monthly", "decimals": 1 },
-  { "id": "cpi", "label": "CPI YoY", "sources": { "fred": "CPIAUCNS" }, "unit": "%", "transform": "yoy", "cadence": "monthly", "decimals": 1 },
-  { "id": "pce", "label": "PCE YoY", "sources": { "fred": "PCEPI" }, "unit": "%", "transform": "yoy", "cadence": "monthly", "decimals": 1 },
-  { "id": "corepce", "label": "Core PCE YoY", "sources": { "fred": "PCEPILFE" }, "unit": "%", "transform": "yoy", "cadence": "monthly", "decimals": 1 }
+  {"id": "ust2y", "label": "2Y Treasury", "sources": {"fred": "DGS2"}, "unit": "%", "transform": "level", "cadence": "daily", "decimals": 2},
+  {"id": "ust10y", "label": "10Y Treasury", "sources": {"fred": "DGS10"}, "unit": "%", "transform": "level", "cadence": "daily", "decimals": 2},
+  {"id": "ust20y", "label": "20Y Treasury", "sources": {"fred": "DGS20"}, "unit": "%", "transform": "level", "cadence": "daily", "decimals": 2},
+  {"id": "unrate", "label": "Unemployment", "sources": {"fred": "UNRATE"}, "unit": "%", "transform": "level", "cadence": "monthly", "decimals": 1},
+  {"id": "cpi", "label": "CPI YoY", "sources": {"fred": "CPIAUCNS"}, "unit": "%", "transform": "yoy", "cadence": "monthly", "decimals": 1},
+  {"id": "pce", "label": "PCE YoY", "sources": {"fred": "PCEPI"}, "unit": "%", "transform": "yoy", "cadence": "monthly", "decimals": 1},
+  {"id": "corepce", "label": "Core PCE YoY", "sources": {"fred": "PCEPILFE"}, "unit": "%", "transform": "yoy", "cadence": "monthly", "decimals": 1}
 ]

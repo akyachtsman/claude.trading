@@ -38,6 +38,11 @@ const FRED_IDS = ['DGS2', 'DGS10', 'DGS20', 'UNRATE', 'CPIAUCNS', 'PCEPI', 'PCEP
 const FRED_TEXT = Object.fromEntries(FRED_IDS.map((id) => [id, readFileSync(path.join(FIX, `fred-${id}.csv`), 'utf8')]));
 const TSY_TEXT = Object.fromEntries(['202608', '202609'].map((m) => [m, readFileSync(path.join(FIX, `treasury-${m}.csv`), 'utf8')]));
 const CONFIG = JSON.parse(readFileSync(path.join(ROOT, 'config/econ-indicators.json'), 'utf8'));
+// The shipped roster is FRED-only (Treasury dormant). The Treasury tests need a roster that
+// turns it on, so the harness serves this one unless a test passes its own `config`
+// (`config: null` = the config host is unreachable, so the built-in default is used).
+const TSY_COL = { ust2y: '2 Yr', ust10y: '10 Yr', ust20y: '20 Yr' };
+const ROSTER_TSY = CONFIG.map((r) => (TSY_COL[r.id] ? { ...r, sources: { ...r.sources, treasury: TSY_COL[r.id] } } : r));
 
 // ── assertions ───────────────────────────────────────────────────────────────
 class Fail extends Error {}
@@ -127,8 +132,8 @@ function boot(code, opts = {}) {
       return env.opts.treasury ? env.opts.treasury(m, u) : tsyResponse(m);
     }
     if (u.hostname === 'akyachtsman.github.io') {
-      if (env.opts.config === undefined) return new Response('Not Found', { status: 404 });
-      return new Response(JSON.stringify(env.opts.config), { status: 200 });
+      if (env.opts.config === null) return new Response('Not Found', { status: 404 });
+      return new Response(JSON.stringify(env.opts.config === undefined ? ROSTER_TSY : env.opts.config), { status: 200 });
     }
     throw new TypeError('fetch to an unexpected host: ' + u.href);
   };
@@ -237,9 +242,11 @@ const TESTS = [
   ['roster from config: served rows follow it, committed config == built-in default, junk config falls back', async (code) => {
     const a = boot(code, { config: CONFIG });
     const ra = await a.call({ range: '1y' });
-    const b = boot(code);
+    const b = boot(code, { config: null });
     const rb = await b.call({ range: '1y' });
     eq(ra.json.roster, { source: 'config', count: 7, dropped: 0 }, 'committed config accepted whole');
+    eq(a.fetchCount('home.treasury.gov'), 0, 'FRED-ONLY start: the committed roster names no Treasury column, so Treasury is never called');
+    eq(ra.json.rows.map((x) => x.source), ['fred', 'fred', 'fred', 'fred', 'fred', 'fred', 'fred'], 'every committed row is served from FRED');
     eq(rb.json.roster.source, 'default', 'unreachable config -> default');
     eq(ra.json.rows, rb.json.rows, 'the committed config and the built-in default are the SAME roster');
     const c = boot(code, { config: [

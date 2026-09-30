@@ -101,10 +101,15 @@ type RosterRow = {
 // change from the unadjusted index, and the adjusted one differs by up to ~0.1pp
 // (measured on the 2026 captures: May 4.17 vs 4.25, Aug 3.35 vs 3.40). BEA's PCE
 // headline is computed from the adjusted index, so PCE uses PCEPI / PCEPILFE.
+// FRED-ONLY to begin with (owner 2026-09-30: "can't you just use FRED to begin
+// with?"). The Treasury same-day path below is complete and tested but UNVERIFIED
+// against the live host, so it stays DORMANT: it runs only for a row whose `sources`
+// names a Treasury column (e.g. treasury: '10 Yr'), and this roster and
+// config/econ-indicators.json must stay identical (econ-check asserts it).
 const DEFAULT_ROSTER: unknown[] = [
-  { id: 'ust2y', label: '2Y Treasury', sources: { fred: 'DGS2', treasury: '2 Yr' }, unit: '%', transform: 'level', cadence: 'daily', decimals: 2 },
-  { id: 'ust10y', label: '10Y Treasury', sources: { fred: 'DGS10', treasury: '10 Yr' }, unit: '%', transform: 'level', cadence: 'daily', decimals: 2 },
-  { id: 'ust20y', label: '20Y Treasury', sources: { fred: 'DGS20', treasury: '20 Yr' }, unit: '%', transform: 'level', cadence: 'daily', decimals: 2 },
+  { id: 'ust2y', label: '2Y Treasury', sources: { fred: 'DGS2' }, unit: '%', transform: 'level', cadence: 'daily', decimals: 2 },
+  { id: 'ust10y', label: '10Y Treasury', sources: { fred: 'DGS10' }, unit: '%', transform: 'level', cadence: 'daily', decimals: 2 },
+  { id: 'ust20y', label: '20Y Treasury', sources: { fred: 'DGS20' }, unit: '%', transform: 'level', cadence: 'daily', decimals: 2 },
   { id: 'unrate', label: 'Unemployment', sources: { fred: 'UNRATE' }, unit: '%', transform: 'level', cadence: 'monthly', decimals: 1 },
   { id: 'cpi', label: 'CPI YoY', sources: { fred: 'CPIAUCNS' }, unit: '%', transform: 'yoy', cadence: 'monthly', decimals: 1 },
   { id: 'pce', label: 'PCE YoY', sources: { fred: 'PCEPI' }, unit: '%', transform: 'yoy', cadence: 'monthly', decimals: 1 },

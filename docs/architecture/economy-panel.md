@@ -10,9 +10,13 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   single-flight, every upstream fetch bounded by an `AbortSignal`, always JSON.
   CORS is the **quote-proxy Origin allowlist** (site origin only; no Origin = 403)
   rather than the `*` the other five feeds use — a browser-enforced speed-bump.
-- **Sources, keyless.** FRED `fredgraph.csv` is the SPINE of every row (verified
-  reachable 2026-09-30; lags daily yields 1–2 business days). The U.S. Treasury
-  daily par-yield CSV is a same-day TAIL for the three yields only, and is
+- **Sources, keyless — FRED ONLY TO BEGIN WITH** (owner 2026-09-30). FRED `fredgraph.csv` is the SPINE of every row (verified
+  reachable 2026-09-30; lags daily yields 1–2 business days: read the row's `asOf`).
+  The shipped roster and the built-in default name no Treasury column, so
+  Treasury is never called (`econ-check` asserts zero calls) and every row is
+  `source:"fred"`. The U.S. Treasury daily par-yield CSV is an OPT-IN same-day
+  TAIL for the three yields (add `"treasury": "10 Yr"` to a row's `sources`),
+  dormant until it can be checked against the live host, and
   **UNVERIFIED-AGAINST-LIVE** — `home.treasury.gov` was unreachable from the build
   sandbox, so its parser was written from the documented layout and tested on
   constructed fixtures. It is used only when (1) it parses, (2) it AGREES with
