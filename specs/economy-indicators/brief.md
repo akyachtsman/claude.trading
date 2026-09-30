@@ -19,8 +19,8 @@ Seven rows — 2Y, 10Y, 20Y Treasury, Unemployment, CPI YoY, PCE YoY, Core PCE Y
 ## Constraints
 - No vendor JS or iframes (owner ruling 2026-08-07): the data comes only through a desk edge function.
 - Live mode is real data or nothing; absent is never 0.
-- The panel is 232px wide today.
-- Nothing is deployed and the live Supabase project is not touched by this work.
+- The panel was 232px wide when this was written (it is `clamp(232px, 100vw − 1067px, 320px)` now — `docs/architecture/desk-row-layout.md`).
+- Nothing ships live until the owner approves its deploy, and only the dedicated Supabase project is touched. *(Historical: this read "nothing is deployed" while the function was being built. The owner approved the deploy on 2026-09-30 and `desk-econ` v1 is live — `docs/architecture/economy-panel.md`.)*
 
 ## Approach chosen
 One anon-callable feed function, `desk-econ`, in the same family as `desk-market` / `desk-maps`: FRED's public CSV as the spine for every series (full history, verified reachable), and — OFF by default, FRED-only to begin with (owner 2026-09-30) — the U.S. Treasury's daily par-yield CSV as an opt-in same-day tail for the three yields (FRED lags them 1–2 business days), a committed owner-editable roster (`config/econ-indicators.json`), and a refresh cadence that tightens around the scheduled release times. The history is fetched once (six-plus years) and every span is a slice of it. Detail: `spec.md`.

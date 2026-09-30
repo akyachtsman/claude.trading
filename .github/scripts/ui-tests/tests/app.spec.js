@@ -2099,7 +2099,6 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   expect(await scrollLeftOf(), 'in the middle of the row nothing scrolls').toBe(0);
   await page.mouse.move(edge.right.x, edge.right.y, { steps: 4 });
   await expect.poll(scrollLeftOf, { message: 'holding the pointer at the right edge scrolls the row', timeout: 6000 }).toBeGreaterThan(120);
-  const scrolledTo = await scrollLeftOf();
   const markerAfterScroll = await page.evaluate(() => {
     const m = document.querySelector('.wl-drop-marker'), next = m && m.nextElementSibling;
     return { marker: !!m, before: next ? next.dataset.sym : null };
@@ -2107,8 +2106,42 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   expect(markerAfterScroll.marker, 'the insertion marker follows the tiles as the row scrolls').toBe(true);
   const markerSlot = markerAfterScroll.before === null ? edge.symsAtStart.length : edge.symsAtStart.indexOf(markerAfterScroll.before);   // null = the end of the list
   expect(markerSlot, 'the marker now sits at a slot that was OFF screen when the drag began').toBeGreaterThan(2);
+  // Hold at the right edge until the row runs out, then it must STOP. The insertion marker is a 3px flex child, so
+  // with it in the row the row can scroll 3px past its last tile; repainting the marker clamps it back and the next
+  // frame "moves" again — a loop of DOM mutation and layout that never ends at the boundary (Codex review, PR #294).
+  // The pointer has not moved, so the loop is still running: put the row a few frames short of its end (waiting out
+  // 2400px at a slow frame rate proves nothing more) and let the LOOP finish the job. It must then queue no further
+  // frame, and a settled row must be left alone — not rewritten every frame.
+  await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    zone.scrollLeft = zone.scrollWidth - zone.clientWidth - 60;
+  }, longBand);
+  await expect.poll(() => page.evaluate(() => wlDrag.raf), {
+    message: 'the auto-scroll loop stops queuing frames once the row has run out (an unsettled loop keeps one queued forever)',
+    timeout: 15000,
+  }).toBe(0);
+  const atEnd = await page.evaluate((i) => {
+    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
+    const last = [...zone.querySelectorAll('.wl-tile')].pop().getBoundingClientRect(), z = zone.getBoundingClientRect();
+    window.__edgeMut = 0;
+    window.__edgeObs = new MutationObserver(list => { window.__edgeMut += list.length; });
+    window.__edgeObs.observe(zone, { childList: true });
+    return { lastTileInView: last.right <= z.right + 1, pointerHeld: wlDrag.on, marker: !!zone.querySelector('.wl-drop-marker'),
+      numbers: { lastRight: last.right, zoneRight: z.right, scrollLeft: zone.scrollLeft, scrollWidth: zone.scrollWidth, clientWidth: zone.clientWidth } };
+  }, longBand);
+  expect(atEnd.pointerHeld, 'the drag is still in progress while the row sits at its end').toBe(true);
+  expect(atEnd.lastTileInView, 'the row really did scroll as far as its last tile ' + JSON.stringify(atEnd.numbers)).toBe(true);
+  expect(atEnd.marker, 'and the insertion marker is still painted at the end of the row').toBe(true);
+  await page.waitForTimeout(450);
+  const idle = await page.evaluate(() => {
+    window.__edgeObs.disconnect();
+    return { mutations: window.__edgeMut, raf: wlDrag.raf };
+  });
+  expect(idle.mutations, 'a row held at its end is not rewritten every frame (the marker is not re-inserted in a loop)').toBe(0);
+  expect(idle.raf, 'and no animation frame is left queued at the end').toBe(0);
+  const restedAt = await scrollLeftOf();
   await page.mouse.move(edge.left.x, edge.left.y, { steps: 6 });
-  await expect.poll(scrollLeftOf, { message: 'and the left edge scrolls it back', timeout: 6000 }).toBeLessThan(scrolledTo);
+  await expect.poll(scrollLeftOf, { message: 'and the left edge scrolls it back (and wakes the loop the end had stopped)', timeout: 10000 }).toBeLessThan(restedAt - 100);
   await page.keyboard.press('Escape');
   await page.mouse.up();
   await page.waitForTimeout(300);

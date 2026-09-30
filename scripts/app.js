@@ -1030,9 +1030,17 @@ function wlAutoScroll() {
   const right = 1 - Math.min(1, Math.max(0, r.right - d.x) / WL_EDGE_PX);
   const push = right - left;
   if (!push) return;
+  /* Measure the row WITHOUT the insertion marker. It is a 3px flex child, so with it in place
+     the row can scroll 3px past its last tile; wlDragPaint then removes it, the row clamps
+     back, the marker returns and "did it move?" passes again — a frame loop that never ends
+     at the boundary (Codex review, PR #294). The end is decided here, from the tiles alone,
+     and wlDragPaint puts the marker back on every path out. */
+  wlClearMarker();
   const before = zone.scrollLeft;
-  zone.scrollLeft = before + Math.sign(push) * Math.max(1, Math.round(Math.abs(push) * WL_EDGE_MAX_STEP));
-  if (zone.scrollLeft === before) return;   /* at the end: stop until the pointer moves again */
+  const max = Math.max(0, zone.scrollWidth - zone.clientWidth);
+  const to = Math.min(max, Math.max(0, before + Math.sign(push) * Math.max(1, Math.round(Math.abs(push) * WL_EDGE_MAX_STEP))));
+  if (Math.abs(to - before) < 1) { wlDragPaint(d.x, d.y); return; }   /* at the end: stop until the pointer moves again */
+  zone.scrollLeft = to;
   wlDragPaint(d.x, d.y);
   d.raf = requestAnimationFrame(wlAutoScroll);
 }

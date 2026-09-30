@@ -68,6 +68,16 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     tiles move under a STILL pointer; the rAF loop runs only while the pointer sits in
     an edge zone that can still scroll, is re-armed by every pointer move and is
     cancelled in `wlDragEnd`. The keyboard path is Alt+←/→.
+    **The end of the row is measured WITHOUT the insertion marker** (second Codex
+    round): the marker is a 3px flex child of the scrolling row, so with it in place
+    the row can scroll 3px past its last tile, `wlDragPaint` removes it, the row clamps
+    back, the marker returns and "did it move?" passes again — a frame loop of DOM
+    mutation and layout that never ended at the boundary (measured: 56–60 child-list
+    mutations in 450ms while holding the pointer at the right edge). `wlAutoScroll`
+    clears the marker, reads `scrollWidth − clientWidth`, clamps its target to it and
+    stops when the target is within 1px of where the row already is, repainting the
+    marker on every path out. S26 holds the pointer at the end and asserts ZERO
+    mutations and no queued frame.
   - **Removed for good, not dormant**: `wlSyncPaging`, `attachPaging`, the ▲/▼
     `.wl-page-bar`/`.wl-page` footer and its CSS, the drag-rests-on-▼ stepping
     (`WL_DRAG_STEP_MS`, `wlDragStepAt`, `_wlStep`), the resize listener that
