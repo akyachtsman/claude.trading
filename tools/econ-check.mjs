@@ -22,7 +22,9 @@
                       first). 2 Yr / 10 Yr / 20 Yr copy the FRED capture on shared
                       dates; the 09/29 and 09/30/2026 rows are SYNTHETIC. The live
                       host was unreachable from the build sandbox, so the Treasury
-                      path is UNVERIFIED against the real file. */
+                      path is UNVERIFIED against the real file — and it is ON in the
+                      shipped roster (2Y/10Y/20Y, owner request 2026-09-30), which is
+                      why every Treasury failure mode below must land on FRED. */
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
@@ -38,12 +40,20 @@ const COSD_T0 = '2020-05-30';                  // 76 months before 2026-09-30 (N
 const FRED_IDS = ['DGS2', 'DGS10', 'DGS20', 'UNRATE', 'CPIAUCNS', 'PCEPI', 'PCEPILFE'];
 const FRED_TEXT = Object.fromEntries(FRED_IDS.map((id) => [id, readFileSync(path.join(FIX, `fred-${id}.csv`), 'utf8')]));
 const TSY_TEXT = Object.fromEntries(['202608', '202609'].map((m) => [m, readFileSync(path.join(FIX, `treasury-${m}.csv`), 'utf8')]));
-const CONFIG = JSON.parse(readFileSync(path.join(ROOT, 'config/econ-indicators.json'), 'utf8'));
-// The shipped roster is FRED-only (Treasury dormant). The Treasury tests need a roster that
-// turns it on, so the harness serves this one unless a test passes its own `config`
-// (`config: null` = the config host is unreachable, so the built-in default is used).
-const TSY_COL = { ust2y: '2 Yr', ust10y: '10 Yr', ust20y: '20 Yr' };
-const ROSTER_TSY = CONFIG.map((r) => (TSY_COL[r.id] ? { ...r, sources: { ...r.sources, treasury: TSY_COL[r.id] } } : r));
+// The shipped roster. Since 2026-09-30 (owner request: current 2Y/10Y yields; 20Y comes from the
+// same Treasury file) it names a Treasury column on the three yield rows, so the same-day tail is
+// ON. The harness serves it unless a test passes its own `config` (`config: null` = the config
+// host is unreachable, so the built-in default is used). `let`, because the roster mutants at the
+// bottom swap in a damaged copy and require the suite to notice.
+let CONFIG = JSON.parse(readFileSync(path.join(ROOT, 'config/econ-indicators.json'), 'utf8'));
+// [row id, FRED spine, Treasury column] — exactly these, and no other row, name a Treasury column.
+const TSY_COLS = [['ust2y', 'DGS2', '2 Yr'], ['ust10y', 'DGS10', '10 Yr'], ['ust20y', 'DGS20', '20 Yr']];
+const YIELDS = TSY_COLS.map(([id]) => id);
+const OTHERS = ['unrate', 'cpi', 'pce', 'corepce'];
+// The no-Treasury path, built explicitly: the committed roster with every `treasury` key stripped.
+const fredOnly = (roster) => roster.map((r) => ({
+  ...r, sources: Object.fromEntries(Object.entries(r.sources || {}).filter(([k]) => k !== 'treasury')),
+}));
 
 // ── assertions ───────────────────────────────────────────────────────────────
 class Fail extends Error {}
@@ -130,11 +140,11 @@ function boot(code, opts = {}) {
     }
     if (u.hostname === 'home.treasury.gov') {
       const m = u.searchParams.get('field_tdr_date_value_month');
-      return env.opts.treasury ? env.opts.treasury(m, u) : tsyResponse(m);
+      return env.opts.treasury ? env.opts.treasury(m, u, init) : tsyResponse(m);
     }
     if (u.hostname === 'akyachtsman.github.io') {
       if (env.opts.config === null) return new Response('Not Found', { status: 404 });
-      return new Response(JSON.stringify(env.opts.config === undefined ? ROSTER_TSY : env.opts.config), { status: 200 });
+      return new Response(JSON.stringify(env.opts.config === undefined ? CONFIG : env.opts.config), { status: 200 });
     }
     throw new TypeError('fetch to an unexpected host: ' + u.href);
   };
@@ -142,12 +152,16 @@ function boot(code, opts = {}) {
     constructor(...a) { if (a.length === 0) super(clock.now); else super(...a); }
     static now() { return clock.now; }
   }
+  // `timeoutScale` shrinks every AbortSignal.timeout the function sets (0.01: Treasury's 5s -> 50ms),
+  // so a HUNG upstream can be exercised end to end without the suite sleeping for real seconds.
+  const scale = opts.timeoutScale;
+  const Abort = scale ? { timeout: (ms) => AbortSignal.timeout(Math.max(1, Math.round(ms * scale))) } : AbortSignal;
   let handler = null;
   const mod = { exports: {} };
   const sandbox = {
     module: mod, exports: mod.exports,
     Deno: { serve: (h) => { handler = h; } },
-    fetch, Response, Request, Headers, AbortSignal, AbortController, URL,
+    fetch, Response, Request, Headers, AbortSignal: Abort, AbortController, URL,
     setTimeout, clearTimeout, Date: FakeDate,
     console: {
       log() {}, info() {},
@@ -240,16 +254,30 @@ const TESTS = [
     eq(api.validateRoster({ rows: [] }).rows.length, 0, 'an object is not a roster');
   }],
 
-  ['roster from config: served rows follow it, committed config == built-in default, junk config falls back', async (code) => {
+  ['roster: committed config == built-in default, both naming EXACTLY the 2 Yr / 10 Yr / 20 Yr Treasury columns; served rows follow it; junk config falls back', async (code) => {
+    const { api } = boot(code);
+    const tsy = (roster) => roster.filter((r) => r && r.sources && r.sources.treasury != null).map((r) => [r.id, r.sources.fred, r.sources.treasury]);
+    eq(tsy(CONFIG), TSY_COLS, 'the committed roster names exactly the three yield Treasury columns, each on its own row and FRED spine, and no other');
+    eq(api.DEFAULT_ROSTER, CONFIG, 'the built-in default IS the committed roster (same rows, same keys, same order)');
+    eq(tsy(api.DEFAULT_ROSTER), TSY_COLS, 'so the fallback names the same three columns');
+    const v = api.validateRoster(CONFIG);
+    eq([v.dropped, v.rows.map((r) => [r.id, r.fred, r.treasury])], [0, [...TSY_COLS, ...OTHERS.map((id) => [id, CONFIG.find((r) => r.id === id).sources.fred, null])]],
+      'all seven rows pass validation with their Treasury columns intact');
     const a = boot(code, { config: CONFIG });
     const ra = await a.call({ range: '1y' });
     const b = boot(code, { config: null });
     const rb = await b.call({ range: '1y' });
     eq(ra.json.roster, { source: 'config', count: 7, dropped: 0 }, 'committed config accepted whole');
-    eq(a.fetchCount('home.treasury.gov'), 0, 'FRED-ONLY start: the committed roster names no Treasury column, so Treasury is never called');
-    eq(ra.json.rows.map((x) => x.source), ['fred', 'fred', 'fred', 'fred', 'fred', 'fred', 'fred'], 'every committed row is served from FRED');
     eq(rb.json.roster.source, 'default', 'unreachable config -> default');
+    for (const [name, e] of [['committed config', a], ['built-in default', b]]) eq(e.fetchCount('home.treasury.gov'), 2, `${name}: the Treasury tail is ON (one fetch each for the current and previous NY month)`);
+    eq(ra.json.rows.map((x) => [x.id, x.source]), [...YIELDS.map((id) => [id, 'treasury']), ...OTHERS.map((id) => [id, 'fred'])], 'the three yields are served from Treasury, the other four from FRED');
     eq(ra.json.rows, rb.json.rows, 'the committed config and the built-in default are the SAME roster');
+    // The no-Treasury path is still a real path (a roster edit can drop a column): built explicitly, never taken from the shipped file.
+    const f = boot(code, { config: fredOnly(CONFIG) });
+    const rf = await f.call({ range: '1y' });
+    eq(f.fetchCount('home.treasury.gov'), 0, 'a roster naming no Treasury column never calls Treasury');
+    eq(rf.json.rows.map((x) => [x.id, x.source, x.status]), CONFIG.map((r) => [r.id, 'fred', 'ok']), 'and serves every row from FRED');
+    eq(YIELDS.map((id) => row(rf, id).asOf), ['2026-09-28', '2026-09-28', '2026-09-28'], "the yields at FRED's newest (T-2 on the capture)");
     const c = boot(code, { config: [
       { id: 'ten', label: 'Ten', sources: { fred: 'DGS10' }, unit: '%', transform: 'level', cadence: 'daily', decimals: 2 },
       { id: 'bad', label: 'Bad', sources: { fred: 'DGS10' }, transform: 'level', cadence: 'yearly' },
@@ -291,17 +319,21 @@ const TESTS = [
     assert(!mom.some(([d]) => d === '2025-10-01' || d === '2025-11-01'), 'MoM skips the hole and the month after it');
   }],
 
-  ['Treasury newer than FRED wins the three yields; tail stitched with no duplicate or out-of-order date', async (code) => {
-    const e = boot(code);
-    const r = await e.call({ range: '1m' });
-    eq(r.status, 200, 'HTTP 200');
-    for (const [id, v30, v29] of [['ust2y', 4.9, 4.95], ['ust10y', 5.21, 5.27], ['ust20y', 5.58, 5.63]]) {
-      const x = row(r, id);
-      eq([x.source, x.status, x.asOf, x.value, x.prevAsOf, x.prev, x.delta], ['treasury', 'ok', '2026-09-30', v30, '2026-09-29', v29, round(v30 - v29, 2)], id);
-      eq(x.points.at(-1), ['2026-09-30', v30], `${id} chart ends on the Treasury print`);
-      for (let i = 1; i < x.points.length; i++) assert(x.points[i - 1][0] < x.points[i][0], `${id} strictly ascending, no duplicate`);
+  ["committed roster (and the identical built-in default): Treasury newer than FRED wins the three yields with TODAY's close; tail stitched with no duplicate or out-of-order date", async (code) => {
+    let e;
+    for (const [name, config] of [['committed roster', CONFIG], ['built-in default', null]]) {
+      e = boot(code, { config });
+      const r = await e.call({ range: '1m' });
+      eq([r.status, r.json.ok], [200, true], `${name}: HTTP 200`);
+      for (const [id, v30, v29] of [['ust2y', 4.9, 4.95], ['ust10y', 5.21, 5.27], ['ust20y', 5.58, 5.63]]) {
+        const x = row(r, id);
+        // T0 is 18:00 EDT on 2026-09-30: today's close has posted, so asOf is TODAY
+        eq([x.source, x.status, x.asOf, x.value, x.prevAsOf, x.prev, x.delta], ['treasury', 'ok', '2026-09-30', v30, '2026-09-29', v29, round(v30 - v29, 2)], `${name}: ${id}`);
+        eq(x.points.at(-1), ['2026-09-30', v30], `${name}: ${id} chart ends on the Treasury print`);
+        for (let i = 1; i < x.points.length; i++) assert(x.points[i - 1][0] < x.points[i][0], `${name}: ${id} strictly ascending, no duplicate`);
+      }
+      for (const id of OTHERS) eq([row(r, id).source, row(r, id).status], ['fred', 'ok'], `${name}: ${id} is FRED`);
     }
-    for (const id of ['unrate', 'cpi', 'pce', 'corepce']) eq(row(r, id).source, 'fred', `${id} is FRED`);
     const { api } = e;
     const spine = refObs('DGS10');
     const st = api.stitchTreasury(spine, [['2026-09-25', 5.17], ['2026-09-28', 5.24], ['2026-09-29', 5.27], ['2026-09-30', 5.21]]);
@@ -311,6 +343,20 @@ const TESTS = [
     eq(api.stitchTreasury(spine, null).obs.length, spine.length, 'no tail = the spine');
   }],
 
+  ["before Treasury has posted today's close, the yields are the PRIOR business day's close (an end-of-day file, never intraday)", async (code) => {
+    // 10:00 EDT on 2026-09-30: Treasury's file ends on 09-29 (today's close is not out yet); FRED's capture ends on 09-28
+    const noToday = (m) => (TSY_TEXT[m]
+      ? new Response(TSY_TEXT[m].split('\n').filter((l) => !l.startsWith('09/30/2026')).join('\n'), { status: 200 })
+      : new Response('', { status: 404 }));
+    const e = boot(code, { config: CONFIG, now: at('2026-09-30T14:00:00Z'), treasury: noToday });
+    const r = await e.call({ range: '1m' });
+    for (const [id, v29, v28] of [['ust2y', 4.95, 4.92], ['ust10y', 5.27, 5.24], ['ust20y', 5.63, 5.6]]) {
+      const x = row(r, id);
+      eq([x.source, x.status, x.asOf, x.value, x.prevAsOf, x.prev], ['treasury', 'ok', '2026-09-29', v29, '2026-09-28', v28], id);
+    }
+    for (const id of OTHERS) eq(row(r, id).source, 'fred', `${id} is FRED`);
+  }],
+
   ['Treasury NOT newer than FRED -> FRED stays the source', async (code) => {
     const cut = (m) => new Response(TSY_TEXT[m].split('\n').filter((l) => !/^09\/(29|30)\/2026/.test(l)).join('\n'), { status: 200 });
     const e = boot(code, { treasury: (m) => (TSY_TEXT[m] ? cut(m) : new Response('', { status: 404 })) });
@@ -318,18 +364,32 @@ const TESTS = [
     for (const id of ['ust2y', 'ust10y', 'ust20y']) eq([row(r, id).source, row(r, id).asOf], ['fred', '2026-09-28'], id);
   }],
 
-  ['Treasury failure (5xx, network, HTML block page) -> automatic FRED fallback, still HTTP 200', async (code) => {
-    for (const [name, fn] of [
+  ['Treasury outage (503, 403 block page, HTML on a 200, network error, TIMEOUT) on the committed roster -> all seven rows from FRED, HTTP 200, none missing', async (code) => {
+    // A HUNG host: the fetch settles only when the function's own AbortSignal fires. The 3s guard
+    // turns a fetch nobody bounds into a failed check instead of a suite that never ends.
+    let aborted = 0, unbounded = false;
+    const hang = (m, u, init) => new Promise((_, reject) => {
+      const guard = setTimeout(() => { unbounded = true; reject(new Error('never aborted')); }, 3000);
+      init?.signal?.addEventListener('abort', () => { clearTimeout(guard); aborted++; reject(init.signal.reason); }, { once: true });
+    });
+    for (const [name, fn, extra] of [
       ['503', down(503)],
+      ['403 block page', () => new Response('<html><head><title>Access Denied</title></head><body>Access Denied</body></html>', { status: 403 })],
+      ['HTML on a 200', () => new Response('<html><body>Access Denied</body></html>', { status: 200 })],
       ['network', () => { throw new TypeError('connection reset'); }],
-      ['HTML', () => new Response('<html><body>Access Denied</body></html>', { status: 200 })],
+      ['timeout', hang, { timeoutScale: 0.01 }],
     ]) {
-      const e = boot(code, { treasury: fn });
+      const e = boot(code, { config: CONFIG, treasury: fn, ...extra });
       const r = await e.call();
-      eq(r.status, 200, `${name}: HTTP 200`);
-      for (const id of ['ust2y', 'ust10y', 'ust20y']) eq([row(r, id).source, row(r, id).status, row(r, id).asOf], ['fred', 'ok', '2026-09-28'], `${name}: ${id}`);
+      eq([r.status, r.json.ok, r.json.stale, r.json.rows.length], [200, true, false, 7], `${name}: HTTP 200, ok, nothing stale, seven rows`);
+      eq(e.fetchCount('home.treasury.gov'), 2, `${name}: Treasury was asked (the committed roster wants it)`);
+      for (const x of r.json.rows) {
+        eq([x.id, x.status, x.source, x.value === null], [x.id, 'ok', 'fred', false], `${name}: ${x.id} served from FRED, not missing`);
+      }
+      for (const id of YIELDS) eq(row(r, id).asOf, '2026-09-28', `${name}: ${id} at FRED's newest`);
       eq(row(r, 'ust10y').value, 5.24, `${name}: FRED's newest 10Y`);
     }
+    eq([aborted, unbounded], [2, false], 'the hung Treasury host was cut off by its AbortSignal (both months), never left hanging');
   }],
 
   ['Treasury garbage (mislabelled columns) fails the FRED agreement check; the good column still serves', async (code) => {
@@ -466,7 +526,7 @@ const TESTS = [
     const rs = await Promise.all(['1w', '1m', '3m', '6m', '1y', '5y', '3m', '1m'].map((range) => e.call({ range })));
     assert(rs.every((r) => r.status === 200 && r.json.ok), 'all served');
     for (const id of FRED_IDS) eq(e.fetchCount('fred.stlouisfed.org', (c) => new URL(c.url).searchParams.get('id') === id), 1, `FRED ${id} fetched once`);
-    eq(e.fetchCount('home.treasury.gov'), 2, 'Treasury: one fetch per month (current + previous)');
+    eq(e.fetchCount('home.treasury.gov'), 2, 'Treasury: one fetch per month (current + previous) — the three yield rows share ONE file');
     eq(e.fetchCount('akyachtsman.github.io'), 1, 'config fetched once');
     eq(new Set(rs.map((r) => r.json.fetchedAt)).size, 1, 'all eight share one sweep');
   }],
@@ -544,7 +604,7 @@ const TESTS = [
     const e = boot(code, { treasury: down(503) });
     const r1 = await e.call();
     assert(r1.json.rows.every((x) => x.changed === false), 'cold isolate says false');
-    eq(row(r1, 'ust10y').asOf, '2026-09-28', 'FRED only at first');
+    eq(row(r1, 'ust10y').asOf, '2026-09-28', 'FRED while Treasury is down');
     e.clock.now += 11 * 60_000; // past the Treasury back-off
     e.opts.treasury = undefined;
     const r2 = await e.call();
@@ -575,7 +635,7 @@ const TESTS = [
   ['outbound hygiene: every fetch is bounded by an AbortSignal, carries the UA, no Supabase key, known hosts only', async (code) => {
     const e = boot(code);
     await e.call({ range: '5y' });
-    assert(e.calls.length === 10, `7 FRED + 2 Treasury + 1 config (got ${e.calls.length})`);
+    assert(e.calls.length === 10, `the committed roster's first sweep: 7 FRED + 2 Treasury (current + previous NY month) + 1 config (got ${e.calls.length})`);
     for (const c of e.calls) {
       assert(c.init.signal instanceof AbortSignal, `${c.host}: AbortSignal`);
       const h = new Headers(c.init.headers);
@@ -595,7 +655,7 @@ const TESTS = [
     e.clock.now += 10_000;
     await e.call({ force: true });
     await e.call({ force: true });
-    eq(e.calls.length, n + 9, 'first force re-sweeps every series (7 FRED + 2 Treasury; the roster is cached 1h)');
+    eq(e.calls.length, n + 9, 'first force re-sweeps every series (7 FRED + 2 Treasury, the committed roster; the roster itself is cached 1h)');
     e.clock.now += 10_000;
     await e.call({ force: true });
     eq(e.calls.length, n + 9, 'a second force inside 30s is a cached read');
@@ -675,6 +735,21 @@ const MUTANTS = [
   ['delta not rounded (float noise on the wire)', 'const delta = value !== null && prevV !== null ? roundTo(value - prevV, r.decimals) : null;', 'const delta = value !== null && prevV !== null ? value - prevV : null;'],
   ['a dead feed answers HTTP 200', 'const send = (out: ReturnType<typeof shape>) => reply(out.ok ? 200 : 502, out, cors);', 'const send = (out: ReturnType<typeof shape>) => reply(200, out, cors);'],
   ['degraded feed waits the full quiet TTL','const ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;', 'const ttl = policy.ttlMs;'],
+  ['built-in default re-blanks the 10Y Treasury column (the fallback silently goes FRED-only)', "sources: { fred: 'DGS10', treasury: '10 Yr' }", "sources: { fred: 'DGS10' }"],
+  ['built-in default names the wrong tenor on the 20Y row', "sources: { fred: 'DGS20', treasury: '20 Yr' }", "sources: { fred: 'DGS20', treasury: '30 Yr' }"],
+  ['Treasury never fetched although rows name a column', 'roster.rows.some((r) => r.treasury) ? refreshTreasury(now, today) : Promise.resolve(),', 'Promise.resolve(),'],
+  ['Treasury fetched although no row names a column', 'roster.rows.some((r) => r.treasury) ? refreshTreasury(now, today) : Promise.resolve(),', 'refreshTreasury(now, today),'],
+  ['a Treasury tail sharing no date with FRED is trusted', "if (!overlap) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };", "if (overlap < 0) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };"],
+  ['upstream fetch left unbounded (a hung Treasury host hangs the sweep)', 'const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(ms) });', 'const res = await fetch(url, { headers: UA });'],
+];
+
+// ...and each damage to the SHIPPED roster (config/econ-indicators.json, the file the live function
+// reads from Pages) must be caught as well. Applied to a copy; a damage that changes nothing is INVALID.
+const byId = (c, id) => { const r = c.find((x) => x.id === id); if (!r) throw new Error(`no row ${id}`); return r; };
+const CONFIG_MUTANTS = [
+  ['shipped roster re-blanks the 2Y Treasury column', (c) => { delete byId(c, 'ust2y').sources.treasury; }],
+  ['shipped roster names the 30 Yr column on the 20Y row', (c) => { byId(c, 'ust20y').sources.treasury = '30 Yr'; }],
+  ['shipped roster swaps the 2Y and 10Y columns', (c) => { byId(c, 'ust2y').sources.treasury = '10 Yr'; byId(c, 'ust10y').sources.treasury = '2 Yr'; }],
 ];
 
 // The esbuild pinned (exact version + integrity hash) in tools/package.json and its lockfile — NOT
@@ -689,13 +764,15 @@ function transpile(ts) {
 }
 
 const src = readFileSync(SRC, 'utf8');
+const CODE = transpile(src);
 console.log('desk-econ checks — suite against the committed source');
-const failures = await runSuite(transpile(src), { verbose: true });
+const failures = await runSuite(CODE, { verbose: true });
 console.log(`\n${TESTS.length - failures.length}/${TESTS.length} checks passed`);
 let exit = failures.length ? 1 : 0;
 
 if (process.argv.includes('--mutants')) {
-  console.log(`\nmutants (${MUTANTS.length}) — each must be CAUGHT by at least one check`);
+  const total = MUTANTS.length + CONFIG_MUTANTS.length;
+  console.log(`\nmutants (${total}: ${MUTANTS.length} of the source, ${CONFIG_MUTANTS.length} of the shipped roster) — each must be CAUGHT by at least one check`);
   let killed = 0;
   for (const [name, find, repl] of MUTANTS) {
     const n = src.split(find).length - 1;
@@ -704,6 +781,18 @@ if (process.argv.includes('--mutants')) {
     if (f.length) { killed++; console.log(`  caught    ${name}  <- ${f[0].name}`); }
     else { console.log(`  SURVIVED  ${name}`); exit = 1; }
   }
-  console.log(`\nmutants caught: ${killed}/${MUTANTS.length}`);
+  for (const [name, damage] of CONFIG_MUTANTS) {
+    const shipped = CONFIG;
+    const bad = structuredClone(shipped);
+    let applied = true;
+    try { damage(bad); } catch { applied = false; }
+    if (!applied || JSON.stringify(bad) === JSON.stringify(shipped)) { console.log(`  INVALID   ${name} (the damage changed nothing)`); exit = 1; continue; }
+    CONFIG = bad;
+    let f;
+    try { f = await runSuite(CODE); } finally { CONFIG = shipped; }
+    if (f.length) { killed++; console.log(`  caught    ${name}  <- ${f[0].name}`); }
+    else { console.log(`  SURVIVED  ${name}`); exit = 1; }
+  }
+  console.log(`\nmutants caught: ${killed}/${total}`);
 }
 process.exit(exit);

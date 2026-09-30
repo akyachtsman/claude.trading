@@ -7877,7 +7877,9 @@ function econChrome() {
     bar.appendChild(tf);
     const list = el('ul', 'econ-list');
     list.id = 'econList';
-    const foot = el('p', 'econ-foot', 'Source: FRED. Yields post about a business day late; jobs and inflation once a month.');
+    /* true on both paths: the yields are Treasury's end-of-day close once it posts, else FRED's copy (each row's
+       tooltip names its own source) — "Source: FRED" alone stopped being true when the tail went ON (2026-09-30) */
+    const foot = el('p', 'econ-foot', "Yields: U.S. Treasury's close once posted, else FRED (a business day later). Jobs, inflation: FRED, monthly.");
     body.append(bar, list, foot);
     syncEconTf();
   }
@@ -8065,8 +8067,8 @@ function econRow(r, chartsMatch) {
   figs.appendChild(el('span', 'econ-val', econValueText(r)));
   figs.appendChild(el('span', 'econ-delta', missing ? '—' : econDeltaText(r)));
   info.appendChild(figs);
-  /* the date the reading is FOR — the honest signal, since FRED posts a yield a business day late —
-     with the row's tag (NEW / STALE / NO DATA) beside it */
+  /* the date the reading is FOR — the honest signal: a yield is a CLOSE (Treasury's, posted late in the
+     afternoon, or FRED's a business day later), never intraday — with the row's tag (NEW / STALE / NO DATA) beside it */
   const sub = el('div', 'econ-sub');
   sub.appendChild(el('span', 'econ-date', missing ? '—' : econDateLabel(r.asOf, r.cadence)));
   if (isNew) sub.appendChild(el('span', 'econ-new', 'NEW'));

@@ -124,11 +124,17 @@ its topic file** — the reasoning behind each rule is there, not here.
     scheduled `desk-brief` was retired 2026-07-23.
     → details: `docs/architecture/desk-ask-and-cron.md`
   - **Economy indicators** — `desk-econ` (anon-callable, like the public feeds): FRED
-    base history for every row, **FRED-ONLY to begin with** (owner 2026-09-30; the
-    Treasury same-day tail is dormant, opt-in per row); roster in
+    base history for every row, plus U.S. Treasury's same-day par-yield CLOSE as a
+    cross-checked tail on the 2Y/10Y/20Y rows — **ON since 2026-09-30** (owner request:
+    current 2Y/10Y yields; supersedes that day's "FRED-only to begin with"). An end-of-day
+    file posted ~15:30–18:00 ET, never intraday; UNVERIFIED against the live host; any
+    failure is a silent fallback to FRED (the row's `source` says which). Roster in
     `config/econ-indicators.json`; spans are slices of one cached history; it tells the
     client when to ask again (`refreshInSec`, tight around 08:30 and the afternoon
-    yield window). **Deployed 2026-09-30** (v1, `verify_jwt` ON, from `f78a03f`).
+    yield window). **Deployed 2026-09-30** (v1, `verify_jwt` ON, from `f78a03f`; its
+    built-in default is FRED-only). v1 already carries the Treasury path and reads the
+    roster from Pages (cached 1h), so the Treasury columns go live when the config reaches
+    Pages; a v2 deploy (built-in default = the same roster) awaits owner approval.
     → details: `docs/architecture/economy-panel.md`
   - **Deploying** (owner approval required every time): the Supabase MCP
     `deploy_edge_function`, one function per call, **`verify_jwt` preserved** — it is set
@@ -198,7 +204,7 @@ real-data rules stay in Project-Specific Coding Standards below.
 - `desk-news`: an owner-typed topic REPLACES THE WHOLE SWEEP; a topic matching nothing is a successful EMPTY result, not a throw; the topic is sanitised server-side (`cleanTopic`). → `edge-feeds-and-heatmap.md`
 - Economy panel, colour and numbers: a change is NEUTRAL ink with an arrow (`▲` `▼`, `=` for a real zero) and the chart line is the brass accent — green/red stay P&L-only and a rising yield is not a gain; unknown is an em dash, never `0.00%` (a missing row draws a dashed placeholder, never an invented line); a monthly reading names its MONTH by STRING SLICING (`new Date('2026-08-01')` is UTC midnight and reads Jul 31 in Pacific); a daily chart's caption carries the YEAR once its ends are about a year apart (`Sep '21 – Sep '26`, never `Sep 28 – Sep 28`). → `economy-panel.md`
 - Economy panel, poller: the next fetch is the reply's `refreshInSec` clamped to 30..3600s, a failed poll retries in 60s, polling pauses while the tab is hidden, a span change may only pull the next poll EARLIER and is only recorded (asked for when the reply lands, repeatedly until the span showing has landed) while a forced "Refresh now" is in flight; a NEW chip clears only once its row has been IN VIEW ~60s (IntersectionObserver, per-row timers that a re-render does not restart) and a server-hinted NEW stays pending (`econ_pending_v1`) after the hint goes quiet, never seeded as a silent first look; acknowledgement state is written as a MERGE of only the ids this tab changed (`econPersist`, two tabs must not overwrite each other) and demo state is NEVER persisted; a chart's accessible name reads `pointsNote` when the span fell back; a reply whose `range` is not the span asked is a FAILED poll (never drawn under the wrong label); the lamp AGES (STALE at 3 × `refreshInSec`) and renders sit OUTSIDE the fetch `try`; live never renders demo rows and `?demo=1` never calls the network for this panel; span is `econ_tf_v1`, validated against the presets on load. → `economy-panel.md`
-- `desk-econ`: FRED is the spine of every row; Treasury is OPT-IN per row (dormant — the shipped roster and the built-in default must stay identical and name no Treasury column), used only when newer than FRED AND matching it, never alone; a FRED `.` or empty field is a gap, never 0; YoY is computed point by point, never interpolated; unknown is null; nothing ships live until the owner approves its deploy. → `economy-panel.md`
+- `desk-econ`: FRED is the spine of every row; Treasury is the same-day tail on the three yield rows (ON since 2026-09-30, owner request — the shipped roster and the built-in default must stay IDENTICAL and name exactly the `2 Yr` / `10 Yr` / `20 Yr` columns), an end-of-day close, never intraday, used only when it parses, AGREES with FRED on every shared date (at least one) and is strictly NEWER, never alone — otherwise the row silently stays on FRED (`source` says which); a FRED `.` or empty field is a gap, never 0; YoY is computed point by point, never interpolated; unknown is null; nothing ships live until the owner approves its deploy — and because the function reads its roster from Pages, merging a roster edit to `main` IS a live change. → `economy-panel.md`
 - `quote-proxy` always answers JSON with the Origin-allowlist CORS headers; `prepost` is part of the intraday cache key; every intraday bar carries `x`; only extended bars are wick-de-spiked (`EXT_WICK_TOL`). → `edge-feeds-and-heatmap.md`
 - `buildAskContext()` hands the assistant TICKERS, NEVER money — withholding, not a prompt rule, is the enforcement point. → `desk-ask-and-cron.md`
 - The `desk-ask` tool loop must CARRY THE CODE-EXECUTION CONTAINER (`containerId`) on every later call and never send it on the first. → `desk-ask-and-cron.md`
