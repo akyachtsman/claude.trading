@@ -6072,6 +6072,23 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   for (const r of rows.slice(0, 3)) for (const t of [r.val, r.delta]) expect(t, `[${r.id}] unknown never renders as zero`).not.toMatch(/^[=+−-]?\s*0(\.0+)?%?$/);
   await page.evaluate(() => renderEcon(buildDemoEcon(econTf)));
 
+  // ── 6a. a Treasury reading is named for what it is (Codex, PR #295). Treasury's par-yield file is a ~3:30 pm ET SNAPSHOT of
+  //    bid-side quotes, not the actual close, and before today's rate posts it supplies YESTERDAY's — so neither the tooltip nor
+  //    the footer may call it a "close" or "same day", whatever `asOf` says. (The demo's dates are a past business day: exactly
+  //    the pre-publication case.)
+  const tsy = await page.evaluate(() => {
+    const base = buildDemoEcon(econTf);
+    const r = base.rows.map((x) => ({ ...x }));
+    r[0] = { ...r[0], source: 'treasury' };
+    renderEcon({ ...base, rows: r });
+    return { title: document.querySelector('#econList .econ-row').title, foot: document.querySelector('.econ-foot').textContent };
+  });
+  expect(tsy.title, 'a Treasury row names its source').toMatch(/source U\.S\. Treasury daily rate/);
+  expect(tsy.title, 'and never claims "same day" — a pre-publication Treasury reading is yesterday\'s').not.toMatch(/same.day/i);
+  expect(tsy.foot, 'the footer says what the yield is: a 3:30 pm ET snapshot rate').toMatch(/daily rate.*3:30 pm ET/i);
+  expect(tsy.foot, 'and never calls it a close').not.toMatch(/\bclose/i);
+  await page.evaluate(() => renderEcon(buildDemoEcon(econTf)));
+
   // ── 6b. too little room: seven rows must not be cut off silently. The body is an ORDINARY scroller (no overscroll-behavior,
   //    which would eat the wheel), the rows keep their height, and the source note never paints over the last row.
   const tight = await page.evaluate(() => {

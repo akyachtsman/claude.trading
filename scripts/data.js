@@ -910,10 +910,10 @@ function buildDemoEcon(range, now) {
   const monthDates = Array.from({ length: 76 }, (_, i) => econShiftMonths(newestMonth, i - 75));
   const rows = DEMO_ECON_ROWS.map(([id, label, dec, cadence, seed, end, step, pull]) => {
     const monthly = cadence === 'monthly';
-    /* The demo depicts the FRED path — what live shows whenever Treasury's end-of-day close has not
+    /* The demo depicts the FRED path — what live shows whenever Treasury's daily rate has not
        posted or fails its FRED cross-check. FRED posts a daily yield a business day late, so every daily
        row here ends on the trading day BEFORE the last one and every row's source is "fred". (Live, the
-       three yields read source "treasury" once Treasury posts the day's close — the tail went ON
+       three yields read source "treasury" once Treasury posts the day's rate — the tail went ON
        2026-09-30, owner request.) The as-of date is the honest signal either way. */
     const dates = monthly ? monthDates : dailyDates.slice(0, -1);
     /* a mean-reverting walk, shifted so the newest reading IS `end` (the same trick

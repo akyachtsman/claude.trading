@@ -343,8 +343,8 @@ const TESTS = [
     eq(api.stitchTreasury(spine, null).obs.length, spine.length, 'no tail = the spine');
   }],
 
-  ["before Treasury has posted today's close, the yields are the PRIOR business day's close (an end-of-day file, never intraday)", async (code) => {
-    // 10:00 EDT on 2026-09-30: Treasury's file ends on 09-29 (today's close is not out yet); FRED's capture ends on 09-28
+  ["before Treasury has posted today's rate, the yields are the PRIOR business day's rate (a daily snapshot, never intraday)", async (code) => {
+    // 10:00 EDT on 2026-09-30: Treasury's file ends on 09-29 (today's rate is not out yet); FRED's capture ends on 09-28
     const noToday = (m) => (TSY_TEXT[m]
       ? new Response(TSY_TEXT[m].split('\n').filter((l) => !l.startsWith('09/30/2026')).join('\n'), { status: 200 })
       : new Response('', { status: 404 }));

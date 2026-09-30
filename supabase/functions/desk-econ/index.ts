@@ -13,7 +13,8 @@
 //     DGS10 observation was 2026-09-28).
 //   * U.S. Treasury "Daily Treasury Par Yield Curve Rates" CSV is a TAIL for the
 //     three yields only (ON in the roster since 2026-09-30) — it posts the day's
-//     CLOSE the same afternoon (~15:30-18:00 ET), never intraday. UNVERIFIED-AGAINST-LIVE:
+//     RATE (a ~15:30 ET snapshot of bid-side quotes, not the actual close) the same afternoon
+//     (~15:30-18:00 ET), never intraday. UNVERIFIED-AGAINST-LIVE:
 //     home.treasury.gov was unreachable from the build sandbox (proxy policy),
 //     so its parser was written against the documented layout and exercised on
 //     CONSTRUCTED fixtures only. It is therefore never trusted on its own: a
@@ -105,8 +106,9 @@ type RosterRow = {
 // The Treasury same-day TAIL is ON for the three yields (owner request 2026-09-30:
 // current 2Y and 10Y yields, superseding the same day's "FRED only to begin with";
 // 20Y comes from the same Treasury file and is included so no yield in the table sits
-// a day behind its neighbours). Treasury's par-yield file is an END-OF-DAY close
-// posted ~15:30-18:00 ET: same day AFTER the close, never intraday. The path is
+// a day behind its neighbours). Treasury's par-yield file is a daily RATE (a
+// snapshot of bid-side quotes taken ~15:30 ET, not the actual close) posted ~15:30-18:00 ET:
+// same day, never intraday. The path is
 // UNVERIFIED against the live host (tested on constructed fixtures only), which is
 // why stitchTreasury uses it only when it agrees with FRED and is newer; any failure
 // is a silent per-row fallback to FRED (the row's `source` says which). This roster

@@ -1,6 +1,6 @@
 # Economy panel and `desk-econ`
 
-The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55). Later the same day the owner asked for CURRENT 2Y/10Y yields, so the roster switched Treasury's same-day close ON for the three yields (see Sources and Deploying: live via the Pages roster, v2 deploy pending, UNVERIFIED against the live host).
+The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55). Later the same day the owner asked for CURRENT 2Y/10Y yields, so the roster switched Treasury's same-day daily rate ON for the three yields (see Sources and Deploying: live via the Pages roster, v2 deploy pending, UNVERIFIED against the live host).
 
 - **What it serves.** Seven rows by default — 2Y / 10Y / 20Y Treasury, Unemployment,
   CPI YoY, PCE YoY, Core PCE YoY — each with `value`, `prev`, `delta`, `asOf`,
@@ -10,7 +10,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   single-flight, every upstream fetch bounded by an `AbortSignal`, always JSON.
   CORS is the **quote-proxy Origin allowlist** (site origin only; no Origin = 403)
   rather than the `*` the other five feeds use — a browser-enforced speed-bump.
-- **Sources, keyless — FRED spine, plus Treasury's same-day CLOSE on the three yields**
+- **Sources, keyless — FRED spine, plus Treasury's same-day daily RATE on the three yields**
   (ON since 2026-09-30, owner request: current 2Y and 10Y yields. *Superseded: the same
   day's "FRED only to begin with" ruling, under which the roster named no Treasury column
   and Treasury was never called.* 20Y comes from the same Treasury file and is included so
@@ -18,10 +18,11 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   of every row (verified reachable 2026-09-30; lags daily yields 1–2 business days: read the
   row's `asOf`). The shipped roster and the built-in default are IDENTICAL and name exactly
   the `2 Yr` / `10 Yr` / `20 Yr` Treasury columns (`econ-check` asserts both). The U.S.
-  Treasury daily par-yield CSV is an **END-OF-DAY close posted about 15:30–18:00 ET** —
-  same day after the close, NEVER intraday: before it posts, a yield row shows the previous
-  business day's close (Treasury's; FRED often carries that day only after its own
-  afternoon update). It is **UNVERIFIED-AGAINST-LIVE** — `home.treasury.gov` was
+  Treasury daily par-yield CSV is a **daily RATE: a snapshot of bid-side quotes taken at about
+  3:30 pm ET, published about 15:30–18:00 ET** — same day after the snapshot, NEVER intraday,
+  and on a volatile afternoon it can differ from the actual closing yield (Codex, PR #295),
+  so it is never called a "close": before it posts, a yield row shows the previous business
+  day's rate (Treasury's; FRED often carries that day only after its own afternoon update). It is **UNVERIFIED-AGAINST-LIVE** — `home.treasury.gov` was
   unreachable from the build sandbox, so its parser was written from the documented layout
   and tested on constructed fixtures only, and it has not yet run from Supabase. It is used
   only when (1) it parses, (2) it AGREES with FRED on every shared date (|Δ| ≤ 0.015) with
@@ -141,11 +142,13 @@ width).
   em dash through `fmtToNum` — never `0.00%`. A daily reading is `Sep 29`; a monthly one names
   its MONTH (`Aug`, the year only when it is not this one), by string slicing — never
   `new Date('2026-08-01')`, which is UTC midnight and reads Jul 31 in Pacific. The date is
-  deliberately prominent: a yield is a daily CLOSE — today's only once Treasury has posted it
+  deliberately prominent: a yield is a daily RATE — today's only once Treasury has posted it
   (late afternoon ET), otherwise the previous business day's, and older when only FRED has it.
   (Until 2026-09-30's switch this read "the feed is FRED-only".) The source note under the list
-  is true on both paths ("Yields: U.S. Treasury's close once posted, else FRED …"), and each
-  row's tooltip names its own `source` ("source U.S. Treasury, same day" / "source FRED").
+  is true on both paths ("Yields: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else
+  FRED …"), and each row's tooltip names its own `source` ("source U.S. Treasury daily rate" /
+  "source FRED") — never "same day": before today's rate posts, Treasury supplies YESTERDAY's,
+  and `asOf` is what says so (Codex, PR #295).
 - **Status.** `missing` (or a null value): em dashes, a dashed placeholder, a `NO DATA` tag.
   `stale`: the row keeps its last good value and chart (spec §8), muted, tagged `STALE`
   (the tooltip carries the age).
@@ -205,6 +208,6 @@ width).
   as NEW. Each chart's accessible name says what is drawn — `pointsNote` ("monthly - 6 latest")
   when the span fell back, else "over 3M" — never a short span over a half-year of readings.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
-  real rows — FRED, with Treasury's close on the three yields once the roster naming those
+  real rows — FRED, with Treasury's daily rate on the three yields once the roster naming those
   columns is on Pages. If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).

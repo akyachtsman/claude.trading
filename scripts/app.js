@@ -7877,9 +7877,10 @@ function econChrome() {
     bar.appendChild(tf);
     const list = el('ul', 'econ-list');
     list.id = 'econList';
-    /* true on both paths: the yields are Treasury's end-of-day close once it posts, else FRED's copy (each row's
+    /* true on both paths: the yields are Treasury's daily rate (a ~3:30 pm ET snapshot of bid-side quotes, not the
+       actual close) once it posts, else FRED's copy (each row's
        tooltip names its own source) — "Source: FRED" alone stopped being true when the tail went ON (2026-09-30) */
-    const foot = el('p', 'econ-foot', "Yields: U.S. Treasury's close once posted, else FRED (a business day later). Jobs, inflation: FRED, monthly.");
+    const foot = el('p', 'econ-foot', "Yields: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else FRED (a business day later). Jobs, inflation: FRED, monthly.");
     body.append(bar, list, foot);
     syncEconTf();
   }
@@ -8067,7 +8068,7 @@ function econRow(r, chartsMatch) {
   figs.appendChild(el('span', 'econ-val', econValueText(r)));
   figs.appendChild(el('span', 'econ-delta', missing ? '—' : econDeltaText(r)));
   info.appendChild(figs);
-  /* the date the reading is FOR — the honest signal: a yield is a CLOSE (Treasury's, posted late in the
+  /* the date the reading is FOR — the honest signal: a yield is a daily RATE (Treasury's 3:30 pm ET snapshot, posted late in the
      afternoon, or FRED's a business day later), never intraday — with the row's tag (NEW / STALE / NO DATA) beside it */
   const sub = el('div', 'econ-sub');
   sub.appendChild(el('span', 'econ-date', missing ? '—' : econDateLabel(r.asOf, r.cadence)));
@@ -8095,7 +8096,7 @@ function econRow(r, chartsMatch) {
     (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
     missing ? '' : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
     missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points',
-    r.source === 'treasury' ? 'source U.S. Treasury, same day' : r.source === 'fred' ? 'source FRED' : '',
+    r.source === 'treasury' ? 'source U.S. Treasury daily rate' : r.source === 'fred' ? 'source FRED' : '',
     r.pointsNote ? String(r.pointsNote) : '',
     stale ? 'STALE' + (Number.isFinite(fmtToNum(r.staleSec)) ? ' — last good reading ' + Math.round(r.staleSec / 60) + ' min ago' : '') : '',
   ].filter(Boolean).join(' · ');
