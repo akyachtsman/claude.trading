@@ -3411,9 +3411,20 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
      left to wherever earlier steps happened to leave the page, which is what
      made this check pass or fail by luck: it failed only on the runs that had
      drifted to that geometry, 1 to 2 runs in 3. */
+  /* Seated by what the slot is doing, NOT by a fixed offset from the list: the list
+     is only ~130px tall in the STACKED rail (capped at 220px, S53) and ~650px beside
+     the chart, and a fixed "top 70px above the viewport" pushed slot 60 clean off the
+     screen in the short one — the pointer then lands on nothing, and the check fails
+     for the harness's geometry rather than the app. So: seat slot 60 three-quarters of
+     the way down the list's OWN scroll window, then scroll the page to put that slot 60px
+     from the top of the viewport. The list's top is then above the viewport by
+     ~0.75 x its height in BOTH layouts, which is the geometry that exposes scroll
+     anchoring, while the slot itself stays on screen. */
   await page.evaluate(() => {
-    const r = document.querySelector('.wb-slots').getBoundingClientRect();
-    window.scrollTo(0, window.scrollY + r.top + 70);
+    const list = document.querySelector('.wb-slots');
+    const b = list.querySelector('[data-slot="60"] .wb-slot');
+    list.scrollTop += b.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientHeight * 0.75;
+    window.scrollTo(0, window.scrollY + b.getBoundingClientRect().top - 60);
   });
   await page.waitForTimeout(250);
   const deepBox = await deepBtn.boundingBox();
@@ -5462,5 +5473,64 @@ test('S52: the news topic accepts a punctuated topic, drops a stale reply and cl
     expect(await page.evaluate(() => localStorage.getItem('news_topic_v1')),
       `and "${typed}" stores "${shown}" — a topic of only junk clears rather than searching raw text`)
       .toBe(shown || null);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S53 — the charts rail's height follows the LAYOUT it is in. Below 861px the
+// rail is stacked ABOVE the chart, and its cap is a fixed 220px; beside the chart
+// (861px and up) its cap is the chart column's own height. The stacked cap was
+// dead for a long time — an earlier `#wbSidebar { max-height: 220px }` sat BEFORE
+// the base rule at equal specificity, and the script then wrote the chart's
+// height as an INLINE max-height, which beats every stylesheet rule — so a phone
+// carried a 460px list over its chart and an iPad an 891px one. Nothing in S40 or
+// S45 could see it: they assert what is IN the rail, never how tall it stands.
+//
+// The branch is taken off THIS PROJECT'S width, so each of the four projects
+// checks the side of the breakpoint it actually renders (desktop = beside; tablet
+// 810, mobile-chrome and iphone = stacked). Both branches are asserted from
+// rendered geometry, and the inline style must stay EMPTY: a max-height written
+// inline is precisely how the stacked cap was defeated.
+test('S53: the charts rail is capped at 220px when stacked and at the chart column\'s height when beside it', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  await gotoDemo(page, '#wbSidebar .wb-slots', 15000);
+  await page.locator('#wbChart').scrollIntoViewIfNeeded();
+  // the chart has drawn (the rail is capped from the chart's height on the render that draws it);
+  // waited on by what is VISIBLE, never by how the cap is implemented, so the assertions below stay
+  // meaningful against any implementation
+  await expect.poll(() => page.evaluate(() => document.getElementById('wbChart').childElementCount),
+    'the chart has drawn').toBeGreaterThan(20);
+  await page.waitForTimeout(400);
+
+  const m = await page.evaluate(() => {
+    const rail = document.getElementById('wbSidebar');
+    const bars = document.getElementById('wbPaneBars');
+    const svg = document.getElementById('wbChart');
+    const rr = rail.getBoundingClientRect(), br = bars.getBoundingClientRect(), sr = svg.getBoundingClientRect();
+    const slots = rail.querySelector('.wb-slots');
+    return {
+      vw: window.innerWidth,
+      rail: rr.height, railBottom: rr.bottom, railRight: rr.right,
+      chartColumn: sr.bottom - br.top, barsTop: br.top, barsLeft: br.left,
+      inline: rail.style.maxHeight,
+      cssCap: getComputedStyle(rail).maxHeight,
+      slotsScrolls: slots.scrollHeight > slots.clientHeight + 1,
+    };
+  });
+
+  expect(m.inline, 'the cap is never written inline — an inline max-height beats every stylesheet rule, which is how the 220px cap died').toBe('');
+  expect(m.slotsScrolls, 'the 100-slot list scrolls INSIDE the rail whichever way it is capped').toBe(true);
+
+  if (m.vw <= 860) {
+    expect(m.cssCap, `stacked at ${m.vw}px: the stylesheet caps the rail at 220px`).toBe('220px');
+    expect(m.rail, 'and it stands no taller than that').toBeLessThanOrEqual(220 + 1);
+    expect(m.railBottom, 'the rail is ABOVE the chart, not beside it').toBeLessThanOrEqual(m.barsTop + 1);
+  } else {
+    expect(m.railRight, `beside the chart at ${m.vw}px: the rail is a SIDE rail`).toBeLessThanOrEqual(m.barsLeft + 1);
+    expect(m.cssCap, 'and the stacked 220px cap has not leaked into the wide layout').not.toBe('220px');
+    expect(m.rail, 'it is capped at the chart column (pane bars + canvas), so a long roster scrolls rather than growing the row')
+      .toBeLessThanOrEqual(m.chartColumn + 1);
+    expect(m.rail, 'and fills it rather than collapsing').toBeGreaterThan(m.chartColumn * 0.9);
   }
 });

@@ -706,19 +706,21 @@
      full width back. */
   @media (max-width: 860px) {
     .wb-grid { grid-template-columns: minmax(0, 1fr); }
-    #wbSidebar { max-height: 220px; }
-    /* The stacked rail's equal column split lives AFTER the base rules that
-       set the side-rail widths — see the second 860px block below. */
+    /* The stacked rail's equal column split AND its 220px height cap live AFTER
+       the base rules they override — see the second 860px block below. */
   }
   /* The rail is a ROW of two columns; each column scrolls on its own so a
-     40-name watchlist cannot push the manual stack off the bottom. The
-     max-height is overwritten per render to match the chart's height (see the
-     note in renderCharts), so this value is only the pre-measure default. */
+     40-name watchlist cannot push the manual stack off the bottom. Beside the
+     chart its cap is the chart's height: renderCharts publishes it as
+     `--wb-rail-h` on every render (see the note there), so 600px is only the
+     pre-measure default. It is a custom property and NOT an inline max-height
+     because an inline style beats every stylesheet rule — the stacked-rail cap
+     below could never have applied while the script wrote the height inline. */
   /* A COLUMN now: the roster picker is a full-width header over both symbol
      columns (see renderWbSidebar). It was a row of two columns until
      2026-08-25, when the 154px rail left the picker too narrow to name the
      list it had selected. */
-  #wbSidebar { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); max-height: 600px; }
+  #wbSidebar { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); max-height: var(--wb-rail-h, 600px); }
   /* `min-height: 0` is load-bearing: a flex ITEM defaults to min-height auto,
      so without it this row refuses to shrink below its content and the rail's
      max-height (set per render to the chart's height) stops capping anything —
@@ -789,6 +791,13 @@
      warning about — equal-specificity overrides placed before what they lift. */
   @media (max-width: 860px) {
     .wb-rail-manual { flex: 1 1 0; }
+    /* Stacked, the rail sits ABOVE the chart, so capping it to the chart's
+       height (the side-rail rule) put a 460px list over a phone's chart and an
+       891px one over an iPad's. 220px keeps the picker and about eight slots in
+       view and the 100-slot list scrolls inside it. Same source-order trap as
+       the split above: this must follow `#wbSidebar`'s base rule, and the
+       earlier copy of it (in the first 860px block) silently did nothing. */
+    #wbSidebar { max-height: 220px; }
   }
   .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
   .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
