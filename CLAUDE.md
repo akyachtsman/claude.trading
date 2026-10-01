@@ -147,10 +147,17 @@ its topic file** — the reasoning behind each rule is there, not here.
     is still seen. Roster in `config/econ-indicators.json`; spans are slices of one cached
     history; it tells the client when to ask again (`refreshInSec`, tight around 08:30 and
     the afternoon yield window). **Deployed 2026-09-30** (v1, `verify_jwt` ON, from
-    `f78a03f`): v1 reads the roster from Pages (cached 1h) and so attempts Treasury INLINE
+    `f78a03f`): v1 read the roster from Pages (cached 1h) and so attempted Treasury INLINE
     with a 5 s limit on EVERY request — adding ~4–5 s to every desk-econ reply and still
-    ending FRED-only (live logs: `Signal timed out`). **v3 (the shared store) is NOT
-    deployed** until the owner approves; it needs no migration (the table exists).
+    ending FRED-only (live logs: `Signal timed out`). **v3 (the shared store) DEPLOYED
+    2026-10-01** (owner-approved, Supabase version 2, `verify_jwt` ON, from `c06888a`; no
+    migration was needed, the table existed). Verified live that day: the first request took
+    20.7 s and returned the three yield rows `source:"treasury"` as of 2026-09-30, the
+    `econ:treasury` row held all three columns with `fetchedAt` set and no `failedAt`, and the
+    next request answered in under a second from the stored row. Rollback = redeploy v1, i.e.
+    `supabase/functions/desk-econ/index.ts` as of `cd5f920` (the #294 merge on `main`; byte-identical
+    to the `f78a03f` branch commit v1 was deployed from, which the squash left unreachable), with
+    `verify_jwt` ON.
     → details: `docs/architecture/economy-panel.md`
   - **`desk-probe`** is a THROWAWAY diagnostic (owner-approved 2026-10-01, v1, `verify_jwt`
     ON) that measured from Supabase's servers which public yield sources desk-econ can reach;
@@ -163,10 +170,11 @@ its topic file** — the reasoning behind each rule is there, not here.
     and OFF for `desk-ask`/`quote-proxy`/`desk-market`/`desk-charts`/`desk-news`; the
     flags live nowhere else, so read `list_edge_functions` first. Last full deploy
     2026-09-30 from `d0ca48e`; rollback = redeploy that file from `dd7cf5f` (the
-    pre-audit source live matched) with the same flag. `desk-econ` (new, v1, 2026-09-30,
-    owner-approved) is also `verify_jwt` ON and has no earlier version to roll back to;
-    taking it out of service means deleting it (owner approval), after which the panel
-    lamps STALE with an empty state.
+    pre-audit source live matched) with the same flag. `desk-econ` (new, v1, 2026-09-30;
+    v3 = Supabase version 2, 2026-10-01, both owner-approved) is also `verify_jwt` ON;
+    rolling v3 back = redeploy that file at `cd5f920` (v1) with `verify_jwt` ON, and taking it out
+    of service means deleting it (owner approval), after which the panel lamps STALE with an
+    empty state.
     → details: `docs/architecture/edge-feeds-and-heatmap.md` (Deploying)
 - `supabase/migrations/` — `desk_001`–`desk_006` were applied out-of-band and are
   RECONSTRUCTED from the live catalog (not the original text; `desk_003_seed` is a
@@ -272,8 +280,8 @@ real-data rules stay in Project-Specific Coding Standards below.
   ever leave it — payload byte-shape-identical to the formerly-committed
   public news.json. `desk-heatmap` holds it too, solely for the
   `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
-  multi-period sweep — public market percentages only. `desk-econ` v3 (written
-  2026-10-01, NOT deployed until the owner approves) holds it too, solely for that
+  multi-period sweep — public market percentages only. `desk-econ` v3 (deployed
+  2026-10-01, owner-approved) holds it too, solely for that
   table's `econ:treasury` row — public Treasury yield observations only.
 - **Accepted residual — anonymous watchlist writes (audit 2026-09-29, C1).**
   `desk_get_watchlists_open` / `desk_set_watchlists_open` (`desk_012`/`desk_014`)

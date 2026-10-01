@@ -1,6 +1,6 @@
 # Economy panel and `desk-econ`
 
-The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55). Later the same day the owner asked for CURRENT 2Y/10Y yields, so the roster switched Treasury's same-day daily rate ON for the three yields (see Sources and Deploying). On 2026-10-01 a throwaway probe measured Treasury from Supabase's servers: the right data, but 17–20 s per request — and live calls the same day showed that EVERY desk-econ request runs on a FRESH instance. So v3 keeps Treasury's validated rows in the SHARED table `desk_feed_cache` and lets at most one request per interval do the slow fetch, under a lease (see "Treasury in the shared store"). **v3 is NOT deployed** (owner approval pending; no migration needed — the table exists); live is still v1, whose inline 5 s Treasury attempt runs on EVERY request, adds ~4–5 s to each reply, and still ends FRED-only. (A per-instance background design, v2, was written and checkpointed that morning and dropped once the fresh-instance measurement came in.)
+The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55). Later the same day the owner asked for CURRENT 2Y/10Y yields, so the roster switched Treasury's same-day daily rate ON for the three yields (see Sources and Deploying). On 2026-10-01 a throwaway probe measured Treasury from Supabase's servers: the right data, but 17–20 s per request — and live calls the same day showed that EVERY desk-econ request runs on a FRESH instance. So v3 keeps Treasury's validated rows in the SHARED table `desk_feed_cache` and lets at most one request per interval do the slow fetch, under a lease (see "Treasury in the shared store"). **v3 was DEPLOYED 2026-10-01** (owner-approved, Supabase version 2, `verify_jwt` ON, from `c06888a`; no migration needed — the table exists; verified live, see Deploying) — until then live was v1, whose inline 5 s Treasury attempt ran on EVERY request, added ~4–5 s to each reply, and still ended FRED-only. (A per-instance background design, v2, was written and checkpointed that morning and dropped once the fresh-instance measurement came in.)
 
 - **What it serves.** Seven rows by default — 2Y / 10Y / 20Y Treasury, Unemployment,
   CPI YoY, PCE YoY, Core PCE YoY — each with `value`, `prev`, `delta`, `asOf`,
@@ -74,7 +74,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   it was, so a column that can NEVER validate costs at most one slow attempt per idle interval
   outside the window (hourly, like a failing host) and the usual 5-min attempts inside it until
   midnight ET (today's rate is not held without it).
-- **Treasury in the shared store (v3, 2026-10-01 — NOT deployed yet).** MEASURED 2026-10-01:
+- **Treasury in the shared store (v3, 2026-10-01 — DEPLOYED the same day).** MEASURED 2026-10-01:
   every desk-econ request runs on a FRESH instance (`generatedAt` differed on calls 4 s apart,
   and v1's per-instance 10-minute back-off never held — every call re-attempted Treasury), so
   module memory is never reused and any per-instance or background design can never be seen by
@@ -252,25 +252,26 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   Pages (first merge to `main`) the function reports `roster.source:"default"` — the
   built-in roster is identical, so the rows are the same. *(True of v1 while both were
   FRED-only. Since the Treasury columns went into the config, v1's built-in default and the
-  Pages roster DIFFER until the next deploy (the v3 source): `roster.source:"default"` on v1 now means the
-  yields are on FRED — see below.)*
+  Pages roster DIFFERED until the v3 deploy (2026-10-01, which closed that gap): `roster.source:"default"` on v1 meant the
+  yields were on FRED — see below.)*
   The repo spells the BOM strip `/^\uFEFF/`; the payload sent used the same escape, and
   the read-back may show the literal character instead — the same regex either way.
-  **Treasury tail ON (2026-09-30, owner request) — NOT redeployed.** The live function is
-  still v1, whose built-in default names no Treasury column. But v1 (deployed from `f78a03f`,
+  **Treasury tail ON (2026-09-30, owner request) — NOT redeployed at the time.** *(Historical:
+  v3 was deployed 2026-10-01, see the v3 paragraph below.)* The live function was
+  still v1, whose built-in default names no Treasury column. But v1 (deployed from `f78a03f`, whose file is the one at `cd5f920` on `main`,
   the same source as this file before the roster change) already carries the whole Treasury
   path and reads the roster from Pages at runtime (cached 1h), so the three Treasury columns
   take effect on the LIVE function within about an hour of `config/econ-indicators.json`
   reaching Pages (the merge to `main`) — a merged roster edit IS a live change, deploy or
   not. The next deploy (the built-in default naming the same three columns, so a Pages outage
-  does not drop the yields back to FRED) awaits the owner's separate approval. The Treasury
-  path is UNVERIFIED AGAINST THE LIVE HOST until it has run from Supabase: after Treasury
+  does not drop the yields back to FRED) was v3, approved and done 2026-10-01. The Treasury
+  path was UNVERIFIED AGAINST THE LIVE HOST until it ran from Supabase: after Treasury
   posts (inside 15:25–18:30 ET), `ust10y.source` should read `"treasury"` with today's `asOf`;
   if it never does, the rows are silently on FRED — read the function logs for
   `desk-econ: Treasury` / `treasury disagrees` / `no overlap` lines. *(Superseded 2026-10-01:
   it ran, and never did — see the next paragraph.)*
-  **2026-10-01 — live v1 never serves Treasury and costs EVERY reply ~4–5 s; v3 fixes both but
-  is NOT deployed.** With the roster on Pages, live v1 attempts Treasury INLINE with a 5 s limit.
+  **2026-10-01 — live v1 never served Treasury and cost EVERY reply ~4–5 s; v3 fixes both and
+  was deployed that day (verification at the end of this paragraph).** With the roster on Pages, v1 attempted Treasury INLINE with a 5 s limit.
   Every request runs on a fresh instance, so v1's per-instance 10-min back-off never holds:
   EVERY desk-econ request waits ~5 s for an attempt that always times out (`desk-econ: Treasury
   202609 failed: Signal timed out`) — calls at +0 / +4 / +30 / +90 s each took ~5.5 s and each
@@ -283,7 +284,8 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   deploy only on the owner's approval, `verify_jwt` ON as v1, NO migration (the table exists;
   the first lease creates the row). It reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from
   the function env, which Supabase provides to every edge function (`desk-heatmap` relies on
-  the same pair today). After the deploy, verify: (1) an ordinary reply is fast again (no
+  the same pair today). The post-deploy checklist (run 2026-10-01 — see "Deployed 2026-10-01
+  (v3)" at the end of this section for the result): (1) an ordinary reply is fast again (no
   ~5 s Treasury wait); (2) the first reply after an attempt falls due takes ~20 s and reads
   `ust10y.source:"treasury"` (today's `asOf` once Treasury has posted, else the prior business
   day's); (3) the next call — a different instance — is fast and shows the same rows; (4)
@@ -295,6 +297,22 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   re-read failed` and no `401` (a browser UA on the REST call would surface as a failed read);
   (6) after 18:30 ET with today's rate still pending, a reply's `refreshInSec` is ≤ 300, not the
   quiet 900.
+  **Deployed 2026-10-01 (v3).** Owner-approved ("Yes, deploy desk-econ v3"); project
+  `kwugzhyfjevzwgplhtsd`, Supabase version 2 (`ezbr_sha256` `dfea38f9…5bea43`), `verify_jwt`
+  **ON**, from `c06888a` (the file has not changed since that merge). The payload sent equals the
+  repo file except two literal BOM characters where the repo has the `\uFEFF` escape (the same
+  regex; a byte-for-byte compare of a read-back needs that normalisation). Verified at
+  05:47 UTC (01:47 ET, Treasury's 09-30 print already out): the FIRST request took 20.7 s and
+  returned `ust2y` 4.88 / `ust10y` 5.29 / `ust20y` 5.68, all `source:"treasury"`, `asOf`
+  2026-09-30 (a day AHEAD of FRED); the `econ:treasury` row held all three columns (21
+  observations each, last 2026-09-30) with `fetchedAt` = `mergedAt` set, a lease and no
+  `failedAt`; the SECOND request answered in 0.94 s with the same rows (read from the store, on a
+  different instance); the logs carried one expected warning — `Treasury 202610 failed: not a
+  par-yield CSV`, because the October file does not exist until the first October print — and no
+  `Signal timed out`, store read/write failure or 401. Still to see in normal operation: items
+  (6) above (the capped `refreshInSec` after 18:30 ET) and today's rate arriving after the
+  3:30 pm ET snapshot. **Rollback** = redeploy v1 — `supabase/functions/desk-econ/index.ts` as of `cd5f920` (the #294 merge on `main`, byte-identical to the `f78a03f` branch commit v1 was deployed from; that commit is no longer reachable from any branch after the squash merge) — with `verify_jwt` ON; the
+  `econ:treasury` row is then simply unused.
 
 ## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`
 
@@ -435,7 +453,7 @@ width); **S56** guards the live 10Y.
   "may be delayed", and the 30-minute LIVE/LAST threshold is a guess to be checked against the
   open session (a 15-minute delay puts a normal bar 15–20 minutes old).
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
-  real rows — FRED, with Treasury's daily rate on the three yields once v3 (the shared store)
-  is deployed; v1's inline 5 s Treasury attempt always times out, so until then the yields are
-  FRED's (and every reply carries that ~5 s). If the function is ever down, a live page lamps the panel `STALE` and retries
+  real rows — FRED, with Treasury's daily rate on the three yields since v3 (the shared store)
+  went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields
+  were FRED's and every reply carried that ~5 s). If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
