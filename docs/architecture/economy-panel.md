@@ -583,8 +583,9 @@ width); **S56** guards the live 10Y.
   **The monthly rows** (unemployment, CPI, PCE, core PCE) have no intraday series: no chart,
   caption `no 1-day data`, tooltip "a monthly indicator has no intraday series" — also when their
   official reading is `missing`. **Demo**
-  draws `buildDemoBars` (seeded 5-minute bars over the last trading day's 08:00–17:00 ET bond
-  session, caption `05:00 – 14:00` Pacific) and never calls the network. **Cadence:** the bars
+  draws `buildDemoBars` (seeded 5-minute bars over the last BOND session day's 08:00–17:00 ET —
+  NYSE trading days minus Columbus and Veterans Day, `BOND_ONLY_HOLIDAYS`, Codex PR #301 —
+  caption `05:00 – 14:00` Pacific) and never calls the network. **Cadence:** the bars
   are fetched at once on picking 1D, alongside each quote poll (`econLiveFetch`, 60 s while the
   bond session runs, 10 min around it, hourly at weekends/holidays; concurrent with the quote and
   AWAITED, so the masthead's "Refresh now" stays pending until the bars have landed — Codex, PR #301;

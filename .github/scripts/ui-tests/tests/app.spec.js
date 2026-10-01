@@ -7146,6 +7146,21 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   expect(parsed.formats[4][1], 'and an empty one lists a bar\'s keys').toMatch(/1 bars in the reply, 0 usable \(a bar's keys: a\)/);
   expect(parsed.thinned, 'a day of one-minute bars is thinned to at most 150 real points').toBeLessThanOrEqual(150);
 
+  // the demo's bars are seeded on the last day the BOND session ran: Columbus Day and Veterans Day (shut for the yields, open for the NYSE)
+  // fall back to the day before, ordinary days are untouched, and the NYSE's own holidays still fall back as before (Codex, PR #301)
+  const demoDay = await page.evaluate(() => {
+    const first = (iso) => new Date(buildDemoBars('ust10y', new Date(iso))[0][0]).toISOString();
+    return {
+      columbus: first('2026-10-12T19:00:00Z'),    // Mon Oct 12 (Columbus Day) 12:00 PT → Fri Oct 9, 08:00 EDT
+      veterans: first('2026-11-11T20:00:00Z'),    // Wed Nov 11 (Veterans Day) 12:00 PT → Tue Nov 10, 08:00 EST
+      ordinary: first('2026-10-13T19:00:00Z'),    // Tue Oct 13 → itself
+      thanksgiving: first('2026-11-26T20:00:00Z'), // Thu Nov 26 (NYSE closed) → Wed Nov 25, 08:00 EST
+    };
+  });
+  expect(demoDay, 'demo bars start at 08:00 ET on the last BOND session day').toEqual({
+    columbus: '2026-10-09T12:00:00.000Z', veterans: '2026-11-10T13:00:00.000Z', ordinary: '2026-10-13T12:00:00.000Z', thanksgiving: '2026-11-25T13:00:00.000Z',
+  });
+
   // ── 3. force live: stub the quote, desk-econ (recording the range it is asked) and the bars
   await page.evaluate(() => {
     DESK_DB.url = DESK_DB.url || 'https://stub.invalid';

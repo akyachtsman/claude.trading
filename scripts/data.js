@@ -971,7 +971,11 @@ function etWallToMs(iso, minutes, seconds) {
 function buildDemoBars(id, now) {
   const row = DEMO_ECON_ROWS.find(r => r[0] === id);
   if (!row) return [];
-  const day = isoDate(lastTradingDay(now || new Date()));
+  /* the last day the BOND session ran: NYSE's trading days minus Columbus Day and Veterans Day (BOND_ONLY_HOLIDAYS) — the demo must
+     not draw a full session, captioned as one, on a day the yields do not trade (Codex, PR #301) */
+  let d = lastTradingDay(now || new Date());
+  while (BOND_ONLY_HOLIDAYS.has(isoDate(d))) d = tradingDayOnOrBefore(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1));
+  const day = isoDate(d);
   const open = etWallToMs(day, 8 * 60), n = 9 * 12;
   const rnd = lcg(row[4] * 31 + 5), end = row[5], step = row[6] / 14;
   const vals = [end + (rnd() - 0.5) * step * 6];
