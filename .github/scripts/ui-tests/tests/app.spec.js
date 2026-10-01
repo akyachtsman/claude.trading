@@ -6488,6 +6488,9 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
       noBaseline: run(row, { prevClose: null, prevDate: null }),
       oldBar: run(row, { ts: now - 31 * 60000 }).live.fresh, newBar: run(row, { ts: now - 5 * 60000 }).live.fresh,
       onePoint: run({ ...row, points: [['2026-09-29', 5.26]] }, {}).points.length,
+      // a short span that fell back to its N latest readings keeps N, so the caption (and the chart's accessible name) stay true
+      noted: (() => { const six = ['09-22', '09-23', '09-24', '09-25', '09-28', '09-29'].map((d, i) => [`2026-${d}`, 5.2 + i / 100]);
+        const o = run({ ...row, points: six, pointsNote: 'daily - 6 latest' }, {}); return [o.points.length, o.points[0][0], o.points[o.points.length - 1], o.pointsNote]; })(),
       otherId: (() => { econLive.q = { ust2y: q({}), ust10y: q({}) }; const r2 = { ...row, id: 'ust2y' }; return econLiveRow(r2, now) === r2; })(),
     };
     econLive.q = { ust10y: q({}) };
@@ -6510,6 +6513,8 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   expect(rules.noBaselineText, 'no baseline: the change is an em dash, never "= 0.00"').toBe('—');
   expect([rules.oldBar, rules.newBar], 'LIVE only while the bar is under 30 minutes old').toEqual([false, true]);
   expect(rules.onePoint, 'a chart that had fewer than two real points is not extended into a line').toBe(1);
+  expect(rules.noted, 'a "daily - 6 latest" fallback stays SIX readings: the print replaces the oldest, the note stays true (Codex, PR #297)')
+    .toEqual([6, '2026-09-23', ['2026-10-01', 5.321], 'daily - 6 latest']);
   expect(rules.otherId, 'only the 10Y row is ever live — the 2Y and 20Y have no free live source').toBe(true);
   expect(rules.demo, 'and demo never overlays').toBe(true);
 
@@ -6517,8 +6522,11 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   const delays = await page.evaluate(() => Object.fromEntries(
     [['open', '2026-10-01T15:45:00Z'], ['0800 ET', '2026-10-01T12:00:00Z'], ['0700 ET', '2026-10-01T11:00:00Z'], ['1514 ET', '2026-10-01T19:14:00Z'],
       ['1515 ET', '2026-10-01T19:15:00Z'], ['evening', '2026-10-01T22:00:00Z'], ['saturday', '2026-10-03T16:00:00Z'], ['thanksgiving', '2026-11-26T15:00:00Z'],
+      ['columbus day', '2026-10-12T15:00:00Z'], ['day after it', '2026-10-13T15:00:00Z'], ['veterans day', '2026-11-11T16:00:00Z'], ['veterans day 2027', '2027-11-11T16:00:00Z'],
     ].map(([k, iso]) => [k, econLiveDelaySec(Date.parse(iso))])));
-  expect(delays, 'the cadence follows the New York clock').toEqual({ open: 60, '0800 ET': 60, '0700 ET': 600, '1514 ET': 60, '1515 ET': 600, evening: 600, saturday: 3600, thanksgiving: 3600 });
+  expect(delays, 'the cadence follows the New York clock — and the BOND calendar: the NYSE is open on Columbus Day and Veterans Day, the bond market is not (Codex, PR #297)')
+    .toEqual({ open: 60, '0800 ET': 60, '0700 ET': 600, '1514 ET': 60, '1515 ET': 600, evening: 600, saturday: 3600, thanksgiving: 3600,
+      'columbus day': 3600, 'day after it': 60, 'veterans day': 3600, 'veterans day 2027': 3600 });
 
   // ── 5. the real poller end to end: a good quote draws the 10Y live; every other row is untouched
   const row10 = () => page.evaluate(() => {
@@ -6591,6 +6599,40 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   });
   expect(await page.evaluate((k) => window.__qcalls.slice(k).map((c) => c.force), n), '"Refresh now" asks for a forced quote').toEqual([true]);
 
+  // a ticker tick with nothing a viewer could see change leaves the live row alone (its tooltip survives a hover)
+  await page.evaluate(() => { window.__node = document.querySelector('#econList .econ-row[data-id="ust10y"]'); });
+  await page.clock.runFor(31_000);
+  expect(await page.evaluate(() => document.querySelector('#econList .econ-row[data-id="ust10y"]') === window.__node), 'the 30s ticker does not rebuild an unchanged live row').toBe(true);
+
+  // ── 6b. a FORCED quote owns the slot until it lands (Codex, PR #297): a poll timer coming due meanwhile — or an unforced call —
+  //        would take the newer generation and get the forced reply thrown away
+  await page.evaluate(() => { window.__quoteFn = () => new Promise((res) => { window.__release = () => res(window.__goodQuote()); }); econLiveArm(10); });
+  n = await calls();
+  const fetchedBefore = await page.evaluate(() => econLive.q.ust10y.fetchedAt);
+  await page.evaluate(() => { window.__forcedQ = econLiveFetch(true); });
+  expect(await calls(), 'the forced quote is in flight').toBe(n + 1);
+  expect(await page.evaluate(() => [econLive.timer, econLive.dueAt]), 'and the poll timer armed before it is cancelled').toEqual([0, 0]);
+  await page.clock.runFor(15_000);                                // past the 10s timer, inside the 20s cap on a quote
+  expect(await calls(), 'past the moment that timer was due: no second request').toBe(n + 1);
+  await page.evaluate(() => econLiveFetch(false));
+  expect(await calls(), 'an unforced call meanwhile (boot, a tab returning) waits too').toBe(n + 1);
+  await page.evaluate(() => { window.__release(); return window.__forcedQ; });
+  expect(await page.evaluate((t) => econLive.q.ust10y.fetchedAt > t, fetchedBefore), 'the forced reply LANDED (it was not discarded by a newer generation)').toBe(true);
+  const rearm = await page.evaluate(() => [econLive.forcing, econLive.dueAt - Date.now()]);
+  expect(rearm[0], 'the slot is released').toBe(false);
+  expect(rearm[1], 'and the poll re-armed a minute out').toBeGreaterThan(58_000);
+  expect(rearm[1]).toBeLessThanOrEqual(60_000);
+  // a quote that never answers is a failed quote after 20s, not a wedged poller
+  await page.evaluate(() => { window.__quoteFn = () => new Promise(() => {}); window.__hung = econLiveFetch(false); });
+  expect(await page.evaluate(() => econLive.dueAt), 'a hung request holds no timer').toBe(0);
+  await page.clock.runFor(21_000);
+  await page.evaluate(() => window.__hung);
+  const failedHung = await page.evaluate(() => [econLive.forcing, Math.round((econLive.dueAt - Date.now()) / 1000)]);
+  expect(failedHung[0], 'a hung quote leaves no forced slot held').toBe(false);
+  expect(failedHung[1], 'after 20s it counts as failed and the retry is a minute out').toBeGreaterThanOrEqual(59);
+  expect(failedHung[1]).toBeLessThanOrEqual(60);
+  await page.evaluate(() => { window.__quoteFn = () => window.__goodQuote(); return econLiveFetch(false); });
+
   // ── 7. a hidden tab asks for nothing, and asks at once on return if a quote came due meanwhile
   await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); econVisibility(); });
   expect(await page.evaluate(() => econLive.timer), 'hidden: no timer').toBe(0);
@@ -6640,4 +6682,18 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   await page.evaluate(() => Promise.all([refreshEcon(false), econLiveFetch(false)]));
   r10 = await row10();
   expect([r10.val, r10.date, r10.tag], 'Friday afternoon: yesterday\'s last print is a DATE (Oct 1), not a clock, and says LAST').toEqual(['5.32%', 'Oct 1', 'LAST']);
+
+  // ── 13. the date cell is re-read by the 30s ticker across Pacific midnight, not only when the row is rebuilt (Codex, PR #297)
+  await page.clock.setSystemTime(new Date('2026-10-03T06:50:00Z'));   // Fri 23:50 PT
+  await page.evaluate(() => {
+    window.__quoteFn = () => window.__quote(window.__bars('2026-10-01', '12:20', '18:55', 5.20, 5.293), window.__bars('2026-10-02', '12:20', '18:55', 5.30, 5.321));
+    econLive.q = {};
+    return Promise.all([refreshEcon(false), econLiveFetch(false)]);
+  });
+  r10 = await row10();
+  expect([r10.val, r10.date, r10.tag], 'a bar from today (Pacific) shows its CLOCK').toEqual(['5.32%', '11:55', 'LAST']);
+  await page.clock.setSystemTime(new Date('2026-10-03T07:10:00Z'));   // twenty minutes on, past Pacific midnight
+  await page.clock.runFor(31_000);                                      // the 30s ticker alone — no quote, no poll lands
+  r10 = await row10();
+  expect([r10.val, r10.date], '...and a DATE once the Pacific day has rolled over').toEqual(['5.32%', 'Oct 2']);
 });

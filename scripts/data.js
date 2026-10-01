@@ -49,6 +49,10 @@ const NYSE_EARLY_CLOSES = new Set([
   '2026-11-27', '2026-12-24',
   '2027-11-26',
 ]);
+/* Days the BOND market is shut but the NYSE is open: Columbus Day (2nd Monday of October) and Veterans Day. Only the
+   live 10Y's poll cadence reads this (econLiveDelaySec) — every stock-session gate keeps NYSE_HOLIDAYS. Extend it
+   yearly with the table above (ends 2027). */
+const BOND_ONLY_HOLIDAYS = new Set(['2026-10-12', '2026-11-11', '2027-10-11', '2027-11-11']);
 const isoDate = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const isTradingDay = d => d.getDay() !== 0 && d.getDay() !== 6 && !NYSE_HOLIDAYS.has(isoDate(d));
 /* The trading calendar keys off the DESK's calendar day — Pacific, like every

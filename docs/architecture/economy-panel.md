@@ -402,7 +402,9 @@ width); **S56** guards the live 10Y.
   print (`value`), the change from the PREVIOUS SESSION'S LAST PRINT of the same index (`null` —
   an em dash, never 0 — when the series holds no earlier session), `asOf` = the print's NY date,
   `source: 'live'`, `changed: false`, and the chart gets the print as its last point (only when it
-  already had two or more). The date cell is the Pacific CLOCK of the bar when it is from today
+  already had two or more; a short span that fell back to its N latest readings, `pointsNote`
+  "daily - 6 latest", keeps N — the print replaces the OLDEST point — so the caption and the chart's
+  accessible name stay true). The date cell is the Pacific CLOCK of the bar when it is from today
   (Pacific), else the date; the tag beside it is `LIVE` while the bar started under
   `ECON_LIVE_FRESH_MS` (30 min) ago and `LAST` once the quote has stopped moving (after the bell,
   over a weekend). The tooltip names the bar ("as of 2026-10-01 08:40 PDT (5-minute bar start)"),
@@ -412,11 +414,20 @@ width); **S56** guards the live 10Y.
   so no chip fires later when the overlay drops. **Polling** is its own timer, not `refreshInSec`:
   `econLiveFetch` → `econLiveArm`, every 60 s while the bond cash session runs (07:55–15:15 ET on a
   trading day; the proxy caches 60 s), 10 min around it, hourly at weekends and holidays
-  (`econLiveDelaySec`, off `etTradingClock`); a failed quote retries in 60 s; paused while the tab
-  is hidden and asked at once on return if one came due (the aged-out print is dropped first); the
-  masthead's "Refresh now" adds a FORCED quote to its `Promise.all`. A quote repaints ONLY the live
-  row in place (`econLiveRepaint`) so a minute's tick does not restart the NEW watch of the other rows;
-  a full `renderEcon` also applies the overlay. `?demo=1` never calls it (`DESK.mode === 'demo'`
+  (`econLiveDelaySec`, off `etTradingClock` PLUS `BOND_ONLY_HOLIDAYS` in `data.js` — Columbus Day and
+  Veterans Day, when the NYSE is open and the bond market is not; bond EARLY closes are not modelled:
+  the quote sits at its last print, tagged LAST, until 15:15); a failed quote retries in 60 s; each
+  quote is capped at 20 s (`ECON_LIVE_TIMEOUT_MS`) so a hung request is a failed quote, not a wedged
+  poller; paused while the tab is hidden and asked at once on return if one came due (the aged-out
+  print is dropped first); the masthead's "Refresh now" adds a FORCED quote to its `Promise.all`.
+  **A FORCED quote owns the slot until it lands** (`econLive.forcing`; Codex, PR #297): every fetch
+  clears the poll timer when it starts and an unforced call made meanwhile returns, because a timer
+  coming due would take the newer generation and get the forced reply thrown away. A quote repaints
+  ONLY the live row in place (`econLiveRepaint`) so a minute's tick does not restart the NEW watch of
+  the other rows; the 30 s ticker (`relampEcon`) calls it too — the date cell and LIVE→LAST depend on
+  the CLOCK, so they would otherwise go stale across Pacific midnight or between idle polls — and
+  it rebuilds a row only when its text or tooltip differs, so a hover is not torn down every half
+  minute; a full `renderEcon` also applies the overlay. `?demo=1` never calls it (`DESK.mode === 'demo'`
   guards both the fetch and the overlay). **Unmeasured**: how far behind the tape Yahoo's `^TNX` bars
   run while the market is OPEN (it was closed when this was built) — the tooltip and footer say
   "may be delayed", and the 30-minute LIVE/LAST threshold is a guess to be checked against the

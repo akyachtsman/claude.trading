@@ -7733,7 +7733,8 @@ const ECON_LIVE_TOL = 0.75;                 /* percentage points: a print furthe
 const ECON_LIVE_FRESH_MS = 30 * 60000;      /* LIVE while the newest 5-minute bar started within this, LAST after */
 const ECON_LIVE_KEEP_MS = 30 * 60000;       /* a reading whose last successful fetch is older than this is dropped: the row falls back to the official one */
 const ECON_LIVE_FAST_S = 60, ECON_LIVE_IDLE_S = 600, ECON_LIVE_OFF_S = 3600;
-const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0 };   /* q: row id → { price, ts, date, prevClose, prevDate, fetchedAt } */
+const ECON_LIVE_TIMEOUT_MS = 20000;         /* a quote that has not answered by then is a failed quote: a hung request must not wedge the poll chain */
+const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0, forcing: false };   /* q: row id → { price, ts, date, prevClose, prevDate, fetchedAt } */
 
 let econTf = ECON_DEFAULT_TF;
 try {
@@ -7954,7 +7955,7 @@ function paintEconStamp() {
   } else { applyStamp(st, '', '', ''); st.textContent = '—'; }
 }
 /* a lamp AGES even when its poll fails: re-read it against Date.now() with nothing fetched */
-function relampEcon() { paintEconLamp(); }
+function relampEcon() { paintEconLamp(); renderAfterFetch(econLiveRepaint); }
 setInterval(relampEcon, STAMP_TICK_MS);
 
 /* ── NEW: a reading this browser has not looked at yet. A row is NEW when its newest reading differs
@@ -8166,7 +8167,10 @@ function econLiveRow(r, now) {
   if (!(q.date > r.asOf) || Math.abs(q.price - official) > ECON_LIVE_TOL) return r;
   const pts = Array.isArray(r.points) ? r.points : [];
   const lastPt = pts[pts.length - 1];
-  const points = pts.length >= 2 && Array.isArray(lastPt) && String(lastPt[0]) < q.date ? pts.concat([[q.date, q.price]]) : pts;
+  /* a short span that fell back to its N latest readings (`pointsNote`: "daily - 6 latest") keeps N — the print replaces the
+     OLDEST point — so the caption and the chart's accessible name stay true (Codex, PR #297) */
+  const points = pts.length >= 2 && Array.isArray(lastPt) && String(lastPt[0]) < q.date
+    ? (r.pointsNote ? pts.slice(1) : pts).concat([[q.date, q.price]]) : pts;
   return {
     ...r, value: q.price, delta: Number.isFinite(q.prevClose) ? Number((q.price - q.prevClose).toFixed(econDec(r))) : null,
     prev: q.prevClose, asOf: q.date, prevAsOf: q.prevDate, points, source: 'live', changed: false,
@@ -8203,6 +8207,10 @@ function econLiveRepaint() {
     if (live === r && !li.dataset.live) continue;   /* nothing live on it, nothing was: leave the row (and its NEW watch) alone */
     if (live !== r) econLiveSeen(r);
     const next = econRow(live, chartsMatch);
+    /* the 30s ticker calls this too (the date cell and LIVE→LAST depend on the CLOCK, not only on a new quote, so across Pacific
+       midnight or an idle ten minutes they go stale on their own — Codex, PR #297): rebuild only when something a viewer could
+       see differs, so a hover on the row (its tooltip) is not torn down every half minute */
+    if (live !== r && li.dataset.live && next.textContent === li.textContent && next.title === li.title) continue;
     li.replaceWith(next);
     if (next.classList.contains('is-new')) econWatch(next);
     rebuilt = true;
@@ -8210,10 +8218,12 @@ function econLiveRepaint() {
   if (rebuilt) econArmNew();
 }
 /* How soon to ask again: every minute while the bond cash session runs (the proxy caches a minute), every ten
-   minutes around it on a trading day, hourly at weekends and holidays. */
+   minutes around it on a trading day, hourly at weekends and holidays — NYSE holidays plus Columbus Day and Veterans Day
+   (BOND_ONLY_HOLIDAYS). Bond-market EARLY closes (14:00 before some holidays) are not modelled: the quote just sits at its
+   last print, tagged LAST, until 15:15. */
 function econLiveDelaySec(now) {
   const c = etTradingClock(new Date(now));
-  if (!c) return ECON_LIVE_OFF_S;
+  if (!c || BOND_ONLY_HOLIDAYS.has(c.date)) return ECON_LIVE_OFF_S;   /* the bond market shuts on two days the NYSE does not (Codex, PR #297) */
   return c.minutes >= 7 * 60 + 55 && c.minutes < 15 * 60 + 15 ? ECON_LIVE_FAST_S : ECON_LIVE_IDLE_S;
 }
 function econLiveArm(sec) {
@@ -8223,19 +8233,32 @@ function econLiveArm(sec) {
   if (document.hidden) return;   /* visibilitychange rearms */
   econLive.timer = setTimeout(() => { econLive.timer = 0; econLiveFetch(false); }, sec * 1000);
 }
+function econLiveQuote(sym, force) {
+  let t;
+  const cap = new Promise((_, reject) => { t = setTimeout(() => reject(new Error('quote-proxy timed out')), ECON_LIVE_TIMEOUT_MS); });
+  return Promise.race([deskQuote(sym, 'intraday', false, force ? { force: true } : undefined), cap]).finally(() => clearTimeout(t));
+}
 /* One quote per live row. NEVER throws (the caller may sit inside a Promise.all with the forced refresh). A failed
    quote keeps the last good one, which ages out after ECON_LIVE_KEEP_MS; the repaint and the re-arm sit OUTSIDE the
    fetch's try (renderAfterFetch). `force` bypasses quote-proxy's warm cache ("Refresh now"). */
 async function econLiveFetch(force) {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  const forced = force === true;
+  /* A FORCED quote owns the slot until it lands (Codex, PR #297): a timer coming due meanwhile — or an unforced call from
+     boot / a tab coming back — would take the newer generation and get the forced reply thrown away, leaving the row on the
+     proxy's cached quote under a "Refresh now" that said it had refreshed. Every fetch clears the timer; the one that lands re-arms. */
+  if (!forced && econLive.forcing) return;
+  clearTimeout(econLive.timer); econLive.timer = 0; econLive.dueAt = 0;
   const gen = ++econLive.gen;
+  if (forced) econLive.forcing = true;
   const got = await Promise.all(Object.entries(ECON_LIVE).map(async ([id, sym]) => {
     try {
-      const out = await deskQuote(sym, 'intraday', false, force === true ? { force: true } : undefined);
+      const out = await econLiveQuote(sym, forced);
       return [id, out && out.ok ? econLiveParse(out.series, Date.now()) : null];
     } catch { return [id, null]; }
   }));
   if (gen !== econLive.gen) return;   /* a newer request owns the state now */
+  econLive.forcing = false;
   let ok = false;
   for (const [id, q] of got) if (q) { econLive.q[id] = { ...q, fetchedAt: Date.now() }; ok = true; }
   renderAfterFetch(econLiveRepaint);
