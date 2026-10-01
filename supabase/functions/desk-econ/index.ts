@@ -658,6 +658,20 @@ function treasuryHeld(row: StoreRow, rows: RosterRow[], today: string): boolean 
     return !spine || stitchTreasury(spine, col).reason === null;
   });
 }
+// The stored columns still serve the roster THIS request runs on: every Treasury
+// column it names is present and, where this request has that row's FRED spine, still
+// agrees with it. `fetchedAt` only says a complete fetch happened under the roster of
+// that day; the hourly Pages roster can add a tenor or repoint a row since, and a
+// weekend add would otherwise stay on lagging FRED until Monday 15:25 ET (Codex, PR #296).
+function treasuryCovers(row: StoreRow, rows: RosterRow[]): boolean {
+  return rows.every((r) => {
+    if (!r.treasury) return true;
+    const col = row.cols.get(r.treasury);
+    if (!col) return false;
+    const spine = fredStore.get(r.fred)?.obs;
+    return spine ? stitchTreasury(spine, col).reason === null : true;
+  });
+}
 // The opening of the most recent posting window at or before `ms` — a weekday at
 // 15:25 ET: on a weekday before 15:25 it is the previous weekday's, on Sat/Sun and on
 // Monday before 15:25 it is Friday's. Walks back one NY day at a time from just before
@@ -685,9 +699,10 @@ function treasuryWanted(now: number, today: string, rows: RosterRow[], row: Stor
   }
   // Outside the window nothing can have been published since it last opened: ask only
   // if no COMPLETE fetch has SUCCEEDED since then (an empty store has fetchedAt 0, so
-  // the first request after a deploy asks at once). A host that keeps failing — or a
-  // column that keeps failing to validate — is asked hourly.
-  if (row.fetchedAt >= lastPostingStart(now)) return false;
+  // the first request after a deploy asks at once) or the stored columns no longer
+  // cover the current roster. A host that keeps failing — or a column that keeps
+  // failing to validate — is asked hourly.
+  if (row.fetchedAt >= lastPostingStart(now) && treasuryCovers(row, rows)) return false;
   return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;
 }
 const working = (row: StoreRow) => ({ at: keptAt(row), cols: row.cols });
@@ -767,8 +782,10 @@ async function treasuryCycle(now: number, today: string, rows: RosterRow[], seen
     if (curFailed) return done(latest, lease);
     if (cur?.lease === lease.lease) {
       const failed = { ...cur, failedAt: Date.now() };
-      await writeTreasuryRow(failed);
-      return done(cur, failed);
+      // The client's next poll is timed from what the table holds: if the failure was not
+      // stored, that is still `cur` (our lease, retryable in 5 min) — not an unsaved 10-min
+      // back-off no other request will ever see (Codex, PR #296).
+      return (await writeTreasuryRow(failed)) ? done(cur, failed) : done(cur);
     }
     return done(base);
   }

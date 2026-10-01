@@ -634,11 +634,16 @@ const TESTS = [
 
   ['OUTSIDE the posting window: no attempt once a fetch has succeeded since the last window opened (weekday 15:25 ET; Friday\'s over a weekend, DST weekends included); a store older than that gets ONE attempt; a failing host costs at most one per hour', async (code) => {
     // a row as a real successful attempt leaves it, re-stamped to `fetchedAt`
+    // A fetch dated BEFORE the fixtures' own Treasury rows (the March DST case) cannot hold them: the function drops
+    // stored dates after "today", correctly. Its columns are FRED's own last observations up to that day instead —
+    // they agree with FRED by construction, which is all the weekend checks need from a stored column.
+    const colsUpTo = (iso) => Object.fromEntries(TSY_COLS.map(([, fredId, c]) => [c, refObs(fredId, '2025-12-01').filter(([d]) => d <= iso.slice(0, 10)).slice(-5)]));
     const seeded = async (fetchedAt) => {
       const src = fakeDb();
       await boot(code, { db: src }).call();
       const db = fakeDb();
-      db.seed({ ...src.payload(), fetchedAt, attemptedAt: fetchedAt, failedAt: null });
+      const iso = new Date(fetchedAt).toISOString();
+      db.seed({ ...src.payload(), ...(iso < '2026-09-01' ? { cols: colsUpTo(iso) } : {}), fetchedAt, attemptedAt: fetchedAt, failedAt: null });
       return db;
     };
     const visit = async (db, iso, treasury) => {
@@ -680,6 +685,29 @@ const TESTS = [
       eq([r.status, row(r, 'ust10y').source, row(r, 'ust10y').asOf], [200, 'treasury', '2026-09-30'], `${iso}: HTTP 200, the stored rate`);
     }
     eq(fails, [2, 0, 0, 2], 'a failing host: 10:00 asked, 10:11 (back-off over) and 10:59 not, 11:01 asked again');
+    // (e) the roster changes after a COMPLETE fetch (Codex, PR #296): fetchedAt vouches only for the roster it ran under.
+    //     The Pages roster is re-read hourly, so a tenor added — or a row repointed — on a weekend must not wait for Monday 15:25 ET.
+    const no20 = CONFIG.map((r) => (r.id === 'ust20y' ? { ...r, sources: { fred: r.sources.fred } } : r));
+    const swapped = CONFIG.map((r) => (r.id === 'ust2y' ? { ...r, sources: { ...r.sources, treasury: '10 Yr' } }
+      : r.id === 'ust10y' ? { ...r, sources: { ...r.sources, treasury: '2 Yr' } } : r));
+    const asked = async (db, iso, config) => {
+      const e = boot(code, { db, now: at(iso), config });
+      const r = await e.call();
+      return [e.fetchCount('home.treasury.gov'), r];
+    };
+    const e1 = fakeDb();
+    eq((await asked(e1, '2026-10-02T22:00:00Z', no20))[0], 2, 'Fri 18:00 ET, a roster without the 20 Yr column: fetched');
+    eq([Object.keys(e1.payload().cols).sort(), e1.payload().fetchedAt > 0], [['10 Yr', '2 Yr'], true], 'a COMPLETE fetch for that roster: two columns stored, fetchedAt advanced');
+    eq((await asked(e1, '2026-10-03T14:00:00Z', no20))[0], 0, 'Saturday, same roster: nothing to ask');
+    const [n1, r1] = await asked(e1, '2026-10-03T15:00:00Z', CONFIG);
+    eq([n1, row(r1, 'ust20y').source], [2, 'treasury'], 'Saturday, the roster now names the 20 Yr column: asked at once (not Monday 15:25 ET), and that row carries Treasury');
+    eq(Object.keys(e1.payload().cols).sort(), ['10 Yr', '2 Yr', '20 Yr'], 'the new column is stored');
+    eq((await asked(e1, '2026-10-03T16:00:00Z', CONFIG))[0], 0, 'and once the stored columns cover the roster nothing more is asked');
+    const e2 = await seeded(at('2026-10-02T22:00:00Z'));
+    eq((await asked(e2, '2026-10-03T14:00:00Z', CONFIG))[0], 0, 'baseline: the roster it was fetched for asks nothing');
+    const [n2, r2] = await asked(e2, '2026-10-03T15:00:00Z', swapped);
+    eq(n2, 2, 'a roster that repoints the 2Y/10Y rows at the other column (the stored ones no longer agree with their FRED spines): asked');
+    eq(YIELDS.map((id) => row(r2, id).source), ['fred', 'fred', 'treasury'], 'the repointed rows stay on FRED, the untouched 20Y still carries Treasury');
   }],
 
   ['PARTIAL success (one yield cannot validate — its FRED spine is down): the columns that did are stored and served, but fetchedAt does NOT move, so outside the window the missing one is still asked for, hourly; once all validate, fetchedAt advances and the asking stops', async (code) => {
@@ -783,6 +811,17 @@ const TESTS = [
     eq(YIELDS.map((id) => [row(rg, id).source, row(rg, id).asOf]), YIELDS.map(() => ['treasury', '2026-09-30']), '19:00 ET: this reply still carries what it fetched');
     eq([rg.json.phase, rg.json.refreshInSec], ['quiet', 300], 'but the client is told to come back when the next attempt is allowed (5 min), not the quiet 15');
     eq(db3.payload().mergedAt ?? 0, 0, 'the table still holds only the lease');
+    // The same when Treasury answers nothing usable and the FAILURE record cannot be stored (Codex, PR #296): the table then
+    // holds only the lease (retryable in 5 min), so the client is not told to wait for a 10-min back-off nobody else will see.
+    const N = at('2026-09-30T23:00:00Z');
+    const stored = boot(code, { db: fakeDb(), now: N, treasury: down(503) });
+    eq((await stored.call()).json.refreshInSec, 600, '19:00 ET, failure stored: the client is sent back when the 10-min back-off ends');
+    const db4 = fakeDb();
+    db4.write = (u, init) => (JSON.parse(init.body)[0].payload.failedAt !== null ? new Response('{"message":"boom"}', { status: 503 }) : undefined);
+    const h = boot(code, { db: db4, now: N, treasury: down(503) });
+    const rh = await h.call();
+    eq([rh.status, YIELDS.map((id) => row(rh, id).source)], [200, ['fred', 'fred', 'fred']], 'the reply is FRED either way');
+    eq([db4.payload().failedAt, rh.json.refreshInSec], [null, 300], 'failure record not stored: the table holds the lease only, so the client comes back in 5 min, not 10');
   }],
 
   ["FINAL RE-READ failure (500, timeout) is not 'no row yet': nothing is written after the lease — a contender's fresher row stands byte for byte, and no failure is recorded — while the reply serves what THIS request validated; a real 'no row yet' is still a base it writes on", async (code) => {
@@ -1254,8 +1293,8 @@ const MUTANTS = [
   ['posting-window cadence shortened to 1 min', 'return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;', 'return now - row.attemptedAt >= 60_000;'],
   ['5-minutely outside the posting window instead of hourly (a failing host)', 'return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;', 'return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;'],
   ['a failing host outside the window asked on every request', 'return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;', 'return true;'],
-  ['the old hourly-regardless rule outside the window (fetchedAt not consulted)', 'if (row.fetchedAt >= lastPostingStart(now)) return false;', 'if (row.fetchedAt < 0) return false;'],
-  ['fetchedAt ignored: any attempt since the window opened, even a failed one, stops asking', 'if (row.fetchedAt >= lastPostingStart(now)) return false;', 'if (row.attemptedAt >= lastPostingStart(now)) return false;'],
+  ['the old hourly-regardless rule outside the window (fetchedAt not consulted)', 'if (row.fetchedAt >= lastPostingStart(now) && treasuryCovers(row, rows)) return false;', 'if (row.fetchedAt < 0 && treasuryCovers(row, rows)) return false;'],
+  ['fetchedAt ignored: any attempt since the window opened, even a failed one, stops asking', 'if (row.fetchedAt >= lastPostingStart(now) && treasuryCovers(row, rows)) return false;', 'if (row.attemptedAt >= lastPostingStart(now) && treasuryCovers(row, rows)) return false;'],
   ['window start wrong over a weekend (Sat/Sun counted as weekdays)', "if (w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from) return t - (w.sec - WINDOWS[1].from) * 1000;", 'if (w.sec >= WINDOWS[1].from) return t - (w.sec - WINDOWS[1].from) * 1000;'],
   ["window start off by a day (today's 15:25 even before it)", 't -= (w.sec + 1) * 1000;', 'return t + (WINDOWS[1].from - w.sec) * 1000;'],
   ['posting window stops at 18:30 (a late post waits an hour)', "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from;", "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from && w.sec < WINDOWS[1].to;"],
@@ -1275,6 +1314,11 @@ const MUTANTS = [
   ['mergedAt not stamped on a merge (a partial store is dropped by the 72h keep at once)', 'mergedAt: at,', 'mergedAt: base.mergedAt,'],
   ['the 72h keep measured from fetchedAt only', 'const keptAt = (r: StoreRow) => Math.max(r.mergedAt, r.fetchedAt);', 'const keptAt = (r: StoreRow) => r.fetchedAt;'],
   ['mergedAt not read back from the store', 'row.mergedAt = stamp(o.mergedAt) ?? 0;', 'row.mergedAt = 0;'],
+  // Codex round 3 (PR #296): a roster change after a complete fetch, and a failure record that is not stored
+  ['fetchedAt honoured although the roster has since gained a Treasury column the store lacks', 'if (row.fetchedAt >= lastPostingStart(now) && treasuryCovers(row, rows)) return false;', 'if (row.fetchedAt >= lastPostingStart(now)) return false;'],
+  ['a missing column counts as covered (a tenor added on a weekend waits for Monday)', 'if (!col) return false;\n    const spine = fredStore.get(r.fred)?.obs;\n    return spine ?', 'if (!col) return true;\n    const spine = fredStore.get(r.fred)?.obs;\n    return spine ?'],
+  ['a stored column that no longer agrees with its (repointed) FRED spine counts as covered', 'return spine ? stitchTreasury(spine, col).reason === null : true;', 'return true;'],
+  ['a failure record that was not stored still times the client from the unsaved 10-min back-off', 'return (await writeTreasuryRow(failed)) ? done(cur, failed) : done(cur);', 'return (await writeTreasuryRow(failed), done(cur, failed));'],
 ];
 
 // ...and each damage to the SHIPPED roster (config/econ-indicators.json, the file the live function

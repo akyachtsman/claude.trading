@@ -97,7 +97,11 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   last opened, so an attempt is due only when no fetch has SUCCEEDED since the most recent
   weekday 15:25 ET (`fetchedAt` against `lastPostingStart()`: the previous weekday's on a
   weekday morning, Friday's over a weekend and on Monday morning; walked back one NY day at a
-  time, so the DST Sundays are handled) — and then at most hourly, so a host that keeps
+  time, so the DST Sundays are handled) OR the stored columns no longer cover the roster this
+  request runs on (`treasuryCovers()`: every Treasury column the roster names is present and,
+  where this request has the row's FRED spine, still agrees with it — the Pages roster is
+  re-read hourly, so a tenor added or a row repointed over a weekend is asked for at once, not
+  at Monday 15:25 ET; Codex, PR #296 round 3) — and then at most hourly, so a host that keeps
   failing costs at most one slow poll an hour. An empty store has `fetchedAt` 0, so the first
   request after a deploy asks at once. When an attempt is due it
   re-reads (the first read ran beside FRED), writes the lease BEFORE fetching, re-reads to
@@ -106,7 +110,9 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   would never see its result. The fetched columns are validated BEFORE anything is written
   (parsed, and agreeing with this request's FRED by `stitchTreasury`'s own check — a blocked,
   HTML or mislabelled file never reaches the store); nothing usable records `failedAt` (only
-  while the lease is still its own); otherwise the merged row (pruned to 70 days) is written,
+  while the lease is still its own; if THAT write is not stored either, the client's next poll
+  is timed from the lease row the table still holds — 5 min — not from the unsaved 10-min
+  back-off); otherwise the merged row (pruned to 70 days) is written,
   re-read first so it merges onto whatever is stored by then, stamped `mergedAt` — and
   `fetchedAt` only when EVERY column the roster names validated (a partial success stores what
   did but leaves `fetchedAt`, so outside the window the missing column is still asked for,
@@ -193,7 +199,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   check to play several cold instances, and playing the gateway's 401 for a browser-shaped
   user-agent; the harness serves the COMMITTED roster, and the no-Treasury path is tested on
   that roster with its `treasury` keys stripped); `--mutants` proves 71 single-line source
-  mutants plus 3 damages to the shipped roster are each caught (75/75 on 2026-10-01; a mutant
+  mutants plus 3 damages to the shipped roster are each caught (79/79 on 2026-10-01; a mutant
   that does not transpile is reported INVALID). The v3 checks: cold instance A holds the lease,
   waits for a "18 s" Treasury (time scaled) and serves it in its OWN reply, while instance C
   arriving during that wait gets the store at once without fetching, and instance B afterwards
@@ -207,7 +213,10 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   weekends included), a store older than the last window start one attempt and then none, and
   a host that keeps failing one attempt per hour; a PARTIAL success (FRED's DGS20 down) storing
   and serving the two columns that validated with `fetchedAt` left alone, so the missing one is
-  asked for again an hour later, and `fetchedAt` advancing once all three validate; the RETRY
+  asked for again an hour later, and `fetchedAt` advancing once all three validate; a roster
+  that GAINS a Treasury column (or repoints a row at another one) after a complete Friday
+  fetch is asked for on the Saturday, not at Monday 15:25 ET, and nothing more once the
+  stored columns cover it; the RETRY
   CAP (19:00 and 23:00 ET with today's rate pending: `refreshInSec` 300, 180 for a later
   instance, never below 30, back to 900 once the late print lands; 15:30 ET unchanged at 60;
   900 once held; 600 / 360 inside a failure's back-off; no cap at 10:00 ET or on a Saturday); a
@@ -218,7 +227,9 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   rows, nothing but the failure stored; a store read failing (500, timeout, non-JSON, not a
   row list) → FRED only with no attempt and no write, a foreign-shaped or corrupt payload never
   served and rewritten clean by the next lease; a lease write failing → no attempt, a final
-  write failing → this reply still carries the fetched rows (and the log never the key); every
+  write failing → this reply still carries the fetched rows (and the log never the key) and the
+  client is timed from the lease row the table still holds, as when the failure record itself
+  cannot be stored (5 min, not an unsaved back-off's 10); every
   REST call goes to `SUPABASE_URL` with the service key, no user-agent, bounded; and the real
   rows parse with `\n` and `\r\n`, equal the FRED capture on 09-28 and append 09-29/09-30 onto it.
 - **Deploying.** Deployed 2026-09-30 (owner-approved, project
