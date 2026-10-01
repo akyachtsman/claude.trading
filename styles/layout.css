@@ -303,8 +303,8 @@
   .top-boxes > .area-econ { flex: 2 1 0; min-width: 0; }
   .top-boxes > .col-rail { flex: 1 1 0; min-width: 0; }
   .top-boxes .panel-body { max-height: 320px; overflow-y: auto; }
-  /* The Economy body is NOT capped at 320: seven rows, the span control and the source note
-     need ~420px, and a cap that cut the last rows off behind a scroller nobody is told about
+  /* The Economy body is NOT capped at 320: seven rows (each with its source line) and the span
+     control need well over that, and a cap that cut the last rows off behind a scroller nobody is told about
      would read as a shorter list. It is an ordinary scroll container (plain `overflow-y: auto`,
      NO `overscroll-behavior` — the wheel chains to the page like `#newsList`) that scrolls
      only when the space it is given really is too small. Beside Markets (>=1120) the space is

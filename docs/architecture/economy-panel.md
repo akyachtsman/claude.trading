@@ -319,8 +319,8 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
 Built 2026-09-30 into the desk row's 4th slot (`<aside class="panel area-econ">`).
 Everything for it sits in ONE block of `app.js` (before the widgets section) plus
 `deskEcon()` / `buildDemoEcon()` in `data.js`; `index.html` keeps the bare placeholder it
-shipped with — `econChrome()` builds the span control, the list, the source note and the
-header's `#econStamp` itself. Guard: **S55** (S5 also names `#econLamp`; S54 holds the slot's
+shipped with — `econChrome()` builds the span control, the list and the
+header's `#econStamp` itself (there is no footer note). Guard: **S55** (S5 also names `#econLamp`; S54 holds the slot's
 width); **S56** guards the live 10Y.
 
 - **Rows.** One `<li class="econ-row">` per indicator: label / value / change / the date
@@ -340,12 +340,23 @@ width); **S56** guards the live 10Y.
   `new Date('2026-08-01')`, which is UTC midnight and reads Jul 31 in Pacific. The date is
   deliberately prominent: a yield is a daily RATE — today's only once Treasury has posted it
   (late afternoon ET), otherwise the previous business day's, and older when only FRED has it.
-  (Until 2026-09-30's switch this read "the feed is FRED-only".) The source note under the list
-  is true on every path ("Yields: 10Y live (Yahoo ^TNX, may be delayed); 2Y, 20Y and the 10Y when no
-  live quote: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else FRED …"), and each
-  row's tooltip names its own `source` ("source U.S. Treasury daily rate" / "source FRED" / "source
-  Yahoo Finance ^TNX live quote") — never "same day": before today's rate posts, Treasury supplies
-  YESTERDAY's, and `asOf` is what says so (Codex, PR #295).
+  (Until 2026-09-30's switch this read "the feed is FRED-only".)
+- **A source on every row — and no footer (owner request 2026-10-01: "I want a per index source").**
+  Under each row's date sits a tiny `.econ-src` line (9px, the muted ink token — never `opacity`),
+  `Source: <name>`, from `econSourceLabel(r)`: a live print → `Yahoo ^TNX` (the symbol from `r.live`),
+  `source:'treasury'` → `U.S. Treasury`, `source:'fred'` → `FRED`; in DEMO every row reads
+  `Source: Demo data` (the generated numbers are not FRED's, whatever the payload's `source` field
+  says, and the tooltip agrees); an unknown source and a `missing` row print NO line — never a guess.
+  The line is clipped, not wrapped (`overflow: hidden`), and the longest real name, `Source: U.S.
+  Treasury`, must fit the 104px value block at every viewport (S55 measures it — a clipped source is
+  a wrong source). The footer note that used to say all this once for the whole panel was REMOVED
+  (`.econ-foot` is gone; S55/S56 assert `.econ-foot` does not exist). What it carried that the line
+  cannot lives in each row's tooltip: `source U.S. Treasury daily rate (a ~3:30 pm ET snapshot of
+  bid-side quotes)` / `source FRED` / `source Yahoo Finance ^TNX live quote, may be delayed` — never
+  "same day" and never a "close": before today's rate posts, Treasury supplies YESTERDAY's, and
+  `asOf` is what says so (Codex, PR #295). Only the agency FRED republishes (BLS, BEA) is NOT named:
+  the payload carries no such field, and a client-side map keyed on row ids would break the day the
+  owner edits the roster.
 - **Status.** `missing` (or a null value): em dashes, a dashed placeholder, a `NO DATA` tag.
   `stale`: the row keeps its last good value and chart (spec §8), muted, tagged `STALE`
   (the tooltip carries the age).
@@ -449,7 +460,7 @@ width); **S56** guards the live 10Y.
   it rebuilds a row only when its text or tooltip differs, so a hover is not torn down every half
   minute; a full `renderEcon` also applies the overlay. `?demo=1` never calls it (`DESK.mode === 'demo'`
   guards both the fetch and the overlay). **Unmeasured**: how far behind the tape Yahoo's `^TNX` bars
-  run while the market is OPEN (it was closed when this was built) — the tooltip and footer say
+  run while the market is OPEN (it was closed when this was built) — the tooltip says
   "may be delayed", and the 30-minute LIVE/LAST threshold is a guess to be checked against the
   open session (a 15-minute delay puts a normal bar 15–20 minutes old).
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
