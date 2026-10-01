@@ -7867,19 +7867,203 @@ function econSpanCaption(pts, cadence) {
    own `points` ([date, value] pairs, oldest first). x is index order; y is the row's own min/max
    with a little room. A flat series is a level line through the middle, not a line glued to the
    floor; fewer than two real values is NOT drawn — the caller shows a dashed placeholder. */
-function econSpark(points, label) {
+const ECON_SPARK_PAD = 3;
+/* the height (in the chart's own 100 x 32 units) a value is drawn at — shared by the line and by the value axis, so a label
+   can never sit anywhere but on the height it names */
+const econSparkY = (v, lo, span) => span > 0 ? ECON_SPARK_H - ECON_SPARK_PAD - (v - lo) / span * (ECON_SPARK_H - 2 * ECON_SPARK_PAD) : ECON_SPARK_H / 2;
+function econSpark(points, label, grid) {
   const vals = (Array.isArray(points) ? points : []).map(p => fmtToNum(p[1]));
   if (vals.length < 2) return null;
-  const w = ECON_SPARK_W, h = ECON_SPARK_H, pad = 3;
+  const w = ECON_SPARK_W, h = ECON_SPARK_H;
   const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo;
-  const pts = vals.map((v, i) => [i / (vals.length - 1) * (w - 2) + 1, span > 0 ? h - pad - (v - lo) / span * (h - 2 * pad) : h / 2]);
+  const pts = vals.map((v, i) => [i / (vals.length - 1) * (w - 2) + 1, econSparkY(v, lo, span)]);
   /* preserveAspectRatio none lets the chart take whatever width the column gives it;
      non-scaling-stroke keeps the line 1.5px however it is stretched */
   const svg = svgEl('svg', { viewBox: '0 0 ' + w + ' ' + h, preserveAspectRatio: 'none', role: 'img', 'aria-label': label, focusable: 'false' });
+  /* a faint dashed line across the chart at each labelled value (behind the area and the line) */
+  for (const g of Array.isArray(grid) ? grid : []) {
+    const y = econSparkY(g, lo, span).toFixed(2);
+    svg.appendChild(svgEl('line', { class: 'econ-grid', x1: 0, x2: w, y1: y, y2: y, 'vector-effect': 'non-scaling-stroke' }));
+  }
   const line = pathFrom(pts);
   svg.appendChild(svgEl('path', { class: 'econ-area', d: line + 'L' + pts[pts.length - 1][0].toFixed(1) + ' ' + h + 'L' + pts[0][0].toFixed(1) + ' ' + h + 'Z' }));
   svg.appendChild(svgEl('path', { class: 'econ-line', d: line, fill: 'none', 'vector-effect': 'non-scaling-stroke' }));
   return svg;
+}
+
+/* ── the axes (owner 2026-10-01, from the 1D chart and then "every single range option": "I want numbers across vertical and
+   horizontal lines"). Every chart carries a VALUE axis on its right (up to three round values, each on the height it is drawn at,
+   with a faint dashed line across the chart) and a TIME axis under it (up to three round dates or clock times, each where it falls
+   along the drawn line). The two ends of the span are therefore on the chart itself; the old "Sep 24 – Oct 1" caption is only a
+   tooltip / data-span now. Both axes are computed from the SAME points the line is drawn from (`econSparkY`, `econIdxFrac`), so a label
+   cannot name a place the line is not. */
+
+/* up to three round values inside the data's range, never finer than the row's own decimals; when no round step gives two or three
+   the min and max themselves; a flat series (or one narrower than a unit of its last decimal) gets its one value */
+function econYTicks(vals, dec) {
+  const lo = Math.min(...vals), hi = Math.max(...vals), range = hi - lo, unit = Math.pow(10, -dec);
+  if (!(range > 0)) return [lo];
+  const base = Math.pow(10, Math.floor(Math.log10(range / 3)));
+  for (const m of [1, 2, 5, 10, 20, 50]) {
+    const step = base * m;
+    if (step < unit - 1e-12) continue;
+    const first = Math.ceil(lo / step - 1e-9), last = Math.floor(hi / step + 1e-9), n = last - first + 1;
+    if (n >= 2 && n <= 3) return Array.from({ length: n }, (_, i) => Number(((first + i) * step).toFixed(6)));
+  }
+  return Number(lo.toFixed(dec)) === Number(hi.toFixed(dec)) ? [(lo + hi) / 2] : [lo, hi];
+}
+/* the value axis: the labels, each at the height `econSparkY` draws its value at. Returns the element and the values (the chart
+   draws a dashed line at each). aria-hidden: the chart's own accessible name and the row's tooltip carry the numbers. */
+function econYAxis(vals, dec) {
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo, ticks = econYTicks(vals, dec);
+  const box = el('div', 'econ-yaxis');
+  box.setAttribute('aria-hidden', 'true');
+  for (const v of ticks) {
+    const t = el('span', 'econ-ytick', econNum(v, dec));
+    t.style.top = (econSparkY(v, lo, span) / ECON_SPARK_H * 100).toFixed(2) + '%';
+    box.appendChild(t);
+  }
+  return { box, ticks };
+}
+/* where an instant falls along the DRAWN x (0..1): the line is drawn in index order, so an instant between two points sits
+   proportionally between their positions — whatever the spacing of the points (gaps, a thinned day, weekends) */
+function econIdxFrac(ts, T) {
+  const n = ts.length;
+  if (n < 2 || T <= ts[0]) return 0;
+  if (T >= ts[n - 1]) return 1;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (ts[mid] <= T) lo = mid; else hi = mid; }
+  return (lo + (ts[hi] > ts[lo] ? (T - ts[lo]) / (ts[hi] - ts[lo]) : 0)) / (n - 1);
+}
+const econPad2 = n => String(n).padStart(2, '0');
+/* the Pacific minute of the day at an instant (the desk's clocks are Pacific); `% 24` because some engines print midnight as 24:00 */
+function econPtMinutes(ms) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(fmtClockBare(new Date(ms).toISOString()));
+  return m ? (+m[1] % 24) * 60 + +m[2] : -1;
+}
+const ECON_X_MINUTES = [15, 30, 60, 120, 180, 240, 360, 720];
+/* the time axis of a 1D chart: the smallest round clock step (Pacific) that leaves at most three labelled marks, each a clock time —
+   or the DATE at Pacific midnight, where the day changes — plus a small unlabelled mark at every other hour when the labels are further
+   apart than that. A span too short for a mark is labelled at its two ends. */
+function econXTicksIntraday(pts) {
+  const ts = pts.map(p => p[0]), t0 = ts[0], t1 = ts[ts.length - 1], grid = [];
+  for (let t = Math.ceil(t0 / 900000) * 900000; t <= t1; t += 900000) { const m = econPtMinutes(t); if (m >= 0) grid.push([t, m]); }
+  const clock = (t, m) => m === 0 ? fmtShortDate(ptDateKey(new Date(t))) : econPad2(Math.floor(m / 60)) + ':' + econPad2(m % 60);
+  let step = 0, major = [];
+  for (const s of ECON_X_MINUTES) { const hit = grid.filter(g => g[1] % s === 0); if (hit.length <= 3) { step = s; major = hit; break; } }
+  if (!major.length) return [{ f: 0, label: fmtClockBare(new Date(t0).toISOString()) }, { f: 1, label: fmtClockBare(new Date(t1).toISOString()) }];
+  const out = major.map(([t, m]) => ({ f: econIdxFrac(ts, t), label: clock(t, m) }));
+  if (step > 60) for (const [t, m] of grid) if (m % 60 === 0 && m % step !== 0) out.push({ f: econIdxFrac(ts, t), label: '', minor: true });
+  return out;
+}
+/* the time axis of a daily or monthly chart: calendar marks (Mondays, month starts, quarter starts, half-years, years, every second year)
+   — the smallest kind that leaves two or three of them inside the span — else the first, middle and last READING. Labels name the day
+   ("Sep 24"), the month with its year for monthly series or a span of about a year ("Jan '26"), or just the year. */
+const ECON_X_CAL = [
+  ['week', (y, mo, d, dow) => dow === 1], ['month', (y, mo, d) => d === 1], ['quarter', (y, mo, d) => d === 1 && mo % 3 === 0],
+  ['half', (y, mo, d) => d === 1 && (mo === 0 || mo === 6)], ['year', (y, mo, d) => d === 1 && mo === 0],
+  ['2y', (y, mo, d) => d === 1 && mo === 0 && y % 2 === 0], ['5y', (y, mo, d) => d === 1 && mo === 0 && y % 5 === 0],
+];
+function econXTicksDates(pts, cadence) {
+  const ts = pts.map(p => { const s = String(p[0]); return Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)); });
+  const t0 = ts[0], t1 = ts[ts.length - 1], long = t1 - t0 >= 300 * 86400000;
+  const iso = t => new Date(t).toISOString().slice(0, 10);
+  /* compact: a month is its name, with the year only at January ("Jan '26", "Jul"); a plain day is "Sep 24"; the long marks are the year */
+  const name = (t, kind) => {
+    const s = iso(t);
+    if (kind === 'year' || kind === '2y' || kind === '5y') return s.slice(0, 4);
+    if (cadence === 'monthly' || cadence === 'quarterly' || long) return MONTHS[+s.slice(5, 7) - 1] + (s.slice(5, 7) === '01' ? " '" + s.slice(2, 4) : '');
+    return fmtShortDate(s);
+  };
+  const days = [];
+  for (let t = t0; t <= t1; t += 86400000) days.push(t);
+  for (const [kind, test] of ECON_X_CAL) {
+    const hit = days.filter(t => { const d = new Date(t); return test(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCDay()); });
+    if (hit.length >= 2 && hit.length <= 3) return hit.map(t => ({ f: econIdxFrac(ts, t), label: name(t, kind) }));
+  }
+  const n = pts.length, idx = [...new Set([0, Math.round((n - 1) / 2), n - 1])];
+  return idx.map(i => ({ f: n > 1 ? i / (n - 1) : 0, label: econEndLabel(iso(ts[i]), cadence, long) }));
+}
+/* the time axis element: a baseline the width of the chart, a small mark per tick, a label under each major one. Marks and labels sit
+   at the same x the line is drawn at (the svg's own 1..99 of 100 units), and a label near either end hangs inward, not off the chart. */
+function econXAxis(ticks) {
+  const ax = el('div', 'econ-axis');
+  ax.setAttribute('aria-hidden', 'true');
+  for (const t of ticks) {
+    const left = 1 + 98 * t.f;
+    const mark = el('i', 'econ-tickmark' + (t.minor ? ' is-minor' : ''));
+    mark.style.left = left.toFixed(2) + '%';
+    ax.appendChild(mark);
+    if (!t.label) continue;
+    const lab = el('span', 'econ-xtick' + (left < 16 ? ' is-start' : left > 84 ? ' is-end' : ''), t.label);
+    lab.style.left = left.toFixed(2) + '%';
+    ax.appendChild(lab);
+  }
+  return ax;
+}
+/* How many of an axis's labels fit is a question about pixels, which only the browser can answer — the panel is 232px wide at its
+   narrowest and the plot only ~68px of that. So after layout each time axis keeps its outermost labels first (the leftmost and the
+   rightmost), then the others left to right, and HIDES any label that would touch one already kept (4px apart) or leave the axis.
+   Hidden labels keep their tick marks. Re-run whenever the list's markup changes (a MutationObserver — every update path rebuilds a
+   row's chart: render, the in-place live repaint, the ticker), whenever the panel is resized, and once the web fonts are in (text
+   width changes with them). No rAF: observer callbacks run after layout is forced, and a paused test clock must not stall it. */
+function econFitAxis(ax) {
+  const labels = [...ax.querySelectorAll('.econ-xtick')], W = ax.clientWidth;
+  for (const l of labels) l.classList.remove('is-hide');
+  if (!W || !labels.length) return;
+  const box = ax.getBoundingClientRect(), kept = [];
+  const order = [...new Set([0, labels.length - 1, ...labels.keys()])];
+  for (const i of order) {
+    const r = labels[i].getBoundingClientRect();
+    const inside = r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
+    if (inside && kept.every(k => r.right + 4 <= k.left || r.left >= k.right + 4)) kept.push(r);
+    else labels[i].classList.add('is-hide');
+  }
+}
+/* The same for the value axis, vertically: a short row (a phone, a tablet) can put two round values closer than a label is tall. The highest
+   and the lowest label are kept first, then the others; a hidden label takes its dashed gridline with it (no unlabelled line). */
+function econFitValueAxis(ya) {
+  const labels = [...ya.querySelectorAll('.econ-ytick')], grid = [...ya.parentNode.querySelectorAll('.econ-grid')];
+  labels.forEach((l, i) => { l.classList.remove('is-hide'); if (grid[i]) grid[i].classList.remove('is-hide'); });
+  if (!ya.clientHeight || labels.length < 2) return;
+  const rects = labels.map(l => l.getBoundingClientRect());
+  const byTop = [...rects.keys()].sort((a, b) => rects[a].top - rects[b].top);
+  const kept = [];
+  for (const i of new Set([byTop[0], byTop[byTop.length - 1], ...byTop])) {
+    const r = rects[i];
+    if (kept.every(k => r.bottom + 1 <= k.top || r.top >= k.bottom + 1)) kept.push(r);
+    else { labels[i].classList.add('is-hide'); if (grid[i]) grid[i].classList.add('is-hide'); }
+  }
+}
+function econWatchAxes(list) {
+  const fit = () => {
+    for (const ax of list.querySelectorAll('.econ-axis')) econFitAxis(ax);
+    for (const ya of list.querySelectorAll('.econ-yaxis')) econFitValueAxis(ya);
+  };
+  new MutationObserver(fit).observe(list, { childList: true, subtree: true });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(fit).observe(list);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+}
+/* the chart with both axes, appended to the row's chart column: the plot (the svg and the value axis side by side) over the time axis */
+function econPlot(chart, pts, label, r, ticks, span) {
+  const dec = econDec(r), ya = econYAxis(pts.map(p => fmtToNum(p[1])), dec);
+  const plot = el('div', 'econ-plot');
+  const svg = econSpark(pts, label, ya.ticks);
+  plot.appendChild(svg);
+  plot.appendChild(ya.box);
+  chart.appendChild(plot);
+  chart.appendChild(econXAxis(ticks));
+  /* Both axes are aria-hidden (a screen reader walking 20 loose numbers is noise), so everything they say is also said ONCE, in words: the span
+     (what the printed caption used to carry), the values on the value axis and the labels on the time axis. It is the svg's accessible
+     DESCRIPTION (aria-describedby, on a visually hidden node — the accessible NAME stays what it was) and it is returned for the row's tooltip
+     (Codex, PR #302). */
+  const desc = 'Chart spans ' + span + '. Value axis ' + ya.ticks.map(v => econNum(v, dec) + (r.unit || '')).join(', ') + '. Time axis '
+    + (ticks.filter(t => t.label).map(t => t.label).join(', ') || 'none') + '.';
+  const sr = el('span', 'econ-sr', desc);
+  sr.id = 'econ-desc-' + r.id;
+  chart.appendChild(sr);
+  svg.setAttribute('aria-describedby', sr.id);
+  return desc;
 }
 
 /* ── chrome: the span control and the list are built here (the header's stamp too),
@@ -7914,6 +8098,7 @@ function econChrome() {
     /* no footer note (owner, 2026-10-01: "I want a per index source"): every row names its own source in its tiny
        `.econ-src` line (econSourceLabel) and the row's tooltip says the rest. */
     body.append(bar, list);
+    econWatchAxes(list);
     syncEconTf();
   }
   return { list: document.getElementById('econList') };
@@ -8159,14 +8344,18 @@ function econRow(r, chartsMatch) {
   if (econTf === '1d') chartTip = econIntradayChart(chart, r, missing);
   else {
     const pts = (Array.isArray(r.points) ? r.points : []).filter(p => Array.isArray(p) && Number.isFinite(fmtToNum(p[1])));
-    const svg = missing || !chartsMatch ? null : econSpark(pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econRange.toUpperCase()));
-    if (svg) chart.appendChild(svg);
-    else chart.appendChild(el('span', 'econ-noline'));
-    if (svg) {
-      const cap = el('span', 'econ-cap', r.pointsNote ? String(r.pointsNote) : econSpanCaption(pts, r.cadence));
-      if (r.pointsNote) cap.classList.add('econ-note');
-      chart.appendChild(cap);
-    } else if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
+    const drawn = !missing && chartsMatch && pts.length >= 2;
+    if (drawn) {
+      /* both axes carry the span now; the first and last date stay on the chart column as `data-span` (and in the tooltip) */
+      const span = econSpanCaption(pts, r.cadence);
+      chartTip = econPlot(chart, pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econRange.toUpperCase()), r, econXTicksDates(pts, r.cadence), span);
+      chart.dataset.span = span;
+      /* the one caption left: a short span that fell back to the N latest readings says so (the axis alone would let it read as the span asked for) */
+      if (r.pointsNote) chart.appendChild(el('span', 'econ-cap econ-note', String(r.pointsNote)));
+    } else {
+      chart.appendChild(el('span', 'econ-noline'));
+      if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
+    }
   }
   li.appendChild(chart);
 
@@ -8525,10 +8714,10 @@ function econIntradayChart(chart, r, missing) {
   if (!e) return none('loading…', '1-day chart loading');
   if (e.pts.length >= 2) {
     const cap = econIntradayCaption(e.pts);
-    chart.appendChild(econSpark(e.pts, (r.label || r.id) + ', ' + e.pts.length + ' prices ' + cap + ' Pacific'));
-    chart.appendChild(el('span', 'econ-cap', cap));
-    return DESK.mode === 'demo' ? '1-day chart: generated demo prices'
-      : '1-day chart: ' + e.pts.length + ' CNBC ' + ECON_LIVE[r.id] + ' prices, ' + cap + (e.why ? ' — the last refresh failed (' + e.detail + '), these are the last good prices' : '');
+    const desc = econPlot(chart, e.pts, (r.label || r.id) + ', ' + e.pts.length + ' prices ' + cap + ' Pacific', r, econXTicksIntraday(e.pts), cap + ' Pacific');
+    chart.dataset.span = cap;   /* first and last bar on the Pacific clock: the accessible name, the tooltip and this — no longer a printed caption */
+    return (DESK.mode === 'demo' ? '1-day chart: generated demo prices'
+      : '1-day chart: ' + e.pts.length + ' CNBC ' + ECON_LIVE[r.id] + ' prices, ' + cap + (e.why ? ' — the last refresh failed (' + e.detail + '), these are the last good prices' : '')) + ' · ' + desc;
   }
   return none('1D ' + econBarsShort(e), '1-day chart unavailable: ' + e.detail);
 }
