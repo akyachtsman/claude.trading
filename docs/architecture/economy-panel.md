@@ -559,8 +559,10 @@ width); **S56** guards the live 10Y.
   so a date that moved — Feb 30, 25:00 — is refused; minute/second ranges are checked first, or
   minute 70 would read back as a valid 09:10), else an ISO stamp with its offset; the price is
   `close`, `last` or `price` through `econCnbcNum`; a bar from the future or with a price outside
-  (−5, 30) is skipped; bars are sorted, only the NEWEST New York session is kept, and a long
-  day is thinned with `econDownsample` (≤ `ECON_BARS_MAX` = 150 real points).
+  (−5, 30) is skipped; bars are sorted, only the NEWEST New York session is kept — and only THEN
+  is the two-bar minimum applied (yesterday plus one bar of today reads `no bars` and keeps the
+  last good chart; Codex, PR #301) — and a long day is thinned with `econDownsample`
+  (≤ `ECON_BARS_MAX` = 150 real points).
   **Failure is named, never filled.** No substitute source (owner: "no fallbacks"), no demo
   bars in live, no chart from anything but real bars. The row shows the dashed placeholder
   and the reason: caption `1D HTTP 403` / `1D no answer` / `1D not JSON` / `1D unknown format`
@@ -576,7 +578,8 @@ width); **S56** guards the live 10Y.
   draws `buildDemoBars` (seeded 5-minute bars over the last trading day's 08:00–17:00 ET bond
   session, caption `05:00 – 14:00` Pacific) and never calls the network. **Cadence:** the bars
   are fetched at once on picking 1D, alongside each quote poll (`econLiveFetch`, 60 s while the
-  bond session runs, 10 min around it, hourly at weekends/holidays) and on a tab coming back
+  bond session runs, 10 min around it, hourly at weekends/holidays; concurrent with the quote and
+  AWAITED, so the masthead's "Refresh now" stays pending until the bars have landed — Codex, PR #301) and on a tab coming back
   with bars older than a minute — only while 1D is the view (`econBarsFetch` guards it too),
   never while hidden. `econLiveRepaint` redraws the yield rows in place and compares the
   chart's markup as well as the text, because new bars change no text. The caption is the

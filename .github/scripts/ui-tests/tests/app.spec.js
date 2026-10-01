@@ -7122,6 +7122,9 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
       future: keys(P({ priceBars: [bar(0), bar(1), bar(2), bar(3), bar(60)] })), bad: keys(P({ priceBars: [bar(0), bar(1, { close: '52.9' }), bar(2, { close: 'N/A' }), bar(3)] })),
       twoDays: P({ priceBars: [{ tradeTimeinMills: open - 86400000, close: '5.0' }, { tradeTimeinMills: open - 86400000 + 300000, close: '5.0' }, bar(0), bar(1), bar(2)] }),
       unsorted: P({ priceBars: [bar(2), bar(0), bar(1)] }).pts.map((p) => p[0] - open),
+      // yesterday's session plus ONE bar of today: the newest session has a single usable bar — no chart, a reason, and the last good bars are kept (Codex, PR #301)
+      oneNew: (() => { const body = { priceBars: [0, 1, 2].map((i) => ({ tradeTimeinMills: open - 86400000 + i * 300000, close: '5.0' })).concat([bar(0)]) };
+        return { parse: P(body), keep: econBarsEntry('ust10y', { ok: true, body }, { pts: [[open - 600000, 5.2], [open - 300000, 5.21]], fetchedAt: now - 60000 }, now) }; })(),
       formats: [P(null), P('x'), P({ foo: 1, barData: { zz: 2 } }), P({ priceBars: [] }), P({ priceBars: [{ a: 1 }] })].map((x) => [x.why, x.detail]),
       thinned: P({ priceBars: Array.from({ length: 400 }, (_, i) => ({ tradeTimeinMills: open + i * 60000, close: (5.2 + Math.sin(i / 9) / 10).toFixed(3) })) }).pts.length,
     };
@@ -7136,6 +7139,8 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   expect([parsed.future, parsed.bad], 'a bar from the future and a ×10 / N/A price are skipped, the rest kept').toEqual([{ n: 4, why: '' }, { n: 2, why: '' }]);
   expect(parsed.twoDays.pts.length, 'only the NEWEST session\'s bars (a 1-day chart)').toBe(3);
   expect(parsed.unsorted, 'bars are put in time order').toEqual([0, 300000, 600000]);
+  expect([parsed.oneNew.parse.pts.length, parsed.oneNew.parse.why, parsed.oneNew.parse.detail], 'yesterday plus ONE bar of today is not enough for a chart: a named reason, not a one-point result').toEqual([0, 'empty', "4 bars in the reply, 1 usable on the newest session (a bar's keys: tradeTimeinMills,close)"]);
+  expect([parsed.oneNew.keep.pts.length, parsed.oneNew.keep.why], 'and it keeps the last good bars rather than blanking the chart').toEqual([2, 'empty']);
   expect(parsed.formats.map((f) => f[0]), 'null, a string, an unknown object, an empty list and a list of junk each name a reason').toEqual(['format', 'format', 'format', 'empty', 'empty']);
   expect(parsed.formats[2][1], 'an unknown format lists the reply\'s keys (the owner reads these back)').toBe('unrecognised reply format (keys: foo,barData / barData: zz)');
   expect(parsed.formats[4][1], 'and an empty one lists a bar\'s keys').toMatch(/1 bars in the reply, 0 usable \(a bar's keys: a\)/);
@@ -7227,6 +7232,17 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   await page.evaluate(() => { window.__bfn = (sym) => window.__good(window.__base[sym]); });
   await page.clock.runFor(61_000);
   await expect.poll(async () => (await rows1d()).ust10y.svg, 'a good reply on the next poll brings the charts back').toBe(true);
+  // a FORCED refresh ("Refresh now") stays pending until the bars have landed too (Codex, PR #301)
+  await page.evaluate(() => {
+    window.__rel = []; window.__fdone = false;
+    window.__bfn = (sym) => new Promise((res) => window.__rel.push(() => res(window.__good(window.__base[sym]))));
+    window.__f = econLiveFetch(true); window.__f.then(() => { window.__fdone = true; });
+  });
+  await page.clock.runFor(3_000);
+  expect(await page.evaluate(() => [window.__rel.length, window.__fdone]), 'a forced refresh asked for the three bars and is still pending while they are outstanding (the quote has long landed)').toEqual([3, false]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__f; });
+  expect(await page.evaluate(() => window.__fdone), 'and resolves once they land').toBe(true);
+  await page.evaluate(() => { window.__bfn = (sym) => window.__good(window.__base[sym]); });
   let n = await page.evaluate(() => window.__bsyms.length);
   await page.clock.runFor(61_000);
   expect(await page.evaluate(() => window.__bsyms.length), 'a minute on: three more requests (one per yield)').toBe(n + 3);

@@ -8357,11 +8357,13 @@ async function econLiveFetch(force) {
   clearTimeout(econLive.timer); econLive.timer = 0; econLive.dueAt = 0;
   const gen = ++econLive.gen;
   if (forced) econLive.forcing = true;
-  if (econTf === '1d') econBarsFetch();   /* the day's bars ride the same cadence while 1D is showing */
+  /* the day's bars ride the same cadence while 1D is showing — fetched CONCURRENTLY with the quote and awaited below, so a forced
+     "Refresh now" stays pending until they have landed too (Codex, PR #301); econBarsFetch never throws, the catch is belt and braces */
+  const barsP = econTf === '1d' ? econBarsFetch().catch(() => {}) : null;
   let body = null, cnbc = {};
   try { body = await econLiveCnbc(); } catch { body = null; }
   try { cnbc = econLiveParseCnbc(body, Date.now()); } catch { cnbc = {}; }
-  if (gen !== econLive.gen) return;   /* a newer request owns the state now */
+  if (gen !== econLive.gen) { if (barsP) await barsP; return; }   /* a newer request owns the state now */
   econLive.forcing = false;
   const landed = Date.now();
   econLive.landedAt = landed;
@@ -8370,6 +8372,7 @@ async function econLiveFetch(force) {
   for (const id of ids) econLive.q[id] = { ...cnbc[id], fetchedAt: landed, keepMs: Math.max(ECON_LIVE_KEEP_MS, 2 * econLiveDelaySec(landed) * 1000) };
   renderAfterFetch(econLiveRepaint);
   econLiveArm(ids.length ? econLiveDelaySec(Date.now()) : ECON_RETRY_S);
+  if (barsP) await barsP;
 }
 
 /* ── 1D: the yields' intraday bars (owner request 2026-10-01: "add the one day chart" → "build it blind") ──────────────────
@@ -8428,11 +8431,14 @@ function econBarsParse(body, now) {
     if (Number.isFinite(ms) && ms <= now + 5 * 60000 && Number.isFinite(price) && price > -5 && price < 30) out.push([ms, price]);
   }
   out.sort((a, c) => a[0] - c[0]);
-  if (out.length < 2) {
-    return { pts: [], why: 'empty', detail: arr.length + ' bars in the reply, ' + out.length + ' usable' + (arr[0] && typeof arr[0] === 'object' ? ' (a bar\'s keys: ' + Object.keys(arr[0]).slice(0, 8).join(',') + ')' : '') };
+  /* the newest session FIRST, then the minimum: a reply holding yesterday plus the first bar of today has ONE usable bar, which must
+     read as "no bars yet" (and keep the last good chart), not slip through as a one-point result with no reason (Codex, PR #301) */
+  const day = out.length ? etClock(new Date(out[out.length - 1][0])).date : '';
+  const today = out.filter(p => etClock(new Date(p[0])).date === day);
+  if (today.length < 2) {
+    return { pts: [], why: 'empty', detail: arr.length + ' bars in the reply, ' + today.length + ' usable' + (out.length > today.length ? ' on the newest session' : '') + (arr[0] && typeof arr[0] === 'object' ? ' (a bar\'s keys: ' + Object.keys(arr[0]).slice(0, 8).join(',') + ')' : '') };
   }
-  const day = etClock(new Date(out[out.length - 1][0])).date;
-  return { pts: econDownsample(out.filter(p => etClock(new Date(p[0])).date === day), ECON_BARS_MAX), why: '', detail: '' };
+  return { pts: econDownsample(today, ECON_BARS_MAX), why: '', detail: '' };
 }
 /* what the bars must agree with: the live quote, else the row's own reading */
 function econBarsRef(id) {
