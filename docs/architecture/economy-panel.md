@@ -493,7 +493,7 @@ width); **S56** guards the live 10Y.
   `ECON_LIVE_KEEP_MS` before their official reading returns. `econLiveParseCnbc(body, now)` →
   `{ rowId: { price, ts, date, prevClose, prevDate: null, via: 'cnbc', symbol } }`: numbers arrive as
   strings with a trailing `%` (`"4.787%"`); `last_time` is `"2026-10-01T11:49:47.000-0400"`, an offset
-  WITHOUT a colon, rewritten to the standard form before `Date.parse`; the previous close is
+  WITHOUT a colon, rewritten to the standard form before `Date.parse` (which REPAIRS a calendar-impossible stamp — Feb 30 → Mar 2, 24:00 → the next day — so the captured fields are read back as UTC and a stamp whose fields move is refused); the previous close is
   **`last − change`** (`change` is in percentage points) and an absent, junk or absurd (≥ 2 points)
   `change` leaves it `null` — an em dash, never a guess; **`change_pct` is NEVER used** (it read +0.19%
   beside a −0.10 change on the 2Y); a quote with a non-zero `code`, a price outside (−5, 30), an
@@ -505,8 +505,10 @@ width); **S56** guards the live 10Y.
   page, so the boot-time request fails there (a runner's IP is refused) and logs console errors the app
   absorbs by design; the shared allowlist (`OPTIONAL_FEED`, the exact prefix
   `https://quote.cnbc.com/quote-html-webservice/`, in `benignCors` and the S1/S3 console rules) admits
-  exactly that and nothing wider — not CNBC's other hosts or pages, not a look-alike host (S57 pins
-  all three). **Privacy:** CNBC sees each viewer's IP, user-agent and the page origin
+  exactly that and nothing wider — not CNBC's other hosts or pages, not a look-alike host, and not a
+  foreign URL that carries the prefix in its query string (a console location must START with it,
+  `optionalFeedUrl`; a message must hold it as a whole URL token, `optionalFeedInText`) — S57 pins
+  all four. **Privacy:** CNBC sees each viewer's IP, user-agent and the page origin
   (`https://akyachtsman.github.io/`) on every poll; no desk data crosses (the request carries none).
   **Open:** how far behind CNBC's quote runs is not measured (one reading, seconds old); and only a
   browser that can reach `quote.cnbc.com` gets it — server code (`desk-ask`, the scheduled asks) never

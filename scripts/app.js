@@ -8185,7 +8185,12 @@ function econCnbcNum(v) {
 }
 function econCnbcTime(s) {
   const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?([+-])(\d\d):?(\d\d)$/.exec(String(s == null ? '' : s));
-  return m ? Date.parse(m[1] + m[2] + m[3] + ':' + m[4]) : NaN;
+  if (!m || Number(m[3]) > 14 || Number(m[4]) > 59) return NaN;
+  /* Date.parse REPAIRS a calendar-impossible stamp (Feb 30 → Mar 2, 24:00 → the next day) rather than refusing it, and a
+     quote is a number or it is nothing: read the captured fields back as UTC and refuse any that moved. */
+  const wall = new Date(m[1] + 'Z');
+  if (isNaN(wall) || wall.toISOString().slice(0, 19) !== m[1]) return NaN;
+  return Date.parse(m[1] + m[2] + m[3] + ':' + m[4]);
 }
 function econLiveParseCnbc(body, now) {
   const out = {};

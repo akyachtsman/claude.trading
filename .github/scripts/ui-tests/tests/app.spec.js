@@ -81,9 +81,14 @@ const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
 /* ONE optional third-party feed beside the desk's own (owner request 2026-10-01): the live 2Y/10Y/20Y come straight from the
    visitor's BROWSER to CNBC's quote service, because CNBC refuses every server. It is an unofficial endpoint and, from a CI runner
    or any blocked network, its refusal logs the same console errors a failed feed call does — which the app absorbs BY DESIGN (the
-   rows fall back to Treasury/FRED). Matched on this exact URL prefix and nothing wider: not CNBC's other hosts or pages, and not a
-   look-alike host (S57 pins all three). */
+   rows fall back to Treasury/FRED). Matched on this exact URL prefix and nothing wider: not CNBC's other hosts or pages, not a
+   look-alike host, and not another URL that merely CARRIES the prefix inside its query string (S57 pins all four). A location
+   URL must START with it (`optionalFeedUrl`); a message must hold it as a whole URL token — at the start or right after
+   whitespace, a quote or an opening bracket (`optionalFeedInText`) — never after `=`, `?` or `/`. */
 const OPTIONAL_FEED = 'https://quote.cnbc.com/quote-html-webservice/';
+const optionalFeedUrl = (u) => typeof u === 'string' && u.startsWith(OPTIONAL_FEED);
+const OPTIONAL_FEED_TOKEN = new RegExp(`(?:^|[\\s'"(])${OPTIONAL_FEED.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`);
+const optionalFeedInText = (s) => OPTIONAL_FEED_TOKEN.test(String(s || ''));
 /* The TradingView embed probes motion sensors from inside its OWN nested
    sub-frame, which an `allow=` on the outer iframe cannot reach (tried in
    PR #78). Exact string only — never a blanket console mute. */
@@ -120,7 +125,7 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.tes
 const benignCors = (text, src) => {
   const t = `${text || ''} ${src || ''}`;
   return FEED_CORS.test(text || '') &&
-    (t.includes(FEED_ORIGIN) || t.includes(OPTIONAL_FEED) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
+    (t.includes(FEED_ORIGIN) || optionalFeedUrl(src) || optionalFeedInText(text) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
 };
 /* WebKit raises a blocked cross-origin fetch as a pageerror where Chromium only
    logs it, so this is the iphone project's half of the same rule. */
@@ -474,7 +479,7 @@ test('S1: page loads without JS errors', async ({ page, renderWitness }) => {
     if (m.type() !== 'error') return;
     const at = (m.location() && m.location().url) || '';
     if (m.text().includes(FEED_ORIGIN) || at.includes(FEED_ORIGIN)) return;
-    if (at.includes(OPTIONAL_FEED)) return;   /* the CNBC quote call's "Failed to load resource" — see OPTIONAL_FEED at the top */
+    if (optionalFeedUrl(at)) return;   /* the CNBC quote call's "Failed to load resource" — see OPTIONAL_FEED at the top */
     /* A CORS REJECTION from the feed origin is the same allowlisted noise, but
        it arrives as a PAIR and only the second message names the URL — the
        first says "Origin http://localhost:8080 is not allowed by
@@ -709,7 +714,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
        fix, so it lands inside S3's sweep window. Matched on the TEXT as well as
        the source: the CORS pair's first message names the blocked origin rather
        than the URL, so a source-only test misses half of it. */
-    const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text) || src.includes(OPTIONAL_FEED) || text.includes(OPTIONAL_FEED);
+    const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text) || optionalFeedUrl(src) || optionalFeedInText(text);
     if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
     /* The rule above demands the FEED ORIGIN appear in the text or the location,
        which the first message of WebKit's CORS pair supplies in neither — it
@@ -853,7 +858,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
   /* feed-origin 5xx excluded — see the FEED_ORIGIN note on the console
      listener above; a persistent feed outage still fails loudly via S14 */
   const blocking = findings.filter(f =>
-    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN_RE.test(c.url || '') && !String(c.url || '').includes(OPTIONAL_FEED)) ||
+    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN_RE.test(c.url || '') && !optionalFeedUrl(c.url)) ||
     f.consoleErrors.length > 0);
   expect(blocking, `Blocking anomalies found:\n${JSON.stringify(blocking, null, 2)}`).toHaveLength(0);
 });
@@ -6787,6 +6792,10 @@ test('S57: the live yields from CNBC — one browser request for all three, each
       future: n(one({ last_time: '2026-10-01T12:30:00.000-0400' })), noTime: n(one({ last_time: undefined })), junkTime: n(one({ last_time: 'yesterday' })),
       noChange: one({ change: undefined }).ust2y.prevClose, absurd: one({ change: '9.9' }).ust2y.prevClose, junkChange: one({ change: 'n/a' }).ust2y.prevClose,
       colonOffset: one({ last_time: '2026-10-01T11:49:47-04:00' }).ust2y.ts,
+      // Date.parse repairs these instead of refusing them (Feb 30 reads as Mar 2, 24:00 as the next day) — a quote is a number or nothing (Codex, PR #300)
+      impossible: [n(one({ last_time: '2026-02-30T11:49:47.000-0400' })), n(one({ last_time: '2026-02-29T11:49:47.000-0400' })), n(one({ last_time: '2026-04-31T11:49:47.000-0400' })),
+        n(one({ last_time: '2026-10-01T24:00:00.000-0400' })), n(one({ last_time: '2026-09-31T11:49:47-04:00' })), n(one({ last_time: '2026-10-01T11:49:47.000-1500' }))],
+      leapDay: n(one({ last_time: '2024-02-29T11:49:47.000-0400' })),   // a REAL leap day is still read
     };
   });
   expect(parsed.ids, 'all three yields are read from one reply').toEqual(['ust10y', 'ust20y', 'ust2y']);
@@ -6800,6 +6809,8 @@ test('S57: the live yields from CNBC — one browser request for all three, each
   expect(parsed.nothing, 'null, {}, no result, an empty list, a string and an array are all nothing').toEqual([0, 0, 0, 0, 0, 0]);
   expect([parsed.unknownSymbol, parsed.badCode, parsed.junkLast, parsed.scale, parsed.future, parsed.noTime, parsed.junkTime],
     'an unlisted symbol, an error code, N/A, a x10 scale fault, a quote from the future, and a missing or junk time are all refused').toEqual([0, 0, 0, 0, 0, 0, 0]);
+  expect(parsed.impossible, 'a calendar-impossible time (Feb 30, Feb 29 in a common year, Apr 31, 24:00, Sep 31, a -15:00 offset) is refused, not repaired onto another day').toEqual([0, 0, 0, 0, 0, 0]);
+  expect(parsed.leapDay, 'while a real leap day is still read').toBe(1);
   expect(parsed.noCode, 'a quote with no code field at all is still read').toBe(1);
   expect([parsed.noChange, parsed.absurd, parsed.junkChange], 'a missing, absurd (9.9 points) or junk change leaves the baseline unknown, never a guess').toEqual([null, null, null]);
 
@@ -6957,5 +6968,17 @@ test('S57: the live yields from CNBC — one browser request for all three, each
     'a look-alike host is not').toBe(false);
   expect(benignCors("Access to fetch at 'https://www.cnbc.com/quotes/US10Y' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
     'and neither is any other CNBC URL').toBe(false);
+  // a foreign URL that merely CARRIES the permitted prefix in its query string (Codex, PR #300) — in the message, in the location, and in the 5xx rule's URL
+  const carrier = 'https://evil.example/fail?next=' + OPTIONAL_FEED;
+  expect(benignCors("Access to fetch at '" + carrier + "' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'a foreign URL carrying the prefix in its query is not allowlisted by its message').toBe(false);
+  const corsMsg = 'Fetch API cannot load due to access control checks.';
+  expect([benignCors(corsMsg, OPTIONAL_FEED + 'restQuote/x'), benignCors(corsMsg, carrier)],
+    'the same CORS message is allowlisted by a location that STARTS with the prefix and not by one that merely carries it').toEqual([true, false]);
+  expect([optionalFeedUrl(OPTIONAL_FEED + 'restQuote/x'), optionalFeedUrl(carrier), optionalFeedUrl(' ' + OPTIONAL_FEED), optionalFeedUrl(undefined)],
+    'a location URL must START with the prefix').toEqual([true, false, false, false]);
+  expect([optionalFeedInText("fetch at '" + OPTIONAL_FEED + "x'"), optionalFeedInText(OPTIONAL_FEED + 'x'), optionalFeedInText('load ' + OPTIONAL_FEED + 'x'),
+    optionalFeedInText(carrier), optionalFeedInText('x/' + OPTIONAL_FEED), optionalFeedInText(null)],
+    'a message names it only as a whole URL token (start, or after whitespace / a quote / a bracket), never after = ? or /').toEqual([true, true, true, false, false, false]);
   expect(errs, 'no page errors').toEqual([]);
 });
