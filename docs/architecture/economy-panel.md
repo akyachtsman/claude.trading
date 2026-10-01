@@ -300,7 +300,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   **Deployed 2026-10-01 (v3).** Owner-approved ("Yes, deploy desk-econ v3"); project
   `kwugzhyfjevzwgplhtsd`, Supabase version 2 (`ezbr_sha256` `dfea38f9…5bea43`), `verify_jwt`
   **ON**, from `c06888a` (the file has not changed since that merge). The payload sent equals the
-  repo file except two literal BOM characters where the repo has the `﻿` escape (the same
+  repo file except two literal BOM characters where the repo has the `\uFEFF` escape (the same
   regex; a byte-for-byte compare of a read-back needs that normalisation). Verified at
   05:47 UTC (01:47 ET, Treasury's 09-30 print already out): the FIRST request took 20.7 s and
   returned `ust2y` 4.88 / `ust10y` 5.29 / `ust20y` 5.68, all `source:"treasury"`, `asOf`
