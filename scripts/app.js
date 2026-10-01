@@ -7731,7 +7731,7 @@ const ECON_SPARK_W = 100, ECON_SPARK_H = 32;
 const ECON_LIVE = { ust10y: '^TNX' };       /* row id → Yahoo symbol */
 const ECON_LIVE_TOL = 0.75;                 /* percentage points: a print further than this from the row's own newest official reading is a misread (×10 scaling, a wrong symbol), never a move */
 const ECON_LIVE_FRESH_MS = 30 * 60000;      /* LIVE while the newest 5-minute bar started within this, LAST after */
-const ECON_LIVE_KEEP_MS = 30 * 60000;       /* a reading whose last successful fetch is older than this is dropped: the row falls back to the official one */
+const ECON_LIVE_KEEP_MS = 30 * 60000;       /* a reading whose last successful fetch is older than this is dropped: the row falls back to the official one — or older than TWO poll intervals when polling is slower than that (weekends, holidays: an hourly poll must not flicker the row off halfway through its own interval; Codex, PR #297) */
 const ECON_LIVE_FAST_S = 60, ECON_LIVE_IDLE_S = 600, ECON_LIVE_OFF_S = 3600;
 const ECON_LIVE_TIMEOUT_MS = 20000;         /* a quote that has not answered by then is a failed quote: a hung request must not wedge the poll chain */
 const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0, forcing: false };   /* q: row id → { price, ts, date, prevClose, prevDate, fetchedAt } */
@@ -8161,7 +8161,7 @@ function econLiveParse(series, now) {
    PRINT of the same index (null when the series holds none — never 0), the chart gets the print as its last point. */
 function econLiveRow(r, now) {
   const q = Object.hasOwn(ECON_LIVE, r.id) ? econLive.q[r.id] : null;
-  if (!q || DESK.mode === 'demo' || now - q.fetchedAt > ECON_LIVE_KEEP_MS) return r;
+  if (!q || DESK.mode === 'demo' || now - q.fetchedAt > (q.keepMs || ECON_LIVE_KEEP_MS)) return r;
   const official = fmtToNum(r.value);
   if (r.status !== 'ok' || !r.asOf || !Number.isFinite(official)) return r;
   if (!(q.date > r.asOf) || Math.abs(q.price - official) > ECON_LIVE_TOL) return r;
@@ -8260,7 +8260,8 @@ async function econLiveFetch(force) {
   if (gen !== econLive.gen) return;   /* a newer request owns the state now */
   econLive.forcing = false;
   let ok = false;
-  for (const [id, q] of got) if (q) { econLive.q[id] = { ...q, fetchedAt: Date.now() }; ok = true; }
+  const landed = Date.now();
+  for (const [id, q] of got) if (q) { econLive.q[id] = { ...q, fetchedAt: landed, keepMs: Math.max(ECON_LIVE_KEEP_MS, 2 * econLiveDelaySec(landed) * 1000) }; ok = true; }
   renderAfterFetch(econLiveRepaint);
   econLiveArm(ok ? econLiveDelaySec(Date.now()) : ECON_RETRY_S);
 }

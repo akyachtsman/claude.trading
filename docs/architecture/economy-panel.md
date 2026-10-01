@@ -398,7 +398,9 @@ width); **S56** guards the live 10Y.
   overwritten by a delayed quote of the same day); it is within `ECON_LIVE_TOL` (0.75 points) of
   the official value (a misread symbol or a ×10 scale is not a move); and the fetch it came from is
   younger than `ECON_LIVE_KEEP_MS` (30 min — a failing quote keeps the last good print that long,
-  then the row is the official one again: real data or nothing). When it applies the row shows the
+  then the row is the official one again: real data or nothing; when polling is slower than that
+  the window is TWO poll intervals, `q.keepMs` — 2 h on the hourly weekend/holiday cadence — so a
+  valid closed-session print does not flicker off halfway through its own interval, Codex PR #297). When it applies the row shows the
   print (`value`), the change from the PREVIOUS SESSION'S LAST PRINT of the same index (`null` —
   an em dash, never 0 — when the series holds no earlier session), `asOf` = the print's NY date,
   `source: 'live'`, `changed: false`, and the chart gets the print as its last point (only when it

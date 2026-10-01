@@ -6485,6 +6485,8 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
       far: same(row, { price: 6.02 }), edge: !same(row, { price: 6.00 }),
       stale: same({ ...row, status: 'stale' }, {}), missing: same({ ...row, status: 'missing', value: null }, {}),
       aged: same(row, { fetchedAt: now - 31 * 60000 }), young: !same(row, { fetchedAt: now - 29 * 60000 }),
+      // a slower cadence keeps the print for two of its own intervals (an hourly weekend poll must not flicker the row off at +30 min)
+      slowKept: !same(row, { fetchedAt: now - 119 * 60000, keepMs: 2 * 3600 * 1000 }), slowGone: same(row, { fetchedAt: now - 121 * 60000, keepMs: 2 * 3600 * 1000 }),
       noBaseline: run(row, { prevClose: null, prevDate: null }),
       oldBar: run(row, { ts: now - 31 * 60000 }).live.fresh, newBar: run(row, { ts: now - 5 * 60000 }).live.fresh,
       onePoint: run({ ...row, points: [['2026-09-29', 5.26]] }, {}).points.length,
@@ -6510,6 +6512,7 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   expect([rules.far, rules.edge], 'a print more than 0.75 points from the official reading is a misread, 0.74 is a move').toEqual([true, true]);
   expect([rules.stale, rules.missing], 'never alone: a stale or missing official row gets no overlay').toEqual([true, true]);
   expect([rules.aged, rules.young], 'a quote fetched more than 30 minutes ago is dropped, 29 minutes is kept').toEqual([true, true]);
+  expect([rules.slowKept, rules.slowGone], 'on the hourly cadence it is kept for two intervals, 119 minutes, and dropped at 121 (Codex, PR #297)').toEqual([true, true]);
   expect(rules.noBaselineText, 'no baseline: the change is an em dash, never "= 0.00"').toBe('—');
   expect([rules.oldBar, rules.newBar], 'LIVE only while the bar is under 30 minutes old').toEqual([false, true]);
   expect(rules.onePoint, 'a chart that had fewer than two real points is not extended into a line').toBe(1);
@@ -6696,4 +6699,10 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   await page.clock.runFor(31_000);                                      // the 30s ticker alone — no quote, no poll lands
   r10 = await row10();
   expect([r10.val, r10.date], '...and a DATE once the Pacific day has rolled over').toEqual(['5.32%', 'Oct 2']);
+  // the weekend poll is hourly, so a print fetched at 06:50Z must still stand 55 minutes later — not flicker to the official row at +30 min
+  expect(await page.evaluate(() => econLive.q.ust10y.keepMs), 'a weekend fetch is kept for two hourly intervals').toBe(7_200_000);
+  await page.clock.setSystemTime(new Date('2026-10-03T07:45:00Z'));
+  await page.clock.runFor(31_000);
+  r10 = await row10();
+  expect([r10.val, r10.date, r10.tag], '55 minutes after an hourly weekend fetch the last print is still the row').toEqual(['5.32%', 'Oct 2', 'LAST']);
 });
