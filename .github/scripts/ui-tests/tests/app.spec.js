@@ -81,13 +81,16 @@ const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
 /* ONE optional third-party feed beside the desk's own (owner request 2026-10-01): the live 2Y/10Y/20Y come straight from the
    visitor's BROWSER to CNBC's quote service, because CNBC refuses every server. It is an unofficial endpoint and, from a CI runner
    or any blocked network, its refusal logs the same console errors a failed feed call does — which the app absorbs BY DESIGN (the
-   rows fall back to Treasury/FRED). Matched on this exact URL prefix and nothing wider: not CNBC's other hosts or pages, not a
-   look-alike host, and not another URL that merely CARRIES the prefix inside its query string (S57 pins all four). A location
-   URL must START with it (`optionalFeedUrl`); a message must hold it as a whole URL token — at the start or right after
+   rows show NOT LIVE). The 1D span adds its twin, CNBC's chart feed (`OPTIONAL_FEED_CHARTS`): S3 clicks every control, the 1D button
+   included, and a CI runner is refused there too. Each is matched on its exact URL prefix and nothing wider: not CNBC's other hosts
+   or pages, not a look-alike host, and not another URL that merely CARRIES a prefix inside its query string (S57 pins all four). A
+   location URL must START with one (`optionalFeedUrl`); a message must hold one as a whole URL token — at the start or right after
    whitespace, a quote or an opening bracket (`optionalFeedInText`) — never after `=`, `?` or `/`. */
 const OPTIONAL_FEED = 'https://quote.cnbc.com/quote-html-webservice/';
-const optionalFeedUrl = (u) => typeof u === 'string' && u.startsWith(OPTIONAL_FEED);
-const OPTIONAL_FEED_TOKEN = new RegExp(`(?:^|[\\s'"(])${OPTIONAL_FEED.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`);
+const OPTIONAL_FEED_CHARTS = 'https://ts-api.cnbc.com/harmony/app/charts/';
+const OPTIONAL_FEEDS = [OPTIONAL_FEED, OPTIONAL_FEED_CHARTS];
+const optionalFeedUrl = (u) => typeof u === 'string' && OPTIONAL_FEEDS.some((f) => u.startsWith(f));
+const OPTIONAL_FEED_TOKEN = new RegExp(`(?:^|[\\s'"(])(?:${OPTIONAL_FEEDS.map((f) => f.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')).join('|')})`);
 const optionalFeedInText = (s) => OPTIONAL_FEED_TOKEN.test(String(s || ''));
 /* The TradingView embed probes motion sensors from inside its OWN nested
    sub-frame, which an `allow=` on the outer iframe cannot reach (tried in
@@ -5898,8 +5901,8 @@ test('S54: the accounts sit at the bottom of the page, side by side, in line wit
 
 // S55 — The Economy panel (owner request 2026-09-30): the desk row's 4th column. Seven indicators —
 // 2Y/10Y/20Y Treasury, unemployment, CPI, PCE, core PCE — each row a value, a change, the date the
-// reading is FOR and ITS OWN chart to the right, over a span the owner picks (1W 1M 3M 6M 1Y 5Y; there
-// is no 1D — the data is one reading per business day or per month).
+// reading is FOR and ITS OWN chart to the right, over a span the owner picks (1D 1W 1M 3M 6M 1Y 5Y; 1D is the yields' intraday
+// chart and is covered by S58 — the monthly rows have no 1-day data).
 //
 // Everything is read off the LIVE layout and the LIVE DOM. The second half forces live mode and drives
 // the real poller through a stubbed `deskEcon` on Playwright's clock (installed BEFORE navigation so the
@@ -6001,11 +6004,11 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   });
   expect(pl, 'no gain/loss colour or P&L class anywhere in the Economy panel — a rising yield is not a gain').toEqual([]);
 
-  // ── 3. the span control: six presets, 3M pressed, no 1D, and it says why
+  // ── 3. the span control: seven presets (1D first — S58), 3M pressed, and the title says what 1D is and what has no 1-day data
   const tfLabels = await page.locator('#econTf button').allTextContents();
-  expect(tfLabels, 'the six presets — no 1D, the data has no intraday series').toEqual(['1W', '1M', '3M', '6M', '1Y', '5Y']);
+  expect(tfLabels, 'the seven presets: 1D (the yields\' intraday chart) then 1W..5Y').toEqual(['1D', '1W', '1M', '3M', '6M', '1Y', '5Y']);
   expect(await pressed(), 'default 3M, exactly one pressed').toEqual(['3m']);
-  await expect(page.locator('#econTf'), 'the control says there is no 1-day view').toHaveAttribute('title', /no 1-day view/i);
+  await expect(page.locator('#econTf'), 'the control says the monthly indicators have no 1-day data').toHaveAttribute('title', /no 1-day data/i);
 
   // ── 4. a monthly row on a span shorter than 6 readings shows its 6 latest AND says so; a daily one never does
   for (const tf of ['1w', '1m', '3m']) {
@@ -6150,7 +6153,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
     DESK.mode = 'live';
     localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
-    // the real deskEcon's request and failure mapping (before it is stubbed): the function has no 1D, `force` only when true
+    // the real deskEcon's request and failure mapping (before it is stubbed): the function has no 1D (the panel never asks it for one — S58), `force` only when true
     const realFetch = window.fetch;
     window.__wire = [];
     window.fetch = (url, init) => {
@@ -7048,5 +7051,365 @@ test('S57: the live yields from CNBC — one browser request for all three, each
   expect([optionalFeedInText("fetch at '" + OPTIONAL_FEED + "x'"), optionalFeedInText(OPTIONAL_FEED + 'x'), optionalFeedInText('load ' + OPTIONAL_FEED + 'x'),
     optionalFeedInText(carrier), optionalFeedInText('x/' + OPTIONAL_FEED), optionalFeedInText(null)],
     'a message names it only as a whole URL token (start, or after whitespace / a quote / a bracket), never after = ? or /').toEqual([true, true, true, false, false, false]);
+  // the chart feed (the 1D span) is the second exact prefix, held to the same rules
+  const chartMsg = (u) => "Access to fetch at '" + u + "' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.";
+  expect([benignCors(chartMsg(OPTIONAL_FEED_CHARTS + '..json?symbol=US10Y')), benignCors(chartMsg('https://ts-api.cnbc.com.evil.example/harmony/app/charts/1D.json')), benignCors(chartMsg('https://ts-api.cnbc.com/harmony/app/other/1D.json')),
+    benignCors(chartMsg('https://evil.example/x?next=' + OPTIONAL_FEED_CHARTS)), optionalFeedUrl(OPTIONAL_FEED_CHARTS + '1D.json?symbol=US2Y'), optionalFeedUrl('https://evil.example/x?next=' + OPTIONAL_FEED_CHARTS)],
+    'the chart feed prefix is allowlisted; a look-alike host, another path on the host and a URL that merely carries the prefix are not').toEqual([true, false, false, false, true, false]);
+  expect(errs, 'no page errors').toEqual([]);
+});
+
+// ── S58 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// 1D on the Economy panel (owner request 2026-10-01: "add the one day chart" → "build it blind"). The 2Y, 10Y and 20Y draw the day's
+// price bars from CNBC's chart feed, fetched by the visitor's browser; the feed's URL and shape were NOT measured (the build sandbox
+// gets 403 from every CNBC host), so this scenario pins the DESIGN's promises rather than the feed: 1D is a VIEW — desk-econ is never
+// asked for it; the bars are parsed from the plausible shapes; and every way the feed can fail is NAMED on the row (caption + tooltip)
+// with no chart drawn from anything but real bars — never a substitute source (owner: "no fallbacks"). The monthly rows say they have
+// no 1-day data. Driven with stubs on Playwright's fake clock (Thu 08:50:30 PT) — never the network.
+test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never asked for it, and every failure is named', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(240_000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await page.clock.install({ time: new Date('2026-10-01T15:50:30Z') });
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  const rows1d = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const cap = li.querySelector('.econ-cap'), svg = li.querySelector('.econ-chart svg');
+    return [li.dataset.id, { svg: !!svg, cap: cap ? cap.textContent : '', capClip: cap ? cap.scrollWidth > cap.clientWidth + 1 : false, title: li.title, aria: svg ? svg.getAttribute('aria-label') : null }];
+  })));
+  const pressed = () => page.evaluate(() => [...document.querySelectorAll('#econTf button[aria-pressed="true"]')].map((b) => b.dataset.tf));
+  const pick = async (tf) => { await page.locator(`#econTf button[data-tf="${tf}"]`).click(); await expect.poll(pressed).toEqual([tf]); };
+  const YIELDS = ['ust2y', 'ust10y', 'ust20y'], MONTHLY = ['unrate', 'cpi', 'pce', 'corepce'];
+
+  // ── 1. demo: 1D draws seeded bars for the yields, says "no 1-day data" for the rest, asks nothing, and persists
+  await page.evaluate(() => { window.__bcalls = 0; window.__realBars0 = econLiveBars; window.econLiveBars = () => { window.__bcalls++; return Promise.resolve({ ok: false, why: 'noanswer', detail: 'x' }); }; });
+  await pick('1d');
+  let R = await rows1d();
+  expect(YIELDS.map((id) => [R[id].svg, R[id].cap]), 'demo 1D: each yield draws a chart captioned with the Pacific clock of the bond session (08:00-17:00 ET)').toEqual(YIELDS.map(() => [true, '05:00 – 14:00']));
+  expect(MONTHLY.map((id) => [R[id].svg, R[id].cap]), 'and every monthly row has no chart and says so').toEqual(MONTHLY.map(() => [false, 'no 1-day data']));
+  expect(MONTHLY.every((id) => /no 1-day data: a monthly indicator has no intraday series/.test(R[id].title)), 'its tooltip says why').toBe(true);
+  expect(Object.values(R).some((r) => r.capClip), 'no caption is clipped').toBe(false);
+  expect(await page.evaluate(() => window.__bcalls), 'demo never asks CNBC for bars').toBe(0);
+  expect(await page.evaluate(() => [localStorage.getItem('econ_tf_v1'), econTf, econRange]), '1D is persisted as the VIEW; the range desk-econ is asked for stays 3M').toEqual(['1d', '1d', '3m']);
+  const demoPath = await page.evaluate(() => document.querySelector('#econList .econ-row[data-id="ust10y"] .econ-line').getAttribute('d'));
+  expect(demoPath.length, 'a real path, not a stub').toBeGreaterThan(200);
+  await pick('3m');
+  R = await rows1d();
+  expect([...YIELDS, ...MONTHLY].map((id) => R[id].svg), 'back on 3M every row draws its daily chart again').toEqual(Array(7).fill(true));
+  expect(Object.values(R).filter((r) => /no 1-day data/.test(r.cap)), 'and nothing says "no 1-day data"').toEqual([]);
+  await pick('1d');
+  await page.reload();
+  await expect(page.locator('#econList .econ-row').first()).toBeVisible({ timeout: 15000 });
+  expect(await pressed(), 'a reload keeps 1D').toEqual(['1d']);
+  expect(await page.evaluate(() => [econTf, econRange]), 'and starts the range on the default span').toEqual(['1d', '3m']);
+  await pick('3m');
+
+  // ── 2. parsing: the plausible shapes, the times, the guards
+  const parsed = await page.evaluate(() => {
+    const now = Date.parse('2026-10-01T15:50:30Z');
+    const open = Date.parse('2026-10-01T12:00:00Z');   // 08:00 EDT
+    const bar = (i, o = {}) => ({ tradeTimeinMills: open + i * 300000, close: (5.2 + i / 1000).toFixed(3), ...o });
+    const A = { barData: { priceBars: [0, 1, 2, 3].map((i) => bar(i)) } };
+    const wall = (hhmmss, day = '20261001') => ({ tradeTime: day + hhmmss, close: '5.25' });
+    const P = (b) => econBarsParse(b, now);
+    const keys = (x) => ({ n: x.pts.length, why: x.why });
+    return {
+      A: P(A), B: P({ priceBars: [wall('080000'), wall('080500'), wall('081000')] }), C: P([bar(0), bar(1)]), D: P({ bars: [bar(0, { last: '5.31', close: undefined }), bar(1, { close: null, last: '5.32' })] }),
+      wallInstants: [econBarMs(wall('083000')), econBarMs(wall('083000', '20261201')), econBarMs(wall('120000', '20260311')), econBarMs(wall('120000', '20260307'))],
+      iso: econBarMs({ time: '2026-10-01T08:00:00.000-0400' }), mills: econBarMs({ tradeTimeinMills: String(open) }),
+      badDates: [econBarMs(wall('080000', '20260230')), econBarMs(wall('250000')), econBarMs(wall('087000')), econBarMs({ tradeTime: 'soon' }), econBarMs({})],
+      future: keys(P({ priceBars: [bar(0), bar(1), bar(2), bar(3), bar(60)] })), bad: keys(P({ priceBars: [bar(0), bar(1, { close: '52.9' }), bar(2, { close: 'N/A' }), bar(3)] })),
+      twoDays: P({ priceBars: [{ tradeTimeinMills: open - 86400000, close: '5.0' }, { tradeTimeinMills: open - 86400000 + 300000, close: '5.0' }, bar(0), bar(1), bar(2)] }),
+      unsorted: P({ priceBars: [bar(2), bar(0), bar(1)] }).pts.map((p) => p[0] - open),
+      // yesterday's session plus ONE bar of today: the newest session has a single usable bar — no chart, a reason, and the last good bars are kept (Codex, PR #301)
+      oneNew: (() => { const body = { priceBars: [0, 1, 2].map((i) => ({ tradeTimeinMills: open - 86400000 + i * 300000, close: '5.0' })).concat([bar(0)]) };
+        return { parse: P(body), keep: econBarsEntry('ust10y', { ok: true, body }, { pts: [[open - 600000, 5.2], [open - 300000, 5.21]], fetchedAt: now - 60000 }, now) }; })(),
+      formats: [P(null), P('x'), P({ foo: 1, barData: { zz: 2 } }), P({ priceBars: [] }), P({ priceBars: [{ a: 1 }] })].map((x) => [x.why, x.detail]),
+      thinned: P({ priceBars: Array.from({ length: 400 }, (_, i) => ({ tradeTimeinMills: open + i * 60000, close: (5.2 + Math.sin(i / 9) / 10).toFixed(3) })) }).pts.length,
+    };
+  });
+  expect(parsed.A.pts.map((p) => p[1]), 'shape A (barData.priceBars, epoch-ms times, string closes) → the prices in time order').toEqual([5.2, 5.201, 5.202, 5.203]);
+  expect([parsed.B.pts.length, parsed.B.pts[0][0], parsed.B.pts[2][0]], 'shape B (priceBars with New York wall-clock `tradeTime`) → 08:00 EDT is 12:00Z').toEqual([3, Date.parse('2026-10-01T12:00:00Z'), Date.parse('2026-10-01T12:10:00Z')]);
+  expect([parsed.C.pts.length, parsed.D.pts.map((p) => p[1])], 'a bare array, and `last` in place of `close`').toEqual([2, [5.31, 5.32]]);
+  expect(parsed.wallInstants, 'New York wall time → instant across the year: EDT (-4) in October and on the Wednesday after the spring change, EST (-5) in December and on the Saturday before it').toEqual([
+    Date.parse('2026-10-01T12:30:00Z'), Date.parse('2026-12-01T13:30:00Z'), Date.parse('2026-03-11T16:00:00Z'), Date.parse('2026-03-07T17:00:00Z')]);
+  expect([parsed.iso, parsed.mills], 'an ISO stamp with its offset, and ms given as a string').toEqual([Date.parse('2026-10-01T12:00:00Z'), Date.parse('2026-10-01T12:00:00Z')]);
+  expect(parsed.badDates.every((v) => Number.isNaN(v)), 'a date that does not exist (Feb 30, 25:00, minute 70), junk or nothing is refused, never repaired onto another instant').toBe(true);
+  expect([parsed.future, parsed.bad], 'a bar from the future and a ×10 / N/A price are skipped, the rest kept').toEqual([{ n: 4, why: '' }, { n: 2, why: '' }]);
+  expect(parsed.twoDays.pts.length, 'only the NEWEST session\'s bars (a 1-day chart)').toBe(3);
+  expect(parsed.unsorted, 'bars are put in time order').toEqual([0, 300000, 600000]);
+  expect([parsed.oneNew.parse.pts.length, parsed.oneNew.parse.why, parsed.oneNew.parse.detail], 'yesterday plus ONE bar of today is not enough for a chart: a named reason, not a one-point result').toEqual([0, 'empty', "4 bars in the reply, 1 usable on the newest session (a bar's keys: tradeTimeinMills,close)"]);
+  expect([parsed.oneNew.keep.pts.length, parsed.oneNew.keep.why], 'and it keeps the last good bars rather than blanking the chart').toEqual([2, 'empty']);
+  expect(parsed.formats.map((f) => f[0]), 'null, a string, an unknown object, an empty list and a list of junk each name a reason').toEqual(['format', 'format', 'format', 'empty', 'empty']);
+  expect(parsed.formats[2][1], 'an unknown format lists the reply\'s keys (the owner reads these back)').toBe('unrecognised reply format (keys: foo,barData / barData: zz)');
+  expect(parsed.formats[4][1], 'and an empty one lists a bar\'s keys').toMatch(/1 bars in the reply, 0 usable \(a bar's keys: a\)/);
+  expect(parsed.thinned, 'a day of one-minute bars is thinned to at most 150 real points').toBeLessThanOrEqual(150);
+
+  // the demo's bars are seeded on the last day the BOND session ran: Columbus Day and Veterans Day (shut for the yields, open for the NYSE)
+  // fall back to the day before, ordinary days are untouched, and the NYSE's own holidays still fall back as before (Codex, PR #301)
+  const demoDay = await page.evaluate(() => {
+    const first = (iso) => new Date(buildDemoBars('ust10y', new Date(iso))[0][0]).toISOString();
+    return {
+      columbus: first('2026-10-12T19:00:00Z'),    // Mon Oct 12 (Columbus Day) 12:00 PT → Fri Oct 9, 08:00 EDT
+      veterans: first('2026-11-11T20:00:00Z'),    // Wed Nov 11 (Veterans Day) 12:00 PT → Tue Nov 10, 08:00 EST
+      ordinary: first('2026-10-13T19:00:00Z'),    // Tue Oct 13 → itself
+      thanksgiving: first('2026-11-26T20:00:00Z'), // Thu Nov 26 (NYSE closed) → Wed Nov 25, 08:00 EST
+    };
+  });
+  expect(demoDay, 'demo bars start at 08:00 ET on the last BOND session day').toEqual({
+    columbus: '2026-10-09T12:00:00.000Z', veterans: '2026-11-10T13:00:00.000Z', ordinary: '2026-10-13T12:00:00.000Z', thanksgiving: '2026-11-25T13:00:00.000Z',
+  });
+
+  // ── 3. force live: stub the quote, desk-econ (recording the range it is asked) and the bars
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
+    window.__ranges = []; window.__bsyms = [];
+    const quote = (sym, last, ts) => ({ symbol: sym, code: 0, last: last + '%', last_time: new Date(ts - 4 * 3600000).toISOString().slice(0, 19) + '.000-0400', change: '-0.04' });
+    window.econLiveCnbc = () => Promise.resolve({ FormattedQuoteResult: { FormattedQuote: [quote('US2Y', 4.787, Date.now() - 30000), quote('US10Y', 5.253, Date.now() - 30000), quote('US20Y', 5.612, Date.now() - 30000)] } });
+    const open = Date.parse('2026-10-01T12:00:00Z');
+    window.__good = (base) => ({ ok: true, body: { barData: { priceBars: Array.from({ length: 47 }, (_, i) => ({ tradeTimeinMills: open + i * 300000, close: (base + Math.sin(i / 6) * 0.04).toFixed(3) })) } } });
+    window.__base = { US2Y: 4.79, US10Y: 5.25, US20Y: 5.61 };
+    window.__bfn = (sym) => window.__good(window.__base[sym]);
+    window.econLiveBars = (sym) => { window.__bsyms.push(sym); return Promise.resolve(window.__bfn(sym)); };
+    window.deskEcon = (range) => {
+      window.__ranges.push(range);
+      const p = buildDemoEcon(range);
+      const rows = p.rows.map((r) => (['ust2y', 'ust10y', 'ust20y'].includes(r.id) ? { ...r, asOf: '2026-09-30', prevAsOf: '2026-09-29', source: 'treasury', value: { ust2y: 4.88, ust10y: 5.29, ust20y: 5.68 }[r.id] } : r));
+      return Promise.resolve({ ...p, rows, range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false });
+    };
+    startEcon();
+  });
+  await expect(page.locator('#econList .econ-row[data-live="1"]'), 'the three yields are live').toHaveCount(3);
+  expect(await page.evaluate(() => [window.__ranges, window.__bsyms.length]), 'booted on 3M: desk-econ was asked for 3m, and no bars were fetched (1D is not the view)').toEqual([['3m'], 0]);
+
+  // ── 4. picking 1D asks CNBC for each yield's bars and desk-econ for NOTHING; the poll clock is not touched
+  const dueBefore = await page.evaluate(() => econState.dueAt);
+  await pick('1d');
+  await expect.poll(() => page.evaluate(() => window.__bsyms.length), 'one bars request per yield').toBe(3);
+  expect(await page.evaluate(() => window.__bsyms.slice().sort()), 'for US2Y, US10Y and US20Y').toEqual(['US10Y', 'US20Y', 'US2Y']);
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-chart svg'), 'the 10Y draws its day').toHaveCount(1);
+  R = await rows1d();
+  expect(YIELDS.map((id) => [R[id].svg, R[id].cap]), 'each yield: a chart captioned with the Pacific clock of its first and last bar (08:00 → 05:00, 11:50 → 08:50)').toEqual(YIELDS.map(() => [true, '05:00 – 08:50']));
+  expect(R.ust10y.aria, 'the chart\'s accessible name says what it is').toBe('10Y Treasury, 47 prices 05:00 – 08:50 Pacific');
+  expect(R.ust2y.title, 'the tooltip names the source and the count').toContain('1-day chart: 47 CNBC US2Y prices, 05:00 – 08:50');
+  expect(MONTHLY.map((id) => [R[id].svg, R[id].cap]), 'the monthly rows say they have no 1-day data').toEqual(MONTHLY.map(() => [false, 'no 1-day data']));
+  expect(await page.evaluate(() => window.__ranges), 'desk-econ was NOT asked for 1D (it would answer an unknown range with 3m, a failed poll)').toEqual(['3m']);
+  expect(await page.evaluate((d) => econState.dueAt === d, dueBefore), 'and the desk-econ poll clock did not move').toBe(true);
+  expect(await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] .econ-sub *')].map((e) => e.textContent).join('|')), 'the row\'s own liveness chip and date are untouched by the view').toMatch(/08:49|08:50|LIVE/);
+  expect(Object.values(R).some((r) => r.capClip), 'no caption clipped').toBe(false);
+
+  // the bars-versus-quote check also runs at RENDER time: bars stored while no reference existed (a boot on a saved 1D where a bars reply beats
+  // the quote and the rows) are still refused once one does (Codex, PR #301)
+  await page.evaluate(() => {
+    const open = Date.parse('2026-10-01T12:00:00Z');
+    econBars.m.ust10y = { pts: [[open, 7.5], [open + 300000, 7.5]], fetchedAt: Date.now(), why: '', detail: '' };   // stored with no reference to check against
+    renderEcon(econState.shown);
+  });
+  R = await rows1d();
+  expect([R.ust10y.svg, R.ust10y.cap], 'unchecked bars 2.2 points from the quote are not drawn once the quote is there').toEqual([false, '1D bars ≠ quote']);
+  expect(R.ust10y.title, 'and the tooltip says so').toContain('points from the quote');
+  // the reference is the number the row DRAWS: a CNBC quote that econLiveRow REFUSES as a misread (7.5 against an official 5.29) must not vouch
+  // for bars sitting near the same misread — they are checked against the official reading the row shows instead (Codex, PR #301)
+  await page.evaluate(() => {
+    const open = Date.parse('2026-10-01T12:00:00Z');
+    window.__savedQ = econLive.q.ust10y;
+    econLive.q.ust10y = { ...window.__savedQ, price: 7.5 };
+    econBars.m.ust10y = { pts: [[open, 7.5], [open + 300000, 7.5]], fetchedAt: Date.now(), why: '', detail: '' };
+    renderEcon(econState.shown);
+  });
+  R = await rows1d();
+  expect([R.ust10y.svg, R.ust10y.cap], 'bars matching only a REFUSED quote (7.5 vs the official 5.29) are not drawn').toEqual([false, '1D bars ≠ quote']);
+  expect(R.ust10y.title, 'and the tooltip compares them with the official reading the row shows').toContain('the quote (5.290)');
+  expect(await page.evaluate(() => { const refused = econBarsRef('ust10y'); econLive.q.ust10y = window.__savedQ; return [refused, econBarsRef('ust10y')]; }), 'the reference is the official 5.29 while the quote is refused, and the live 5.253 once it is trusted').toEqual([5.29, 5.253]);
+  // a MONTHLY row whose official reading is missing still says it has no 1-day data (not an unlabeled placeholder)
+  await page.evaluate(() => { renderEcon({ ...econState.shown, rows: econState.shown.rows.map((r) => (r.id === 'cpi' ? { ...r, status: 'missing', value: null, prev: null, delta: null, asOf: null, points: [] } : r)) }); });
+  R = await rows1d();
+  expect([R.cpi.svg, R.cpi.cap, /no 1-day data/.test(R.cpi.title)], 'a missing monthly row on 1D: still "no 1-day data", with its tooltip').toEqual([false, 'no 1-day data', true]);
+  await page.evaluate(() => { econBars.m = {}; return econBarsFetch(); });
+  await expect.poll(async () => (await rows1d()).ust10y.svg, 'the next good fetch draws the 10Y again').toBe(true);
+
+  // ── 5. a span change from 1D: a NEW span asks desk-econ once; 1D again and back to the span that is showing ask nothing
+  await pick('1w');
+  expect(await page.evaluate(() => window.__ranges), 'from 1D to 1W: desk-econ is asked for 1w').toEqual(['3m', '1w']);
+  await pick('1d');
+  await pick('1w');
+  expect(await page.evaluate(() => [window.__ranges, econRange]), '1W → 1D → 1W asks nothing more').toEqual([['3m', '1w'], '1w']);
+  await pick('1d');
+
+  // ── 6. every failure is NAMED on the row; no chart is drawn from anything else
+  const fail = async (res, label) => {
+    await page.evaluate((r) => { window.__bfn = r === 'far' ? () => window.__good(7.5) : () => r; econBars.m = {}; return econBarsFetch(); }, res);
+    return rows1d();
+  };
+  for (const [label, res, cap, tip] of [
+    ['HTTP 403', { ok: false, why: 'http', detail: 'HTTP 403' }, '1D HTTP 403', '1-day chart unavailable: HTTP 403'],
+    ['no answer', { ok: false, why: 'noanswer', detail: 'no answer (blocked by CNBC, an extension or the network, or too slow)' }, '1D no answer', 'unavailable: no answer (blocked by CNBC'],
+    ['not JSON', { ok: false, why: 'json', detail: 'the reply was not JSON' }, '1D not JSON', 'the reply was not JSON'],
+    ['unknown format', { ok: true, body: { status: 'ok', data: { x: 1 } } }, '1D unknown format', 'unrecognised reply format (keys: status,data)'],
+    ['no bars', { ok: true, body: { barData: { priceBars: [] } } }, '1D no bars', '0 bars in the reply, 0 usable'],
+    ['bars disagree with the quote', 'far', '1D bars ≠ quote', 'points from the quote'],
+  ]) {
+    const F = await fail(res, label);
+    expect(YIELDS.map((id) => [F[id].svg, F[id].cap]), `${label}: no chart, and the caption says why`).toEqual(YIELDS.map(() => [false, cap]));
+    expect(YIELDS.every((id) => F[id].title.includes(tip)), `${label}: the tooltip carries the detail ("${tip}")`).toBe(true);
+    expect(Object.values(F).some((r) => r.capClip), `${label}: the caption is not clipped`).toBe(false);
+    expect(MONTHLY.map((id) => F[id].cap), `${label}: the monthly rows still just say they have none`).toEqual(MONTHLY.map(() => 'no 1-day data'));
+  }
+  expect(await page.evaluate(() => (window.__ranges.length)), 'no failure ever reached desk-econ').toBe(2);
+
+  // ── 7. a good reply after failures draws; a failure AFTER a good reply keeps the last good bars for 30 minutes, says so, then gives up
+  await page.evaluate(() => { window.__bfn = (sym) => window.__good(window.__base[sym]); econBars.m = {}; return econBarsFetch(); });
+  R = await rows1d();
+  expect(YIELDS.map((id) => R[id].svg), 'recovered').toEqual([true, true, true]);
+  await page.evaluate(() => { window.__bfn = () => ({ ok: false, why: 'http', detail: 'HTTP 502' }); });
+  await page.clock.runFor(61_000);                                       // the next poll (60 s in session) refreshes the bars too
+  R = await rows1d();
+  expect(YIELDS.map((id) => R[id].svg), 'a failed refresh keeps the last good bars...').toEqual([true, true, true]);
+  expect(YIELDS.every((id) => R[id].title.includes('the last refresh failed (HTTP 502), these are the last good prices')), '...and the tooltip says the refresh failed').toBe(true);
+  await page.clock.runFor(31 * 60_000);
+  R = await rows1d();
+  expect(YIELDS.map((id) => [R[id].svg, R[id].cap]), 'past 30 minutes without a good reply: no chart, the reason').toEqual(YIELDS.map(() => [false, '1D HTTP 502']));
+
+  // ── 8. cadence: bars ride the quote poll ONLY while 1D is showing; a hidden tab asks for nothing
+  await page.evaluate(() => { window.__bfn = (sym) => window.__good(window.__base[sym]); });
+  await page.clock.runFor(61_000);
+  await expect.poll(async () => (await rows1d()).ust10y.svg, 'a good reply on the next poll brings the charts back').toBe(true);
+  // a FORCED refresh ("Refresh now") stays pending until the bars have landed too (Codex, PR #301)
+  await page.evaluate(() => {
+    window.__rel = []; window.__fdone = false;
+    window.__bfn = (sym) => new Promise((res) => window.__rel.push(() => res(window.__good(window.__base[sym]))));
+    window.__f = econLiveFetch(true); window.__f.then(() => { window.__fdone = true; });
+  });
+  await page.clock.runFor(3_000);
+  expect(await page.evaluate(() => [window.__rel.length, window.__fdone]), 'a forced refresh asked for the three bars and is still pending while they are outstanding (the quote has long landed)').toEqual([3, false]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__f; });
+  expect(await page.evaluate(() => window.__fdone), 'and resolves once they land').toBe(true);
+  await page.evaluate(() => { window.__bfn = (sym) => window.__good(window.__base[sym]); });
+  let n = await page.evaluate(() => window.__bsyms.length);
+  await page.clock.runFor(61_000);
+  expect(await page.evaluate(() => window.__bsyms.length), 'a minute on: three more requests (one per yield)').toBe(n + 3);
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); econVisibility(); });
+  n = await page.evaluate(() => window.__bsyms.length);
+  await page.clock.runFor(180_000);
+  expect(await page.evaluate(() => window.__bsyms.length), 'hidden for three minutes: no bars requests').toBe(n);
+  await page.evaluate(() => { delete document.hidden; econVisibility(); });
+  // both clocks have expired (the quote poll AND the bars are due), yet it is ONE batch — three requests, not six (Codex, PR #301)
+  expect(await page.evaluate(() => window.__bsyms.length), 'visible again with old bars: asked at once, once').toBe(n + 3);
+  await pick('3m');
+  n = await page.evaluate(() => window.__bsyms.length);
+  await page.clock.runFor(125_000);
+  expect(await page.evaluate(() => window.__bsyms.length), 'off 1D: the bars are not asked for any more').toBe(n);
+  await page.evaluate(() => econBarsFetch());
+  expect(await page.evaluate(() => window.__bsyms.length), 'and asking for them directly while another span is showing does nothing').toBe(n);
+
+  // "Refresh now" started OFF 1D, with 1D picked while it is still running, stays pending for the bars that pick launched (Codex, PR #301).
+  // The feeds are stubbed to land at once (as S55's 7b3 does); the click is the real refreshNowClicked.
+  await page.evaluate(() => {
+    window.__tick = window.feedPollTick; window.__sf = window.scheduleFeedPoll; window.__sm = window.scheduleMarketPoll;
+    window.feedPollTick = async () => {}; window.scheduleFeedPoll = () => {}; window.scheduleMarketPoll = () => {};
+    window.__cn0 = window.econLiveCnbc; window.__dec0 = window.deskEcon;
+    renderMasthead();   // the live button (it is only built once the page is live)
+  });
+  const startRefresh = (hold) => page.evaluate((h) => {
+    window.__rel = []; window.__done = false;
+    window.__bfn = (sym) => new Promise((res) => window.__rel.push(() => res(window.__good(window.__base[sym]))));
+    if (h === 'quote') window.econLiveCnbc = () => new Promise((res) => { window.__qrel = () => res(window.__cn0()); });
+    if (h === 'econ') window.deskEcon = (range) => new Promise((res) => { window.__drel = () => res(window.__dec0(range)); });
+    window.__c = refreshNowClicked(); window.__c.then(() => { window.__done = true; });
+  }, hold);
+  const btnPending = async () => (await page.evaluate(() => { const b = document.getElementById('refreshNowBtn'); return [b.disabled, b.textContent]; }));
+  // (0) the forced quote request itself (what refreshNowClicked awaits first): its own promise covers a batch started while it was out
+  await page.evaluate(() => {
+    window.__rel = []; window.__done = false;
+    window.__bfn = (sym) => new Promise((res) => window.__rel.push(() => res(window.__good(window.__base[sym]))));
+    window.econLiveCnbc = () => new Promise((res) => { window.__qrel = () => res(window.__cn0()); });
+    window.__f = econLiveFetch(true); window.__f.then(() => { window.__done = true; });
+  });
+  await pick('1d');
+  await page.evaluate(() => window.__qrel());
+  await page.clock.runFor(3_000);
+  expect(await page.evaluate(() => [window.__rel.length, window.__done]), 'econLiveFetch(true): the quote has landed, the bars 1D started meanwhile have not — still pending').toEqual([3, false]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__f; });
+  expect(await page.evaluate(() => window.__done), 'and it resolves once they land').toBe(true);
+  await pick('3m');
+  // (a) the CNBC quote is the slow part: 1D is picked before it lands
+  await startRefresh('quote');
+  await pick('1d');
+  expect(await page.evaluate(() => window.__rel.length), 'picking 1D mid-refresh asked for the three bars').toBe(3);
+  await page.evaluate(() => window.__qrel());
+  await page.clock.runFor(3_000);
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'the quote has landed but the bars are outstanding: Refresh now is still pending').toEqual([false, [true, 'Refreshing…']]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__c; });
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'and it is back once they land').toEqual([true, [false, 'Refresh now']]);
+  // (b) desk-econ is the slow part: the quote has landed, THEN 1D is picked, then desk-econ lands
+  await pick('3m');
+  await page.evaluate(() => { window.econLiveCnbc = window.__cn0; });
+  await startRefresh('econ');
+  await page.clock.runFor(1_000);
+  await pick('1d');
+  expect(await page.evaluate(() => window.__rel.length), 'picking 1D after the quote landed also asked for the three bars').toBe(3);
+  await page.evaluate(() => window.__drel());
+  await page.clock.runFor(3_000);
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'desk-econ has landed but the bars are outstanding: still pending').toEqual([false, [true, 'Refreshing…']]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__c; });
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'and it is back once they land').toEqual([true, [false, 'Refresh now']]);
+  await page.evaluate(() => {
+    window.feedPollTick = window.__tick; window.scheduleFeedPoll = window.__sf; window.scheduleMarketPoll = window.__sm;
+    window.econLiveCnbc = window.__cn0; window.deskEcon = window.__dec0; window.__bfn = (sym) => window.__good(window.__base[sym]);
+  });
+  await pick('3m');
+
+  // ── 9. a saved 1D at boot: desk-econ is asked for the default span, not "1d", and the bars come with the first quote
+  await page.evaluate(() => { localStorage.setItem('econ_tf_v1', '1d'); });
+  await page.reload();
+  await expect(page.locator('#econList .econ-row').first()).toBeVisible({ timeout: 15000 });
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid'; DESK.mode = 'live';
+    window.__ranges = []; window.__bsyms = []; window.__realBars = econLiveBars;
+    window.econLiveCnbc = () => Promise.resolve(null);
+    window.econLiveBars = (sym) => { window.__bsyms.push(sym); return Promise.resolve({ ok: false, why: 'http', detail: 'HTTP 403' }); };
+    window.deskEcon = (range) => { window.__ranges.push(range); return Promise.resolve({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false }); };
+    startEcon();
+  });
+  await expect.poll(() => page.evaluate(() => window.__ranges.length)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => [econTf, econRange, window.__ranges[0]]), 'saved 1D: the view is 1D, the range 3m, and desk-econ is asked for 3m').toEqual(['1d', '3m', '3m']);
+  await expect.poll(() => page.evaluate(() => window.__bsyms.length), 'and the bars are asked for at boot').toBe(3);
+  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  await expect.poll(async () => YIELDS.map((id) => /* R */ 0).length && (await rows1d()).ust2y.cap, 'CNBC refusing (403) at boot is named on the yields').toBe('1D HTTP 403');
+  R = await rows1d();
+  expect(YIELDS.map((id) => R[id].cap), 'on every yield').toEqual(YIELDS.map(() => '1D HTTP 403'));
+  await page.evaluate(() => { localStorage.setItem('econ_tf_v1', '3m'); });
+
+  // ── 10. the real econLiveBars: the exact URL with ONLY an abort signal, NEVER throws, a hang is given up on at 8 s
+  const real = await page.evaluate(async () => {
+    const f0 = window.fetch, calls = [], out = {};
+    try {
+      window.fetch = (url, init) => { calls.push([String(url), Object.keys(init || {})]); return Promise.resolve(new Response(JSON.stringify({ priceBars: [] }), { status: 200 })); };
+      out.ok = await window.__realBars('US10Y');
+      window.fetch = () => Promise.resolve(new Response('denied', { status: 403 }));
+      out.denied = await window.__realBars('US2Y');
+      window.fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+      out.blocked = await window.__realBars('US2Y');
+      window.fetch = () => Promise.resolve(new Response('<html>x</html>', { status: 200 }));
+      out.html = await window.__realBars('US2Y');
+    } finally { window.fetch = f0; }
+    return { ...Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [v.ok, v.why || '', v.detail || '']])), calls };
+  });
+  expect(real.calls[0], 'the request is the chart URL for the symbol with ONLY an abort signal').toEqual(['https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=US10Y', ['signal']]);
+  expect([real.ok[0], real.denied, real.blocked[1], real.html[1]], 'a 200 gives the body; 403 / blocked / not-JSON give named reasons, never a throw').toEqual([true, [false, 'http', 'HTTP 403'], 'noanswer', 'json']);
+  const hung = page.evaluate(async () => {
+    const f0 = window.fetch;
+    window.fetch = (u, init) => new Promise((_, rej) => init.signal.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))));
+    try { return await window.__realBars('US2Y'); } finally { window.fetch = f0; }
+  });
+  const settled = (p) => Promise.race([p.then(() => true), new Promise((r) => setTimeout(() => r(false), 400))]);   // real-time look: the page clock also ticks on its own
+  await page.clock.runFor(7_000);
+  expect(await settled(hung), 'a request silent for 7 s is still waiting...').toBe(false);
+  await page.clock.runFor(1_500);
+  expect(await settled(hung), '...and by 8.5 s it has been given up on').toBe(true);
+  expect((await hung).why, 'as "no answer"').toBe('noanswer');
   expect(errs, 'no page errors').toEqual([]);
 });

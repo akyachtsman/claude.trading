@@ -168,8 +168,9 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   first, ≤120 points (first/last + min/max of 59 buckets — every point real). A
   span with fewer than 6 observations returns the 6 latest and sets
   `pointsNote` (`"monthly - 6 latest"`); fewer than 2 in total → `points: []`.
-  There is no 1D: the finest data that exists is one reading per business day
-  (yields) or per month (jobs, inflation).
+  desk-econ has no 1D: the finest data it holds is one reading per business day
+  (yields) or per month (jobs, inflation). The panel's own 1D view (below) is NOT a range
+  and never reaches it.
 - **Refresh policy — "as soon as the data changes".** From the America/New_York
   wall clock (ONE hoisted formatter, `NY_CLOCK` — the `NY_DATE` rule): 60 s inside
   Mon–Fri 08:25–09:15 (BLS/BEA 08:30) and 15:25–18:30 (Treasury), 15 min on a
@@ -364,9 +365,10 @@ width); **S56** guards the live 10Y.
 - **Status.** `missing` (or a null value): em dashes, a dashed placeholder, a `NO DATA` tag.
   `stale`: the row keeps its last good value and chart (spec §8), muted, tagged `STALE`
   (the tooltip carries the age).
-- **Span.** `#econTf` is the shared `.seg` chrome: 1W 1M 3M 6M 1Y 5Y, default **3M**,
+- **Span.** `#econTf` is the shared `.seg` chrome: 1D 1W 1M 3M 6M 1Y 5Y, default **3M**,
   persisted in `localStorage` `econ_tf_v1` and validated against the list on load (a bad
-  value falls back). There is NO 1D (the control's `title` says so). In demo a pick rebuilds
+  value falls back). 1D is a VIEW, not a range — see "The 1D view" below; the control's
+  `title` says the monthly indicators have no 1-day data. In demo a pick rebuilds
   from `buildDemoEcon(range)`; live it asks `deskEcon(range)` — a slice server-side — keeping
   the old rows, dimmed (`.is-pending`), until the reply lands. A reply whose `range` is not
   the span being asked (version skew: an older deploy answers 3m to anything) is treated as a
@@ -536,6 +538,68 @@ width); **S56** guards the live 10Y.
   old, and the 20Y item's shape was never seen — it is parsed on the same rules); and only a browser
   that can reach `quote.cnbc.com` gets it — server code (`desk-ask`, the scheduled asks) never sees
   these prices.
+- **The 1D view (owner 2026-10-01: "add the one day chart" → "build it blind"; guard S58).**
+  `econTf` is the VIEW the owner picked and `econRange` the span desk-econ is ASKED for (the
+  last real span; `3m` when the saved view is `1d`). 1D is never sent to desk-econ — it would
+  answer an unknown range with `3m`, which `econFetch` treats as a failed reply — so picking
+  1D, or going back to the span still showing, changes only what is drawn: no request, the poll
+  clock and a forced refresh in flight untouched (`econPickSpan`: `econRange === before`). The
+  poller's `asked`, its `owned` re-ask and its stale-reply drop read `econRange`; a changed
+  range still takes the whole existing path (the forced-slot serialisation, `is-pending`).
+  **Source (BUILT BLIND).** The yields draw the day's price bars from CNBC's chart feed,
+  `ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=US2Y|US10Y|US20Y` (`ECON_CHART_URL`, one
+  request per yield), fetched by the visitor's BROWSER (`econLiveBars`: `fetch(url, { signal })`,
+  8 s, never throws → `{ ok, body }` or `{ ok: false, why, detail }`). The URL and the reply's
+  shape are from memory and were NOT measured — every CNBC host answers the build sandbox 403
+  (WebFetch too) — which is why the design names every failure instead of guessing quietly.
+  **Parsing** (`econBarsParse`): the list is looked for at `barData.priceBars`, `priceBars`,
+  `bars`, `data.priceBars`, `chart.priceBars`, `result.priceBars` or as a bare array; a bar's
+  instant is `tradeTimeinMills` (epoch ms), else `tradeTime` as `YYYYMMDDhhmmss` New York wall
+  time (`etWallToMs` in `data.js`, the inverse of `etClock`, refined twice for DST and READ BACK
+  so a date that moved — Feb 30, 25:00 — is refused; minute/second ranges are checked first, or
+  minute 70 would read back as a valid 09:10), else an ISO stamp with its offset; the price is
+  `close`, `last` or `price` through `econCnbcNum`; a bar from the future or with a price outside
+  (−5, 30) is skipped; bars are sorted, only the NEWEST New York session is kept — and only THEN
+  is the two-bar minimum applied (yesterday plus one bar of today reads `no bars` and keeps the
+  last good chart; Codex, PR #301) — and a long day is thinned with `econDownsample`
+  (≤ `ECON_BARS_MAX` = 150 real points).
+  **Failure is named, never filled.** No substitute source (owner: "no fallbacks"), no demo
+  bars in live, no chart from anything but real bars. The row shows the dashed placeholder
+  and the reason: caption `1D HTTP 403` / `1D no answer` / `1D not JSON` / `1D unknown format`
+  / `1D no bars` / `1D bars ≠ quote`, and the row's tooltip carries the detail — for an unknown
+  format the reply's top-level keys (and `barData`'s), for no bars the count and a bar's keys,
+  for a mismatch the two prices (`econBarsEntry`: the last bar must be within
+  `ECON_BARS_MISMATCH` = 1.5 points of the number the row DRAWS — the live quote only when
+  `econLiveRow` trusts it, else the official reading: `econBarsRef`; a CNBC quote the row refused
+  as a misread must not vouch for bars near the same misread, Codex PR #301). **The owner
+  reads these back**, so a wrong guess about the feed costs one look at the panel, not a
+  console session. A failed refresh keeps the last GOOD bars for `ECON_BARS_KEEP_MS` (30 min)
+  with "the last refresh failed (…)" in the tooltip, then only the reason is shown.
+  The same check runs at every RENDER (`econBarsMismatch` in `econBarsFor`): a page that boots
+  on a saved 1D can have a bars reply land before any quote or desk-econ row exists, and those
+  bars must still be refused once a reference does (Codex, PR #301). Concurrent fetches are
+  coalesced (`econBars.p`): a tab coming back starts the quote poll and asks for fresh bars, and
+  must make three requests at the unofficial endpoint, not six.
+  **The monthly rows** (unemployment, CPI, PCE, core PCE) have no intraday series: no chart,
+  caption `no 1-day data`, tooltip "a monthly indicator has no intraday series" — also when their
+  official reading is `missing`. **Demo**
+  draws `buildDemoBars` (seeded 5-minute bars over the last BOND session day's 08:00–17:00 ET —
+  NYSE trading days minus Columbus and Veterans Day, `BOND_ONLY_HOLIDAYS`, Codex PR #301 —
+  caption `05:00 – 14:00` Pacific) and never calls the network. **Cadence:** the bars
+  are fetched at once on picking 1D, alongside each quote poll (`econLiveFetch`, 60 s while the
+  bond session runs, 10 min around it, hourly at weekends/holidays; concurrent with the quote and
+  AWAITED, so the masthead's "Refresh now" stays pending until the bars have landed — Codex, PR #301;
+  that includes a batch started by picking 1D while a forced refresh is already running: the quote
+  request waits for whichever batch is in flight (`barsP || econBars.p`) and `refreshNowClicked` waits
+  for `econBars.p` once its `Promise.all` has settled) and on a tab coming back
+  with bars older than a minute — only while 1D is the view (`econBarsFetch` guards it too),
+  never while hidden. `econLiveRepaint` redraws the yield rows in place and compares the
+  chart's markup as well as the text, because new bars change no text. The caption is the
+  Pacific clock of the first and last bar (dated when the newest bar is not from today). The
+  S1/S3 console allowlist carries the chart feed's exact prefix (`OPTIONAL_FEED_CHARTS`) as
+  well: S3 clicks every control, the 1D button included, and a CI runner is refused there.
+  **Open:** whether the feed answers a page on this site (CORS), and its real URL and shape —
+  to be read off the first live 1D view.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
   real rows — FRED, with Treasury's daily rate on the three yields since v3 (the shared store)
   went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields

@@ -7686,7 +7686,11 @@ async function refreshNowClicked() {
   const btn = document.getElementById('refreshNowBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
-  try { await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true)]); } finally {
+  try {
+    await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true)]);
+    /* 1D picked after the quote had landed but while desk-econ was still out starts its bars on its own: still part of this refresh */
+    if (econBars.p) await econBars.p.catch(() => {});
+  } finally {
     refreshNowPending = false;
     renderMasthead();
     scheduleFeedPoll(); scheduleMarketPoll();
@@ -7710,10 +7714,10 @@ async function refreshNowClicked() {
    STALE lamp, or (none yet) an honest empty state — demo rows exist only under
    ?demo=1, and ?demo=1 never calls the network for this panel. */
 const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1', ECON_PENDING_KEY = 'econ_pending_v1';
-const ECON_TFS = [['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
+const ECON_TFS = [['1d', '1D', '1 day'], ['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
   ['6m', '6M', '6 months'], ['1y', '1Y', '1 year'], ['5y', '5Y', '5 years']];
 const ECON_DEFAULT_TF = '3m';
-const ECON_TF_TITLE = 'Chart span. Daily and monthly data only — there is no 1-day view.';
+const ECON_TF_TITLE = 'Chart span. 1D is the intraday chart of the three yields (CNBC); the monthly indicators have no 1-day data.';
 const ECON_MIN_S = 30, ECON_MAX_S = 3600;   /* clamp on the server's refreshInSec */
 const ECON_RETRY_S = 60;                    /* fast retry after a failed poll */
 const ECON_STALE_X = 3;                     /* STALE once the last success is older than 3 × refreshInSec */
@@ -7753,6 +7757,10 @@ try {
   if (ECON_TFS.some(t => t[0] === saved)) econTf = saved;
 } catch { /* private mode — default */ }
 const saveEconTf = () => { try { localStorage.setItem(ECON_TF_KEY, econTf); } catch { /* private mode */ } };
+/* The span desk-econ is ASKED for: the last REAL span. 1D is a VIEW of the payload already on screen (the yields' charts come from
+   CNBC's intraday bars, the monthly rows have none), never a range — desk-econ would answer an unknown range with 3m, which a poll
+   treats as a failed reply. So a saved '1d' starts the poller on the default span. */
+let econRange = econTf === '1d' ? ECON_DEFAULT_TF : econTf;
 
 /* "Seen" = the newest reading this browser has already looked at: { id: 'asOf|value' }.
    Kept in memory as well, so a blocked localStorage still clears a chip for the session. */
@@ -7896,7 +7904,7 @@ function econChrome() {
       const b = el('button', '', label);
       b.type = 'button';
       b.dataset.tf = key;
-      b.title = 'Charts show the last ' + words;
+      b.title = key === '1d' ? 'Intraday chart of the three yields (CNBC); the monthly indicators have no 1-day data' : 'Charts show the last ' + words;
       b.addEventListener('click', () => econPickSpan(key));
       tf.appendChild(b);
     }
@@ -7915,10 +7923,19 @@ function syncEconTf() {
 }
 function econPickSpan(key) {
   if (key === econTf) return;
+  const before = econRange;
   econTf = key;
+  if (key !== '1d') econRange = key;
   saveEconTf();
   syncEconTf();
-  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
+  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econRange)); return; }
+  /* 1D — or back from 1D to the span that is still showing — changes the VIEW, not the range: nothing is asked of desk-econ, so
+     the poll clock, a forced refresh in flight and the generation counter are all left alone. Only the intraday bars are fetched. */
+  if (econRange === before) {
+    if (econState.shown) renderEcon(econState.shown);
+    if (key === '1d') econBarsFetch();
+    return;
+  }
   /* A forced refresh is in flight: a request of our own would take the newer generation and get
      the forced reply thrown away (or, served by another isolate's cache, show pre-refresh data).
      So the span is only RECORDED; refreshEcon asks for it the moment the forced reply lands
@@ -8050,7 +8067,7 @@ function renderEcon(payload) {
 
   /* the charts belong to the span they were fetched for: after a span change whose reply never came,
      the old rows keep their values but NOT a chart labelled with the wrong window */
-  const chartsMatch = !payload || !payload.range || payload.range === econTf;
+  const chartsMatch = !payload || !payload.range || payload.range === econRange;
   const seededSet = {}, pendSet = {}, now = Date.now();
   for (const r of rows) {
     const live = econLiveRow(r, now);   /* a live print standing in for the official reading, or the row itself */
@@ -8136,17 +8153,21 @@ function econRow(r, chartsMatch) {
   if (srcText) info.appendChild(el('div', 'econ-src', 'Source: ' + srcText));
   li.appendChild(info);
 
-  /* the chart, to the RIGHT of the value block */
+  /* the chart, to the RIGHT of the value block. On 1D the yields draw CNBC's intraday bars and every other row says it has none. */
   const chart = el('div', 'econ-chart');
-  const pts = (Array.isArray(r.points) ? r.points : []).filter(p => Array.isArray(p) && Number.isFinite(fmtToNum(p[1])));
-  const svg = missing || !chartsMatch ? null : econSpark(pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econTf.toUpperCase()));
-  if (svg) chart.appendChild(svg);
-  else chart.appendChild(el('span', 'econ-noline'));
-  if (svg) {
-    const cap = el('span', 'econ-cap', r.pointsNote ? String(r.pointsNote) : econSpanCaption(pts, r.cadence));
-    if (r.pointsNote) cap.classList.add('econ-note');
-    chart.appendChild(cap);
-  } else if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
+  let chartTip = '';
+  if (econTf === '1d') chartTip = econIntradayChart(chart, r, missing);
+  else {
+    const pts = (Array.isArray(r.points) ? r.points : []).filter(p => Array.isArray(p) && Number.isFinite(fmtToNum(p[1])));
+    const svg = missing || !chartsMatch ? null : econSpark(pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econRange.toUpperCase()));
+    if (svg) chart.appendChild(svg);
+    else chart.appendChild(el('span', 'econ-noline'));
+    if (svg) {
+      const cap = el('span', 'econ-cap', r.pointsNote ? String(r.pointsNote) : econSpanCaption(pts, r.cadence));
+      if (r.pointsNote) cap.classList.add('econ-note');
+      chart.appendChild(cap);
+    } else if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
+  }
   li.appendChild(chart);
 
   /* every fact in the tooltip too, including what is not on the row: where the number came from */
@@ -8161,7 +8182,8 @@ function econRow(r, chartsMatch) {
       : r.source === 'treasury' ? 'source U.S. Treasury daily rate (a ~3:30 pm ET snapshot of bid-side quotes)' : r.source === 'fred' ? 'source FRED' : '',
     r.live ? 'latest official reading ' + econNum(r.live.official.value, dec) + (r.unit || '') + ' on ' + econDateLabel(r.live.official.asOf, 'daily')
       + ' (' + (r.live.official.source === 'treasury' ? 'U.S. Treasury' : 'FRED') + ')' : '',
-    r.pointsNote ? String(r.pointsNote) : '',
+    r.pointsNote && econTf !== '1d' ? String(r.pointsNote) : '',
+    chartTip,
     stale ? 'STALE' + (Number.isFinite(fmtToNum(r.staleSec)) ? ' — last good reading ' + Math.round(r.staleSec / 60) + ' min ago' : '') : '',
   ].filter(Boolean).join(' · ');
   li.title = why;
@@ -8290,7 +8312,7 @@ function econLiveSeen(r) {
 function econLiveRepaint() {
   const shown = econState.shown;
   if (!shown || !Array.isArray(shown.rows)) return;
-  const chartsMatch = !shown.range || shown.range === econTf, now = Date.now();
+  const chartsMatch = !shown.range || shown.range === econRange, now = Date.now();
   let rebuilt = false;
   for (const li of document.querySelectorAll('#econList .econ-row')) {
     if (!Object.hasOwn(ECON_LIVE, li.dataset.id)) continue;
@@ -8302,7 +8324,8 @@ function econLiveRepaint() {
     /* the 30s ticker calls this too (the date cell, LIVE→NOT LIVE→LAST and the session's open and close depend on the CLOCK, not
        only on a new quote — Codex, PR #297): rebuild only when something a viewer could see differs, so a hover on the row
        (its tooltip) is not torn down every half minute, and a row with nothing live on it keeps its NEW watch */
-    if (next.textContent === li.textContent && next.title === li.title) continue;
+    const nc = next.querySelector('.econ-chart'), oc = li.querySelector('.econ-chart');   /* the 1D bars land without changing any text */
+    if (next.textContent === li.textContent && next.title === li.title && nc && oc && nc.innerHTML === oc.innerHTML) continue;
     li.replaceWith(next);
     if (next.classList.contains('is-new')) econWatch(next);
     rebuilt = true;
@@ -8338,10 +8361,16 @@ async function econLiveFetch(force) {
   clearTimeout(econLive.timer); econLive.timer = 0; econLive.dueAt = 0;
   const gen = ++econLive.gen;
   if (forced) econLive.forcing = true;
+  /* the day's bars ride the same cadence while 1D is showing — fetched CONCURRENTLY with the quote and awaited below, so a forced
+     "Refresh now" stays pending until they have landed too (Codex, PR #301); econBarsFetch never throws, the catch is belt and braces */
+  const barsP = econTf === '1d' ? econBarsFetch().catch(() => {}) : null;
+  /* ...and a batch launched WHILE the quote was out (1D picked mid-refresh: econPickSpan starts it) is waited for too — whoever started
+     it, `econBars.p` is the one in flight (Codex, PR #301) */
+  const barsWait = () => { const p = barsP || econBars.p; return p ? p.catch(() => {}) : null; };
   let body = null, cnbc = {};
   try { body = await econLiveCnbc(); } catch { body = null; }
   try { cnbc = econLiveParseCnbc(body, Date.now()); } catch { cnbc = {}; }
-  if (gen !== econLive.gen) return;   /* a newer request owns the state now */
+  if (gen !== econLive.gen) { await barsWait(); return; }   /* a newer request owns the state now */
   econLive.forcing = false;
   const landed = Date.now();
   econLive.landedAt = landed;
@@ -8350,6 +8379,158 @@ async function econLiveFetch(force) {
   for (const id of ids) econLive.q[id] = { ...cnbc[id], fetchedAt: landed, keepMs: Math.max(ECON_LIVE_KEEP_MS, 2 * econLiveDelaySec(landed) * 1000) };
   renderAfterFetch(econLiveRepaint);
   econLiveArm(ids.length ? econLiveDelaySec(Date.now()) : ECON_RETRY_S);
+  await barsWait();
+}
+
+/* ── 1D: the yields' intraday bars (owner request 2026-10-01: "add the one day chart" → "build it blind") ──────────────────
+   The 2Y, 10Y and 20Y draw the day's price bars from CNBC's own chart feed — the same provider as the live numbers, fetched
+   by the visitor's BROWSER (CNBC refuses servers). BUILT BLIND: the feed's URL and shape are from memory and were NOT
+   measured (the build sandbox gets 403 from every CNBC host), so the parser accepts the plausible shapes and — the point of
+   the design — every way it can fail is named on the row: no chart is ever drawn from anything but real bars, never a
+   substitute source (owner: "no fallbacks"), and the reason (HTTP status, no answer, not JSON, unknown format with the
+   reply's keys, no usable bars, a last bar that disagrees with the quote) is in the caption and the row's tooltip. The
+   monthly rows have no intraday series and say so. desk-econ is never involved. */
+const ECON_CHART_URL = (sym) => 'https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=' + encodeURIComponent(sym);
+const ECON_BARS_MAX = 150;                  /* thinned with the panel's own min/max bucketing: every kept point is a real bar */
+const ECON_BARS_MISMATCH = 1.5;             /* points: a last bar further than this from the quote is another instrument or a scale fault */
+const ECON_BARS_KEEP_MS = 30 * 60000;       /* a failed refresh keeps the last good bars this long, then the row says why there are none */
+const econBars = { m: {}, p: null, at: 0 };  /* m: row id → { pts: [[ms, price]…], fetchedAt, why, detail }; p: the batch in flight */
+
+/* The request: a plain GET from this browser, 8 s, NEVER throws — { ok, body } or { ok: false, why, detail }. */
+async function econLiveBars(sym) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ECON_CNBC_TIMEOUT_MS);
+  try {
+    const r = await fetch(ECON_CHART_URL(sym), { signal: ctl.signal });
+    if (!r.ok) return { ok: false, why: 'http', detail: 'HTTP ' + r.status };
+    try { return { ok: true, body: await r.json() }; } catch {
+      return ctl.signal.aborted ? { ok: false, why: 'noanswer', detail: 'no answer (too slow)' } : { ok: false, why: 'json', detail: 'the reply was not JSON' };
+    }
+  } catch { return { ok: false, why: 'noanswer', detail: 'no answer (blocked by CNBC, an extension or the network, or too slow)' }; } finally { clearTimeout(t); }
+}
+/* One bar's instant: epoch ms when the bar carries them (`tradeTimeinMills`), else CNBC's `tradeTime` 'YYYYMMDDhhmmss' — New York wall
+   time with no offset — else an ISO stamp with its offset. NaN when it has none, or when the date does not exist. */
+function econBarMs(b) {
+  const ms = Number(b.tradeTimeinMills != null ? b.tradeTimeinMills : b.tradeTimeInMills);
+  if (Number.isFinite(ms) && ms > 1e11) return ms;
+  const w = /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?$/.exec(String(b.tradeTime == null ? '' : b.tradeTime));
+  if (w) {
+    if (+w[4] > 23 || +w[5] > 59 || +(w[6] || 0) > 59) return NaN;   /* minute 70 would read back as a valid 09:10 */
+    const day = w[1] + '-' + w[2] + '-' + w[3], min = +w[4] * 60 + +w[5], t = etWallToMs(day, min, +(w[6] || 0));
+    const c = etClock(new Date(t));   /* read it back: a stamp whose date moved (Feb 30) is refused, not repaired */
+    return c.date === day && c.minutes === min ? t : NaN;
+  }
+  return econCnbcTime(b.tradeTime != null ? b.tradeTime : b.time);
+}
+/* A reply → the day's bars, or the reason there are none. The list is looked for in the plausible places; a bar's price is
+   `close` (or `last` / `price`); only the NEWEST session's bars (New York date) are kept — it is a 1-day chart. */
+function econBarsParse(body, now) {
+  const obj = body && typeof body === 'object';
+  const arr = !obj ? null : Array.isArray(body) ? body
+    : [body.barData && body.barData.priceBars, body.priceBars, body.bars, body.data && body.data.priceBars, body.chart && body.chart.priceBars, body.result && body.result.priceBars].find(Array.isArray);
+  if (!arr) {
+    const inner = obj && body.barData && typeof body.barData === 'object' ? ' / barData: ' + Object.keys(body.barData).slice(0, 8).join(',') : '';
+    return { pts: [], why: 'format', detail: 'unrecognised reply format (keys: ' + (obj ? Object.keys(body).slice(0, 8).join(',') || 'none' : typeof body) + inner + ')' };
+  }
+  const out = [];
+  for (const b of arr) {
+    if (!b || typeof b !== 'object') continue;
+    const ms = econBarMs(b), price = econCnbcNum(b.close != null ? b.close : b.last != null ? b.last : b.price);
+    if (Number.isFinite(ms) && ms <= now + 5 * 60000 && Number.isFinite(price) && price > -5 && price < 30) out.push([ms, price]);
+  }
+  out.sort((a, c) => a[0] - c[0]);
+  /* the newest session FIRST, then the minimum: a reply holding yesterday plus the first bar of today has ONE usable bar, which must
+     read as "no bars yet" (and keep the last good chart), not slip through as a one-point result with no reason (Codex, PR #301) */
+  const day = out.length ? etClock(new Date(out[out.length - 1][0])).date : '';
+  const today = out.filter(p => etClock(new Date(p[0])).date === day);
+  if (today.length < 2) {
+    return { pts: [], why: 'empty', detail: arr.length + ' bars in the reply, ' + today.length + ' usable' + (out.length > today.length ? ' on the newest session' : '') + (arr[0] && typeof arr[0] === 'object' ? ' (a bar\'s keys: ' + Object.keys(arr[0]).slice(0, 8).join(',') + ')' : '') };
+  }
+  return { pts: econDownsample(today, ECON_BARS_MAX), why: '', detail: '' };
+}
+/* what the bars must agree with: the number the row itself DRAWS — the live quote only when econLiveRow trusts it (same date,
+   tolerance and age rules), else the official reading. A raw quote that the row refused as a misread must not vouch for bars
+   near the same misread (Codex, PR #301). */
+function econBarsRef(id) {
+  const row = econState.shown && Array.isArray(econState.shown.rows) ? econState.shown.rows.find(r => r.id === id) : null;
+  return row ? fmtToNum(econLiveRow(row, Date.now()).value) : NaN;
+}
+/* One row's store entry from one reply. A bad reply keeps the last GOOD bars for ECON_BARS_KEEP_MS (a one-minute blip must not
+   blank the chart) — with the failure still recorded beside them — and after that there are no bars, only the reason. */
+function econBarsEntry(id, res, prev, now) {
+  let pts = [], why = '', detail = '';
+  if (!res || !res.ok) { why = (res && res.why) || 'noanswer'; detail = (res && res.detail) || 'no answer'; }
+  else {
+    const p = econBarsParse(res.body, now);
+    pts = p.pts; why = p.why; detail = p.detail;
+    const bad = pts.length ? econBarsMismatch(id, pts) : '';
+    if (bad) { pts = []; why = 'mismatch'; detail = bad; }
+  }
+  if (pts.length) return { pts, fetchedAt: now, why: '', detail: '' };
+  if (prev && prev.pts.length && now - prev.fetchedAt <= ECON_BARS_KEEP_MS) return { pts: prev.pts, fetchedAt: prev.fetchedAt, why, detail };
+  return { pts: [], fetchedAt: 0, why, detail };
+}
+/* Fetch all three rows' bars (only while 1D is the view; never in demo, which draws seeded bars). Newest request wins. */
+function econBarsFetch() {
+  if (DESK.mode === 'demo' || !DESK_DB.url || econTf !== '1d') return Promise.resolve();
+  /* ONE batch at a time: a second caller (a tab coming back starts the quote poll AND asks for fresh bars) gets the batch already in
+     flight, so a visibility return is three requests, not six at an unofficial endpoint (Codex, PR #301) */
+  if (econBars.p) return econBars.p;
+  econBars.p = (async () => {
+    try {
+      const res = await Promise.all(Object.keys(ECON_LIVE).map(async (id) => {
+        let r;
+        try { r = await econLiveBars(ECON_LIVE[id]); } catch { r = { ok: false, why: 'noanswer', detail: 'no answer' }; }
+        return [id, r];
+      }));
+      const now = Date.now();
+      for (const [id, r] of res) econBars.m[id] = econBarsEntry(id, r, econBars.m[id], now);
+      econBars.at = now;
+      renderAfterFetch(econLiveRepaint);
+    } catch (e) {   /* reading a reply must not leave an unhandled rejection or a silent blank: name it on every row */
+      const now = Date.now();
+      for (const id of Object.keys(ECON_LIVE)) econBars.m[id] = econBarsEntry(id, { ok: false, why: 'format', detail: 'could not read the reply (' + ((e && e.message) || e) + ')' }, econBars.m[id], now);
+      renderAfterFetch(econLiveRepaint);
+    } finally { econBars.p = null; }
+  })();
+  return econBars.p;
+}
+/* What the bars must agree with, checked AGAIN at every render: the fetch-time check in econBarsEntry has no reference when the page
+   boots on a saved 1D and a bar reply beats the quote and the desk-econ rows, so a plausible but wrong instrument or scale would be
+   stored unchecked (Codex, PR #301). A row is only ever drawn once desk-econ has landed, so a reference exists by then. */
+function econBarsMismatch(id, pts) {
+  const ref = econBarsRef(id), last = pts.length ? pts[pts.length - 1][1] : NaN;
+  if (!Number.isFinite(ref) || !Number.isFinite(last) || Math.abs(last - ref) <= ECON_BARS_MISMATCH) return '';
+  return 'the last bar (' + last.toFixed(3) + ') is ' + Math.abs(last - ref).toFixed(2) + ' points from the quote (' + ref.toFixed(3) + ')';
+}
+function econBarsFor(id) {
+  if (DESK.mode === 'demo') return { pts: buildDemoBars(id), why: '', detail: '' };
+  const e = econBars.m[id];
+  if (!e) return null;
+  const bad = e.pts.length ? econBarsMismatch(id, e.pts) : '';
+  return bad ? { pts: [], fetchedAt: 0, why: 'mismatch', detail: bad } : e;
+}
+/* the caption under a 1D chart: its first and last bar on the Pacific clock, dated when they are not from today */
+function econIntradayCaption(pts) {
+  const a = new Date(pts[0][0]), b = new Date(pts[pts.length - 1][0]), day = ptDateKey(b);
+  return (day === ptDateKey(new Date()) ? '' : fmtShortDate(day) + ' ') + fmtClockBare(a.toISOString()) + ' – ' + fmtClockBare(b.toISOString());
+}
+const econBarsShort = e => e.why === 'http' ? e.detail : ({ noanswer: 'no answer', json: 'not JSON', format: 'unknown format', empty: 'no bars', mismatch: 'bars ≠ quote' })[e.why] || 'unavailable';
+/* The 1D chart column of one row; returns the sentence that joins the row's tooltip. */
+function econIntradayChart(chart, r, missing) {
+  const none = (cap, tip) => { chart.appendChild(el('span', 'econ-noline')); if (cap) chart.appendChild(el('span', 'econ-cap', cap)); return tip; };
+  /* the lack of an intraday series does not depend on whether the official reading is available (Codex, PR #301) */
+  if (!Object.hasOwn(ECON_LIVE, r.id)) return none('no 1-day data', 'no 1-day data: a ' + (r.cadence || 'monthly') + ' indicator has no intraday series');
+  if (missing) return none('', '');
+  const e = econBarsFor(r.id);
+  if (!e) return none('loading…', '1-day chart loading');
+  if (e.pts.length >= 2) {
+    const cap = econIntradayCaption(e.pts);
+    chart.appendChild(econSpark(e.pts, (r.label || r.id) + ', ' + e.pts.length + ' prices ' + cap + ' Pacific'));
+    chart.appendChild(el('span', 'econ-cap', cap));
+    return DESK.mode === 'demo' ? '1-day chart: generated demo prices'
+      : '1-day chart: ' + e.pts.length + ' CNBC ' + ECON_LIVE[r.id] + ' prices, ' + cap + (e.why ? ' — the last refresh failed (' + e.detail + '), these are the last good prices' : '');
+  }
+  return none('1D ' + econBarsShort(e), '1-day chart unavailable: ' + e.detail);
 }
 
 /* ── poller: the response's refreshInSec (clamped 30s..3600s) schedules the next fetch. The function
@@ -8390,7 +8571,7 @@ async function refreshEcon(force, opts) {
    forced refresh holds the request slot, so a span change meanwhile was only recorded and is asked
    for by the caller (the return value: true = "the span moved, ask again"). */
 async function econFetch(force, owned, keepClock) {
-  const asked = econTf, gen = ++econState.gen;
+  const asked = econRange, gen = ++econState.gen;
   if (keepClock) { econState.pending = true; const l = document.getElementById('econList'); if (l) l.classList.add('is-pending'); }
   let out = null;
   try {
@@ -8399,10 +8580,10 @@ async function econFetch(force, owned, keepClock) {
   if (gen !== econState.gen) return false;   /* a newer request owns the state now */
   econState.pending = false;
   /* the span changed while a forced refresh held the slot: not a failed poll, ask again for the one showing */
-  if (owned && econTf !== asked) return true;
+  if (owned && econRange !== asked) return true;
   /* drop a reply for a span nobody is asking about any more, or one that says it drew another window
      (version skew: an older deploy would answer a range it does not know with 3m) */
-  if (out && (econTf !== asked || (out.range && out.range !== asked) || !Array.isArray(out.rows))) out = null;
+  if (out && (econRange !== asked || (out.range && out.range !== asked) || !Array.isArray(out.rows))) out = null;
   if (out) {
     econState.payload = out;
     econState.landedAt = Date.now();
@@ -8434,6 +8615,7 @@ function econVisibility() {
     if (left <= 0) econLiveFetch(false);
     else econLiveArm(left / 1000);
   }
+  if (econTf === '1d' && DESK.mode !== 'demo' && DESK_DB.url && Date.now() - econBars.at > 60000) econBarsFetch();   /* the bars are old */
   if (DESK.mode !== 'demo' && DESK_DB.url && econState.dueAt) {
     relampEcon();   /* BEFORE the refetch: a tab that sat hidden must not come back claiming LIVE */
     const left = econState.dueAt - Date.now();
@@ -8449,7 +8631,7 @@ function startEcon() {
   /* demo's acknowledgement state is session-only and starts empty; live reads what this browser has stored */
   econSeen = DESK.mode === 'demo' ? {} : econSeenRead();
   econPending = DESK.mode === 'demo' ? {} : econPendingRead();
-  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econTf)); return; }
+  if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econRange)); return; }
   if (!DESK_DB.url) return;
   renderEcon(null);
   refreshEcon(false);
