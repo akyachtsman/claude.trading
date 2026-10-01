@@ -78,6 +78,12 @@ const BASE_URL = process.env.APP_URL || 'https://akyachtsman.github.io/claude.tr
    but both are built from these constants rather than from re-typed literals. */
 const FEED_ORIGIN = '.supabase.co/functions/v1/';
 const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
+/* ONE optional third-party feed beside the desk's own (owner request 2026-10-01): the live 2Y/10Y/20Y come straight from the
+   visitor's BROWSER to CNBC's quote service, because CNBC refuses every server. It is an unofficial endpoint and, from a CI runner
+   or any blocked network, its refusal logs the same console errors a failed feed call does — which the app absorbs BY DESIGN (the
+   rows fall back to Treasury/FRED). Matched on this exact URL prefix and nothing wider: not CNBC's other hosts or pages, and not a
+   look-alike host (S57 pins all three). */
+const OPTIONAL_FEED = 'https://quote.cnbc.com/quote-html-webservice/';
 /* The TradingView embed probes motion sensors from inside its OWN nested
    sub-frame, which an `allow=` on the outer iframe cannot reach (tried in
    PR #78). Exact string only — never a blanket console mute. */
@@ -114,7 +120,7 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.tes
 const benignCors = (text, src) => {
   const t = `${text || ''} ${src || ''}`;
   return FEED_CORS.test(text || '') &&
-    (t.includes(FEED_ORIGIN) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
+    (t.includes(FEED_ORIGIN) || t.includes(OPTIONAL_FEED) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
 };
 /* WebKit raises a blocked cross-origin fetch as a pageerror where Chromium only
    logs it, so this is the iphone project's half of the same rule. */
@@ -468,6 +474,7 @@ test('S1: page loads without JS errors', async ({ page, renderWitness }) => {
     if (m.type() !== 'error') return;
     const at = (m.location() && m.location().url) || '';
     if (m.text().includes(FEED_ORIGIN) || at.includes(FEED_ORIGIN)) return;
+    if (at.includes(OPTIONAL_FEED)) return;   /* the CNBC quote call's "Failed to load resource" — see OPTIONAL_FEED at the top */
     /* A CORS REJECTION from the feed origin is the same allowlisted noise, but
        it arrives as a PAIR and only the second message names the URL — the
        first says "Origin http://localhost:8080 is not allowed by
@@ -702,7 +709,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
        fix, so it lands inside S3's sweep window. Matched on the TEXT as well as
        the source: the CORS pair's first message names the blocked origin rather
        than the URL, so a source-only test misses half of it. */
-    const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text);
+    const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text) || src.includes(OPTIONAL_FEED) || text.includes(OPTIONAL_FEED);
     if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
     /* The rule above demands the FEED ORIGIN appear in the text or the location,
        which the first message of WebKit's CORS pair supplies in neither — it
@@ -846,7 +853,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
   /* feed-origin 5xx excluded — see the FEED_ORIGIN note on the console
      listener above; a persistent feed outage still fails loudly via S14 */
   const blocking = findings.filter(f =>
-    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN_RE.test(c.url || '')) ||
+    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN_RE.test(c.url || '') && !String(c.url || '').includes(OPTIONAL_FEED)) ||
     f.consoleErrors.length > 0);
   expect(blocking, `Blocking anomalies found:\n${JSON.stringify(blocking, null, 2)}`).toHaveLength(0);
 });
@@ -6159,6 +6166,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     // the live 10Y (S56) asks quote-proxy beside desk-econ; S55 is about desk-econ's own poller, so the quote is stubbed OFF
     // (a rejection: the rows stay exactly what the server sent) instead of reaching for the network from a forced-live page
     window.deskQuote = () => Promise.reject(new Error('quote-proxy stubbed off in S55'));
+    window.econLiveCnbc = () => Promise.resolve(null);   // the live yields are S56/S57's business, not this scenario's
     window.deskEcon = (range, force) => {
       window.__calls.push({ range, force: force === true });
       const m = window.__mode;
@@ -6418,9 +6426,10 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
 // old by the afternoon; Yahoo's ^TNX through the existing quote-proxy is a live print. It is a CLIENT-side overlay on the row,
 // trusted only when the official row is healthy, the print is on a STRICTLY newer New York date, within 0.75 points of the
 // official reading and fetched in the last 30 minutes — otherwise the row is EXACTLY what the server sent (real data or nothing).
-// The 2Y and 20Y have no free live source and are untouched. Driven with a stubbed deskEcon and deskQuote on Playwright's fake
+// This is the YAHOO path — the 10Y's fallback when CNBC does not deliver it (S57 covers CNBC itself): the CNBC request is stubbed
+// DOWN here, so the 2Y and 20Y have no live print and are untouched. Driven with a stubbed deskEcon and deskQuote on Playwright's fake
 // clock (a fixed Thursday morning Pacific, so "today" and the bond session are known) — never the network.
-test('S56: the live 10Y — a live ^TNX print stands in for the official reading only when it can be trusted', async ({ page, renderWitness }) => {
+test('S56: the live 10Y (Yahoo ^TNX, the fallback) — a live print stands in for the official reading only when it can be trusted', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(150_000);
   const T0 = '2026-10-01T15:45:00Z';   // Thu 11:45 ET = 08:45 PT: inside the bond cash session
@@ -6477,6 +6486,7 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
     localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
     window.__qcalls = [];
     window.__quoteFn = () => window.__goodQuote();
+    window.econLiveCnbc = () => Promise.resolve(null);   // CNBC unavailable: the 10Y falls to Yahoo, the 2Y and 20Y have no live print
     window.deskQuote = (sym, kind, prepost, opts) => {
       window.__qcalls.push({ sym, kind, prepost: prepost === true, force: !!(opts && opts.force) });
       try { return Promise.resolve(window.__quoteFn()); } catch (e) { return Promise.reject(e); }
@@ -6497,7 +6507,7 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
     const row = { id: 'ust10y', label: '10Y Treasury', value: 5.26, asOf: '2026-09-29', prev: 5.24, prevAsOf: '2026-09-28', delta: 0.02, status: 'ok',
       source: 'fred', decimals: 2, unit: '%', cadence: 'daily', changed: true, points: [['2026-09-25', 5.17], ['2026-09-28', 5.24], ['2026-09-29', 5.26]] };
     const now = Date.now();
-    const q = (o) => ({ price: 5.321, ts: Date.parse('2026-10-01T15:40:00Z'), date: '2026-10-01', prevClose: 5.293, prevDate: '2026-09-30', fetchedAt: now, ...o });
+    const q = (o) => ({ price: 5.321, ts: Date.parse('2026-10-01T15:40:00Z'), date: '2026-10-01', prevClose: 5.293, prevDate: '2026-09-30', via: 'yahoo', symbol: '^TNX', fetchedAt: now, ...o });
     const run = (r, o) => { econLive.q = { ust10y: q(o) }; return econLiveRow(r, now); };
     const same = (r, o) => run(r, o) === r;   // the SAME object back = no overlay
     const out = run(row, {});
@@ -6516,7 +6526,7 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
       // a short span that fell back to its N latest readings keeps N, so the caption (and the chart's accessible name) stay true
       noted: (() => { const six = ['09-22', '09-23', '09-24', '09-25', '09-28', '09-29'].map((d, i) => [`2026-${d}`, 5.2 + i / 100]);
         const o = run({ ...row, points: six, pointsNote: 'daily - 6 latest' }, {}); return [o.points.length, o.points[0][0], o.points[o.points.length - 1], o.pointsNote]; })(),
-      otherId: (() => { econLive.q = { ust2y: q({}), ust10y: q({}) }; const r2 = { ...row, id: 'ust2y' }; return econLiveRow(r2, now) === r2; })(),
+      otherId: (() => { econLive.q = { cpi: q({}), ust10y: q({}) }; const r2 = { ...row, id: 'cpi' }; return econLiveRow(r2, now) === r2; })(),
     };
     econLive.q = { ust10y: q({}) };
     DESK.mode = 'demo';
@@ -6541,7 +6551,8 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   expect(rules.onePoint, 'a chart that had fewer than two real points is not extended into a line').toBe(1);
   expect(rules.noted, 'a "daily - 6 latest" fallback stays SIX readings: the print replaces the oldest, the note stays true (Codex, PR #297)')
     .toEqual([6, '2026-09-23', ['2026-10-01', 5.321], 'daily - 6 latest']);
-  expect(rules.otherId, 'only the 10Y row is ever live — the 2Y and 20Y have no free live source').toBe(true);
+  expect(rules.otherId, 'only a row with a live symbol is ever live — CPI never is, whatever is stored under its id').toBe(true);
+  expect([rules.out.live.via, rules.out.live.symbol], 'and a Yahoo print says so').toEqual(['yahoo', '^TNX']);
   expect(rules.demo, 'and demo never overlays').toBe(true);
 
   // ── 4. the poll cadence: every minute in the bond session, ten around it on a trading day, hourly at weekends and holidays
@@ -6732,4 +6743,219 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   await page.clock.runFor(31_000);
   r10 = await row10();
   expect([r10.val, r10.date, r10.tag], '55 minutes after an hourly weekend fetch the last print is still the row').toEqual(['5.32%', 'Oct 2', 'LAST']);
+});
+
+// ── S57 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The live 2Y, 10Y and 20Y from CNBC's quote service (owner request 2026-10-01: "Can this be built into the dashboard?"). FRED and
+// Treasury publish a yield once a day; CNBC's restQuote answers a page on THIS site with CORS (measured from the owner's browser,
+// 11:49 ET: 2Y 4.787, 10Y 5.253) though it refuses every server (Supabase and the build sandbox both get 403). So the dashboard makes
+// ONE request from the visitor's browser for all three rows, each row trusted on its own by the same rules as the live 10Y, and the
+// 10Y falls back to Yahoo's ^TNX when CNBC does not deliver it. An unofficial endpoint: every failure is a fall back, never an error.
+// Driven with stubs on Playwright's fake clock (Thu 08:50:30 PT, inside the bond session) — never the network.
+test('S57: the live yields from CNBC — one browser request for all three, each row trusted on its own', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(180_000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await page.clock.install({ time: new Date('2026-10-01T15:50:30Z') });
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  // a CNBC reply as it really arrives: strings with a trailing %, the time with its UTC offset and NO colon, `change` in points, and
+  // a `change_pct` that is not to be trusted (it read +0.19% beside a -0.10 change on the 2Y)
+  await page.evaluate(() => {
+    const base = { symbolType: 'symbol', code: 0, changetype: 'DOWN', type: 'BOND', subType: 'Government Bond', exchange: 'Tradeweb', source: 'Exchange', provider: 'CNBC Quote' };
+    window.__cq = (over = {}) => ({ FormattedQuoteResult: { FormattedQuote: [
+      { ...base, symbol: 'US2Y', name: 'U.S. 2 Year Treasury', last: '4.787%', last_timedate: '11:49 AM EDT', last_time: '2026-10-01T11:49:47.000-0400', open: '4.891%', high: '4.925%', low: '4.783%', change: '-0.10', change_pct: '+0.1914%', ...over.US2Y },
+      { ...base, symbol: 'US10Y', name: 'U.S. 10 Year Treasury', last: '5.253%', last_timedate: '11:49 AM EDT', last_time: '2026-10-01T11:49:41.000-0400', open: '5.289%', high: '5.344%', low: '5.245%', change: '-0.04', change_pct: '-0.7557%', ...over.US10Y },
+      { ...base, symbol: 'US20Y', name: 'U.S. 20 Year Treasury', last: '5.612%', last_timedate: '11:49 AM EDT', last_time: '2026-10-01T11:49:40.000-0400', open: '5.670%', high: '5.690%', low: '5.600%', change: '-0.07', change_pct: '-1.2%', ...over.US20Y },
+    ].filter((q) => !(over.drop || []).includes(q.symbol)) } });
+  });
+
+  // ── 1. parsing a CNBC reply into prints and baselines
+  const parsed = await page.evaluate(() => {
+    const now = Date.parse('2026-10-01T15:50:30Z');
+    const P = (b) => econLiveParseCnbc(b, now);
+    const one = (q) => P({ FormattedQuoteResult: { FormattedQuote: [{ symbol: 'US2Y', code: 0, last: '4.787%', last_time: '2026-10-01T11:49:47.000-0400', change: '-0.10', ...q }] } });
+    const n = (o) => Object.keys(o).length;
+    const good = P(window.__cq());
+    return {
+      good, ids: Object.keys(good).sort(),
+      single: P({ FormattedQuoteResult: { FormattedQuote: { symbol: 'US10Y', code: 0, last: '5.253', last_time: '2026-10-01T11:49:41.000-0400' } } }),
+      nothing: [P(null), P({}), P({ FormattedQuoteResult: {} }), P({ FormattedQuoteResult: { FormattedQuote: [] } }), P('x'), P([])].map(n),
+      unknownSymbol: n(P({ FormattedQuoteResult: { FormattedQuote: [{ symbol: 'US30Y', code: 0, last: '5.7%', last_time: '2026-10-01T11:49:47.000-0400' }] } })),
+      badCode: n(one({ code: 1 })), noCode: n(one({ code: undefined })), junkLast: n(one({ last: 'N/A' })), scale: n(one({ last: '47.87%' })),
+      future: n(one({ last_time: '2026-10-01T12:30:00.000-0400' })), noTime: n(one({ last_time: undefined })), junkTime: n(one({ last_time: 'yesterday' })),
+      noChange: one({ change: undefined }).ust2y.prevClose, absurd: one({ change: '9.9' }).ust2y.prevClose, junkChange: one({ change: 'n/a' }).ust2y.prevClose,
+      colonOffset: one({ last_time: '2026-10-01T11:49:47-04:00' }).ust2y.ts,
+    };
+  });
+  expect(parsed.ids, 'all three yields are read from one reply').toEqual(['ust10y', 'ust20y', 'ust2y']);
+  const g = parsed.good;
+  expect([g.ust2y.price, g.ust10y.price, g.ust20y.price], 'the print is `last`, its trailing % stripped').toEqual([4.787, 5.253, 5.612]);
+  expect([g.ust2y.prevClose, g.ust10y.prevClose, g.ust20y.prevClose], 'the previous close is last minus `change` (points) — change_pct is never used').toEqual([4.887, 5.293, 5.682]);
+  expect(g.ust2y.ts, 'the time is read with its UTC offset although it has no colon (-0400), as the standard form').toBe(Date.parse('2026-10-01T15:49:47Z'));
+  expect(parsed.colonOffset, 'and the colon form reads the same instant').toBe(g.ust2y.ts);
+  expect([g.ust2y.date, g.ust2y.via, g.ust2y.symbol, g.ust2y.prevDate], 'the session is the NEW YORK date; it says where it came from; CNBC gives no baseline date').toEqual(['2026-10-01', 'cnbc', 'US2Y', null]);
+  expect([parsed.single.ust10y.price, parsed.single.ust10y.prevClose], 'a single quote object (not an array) is read; no `change` means an unknown baseline (null, never 0)').toEqual([5.253, null]);
+  expect(parsed.nothing, 'null, {}, no result, an empty list, a string and an array are all nothing').toEqual([0, 0, 0, 0, 0, 0]);
+  expect([parsed.unknownSymbol, parsed.badCode, parsed.junkLast, parsed.scale, parsed.future, parsed.noTime, parsed.junkTime],
+    'an unlisted symbol, an error code, N/A, a x10 scale fault, a quote from the future, and a missing or junk time are all refused').toEqual([0, 0, 0, 0, 0, 0, 0]);
+  expect(parsed.noCode, 'a quote with no code field at all is still read').toBe(1);
+  expect([parsed.noChange, parsed.absurd, parsed.junkChange], 'a missing, absurd (9.9 points) or junk change leaves the baseline unknown, never a guess').toEqual([null, null, null]);
+
+  // ── 2. each row is trusted on its own, through the real econLiveRow
+  const rules = await page.evaluate(() => {
+    DESK.mode = 'live';   // econLiveRow never overlays in demo
+    const now = Date.now();
+    const q = econLiveParseCnbc(window.__cq(), now);
+    const mk = (id, label, value, prev) => ({ id, label, value, prev, delta: Number((value - prev).toFixed(2)), asOf: '2026-09-30', prevAsOf: '2026-09-29', status: 'ok',
+      source: 'treasury', decimals: 2, unit: '%', cadence: 'daily', changed: false, points: [['2026-09-26', prev - 0.05], ['2026-09-29', prev], ['2026-09-30', value]] });
+    const rows = { ust2y: mk('ust2y', '2Y Treasury', 4.88, 4.89), ust10y: mk('ust10y', '10Y Treasury', 5.29, 5.26), ust20y: mk('ust20y', '20Y Treasury', 5.68, 5.64) };
+    const load = (qq) => { econLive.q = Object.fromEntries(Object.entries(qq).map(([id, v]) => [id, { ...v, fetchedAt: now }])); };
+    load(q);
+    const drawn = Object.fromEntries(Object.entries(rows).map(([id, r]) => { const o = econLiveRow(r, now); return [id, { same: o === r, value: o.value, delta: o.delta, prev: o.prev, asOf: o.asOf, source: o.source,
+      live: o.live && { via: o.live.via, symbol: o.live.symbol, fresh: o.live.fresh, official: o.live.official } }]; }));
+    load({ ...q, ust2y: { ...q.ust2y, price: 6.03 } });   // a 2Y print 1.15 points off its official reading is a misread...
+    const far = Object.fromEntries(Object.keys(rows).map((id) => [id, econLiveRow(rows[id], now) === rows[id]]));   // ...for THAT row only
+    load(q);
+    const caught = { ...rows.ust20y, asOf: '2026-10-01' };   // today's Treasury rate has posted for the 20Y: the official reading stands
+    const stands = { ust20y: econLiveRow(caught, now) === caught, ust2y: econLiveRow(rows.ust2y, now) !== rows.ust2y };
+    econLive.q = {}; DESK.mode = 'demo';
+    return { drawn, far, stands };
+  });
+  expect(rules.drawn.ust2y, 'the 2Y: the print stands in, the change is from the previous close CNBC reports, and it says CNBC').toEqual({ same: false, value: 4.787, delta: -0.1, prev: 4.887, asOf: '2026-10-01', source: 'live',
+    live: { via: 'cnbc', symbol: 'US2Y', fresh: true, official: { asOf: '2026-09-30', value: 4.88, source: 'treasury' } } });
+  expect([rules.drawn.ust10y.value, rules.drawn.ust10y.delta, rules.drawn.ust20y.value, rules.drawn.ust20y.delta, rules.drawn.ust20y.live.symbol],
+    'the 10Y and the 20Y alike').toEqual([5.253, -0.04, 5.612, -0.07, 'US20Y']);
+  expect(rules.far, 'a misread on one row (1.15 points off) leaves that row on its official reading and the other two live').toEqual({ ust2y: true, ust10y: false, ust20y: false });
+  expect(rules.stands, 'an official reading that has caught up STANDS for its row only').toEqual({ ust20y: true, ust2y: true });
+
+  // ── 3. the real poller end to end: ONE request, three live rows, Yahoo untouched
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
+    window.__realCnbc = econLiveCnbc;
+    window.__ccalls = 0; window.__qcalls = [];
+    window.__cbody = window.__cq();
+    window.econLiveCnbc = () => { window.__ccalls++; return window.__cbody instanceof Error ? Promise.reject(window.__cbody) : Promise.resolve(window.__cbody); };
+    window.__bars = (date, from, to, a, b) => {
+      const out = [];
+      let t = Date.parse(`${date}T${from}:00Z`);
+      const n = Math.round((Date.parse(`${date}T${to}:00Z`) - t) / 300000) + 1;
+      for (let i = 0; i < n; i++, t += 300000) out.push([new Date(t).toISOString().slice(0, 16).replace('T', ' '), a + (b - a) * (n > 1 ? i / (n - 1) : 1)]);
+      return out;
+    };
+    window.__yahoo = () => {
+      const bars = window.__bars('2026-09-30', '12:20', '18:55', 5.20, 5.293).concat(window.__bars('2026-10-01', '12:20', '15:40', 5.30, 5.321));
+      const col = (f) => bars.map(f);
+      return { ok: true, symbol: '^TNX', kind: 'intraday', prepost: false, asOf: bars[bars.length - 1][0],
+        series: { t: col((b) => b[0]), o: col((b) => b[1]), h: col((b) => b[1]), l: col((b) => b[1]), c: col((b) => b[1]), v: col(() => 0), x: col(() => 0) } };
+    };
+    window.deskQuote = (sym, kind, prepost, opts) => { window.__qcalls.push({ sym, kind, force: !!(opts && opts.force) }); return Promise.resolve(window.__yahoo()); };
+    const official = { ust2y: [4.88, 4.89], ust10y: [5.29, 5.26], ust20y: [5.68, 5.64] };
+    window.deskEcon = (range) => {
+      const p = buildDemoEcon(range);
+      const rows = p.rows.map((r) => {
+        const o = official[r.id];
+        if (!o) return { ...r, source: 'fred' };
+        return { ...r, value: o[0], prev: o[1], delta: Number((o[0] - o[1]).toFixed(2)), asOf: '2026-09-30', prevAsOf: '2026-09-29', status: 'ok', source: 'treasury', changed: false,
+          points: r.points.filter((x) => x[0] < '2026-09-30').concat([['2026-09-30', o[0]]]) };
+      });
+      return Promise.resolve({ ...p, rows, range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false });
+    };
+  });
+  const rowsOf = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const q = (s) => li.querySelector(s);
+    return [li.dataset.id, { val: q('.econ-val').textContent, delta: q('.econ-delta').textContent, date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
+      isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null, title: li.title, live: li.dataset.live || null, cap: q('.econ-cap') ? q('.econ-cap').textContent : '',
+      clip: q('.econ-src') ? q('.econ-src').scrollWidth > q('.econ-src').clientWidth + 1 : null }];
+  })));
+  const state = () => page.evaluate(() => ({ c: window.__ccalls, y: window.__qcalls.map((x) => x.sym) }));
+  await page.evaluate(() => { startEcon(); });
+  await expect(page.locator('#econList .econ-row[data-live="1"]'), 'all three yield rows are drawn live').toHaveCount(3);
+  let R = await rowsOf();
+  expect([R.ust2y.val, R.ust2y.delta, R.ust2y.tag, R.ust2y.date, R.ust2y.src], 'the 2Y: the print, its change, LIVE, the Pacific CLOCK of the quote (15:49Z = 08:49 PDT), and CNBC named')
+    .toEqual(['4.79%', '▼ 0.10', 'LIVE', '08:49', 'Source: CNBC US2Y']);
+  expect([R.ust10y.val, R.ust10y.delta, R.ust10y.tag, R.ust10y.src], 'the 10Y').toEqual(['5.25%', '▼ 0.04', 'LIVE', 'Source: CNBC US10Y']);
+  expect([R.ust20y.val, R.ust20y.delta, R.ust20y.tag, R.ust20y.src], 'the 20Y').toEqual(['5.61%', '▼ 0.07', 'LIVE', 'Source: CNBC US20Y']);
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].isNew), 'a live row never carries a NEW chip').toEqual([false, false, false]);
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].clip), 'the longest source line ("Source: CNBC US10Y") fits its block').toEqual([false, false, false]);
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => /– Oct 1$/.test(R[id].cap)), 'and each chart now runs to today').toEqual([true, true, true]);
+  expect(R.ust2y.title, 'the tooltip names the quote, its time and the official reading it stands in for').toMatch(/as of 2026-10-01 08:49 PDT \(time of the last quote\)/);
+  expect(R.ust2y.title).toMatch(/source CNBC US2Y live quote, may be delayed/);
+  expect(R.ust2y.title).toMatch(/from the previous close CNBC reports/);
+  expect(R.ust2y.title).toMatch(/latest official reading 4\.88% on Sep 30 \(U\.S\. Treasury\)/);
+  expect(R.ust2y.title, 'and is not labelled as Treasury\'s own reading').not.toMatch(/source U\.S\. Treasury/);
+  expect(['unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, R[id].live, R[id].tag, R[id].src]), 'the four monthly rows are untouched and keep naming FRED')
+    .toEqual(['unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, null, null, 'Source: FRED']));
+  expect(await page.evaluate(() => [econSeen.ust2y, econSeen.ust10y, econSeen.ust20y]), 'the official readings the prints stand in for are recorded as seen').toEqual(['2026-09-30|4.88', '2026-09-30|5.29', '2026-09-30|5.68']);
+  expect(await state(), 'ONE CNBC request carried all three rows, and Yahoo was not asked at all').toEqual({ c: 1, y: [] });
+
+  // ── 4. the cadence: one request a minute for all three rows
+  await page.clock.runFor(58_000);
+  expect((await state()).c, '58 s in: not asked again').toBe(1);
+  await page.clock.runFor(4_000);
+  expect(await state(), 'a minute on: ONE more request (not three), still no Yahoo').toEqual({ c: 2, y: [] });
+
+  // ── 5. CNBC goes away: the 10Y falls to Yahoo, the 2Y and 20Y keep their last print, then give way to the official reading
+  await page.evaluate(() => { window.__cbody = new Error('blocked by an extension'); });
+  await page.clock.runFor(61_000);
+  R = await rowsOf();
+  expect([R.ust10y.src, R.ust10y.val, R.ust10y.tag], 'CNBC down: the 10Y is the Yahoo ^TNX print').toEqual(['Source: Yahoo ^TNX', '5.32%', 'LIVE']);
+  expect([R.ust2y.src, R.ust2y.tag, R.ust20y.src], 'while the 2Y and 20Y keep their last CNBC print (it is under 30 minutes old)').toEqual(['Source: CNBC US2Y', 'LIVE', 'Source: CNBC US20Y']);
+  expect((await state()).y, 'and Yahoo was asked for the 10Y ONLY').toEqual(['^TNX']);
+  await page.clock.runFor(31 * 60_000);
+  R = await rowsOf();
+  expect([R.ust2y.src, R.ust2y.live, R.ust2y.tag, R.ust2y.val, R.ust20y.src, R.ust20y.live, R.ust20y.val], 'half an hour on, the 2Y and 20Y are back on their official Treasury reading — real data or nothing')
+    .toEqual(['Source: U.S. Treasury', null, null, '4.88%', 'Source: U.S. Treasury', null, '5.68%']);
+  expect([R.ust10y.src, R.ust10y.live], 'the 10Y is still the Yahoo print').toEqual(['Source: Yahoo ^TNX', '1']);
+  await page.evaluate(() => { window.__cbody = window.__cq(); });
+  await page.clock.runFor(61_000);
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].src), 'CNBC back: every yield is CNBC again, the 10Y included').toEqual(['Source: CNBC US2Y', 'Source: CNBC US10Y', 'Source: CNBC US20Y']);
+  await page.evaluate(() => { econLive.q = {}; window.__cbody = window.__cq({ drop: ['US10Y', 'US20Y'] }); });
+  await page.clock.runFor(61_000);
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].src), 'CNBC leaves two rows out: the 2Y is CNBC, the 10Y falls to Yahoo, the 20Y (no Yahoo symbol) has no live print')
+    .toEqual(['Source: CNBC US2Y', 'Source: Yahoo ^TNX', 'Source: U.S. Treasury']);
+
+  // ── 6. the request itself: exactly the call that was measured, no extra options, and it NEVER throws
+  const real = await page.evaluate(async () => {
+    const f0 = window.fetch, calls = [], out = {};
+    try {
+      window.fetch = (url, init) => { calls.push([String(url), Object.keys(init || {})]); return Promise.resolve(new Response(JSON.stringify(window.__cq()), { status: 200, headers: { 'content-type': 'application/json' } })); };
+      out.ok = await window.__realCnbc();
+      window.fetch = () => Promise.resolve(new Response('denied', { status: 403 }));
+      out.denied = await window.__realCnbc();
+      window.fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+      out.blocked = await window.__realCnbc();
+      window.fetch = () => Promise.resolve(new Response('<html>not json</html>', { status: 200 }));
+      out.html = await window.__realCnbc();
+    } finally { window.fetch = f0; }
+    return { ok: !!(out.ok && out.ok.FormattedQuoteResult), denied: out.denied, blocked: out.blocked, html: out.html, calls };
+  });
+  expect(real.calls[0], 'the request is the measured URL with ONLY an abort signal — nothing that could turn it into a CORS preflight').toEqual([
+    'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=US2Y%7CUS10Y%7CUS20Y&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json&events=1', ['signal']]);
+  expect([real.ok, real.denied, real.blocked, real.html], 'a 200 gives the body; a 403, a blocked request and a body that is not JSON all give null, never a throw').toEqual([true, null, null, null]);
+  const hung = page.evaluate(async () => {
+    const f0 = window.fetch;
+    window.fetch = (u, init) => new Promise((_, rej) => init.signal.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))));
+    try { return { v: await window.__realCnbc() }; } finally { window.fetch = f0; }
+  });
+  const settled = (p) => Promise.race([p.then(() => true), new Promise((r) => setTimeout(() => r(false), 400))]);   // real-time look: the page clock also ticks on its own
+  await page.clock.runFor(7_000);
+  expect(await settled(hung), 'a request silent for 7 s is still waiting...').toBe(false);
+  await page.clock.runFor(1_500);
+  expect(await settled(hung), '...and by 8.5 s it has been given up on, so the Yahoo fallback is not held up behind it').toBe(true);
+  expect((await hung).v, 'as a failed request: null, never a throw').toBeNull();
+
+  // ── 7. the console allowlist S1/S3 share knows this ONE optional feed — and nothing wider
+  expect(benignCors("Access to fetch at 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=US2Y' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'CNBC\'s CORS refusal is allowlisted (the app falls back to the official numbers by design)').toBe(true);
+  expect(benignCors("Access to fetch at 'https://quote.cnbc.com.evil.example/quote-html-webservice/x' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'a look-alike host is not').toBe(false);
+  expect(benignCors("Access to fetch at 'https://www.cnbc.com/quotes/US10Y' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'and neither is any other CNBC URL').toBe(false);
+  expect(errs, 'no page errors').toEqual([]);
 });

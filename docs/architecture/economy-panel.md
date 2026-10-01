@@ -146,8 +146,10 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   day: `^TNX` last 5.293 vs Treasury's 09-30 par 5.29, `^FVX` 5.089 vs 5.09 (5Y), `^TYX` 5.638 vs
   5.64 (30Y); there is NO Yahoo symbol for a 2Y or 20Y yield (`2YY=F`, `5YY=F`, `30Y=F`, `US2Y=X`,
   `^US2Y`, `2Y=F`, `^UST2Y`, `US20Y=X`, `^US20Y` all 404; `ZT=F` / `ZB=F` / `UB=F` are futures
-  PRICES, not yields; `10Y=F`, the micro 10-year yield future, exists and trades overnight). So the
-  2Y and 20Y have no free live source: their best same-day figure is Treasury's snapshot.
+  PRICES, not yields; `10Y=F`, the micro 10-year yield future, exists and trades overnight). So
+  through Yahoo the 2Y and 20Y have no live source. *(Superseded the same day for the 2Y and 20Y:
+  CNBC refuses SERVERS but answers the visitor's own BROWSER — see "The live yields from CNBC"
+  below.)*
 - **FRED holes are holes.** The documented missing marker is `.`, but MEASURED
   2026-09-30 the endpoint writes an EMPTY field (`2026-09-07,` Labor Day;
   `2025-10-01,` the shutdown month for CPI and UNRATE). `Number('')` is `0`, so
@@ -343,8 +345,9 @@ width); **S56** guards the live 10Y.
   (Until 2026-09-30's switch this read "the feed is FRED-only".)
 - **A source on every row — and no footer (owner request 2026-10-01: "I want a per index source").**
   Under each row's date sits a tiny `.econ-src` line (9px, the muted ink token — never `opacity`),
-  `Source: <name>`, from `econSourceLabel(r)`: a live print → `Yahoo ^TNX` (the symbol from `r.live`),
-  `source:'treasury'` → `U.S. Treasury`, `source:'fred'` → `FRED`; in DEMO every row reads
+  `Source: <name>`, from `econSourceLabel(r)`: a live print → `CNBC US2Y` (or `Yahoo ^TNX` while the 10Y's
+  Yahoo fallback stands in; the symbol and `via` come from `r.live`), `source:'treasury'` → `U.S.
+  Treasury`, `source:'fred'` → `FRED`; in DEMO every row reads
   `Source: Demo data` (the generated numbers are not FRED's, whatever the payload's `source` field
   says, and the tooltip agrees); an unknown source and a `missing` row print NO line — never a guess.
   The line is clipped, not wrapped (`overflow: hidden`), and the longest real name, `Source: U.S.
@@ -415,12 +418,18 @@ width); **S56** guards the live 10Y.
   `startEcon`): its synthetic readings would otherwise make the first real visit read every row
   as NEW. Each chart's accessible name says what is drawn — `pointsNote` ("monthly - 6 latest")
   when the span fell back, else "over 3M" — never a short span over a half-year of readings.
-- **The live 10Y (owner request 2026-10-01; guard S56).** FRED and Treasury publish a yield once a
-  day, so by the afternoon the 10Y is a business day old; Yahoo's `^TNX` is a live print, keyless,
-  through the `quote-proxy` every chart already uses (`deskQuote('^TNX', 'intraday')`, the 5-minute
-  bars of the last five sessions). It is a CLIENT-side OVERLAY on the `ust10y` row — `ECON_LIVE`
-  maps row id → symbol, and nothing else is live — so there is no edge-function change and no
-  deploy; merging it IS shipping it. `econLiveRow(r, now)` returns the SAME object (no overlay) unless
+- **The live yields (owner request 2026-10-01; guards S56 and S57).** FRED and Treasury publish a
+  yield once a day, so by the afternoon a yield row is a business day old. Live prints are
+  CLIENT-side OVERLAYS on the `ust2y` / `ust10y` / `ust20y` rows — no edge-function change, no
+  deploy; merging it IS shipping it — from two places: **CNBC's quote service**, tried FIRST, ONE
+  request for all three rows made by the visitor's browser (next bullet), and **Yahoo's `^TNX`**,
+  the 10Y's FALLBACK when CNBC does not deliver it (keyless, through the `quote-proxy` every chart
+  already uses: `deskQuote('^TNX', 'intraday')`, the 5-minute bars of the last five sessions).
+  `ECON_LIVE` maps row id → CNBC symbol (`US2Y` / `US10Y` / `US20Y`; it is also the set of rows
+  that CAN be live), `ECON_LIVE_YAHOO` the rows that have a Yahoo fallback (only `ust10y` →
+  `^TNX`). Everything below — the trust rules, the render, the cadence, the forced-slot rule — is
+  shared by both sources; each stored print (`econLive.q[id]`) carries `via: 'cnbc' | 'yahoo'` and
+  its `symbol`, which the row's source line and tooltip name. `econLiveRow(r, now)` returns the SAME object (no overlay) unless
   ALL of these hold: the official row is `status: 'ok'` (never alone — a print needs a healthy row to
   be checked against); the print's NEW YORK date is STRICTLY newer than the official `asOf` (an
   official reading that has caught up to that day STANDS; Treasury's/FRED's own number is never
@@ -463,6 +472,45 @@ width); **S56** guards the live 10Y.
   run while the market is OPEN (it was closed when this was built) — the tooltip says
   "may be delayed", and the 30-minute LIVE/LAST threshold is a guess to be checked against the
   open session (a 15-minute delay puts a normal bar 15–20 minutes old).
+- **The live yields from CNBC (owner request 2026-10-01: "Can this be built into the dashboard?";
+  guard S57).** CNBC's quote service, `quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol
+  ?symbols=US2Y|US10Y|US20Y&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json&events=1`
+  (the URL is `ECON_CNBC_URL`; the owner found it in CNBC's own page — DevTools → Network → Fetch/XHR on
+  `cnbc.com/quotes/US10Y` — a `symbol?symbols=US10Y…` fetch the page repeats as its price updates).
+  **It must be called from the BROWSER.** Its bot protection (Akamai, `AkamaiGHost`, "Access Denied",
+  HTTP 403) refuses every server — Supabase's functions and the build sandbox, even with the host
+  allowed — but a page on this site is answered with CORS: measured from the owner's Chromebook,
+  running on `akyachtsman.github.io`, 2026-10-01 11:49 ET: `US2Y` last 4.787, `US10Y` 5.253 (agreeing
+  with Yahoo's 5.26 at 11:33 and with Treasury's 09-30 closes through `last − change` = 4.887 / 5.293),
+  `last_time` seconds old, `exchange: "Tradeweb"`. So `econLiveCnbc()` is a plain `fetch(ECON_CNBC_URL,
+  { signal })` — default semantics ONLY, exactly the call that was measured, no extra option or header
+  that could turn it into a CORS preflight (S57 pins `['signal']`) — and it NEVER throws: a 403, a
+  blocked request (an extension, a work or school network), a body that is not JSON, or 8 s of silence
+  (`ECON_CNBC_TIMEOUT_MS`) is `null`. It is an UNOFFICIAL endpoint, so every failure is a FALL BACK,
+  never an error. **One request carries all three rows** (a request a minute in the bond session, the
+  cadence above), and `econLiveFetch` then asks Yahoo ONLY for a row CNBC did not deliver that has a
+  Yahoo symbol (the 10Y); the 2Y and 20Y simply have no live print then, and keep the last good one for
+  `ECON_LIVE_KEEP_MS` before their official reading returns. `econLiveParseCnbc(body, now)` →
+  `{ rowId: { price, ts, date, prevClose, prevDate: null, via: 'cnbc', symbol } }`: numbers arrive as
+  strings with a trailing `%` (`"4.787%"`); `last_time` is `"2026-10-01T11:49:47.000-0400"`, an offset
+  WITHOUT a colon, rewritten to the standard form before `Date.parse`; the previous close is
+  **`last − change`** (`change` is in percentage points) and an absent, junk or absurd (≥ 2 points)
+  `change` leaves it `null` — an em dash, never a guess; **`change_pct` is NEVER used** (it read +0.19%
+  beside a −0.10 change on the 2Y); a quote with a non-zero `code`, a price outside (−5, 30), an
+  unparseable or future time, or a symbol outside `ECON_LIVE` is skipped, not repaired. The rows then go
+  through the SAME `econLiveRow` as Yahoo's, each on its OWN: a misread on the 2Y leaves only the 2Y on
+  its official reading. The source line reads `Source: CNBC US2Y` (`Source: Yahoo ^TNX` when the
+  fallback is standing in); the tooltip says "as of … (time of the last quote)", "from the previous
+  close CNBC reports", "source CNBC US2Y live quote, may be delayed". **CI:** S1/S3 load the live-config
+  page, so the boot-time request fails there (a runner's IP is refused) and logs console errors the app
+  absorbs by design; the shared allowlist (`OPTIONAL_FEED`, the exact prefix
+  `https://quote.cnbc.com/quote-html-webservice/`, in `benignCors` and the S1/S3 console rules) admits
+  exactly that and nothing wider — not CNBC's other hosts or pages, not a look-alike host (S57 pins
+  all three). **Privacy:** CNBC sees each viewer's IP, user-agent and the page origin
+  (`https://akyachtsman.github.io/`) on every poll; no desk data crosses (the request carries none).
+  **Open:** how far behind CNBC's quote runs is not measured (one reading, seconds old); and only a
+  browser that can reach `quote.cnbc.com` gets it — server code (`desk-ask`, the scheduled asks) never
+  sees these prices.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
   real rows — FRED, with Treasury's daily rate on the three yields since v3 (the shared store)
   went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields

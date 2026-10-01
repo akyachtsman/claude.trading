@@ -7721,20 +7721,28 @@ const ECON_NEW_MS = 60000;                  /* a NEW chip clears once its row ha
 const ECON_NEW_SEEN = 0.5;                  /* ...half of it counts as in view */
 const ECON_SPARK_W = 100, ECON_SPARK_H = 32;
 
-/* ── the live 10Y (owner request 2026-10-01) ──────────────────────────────────
-   FRED and Treasury publish a yield once a day, so by the afternoon the 10Y row is a business day old. A live
-   10-year print IS available keyless from Yahoo's ^TNX (the CBOE 10-year yield index, quoted in percent; checked
-   2026-10-01 against Treasury's own 09-30 par yield: 5.293 vs 5.29) through the `quote-proxy` every chart already
-   uses — so this is a CLIENT-side overlay on the row: no edge function, no deploy. There is no free live 2Y or 20Y
-   (Yahoo has no such symbol), so those rows are untouched. The overlay is applied only when it can be trusted
-   (econLiveRow) and the row is otherwise exactly what the server sent: real data or nothing. */
-const ECON_LIVE = { ust10y: '^TNX' };       /* row id → Yahoo symbol */
+/* ── the live yields (owner request 2026-10-01) ───────────────────────────────
+   FRED and Treasury publish a yield once a day, so by the afternoon a yield row is a business day old. Live prints
+   come from two places, both CLIENT-side overlays on the row — no edge function, no deploy:
+   · CNBC's quote service (quote.cnbc.com restQuote), ONE request for all three yields (US2Y|US10Y|US20Y), made by
+     THIS browser: CNBC's bot protection refuses every server (Supabase and the build sandbox both get 403), but it
+     answers a page on this site with CORS — measured from the owner's Chromebook 2026-10-01 11:49 ET: 2Y 4.787, 10Y
+     5.253 (Tradeweb quotes, last_time seconds old). An unofficial endpoint, so it can change or be blocked (an
+     extension, a work network) at any time: that is a fall back, never an error.
+   · Yahoo's ^TNX (the CBOE 10-year yield index, in percent; 5.293 vs Treasury's 5.29 on 2026-09-30) through the
+     `quote-proxy` every chart already uses: the 10Y's fallback when CNBC does not deliver it. Yahoo has no 2Y or 20Y.
+   The overlay is applied only when it can be trusted (econLiveRow) and the row is otherwise exactly what the server
+   sent: real data or nothing. */
+const ECON_LIVE = { ust2y: 'US2Y', ust10y: 'US10Y', ust20y: 'US20Y' };   /* row id → CNBC symbol */
+const ECON_LIVE_YAHOO = { ust10y: '^TNX' };  /* row id → Yahoo symbol: the fallback for the rows that have one */
+const ECON_CNBC_URL = 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=US2Y%7CUS10Y%7CUS20Y&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json&events=1';
+const ECON_CNBC_TIMEOUT_MS = 8000;          /* it answers in well under a second: a request silent this long is a failed one, and Yahoo's fallback waits behind it */
 const ECON_LIVE_TOL = 0.75;                 /* percentage points: a print further than this from the row's own newest official reading is a misread (×10 scaling, a wrong symbol), never a move */
 const ECON_LIVE_FRESH_MS = 30 * 60000;      /* LIVE while the newest 5-minute bar started within this, LAST after */
 const ECON_LIVE_KEEP_MS = 30 * 60000;       /* a reading whose last successful fetch is older than this is dropped: the row falls back to the official one — or older than TWO poll intervals when polling is slower than that (weekends, holidays: an hourly poll must not flicker the row off halfway through its own interval; Codex, PR #297) */
 const ECON_LIVE_FAST_S = 60, ECON_LIVE_IDLE_S = 600, ECON_LIVE_OFF_S = 3600;
 const ECON_LIVE_TIMEOUT_MS = 20000;         /* a quote that has not answered by then is a failed quote: a hung request must not wedge the poll chain */
-const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0, forcing: false };   /* q: row id → { price, ts, date, prevClose, prevDate, fetchedAt } */
+const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0, forcing: false };   /* q: row id → { price, ts, date, prevClose, prevDate, via: 'cnbc'|'yahoo', symbol, fetchedAt, keepMs } */
 
 let econTf = ECON_DEFAULT_TF;
 try {
@@ -8073,7 +8081,7 @@ function renderEcon(payload) {
    NOTHING — never a guess. */
 function econSourceLabel(r) {
   if (DESK.mode === 'demo') return 'Demo data';
-  if (r.live) return 'Yahoo ' + r.live.symbol;
+  if (r.live) return (r.live.via === 'cnbc' ? 'CNBC ' : 'Yahoo ') + r.live.symbol;
   return r.source === 'treasury' ? 'U.S. Treasury' : r.source === 'fred' ? 'FRED' : '';
 }
 
@@ -8126,11 +8134,11 @@ function econRow(r, chartsMatch) {
   /* every fact in the tooltip too, including what is not on the row: where the number came from */
   const why = [
     (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
-    missing ? '' : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (5-minute bar start)'
+    missing ? '' : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + (r.live.via === 'cnbc' ? ' (time of the last quote)' : ' (5-minute bar start)')
       : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
-    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points' + (r.live ? ' from the previous session\'s last print' : ''),
+    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points' + (r.live ? (r.live.via === 'cnbc' ? ' from the previous close CNBC reports' : ' from the previous session\'s last print') : ''),
     DESK.mode === 'demo' ? 'source demo data (generated, not real)'
-      : r.live ? 'source Yahoo Finance ' + r.live.symbol + ' live quote, may be delayed'
+      : r.live ? 'source ' + (r.live.via === 'cnbc' ? 'CNBC ' : 'Yahoo Finance ') + r.live.symbol + ' live quote, may be delayed'
       : r.source === 'treasury' ? 'source U.S. Treasury daily rate (a ~3:30 pm ET snapshot of bid-side quotes)' : r.source === 'fred' ? 'source FRED' : '',
     r.live ? 'latest official reading ' + econNum(r.live.official.value, dec) + (r.unit || '') + ' on ' + econDateLabel(r.live.official.asOf, 'daily')
       + ' (' + (r.live.official.source === 'treasury' ? 'U.S. Treasury' : 'FRED') + ')' : '',
@@ -8163,6 +8171,50 @@ function econLiveParse(series, now) {
   for (; i >= 0 && !prev; i--) { const b = bar(i); if (b && b.date < last.date) prev = b; }
   return { price: last.price, ts: last.ts, date: last.date, prevClose: prev ? prev.price : null, prevDate: prev ? prev.date : null };
 }
+/* ── CNBC: parse. A quote is {symbol, code, last: "4.787%", last_time: "2026-10-01T11:49:47.000-0400", change: "-0.10", …}:
+   numbers arrive as strings, often with a trailing %, and the time carries its UTC offset WITHOUT a colon (-0400) — not the
+   standard ISO form, and engines differ on whether they accept it (current Chromium and WebKit do) — so the offset is
+   rewritten to the standard form before Date.parse rather than relying on that. `change` is in
+   percentage points, so the previous close is last − change (it agrees with Treasury's own close to the cent). The
+   quote's `change_pct` is NEVER used: it read +0.19% beside a −0.10 change on the 2Y. Anything malformed is skipped,
+   never repaired (a quote is a number or it is nothing); a quote from the future is a clock fault, not a quote. Returns
+   { rowId: { price, ts, date, prevClose, prevDate: null, via: 'cnbc', symbol } } for the rows it could read. */
+function econCnbcNum(v) {
+  const m = /^\s*([+-]?\d+(?:\.\d+)?)\s*%?\s*$/.exec(String(v == null ? '' : v));
+  return m ? Number(m[1]) : null;
+}
+function econCnbcTime(s) {
+  const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?([+-])(\d\d):?(\d\d)$/.exec(String(s == null ? '' : s));
+  return m ? Date.parse(m[1] + m[2] + m[3] + ':' + m[4]) : NaN;
+}
+function econLiveParseCnbc(body, now) {
+  const out = {};
+  const list = body && body.FormattedQuoteResult ? body.FormattedQuoteResult.FormattedQuote : null;
+  for (const it of Array.isArray(list) ? list : list && typeof list === 'object' ? [list] : []) {
+    if (!it || typeof it !== 'object') continue;
+    const id = Object.keys(ECON_LIVE).find(k => ECON_LIVE[k] === it.symbol);
+    if (!id || (it.code !== undefined && Number(it.code) !== 0)) continue;
+    const price = econCnbcNum(it.last), ts = econCnbcTime(it.last_time);
+    if (!Number.isFinite(price) || price <= -5 || price >= 30 || !Number.isFinite(ts) || ts > now + 5 * 60000) continue;
+    const chg = econCnbcNum(it.change);
+    out[id] = {
+      price, ts, date: etClock(new Date(ts)).date,
+      prevClose: Number.isFinite(chg) && Math.abs(chg) < 2 ? Number((price - chg).toFixed(3)) : null,
+      prevDate: null, via: 'cnbc', symbol: it.symbol,
+    };
+  }
+  return out;
+}
+/* The request itself: ONE call for every live row, made by this browser. NEVER throws and never reads a non-200: null means
+   "CNBC did not answer" (blocked, offline, timed out, changed) and the caller falls back. Default fetch semantics only — it is
+   exactly the call that was measured from the owner's browser, with no extra headers that could turn it into a CORS preflight. */
+async function econLiveCnbc() {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ECON_CNBC_TIMEOUT_MS);
+  try {
+    const r = await fetch(ECON_CNBC_URL, { signal: ctl.signal });
+    return r.ok ? await r.json() : null;
+  } catch { return null; } finally { clearTimeout(t); }
+}
 /* The row as drawn: a live print stands in for the official reading ONLY when all of these hold, else the row is
    returned UNCHANGED (same object) — never alone: the official row must be healthy (a live print is checked against
    it); the print's NEW YORK date must be STRICTLY newer than the official reading's (an official reading that has
@@ -8185,7 +8237,7 @@ function econLiveRow(r, now) {
   return {
     ...r, value: q.price, delta: Number.isFinite(q.prevClose) ? Number((q.price - q.prevClose).toFixed(econDec(r))) : null,
     prev: q.prevClose, asOf: q.date, prevAsOf: q.prevDate, points, source: 'live', changed: false,
-    live: { symbol: ECON_LIVE[r.id], ts: q.ts, fresh: now - q.ts <= ECON_LIVE_FRESH_MS, official: { asOf: r.asOf, value: r.value, source: r.source } },
+    live: { symbol: q.symbol, via: q.via, ts: q.ts, fresh: now - q.ts <= ECON_LIVE_FRESH_MS, official: { asOf: r.asOf, value: r.value, source: r.source } },
   };
 }
 /* the date cell of a live row: the Pacific CLOCK of its bar when the bar is from today (Pacific), else the date it is for */
@@ -8249,7 +8301,7 @@ function econLiveQuote(sym, force) {
   const cap = new Promise((_, reject) => { t = setTimeout(() => reject(new Error('quote-proxy timed out')), ECON_LIVE_TIMEOUT_MS); });
   return Promise.race([deskQuote(sym, 'intraday', false, force ? { force: true } : undefined), cap]).finally(() => clearTimeout(t));
 }
-/* One quote per live row. NEVER throws (the caller may sit inside a Promise.all with the forced refresh). A failed
+/* One CNBC request for every live row (Yahoo for the 10Y when CNBC does not deliver it). NEVER throws (the caller may sit inside a Promise.all with the forced refresh). A failed
    quote keeps the last good one, which ages out after ECON_LIVE_KEEP_MS; the repaint and the re-arm sit OUTSIDE the
    fetch's try (renderAfterFetch). `force` bypasses quote-proxy's warm cache ("Refresh now"). */
 async function econLiveFetch(force) {
@@ -8262,10 +8314,19 @@ async function econLiveFetch(force) {
   clearTimeout(econLive.timer); econLive.timer = 0; econLive.dueAt = 0;
   const gen = ++econLive.gen;
   if (forced) econLive.forcing = true;
-  const got = await Promise.all(Object.entries(ECON_LIVE).map(async ([id, sym]) => {
+  /* CNBC first: ONE request carries every live row, straight from this browser. What it does not deliver — blocked by an
+     extension or a network, an answer that changed shape, a row it left out — falls to Yahoo for the rows that have a Yahoo
+     symbol (the 10Y); the others simply have no live print, and their official reading stands. */
+  let cnbc = {};
+  try { cnbc = econLiveParseCnbc(await econLiveCnbc(), Date.now()); } catch { cnbc = {}; }
+  const got = await Promise.all(Object.keys(ECON_LIVE).map(async (id) => {
+    if (cnbc[id]) return [id, cnbc[id]];
+    const sym = ECON_LIVE_YAHOO[id];
+    if (!sym) return [id, null];
     try {
       const out = await econLiveQuote(sym, forced);
-      return [id, out && out.ok ? econLiveParse(out.series, Date.now()) : null];
+      const q = out && out.ok ? econLiveParse(out.series, Date.now()) : null;
+      return [id, q ? { ...q, via: 'yahoo', symbol: sym } : null];
     } catch { return [id, null]; }
   }));
   if (gen !== econLive.gen) return;   /* a newer request owns the state now */
