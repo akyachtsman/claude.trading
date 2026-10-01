@@ -7196,6 +7196,19 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   R = await rows1d();
   expect([R.ust10y.svg, R.ust10y.cap], 'unchecked bars 2.2 points from the quote are not drawn once the quote is there').toEqual([false, '1D bars ≠ quote']);
   expect(R.ust10y.title, 'and the tooltip says so').toContain('points from the quote');
+  // the reference is the number the row DRAWS: a CNBC quote that econLiveRow REFUSES as a misread (7.5 against an official 5.29) must not vouch
+  // for bars sitting near the same misread — they are checked against the official reading the row shows instead (Codex, PR #301)
+  await page.evaluate(() => {
+    const open = Date.parse('2026-10-01T12:00:00Z');
+    window.__savedQ = econLive.q.ust10y;
+    econLive.q.ust10y = { ...window.__savedQ, price: 7.5 };
+    econBars.m.ust10y = { pts: [[open, 7.5], [open + 300000, 7.5]], fetchedAt: Date.now(), why: '', detail: '' };
+    renderEcon(econState.shown);
+  });
+  R = await rows1d();
+  expect([R.ust10y.svg, R.ust10y.cap], 'bars matching only a REFUSED quote (7.5 vs the official 5.29) are not drawn').toEqual([false, '1D bars ≠ quote']);
+  expect(R.ust10y.title, 'and the tooltip compares them with the official reading the row shows').toContain('the quote (5.290)');
+  expect(await page.evaluate(() => { const refused = econBarsRef('ust10y'); econLive.q.ust10y = window.__savedQ; return [refused, econBarsRef('ust10y')]; }), 'the reference is the official 5.29 while the quote is refused, and the live 5.253 once it is trusted').toEqual([5.29, 5.253]);
   // a MONTHLY row whose official reading is missing still says it has no 1-day data (not an unlabeled placeholder)
   await page.evaluate(() => { renderEcon({ ...econState.shown, rows: econState.shown.rows.map((r) => (r.id === 'cpi' ? { ...r, status: 'missing', value: null, prev: null, delta: null, asOf: null, points: [] } : r)) }); });
   R = await rows1d();

@@ -8440,12 +8440,12 @@ function econBarsParse(body, now) {
   }
   return { pts: econDownsample(today, ECON_BARS_MAX), why: '', detail: '' };
 }
-/* what the bars must agree with: the live quote, else the row's own reading */
+/* what the bars must agree with: the number the row itself DRAWS — the live quote only when econLiveRow trusts it (same date,
+   tolerance and age rules), else the official reading. A raw quote that the row refused as a misread must not vouch for bars
+   near the same misread (Codex, PR #301). */
 function econBarsRef(id) {
-  const q = econLive.q[id];
-  if (q && Number.isFinite(q.price)) return q.price;
   const row = econState.shown && Array.isArray(econState.shown.rows) ? econState.shown.rows.find(r => r.id === id) : null;
-  return row ? fmtToNum(row.value) : NaN;
+  return row ? fmtToNum(econLiveRow(row, Date.now()).value) : NaN;
 }
 /* One row's store entry from one reply. A bad reply keeps the last GOOD bars for ECON_BARS_KEEP_MS (a one-minute blip must not
    blank the chart) — with the failure still recorded beside them — and after that there are no bars, only the reason. */

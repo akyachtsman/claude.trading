@@ -569,7 +569,9 @@ width); **S56** guards the live 10Y.
   / `1D no bars` / `1D bars ≠ quote`, and the row's tooltip carries the detail — for an unknown
   format the reply's top-level keys (and `barData`'s), for no bars the count and a bar's keys,
   for a mismatch the two prices (`econBarsEntry`: the last bar must be within
-  `ECON_BARS_MISMATCH` = 1.5 points of the live quote, else the row's own reading). **The owner
+  `ECON_BARS_MISMATCH` = 1.5 points of the number the row DRAWS — the live quote only when
+  `econLiveRow` trusts it, else the official reading: `econBarsRef`; a CNBC quote the row refused
+  as a misread must not vouch for bars near the same misread, Codex PR #301). **The owner
   reads these back**, so a wrong guess about the feed costs one look at the panel, not a
   console session. A failed refresh keeps the last GOOD bars for `ECON_BARS_KEEP_MS` (30 min)
   with "the last refresh failed (…)" in the tooltip, then only the reason is shown.
