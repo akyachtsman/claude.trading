@@ -7863,7 +7863,7 @@ function econSpark(points, label) {
   return svg;
 }
 
-/* ── chrome: the span control, the list and the source note are built here (the header's stamp too),
+/* ── chrome: the span control and the list are built here (the header's stamp too),
    once, so index.html keeps the bare placeholder it shipped with. */
 function econChrome() {
   const body = document.getElementById('econBody');
@@ -7892,12 +7892,9 @@ function econChrome() {
     bar.appendChild(tf);
     const list = el('ul', 'econ-list');
     list.id = 'econList';
-    /* true on every path: the 10Y is a live Yahoo quote while one can be trusted (2026-10-01); the yields are otherwise
-       Treasury's daily rate (a ~3:30 pm ET snapshot of bid-side quotes, not the actual close) once it posts, else
-       FRED's copy (each row's tooltip names its own source) — "Source: FRED" alone stopped being true when the tail
-       went ON (2026-09-30) */
-    const foot = el('p', 'econ-foot', "Yields: 10Y live (Yahoo ^TNX, may be delayed); 2Y, 20Y and the 10Y when no live quote: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else FRED (a business day later). Jobs, inflation: FRED, monthly.");
-    body.append(bar, list, foot);
+    /* no footer note (owner, 2026-10-01: "I want a per index source"): every row names its own source in its tiny
+       `.econ-src` line (econSourceLabel) and the row's tooltip says the rest. */
+    body.append(bar, list);
     syncEconTf();
   }
   return { list: document.getElementById('econList') };
@@ -8069,6 +8066,17 @@ function renderEcon(payload) {
   if (!econIO) econArmNew();
 }
 
+/* Where THIS number came from, for the tiny line under each row (owner request 2026-10-01) — the visible twin of the
+   tooltip's `source` clause. Demo rows say so: they are generated, whatever their payload `source` field reads, and
+   "FRED" under a made-up number would be a lie. A live print names Yahoo and its symbol (a fetch through
+   quote-proxy); an official reading names whoever supplied its newest observation. An unknown source prints
+   NOTHING — never a guess. */
+function econSourceLabel(r) {
+  if (DESK.mode === 'demo') return 'Demo data';
+  if (r.live) return 'Yahoo ' + r.live.symbol;
+  return r.source === 'treasury' ? 'U.S. Treasury' : r.source === 'fred' ? 'FRED' : '';
+}
+
 function econRow(r, chartsMatch) {
   const dec = econDec(r);
   const missing = r.status === 'missing' || !Number.isFinite(fmtToNum(r.value));
@@ -8098,6 +8106,8 @@ function econRow(r, chartsMatch) {
   if (stale) sub.appendChild(el('span', 'econ-tag', 'STALE'));
   else if (missing) sub.appendChild(el('span', 'econ-tag', 'NO DATA'));
   info.appendChild(sub);
+  const srcText = missing ? '' : econSourceLabel(r);   /* no reading, no source to credit */
+  if (srcText) info.appendChild(el('div', 'econ-src', 'Source: ' + srcText));
   li.appendChild(info);
 
   /* the chart, to the RIGHT of the value block */
@@ -8119,8 +8129,9 @@ function econRow(r, chartsMatch) {
     missing ? '' : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (5-minute bar start)'
       : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
     missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points' + (r.live ? ' from the previous session\'s last print' : ''),
-    r.live ? 'source Yahoo Finance ' + r.live.symbol + ' live quote, may be delayed'
-      : r.source === 'treasury' ? 'source U.S. Treasury daily rate' : r.source === 'fred' ? 'source FRED' : '',
+    DESK.mode === 'demo' ? 'source demo data (generated, not real)'
+      : r.live ? 'source Yahoo Finance ' + r.live.symbol + ' live quote, may be delayed'
+      : r.source === 'treasury' ? 'source U.S. Treasury daily rate (a ~3:30 pm ET snapshot of bid-side quotes)' : r.source === 'fred' ? 'source FRED' : '',
     r.live ? 'latest official reading ' + econNum(r.live.official.value, dec) + (r.unit || '') + ' on ' + econDateLabel(r.live.official.asOf, 'daily')
       + ' (' + (r.live.official.source === 'treasury' ? 'U.S. Treasury' : 'FRED') + ')' : '',
     r.pointsNote ? String(r.pointsNote) : '',

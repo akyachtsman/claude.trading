@@ -64,8 +64,8 @@ How the desk row (Markets | News | Ask | Economy), the accounts block at the bot
   composer you cannot type into. WebKit lays Markets ~11px wider, so Ask is ~11px narrower
   there; S54 therefore reads the floor off the layout's own Ask+Economy box.
   The panel stays IN FLOW and is kept from setting the row's height — no longer by the
-  320px cap on `.top-boxes .panel-body` (the Economy body opts out of it: seven rows + the
-  span control + the source note need ~420px, and a cap that cut rows off behind a scroller
+  320px cap on `.top-boxes .panel-body` (the Economy body opts out of it: seven rows (each with its
+  source line) + the span control need well over that, and a cap that cut rows off behind a scroller
   nobody is told about would read as a shorter list) but by the body being
   **`flex: 1 1 0; min-height: 0`**: its content contributes nothing to the panel's height, so
   the panel is exactly Markets' height whatever the roster holds, and the body is an ordinary

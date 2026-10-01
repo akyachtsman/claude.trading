@@ -5968,9 +5968,9 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   }, thisYear);
   expect(pacific, 'the first of a month is that month, not the one before it (Aug 1 is Aug, not Jul 31)').toEqual(['Aug', 'Jan', 'Sep 29']);
 
-  // beside Markets (>=1120) the rows share the column's height: no dead band under the last row, the note on the bottom edge
+  // beside Markets (>=1120) the rows share the column's height: no dead band under the last row
   if (await page.evaluate(() => window.innerWidth) >= 1120) {
-    const gap = await page.evaluate(() => document.querySelector('.area-econ').getBoundingClientRect().bottom - document.querySelector('.econ-foot').getBoundingClientRect().bottom);
+    const gap = await page.evaluate(() => document.querySelector('.area-econ').getBoundingClientRect().bottom - [...document.querySelectorAll('#econList .econ-row')].pop().getBoundingClientRect().bottom);
     expect(gap, 'the rows fill the column Markets sets (a body capped at 320px leaves ~400px of empty panel)').toBeLessThanOrEqual(40);
   }
 
@@ -6072,25 +6072,50 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   for (const r of rows.slice(0, 3)) for (const t of [r.val, r.delta]) expect(t, `[${r.id}] unknown never renders as zero`).not.toMatch(/^[=+−-]?\s*0(\.0+)?%?$/);
   await page.evaluate(() => renderEcon(buildDemoEcon(econTf)));
 
-  // ── 6a. a Treasury reading is named for what it is (Codex, PR #295). Treasury's par-yield file is a ~3:30 pm ET SNAPSHOT of
-  //    bid-side quotes, not the actual close, and before today's rate posts it supplies YESTERDAY's — so neither the tooltip nor
-  //    the footer may call it a "close" or "same day", whatever `asOf` says. (The demo's dates are a past business day: exactly
-  //    the pre-publication case.)
+  // ── 6a. every row names its OWN source in a tiny line under its date (owner 2026-10-01: "I want a per index source", no footer).
+  //    In demo that line is "Demo data" — the generated numbers are not FRED's, whatever the payload's `source` says — and the
+  //    tooltip agrees. The REAL names are read off the pure row builder with the mode flipped for the call: a Treasury reading is a
+  //    ~3:30 pm ET SNAPSHOT of bid-side quotes, not the actual close, and before today's rate posts it supplies YESTERDAY's, so
+  //    neither the line nor the tooltip may call it a "close" or "same day" (Codex, PR #295). Nothing in the panel may be a footer.
+  const demoSrc = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const e = li.querySelector('.econ-src'); const cs = e ? getComputedStyle(e) : null;
+    return { id: li.dataset.id, text: e ? e.textContent : null, title: li.title.includes('source demo data'), px: cs ? parseFloat(cs.fontSize) : null, clip: e ? e.scrollWidth > e.clientWidth + 1 : null };
+  }));
+  expect(demoSrc.map((d) => [d.id, d.text, d.title]), 'demo: every one of the seven rows says its numbers are demo data, on the row and in its tooltip')
+    .toEqual(['ust2y', 'ust10y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, 'Source: Demo data', true]));
+  for (const d of demoSrc) {
+    expect(d.px, `[${d.id}] the source line is VERY small (9px, below the 11px of the figures around it)`).toBeLessThanOrEqual(10);
+    expect(d.clip, `[${d.id}] and nothing is clipped (a clipped source is a wrong source)`).toBe(false);
+  }
+  expect(await page.locator('.econ-foot').count(), 'there is no footer note: the source is per row').toBe(0);
   const tsy = await page.evaluate(() => {
     const base = buildDemoEcon(econTf);
-    const r = base.rows.map((x) => ({ ...x }));
-    r[0] = { ...r[0], source: 'treasury' };
-    renderEcon({ ...base, rows: r });
-    return { title: document.querySelector('#econList .econ-row').title, foot: document.querySelector('.econ-foot').textContent };
+    const mk = (src) => ({ ...base.rows[0], source: src });
+    const prev = DESK.mode;
+    try {
+      DESK.mode = 'live';   // econRow only builds a node; live mode is what names the real source
+      const t = econRow(mk('treasury'), true), f = econRow(mk('fred'), true), u = econRow(mk('???'), true), m = econRow({ ...mk('fred'), status: 'missing', value: null }, true);
+      // the longest real name must FIT the 104px value block at this viewport: put the nodes in the list to measure them
+      // (the demo render below rebuilds the list, so nothing is left behind)
+      const list = document.getElementById('econList'); list.appendChild(t); list.appendChild(f);
+      const clipOf = (li) => { const e = li.querySelector('.econ-src'); return e.scrollWidth > e.clientWidth + 1; };
+      return { tsyClip: clipOf(t), fredClip: clipOf(f), tsyLine: t.querySelector('.econ-src').textContent, tsyTitle: t.title, fredLine: f.querySelector('.econ-src').textContent, fredTitle: f.title,
+        unknownLine: u.querySelector('.econ-src'), missingLine: m.querySelector('.econ-src') };
+    } finally { DESK.mode = prev; }
   });
-  expect(tsy.title, 'a Treasury row names its source').toMatch(/source U\.S\. Treasury daily rate/);
-  expect(tsy.title, 'and never claims "same day" — a pre-publication Treasury reading is yesterday\'s').not.toMatch(/same.day/i);
-  expect(tsy.foot, 'the footer says what the yield is: a 3:30 pm ET snapshot rate').toMatch(/daily rate.*3:30 pm ET/i);
-  expect(tsy.foot, 'and never calls it a close').not.toMatch(/\bclose/i);
+  expect([tsy.tsyClip, tsy.fredClip], 'the longest real names ("Source: U.S. Treasury") fit their 104px block at every viewport — a clipped source is a wrong source').toEqual([false, false]);
+  expect(tsy.tsyLine, 'a Treasury row says so on the row').toBe('Source: U.S. Treasury');
+  expect(tsy.fredLine, 'a FRED row says so on the row').toBe('Source: FRED');
+  expect(tsy.tsyTitle, 'a Treasury row names its source in the tooltip').toMatch(/source U\.S\. Treasury daily rate/);
+  expect(tsy.tsyTitle, 'and says what the rate is: a 3:30 pm ET snapshot').toMatch(/3:30 pm ET snapshot/);
+  expect(tsy.tsyTitle, 'never "same day" — a pre-publication Treasury reading is yesterday\'s').not.toMatch(/same.day/i);
+  expect(tsy.tsyTitle, 'and never a close').not.toMatch(/\bclose/i);
+  expect(tsy.fredTitle, 'a FRED row\'s tooltip names FRED').toMatch(/source FRED/);
+  expect([tsy.unknownLine, tsy.missingLine], 'an unknown source, and a row with no reading, print NO source line (never a guess)').toEqual([null, null]);
   await page.evaluate(() => renderEcon(buildDemoEcon(econTf)));
 
   // ── 6b. too little room: seven rows must not be cut off silently. The body is an ORDINARY scroller (no overscroll-behavior,
-  //    which would eat the wheel), the rows keep their height, and the source note never paints over the last row.
+  //    which would eat the wheel), and the rows keep their height.
   const tight = await page.evaluate(() => {
     const body = document.getElementById('econBody');
     body.style.maxHeight = '260px';
@@ -6099,7 +6124,6 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     const out = {
       scrolls: body.scrollHeight > body.clientHeight + 1, overflowY: cs.overflowY, overscroll: [cs.overscrollBehaviorX, cs.overscrollBehaviorY],
       minRow: Math.min(...rows.map((r) => r.getBoundingClientRect().height)),
-      lastBottom: rows[rows.length - 1].getBoundingClientRect().bottom, footTop: document.querySelector('.econ-foot').getBoundingClientRect().top,
     };
     body.style.maxHeight = '';
     return out;
@@ -6108,7 +6132,6 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   expect(tight.overflowY, 'an ordinary scrollbar').toBe('auto');
   expect(tight.overscroll, 'and NO overscroll-behavior (it kills the wheel over a short panel)').toEqual(['auto', 'auto']);
   expect(tight.minRow, 'rows keep at least their 52px rather than squashing').toBeGreaterThanOrEqual(51);
-  expect(tight.lastBottom, 'the source note does not paint over the last row').toBeLessThanOrEqual(tight.footTop + 1);
 
   // ── 7. LIVE (forced): the real poller, a stubbed desk-econ, Playwright's fake clock
   await page.evaluate(() => {
@@ -6538,13 +6561,13 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
     const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right }; };
     return {
       val: q('.econ-val').textContent, delta: q('.econ-delta').textContent, date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
-      isNew: !!q('.econ-new'), title: li.title, cap: q('.econ-cap').textContent, aria: q('.econ-chart svg') ? q('.econ-chart svg').getAttribute('aria-label') : null,
+      isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null, title: li.title, cap: q('.econ-cap').textContent, aria: q('.econ-chart svg') ? q('.econ-chart svg').getAttribute('aria-label') : null,
       live: li.dataset.live || null, info: box(q('.econ-info')), chart: q('.econ-chart svg') ? box(q('.econ-chart svg')) : null,
-      clip: { label: q('.econ-label').scrollWidth > q('.econ-label').clientWidth + 1, date: q('.econ-date').scrollWidth > q('.econ-date').clientWidth + 1, sub: q('.econ-sub').scrollWidth > q('.econ-sub').clientWidth + 1 },
+      clip: { src: q('.econ-src') ? q('.econ-src').scrollWidth > q('.econ-src').clientWidth + 1 : null, label: q('.econ-label').scrollWidth > q('.econ-label').clientWidth + 1, date: q('.econ-date').scrollWidth > q('.econ-date').clientWidth + 1, sub: q('.econ-sub').scrollWidth > q('.econ-sub').clientWidth + 1 },
     };
   });
   const others = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].filter((li) => li.dataset.id !== 'ust10y')
-    .map((li) => [li.dataset.id, li.querySelector('.econ-val').textContent, li.querySelector('.econ-date').textContent, !!li.querySelector('.econ-tag'), li.title]));
+    .map((li) => [li.dataset.id, li.querySelector('.econ-val').textContent, li.querySelector('.econ-date').textContent, !!li.querySelector('.econ-tag'), li.title, li.querySelector('.econ-src') ? li.querySelector('.econ-src').textContent : null]));
   const calls = () => page.evaluate(() => window.__qcalls.length);
   await page.evaluate(() => { window.__official.changed = true; startEcon(); });
   await expect(page.locator('#econList .econ-row[data-id="ust10y"][data-live="1"]'), 'the 10Y row is drawn live').toHaveCount(1);
@@ -6561,12 +6584,15 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   expect(r10.title).toMatch(/source Yahoo Finance \^TNX live quote, may be delayed/);
   expect(r10.title).toMatch(/latest official reading 5\.26% on Sep 29 \(FRED\)/);
   expect(r10.title, 'and is not labelled as FRED\'s own reading').not.toMatch(/source FRED/);
-  expect(r10.clip, 'nothing in the left block is clipped (a clipped time is a wrong time)').toEqual({ label: false, date: false, sub: false });
+  expect(r10.src, 'the 10Y row names Yahoo and the symbol on its own source line while the print stands in').toBe('Source: Yahoo ^TNX');
+  expect(r10.clip, 'nothing in the left block is clipped (a clipped time is a wrong time)').toEqual({ src: false, label: false, date: false, sub: false });
   expect(r10.chart.l, 'the chart still starts to the right of the value block').toBeGreaterThanOrEqual(r10.info.r - 0.5);
   const oth = await others();
   expect(oth.map((o) => [o[0], o[3]]), 'the other six rows carry no tag').toEqual(['ust2y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, false]));
   expect(oth.filter((o) => /Yahoo|live/i.test(o[4])), 'and none names the live quote').toEqual([]);
-  await expect(page.locator('.econ-foot'), 'the footer says the 10Y is live and where from').toContainText(/10Y live \(Yahoo \^TNX/);
+  expect(oth.map((o) => [o[0], o[5]]), 'the other six rows keep naming FRED (their official source), not the live quote')
+    .toEqual(['ust2y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, 'Source: FRED']));
+  expect(await page.locator('.econ-foot').count(), 'no footer: the source is per row').toBe(0);
   expect(await page.evaluate(() => window.__qcalls[0]), 'one quote-proxy call, the intraday ^TNX, not forced').toEqual({ sym: '^TNX', kind: 'intraday', prepost: false, force: false });
   expect(await page.evaluate(() => {
     const bad = ['--color-gain', '--color-loss', '--color-gain-dim', '--color-loss-dim', '--color-danger', '--color-status-live'].map((t) => { const e = document.createElement('i'); e.style.color = `var(${t})`; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; });
@@ -6659,6 +6685,7 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   r10 = await row10();
   expect([r10.val, r10.delta, r10.date, r10.tag, r10.live], 'past 30 minutes with no success: the official reading, nothing live').toEqual(['5.26%', '▲ 0.02', 'Sep 29', null, null]);
   expect(r10.title, 'and its tooltip is FRED\'s again').toMatch(/source FRED/);
+  expect(r10.src, 'and so is its source line: the live quote no longer stands in').toBe('Source: FRED');
   expect(r10.isNew, 'with no NEW chip: the reading was recorded as seen while the live print stood in for it').toBe(false);
   // ...and recovers on the next quote
   await page.evaluate(() => { window.__quoteFn = () => window.__goodQuote(); });

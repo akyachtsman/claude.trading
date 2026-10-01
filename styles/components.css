@@ -764,7 +764,7 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 /* rows share the height the panel is given (beside Markets it is a lot) but never grow past
    ~104px, and never shrink below 52px: then the BODY scrolls rather than the rows squashing. The list
    deliberately keeps the default `min-height: auto` (its rows' minimum) — `min-height: 0` let it shrink
-   below its rows and the source note then painted over the last one. */
+   below its rows. */
 .econ-row {
   flex: 1 1 56px; min-height: 52px; max-height: 104px;
   display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: var(--space-2); align-items: stretch;
@@ -788,6 +788,10 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 }
 .econ-new { background: var(--color-accent-light); color: var(--color-accent-bright); }
 .econ-tag { border: 1px solid var(--color-border-hover); color: var(--color-text-secondary); }
+/* the source of the number: as small as is still legible, a muted line under the date. Muted through the ink
+   token, never `opacity` (that would dodge the contrast gate's pairs); clipped rather than wrapped so a long
+   name can never push the row taller */
+.econ-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary); }
 .is-stale .econ-val, .is-missing .econ-val, .is-missing .econ-date, .is-missing .econ-delta { color: var(--color-text-secondary); }
 .econ-chart { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; transition: opacity .15s ease; }
 .econ-chart svg { display: block; width: 100%; flex: 1 1 0; min-height: 26px; }
@@ -806,4 +810,3 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 /* a span change whose reply is on the way: the old charts stay, dimmed, under the new label */
 .econ-list.is-pending .econ-chart { opacity: .35; }
 .econ-empty { padding: var(--space-4) 0; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); }
-.econ-foot { flex: none; margin: var(--space-2) 0 0; font: 400 10px/1.4 var(--font-sans); color: var(--color-text-secondary); }
