@@ -154,8 +154,10 @@ its topic file** — the reasoning behind each rule is there, not here.
     migration was needed, the table existed). Verified live that day: the first request took
     20.7 s and returned the three yield rows `source:"treasury"` as of 2026-09-30, the
     `econ:treasury` row held all three columns with `fetchedAt` set and no `failedAt`, and the
-    next request answered in under a second from the stored row. Rollback = redeploy the
-    `f78a03f` source (v1) with `verify_jwt` ON.
+    next request answered in under a second from the stored row. Rollback = redeploy v1, i.e.
+    `supabase/functions/desk-econ/index.ts` as of `cd5f920` (the #294 merge on `main`; byte-identical
+    to the `f78a03f` branch commit v1 was deployed from, which the squash left unreachable), with
+    `verify_jwt` ON.
     → details: `docs/architecture/economy-panel.md`
   - **`desk-probe`** is a THROWAWAY diagnostic (owner-approved 2026-10-01, v1, `verify_jwt`
     ON) that measured from Supabase's servers which public yield sources desk-econ can reach;
@@ -170,7 +172,7 @@ its topic file** — the reasoning behind each rule is there, not here.
     2026-09-30 from `d0ca48e`; rollback = redeploy that file from `dd7cf5f` (the
     pre-audit source live matched) with the same flag. `desk-econ` (new, v1, 2026-09-30;
     v3 = Supabase version 2, 2026-10-01, both owner-approved) is also `verify_jwt` ON;
-    rolling v3 back = redeploy the `f78a03f` source with `verify_jwt` ON, and taking it out
+    rolling v3 back = redeploy that file at `cd5f920` (v1) with `verify_jwt` ON, and taking it out
     of service means deleting it (owner approval), after which the panel lamps STALE with an
     empty state.
     → details: `docs/architecture/edge-feeds-and-heatmap.md` (Deploying)

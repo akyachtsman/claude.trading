@@ -258,7 +258,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   the read-back may show the literal character instead — the same regex either way.
   **Treasury tail ON (2026-09-30, owner request) — NOT redeployed at the time.** *(Historical:
   v3 was deployed 2026-10-01, see the v3 paragraph below.)* The live function was
-  still v1, whose built-in default names no Treasury column. But v1 (deployed from `f78a03f`,
+  still v1, whose built-in default names no Treasury column. But v1 (deployed from `f78a03f`, whose file is the one at `cd5f920` on `main`,
   the same source as this file before the roster change) already carries the whole Treasury
   path and reads the roster from Pages at runtime (cached 1h), so the three Treasury columns
   take effect on the LIVE function within about an hour of `config/econ-indicators.json`
@@ -311,7 +311,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   par-yield CSV`, because the October file does not exist until the first October print — and no
   `Signal timed out`, store read/write failure or 401. Still to see in normal operation: items
   (6) above (the capped `refreshInSec` after 18:30 ET) and today's rate arriving after the
-  3:30 pm ET snapshot. **Rollback** = redeploy the `f78a03f` source (v1) with `verify_jwt` ON; the
+  3:30 pm ET snapshot. **Rollback** = redeploy v1 — `supabase/functions/desk-econ/index.ts` as of `cd5f920` (the #294 merge on `main`, byte-identical to the `f78a03f` branch commit v1 was deployed from; that commit is no longer reachable from any branch after the squash merge) — with `verify_jwt` ON; the
   `econ:treasury` row is then simply unused.
 
 ## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`
