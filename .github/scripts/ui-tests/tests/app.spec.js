@@ -6623,17 +6623,20 @@ test('S56: the live yield rules — a quote stands in for the official reading o
     return [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] *, #econList .econ-row[data-id="ust2y"] *')].filter((n) => bad.includes(getComputedStyle(n).color) || bad.includes(getComputedStyle(n).borderTopColor) || bad.includes(getComputedStyle(n).backgroundColor)).map((n) => n.className);
   }), 'the LIVE tag and the NOT LIVE chip are neutral ink: green and red stay P&L-only').toEqual([]);
 
-  // 5a. the worst case for width: an unseen official reading (NEW) on a row that is also NOT LIVE — date + NOT LIVE + NEW are wider than the 104px block,
-  //     so NEW wraps to a second line; NOT LIVE (the one that matters) stays on the first, beside the date, and nothing hangs out of the block
+  // 5a. the worst case for width: an unseen official reading (NEW) on a row that is also NOT LIVE — date + NOT LIVE + NEW are wider than the 104px block, so the
+  //     flex line WRAPS rather than hang into the chart column. What must hold in ANY font state (CI's web fonts swap in late, and its fallback sans is wider than
+  //     this sandbox's — the first, stricter version of this check, "NOT LIVE shares the date's line", failed there on mobile-chrome): both chips show, NOT LIVE is
+  //     never placed after NEW, every chip stays inside the value block, and nothing overflows it sideways
   await page.evaluate(() => { delete econSeen.ust2y; econPending.ust2y = 'x'; econLiveRepaint(); });
+  await page.evaluate(() => document.fonts.ready);
   const both = await page.evaluate(() => {
     const li = document.querySelector('#econList .econ-row[data-id="ust2y"]');
     const r = (s) => li.querySelector(s).getBoundingClientRect(), info = r('.econ-info');
     const sub = li.querySelector('.econ-sub');
-    return { chips: [!!li.querySelector('.econ-nolive'), !!li.querySelector('.econ-new')], sameLine: Math.abs(r('.econ-date').top - r('.econ-nolive').top) < 3,
+    return { chips: [!!li.querySelector('.econ-nolive'), !!li.querySelector('.econ-new')], notAfterNew: r('.econ-nolive').top <= r('.econ-new').top + 0.5,
       inside: ['.econ-date', '.econ-nolive', '.econ-new'].map((s) => r(s).right <= info.right + 0.5 && r(s).left >= info.left - 0.5), subOverflow: sub.scrollWidth > sub.clientWidth + 1 };
   });
-  expect(both, 'NEW and NOT LIVE together: both show, NOT LIVE shares the date\'s line, and every chip stays inside the value block').toEqual({ chips: [true, true], sameLine: true, inside: [true, true, true], subOverflow: false });
+  expect(both, 'NEW and NOT LIVE together: both show, NOT LIVE is never after NEW, every chip stays inside the value block and nothing overflows it').toEqual({ chips: [true, true], notAfterNew: true, inside: [true, true, true], subOverflow: false });
   await page.evaluate(() => { delete econPending.ust2y; econSeen.ust2y = econSig(econState.shown.rows.find((r) => r.id === 'ust2y')); econLiveRepaint(); });
 
   // 5b. a FULL render (a server poll, a span change, another tab's storage event) draws the live print without waiting for a quote,

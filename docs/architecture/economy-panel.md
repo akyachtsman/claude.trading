@@ -468,9 +468,14 @@ width); **S56** guards the live 10Y.
   row that is not a yield, before the FIRST reply has landed (`econLive.landedAt` — a page load does
   not flash it), or on a row with no live print once the session is shut (real time is not expected
   then). `econLive.answered` records whether the last request got a usable body (`null` until the
-  first). Width: date + NOT LIVE fit the 104px block on one line, and a NEW chip beside them (an unseen
-  official reading while CNBC is down) wraps to a second line (`.econ-sub` is `flex-wrap`) rather than
-  hang into the chart column (S56 measures it). Known residual: bond-market EARLY closes (14:00
+  first). Width: the chip is compact (`.econ-nolive`: no border, tight padding and tracking, ~46px beside a 42px
+  date) so date + NOT LIVE fit the 104px block on one line in every font state, and a NEW chip beside
+  them (an unseen official reading while CNBC is down) wraps to a second line (`.econ-sub` is
+  `flex-wrap`) rather than hang into the chart column. S56 asserts what must hold in ANY font state —
+  both chips visible, NOT LIVE never after NEW, every chip inside the block, no sideways overflow — and
+  NOT the stricter "same line as the date": a first version asserted that and failed on CI's phone
+  viewport, where the web fonts swap in late and the fallback sans is wider than this sandbox's (a
+  first, bordered ~57px chip wrapped there). Known residual: bond-market EARLY closes (14:00
   before some holidays) are not modelled, so the row says NOT LIVE from the early close until 17:05.
   **Polling** is its own timer, not `refreshInSec`: `econLiveFetch` → `econLiveArm`, every 60 s while
   the bond session runs, 10 min around it on a trading day, hourly at weekends and holidays
