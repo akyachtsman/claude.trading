@@ -23,7 +23,7 @@
   ruling 2026-07-22):
   stamps via `fmtClock`, intraday bar times via `fmtBarT`, news row times via
   `newsWhen` — never the viewer's locale, never raw UTC. The trading calendar is ONE
-  table (`NYSE_HOLIDAYS`, through 2027 — extend it before 2028) plus
+  table (`NYSE_HOLIDAYS`, through 2027 — extend it before 2028; `BOND_ONLY_HOLIDAYS` beside it lists the two days the bond market shuts and the NYSE does not, Columbus Day and Veterans Day, read ONLY by the live 10Y's poll cadence — extend it with the same rule) plus
   `NYSE_EARLY_CLOSES`; the settle grace does not fire on a holiday, and
   `lastTradingDay` is anchored to the Pacific day, so a Tokyo/Auckland viewer no
   longer lamps a healthy snapshot STALE. Every number formatter answers an em dash

@@ -138,10 +138,16 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   rate never appears and an attempt is made every 5 min until midnight ET (one slow poll each,
   for whichever tab lands on it); the day after needs nothing special — the rule is "a fetch
   has succeeded since the window last opened", not "a file dated yesterday".
-- **Live-yield candidates, measured from Supabase 2026-10-01 (for the record; none is used).**
-  CNBC's quote API: HTTP 403 "Access Denied" (Akamai) — dead. Stooq's yield symbols `2yusy.b` /
-  `10yusy.b`: timed out at 20 s — dead. Yahoo `^TNX` (the CBOE 10-year yield index): HTTP 200 in
-  ~85–110 ms with a live quote — usable for a future live 10Y, not part of this change.
+- **Live-yield candidates, measured from Supabase 2026-10-01.** CNBC's quote API: HTTP 403 "Access
+  Denied" (Akamai) — dead. Stooq's yield symbols `2yusy.b` / `10yusy.b`: timed out at 20 s — dead.
+  Yahoo `^TNX` (the CBOE 10-year yield index): HTTP 200 in ~85–110 ms with a live quote — **USED
+  for the 10Y since 2026-10-01** (see "The live 10Y" in the panel section below; it is a
+  client-side overlay, not part of `desk-econ`). Measured through the live `quote-proxy` the same
+  day: `^TNX` last 5.293 vs Treasury's 09-30 par 5.29, `^FVX` 5.089 vs 5.09 (5Y), `^TYX` 5.638 vs
+  5.64 (30Y); there is NO Yahoo symbol for a 2Y or 20Y yield (`2YY=F`, `5YY=F`, `30Y=F`, `US2Y=X`,
+  `^US2Y`, `2Y=F`, `^UST2Y`, `US20Y=X`, `^US20Y` all 404; `ZT=F` / `ZB=F` / `UB=F` are futures
+  PRICES, not yields; `10Y=F`, the micro 10-year yield future, exists and trades overnight). So the
+  2Y and 20Y have no free live source: their best same-day figure is Treasury's snapshot.
 - **FRED holes are holes.** The documented missing marker is `.`, but MEASURED
   2026-09-30 the endpoint writes an EMPTY field (`2026-09-07,` Labor Day;
   `2025-10-01,` the shutdown month for CPI and UNRATE). `Number('')` is `0`, so
@@ -297,7 +303,7 @@ Everything for it sits in ONE block of `app.js` (before the widgets section) plu
 `deskEcon()` / `buildDemoEcon()` in `data.js`; `index.html` keeps the bare placeholder it
 shipped with — `econChrome()` builds the span control, the list, the source note and the
 header's `#econStamp` itself. Guard: **S55** (S5 also names `#econLamp`; S54 holds the slot's
-width).
+width); **S56** guards the live 10Y.
 
 - **Rows.** One `<li class="econ-row">` per indicator: label / value / change / the date
   the reading is FOR at the left (a fixed 104px block, so every chart starts on one line),
@@ -317,10 +323,11 @@ width).
   deliberately prominent: a yield is a daily RATE — today's only once Treasury has posted it
   (late afternoon ET), otherwise the previous business day's, and older when only FRED has it.
   (Until 2026-09-30's switch this read "the feed is FRED-only".) The source note under the list
-  is true on both paths ("Yields: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else
-  FRED …"), and each row's tooltip names its own `source` ("source U.S. Treasury daily rate" /
-  "source FRED") — never "same day": before today's rate posts, Treasury supplies YESTERDAY's,
-  and `asOf` is what says so (Codex, PR #295).
+  is true on every path ("Yields: 10Y live (Yahoo ^TNX, may be delayed); 2Y, 20Y and the 10Y when no
+  live quote: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else FRED …"), and each
+  row's tooltip names its own `source` ("source U.S. Treasury daily rate" / "source FRED" / "source
+  Yahoo Finance ^TNX live quote") — never "same day": before today's rate posts, Treasury supplies
+  YESTERDAY's, and `asOf` is what says so (Codex, PR #295).
 - **Status.** `missing` (or a null value): em dashes, a dashed placeholder, a `NO DATA` tag.
   `stale`: the row keeps its last good value and chart (spec §8), muted, tagged `STALE`
   (the tooltip carries the age).
@@ -379,6 +386,54 @@ width).
   `startEcon`): its synthetic readings would otherwise make the first real visit read every row
   as NEW. Each chart's accessible name says what is drawn — `pointsNote` ("monthly - 6 latest")
   when the span fell back, else "over 3M" — never a short span over a half-year of readings.
+- **The live 10Y (owner request 2026-10-01; guard S56).** FRED and Treasury publish a yield once a
+  day, so by the afternoon the 10Y is a business day old; Yahoo's `^TNX` is a live print, keyless,
+  through the `quote-proxy` every chart already uses (`deskQuote('^TNX', 'intraday')`, the 5-minute
+  bars of the last five sessions). It is a CLIENT-side OVERLAY on the `ust10y` row — `ECON_LIVE`
+  maps row id → symbol, and nothing else is live — so there is no edge-function change and no
+  deploy; merging it IS shipping it. `econLiveRow(r, now)` returns the SAME object (no overlay) unless
+  ALL of these hold: the official row is `status: 'ok'` (never alone — a print needs a healthy row to
+  be checked against); the print's NEW YORK date is STRICTLY newer than the official `asOf` (an
+  official reading that has caught up to that day STANDS; Treasury's/FRED's own number is never
+  overwritten by a delayed quote of the same day); it is within `ECON_LIVE_TOL` (0.75 points) of
+  the official value (a misread symbol or a ×10 scale is not a move); and the fetch it came from is
+  younger than `ECON_LIVE_KEEP_MS` (30 min — a failing quote keeps the last good print that long,
+  then the row is the official one again: real data or nothing; when polling is slower than that
+  the window is TWO poll intervals, `q.keepMs` — 2 h on the hourly weekend/holiday cadence — so a
+  valid closed-session print does not flicker off halfway through its own interval, Codex PR #297). When it applies the row shows the
+  print (`value`), the change from the PREVIOUS SESSION'S LAST PRINT of the same index (`null` —
+  an em dash, never 0 — when the series holds no earlier session), `asOf` = the print's NY date,
+  `source: 'live'`, `changed: false`, and the chart gets the print as its last point (only when it
+  already had two or more; a short span that fell back to its N latest readings, `pointsNote`
+  "daily - 6 latest", keeps N — the print replaces the OLDEST point — so the caption and the chart's
+  accessible name stay true). The date cell is the Pacific CLOCK of the bar when it is from today
+  (Pacific), else the date; the tag beside it is `LIVE` while the bar started under
+  `ECON_LIVE_FRESH_MS` (30 min) ago and `LAST` once the quote has stopped moving (after the bell,
+  over a weekend). The tooltip names the bar ("as of 2026-10-01 08:40 PDT (5-minute bar start)"),
+  the source, and the official reading it stands in for. The tag is neutral ink (`.econ-tag`).
+  **NEW is bypassed**: `econRowIsNew` is false for a live row (the print ticks by the minute) and
+  `econLiveSeen` records the official reading it stands in for as seen (and clears its pending mark),
+  so no chip fires later when the overlay drops. **Polling** is its own timer, not `refreshInSec`:
+  `econLiveFetch` → `econLiveArm`, every 60 s while the bond cash session runs (07:55–15:15 ET on a
+  trading day; the proxy caches 60 s), 10 min around it, hourly at weekends and holidays
+  (`econLiveDelaySec`, off `etTradingClock` PLUS `BOND_ONLY_HOLIDAYS` in `data.js` — Columbus Day and
+  Veterans Day, when the NYSE is open and the bond market is not; bond EARLY closes are not modelled:
+  the quote sits at its last print, tagged LAST, until 15:15); a failed quote retries in 60 s; each
+  quote is capped at 20 s (`ECON_LIVE_TIMEOUT_MS`) so a hung request is a failed quote, not a wedged
+  poller; paused while the tab is hidden and asked at once on return if one came due (the aged-out
+  print is dropped first); the masthead's "Refresh now" adds a FORCED quote to its `Promise.all`.
+  **A FORCED quote owns the slot until it lands** (`econLive.forcing`; Codex, PR #297): every fetch
+  clears the poll timer when it starts and an unforced call made meanwhile returns, because a timer
+  coming due would take the newer generation and get the forced reply thrown away. A quote repaints
+  ONLY the live row in place (`econLiveRepaint`) so a minute's tick does not restart the NEW watch of
+  the other rows; the 30 s ticker (`relampEcon`) calls it too — the date cell and LIVE→LAST depend on
+  the CLOCK, so they would otherwise go stale across Pacific midnight or between idle polls — and
+  it rebuilds a row only when its text or tooltip differs, so a hover is not torn down every half
+  minute; a full `renderEcon` also applies the overlay. `?demo=1` never calls it (`DESK.mode === 'demo'`
+  guards both the fetch and the overlay). **Unmeasured**: how far behind the tape Yahoo's `^TNX` bars
+  run while the market is OPEN (it was closed when this was built) — the tooltip and footer say
+  "may be delayed", and the 30-minute LIVE/LAST threshold is a guess to be checked against the
+  open session (a 15-minute delay puts a normal bar 15–20 minutes old).
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
   real rows — FRED, with Treasury's daily rate on the three yields once v3 (the shared store)
   is deployed; v1's inline 5 s Treasury attempt always times out, so until then the yields are
