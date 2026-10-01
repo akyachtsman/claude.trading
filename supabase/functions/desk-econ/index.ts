@@ -787,8 +787,12 @@ async function treasuryCycle(now: number, today: string, rows: RosterRow[], seen
     console.warn('desk-econ: Treasury store re-read failed — this reply serves the fetch, nothing is stored');
     return done(next, lease);
   }
-  await writeTreasuryRow(next);   // best effort: a failed write still serves THIS reply
-  return done(next);
+  const stored = await writeTreasuryRow(next);   // best effort: a failed write still serves THIS reply
+  // …but the client's next poll is timed from what the table STILL holds: `next` reads as
+  // "today's rate held" and would lift the retry cap, while the persisted row (the lease,
+  // or the row seen just before) still has it pending, and the next request — a fresh
+  // instance — will read exactly that (Codex, PR #296).
+  return stored ? done(next) : done(next, cur ?? lease);
 }
 
 type Status = 'ok' | 'stale' | 'missing';

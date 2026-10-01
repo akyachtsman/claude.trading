@@ -774,6 +774,15 @@ const TESTS = [
     eq(db2.payload().cols, {}, 'nothing was stored');
     assert(f.warns.some((w) => /store write failed HTTP 503/.test(w)), 'the failed write is logged');
     assert(!f.warns.some((w) => w.includes(SERVICE_KEY)), 'and the log never carries the service key');
+    // After 18:30 ET a failed FINAL write must not lift the retry cap (Codex, PR #296): `next` reads as "today's rate held",
+    // but the table still holds only the lease, and the next request — a fresh instance — reads exactly that.
+    const db3 = fakeDb();
+    db3.write = (u, init) => (JSON.parse(init.body)[0].payload.mergedAt > 0 ? new Response('{"message":"boom"}', { status: 503 }) : undefined);
+    const g = boot(code, { db: db3, now: at('2026-09-30T23:00:00Z') });
+    const rg = await g.call();
+    eq(YIELDS.map((id) => [row(rg, id).source, row(rg, id).asOf]), YIELDS.map(() => ['treasury', '2026-09-30']), '19:00 ET: this reply still carries what it fetched');
+    eq([rg.json.phase, rg.json.refreshInSec], ['quiet', 300], 'but the client is told to come back when the next attempt is allowed (5 min), not the quiet 15');
+    eq(db3.payload().mergedAt ?? 0, 0, 'the table still holds only the lease');
   }],
 
   ["FINAL RE-READ failure (500, timeout) is not 'no row yet': nothing is written after the lease — a contender's fresher row stands byte for byte, and no failure is recorded — while the reply serves what THIS request validated; a real 'no row yet' is still a base it writes on", async (code) => {
@@ -1255,6 +1264,7 @@ const MUTANTS = [
   // Codex review of v3 (PR #296): final re-read failure, the retry cap after 18:30 ET, partial success
   ["a FAILED final re-read read as 'no row yet' (the pre-fetch snapshot overwrites a contender's fresher row)", 'try { cur = await readTreasuryRow(now, today); } catch { curFailed = true; }', 'try { cur = await readTreasuryRow(now, today); } catch { cur = null; }'],
   ['a failed final re-read still writes the fetched rows', 'if (curFailed) {', 'if (false) {'],
+  ['a failed FINAL write times the client from the unsaved row (the retry cap lifts after 18:30 ET)', 'return stored ? done(next) : done(next, cur ?? lease);', 'return done(next);'],
   ["'no row yet' on the final re-read treated as a failure (a first fetch is never stored)", 'try { cur = await readTreasuryRow(now, today); } catch { curFailed = true; }', 'try { cur = await readTreasuryRow(now, today); curFailed = !cur; } catch { curFailed = true; }'],
   ['a failed final re-read on the failure path times the client from the pre-lease row (back in 30 s, not when the lease frees)', 'if (curFailed) return done(latest, lease);', 'if (curFailed) return done(latest);'],
   ['no retry cap: after 18:30 ET a pending rate waits the quiet 15 min', 'if (retry !== null) ttl = Math.min(ttl, retry);', 'if (retry === -1) ttl = Math.min(ttl, retry);'],

@@ -166,9 +166,12 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   later; never below 30 s), so after the 18:30 release window the client still comes
   back every ≤5 min instead of the quiet 15 and a late print (2026-09-30's was out by
   ~20:50 ET) is seen; no cap once held, outside that window, or when no attempt can be
-  wanted (no Treasury column, no FRED spine, the store unreadable). The client is told
-  when to ask again (`refreshInSec`, ≥30). Holidays are not excluded (cheaper than a
-  table).
+  wanted (no Treasury column, no FRED spine, the store unreadable). The cap is timed from
+  what the table STILL holds: if the final store write fails after a successful fetch,
+  this reply serves the fetched rows but `refreshInSec` comes from the persisted row (the
+  lease, today's rate still pending), not from the unsaved one that reads as held (Codex,
+  PR #296 round 2). The client is told when to ask again (`refreshInSec`, ≥30). Holidays
+  are not excluded (cheaper than a table).
 - **Failure semantics.** One failed series degrades its own row only: `stale`
   with its last good values and `staleSec` if this isolate held a copy, else
   `missing` with every value `null` (never 0). Every series down on a cold isolate
@@ -190,7 +193,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   check to play several cold instances, and playing the gateway's 401 for a browser-shaped
   user-agent; the harness serves the COMMITTED roster, and the no-Treasury path is tested on
   that roster with its `treasury` keys stripped); `--mutants` proves 71 single-line source
-  mutants plus 3 damages to the shipped roster are each caught (74/74 on 2026-10-01; a mutant
+  mutants plus 3 damages to the shipped roster are each caught (75/75 on 2026-10-01; a mutant
   that does not transpile is reported INVALID). The v3 checks: cold instance A holds the lease,
   waits for a "18 s" Treasury (time scaled) and serves it in its OWN reply, while instance C
   arriving during that wait gets the store at once without fetching, and instance B afterwards
