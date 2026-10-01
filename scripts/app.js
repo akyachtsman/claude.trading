@@ -7686,7 +7686,7 @@ async function refreshNowClicked() {
   const btn = document.getElementById('refreshNowBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
-  try { await Promise.all([feedPollTick(true), refreshEcon(true)]); } finally {
+  try { await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true)]); } finally {
     refreshNowPending = false;
     renderMasthead();
     scheduleFeedPoll(); scheduleMarketPoll();
@@ -7720,6 +7720,20 @@ const ECON_STALE_X = 3;                     /* STALE once the last success is ol
 const ECON_NEW_MS = 60000;                  /* a NEW chip clears once its row has been IN VIEW this long */
 const ECON_NEW_SEEN = 0.5;                  /* ...half of it counts as in view */
 const ECON_SPARK_W = 100, ECON_SPARK_H = 32;
+
+/* ── the live 10Y (owner request 2026-10-01) ──────────────────────────────────
+   FRED and Treasury publish a yield once a day, so by the afternoon the 10Y row is a business day old. A live
+   10-year print IS available keyless from Yahoo's ^TNX (the CBOE 10-year yield index, quoted in percent; checked
+   2026-10-01 against Treasury's own 09-30 par yield: 5.293 vs 5.29) through the `quote-proxy` every chart already
+   uses — so this is a CLIENT-side overlay on the row: no edge function, no deploy. There is no free live 2Y or 20Y
+   (Yahoo has no such symbol), so those rows are untouched. The overlay is applied only when it can be trusted
+   (econLiveRow) and the row is otherwise exactly what the server sent: real data or nothing. */
+const ECON_LIVE = { ust10y: '^TNX' };       /* row id → Yahoo symbol */
+const ECON_LIVE_TOL = 0.75;                 /* percentage points: a print further than this from the row's own newest official reading is a misread (×10 scaling, a wrong symbol), never a move */
+const ECON_LIVE_FRESH_MS = 30 * 60000;      /* LIVE while the newest 5-minute bar started within this, LAST after */
+const ECON_LIVE_KEEP_MS = 30 * 60000;       /* a reading whose last successful fetch is older than this is dropped: the row falls back to the official one */
+const ECON_LIVE_FAST_S = 60, ECON_LIVE_IDLE_S = 600, ECON_LIVE_OFF_S = 3600;
+const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0 };   /* q: row id → { price, ts, date, prevClose, prevDate, fetchedAt } */
 
 let econTf = ECON_DEFAULT_TF;
 try {
@@ -7877,10 +7891,11 @@ function econChrome() {
     bar.appendChild(tf);
     const list = el('ul', 'econ-list');
     list.id = 'econList';
-    /* true on both paths: the yields are Treasury's daily rate (a ~3:30 pm ET snapshot of bid-side quotes, not the
-       actual close) once it posts, else FRED's copy (each row's
-       tooltip names its own source) — "Source: FRED" alone stopped being true when the tail went ON (2026-09-30) */
-    const foot = el('p', 'econ-foot', "Yields: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else FRED (a business day later). Jobs, inflation: FRED, monthly.");
+    /* true on every path: the 10Y is a live Yahoo quote while one can be trusted (2026-10-01); the yields are otherwise
+       Treasury's daily rate (a ~3:30 pm ET snapshot of bid-side quotes, not the actual close) once it posts, else
+       FRED's copy (each row's tooltip names its own source) — "Source: FRED" alone stopped being true when the tail
+       went ON (2026-09-30) */
+    const foot = el('p', 'econ-foot', "Yields: 10Y live (Yahoo ^TNX, may be delayed); 2Y, 20Y and the 10Y when no live quote: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else FRED (a business day later). Jobs, inflation: FRED, monthly.");
     body.append(bar, list, foot);
     syncEconTf();
   }
@@ -7948,6 +7963,7 @@ setInterval(relampEcon, STAMP_TICK_MS);
    first look seeds the record silently, so a fresh browser is not greeted by a wall of NEW chips.
    A chip clears on hover/click of its row, or once ITS ROW has been in view ~60s with the tab visible. */
 function econRowIsNew(r) {
+  if (r.live) return false;   /* a live print ticks by the minute: the chip is for official readings (econLiveSeen records the one it stands in for) */
   if (r.status === 'missing' || !Number.isFinite(fmtToNum(r.value)) || !r.asOf) return false;   /* no reading, nothing to be new */
   if (!Object.hasOwn(econSeen, r.id)) return r.changed === true || Object.hasOwn(econPending, r.id);
   return econSeen[r.id] !== econSig(r);
@@ -8026,9 +8042,11 @@ function renderEcon(payload) {
   /* the charts belong to the span they were fetched for: after a span change whose reply never came,
      the old rows keep their values but NOT a chart labelled with the wrong window */
   const chartsMatch = !payload || !payload.range || payload.range === econTf;
-  const seededSet = {}, pendSet = {};
+  const seededSet = {}, pendSet = {}, now = Date.now();
   for (const r of rows) {
-    if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && !Object.hasOwn(econSeen, r.id)) {
+    const live = econLiveRow(r, now);   /* a live print standing in for the official reading, or the row itself */
+    if (live !== r) econLiveSeen(r);
+    else if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && !Object.hasOwn(econSeen, r.id)) {
       if (r.changed === true) {
         /* the server says it changed and this browser has no record: NEW until acknowledged, even after the hint goes quiet */
         if (!Object.hasOwn(econPending, r.id)) econPending[r.id] = pendSet[r.id] = econSig(r);
@@ -8036,7 +8054,7 @@ function renderEcon(payload) {
         econSeen[r.id] = seededSet[r.id] = econSig(r);   /* first look: record it, do not announce it */
       }
     }
-    list.appendChild(econRow(r, chartsMatch));
+    list.appendChild(econRow(live, chartsMatch));
   }
   if (Object.keys(seededSet).length) econPersist(ECON_SEEN_KEY, seededSet);
   if (Object.keys(pendSet).length) econPersist(ECON_PENDING_KEY, pendSet);
@@ -8071,7 +8089,10 @@ function econRow(r, chartsMatch) {
   /* the date the reading is FOR — the honest signal: a yield is a daily RATE (Treasury's 3:30 pm ET snapshot, posted late in the
      afternoon, or FRED's a business day later), never intraday — with the row's tag (NEW / STALE / NO DATA) beside it */
   const sub = el('div', 'econ-sub');
-  sub.appendChild(el('span', 'econ-date', missing ? '—' : econDateLabel(r.asOf, r.cadence)));
+  /* a LIVE row (the 10Y, 2026-10-01) names the Pacific CLOCK of its bar when that is today, the date otherwise, and
+     says LIVE while the bar is recent, LAST once the quote has stopped moving (after the bell, over a weekend) */
+  sub.appendChild(el('span', 'econ-date', missing ? '—' : r.live ? econLiveWhen(r) : econDateLabel(r.asOf, r.cadence)));
+  if (r.live) { sub.appendChild(el('span', 'econ-tag', r.live.fresh ? 'LIVE' : 'LAST')); li.dataset.live = '1'; }
   if (isNew) sub.appendChild(el('span', 'econ-new', 'NEW'));
   if (stale) sub.appendChild(el('span', 'econ-tag', 'STALE'));
   else if (missing) sub.appendChild(el('span', 'econ-tag', 'NO DATA'));
@@ -8094,9 +8115,13 @@ function econRow(r, chartsMatch) {
   /* every fact in the tooltip too, including what is not on the row: where the number came from */
   const why = [
     (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
-    missing ? '' : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
-    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points',
-    r.source === 'treasury' ? 'source U.S. Treasury daily rate' : r.source === 'fred' ? 'source FRED' : '',
+    missing ? '' : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (5-minute bar start)'
+      : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
+    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points' + (r.live ? ' from the previous session\'s last print' : ''),
+    r.live ? 'source Yahoo Finance ' + r.live.symbol + ' live quote, may be delayed'
+      : r.source === 'treasury' ? 'source U.S. Treasury daily rate' : r.source === 'fred' ? 'source FRED' : '',
+    r.live ? 'latest official reading ' + econNum(r.live.official.value, dec) + (r.unit || '') + ' on ' + econDateLabel(r.live.official.asOf, 'daily')
+      + ' (' + (r.live.official.source === 'treasury' ? 'U.S. Treasury' : 'FRED') + ')' : '',
     r.pointsNote ? String(r.pointsNote) : '',
     stale ? 'STALE' + (Number.isFinite(fmtToNum(r.staleSec)) ? ' — last good reading ' + Math.round(r.staleSec / 60) + ' min ago' : '') : '',
   ].filter(Boolean).join(' · ');
@@ -8107,6 +8132,114 @@ function econRow(r, chartsMatch) {
     li.addEventListener('click', ack);
   }
   return li;
+}
+
+/* ── live 10Y: parse, trust, paint, poll ───────────────────────────────────────────────────────────────────
+   Parse the newest 5-minute bar of an intraday series and the last print of the session before it (the change's
+   baseline). Bar times are UTC 'YYYY-MM-DD HH:mm'; a bar's session is its NEW YORK date. null for anything malformed,
+   and for a bar from the future (a clock fault is not a quote). */
+function econLiveParse(series, now) {
+  if (!series || !Array.isArray(series.t) || !Array.isArray(series.c) || series.t.length !== series.c.length) return null;
+  const bar = i => {
+    const price = fmtToNum(series.c[i]), ts = Date.parse(String(series.t[i]).replace(' ', 'T') + ':00Z');
+    return Number.isFinite(price) && price > -5 && price < 30 && Number.isFinite(ts) ? { price, ts, date: etClock(new Date(ts)).date } : null;
+  };
+  let last = null, i = series.t.length - 1;
+  for (; i >= 0 && !last; i--) last = bar(i);
+  if (!last || last.ts > now + 5 * 60000) return null;
+  let prev = null;
+  for (; i >= 0 && !prev; i--) { const b = bar(i); if (b && b.date < last.date) prev = b; }
+  return { price: last.price, ts: last.ts, date: last.date, prevClose: prev ? prev.price : null, prevDate: prev ? prev.date : null };
+}
+/* The row as drawn: a live print stands in for the official reading ONLY when all of these hold, else the row is
+   returned UNCHANGED (same object) — never alone: the official row must be healthy (a live print is checked against
+   it); the print's NEW YORK date must be STRICTLY newer than the official reading's (an official reading that has
+   caught up to that day stands, so Treasury's/FRED's own number is never overwritten by a delayed quote of the same
+   day); it must sit within ECON_LIVE_TOL of the official reading (a misread symbol or scale is not a move); and the
+   fetch it came from must be younger than ECON_LIVE_KEEP_MS. The change is measured from the previous session's last
+   PRINT of the same index (null when the series holds none — never 0), the chart gets the print as its last point. */
+function econLiveRow(r, now) {
+  const q = Object.hasOwn(ECON_LIVE, r.id) ? econLive.q[r.id] : null;
+  if (!q || DESK.mode === 'demo' || now - q.fetchedAt > ECON_LIVE_KEEP_MS) return r;
+  const official = fmtToNum(r.value);
+  if (r.status !== 'ok' || !r.asOf || !Number.isFinite(official)) return r;
+  if (!(q.date > r.asOf) || Math.abs(q.price - official) > ECON_LIVE_TOL) return r;
+  const pts = Array.isArray(r.points) ? r.points : [];
+  const lastPt = pts[pts.length - 1];
+  const points = pts.length >= 2 && Array.isArray(lastPt) && String(lastPt[0]) < q.date ? pts.concat([[q.date, q.price]]) : pts;
+  return {
+    ...r, value: q.price, delta: Number.isFinite(q.prevClose) ? Number((q.price - q.prevClose).toFixed(econDec(r))) : null,
+    prev: q.prevClose, asOf: q.date, prevAsOf: q.prevDate, points, source: 'live', changed: false,
+    live: { symbol: ECON_LIVE[r.id], ts: q.ts, fresh: now - q.ts <= ECON_LIVE_FRESH_MS, official: { asOf: r.asOf, value: r.value, source: r.source } },
+  };
+}
+/* the date cell of a live row: the Pacific CLOCK of its bar when the bar is from today (Pacific), else the date it is for */
+function econLiveWhen(r) {
+  const d = new Date(r.live.ts);
+  return ptDateKey(d) === ptDateKey(new Date()) ? fmtClockBare(d.toISOString()) : econDateLabel(r.asOf, 'daily');
+}
+/* A live print stands in for an official reading: record that reading as seen (never announce it as NEW — the chip is
+   for readings the viewer was not shown, and a live row is not a place to hang one). */
+function econLiveSeen(r) {
+  const set = {}, del = [];
+  if (econSeen[r.id] !== econSig(r)) econSeen[r.id] = set[r.id] = econSig(r);
+  if (Object.hasOwn(econPending, r.id)) { delete econPending[r.id]; del.push(r.id); }
+  if (Object.keys(set).length) econPersist(ECON_SEEN_KEY, set);
+  if (del.length) econPersist(ECON_PENDING_KEY, {}, del);
+}
+/* Redraw ONLY the live rows in place — a quote ticks every minute and a whole-panel rebuild would restart the NEW
+   watch of every other row. A row that had a live print and no longer does (aged out, or the official reading
+   caught up) goes back to the official one. */
+function econLiveRepaint() {
+  const shown = econState.shown;
+  if (!shown || !Array.isArray(shown.rows)) return;
+  const chartsMatch = !shown.range || shown.range === econTf, now = Date.now();
+  let rebuilt = false;
+  for (const li of document.querySelectorAll('#econList .econ-row')) {
+    if (!Object.hasOwn(ECON_LIVE, li.dataset.id)) continue;
+    const r = shown.rows.find(x => x.id === li.dataset.id);
+    if (!r) continue;
+    const live = econLiveRow(r, now);
+    if (live === r && !li.dataset.live) continue;   /* nothing live on it, nothing was: leave the row (and its NEW watch) alone */
+    if (live !== r) econLiveSeen(r);
+    const next = econRow(live, chartsMatch);
+    li.replaceWith(next);
+    if (next.classList.contains('is-new')) econWatch(next);
+    rebuilt = true;
+  }
+  if (rebuilt) econArmNew();
+}
+/* How soon to ask again: every minute while the bond cash session runs (the proxy caches a minute), every ten
+   minutes around it on a trading day, hourly at weekends and holidays. */
+function econLiveDelaySec(now) {
+  const c = etTradingClock(new Date(now));
+  if (!c) return ECON_LIVE_OFF_S;
+  return c.minutes >= 7 * 60 + 55 && c.minutes < 15 * 60 + 15 ? ECON_LIVE_FAST_S : ECON_LIVE_IDLE_S;
+}
+function econLiveArm(sec) {
+  clearTimeout(econLive.timer);
+  econLive.timer = 0;
+  econLive.dueAt = Date.now() + sec * 1000;
+  if (document.hidden) return;   /* visibilitychange rearms */
+  econLive.timer = setTimeout(() => { econLive.timer = 0; econLiveFetch(false); }, sec * 1000);
+}
+/* One quote per live row. NEVER throws (the caller may sit inside a Promise.all with the forced refresh). A failed
+   quote keeps the last good one, which ages out after ECON_LIVE_KEEP_MS; the repaint and the re-arm sit OUTSIDE the
+   fetch's try (renderAfterFetch). `force` bypasses quote-proxy's warm cache ("Refresh now"). */
+async function econLiveFetch(force) {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  const gen = ++econLive.gen;
+  const got = await Promise.all(Object.entries(ECON_LIVE).map(async ([id, sym]) => {
+    try {
+      const out = await deskQuote(sym, 'intraday', false, force === true ? { force: true } : undefined);
+      return [id, out && out.ok ? econLiveParse(out.series, Date.now()) : null];
+    } catch { return [id, null]; }
+  }));
+  if (gen !== econLive.gen) return;   /* a newer request owns the state now */
+  let ok = false;
+  for (const [id, q] of got) if (q) { econLive.q[id] = { ...q, fetchedAt: Date.now() }; ok = true; }
+  renderAfterFetch(econLiveRepaint);
+  econLiveArm(ok ? econLiveDelaySec(Date.now()) : ECON_RETRY_S);
 }
 
 /* ── poller: the response's refreshInSec (clamped 30s..3600s) schedules the next fetch. The function
@@ -8178,9 +8311,18 @@ async function econFetch(force, owned, keepClock) {
 function econVisibility() {
   if (document.hidden) {
     clearTimeout(econState.timer); econState.timer = 0;
+    clearTimeout(econLive.timer); econLive.timer = 0;
     for (const h of econState.newTimers.values()) clearTimeout(h);
     econState.newTimers.clear();
     return;
+  }
+  if (DESK.mode !== 'demo' && DESK_DB.url && econLive.dueAt) {
+    /* a tab that sat hidden must not come back showing a half-hour-old live print as live: drop what has aged out
+       BEFORE the refetch (the same rule as the lamp), then ask at once if the next quote came due meanwhile */
+    renderAfterFetch(econLiveRepaint);
+    const left = econLive.dueAt - Date.now();
+    if (left <= 0) econLiveFetch(false);
+    else econLiveArm(left / 1000);
   }
   if (DESK.mode !== 'demo' && DESK_DB.url && econState.dueAt) {
     relampEcon();   /* BEFORE the refetch: a tab that sat hidden must not come back claiming LIVE */
@@ -8201,6 +8343,7 @@ function startEcon() {
   if (!DESK_DB.url) return;
   renderEcon(null);
   refreshEcon(false);
+  econLiveFetch(false);
 }
 
 /* ── market widgets: embedded third-party (TradingView) widgets. Each loads as

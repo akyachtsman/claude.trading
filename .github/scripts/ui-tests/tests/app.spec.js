@@ -6133,6 +6133,9 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
 
   await page.evaluate(() => {
     window.__calls = []; window.__mode = 'hang'; window.__refresh = 90; window.__rowsFn = null;
+    // the live 10Y (S56) asks quote-proxy beside desk-econ; S55 is about desk-econ's own poller, so the quote is stubbed OFF
+    // (a rejection: the rows stay exactly what the server sent) instead of reaching for the network from a forced-live page
+    window.deskQuote = () => Promise.reject(new Error('quote-proxy stubbed off in S55'));
     window.deskEcon = (range, force) => {
       window.__calls.push({ range, force: force === true });
       const m = window.__mode;
@@ -6386,4 +6389,255 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await expect(page.locator('#econList')).not.toHaveClass(/is-pending/);
   expect(await page.evaluate(() => econState.dueAt), 'changing the span does not push the pending poll out').toBe(dueAt);
   expect(await pressed()).toEqual(['1y']);
+});
+
+// S56 — The live 10Y (owner request 2026-10-01). FRED and Treasury publish a yield once a day, so the 10Y row is a business day
+// old by the afternoon; Yahoo's ^TNX through the existing quote-proxy is a live print. It is a CLIENT-side overlay on the row,
+// trusted only when the official row is healthy, the print is on a STRICTLY newer New York date, within 0.75 points of the
+// official reading and fetched in the last 30 minutes — otherwise the row is EXACTLY what the server sent (real data or nothing).
+// The 2Y and 20Y have no free live source and are untouched. Driven with a stubbed deskEcon and deskQuote on Playwright's fake
+// clock (a fixed Thursday morning Pacific, so "today" and the bond session are known) — never the network.
+test('S56: the live 10Y — a live ^TNX print stands in for the official reading only when it can be trusted', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  const T0 = '2026-10-01T15:45:00Z';   // Thu 11:45 ET = 08:45 PT: inside the bond cash session
+  await page.clock.install({ time: new Date(T0) });
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  // ── 1. demo: nothing live — the panel never asks, and the 10Y row is the demo row
+  expect(await page.evaluate(() => [econLive.gen, Object.keys(econLive.q).length, econState.shown.rows.some((r) => r.live)]),
+    'demo never fetches a live quote or draws one').toEqual([0, 0, false]);
+  await expect(page.locator('#econList .econ-tag'), 'and no row carries a LIVE/LAST tag').toHaveCount(0);
+
+  // test helpers, in the page: 5-minute UTC bars in quote-proxy's shape
+  await page.evaluate(() => {
+    window.__bars = (date, from, to, a, b) => {
+      const out = [];
+      let t = Date.parse(`${date}T${from}:00Z`);
+      const n = Math.round((Date.parse(`${date}T${to}:00Z`) - t) / 300000) + 1;
+      for (let i = 0; i < n; i++, t += 300000) out.push([new Date(t).toISOString().slice(0, 16).replace('T', ' '), a + (b - a) * (n > 1 ? i / (n - 1) : 1)]);
+      return out;
+    };
+    window.__quote = (...sessions) => {
+      const bars = sessions.flat();
+      const col = (f) => bars.map(f);
+      return { ok: true, symbol: '^TNX', kind: 'intraday', prepost: false, asOf: bars[bars.length - 1][0],
+        series: { t: col((b) => b[0]), o: col((b) => b[1]), h: col((b) => b[1]), l: col((b) => b[1]), c: col((b) => b[1]), v: col(() => 0), x: col(() => 0) } };
+    };
+    window.__goodQuote = () => window.__quote(window.__bars('2026-09-30', '12:20', '18:55', 5.20, 5.293), window.__bars('2026-10-01', '12:20', '15:40', 5.30, 5.321));
+  });
+
+  // ── 2. parsing a quote-proxy reply into the print and its baseline
+  const parsed = await page.evaluate(() => {
+    const now = Date.parse('2026-10-01T15:45:00Z');
+    const p = (q) => econLiveParse(q && q.series, now);
+    const good = p(window.__goodQuote());
+    const onlyToday = p(window.__quote(window.__bars('2026-10-01', '12:20', '15:40', 5.30, 5.321)));
+    const future = p(window.__quote(window.__bars('2026-10-01', '12:20', '16:00', 5.30, 5.321)));
+    const scale = p(window.__quote(window.__bars('2026-10-01', '12:20', '15:40', 52.9, 52.9)));
+    const mismatch = (() => { const q = window.__goodQuote(); q.series.c.pop(); return p(q); })();
+    const daily = p({ series: { t: ['2026-09-29', '2026-09-30'], c: [5.26, 5.29] } });
+    return { good, onlyToday, future, scale, mismatch, daily, none: p(null), empty: p({ series: { t: [], c: [] } }) };
+  });
+  expect(parsed.good.price, 'the newest bar is the print').toBeCloseTo(5.321, 6);
+  expect(parsed.good.ts, 'with its own instant').toBe(Date.parse('2026-10-01T15:40:00Z'));
+  expect([parsed.good.date, parsed.good.prevDate], 'the session is the NEW YORK date; the baseline is the previous session').toEqual(['2026-10-01', '2026-09-30']);
+  expect(parsed.good.prevClose, "the baseline is the previous session's LAST print of the same index").toBeCloseTo(5.293, 6);
+  expect([parsed.onlyToday.prevClose, parsed.onlyToday.prevDate], 'with no earlier session the baseline is unknown (null, never 0)').toEqual([null, null]);
+  expect([parsed.future, parsed.scale, parsed.mismatch, parsed.daily, parsed.none, parsed.empty],
+    'a bar from the future, a x10 scale fault, mismatched arrays, daily bars, nothing and an empty series are all refused').toEqual([null, null, null, null, null, null]);
+
+  // ── 3. force live and stub the two feeds; the trust rules, on fabricated rows through the real econLiveRow
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
+    window.__qcalls = [];
+    window.__quoteFn = () => window.__goodQuote();
+    window.deskQuote = (sym, kind, prepost, opts) => {
+      window.__qcalls.push({ sym, kind, prepost: prepost === true, force: !!(opts && opts.force) });
+      try { return Promise.resolve(window.__quoteFn()); } catch (e) { return Promise.reject(e); }
+    };
+    window.__official = { value: 5.26, prev: 5.24, delta: 0.02, asOf: '2026-09-29', prevAsOf: '2026-09-28', status: 'ok', source: 'fred', changed: false };
+    window.deskEcon = (range) => {
+      const p = buildDemoEcon(range);
+      const o = window.__official;
+      const rows = p.rows.map((r) => {
+        if (r.id !== 'ust10y') return r;
+        const pts = r.points.filter((x) => x[0] < o.asOf).concat([[o.asOf, o.value]]);
+        return { ...r, ...o, points: pts };
+      });
+      return Promise.resolve({ ...p, rows, range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false });
+    };
+  });
+  const rules = await page.evaluate(() => {
+    const row = { id: 'ust10y', label: '10Y Treasury', value: 5.26, asOf: '2026-09-29', prev: 5.24, prevAsOf: '2026-09-28', delta: 0.02, status: 'ok',
+      source: 'fred', decimals: 2, unit: '%', cadence: 'daily', changed: true, points: [['2026-09-25', 5.17], ['2026-09-28', 5.24], ['2026-09-29', 5.26]] };
+    const now = Date.now();
+    const q = (o) => ({ price: 5.321, ts: Date.parse('2026-10-01T15:40:00Z'), date: '2026-10-01', prevClose: 5.293, prevDate: '2026-09-30', fetchedAt: now, ...o });
+    const run = (r, o) => { econLive.q = { ust10y: q(o) }; return econLiveRow(r, now); };
+    const same = (r, o) => run(r, o) === r;   // the SAME object back = no overlay
+    const out = run(row, {});
+    const res = {
+      out, inputIntact: [row.value, row.points.length, row.asOf],
+      sameDay: same({ ...row, asOf: '2026-10-01' }, {}),
+      officialNewer: same({ ...row, asOf: '2026-10-02' }, {}),
+      far: same(row, { price: 6.02 }), edge: !same(row, { price: 6.00 }),
+      stale: same({ ...row, status: 'stale' }, {}), missing: same({ ...row, status: 'missing', value: null }, {}),
+      aged: same(row, { fetchedAt: now - 31 * 60000 }), young: !same(row, { fetchedAt: now - 29 * 60000 }),
+      noBaseline: run(row, { prevClose: null, prevDate: null }),
+      oldBar: run(row, { ts: now - 31 * 60000 }).live.fresh, newBar: run(row, { ts: now - 5 * 60000 }).live.fresh,
+      onePoint: run({ ...row, points: [['2026-09-29', 5.26]] }, {}).points.length,
+      otherId: (() => { econLive.q = { ust2y: q({}), ust10y: q({}) }; const r2 = { ...row, id: 'ust2y' }; return econLiveRow(r2, now) === r2; })(),
+    };
+    econLive.q = { ust10y: q({}) };
+    DESK.mode = 'demo';
+    res.demo = econLiveRow(row, now) === row;
+    DESK.mode = 'live';
+    econLive.q = {};
+    res.noBaselineText = econDeltaText(res.noBaseline);
+    return res;
+  });
+  expect([rules.out.value, rules.out.delta, rules.out.prev, rules.out.asOf, rules.out.prevAsOf, rules.out.source, rules.out.changed],
+    'the print stands in: value, change from the previous session\'s last print (rounded to the row\'s decimals), dates, source').toEqual([5.321, 0.03, 5.293, '2026-10-01', '2026-09-30', 'live', false]);
+  expect(rules.out.points, 'the chart gets the print as its last point').toEqual([['2026-09-25', 5.17], ['2026-09-28', 5.24], ['2026-09-29', 5.26], ['2026-10-01', 5.321]]);
+  expect(rules.out.live.official, 'and remembers the official reading it stands in for').toEqual({ asOf: '2026-09-29', value: 5.26, source: 'fred' });
+  expect(rules.inputIntact, 'the server row is never mutated').toEqual([5.26, 3, '2026-09-29']);
+  expect([rules.sameDay, rules.officialNewer], 'an official reading that has caught up to (or passed) the print\'s date STANDS — never overwritten by a same-day quote').toEqual([true, true]);
+  expect([rules.far, rules.edge], 'a print more than 0.75 points from the official reading is a misread, 0.74 is a move').toEqual([true, true]);
+  expect([rules.stale, rules.missing], 'never alone: a stale or missing official row gets no overlay').toEqual([true, true]);
+  expect([rules.aged, rules.young], 'a quote fetched more than 30 minutes ago is dropped, 29 minutes is kept').toEqual([true, true]);
+  expect(rules.noBaselineText, 'no baseline: the change is an em dash, never "= 0.00"').toBe('—');
+  expect([rules.oldBar, rules.newBar], 'LIVE only while the bar is under 30 minutes old').toEqual([false, true]);
+  expect(rules.onePoint, 'a chart that had fewer than two real points is not extended into a line').toBe(1);
+  expect(rules.otherId, 'only the 10Y row is ever live — the 2Y and 20Y have no free live source').toBe(true);
+  expect(rules.demo, 'and demo never overlays').toBe(true);
+
+  // ── 4. the poll cadence: every minute in the bond session, ten around it on a trading day, hourly at weekends and holidays
+  const delays = await page.evaluate(() => Object.fromEntries(
+    [['open', '2026-10-01T15:45:00Z'], ['0800 ET', '2026-10-01T12:00:00Z'], ['0700 ET', '2026-10-01T11:00:00Z'], ['1514 ET', '2026-10-01T19:14:00Z'],
+      ['1515 ET', '2026-10-01T19:15:00Z'], ['evening', '2026-10-01T22:00:00Z'], ['saturday', '2026-10-03T16:00:00Z'], ['thanksgiving', '2026-11-26T15:00:00Z'],
+    ].map(([k, iso]) => [k, econLiveDelaySec(Date.parse(iso))])));
+  expect(delays, 'the cadence follows the New York clock').toEqual({ open: 60, '0800 ET': 60, '0700 ET': 600, '1514 ET': 60, '1515 ET': 600, evening: 600, saturday: 3600, thanksgiving: 3600 });
+
+  // ── 5. the real poller end to end: a good quote draws the 10Y live; every other row is untouched
+  const row10 = () => page.evaluate(() => {
+    const li = document.querySelector('#econList .econ-row[data-id="ust10y"]');
+    const q = (s) => li.querySelector(s);
+    const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right }; };
+    return {
+      val: q('.econ-val').textContent, delta: q('.econ-delta').textContent, date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
+      isNew: !!q('.econ-new'), title: li.title, cap: q('.econ-cap').textContent, aria: q('.econ-chart svg') ? q('.econ-chart svg').getAttribute('aria-label') : null,
+      live: li.dataset.live || null, info: box(q('.econ-info')), chart: q('.econ-chart svg') ? box(q('.econ-chart svg')) : null,
+      clip: { label: q('.econ-label').scrollWidth > q('.econ-label').clientWidth + 1, date: q('.econ-date').scrollWidth > q('.econ-date').clientWidth + 1, sub: q('.econ-sub').scrollWidth > q('.econ-sub').clientWidth + 1 },
+    };
+  });
+  const others = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].filter((li) => li.dataset.id !== 'ust10y')
+    .map((li) => [li.dataset.id, li.querySelector('.econ-val').textContent, li.querySelector('.econ-date').textContent, !!li.querySelector('.econ-tag'), li.title]));
+  const calls = () => page.evaluate(() => window.__qcalls.length);
+  await page.evaluate(() => { window.__official.changed = true; startEcon(); });
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"][data-live="1"]'), 'the 10Y row is drawn live').toHaveCount(1);
+  let r10 = await row10();
+  expect([r10.val, r10.delta, r10.tag], 'the live print, its change from the previous session\'s last print, and the LIVE tag').toEqual(['5.32%', '▲ 0.03', 'LIVE']);
+  expect(r10.date, 'the date cell is the Pacific CLOCK of the bar (15:40Z = 08:40 PDT), not a date').toBe('08:40');
+  expect(r10.isNew, 'a live row never carries a NEW chip, although the server said `changed`').toBe(false);
+  expect(await page.evaluate(() => econSeen.ust10y), 'the official reading it stands in for is recorded as seen').toBe('2026-09-29|5.26');
+  expect(await page.evaluate(() => econState.shown.rows.find((r) => r.id === 'ust10y').value), 'the server row is untouched underneath').toBe(5.26);
+  expect(r10.cap, 'the chart now runs to today').toMatch(/– Oct 1$/);
+  const serverPoints = await page.evaluate(() => econState.shown.rows.find((r) => r.id === 'ust10y').points.length);
+  expect(r10.aria, 'and has one reading more than the server sent').toContain(`${serverPoints + 1} readings`);
+  expect(r10.title, 'the tooltip names the quote, its bar and the official reading it stands in for').toMatch(/as of 2026-10-01 08:40 PDT \(5-minute bar start\)/);
+  expect(r10.title).toMatch(/source Yahoo Finance \^TNX live quote, may be delayed/);
+  expect(r10.title).toMatch(/latest official reading 5\.26% on Sep 29 \(FRED\)/);
+  expect(r10.title, 'and is not labelled as FRED\'s own reading').not.toMatch(/source FRED/);
+  expect(r10.clip, 'nothing in the left block is clipped (a clipped time is a wrong time)').toEqual({ label: false, date: false, sub: false });
+  expect(r10.chart.l, 'the chart still starts to the right of the value block').toBeGreaterThanOrEqual(r10.info.r - 0.5);
+  const oth = await others();
+  expect(oth.map((o) => [o[0], o[3]]), 'the other six rows carry no tag').toEqual(['ust2y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, false]));
+  expect(oth.filter((o) => /Yahoo|live/i.test(o[4])), 'and none names the live quote').toEqual([]);
+  await expect(page.locator('.econ-foot'), 'the footer says the 10Y is live and where from').toContainText(/10Y live \(Yahoo \^TNX/);
+  expect(await page.evaluate(() => window.__qcalls[0]), 'one quote-proxy call, the intraday ^TNX, not forced').toEqual({ sym: '^TNX', kind: 'intraday', prepost: false, force: false });
+  expect(await page.evaluate(() => {
+    const bad = ['--color-gain', '--color-loss', '--color-gain-dim', '--color-loss-dim', '--color-danger', '--color-status-live'].map((t) => { const e = document.createElement('i'); e.style.color = `var(${t})`; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; });
+    return [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] *')].filter((n) => bad.includes(getComputedStyle(n).color) || bad.includes(getComputedStyle(n).borderTopColor)).map((n) => n.className);
+  }), 'the LIVE tag is neutral ink: green and red stay P&L-only').toEqual([]);
+
+  // 5b. a FULL render (a server poll, a span change, another tab's storage event) draws the live print without waiting for a quote,
+  //     and records the official reading as seen whichever of the two arrived first — the repaint path is not the only one
+  await page.evaluate(() => { econSeen = {}; econPending = { ust10y: '2026-09-29|5.26' }; renderEcon(econState.shown); });
+  r10 = await row10();
+  expect([r10.val, r10.tag, r10.isNew], 'a full render keeps the live print (and no NEW chip)').toEqual(['5.32%', 'LIVE', false]);
+  expect(await page.evaluate(() => [econSeen.ust10y, Object.hasOwn(econPending, 'ust10y')]), 'the official reading is recorded as seen and its pending mark cleared').toEqual(['2026-09-29|5.26', false]);
+
+  // ── 6. the cadence on the clock: a minute while the session runs, and a FORCED refresh asks for a fresh quote
+  const left = await page.evaluate(() => econLive.dueAt - Date.now());
+  expect(left, 'the next quote is a minute away').toBeGreaterThan(57_000);
+  expect(left).toBeLessThanOrEqual(60_000);
+  let n = await calls();
+  await page.clock.runFor(58_000);
+  expect(await calls(), '58s in: not asked again').toBe(n);
+  await page.clock.runFor(3_000);
+  await expect.poll(calls, 'a minute in: asked again').toBe(n + 1);
+  expect((await page.evaluate(() => window.__qcalls[window.__qcalls.length - 1])).force, 'a timed poll is not forced').toBe(false);
+  n = await calls();
+  await page.evaluate(() => econLiveFetch(true));
+  expect(await page.evaluate(() => window.__qcalls[window.__qcalls.length - 1]), '"Refresh now" bypasses the proxy cache').toEqual({ sym: '^TNX', kind: 'intraday', prepost: false, force: true });
+  expect(await calls(), 'with exactly one call').toBe(n + 1);
+  // ...and the masthead's own "Refresh now" reaches it: its Promise.all holds the quote, forced, beside the feeds and desk-econ
+  n = await calls();
+  await page.evaluate(() => {
+    window.feedPollTick = async () => {}; window.scheduleFeedPoll = () => {}; window.scheduleMarketPoll = () => {};
+    return refreshNowClicked();
+  });
+  expect(await page.evaluate((k) => window.__qcalls.slice(k).map((c) => c.force), n), '"Refresh now" asks for a forced quote').toEqual([true]);
+
+  // ── 7. a hidden tab asks for nothing, and asks at once on return if a quote came due meanwhile
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); econVisibility(); });
+  expect(await page.evaluate(() => econLive.timer), 'hidden: no timer').toBe(0);
+  n = await calls();
+  await page.clock.runFor(300_000);
+  expect(await calls(), 'five hidden minutes: no quote asked for').toBe(n);
+  await page.evaluate(() => { delete document.hidden; econVisibility(); });
+  await expect.poll(calls, 'visible again with a quote overdue: asked at once').toBe(n + 1);
+
+  // ── 8. LIVE becomes LAST once the quote stops moving (the same bar 30+ minutes on)
+  await page.clock.runFor(31 * 60_000);
+  r10 = await row10();
+  expect([r10.val, r10.date, r10.tag], 'same print, same clock, tagged LAST — not LIVE').toEqual(['5.32%', '08:40', 'LAST']);
+
+  // ── 9. a failing quote keeps the last good print for 30 minutes from its last SUCCESS, then the row is the official one again
+  await page.evaluate(() => { window.__quoteFn = () => { throw new Error('quote-proxy → HTTP 502'); }; });
+  await page.clock.runFor(25 * 60_000);
+  r10 = await row10();
+  expect([r10.val, r10.tag], 'after 25 minutes of failures the last good print still stands (its own clock tells the truth)').toEqual(['5.32%', 'LAST']);
+  await page.clock.runFor(6 * 60_000);
+  r10 = await row10();
+  expect([r10.val, r10.delta, r10.date, r10.tag, r10.live], 'past 30 minutes with no success: the official reading, nothing live').toEqual(['5.26%', '▲ 0.02', 'Sep 29', null, null]);
+  expect(r10.title, 'and its tooltip is FRED\'s again').toMatch(/source FRED/);
+  expect(r10.isNew, 'with no NEW chip: the reading was recorded as seen while the live print stood in for it').toBe(false);
+  // ...and recovers on the next quote
+  await page.evaluate(() => { window.__quoteFn = () => window.__goodQuote(); });
+  await page.clock.runFor(61_000);
+  await expect.poll(async () => (await row10()).tag, 'a good quote brings the live print back').toBe('LAST');
+
+  // ── 10. the official reading catching up to the print's date ends the overlay: the OFFICIAL number stands
+  await page.evaluate(() => { window.__official = { ...window.__official, value: 5.30, prev: 5.26, delta: 0.04, asOf: '2026-10-01', prevAsOf: '2026-09-29' }; return refreshEcon(false); });
+  await expect.poll(async () => (await row10()).live, 'the official reading is as new: the live print steps aside').toBe(null);
+  r10 = await row10();
+  expect([r10.val, r10.date, r10.tag, r10.title.includes('source FRED')], 'the official number, its date, no tag, FRED named').toEqual(['5.30%', 'Oct 1', null, true]);
+
+  // ── 11. a misread never reaches the row: a print far from the official reading, and a x10 scale fault
+  await page.evaluate(() => { window.__official = { ...window.__official, value: 5.26, prev: 5.24, delta: 0.02, asOf: '2026-09-29', prevAsOf: '2026-09-28' }; econLive.q = {}; });
+  for (const [what, price] of [['a print 1.24 points from the official reading', 6.5], ['a x10 scale fault', 52.9]]) {
+    await page.evaluate((p) => { window.__quoteFn = () => window.__quote(window.__bars('2026-09-30', '12:20', '18:55', p, p), window.__bars('2026-10-01', '12:20', '15:40', p, p)); econLive.q = {}; return Promise.all([refreshEcon(false), econLiveFetch(false)]); }, price);
+    r10 = await row10();
+    expect([r10.val, r10.tag, r10.live], `${what}: the row is the official one`).toEqual(['5.26%', null, null]);
+  }
+
+  // ── 12. an old print, a later day (the weekend): the date cell is the DATE, tagged LAST
+  await page.evaluate(() => { window.__quoteFn = () => window.__goodQuote(); econLive.q = {}; });
+  await page.clock.setSystemTime(new Date('2026-10-02T20:00:00Z'));
+  await page.evaluate(() => Promise.all([refreshEcon(false), econLiveFetch(false)]));
+  r10 = await row10();
+  expect([r10.val, r10.date, r10.tag], 'Friday afternoon: yesterday\'s last print is a DATE (Oct 1), not a clock, and says LAST').toEqual(['5.32%', 'Oct 1', 'LAST']);
 });
