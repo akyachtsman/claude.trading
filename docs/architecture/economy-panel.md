@@ -55,7 +55,8 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   refuse data-centre addresses or be slower than the 5s timeout" — measured: NOT refused, but
   17–20 s, so the 5 s limit failed every time)* the request that holds the lease takes ~20 s:
   at most ONE such reply per 5 minutes while today's rate is pending (typically the first poll
-  after ~15:30 ET); the panel keeps its last render meanwhile (no client-side timeout on
+  after ~15:30 ET; every 5 min until midnight ET on a weekday market holiday, when nothing
+  posts); the panel keeps its last render meanwhile (no client-side timeout on
   `desk-econ`). A day slower than the 45 s bound is a silent FRED fallback with a 10-min
   back-off, visible only in the function log; (d) the STORE — a failed read (5xx, timeout,
   bad body) is a FRED-only reply with NO attempt (an attempt nobody can record would be
@@ -80,9 +81,16 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   attempt. After FRED, `treasuryCycle()` judges on the ROW and the NY clock
   (`treasuryWanted()`): no attempt while no yield has a FRED spine this request (a file could
   not be checked), within 10 min of `failedAt`, or once the row holds today's NY-date rate for
-  every column the roster names AND it agrees with FRED (`treasuryHeld()` — final); otherwise
-  at most every 5 min weekdays 15:25 ET–midnight (`treasuryPosting()`) and hourly at other
-  times, measured from `attemptedAt` — that interval IS the lease. When an attempt is due it
+  every column the roster names AND it agrees with FRED (`treasuryHeld()` — final). Inside
+  the posting window (weekdays 15:25 ET–midnight, `treasuryPosting()`) an attempt is due at
+  most every 5 min, measured from `attemptedAt` — that interval IS the lease. OUTSIDE it
+  (before 15:25 ET, and all weekend) nothing new can have been published since the window
+  last opened, so an attempt is due only when no fetch has SUCCEEDED since the most recent
+  weekday 15:25 ET (`fetchedAt` against `lastPostingStart()`: the previous weekday's on a
+  weekday morning, Friday's over a weekend and on Monday morning; walked back one NY day at a
+  time, so the DST Sundays are handled) — and then at most hourly, so a host that keeps
+  failing costs at most one slow poll an hour. An empty store has `fetchedAt` 0, so the first
+  request after a deploy asks at once. When an attempt is due it
   re-reads (the first read ran beside FRED), writes the lease BEFORE fetching, re-reads to
   confirm the lease is its own, then fetches both months AWAITED with the 45 s bound — on
   purpose: `desk-heatmap` found detached work unreliable on this runtime, and a fresh instance
@@ -99,9 +107,16 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   rewrites it clean) — and it only ever reaches a row through `stitchTreasury`, so a corrupt
   row cannot show a wrong yield. The REST calls (`storeHeaders()`) carry the service key and
   NO user-agent (a browser-shaped UA makes the gateway refuse the secret key — CLAUDE.md), and
-  log through `scrubbed()`. Expected cost (not yet measured from Supabase): at most ONE slow
-  (~20 s) reply per 5 minutes while today's rate is pending; every other reply makes one extra
-  store read (expected ~50–100 ms) that runs beside the FRED sweep.
+  log through `scrubbed()`. Expected cost (not yet measured from Supabase): roughly ONE slow
+  (~20 s) reply per 5 minutes ONLY while today's rate is pending after ~15:30 ET (and once for
+  the first request after a deploy); outside the window, none once a fetch has succeeded since
+  it opened; every other reply makes one extra store read (expected ~50–100 ms) that runs
+  beside the FRED sweep. *(Until 2026-10-01's last revision the rule outside the window was
+  "hourly" — about 20 pointless ~20 s polls a day, since nothing new exists then.)* No holiday
+  table: on a weekday market holiday Treasury publishes nothing, so inside the window today's
+  rate never appears and an attempt is made every 5 min until midnight ET (one slow poll each,
+  for whichever tab lands on it); the day after needs nothing special — the rule is "a fetch
+  has succeeded since the window last opened", not "a file dated yesterday".
 - **Live-yield candidates, measured from Supabase 2026-10-01 (for the record; none is used).**
   CNBC's quote API: HTTP 403 "Access Denied" (Akamai) — dead. Stooq's yield symbols `2yusy.b` /
   `10yusy.b`: timed out at 20 s — dead. Yahoo `^TNX` (the CBOE 10-year yield index): HTTP 200 in
@@ -145,14 +160,14 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   rows dropped and counted (`roster.dropped`), deduped by `id`, capped at 12, the
   FRED id strictly patterned before it reaches a URL, Treasury only on a
   daily-level row.
-- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (34 checks, fresh `vm` isolate each,
+- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (35 checks, fresh `vm` isolate each,
   stubbed `fetch`, settable clock, real FRED captures + constructed Treasury fixtures + the REAL
   Treasury head captured from Supabase under `tools/fixtures/econ/`, and `fakeDb()` — a stateful
   in-memory `desk_feed_cache` behind the stubbed fetch, SHARED by several vm contexts of one
   check to play several cold instances, and playing the gateway's 401 for a browser-shaped
   user-agent; the harness serves the COMMITTED roster, and the no-Treasury path is tested on
-  that roster with its `treasury` keys stripped); `--mutants` proves 54 single-line source
-  mutants plus 3 damages to the shipped roster are each caught (57/57 on 2026-10-01; a mutant
+  that roster with its `treasury` keys stripped); `--mutants` proves 59 single-line source
+  mutants plus 3 damages to the shipped roster are each caught (62/62 on 2026-10-01; a mutant
   that does not transpile is reported INVALID). The v3 checks: cold instance A holds the lease,
   waits for a "18 s" Treasury (time scaled) and serves it in its OWN reply, while instance C
   arriving during that wait gets the store at once without fetching, and instance B afterwards
@@ -160,7 +175,11 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   one fetch pair, nothing inside the 5-min interval, one after it, and an instance whose first
   read predates another's landing re-reads and serves it; a racer's stale failure never
   overwrites a fresher row; the cadence (today's rate final, 5 min in the posting window incl.
-  23:00 ET, hourly otherwise, `failedAt` binding a DIFFERENT instance); Treasury 503 / 403 /
+  23:00 ET, `failedAt` binding a DIFFERENT instance); OUTSIDE the window, a previous-evening
+  success means ZERO requests and no lease written across cold instances until 15:25 ET, a
+  Friday-evening success the same over Saturday, Sunday and Monday morning (both 2026 DST
+  weekends included), a store older than the last window start one attempt and then none, and
+  a host that keeps failing one attempt per hour; Treasury 503 / 403 /
   200-HTML / network / a hang cut by the 45 s signal / garbage columns → HTTP 200, seven FRED
   rows, nothing but the failure stored; a store read failing (500, timeout, non-JSON, not a
   row list) → FRED only with no attempt and no write, a foreign-shaped or corrupt payload never
@@ -218,8 +237,9 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   `ust10y.source:"treasury"` (today's `asOf` once Treasury has posted, else the prior business
   day's); (3) the next call — a different instance — is fast and shows the same rows; (4)
   `desk_feed_cache` row `econ:treasury` holds `cols` for exactly `2 Yr` / `10 Yr` / `20 Yr`,
-  with `attemptedAt` moving at most every 5 min in the window and never once today's rate is
-  held; (5) the logs carry no `Signal timed out`, no `Treasury store read failed` / `store write
+  with `attemptedAt` moving at most every 5 min in the window, never once today's rate is
+  held, and not at all before 15:25 ET / at weekends once a fetch has succeeded since the
+  window last opened; (5) the logs carry no `Signal timed out`, no `Treasury store read failed` / `store write
   failed` and no `401` (a browser UA on the REST call would surface as a failed read).
 
 ## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`

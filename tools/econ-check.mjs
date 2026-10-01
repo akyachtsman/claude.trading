@@ -568,7 +568,7 @@ const TESTS = [
     eq(YIELDS.map((id) => [row(r, id).source, row(r, id).asOf]), YIELDS.map(() => ['treasury', '2026-09-30']), 'the slow answer landed in this reply');
   }],
 
-  ["CADENCE on the shared row: today's rate is final; a missing one is attempted every 5 min from 15:25 ET to midnight, hourly otherwise (from attemptedAt); a failure's 10-min back-off binds a DIFFERENT instance", async (code) => {
+  ["CADENCE on the shared row: today's rate is final; a missing one is attempted every 5 min from 15:25 ET to midnight (from attemptedAt); outside that, nothing once a fetch has succeeded since the window opened; a failure's 10-min back-off binds a DIFFERENT instance", async (code) => {
     const inst = async (db, now, treasury) => {
       const e = boot(code, { db, now, treasury });
       const r = await e.call();
@@ -590,16 +590,67 @@ const TESTS = [
     const dc = fakeDb(), C = at('2026-10-01T03:00:00Z');
     await inst(dc, C, noTodayTsy);
     eq((await inst(dc, C + 5 * 60_000, noTodayTsy))[0], 2, '23:05 ET: attempted at 5 min');
-    // (d) 10:00 ET, outside the posting window: hourly
+    // (d) 10:00 ET, outside the posting window, empty store: the first request asks at once; after that success,
+    //     nothing more until the window opens (nothing new can be published before ~15:30 ET)
     const dd = fakeDb(), D = at('2026-09-30T14:00:00Z');
-    await inst(dd, D, noTodayTsy);
-    eq((await inst(dd, D + 30 * 60_000, noTodayTsy))[0], 0, '10:30: not within the hour');
-    eq((await inst(dd, D + 61 * 60_000, noTodayTsy))[0], 2, '11:01: hourly');
+    eq((await inst(dd, D, noTodayTsy))[0], 2, '10:00, nothing stored: asked at once');
+    for (const [label, later] of [['10:30', 30], ['11:01', 61], ['15:24', 324]]) eq((await inst(dd, D + later * 60_000, noTodayTsy))[0], 0, `${label}: nothing new can exist before the window`);
+    eq((await inst(dd, D + 325 * 60_000, noTodayTsy))[0], 2, '15:25: the window opens, today missing: asked');
     // (e) 16:00 ET, a total failure: the 10-min back-off binds another instance (it would otherwise be due at 5 min)
     const de = fakeDb();
     eq((await inst(de, B, down(503)))[0], 2, '16:00: attempted, failed');
     eq((await inst(de, B + 5 * 60_000, down(503)))[0], 0, '16:05 (another instance): backing off');
     eq((await inst(de, B + 10 * 60_000, down(503)))[0], 2, '16:10: attempted again once the back-off is over');
+  }],
+
+  ['OUTSIDE the posting window: no attempt once a fetch has succeeded since the last window opened (weekday 15:25 ET; Friday\'s over a weekend, DST weekends included); a store older than that gets ONE attempt; a failing host costs at most one per hour', async (code) => {
+    // a row as a real successful attempt leaves it, re-stamped to `fetchedAt`
+    const seeded = async (fetchedAt) => {
+      const src = fakeDb();
+      await boot(code, { db: src }).call();
+      const db = fakeDb();
+      db.seed({ ...src.payload(), fetchedAt, attemptedAt: fetchedAt, failedAt: null });
+      return db;
+    };
+    const visit = async (db, iso, treasury) => {
+      const e = boot(code, { db, now: at(iso), treasury });
+      const r = await e.call();
+      return [e.fetchCount('home.treasury.gov'), r];
+    };
+    // (a) Wed 18:00 ET success -> Thursday until 15:25 ET: ZERO requests and NO write, whichever instance asks
+    const a = fakeDb();
+    eq((await visit(a, '2026-09-30T22:00:00Z'))[0], 2, 'Wed 18:00 ET: fetched');
+    const writes = a.writes();
+    for (const iso of ['2026-10-01T04:30:00Z', '2026-10-01T10:00:00Z', '2026-10-01T14:00:00Z', '2026-10-01T19:24:59Z']) {
+      const [n, r] = await visit(a, iso);
+      eq([n, YIELDS.map((id) => [row(r, id).source, row(r, id).asOf])], [0, YIELDS.map(() => ['treasury', '2026-09-30'])], `${iso}: no attempt, Wednesday's rate served from the store`);
+    }
+    eq(a.writes(), writes, 'and no lease written all morning');
+    eq((await visit(a, '2026-10-01T19:25:00Z'))[0], 2, 'Thu 15:25 ET: the window opens, today missing: asked');
+    // (b) Friday-evening success -> the weekend and Monday morning: nothing; Monday 15:25 ET: asked. Both 2026 DST weekends too.
+    for (const [fri, quiet, mon1525] of [
+      ['2026-10-02T22:00:00Z', ['2026-10-03T14:00:00Z', '2026-10-03T22:00:00Z', '2026-10-04T16:00:00Z', '2026-10-05T13:00:00Z', '2026-10-05T19:24:00Z'], '2026-10-05T19:25:00Z'],
+      ['2026-10-30T22:00:00Z', ['2026-10-31T22:00:00Z', '2026-11-01T17:00:00Z', '2026-11-02T14:00:00Z', '2026-11-02T20:24:00Z'], '2026-11-02T20:25:00Z'],   // DST ends Sun Nov 1
+      ['2026-03-06T23:00:00Z', ['2026-03-07T23:00:00Z', '2026-03-08T16:00:00Z', '2026-03-09T13:00:00Z', '2026-03-09T19:24:00Z'], '2026-03-09T19:25:00Z'],   // DST starts Sun Mar 8
+    ]) {
+      const db = await seeded(at(fri));
+      for (const iso of quiet) eq((await visit(db, iso))[0], 0, `Friday ${fri} success -> ${iso}: no attempt`);
+      eq(db.writes(), 0, `Friday ${fri} success: no lease written over the weekend`);
+      eq((await visit(db, mon1525))[0], 2, `Monday 15:25 ET after Friday ${fri}: asked`);
+    }
+    // (c) a store OLDER than the last window start (a Wednesday success, now Friday 10:00 ET): one attempt, then none
+    const c = await seeded(at('2026-09-30T22:00:00Z'));
+    eq((await visit(c, '2026-10-02T14:00:00Z'))[0], 2, 'Fri 10:00 ET, nothing since Thursday 15:25: asked once');
+    for (const iso of ['2026-10-02T14:30:00Z', '2026-10-02T15:01:00Z', '2026-10-02T19:24:00Z']) eq((await visit(c, iso))[0], 0, `${iso}: it succeeded, so nothing more before the window`);
+    // (d) the same, but the host keeps failing: at most one attempt per hour, and the stored rate still serves
+    const d = await seeded(at('2026-09-30T22:00:00Z'));
+    const fails = [];
+    for (const iso of ['2026-10-02T14:00:00Z', '2026-10-02T14:11:00Z', '2026-10-02T14:59:00Z', '2026-10-02T15:01:00Z']) {
+      const [n, r] = await visit(d, iso, down(503));
+      fails.push(n);
+      eq([r.status, row(r, 'ust10y').source, row(r, 'ust10y').asOf], [200, 'treasury', '2026-09-30'], `${iso}: HTTP 200, the stored rate`);
+    }
+    eq(fails, [2, 0, 0, 2], 'a failing host: 10:00 asked, 10:11 (back-off over) and 10:59 not, 11:01 asked again');
   }],
 
   ['STORE READ failure (500, timeout, non-JSON, not a row list) = a FRED-only reply with NO Treasury attempt; a foreign-shaped or corrupt payload never reaches a reply, and the next lease rewrites it clean', async (code) => {
@@ -999,7 +1050,7 @@ const TESTS = [
     eq(b.fetchCount('home.treasury.gov'), 4, 'retried after 10 min');
     const k = boot(code);
     eq(row(await k.call(), 'ust10y').asOf, '2026-09-30', 'Treasury print');
-    k.clock.now += 7 * 3_600_000; // 01:00 ET on Oct 1: a new NY day, so an attempt is due (hourly, outside the posting window)
+    k.clock.now += 21.5 * 3_600_000; // 15:30 ET on Oct 1: the next window, today's rate missing, so an attempt is due
     k.opts.treasury = down(503);
     const kr = row(await k.call(), 'ust10y');
     eq(k.fetchCount('home.treasury.gov'), 4, 'the attempt was made, and failed');
@@ -1072,7 +1123,7 @@ const MUTANTS = [
   ['Treasury never attempted although rows name a column', 'treasuryStore = seen ? await treasuryCycle(now, today, roster.rows, seen) : null;', 'treasuryStore = seen ? working(seen) : null;'],
   ['the store read although no row names a Treasury column', 'const wantsTreasury = roster.rows.some((r) => r.treasury);', 'const wantsTreasury = true;'],
   ['the old 5 s Treasury timeout (Treasury answers Supabase in 17-20 s)', 'const TREASURY_TIMEOUT_MS = 45_000;', 'const TREASURY_TIMEOUT_MS = 5_000;'],
-  ['lease check removed (an attempt on every request that finds today missing)', 'return now - row.attemptedAt >= every;', 'return true;'],
+  ['lease check removed (an attempt on every request that finds today missing)', 'return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;', 'return true;'],
   ['the lease is not confirmed (two racing instances both fetch)', 'if (!mine || mine.lease !== lease.lease) return working(mine ?? latest);', 'if (!mine) return working(latest);'],
   ['no re-read before taking the lease (a stale first read refetches what just landed)', 'if (!treasuryWanted(now, today, rows, latest)) return working(latest);', 'if (!latest.cols) return working(latest);'],
   ['attemptedAt not written before the fetch (the lease row does not move the clock)', 'const lease: StoreRow = { ...latest, attemptedAt: now, lease: `${now}-${Math.random().toString(36).slice(2, 10)}` };', 'const lease: StoreRow = { ...latest, lease: `${now}-${Math.random().toString(36).slice(2, 10)}` };'],
@@ -1089,8 +1140,13 @@ const MUTANTS = [
   ['a browser UA on the desk_feed_cache REST call (the gateway then refuses the key)', "return { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' };", "return { ...UA, apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' };"],
   ['stored stamps from the future trusted (a corrupt failedAt blocks Treasury for good)', 'const stamp = (v: unknown) => (typeof v === \'number\' && Number.isFinite(v) && v > 0 && v <= now + STORE_SKEW_MS ? v : null);', 'const stamp = (v: unknown) => (typeof v === \'number\' && Number.isFinite(v) && v > 0 ? v : null);'],
   ['stored dates after today trusted', "if (typeof d !== 'string' || !ISO_RE.test(d) || d > today || d < floor) continue;", "if (typeof d !== 'string' || !ISO_RE.test(d) || d < floor) continue;"],
-  ['no 5-minute cadence in the posting window (attempted on every request)', 'const every = treasuryPosting(now) ? TREASURY_POSTING_EVERY_MS : TREASURY_IDLE_EVERY_MS;', 'const every = treasuryPosting(now) ? 0 : TREASURY_IDLE_EVERY_MS;'],
-  ['5-minutely outside the posting window instead of hourly', 'const every = treasuryPosting(now) ? TREASURY_POSTING_EVERY_MS : TREASURY_IDLE_EVERY_MS;', 'const every = TREASURY_POSTING_EVERY_MS;'],
+  ['posting-window cadence shortened to 1 min', 'return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;', 'return now - row.attemptedAt >= 60_000;'],
+  ['5-minutely outside the posting window instead of hourly (a failing host)', 'return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;', 'return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;'],
+  ['a failing host outside the window asked on every request', 'return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;', 'return true;'],
+  ['the old hourly-regardless rule outside the window (fetchedAt not consulted)', 'if (row.fetchedAt >= lastPostingStart(now)) return false;', 'if (row.fetchedAt < 0) return false;'],
+  ['fetchedAt ignored: any attempt since the window opened, even a failed one, stops asking', 'if (row.fetchedAt >= lastPostingStart(now)) return false;', 'if (row.attemptedAt >= lastPostingStart(now)) return false;'],
+  ['window start wrong over a weekend (Sat/Sun counted as weekdays)', "if (w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from) return t - (w.sec - WINDOWS[1].from) * 1000;", 'if (w.sec >= WINDOWS[1].from) return t - (w.sec - WINDOWS[1].from) * 1000;'],
+  ["window start off by a day (today's 15:25 even before it)", 't -= (w.sec + 1) * 1000;', 'return t + (WINDOWS[1].from - w.sec) * 1000;'],
   ['posting window stops at 18:30 (a late post waits an hour)', "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from;", "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from && w.sec < WINDOWS[1].to;"],
   ['a Treasury tail sharing no date with FRED is trusted', "if (!overlap) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };", "if (overlap < 0) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };"],
   ['upstream fetch left unbounded (a hung Treasury host hangs the sweep)', 'const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(ms) });', 'const res = await fetch(url, { headers: UA });'],

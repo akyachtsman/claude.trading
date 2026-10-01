@@ -83,7 +83,7 @@ const TREASURY_BACKOFF_MS = 600_000;   // after a failed Treasury attempt, no in
 const TREASURY_KEEP_MS = 72 * 3_600_000; // a validated Treasury observation is a fact; keep it 72h
 const TREASURY_TOL = 0.015;            // both publish 2 decimals: "agree" = equal after float noise
 const TREASURY_POSTING_EVERY_MS = 300_000;  // today's rate missing, weekday 15:25 ET to midnight: one attempt per 5 min
-const TREASURY_IDLE_EVERY_MS = 3_600_000;   // ...any other time it could still bring something new: hourly
+const TREASURY_IDLE_EVERY_MS = 3_600_000;   // outside it, only while nothing has landed since the window last opened: hourly
 // The shared Treasury store (desk_feed_cache row). Bounded: a slow database costs
 // the Treasury tail for one reply, never the reply.
 const STORE_KEY = 'econ:treasury';
@@ -653,6 +653,19 @@ function treasuryHeld(row: StoreRow, rows: RosterRow[], today: string): boolean 
     return !spine || stitchTreasury(spine, col).reason === null;
   });
 }
+// The opening of the most recent posting window at or before `ms` — a weekday at
+// 15:25 ET: on a weekday before 15:25 it is the previous weekday's, on Sat/Sun and on
+// Monday before 15:25 it is Friday's. Walks back one NY day at a time from just before
+// each local midnight, so a DST Sunday (23 or 25 h long) cannot trip it.
+function lastPostingStart(ms: number): number {
+  let t = ms;
+  for (let i = 0; i < 9; i++) {
+    const w = nyWall(t);
+    if (w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from) return t - (w.sec - WINDOWS[1].from) * 1000;
+    t -= (w.sec + 1) * 1000;   // the previous NY day, 23:59:59
+  }
+  return 0;
+}
 // Whether THIS request should attempt a fetch, judged on the shared row (never on
 // instance memory). attemptedAt is the lease: one attempt per interval, whichever
 // instance makes it; failedAt is a 10-minute back-off every instance honours.
@@ -661,9 +674,15 @@ function treasuryWanted(now: number, today: string, rows: RosterRow[], row: Stor
   // checked, so it could not be stored — do not spend ~20 s (or a lease) on it.
   if (!rows.some((r) => r.treasury && fredStore.has(r.fred))) return false;
   if (row.failedAt !== null && now - row.failedAt < TREASURY_BACKOFF_MS) return false; // backing off
-  if (treasuryHeld(row, rows, today)) return false;                                  // today's rate is final
-  const every = treasuryPosting(now) ? TREASURY_POSTING_EVERY_MS : TREASURY_IDLE_EVERY_MS;
-  return now - row.attemptedAt >= every;                                             // the lease is free
+  if (treasuryPosting(now)) {
+    if (treasuryHeld(row, rows, today)) return false;                                // today's rate is final
+    return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;                       // the lease is free
+  }
+  // Outside the window nothing can have been published since it last opened: ask only
+  // if no fetch has SUCCEEDED since then (an empty store has fetchedAt 0, so the first
+  // request after a deploy asks at once). A host that keeps failing is asked hourly.
+  if (row.fetchedAt >= lastPostingStart(now)) return false;
+  return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;
 }
 const working = (row: StoreRow) => ({ at: row.fetchedAt, cols: row.cols });
 
