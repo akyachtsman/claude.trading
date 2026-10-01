@@ -62,11 +62,18 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   bad body) is a FRED-only reply with NO attempt (an attempt nobody can record would be
   repeated by every request, ~20 s each); a lease that cannot be written means no attempt; a
   final write that fails still serves THIS reply, and the next attempt waits for the interval;
+  a final RE-READ that fails writes nothing at all (below) — the reply serves what it
+  validated, the lease row it wrote stands, and the next attempt again waits for the interval;
   (e) per-instance state is useless (MEASURED: every request is a fresh instance), so the
   module dataset cache, `changed` (always `false` in practice — the client's NEW marker keys
   on `asOf`), the `force` once-per-30s guard and FRED's stale-while-error (a failed series
   reads `missing`, not `stale`, with no earlier copy) are best effort only; (f) the row stays
-  small: every write and every read prunes it to 70 days of the columns it holds (a few KB).
+  small: every write and every read prunes it to 70 days of the columns it holds (a few KB);
+  (g) a PARTIAL success (2026-10-01, from the Codex review of v3): a column that does not
+  validate (its FRED spine down this request, or a mislabelled column) leaves `fetchedAt` where
+  it was, so a column that can NEVER validate costs at most one slow attempt per idle interval
+  outside the window (hourly, like a failing host) and the usual 5-min attempts inside it until
+  midnight ET (today's rate is not held without it).
 - **Treasury in the shared store (v3, 2026-10-01 — NOT deployed yet).** MEASURED 2026-10-01:
   every desk-econ request runs on a FRESH instance (`generatedAt` differed on calls 4 s apart,
   and v1's per-instance 10-minute back-off never held — every call re-attempted Treasury), so
@@ -74,7 +81,9 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   a later request. The validated rows therefore live in `desk_feed_cache` (`desk_006`, RLS
   deny-all, service key — as `desk-heatmap` / `desk-news` use it) under the key
   `econ:treasury`: payload `{ cols: {"2 Yr": [[date, value], …], "10 Yr": …, "20 Yr": …},
-  fetchedAt, attemptedAt, failedAt, lease }` (`fetchedAt` = the last successful merge,
+  fetchedAt, mergedAt, attemptedAt, failedAt, lease }` (`fetchedAt` = the last COMPLETE
+  success — every Treasury column the roster names validated, `mergedAt` = the last merge of
+  ANY validated column, which the 72h keep runs from,
   `attemptedAt` = the last attempt's start = the lease, `failedAt` = the last total failure or
   null, `lease` = the holder's random id). Every request reads it BESIDE the FRED sweep
   (`readTreasuryRow`, 3 s bound — no added latency); a failed read is a FRED-only reply and NO
@@ -97,8 +106,14 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   would never see its result. The fetched columns are validated BEFORE anything is written
   (parsed, and agreeing with this request's FRED by `stitchTreasury`'s own check — a blocked,
   HTML or mislabelled file never reaches the store); nothing usable records `failedAt` (only
-  while the lease is still its own); otherwise the merged row (pruned to 70 days) is written
-  with `fetchedAt`, re-read first so it merges onto whatever is stored by then. Either way
+  while the lease is still its own); otherwise the merged row (pruned to 70 days) is written,
+  re-read first so it merges onto whatever is stored by then, stamped `mergedAt` — and
+  `fetchedAt` only when EVERY column the roster names validated (a partial success stores what
+  did but leaves `fetchedAt`, so outside the window the missing column is still asked for,
+  hourly, instead of waiting for the next window). That final re-read FAILING (5xx, timeout)
+  is not "no row yet" (an empty list is, and is written on): the request then writes NOTHING —
+  neither rows nor a failure, since a whole-payload write from its pre-fetch snapshot could
+  erase a contender's fresher columns — and serves what it validated. Either way
   THIS reply is built from the result, so the lease holder's own reply already carries the
   rate, while every other request meanwhile finds the lease taken and serves the row as it
   is. The stored payload is UNTRUSTED (`storeRowFrom()`): re-validated field by field — known
@@ -144,8 +159,16 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   wall clock (ONE hoisted formatter, `NY_CLOCK` — the `NY_DATE` rule): 60 s inside
   Mon–Fri 08:25–09:15 (BLS/BEA 08:30) and 15:25–18:30 (Treasury), 15 min on a
   quiet weekday but never past today's next window opening, a 60 min heartbeat at
-  weekends, ≤2 min while any row is degraded. The client is told when to ask
-  again (`refreshInSec`, ≥30). Holidays are not excluded (cheaper than a table).
+  weekends, ≤2 min while any row is degraded. Inside the Treasury posting
+  window (weekdays 15:25 ET–midnight), while today's rate is not yet held, the TTL
+  is also capped at the time until the next attempt is allowed (`treasuryRetryInMs()`:
+  5 min from the shared row's `attemptedAt`, or the end of a `failedAt` back-off if
+  later; never below 30 s), so after the 18:30 release window the client still comes
+  back every ≤5 min instead of the quiet 15 and a late print (2026-09-30's was out by
+  ~20:50 ET) is seen; no cap once held, outside that window, or when no attempt can be
+  wanted (no Treasury column, no FRED spine, the store unreadable). The client is told
+  when to ask again (`refreshInSec`, ≥30). Holidays are not excluded (cheaper than a
+  table).
 - **Failure semantics.** One failed series degrades its own row only: `stale`
   with its last good values and `staleSec` if this isolate held a copy, else
   `missing` with every value `null` (never 0). Every series down on a cold isolate
@@ -160,14 +183,14 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   rows dropped and counted (`roster.dropped`), deduped by `id`, capped at 12, the
   FRED id strictly patterned before it reaches a URL, Treasury only on a
   daily-level row.
-- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (35 checks, fresh `vm` isolate each,
+- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (38 checks, fresh `vm` isolate each,
   stubbed `fetch`, settable clock, real FRED captures + constructed Treasury fixtures + the REAL
   Treasury head captured from Supabase under `tools/fixtures/econ/`, and `fakeDb()` — a stateful
   in-memory `desk_feed_cache` behind the stubbed fetch, SHARED by several vm contexts of one
   check to play several cold instances, and playing the gateway's 401 for a browser-shaped
   user-agent; the harness serves the COMMITTED roster, and the no-Treasury path is tested on
-  that roster with its `treasury` keys stripped); `--mutants` proves 59 single-line source
-  mutants plus 3 damages to the shipped roster are each caught (62/62 on 2026-10-01; a mutant
+  that roster with its `treasury` keys stripped); `--mutants` proves 71 single-line source
+  mutants plus 3 damages to the shipped roster are each caught (74/74 on 2026-10-01; a mutant
   that does not transpile is reported INVALID). The v3 checks: cold instance A holds the lease,
   waits for a "18 s" Treasury (time scaled) and serves it in its OWN reply, while instance C
   arriving during that wait gets the store at once without fetching, and instance B afterwards
@@ -179,7 +202,15 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   success means ZERO requests and no lease written across cold instances until 15:25 ET, a
   Friday-evening success the same over Saturday, Sunday and Monday morning (both 2026 DST
   weekends included), a store older than the last window start one attempt and then none, and
-  a host that keeps failing one attempt per hour; Treasury 503 / 403 /
+  a host that keeps failing one attempt per hour; a PARTIAL success (FRED's DGS20 down) storing
+  and serving the two columns that validated with `fetchedAt` left alone, so the missing one is
+  asked for again an hour later, and `fetchedAt` advancing once all three validate; the RETRY
+  CAP (19:00 and 23:00 ET with today's rate pending: `refreshInSec` 300, 180 for a later
+  instance, never below 30, back to 900 once the late print lands; 15:30 ET unchanged at 60;
+  900 once held; 600 / 360 inside a failure's back-off; no cap at 10:00 ET or on a Saturday); a
+  FAILED final re-read (500, timeout) writing nothing after the lease — a contender's row stands
+  byte for byte, no `failedAt` — while the reply serves what it validated, and a real "no row
+  yet" still written; Treasury 503 / 403 /
   200-HTML / network / a hang cut by the 45 s signal / garbage columns → HTTP 200, seven FRED
   rows, nothing but the failure stored; a store read failing (500, timeout, non-JSON, not a
   row list) → FRED only with no attempt and no write, a foreign-shaped or corrupt payload never
@@ -238,9 +269,12 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   day's); (3) the next call — a different instance — is fast and shows the same rows; (4)
   `desk_feed_cache` row `econ:treasury` holds `cols` for exactly `2 Yr` / `10 Yr` / `20 Yr`,
   with `attemptedAt` moving at most every 5 min in the window, never once today's rate is
-  held, and not at all before 15:25 ET / at weekends once a fetch has succeeded since the
-  window last opened; (5) the logs carry no `Signal timed out`, no `Treasury store read failed` / `store write
-  failed` and no `401` (a browser UA on the REST call would surface as a failed read).
+  held, and not at all before 15:25 ET / at weekends once a complete fetch has succeeded since
+  the window last opened (`fetchedAt` moves only then, `mergedAt` on every merge); (5) the logs
+  carry no `Signal timed out`, no `Treasury store read failed` / `store write failed` / `store
+  re-read failed` and no `401` (a browser UA on the REST call would surface as a failed read);
+  (6) after 18:30 ET with today's rate still pending, a reply's `refreshInSec` is ≤ 300, not the
+  quiet 900.
 
 ## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`
 

@@ -684,8 +684,9 @@ function treasuryWanted(now: number, today: string, rows: RosterRow[], row: Stor
     return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;                       // the lease is free
   }
   // Outside the window nothing can have been published since it last opened: ask only
-  // if no fetch has SUCCEEDED since then (an empty store has fetchedAt 0, so the first
-  // request after a deploy asks at once). A host that keeps failing is asked hourly.
+  // if no COMPLETE fetch has SUCCEEDED since then (an empty store has fetchedAt 0, so
+  // the first request after a deploy asks at once). A host that keeps failing — or a
+  // column that keeps failing to validate — is asked hourly.
   if (row.fetchedAt >= lastPostingStart(now)) return false;
   return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;
 }
