@@ -7686,7 +7686,11 @@ async function refreshNowClicked() {
   const btn = document.getElementById('refreshNowBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
-  try { await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true)]); } finally {
+  try {
+    await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true)]);
+    /* 1D picked after the quote had landed but while desk-econ was still out starts its bars on its own: still part of this refresh */
+    if (econBars.p) await econBars.p.catch(() => {});
+  } finally {
     refreshNowPending = false;
     renderMasthead();
     scheduleFeedPoll(); scheduleMarketPoll();
@@ -8360,10 +8364,13 @@ async function econLiveFetch(force) {
   /* the day's bars ride the same cadence while 1D is showing — fetched CONCURRENTLY with the quote and awaited below, so a forced
      "Refresh now" stays pending until they have landed too (Codex, PR #301); econBarsFetch never throws, the catch is belt and braces */
   const barsP = econTf === '1d' ? econBarsFetch().catch(() => {}) : null;
+  /* ...and a batch launched WHILE the quote was out (1D picked mid-refresh: econPickSpan starts it) is waited for too — whoever started
+     it, `econBars.p` is the one in flight (Codex, PR #301) */
+  const barsWait = () => { const p = barsP || econBars.p; return p ? p.catch(() => {}) : null; };
   let body = null, cnbc = {};
   try { body = await econLiveCnbc(); } catch { body = null; }
   try { cnbc = econLiveParseCnbc(body, Date.now()); } catch { cnbc = {}; }
-  if (gen !== econLive.gen) { if (barsP) await barsP; return; }   /* a newer request owns the state now */
+  if (gen !== econLive.gen) { await barsWait(); return; }   /* a newer request owns the state now */
   econLive.forcing = false;
   const landed = Date.now();
   econLive.landedAt = landed;
@@ -8372,7 +8379,7 @@ async function econLiveFetch(force) {
   for (const id of ids) econLive.q[id] = { ...cnbc[id], fetchedAt: landed, keepMs: Math.max(ECON_LIVE_KEEP_MS, 2 * econLiveDelaySec(landed) * 1000) };
   renderAfterFetch(econLiveRepaint);
   econLiveArm(ids.length ? econLiveDelaySec(Date.now()) : ECON_RETRY_S);
-  if (barsP) await barsP;
+  await barsWait();
 }
 
 /* ── 1D: the yields' intraday bars (owner request 2026-10-01: "add the one day chart" → "build it blind") ──────────────────

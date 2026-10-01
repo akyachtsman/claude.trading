@@ -7290,6 +7290,63 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   await page.evaluate(() => econBarsFetch());
   expect(await page.evaluate(() => window.__bsyms.length), 'and asking for them directly while another span is showing does nothing').toBe(n);
 
+  // "Refresh now" started OFF 1D, with 1D picked while it is still running, stays pending for the bars that pick launched (Codex, PR #301).
+  // The feeds are stubbed to land at once (as S55's 7b3 does); the click is the real refreshNowClicked.
+  await page.evaluate(() => {
+    window.__tick = window.feedPollTick; window.__sf = window.scheduleFeedPoll; window.__sm = window.scheduleMarketPoll;
+    window.feedPollTick = async () => {}; window.scheduleFeedPoll = () => {}; window.scheduleMarketPoll = () => {};
+    window.__cn0 = window.econLiveCnbc; window.__dec0 = window.deskEcon;
+    renderMasthead();   // the live button (it is only built once the page is live)
+  });
+  const startRefresh = (hold) => page.evaluate((h) => {
+    window.__rel = []; window.__done = false;
+    window.__bfn = (sym) => new Promise((res) => window.__rel.push(() => res(window.__good(window.__base[sym]))));
+    if (h === 'quote') window.econLiveCnbc = () => new Promise((res) => { window.__qrel = () => res(window.__cn0()); });
+    if (h === 'econ') window.deskEcon = (range) => new Promise((res) => { window.__drel = () => res(window.__dec0(range)); });
+    window.__c = refreshNowClicked(); window.__c.then(() => { window.__done = true; });
+  }, hold);
+  const btnPending = async () => (await page.evaluate(() => { const b = document.getElementById('refreshNowBtn'); return [b.disabled, b.textContent]; }));
+  // (0) the forced quote request itself (what refreshNowClicked awaits first): its own promise covers a batch started while it was out
+  await page.evaluate(() => {
+    window.__rel = []; window.__done = false;
+    window.__bfn = (sym) => new Promise((res) => window.__rel.push(() => res(window.__good(window.__base[sym]))));
+    window.econLiveCnbc = () => new Promise((res) => { window.__qrel = () => res(window.__cn0()); });
+    window.__f = econLiveFetch(true); window.__f.then(() => { window.__done = true; });
+  });
+  await pick('1d');
+  await page.evaluate(() => window.__qrel());
+  await page.clock.runFor(3_000);
+  expect(await page.evaluate(() => [window.__rel.length, window.__done]), 'econLiveFetch(true): the quote has landed, the bars 1D started meanwhile have not — still pending').toEqual([3, false]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__f; });
+  expect(await page.evaluate(() => window.__done), 'and it resolves once they land').toBe(true);
+  await pick('3m');
+  // (a) the CNBC quote is the slow part: 1D is picked before it lands
+  await startRefresh('quote');
+  await pick('1d');
+  expect(await page.evaluate(() => window.__rel.length), 'picking 1D mid-refresh asked for the three bars').toBe(3);
+  await page.evaluate(() => window.__qrel());
+  await page.clock.runFor(3_000);
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'the quote has landed but the bars are outstanding: Refresh now is still pending').toEqual([false, [true, 'Refreshing…']]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__c; });
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'and it is back once they land').toEqual([true, [false, 'Refresh now']]);
+  // (b) desk-econ is the slow part: the quote has landed, THEN 1D is picked, then desk-econ lands
+  await pick('3m');
+  await page.evaluate(() => { window.econLiveCnbc = window.__cn0; });
+  await startRefresh('econ');
+  await page.clock.runFor(1_000);
+  await pick('1d');
+  expect(await page.evaluate(() => window.__rel.length), 'picking 1D after the quote landed also asked for the three bars').toBe(3);
+  await page.evaluate(() => window.__drel());
+  await page.clock.runFor(3_000);
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'desk-econ has landed but the bars are outstanding: still pending').toEqual([false, [true, 'Refreshing…']]);
+  await page.evaluate(() => { window.__rel.forEach((f) => f()); return window.__c; });
+  expect([await page.evaluate(() => window.__done), await btnPending()], 'and it is back once they land').toEqual([true, [false, 'Refresh now']]);
+  await page.evaluate(() => {
+    window.feedPollTick = window.__tick; window.scheduleFeedPoll = window.__sf; window.scheduleMarketPoll = window.__sm;
+    window.econLiveCnbc = window.__cn0; window.deskEcon = window.__dec0; window.__bfn = (sym) => window.__good(window.__base[sym]);
+  });
+  await pick('3m');
+
   // ── 9. a saved 1D at boot: desk-econ is asked for the default span, not "1d", and the bars come with the first quote
   await page.evaluate(() => { localStorage.setItem('econ_tf_v1', '1d'); });
   await page.reload();

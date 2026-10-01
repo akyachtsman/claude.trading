@@ -587,7 +587,10 @@ width); **S56** guards the live 10Y.
   session, caption `05:00 – 14:00` Pacific) and never calls the network. **Cadence:** the bars
   are fetched at once on picking 1D, alongside each quote poll (`econLiveFetch`, 60 s while the
   bond session runs, 10 min around it, hourly at weekends/holidays; concurrent with the quote and
-  AWAITED, so the masthead's "Refresh now" stays pending until the bars have landed — Codex, PR #301) and on a tab coming back
+  AWAITED, so the masthead's "Refresh now" stays pending until the bars have landed — Codex, PR #301;
+  that includes a batch started by picking 1D while a forced refresh is already running: the quote
+  request waits for whichever batch is in flight (`barsP || econBars.p`) and `refreshNowClicked` waits
+  for `econBars.p` once its `Promise.all` has settled) and on a tab coming back
   with bars older than a minute — only while 1D is the view (`econBarsFetch` guards it too),
   never while hidden. `econLiveRepaint` redraws the yield rows in place and compares the
   chart's markup as well as the text, because new bars change no text. The caption is the
