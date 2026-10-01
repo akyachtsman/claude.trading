@@ -17,14 +17,19 @@
                       2026-09-30, cosd=2020-01-01). They carry the real hole
                       markers: an EMPTY field (Labor Day 2026-09-07, and the
                       2025-10-01 shutdown month for CPI and UNRATE), not ".".
-     treasury-*.csv   CONSTRUCTED from Treasury's documented par-yield CSV layout
-                      (quoted header names incl. "1.5 Month", MM/DD/YYYY, newest
-                      first). 2 Yr / 10 Yr / 20 Yr copy the FRED capture on shared
-                      dates; the 09/29 and 09/30/2026 rows are SYNTHETIC. The live
-                      host was unreachable from the build sandbox, so the Treasury
-                      path is UNVERIFIED against the real file — and it is ON in the
-                      shipped roster (2Y/10Y/20Y, owner request 2026-09-30), which is
-                      why every Treasury failure mode below must land on FRED. */
+     treasury-2026MM.csv  CONSTRUCTED from Treasury's par-yield CSV layout (quoted
+                      header names incl. "1.5 Month", MM/DD/YYYY, newest first).
+                      2 Yr / 10 Yr / 20 Yr copy the FRED capture on shared dates; the
+                      09/29 and 09/30/2026 rows are SYNTHETIC (they differ from the
+                      real ones below, on purpose: the suite must not depend on them).
+     treasury-real-20260930-head.csv  the REAL header and three newest rows of the
+                      live file, fetched FROM SUPABASE on 2026-10-01 by the throwaway
+                      desk-probe (this sandbox cannot reach home.treasury.gov). The
+                      layout matched the parser, and 09/28 equals the FRED capture.
+   The Treasury tail is ON in the shipped roster (2Y/10Y/20Y, owner request
+   2026-09-30) and, since the host answers in 17-20 s, it is fetched in the
+   BACKGROUND: a cold isolate's first reply is FRED and the tail lands on a later
+   one. `warm()` below is "call, let the background fetch land, call again". */
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
@@ -40,6 +45,7 @@ const COSD_T0 = '2020-05-30';                  // 76 months before 2026-09-30 (N
 const FRED_IDS = ['DGS2', 'DGS10', 'DGS20', 'UNRATE', 'CPIAUCNS', 'PCEPI', 'PCEPILFE'];
 const FRED_TEXT = Object.fromEntries(FRED_IDS.map((id) => [id, readFileSync(path.join(FIX, `fred-${id}.csv`), 'utf8')]));
 const TSY_TEXT = Object.fromEntries(['202608', '202609'].map((m) => [m, readFileSync(path.join(FIX, `treasury-${m}.csv`), 'utf8')]));
+const TSY_REAL = readFileSync(path.join(FIX, 'treasury-real-20260930-head.csv'), 'utf8');
 // The shipped roster. Since 2026-09-30 (owner request: current 2Y/10Y yields; 20Y comes from the
 // same Treasury file) it names a Treasury column on the three yield rows, so the same-day tail is
 // ON. The harness serves it unless a test passes its own `config` (`config: null` = the config
@@ -63,6 +69,14 @@ const near = (a, b, tol, m) => { if (!(Math.abs(a - b) <= tol)) throw new Fail(`
 const throws = (fn, m) => { let t = false; try { fn(); } catch { t = true; } assert(t, m + ' (expected a throw)'); };
 const round = (v, d) => Number(v.toFixed(d));
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+// A promise the test settles by hand: a Treasury that answers only when told to.
+const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+// Fails (instead of hanging the suite) when `p` has not settled within `ms` of REAL time.
+async function within(p, ms, m) {
+  let t;
+  const late = new Promise((_, reject) => { t = setTimeout(() => reject(new Fail(`${m} (nothing within ${ms} ms)`)), ms); });
+  try { return await Promise.race([p, late]); } finally { clearTimeout(t); }
+}
 
 // ── independent reference data (NOT the function's code) ─────────────────────
 function refObs(id, cosd = COSD_T0) {
@@ -169,6 +183,8 @@ function boot(code, opts = {}) {
       error: (...a) => { env.warns.push(a.join(' ')); },
     },
   };
+  // Supabase's runtime global, when a check wants to see what is handed to waitUntil.
+  if (opts.edgeRuntime) sandbox.EdgeRuntime = opts.edgeRuntime;
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox, { filename: 'desk-econ.cjs' });
   assert(typeof handler === 'function', 'Deno.serve was never called');
@@ -187,6 +203,9 @@ function boot(code, opts = {}) {
     return { status: res.status, headers: res.headers, text, json };
   };
   env.fetchCount = (host, pred = () => true) => calls.filter((c) => c.host === host && pred(c)).length;
+  // Call, let the background Treasury fetch land, call again (same clock): the second reply
+  // is what a client's next poll sees once the tail is in.
+  env.warm = async (body = {}) => { await env.call(body); await env.api.treasuryIdle(); return env.call(body); };
   return env;
 }
 const row = (r, id) => r.json.rows.find((x) => x.id === id);
@@ -264,9 +283,9 @@ const TESTS = [
     eq([v.dropped, v.rows.map((r) => [r.id, r.fred, r.treasury])], [0, [...TSY_COLS, ...OTHERS.map((id) => [id, CONFIG.find((r) => r.id === id).sources.fred, null])]],
       'all seven rows pass validation with their Treasury columns intact');
     const a = boot(code, { config: CONFIG });
-    const ra = await a.call({ range: '1y' });
+    const ra = await a.warm({ range: '1y' });
     const b = boot(code, { config: null });
-    const rb = await b.call({ range: '1y' });
+    const rb = await b.warm({ range: '1y' });
     eq(ra.json.roster, { source: 'config', count: 7, dropped: 0 }, 'committed config accepted whole');
     eq(rb.json.roster.source, 'default', 'unreachable config -> default');
     for (const [name, e] of [['committed config', a], ['built-in default', b]]) eq(e.fetchCount('home.treasury.gov'), 2, `${name}: the Treasury tail is ON (one fetch each for the current and previous NY month)`);
@@ -319,11 +338,11 @@ const TESTS = [
     assert(!mom.some(([d]) => d === '2025-10-01' || d === '2025-11-01'), 'MoM skips the hole and the month after it');
   }],
 
-  ["committed roster (and the identical built-in default): Treasury newer than FRED wins the three yields with TODAY's close; tail stitched with no duplicate or out-of-order date", async (code) => {
+  ["committed roster (and the identical built-in default): once it lands, Treasury newer than FRED wins the three yields with TODAY's rate; tail stitched with no duplicate or out-of-order date", async (code) => {
     let e;
     for (const [name, config] of [['committed roster', CONFIG], ['built-in default', null]]) {
       e = boot(code, { config });
-      const r = await e.call({ range: '1m' });
+      const r = await e.warm({ range: '1m' });
       eq([r.status, r.json.ok], [200, true], `${name}: HTTP 200`);
       for (const [id, v30, v29] of [['ust2y', 4.9, 4.95], ['ust10y', 5.21, 5.27], ['ust20y', 5.58, 5.63]]) {
         const x = row(r, id);
@@ -349,7 +368,7 @@ const TESTS = [
       ? new Response(TSY_TEXT[m].split('\n').filter((l) => !l.startsWith('09/30/2026')).join('\n'), { status: 200 })
       : new Response('', { status: 404 }));
     const e = boot(code, { config: CONFIG, now: at('2026-09-30T14:00:00Z'), treasury: noToday });
-    const r = await e.call({ range: '1m' });
+    const r = await e.warm({ range: '1m' });
     for (const [id, v29, v28] of [['ust2y', 4.95, 4.92], ['ust10y', 5.27, 5.24], ['ust20y', 5.63, 5.6]]) {
       const x = row(r, id);
       eq([x.source, x.status, x.asOf, x.value, x.prevAsOf, x.prev], ['treasury', 'ok', '2026-09-29', v29, '2026-09-28', v28], id);
@@ -360,11 +379,11 @@ const TESTS = [
   ['Treasury NOT newer than FRED -> FRED stays the source', async (code) => {
     const cut = (m) => new Response(TSY_TEXT[m].split('\n').filter((l) => !/^09\/(29|30)\/2026/.test(l)).join('\n'), { status: 200 });
     const e = boot(code, { treasury: (m) => (TSY_TEXT[m] ? cut(m) : new Response('', { status: 404 })) });
-    const r = await e.call();
+    const r = await e.warm();
     for (const id of ['ust2y', 'ust10y', 'ust20y']) eq([row(r, id).source, row(r, id).asOf], ['fred', '2026-09-28'], id);
   }],
 
-  ['Treasury outage (503, 403 block page, HTML on a 200, network error, TIMEOUT) on the committed roster -> all seven rows from FRED, HTTP 200, none missing', async (code) => {
+  ['Treasury outage (503, 403 block page, HTML on a 200, network error, TIMEOUT) on the committed roster -> all seven rows from FRED, HTTP 200, none missing, before AND after the failed background fetch', async (code) => {
     // A HUNG host: the fetch settles only when the function's own AbortSignal fires. The 3s guard
     // turns a fetch nobody bounds into a failed check instead of a suite that never ends.
     let aborted = 0, unbounded = false;
@@ -380,9 +399,12 @@ const TESTS = [
       ['timeout', hang, { timeoutScale: 0.01 }],
     ]) {
       const e = boot(code, { config: CONFIG, treasury: fn, ...extra });
+      const r1 = await e.call();
+      await e.api.treasuryIdle();   // the background fetch has now failed (the hung one: cut off by its signal)
       const r = await e.call();
+      eq(r.json.rows, r1.json.rows, `${name}: the failed background fetch changed no reply`);
       eq([r.status, r.json.ok, r.json.stale, r.json.rows.length], [200, true, false, 7], `${name}: HTTP 200, ok, nothing stale, seven rows`);
-      eq(e.fetchCount('home.treasury.gov'), 2, `${name}: Treasury was asked (the committed roster wants it)`);
+      eq(e.fetchCount('home.treasury.gov'), 2, `${name}: Treasury was asked (the committed roster wants it), once`);
       for (const x of r.json.rows) {
         eq([x.id, x.status, x.source, x.value === null], [x.id, 'ok', 'fred', false], `${name}: ${x.id} served from FRED, not missing`);
       }
@@ -395,10 +417,132 @@ const TESTS = [
   ['Treasury garbage (mislabelled columns) fails the FRED agreement check; the good column still serves', async (code) => {
     const swapped = (m) => new Response(TSY_TEXT[m].replace('"10 Yr","20 Yr"', '"20 Yr","10 Yr"'), { status: 200 });
     const e = boot(code, { treasury: (m) => (TSY_TEXT[m] ? swapped(m) : new Response('', { status: 404 })) });
-    const r = await e.call();
+    const r = await e.warm();
     eq([row(r, 'ust10y').source, row(r, 'ust10y').asOf, row(r, 'ust10y').value], ['fred', '2026-09-28', 5.24], '10Y rejected');
     eq([row(r, 'ust20y').source, row(r, 'ust20y').asOf], ['fred', '2026-09-28'], '20Y rejected');
     eq([row(r, 'ust2y').source, row(r, 'ust2y').asOf], ['treasury', '2026-09-30'], '2Y (correct column) still Treasury');
+  }],
+
+  ['a SLOW Treasury never delays a reply: the first is FRED at once with refreshInSec <= 30, one fetch pair (single-flight, handed to waitUntil), and the landing expires the cached body', async (code) => {
+    // Measured from Supabase 2026-10-01: Treasury answers in 17-20 s. Here it answers only when RELEASED.
+    const gate = deferred();
+    let asked = 0;
+    const waited = [];
+    const e = boot(code, {
+      config: CONFIG, edgeRuntime: { waitUntil: (p) => { waited.push(p); } },
+      treasury: (m) => { asked++; return gate.promise.then(() => tsyResponse(m)); },
+    });
+    const r1 = await within(e.call({ range: '1m' }), 2000, 'the first reply waited on Treasury');
+    eq([r1.status, r1.json.ok, r1.json.rows.length], [200, true, 7], 'HTTP 200, ok, seven rows');
+    for (const x of r1.json.rows) eq([x.id, x.status, x.source], [x.id, 'ok', 'fred'], `${x.id}: FRED while Treasury is on its way`);
+    eq(YIELDS.map((id) => row(r1, id).asOf), ['2026-09-28', '2026-09-28', '2026-09-28'], "the yields at FRED's newest for now");
+    assert(r1.json.refreshInSec <= 30, `a Treasury fetch is in flight: come back within 30s (got ${r1.json.refreshInSec})`);
+    eq([asked, waited.length], [2, 1], 'ONE fetch pair (current + previous month), handed to EdgeRuntime.waitUntil');
+    e.clock.now += 31_000;           // the 30s body has expired: a re-sweep while the fetch is still in flight
+    const r2 = await within(e.call({ range: '1m' }), 2000, 'a reply during the flight waited on Treasury');
+    eq([asked, row(r2, 'ust10y').source], [2, 'fred'], 'single-flight: no second pair while one is in flight');
+    assert(r2.json.refreshInSec <= 30, `still pending: <= 30s (got ${r2.json.refreshInSec})`);
+    e.clock.now += 6 * 60_000;       // past the 5-minute cadence: in flight still wins
+    await within(e.call({ range: '1m' }), 2000, 'a reply after 6 min waited on Treasury');
+    eq(asked, 2, 'single-flight beats the cadence');
+    // It lands. The body cached a moment ago (still inside its 30s) is expired IN PLACE, so the very next
+    // request is a fresh sweep that serves the tail — not the cached FRED body.
+    const fredBefore = e.fetchCount('fred.stlouisfed.org');
+    gate.resolve();
+    await e.api.treasuryIdle();
+    const r3 = await e.call({ range: '1m' });
+    eq(e.fetchCount('fred.stlouisfed.org'), fredBefore + 7, 'a fresh sweep, not the cached body');
+    for (const [id, v30] of [['ust2y', 4.9], ['ust10y', 5.21], ['ust20y', 5.58]]) {
+      eq([row(r3, id).source, row(r3, id).asOf, row(r3, id).value, row(r3, id).changed], ['treasury', '2026-09-30', v30, true], `${id} lands as a change`);
+    }
+    for (const id of OTHERS) eq([row(r3, id).source, row(r3, id).changed], ['fred', false], id);
+    eq(r3.json.refreshInSec, 60, 'nothing pending: the release-window TTL, not the 30s cap');
+    eq(asked, 2, "today's rate is held: no further fetch");
+  }],
+
+  ['a Treasury that answers in 30 s (observed 17-20 s, once past 20 s) still lands: the 45 s bound, not the old 5 s', async (code) => {
+    // timeoutScale 0.02: 45 s -> 900 ms, the old 5 s -> 100 ms; this host answers after "30 s" (600 ms)
+    const slow = (m, u, init) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => resolve(tsyResponse(m)), 600);
+      init?.signal?.addEventListener('abort', () => { clearTimeout(t); reject(init.signal.reason); }, { once: true });
+    });
+    const e = boot(code, { config: CONFIG, treasury: slow, timeoutScale: 0.02 });
+    const r1 = await within(e.call(), 400, 'the first reply waited on a slow Treasury');
+    eq(row(r1, 'ust10y').source, 'fred', 'FRED first');
+    await e.api.treasuryIdle();
+    const r2 = await e.call();
+    eq(YIELDS.map((id) => [row(r2, id).source, row(r2, id).asOf]), [['treasury', '2026-09-30'], ['treasury', '2026-09-30'], ['treasury', '2026-09-30']], 'the slow answer landed and is served');
+  }],
+
+  ["Treasury cadence: today's rate is final; a missing one is asked for every 5 min from 15:25 ET to midnight (not sooner), hourly otherwise; the 10-min back-off holds", async (code) => {
+    const settle = async (e) => { const r = await e.call(); await e.api.treasuryIdle(); return r; };
+    const n = (e) => e.fetchCount('home.treasury.gov');
+    const noToday = (m) => (TSY_TEXT[m]
+      ? new Response(TSY_TEXT[m].split('\n').filter((l) => !l.startsWith('09/30/2026')).join('\n'), { status: 200 })
+      : new Response('Not Found', { status: 404 }));
+    // (a) 18:00 ET, today's rate held: never asked again that day
+    const a = boot(code, { config: CONFIG });
+    await settle(a);
+    for (const step of [6 * 60_000, 60 * 60_000]) { a.clock.now += step; await settle(a); }
+    eq(n(a), 2, "today's rate is final: not asked again after 5 min, nor after an hour");
+    // (b) 16:00 ET, today's rate not out yet: every 5 min, not sooner, until it posts
+    const b = boot(code, { config: CONFIG, now: at('2026-09-30T20:00:00Z'), treasury: noToday });
+    await settle(b);
+    b.clock.now += 4 * 60_000; await settle(b);
+    eq(n(b), 2, '16:04: not sooner than 5 min');
+    b.clock.now += 60_000; await settle(b);
+    eq(n(b), 4, '16:05: asked again');
+    b.opts.treasury = undefined;                  // today's rate posts
+    b.clock.now += 5 * 60_000; await settle(b);
+    eq(n(b), 6, '16:10: asked again, and it is there');
+    const rb = await b.call();
+    eq(YIELDS.map((id) => [row(rb, id).source, row(rb, id).asOf]), YIELDS.map(() => ['treasury', '2026-09-30']), "today's rate served");
+    b.clock.now += 5 * 60_000; await settle(b);
+    eq(n(b), 6, 'held: no more asking');
+    // (c) 23:00 ET still counts (a late post): every 5 min, not hourly
+    const c = boot(code, { config: CONFIG, now: at('2026-10-01T03:00:00Z'), treasury: noToday });
+    await settle(c);
+    c.clock.now += 5 * 60_000; await settle(c);
+    eq(n(c), 4, '23:05 ET: asked again at 5 min');
+    // (d) 10:00 ET, outside the posting window: hourly
+    const d = boot(code, { config: CONFIG, now: at('2026-09-30T14:00:00Z'), treasury: noToday });
+    await settle(d);
+    d.clock.now += 30 * 60_000; await settle(d);
+    eq(n(d), 2, 'not within the hour');
+    d.clock.now += 31 * 60_000; await settle(d);
+    eq(n(d), 4, 'hourly');
+    // (e) 16:00 ET, a total failure: the 10-min back-off beats the 5-min cadence; a failed fetch changes no reply
+    const f = boot(code, { config: CONFIG, now: at('2026-09-30T20:00:00Z'), treasury: down(503) });
+    const f1 = await settle(f);
+    const f2 = await f.call();
+    eq([f2.status, f2.json.rows], [200, f1.json.rows], 'a failed background fetch changes no reply');
+    f.clock.now += 5 * 60_000; await settle(f);
+    eq(n(f), 2, 'backing off: not at the 5-minute mark');
+    f.clock.now += 5 * 60_000; await settle(f);
+    eq(n(f), 4, 'asked again once the 10-min back-off is over');
+  }],
+
+  ['REAL Treasury rows (fetched from Supabase 2026-10-01) parse with \\n and \\r\\n, AGREE with the real FRED capture, and stitch onto it', async (code) => {
+    const { api } = boot(code);
+    const want = {
+      '2 Yr': [['2026-09-28', 4.92], ['2026-09-29', 4.89], ['2026-09-30', 4.88]],
+      '10 Yr': [['2026-09-28', 5.24], ['2026-09-29', 5.26], ['2026-09-30', 5.29]],
+      '20 Yr': [['2026-09-28', 5.6], ['2026-09-29', 5.64], ['2026-09-30', 5.68]],
+    };
+    for (const [name, text] of [['LF', TSY_REAL.replace(/\r\n/g, '\n')], ['CRLF', TSY_REAL.replace(/\r?\n/g, '\r\n')]]) {
+      const m = api.parseTreasuryCsv(text, '2026-09-30');
+      eq(m.size, 14, `${name}: every tenor of the real header found by name, "1.5 Month" included`);
+      for (const [col, obs] of Object.entries(want)) eq(m.get(col), obs, `${name}: ${col}`);
+    }
+    const m = api.parseTreasuryCsv(TSY_REAL, '2026-09-30');
+    for (const [, fredId, col] of TSY_COLS) {
+      const fred = new Map(refObs(fredId));
+      const shared = m.get(col).filter(([d]) => fred.has(d));
+      eq(shared.map(([d]) => d), ['2026-09-28'], `${col}: the real rows share 2026-09-28 with the FRED capture`);
+      for (const [d, v] of shared) eq(v, fred.get(d), `${col} on ${d}: Treasury's real value equals FRED ${fredId}`);
+      const st = api.stitchTreasury(api.parseFredCsv(FRED_TEXT[fredId]), m.get(col));
+      eq([st.reason, st.fromTreasury, st.obs.slice(-3)], [null, 2, want[col]], `${col}: the real 09/29 and 09/30 append onto the real FRED capture`);
+    }
   }],
 
   ['partial failure degrades ONE row; Treasury is never served without a FRED spine; missing is null, never 0', async (code) => {
@@ -409,7 +553,7 @@ const TESTS = [
     eq([x.status, x.value, x.prev, x.delta, x.asOf, x.prevAsOf, x.source, x.points, x.changed], ['missing', null, null, null, null, null, null, [], false], 'ust20y missing, all null');
     for (const y of r.json.rows.filter((z) => z.id !== 'ust20y')) eq(y.status, 'ok', `${y.id} unaffected`);
     const h = boot(code, { fred: { DGS10: () => new Response('<!DOCTYPE html>', { status: 200 }) } });
-    const rh = await h.call();
+    const rh = await h.warm();   // the Treasury tail HAS landed: still no row without a FRED spine
     eq([row(rh, 'ust10y').status, row(rh, 'ust10y').value], ['missing', null], 'HTML body from FRED = missing, even with a Treasury tail on offer');
     const one = boot(code, { fred: { UNRATE: () => new Response('observation_date,UNRATE\n2026-08-01,4.1\n', { status: 200 }) } });
     const u = row(await one.call(), 'unrate');
@@ -423,15 +567,20 @@ const TESTS = [
     eq([r.status, r.json.ok, typeof r.json.error], [502, false, 'string'], '502 ok:false with an error');
     eq(r.headers.get('access-control-allow-origin'), SITE, 'still CORS');
     for (const x of r.json.rows) eq([x.status, x.value, x.prev, x.delta, x.points], ['missing', null, null, null, []], x.id);
-    eq(r.json.refreshInSec, 60, 'a dead feed is retried at the release-window cadence (min of 60s and the 2 min degraded cap)');
-    e.clock.now += 30_000;
+    eq(r.json.refreshInSec, 30, 'a cold isolate kicked a Treasury fetch, so the client is told to come back in 30s');
+    await e.api.treasuryIdle();   // ...which fails too, and backs off
+    e.clock.now += 10_000;
     const again = await e.call();
     eq([again.status, again.json.ok, e.fetchCount('fred.stlouisfed.org')], [502, false, 7], 'the cached failure is still a 502, and costs no upstream call');
+    e.clock.now += 21_000;        // past the 30s cap
+    const third = await e.call();
+    eq([third.status, third.json.refreshInSec, e.fetchCount('fred.stlouisfed.org'), e.fetchCount('home.treasury.gov')], [502, 60, 14, 2],
+      'a dead feed is retried at the release-window cadence (min of 60s and the 2 min degraded cap); Treasury is backing off, so nothing caps it');
   }],
 
   ['stale-while-error: a failed series keeps its last good values, flagged stale with its age', async (code) => {
     const e = boot(code);
-    const r1 = await e.call({ range: '1m' });
+    const r1 = await e.warm({ range: '1m' });
     const before = row(r1, 'ust10y');
     e.clock.now += 120_000;
     e.opts.fred = { DGS10: down(503) };
@@ -444,7 +593,7 @@ const TESTS = [
     for (const y of r2.json.rows.filter((z) => z.id !== 'ust10y')) eq([y.status, y.staleSec], ['ok', null], `${y.id} fresh`);
     assert(r2.json.refreshInSec <= 120, 'a degraded feed asks again soon');
     const f = boot(code);
-    await f.call();
+    await f.warm();
     f.clock.now += 120_000;
     f.throwOnWarn = true; // a refresh that THROWS part-way (the catch path)
     f.opts.fred = { DGS2: down(503) };
@@ -484,13 +633,16 @@ const TESTS = [
       const p = api.refreshPolicy(at(iso));
       eq([p.phase, p.ttlMs / 1000], [phase, sec], iso);
     }
-    const q = boot(code, { now: at('2026-09-30T13:20:00Z') });
+    // Through the handler on a roster that names no Treasury column: this is the NY-clock policy
+    // alone (a cold isolate's pending Treasury fetch caps it at 30s — its own check, below).
+    const fo = fredOnly(CONFIG);
+    const q = boot(code, { config: fo, now: at('2026-09-30T13:20:00Z') });
     eq([(await q.call()).json.refreshInSec, (await q.call()).json.phase], [900, 'quiet'], 'quiet weekday through the handler');
-    const w = boot(code, { now: at('2026-10-03T16:00:00Z') });
+    const w = boot(code, { config: fo, now: at('2026-10-03T16:00:00Z') });
     eq([(await w.call()).json.refreshInSec, (await w.call()).json.phase], [3600, 'weekend'], 'weekend heartbeat through the handler');
-    const d = boot(code, { now: at('2026-03-09T12:30:00Z') });
+    const d = boot(code, { config: fo, now: at('2026-03-09T12:30:00Z') });
     eq((await d.call()).json.refreshInSec, 60, 'DST Monday 08:30 EDT through the handler');
-    const o = boot(code, { now: at('2026-09-30T12:20:00Z') });
+    const o = boot(code, { config: fo, now: at('2026-09-30T12:20:00Z') });
     eq((await o.call()).json.refreshInSec, 300, 'the client is told to come back at the window opening');
   }],
 
@@ -544,7 +696,7 @@ const TESTS = [
 
   ['another span is a SLICE: no extra upstream call, and the windows really differ', async (code) => {
     const e = boot(code);
-    await e.call({ range: '3m' });
+    await e.warm({ range: '3m' });
     const n = e.calls.length;
     const by = {};
     for (const range of ['1w', '1m', '3m', '6m', '1y', '5y']) by[range] = row(await e.call({ range }), 'ust10y').points;
@@ -556,6 +708,7 @@ const TESTS = [
 
   ['points: oldest first, <= 120, first/last of the span kept, extremes kept, every point real', async (code) => {
     const e = boot(code);
+    await e.warm();   // the reference series carry the Treasury tail
     for (const range of ['1w', '1m', '3m', '6m', '1y', '5y']) {
       const r = await e.call({ range });
       for (const x of r.json.rows) {
@@ -603,16 +756,20 @@ const TESTS = [
   ['changed: false on a cold isolate, true only when the newest observation moves', async (code) => {
     const e = boot(code, { treasury: down(503) });
     const r1 = await e.call();
+    await e.api.treasuryIdle();
     assert(r1.json.rows.every((x) => x.changed === false), 'cold isolate says false');
     eq(row(r1, 'ust10y').asOf, '2026-09-28', 'FRED while Treasury is down');
     e.clock.now += 11 * 60_000; // past the Treasury back-off
     e.opts.treasury = undefined;
-    const r2 = await e.call();
-    eq(['ust2y', 'ust10y', 'ust20y'].map((id) => [row(r2, id).asOf, row(r2, id).changed]), [['2026-09-30', true], ['2026-09-30', true], ['2026-09-30', true]], 'the Treasury print is a change');
-    assert(['unrate', 'cpi', 'pce', 'corepce'].every((id) => row(r2, id).changed === false), 'unchanged rows say false');
+    const r2 = await e.call();  // a fetch is kicked, but this reply is built before it lands
+    eq(YIELDS.map((id) => [row(r2, id).asOf, row(r2, id).changed]), [['2026-09-28', false], ['2026-09-28', false], ['2026-09-28', false]], 'not landed yet: FRED, nothing changed');
+    await e.api.treasuryIdle();
+    const r3 = await e.call();  // the landing expired the cached body: a fresh sweep
+    eq(YIELDS.map((id) => [row(r3, id).asOf, row(r3, id).changed]), [['2026-09-30', true], ['2026-09-30', true], ['2026-09-30', true]], 'the Treasury print is a change');
+    assert(OTHERS.every((id) => row(r3, id).changed === false), 'unchanged rows say false');
     e.clock.now += 120_000;
-    const r3 = await e.call();
-    assert(r3.json.rows.every((x) => x.changed === false), 'the next refresh with nothing new says false');
+    const r4 = await e.call();
+    assert(r4.json.rows.every((x) => x.changed === false), 'the next refresh with nothing new says false');
   }],
 
   ['CORS origin allowlist, methods, and JSON on every path', async (code) => {
@@ -650,37 +807,40 @@ const TESTS = [
 
   ['force is honoured at most once per 30s; Treasury backs off after a failure and a kept print never flips back', async (code) => {
     const e = boot(code);
-    await e.call();
+    await e.warm();   // the tail has landed and today's rate is held: no Treasury fetch is due
     const n = e.calls.length;
     e.clock.now += 10_000;
     await e.call({ force: true });
     await e.call({ force: true });
-    eq(e.calls.length, n + 9, 'first force re-sweeps every series (7 FRED + 2 Treasury, the committed roster; the roster itself is cached 1h)');
+    eq(e.calls.length, n + 7, 'first force re-sweeps every FRED series (Treasury follows its own cadence; the roster itself is cached 1h)');
     e.clock.now += 10_000;
     await e.call({ force: true });
-    eq(e.calls.length, n + 9, 'a second force inside 30s is a cached read');
+    eq(e.calls.length, n + 7, 'a second force inside 30s is a cached read');
     e.clock.now += 25_000;
     await e.call({ force: true });
-    eq(e.calls.length, n + 18, 'honoured again once 30s have passed');
+    eq(e.calls.length, n + 14, 'honoured again once 30s have passed');
     const b = boot(code, { treasury: down(503) });
-    await b.call();
+    await b.call(); await b.api.treasuryIdle();
     eq(b.fetchCount('home.treasury.gov'), 2, 'tried once');
     b.clock.now += 120_000;
-    await b.call();
+    await b.call(); await b.api.treasuryIdle();
     eq(b.fetchCount('home.treasury.gov'), 2, 'backing off');
     b.clock.now += 9 * 60_000;
-    await b.call();
+    await b.call(); await b.api.treasuryIdle();
     eq(b.fetchCount('home.treasury.gov'), 4, 'retried after 10 min');
     const k = boot(code);
-    eq(row(await k.call(), 'ust10y').asOf, '2026-09-30', 'Treasury print');
-    k.clock.now += 120_000;
+    eq(row(await k.warm(), 'ust10y').asOf, '2026-09-30', 'Treasury print');
+    k.clock.now += 7 * 3_600_000; // 01:00 ET on Oct 1: a new NY day, so a refetch is due (hourly, outside the posting window)
     k.opts.treasury = down(503);
+    await k.call(); await k.api.treasuryIdle();
+    eq(k.fetchCount('home.treasury.gov'), 4, 'the refetch was made, and failed');
     const kept = row(await k.call(), 'ust10y');
     eq([kept.asOf, kept.source, kept.value, kept.status], ['2026-09-30', 'treasury', 5.21, 'ok'], 'a failed Treasury fetch keeps the validated print (no flip back to T-2)');
   }],
 
   ['a degraded feed retries fast even in a quiet period', async (code) => {
-    const e = boot(code, { now: at('2026-09-30T13:20:00Z'), fred: { DGS20: down(503) } });
+    // A roster that names no Treasury column: this is the degraded-row rule alone, not the 30s Treasury cap.
+    const e = boot(code, { config: fredOnly(CONFIG), now: at('2026-09-30T13:20:00Z'), fred: { DGS20: down(503) } });
     const r = await e.call();
     eq(r.json.refreshInSec, 120, 'degraded -> 2 min, not the 15 min quiet TTL');
     const n = e.fetchCount('fred.stlouisfed.org');
@@ -734,11 +894,23 @@ const MUTANTS = [
   ['origin allowlist bypassed', 'const allowed = ALLOWED_ORIGINS.has(origin);', 'const allowed = true;'],
   ['delta not rounded (float noise on the wire)', 'const delta = value !== null && prevV !== null ? roundTo(value - prevV, r.decimals) : null;', 'const delta = value !== null && prevV !== null ? value - prevV : null;'],
   ['a dead feed answers HTTP 200', 'const send = (out: ReturnType<typeof shape>) => reply(out.ok ? 200 : 502, out, cors);', 'const send = (out: ReturnType<typeof shape>) => reply(200, out, cors);'],
-  ['degraded feed waits the full quiet TTL','const ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;', 'const ttl = policy.ttlMs;'],
+  ['degraded feed waits the full quiet TTL','let ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;', 'let ttl = policy.ttlMs;'],
   ['built-in default re-blanks the 10Y Treasury column (the fallback silently goes FRED-only)', "sources: { fred: 'DGS10', treasury: '10 Yr' }", "sources: { fred: 'DGS10' }"],
   ['built-in default names the wrong tenor on the 20Y row', "sources: { fred: 'DGS20', treasury: '20 Yr' }", "sources: { fred: 'DGS20', treasury: '30 Yr' }"],
-  ['Treasury never fetched although rows name a column', 'roster.rows.some((r) => r.treasury) ? refreshTreasury(now, today) : Promise.resolve(),', 'Promise.resolve(),'],
-  ['Treasury fetched although no row names a column', 'roster.rows.some((r) => r.treasury) ? refreshTreasury(now, today) : Promise.resolve(),', 'refreshTreasury(now, today),'],
+  ['Treasury never fetched although rows name a column', 'kickTreasury(now, today, cols);', 'kickTreasury(now, today, []);'],
+  ['Treasury fetched although no row names a column', 'if (!cols.length) return false;', 'if (cols.length < 0) return false;'],
+  // the background (stale-while-revalidate) Treasury fetch, 2026-10-01
+  ['a reply waits on Treasury (the fetch awaited inside refresh)', 'kickTreasury(now, today, cols);', 'kickTreasury(now, today, cols); await treasuryIdle();'],
+  ['the old 5 s Treasury timeout (Treasury answers Supabase in 17-20 s)', 'const TREASURY_TIMEOUT_MS = 45_000;', 'const TREASURY_TIMEOUT_MS = 5_000;'],
+  ['Treasury single-flight dropped', 'if (treasuryInflight) return false;', 'if (treasuryInflight && false) return false;'],
+  ['the landing does not expire the cached body (in-place invalidation dropped)', 'if (await refreshTreasury(now, today) && dataset) dataset.expiresAt = 0;', 'if (await refreshTreasury(now, today) && dataset) void 0;'],
+  ['the 30 s TTL cap while a fetch is in flight removed', 'if (treasuryInflight) ttl = Math.min(ttl, TREASURY_PENDING_TTL_MS);', '// cap removed'],
+  ['the background fetch is not handed to EdgeRuntime.waitUntil', '(globalThis as any).EdgeRuntime?.waitUntil?.(task);', 'void task;'],
+  ["today's rate not treated as final (asked for again all evening)", 'if (cols.every((c) => kept.get(c)?.at(-1)?.[0] === today)) return false;', 'if (cols.length < 0) return false;'],
+  ['no 5-minute cadence in the posting window (asked on every re-sweep)', 'const every = treasuryPosting(now) ? TREASURY_POSTING_EVERY_MS : TREASURY_IDLE_EVERY_MS;', 'const every = treasuryPosting(now) ? 0 : TREASURY_IDLE_EVERY_MS;'],
+  ['5-minutely outside the posting window instead of hourly', 'const every = treasuryPosting(now) ? TREASURY_POSTING_EVERY_MS : TREASURY_IDLE_EVERY_MS;', 'const every = TREASURY_POSTING_EVERY_MS;'],
+  ['the 10-min back-off ignored', 'if (now < treasuryDownUntil) return false;', 'if (now < 0) return false;'],
+  ['posting window stops at 18:30 (a late post waits an hour)', "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from;", "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from && w.sec < WINDOWS[1].to;"],
   ['a Treasury tail sharing no date with FRED is trusted', "if (!overlap) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };", "if (overlap < 0) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };"],
   ['upstream fetch left unbounded (a hung Treasury host hangs the sweep)', 'const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(ms) });', 'const res = await fetch(url, { headers: UA });'],
 ];
