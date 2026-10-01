@@ -7721,20 +7721,31 @@ const ECON_NEW_MS = 60000;                  /* a NEW chip clears once its row ha
 const ECON_NEW_SEEN = 0.5;                  /* ...half of it counts as in view */
 const ECON_SPARK_W = 100, ECON_SPARK_H = 32;
 
-/* ── the live 10Y (owner request 2026-10-01) ──────────────────────────────────
-   FRED and Treasury publish a yield once a day, so by the afternoon the 10Y row is a business day old. A live
-   10-year print IS available keyless from Yahoo's ^TNX (the CBOE 10-year yield index, quoted in percent; checked
-   2026-10-01 against Treasury's own 09-30 par yield: 5.293 vs 5.29) through the `quote-proxy` every chart already
-   uses — so this is a CLIENT-side overlay on the row: no edge function, no deploy. There is no free live 2Y or 20Y
-   (Yahoo has no such symbol), so those rows are untouched. The overlay is applied only when it can be trusted
-   (econLiveRow) and the row is otherwise exactly what the server sent: real data or nothing. */
-const ECON_LIVE = { ust10y: '^TNX' };       /* row id → Yahoo symbol */
+/* ── the live yields (owner request 2026-10-01; "no fallbacks", same day) ────────────────────────────────────
+   FRED and Treasury publish a yield once a day, so by the afternoon a yield row is a business day old. The live print
+   comes from ONE place, a CLIENT-side overlay on the row — no edge function, no deploy: CNBC's quote service
+   (quote.cnbc.com restQuote), ONE request for all three yields (US2Y|US10Y|US20Y), made by THIS browser. CNBC's bot
+   protection refuses every server (Supabase and the build sandbox both get 403), but it answers a page on this site
+   with CORS — measured from the owner's Chromebook 2026-10-01 11:49 ET: 2Y 4.787, 10Y 5.253 (Tradeweb quotes,
+   last_time seconds old). It is an unofficial endpoint, so it can change or be blocked (an extension, a work network).
+   THERE IS NO FALLBACK (owner, 2026-10-01: "no fallbacks. If CNBC doesn't give me real time, I want to be aware"): a
+   second source — Yahoo's ^TNX was one, measured ~15 minutes behind — would put a delayed number under a live-looking
+   row without saying so. Instead a yield row that has no fresh CNBC quote while the bond session is open says NOT LIVE
+   in plain sight (econLiveState), and keeps showing its latest OFFICIAL reading under its own date and source.
+   The overlay is applied only when it can be trusted (econLiveRow) and the row is otherwise exactly what the server
+   sent: real data or nothing. */
+const ECON_LIVE = { ust2y: 'US2Y', ust10y: 'US10Y', ust20y: 'US20Y' };   /* row id → CNBC symbol */
+const ECON_CNBC_URL = 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=US2Y%7CUS10Y%7CUS20Y&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json&events=1';
+const ECON_CNBC_TIMEOUT_MS = 8000;          /* it answers in well under a second: a request silent this long is a failed one, and the poll chain must not wait on it */
 const ECON_LIVE_TOL = 0.75;                 /* percentage points: a print further than this from the row's own newest official reading is a misread (×10 scaling, a wrong symbol), never a move */
-const ECON_LIVE_FRESH_MS = 30 * 60000;      /* LIVE while the newest 5-minute bar started within this, LAST after */
-const ECON_LIVE_KEEP_MS = 30 * 60000;       /* a reading whose last successful fetch is older than this is dropped: the row falls back to the official one — or older than TWO poll intervals when polling is slower than that (weekends, holidays: an hourly poll must not flicker the row off halfway through its own interval; Codex, PR #297) */
+const ECON_LIVE_FRESH_MS = 5 * 60000;       /* LIVE while the quote's OWN time is within this; older, the row says NOT LIVE (session open) or LAST (closed) */
+const ECON_LIVE_KEEP_MS = 30 * 60000;       /* a reading whose last successful fetch is older than this is dropped: the row is the official one again (and says NOT LIVE while the session is open) — or older than TWO poll intervals when polling is slower than that (weekends, holidays: an hourly poll must not flicker the row off halfway through its own interval; Codex, PR #297) */
 const ECON_LIVE_FAST_S = 60, ECON_LIVE_IDLE_S = 600, ECON_LIVE_OFF_S = 3600;
-const ECON_LIVE_TIMEOUT_MS = 20000;         /* a quote that has not answered by then is a failed quote: a hung request must not wedge the poll chain */
-const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0, forcing: false };   /* q: row id → { price, ts, date, prevClose, prevDate, fetchedAt } */
+/* The bond cash session, 08:00–17:00 ET, padded five minutes either side: while it is open a yield is EXPECTED to be live (the poll
+   runs every minute and a row without a fresh quote says NOT LIVE); outside it a stopped quote is simply the last print (LAST). Early
+   closes (14:00 before some holidays) are not modelled — the quote sits at its last print and the row says NOT LIVE until 17:05. */
+const ECON_OPEN_MIN = 7 * 60 + 55, ECON_CLOSE_MIN = 17 * 60 + 5;
+const econLive = { q: {}, timer: 0, dueAt: 0, gen: 0, forcing: false, landedAt: 0, answered: null };   /* q: row id → { price, ts, date, prevClose, prevDate, symbol, fetchedAt, keepMs }; landedAt: when the first reply landed (0 = none yet, so a row is not called NOT LIVE before CNBC was ever asked); answered: did the LAST request get a usable body (null = not yet) */
 
 let econTf = ECON_DEFAULT_TF;
 try {
@@ -8068,13 +8079,23 @@ function renderEcon(payload) {
 
 /* Where THIS number came from, for the tiny line under each row (owner request 2026-10-01) — the visible twin of the
    tooltip's `source` clause. Demo rows say so: they are generated, whatever their payload `source` field reads, and
-   "FRED" under a made-up number would be a lie. A live print names Yahoo and its symbol (a fetch through
-   quote-proxy); an official reading names whoever supplied its newest observation. An unknown source prints
-   NOTHING — never a guess. */
+   "FRED" under a made-up number would be a lie. A live print names CNBC and its symbol; an official reading (a
+   NOT LIVE yield row included) names whoever supplied its newest observation. An unknown source prints NOTHING —
+   never a guess. */
 function econSourceLabel(r) {
   if (DESK.mode === 'demo') return 'Demo data';
-  if (r.live) return 'Yahoo ' + r.live.symbol;
+  if (r.live) return 'CNBC ' + r.live.symbol;
   return r.source === 'treasury' ? 'U.S. Treasury' : r.source === 'fred' ? 'FRED' : '';
+}
+
+/* Why a yield row is NOT LIVE, for its tooltip: the three honest causes. */
+function econNotLiveWhy(r, now) {
+  if (r.live) {
+    const age = Math.max(0, now - r.live.ts);
+    return 'CNBC\'s last quote for this row is ' + (age < 90 * 60000 ? Math.round(age / 60000) + ' min' : Math.round(age / 3600000) + ' h') + ' old, so it is not real time';
+  }
+  return (econLive.answered === false ? 'CNBC did not answer (blocked, offline or refused), so there is no real-time yield'
+    : 'CNBC sent no usable real-time quote for this row') + '; this is the latest official reading';
 }
 
 function econRow(r, chartsMatch) {
@@ -8098,10 +8119,15 @@ function econRow(r, chartsMatch) {
   /* the date the reading is FOR — the honest signal: a yield is a daily RATE (Treasury's 3:30 pm ET snapshot, posted late in the
      afternoon, or FRED's a business day later), never intraday — with the row's tag (NEW / STALE / NO DATA) beside it */
   const sub = el('div', 'econ-sub');
-  /* a LIVE row (the 10Y, 2026-10-01) names the Pacific CLOCK of its bar when that is today, the date otherwise, and
-     says LIVE while the bar is recent, LAST once the quote has stopped moving (after the bell, over a weekend) */
+  /* a LIVE row (the yields, 2026-10-01) names the Pacific CLOCK of its quote when that is today, the date otherwise, and says
+     LIVE while the quote is fresh, LAST once it has stopped moving with the bond session CLOSED (after the bell, a weekend) —
+     and NOT LIVE, in a solid chip, whenever the session is OPEN and there is no fresh quote: the owner wants to KNOW when CNBC
+     is not giving real time (no fallback stands in; the row keeps its official reading, its date and its own source) */
+  const now = Date.now(), liveState = missing ? '' : econLiveState(r, now);
   sub.appendChild(el('span', 'econ-date', missing ? '—' : r.live ? econLiveWhen(r) : econDateLabel(r.asOf, r.cadence)));
-  if (r.live) { sub.appendChild(el('span', 'econ-tag', r.live.fresh ? 'LIVE' : 'LAST')); li.dataset.live = '1'; }
+  if (r.live) li.dataset.live = '1';
+  if (liveState === 'live' || liveState === 'last') sub.appendChild(el('span', 'econ-tag', liveState === 'live' ? 'LIVE' : 'LAST'));
+  else if (liveState === 'notlive') { sub.appendChild(el('span', 'econ-tag econ-nolive', 'NOT LIVE')); li.dataset.notlive = '1'; }
   if (isNew) sub.appendChild(el('span', 'econ-new', 'NEW'));
   if (stale) sub.appendChild(el('span', 'econ-tag', 'STALE'));
   else if (missing) sub.appendChild(el('span', 'econ-tag', 'NO DATA'));
@@ -8126,11 +8152,12 @@ function econRow(r, chartsMatch) {
   /* every fact in the tooltip too, including what is not on the row: where the number came from */
   const why = [
     (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
-    missing ? '' : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (5-minute bar start)'
+    liveState === 'notlive' ? 'NOT LIVE — ' + econNotLiveWhy(r, now) : '',
+    missing ? '' : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (time of the last quote)'
       : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
-    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points' + (r.live ? ' from the previous session\'s last print' : ''),
+    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points' + (r.live ? ' from the previous close CNBC reports' : ''),
     DESK.mode === 'demo' ? 'source demo data (generated, not real)'
-      : r.live ? 'source Yahoo Finance ' + r.live.symbol + ' live quote, may be delayed'
+      : r.live ? 'source CNBC ' + r.live.symbol + ' live quote, may be delayed'
       : r.source === 'treasury' ? 'source U.S. Treasury daily rate (a ~3:30 pm ET snapshot of bid-side quotes)' : r.source === 'fred' ? 'source FRED' : '',
     r.live ? 'latest official reading ' + econNum(r.live.official.value, dec) + (r.unit || '') + ' on ' + econDateLabel(r.live.official.asOf, 'daily')
       + ' (' + (r.live.official.source === 'treasury' ? 'U.S. Treasury' : 'FRED') + ')' : '',
@@ -8146,36 +8173,73 @@ function econRow(r, chartsMatch) {
   return li;
 }
 
-/* ── live 10Y: parse, trust, paint, poll ───────────────────────────────────────────────────────────────────
-   Parse the newest 5-minute bar of an intraday series and the last print of the session before it (the change's
-   baseline). Bar times are UTC 'YYYY-MM-DD HH:mm'; a bar's session is its NEW YORK date. null for anything malformed,
-   and for a bar from the future (a clock fault is not a quote). */
-function econLiveParse(series, now) {
-  if (!series || !Array.isArray(series.t) || !Array.isArray(series.c) || series.t.length !== series.c.length) return null;
-  const bar = i => {
-    const price = fmtToNum(series.c[i]), ts = Date.parse(String(series.t[i]).replace(' ', 'T') + ':00Z');
-    return Number.isFinite(price) && price > -5 && price < 30 && Number.isFinite(ts) ? { price, ts, date: etClock(new Date(ts)).date } : null;
-  };
-  let last = null, i = series.t.length - 1;
-  for (; i >= 0 && !last; i--) last = bar(i);
-  if (!last || last.ts > now + 5 * 60000) return null;
-  let prev = null;
-  for (; i >= 0 && !prev; i--) { const b = bar(i); if (b && b.date < last.date) prev = b; }
-  return { price: last.price, ts: last.ts, date: last.date, prevClose: prev ? prev.price : null, prevDate: prev ? prev.date : null };
+/* ── the live yields: parse, trust, paint, poll ────────────────────────────────────────────────────────────── */
+/* ── CNBC: parse. A quote is {symbol, code, last: "4.787%", last_time: "2026-10-01T11:49:47.000-0400", change: "-0.10", …}:
+   numbers arrive as strings, often with a trailing %, and the time carries its UTC offset WITHOUT a colon (-0400) — not the
+   standard ISO form, and engines differ on whether they accept it (current Chromium and WebKit do) — so the offset is
+   rewritten to the standard form before Date.parse rather than relying on that. `change` is in
+   percentage points, so the previous close is last − change (it agrees with Treasury's own close to the cent). The
+   quote's `change_pct` is NEVER used: it read +0.19% beside a −0.10 change on the 2Y. Anything malformed is skipped,
+   never repaired (a quote is a number or it is nothing); a quote from the future is a clock fault, not a quote. Returns
+   { rowId: { price, ts, date, prevClose, prevDate: null, symbol } } for the rows it could read. */
+function econCnbcNum(v) {
+  const m = /^\s*([+-]?\d+(?:\.\d+)?)\s*%?\s*$/.exec(String(v == null ? '' : v));
+  return m ? Number(m[1]) : null;
+}
+function econCnbcTime(s) {
+  const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?([+-])(\d\d):?(\d\d)$/.exec(String(s == null ? '' : s));
+  if (!m || Number(m[3]) > 14 || Number(m[4]) > 59) return NaN;
+  /* Date.parse REPAIRS a calendar-impossible stamp (Feb 30 → Mar 2, 24:00 → the next day) rather than refusing it, and a
+     quote is a number or it is nothing: read the captured fields back as UTC and refuse any that moved. */
+  const wall = new Date(m[1] + 'Z');
+  if (isNaN(wall) || wall.toISOString().slice(0, 19) !== m[1]) return NaN;
+  return Date.parse(m[1] + m[2] + m[3] + ':' + m[4]);
+}
+function econLiveParseCnbc(body, now) {
+  const out = {};
+  const list = body && body.FormattedQuoteResult ? body.FormattedQuoteResult.FormattedQuote : null;
+  for (const it of Array.isArray(list) ? list : list && typeof list === 'object' ? [list] : []) {
+    if (!it || typeof it !== 'object') continue;
+    const id = Object.keys(ECON_LIVE).find(k => ECON_LIVE[k] === it.symbol);
+    if (!id || (it.code !== undefined && Number(it.code) !== 0)) continue;
+    const price = econCnbcNum(it.last), ts = econCnbcTime(it.last_time);
+    if (!Number.isFinite(price) || price <= -5 || price >= 30 || !Number.isFinite(ts) || ts > now + 5 * 60000) continue;
+    const chg = econCnbcNum(it.change);
+    out[id] = {
+      price, ts, date: etClock(new Date(ts)).date,
+      prevClose: Number.isFinite(chg) && Math.abs(chg) < 2 ? Number((price - chg).toFixed(3)) : null,
+      prevDate: null, symbol: it.symbol,
+    };
+  }
+  return out;
+}
+/* The request itself: ONE call for every live row, made by this browser. NEVER throws and never reads a non-200: null means
+   "CNBC did not answer" (blocked, offline, timed out, changed) — and the rows then say NOT LIVE, there is no second source.
+   Default fetch semantics only — it is exactly the call that was measured from the owner's browser, with no extra headers
+   that could turn it into a CORS preflight. */
+async function econLiveCnbc() {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ECON_CNBC_TIMEOUT_MS);
+  try {
+    const r = await fetch(ECON_CNBC_URL, { signal: ctl.signal });
+    return r.ok ? await r.json() : null;
+  } catch { return null; } finally { clearTimeout(t); }
 }
 /* The row as drawn: a live print stands in for the official reading ONLY when all of these hold, else the row is
    returned UNCHANGED (same object) — never alone: the official row must be healthy (a live print is checked against
-   it); the print's NEW YORK date must be STRICTLY newer than the official reading's (an official reading that has
-   caught up to that day stands, so Treasury's/FRED's own number is never overwritten by a delayed quote of the same
-   day); it must sit within ECON_LIVE_TOL of the official reading (a misread symbol or scale is not a move); and the
-   fetch it came from must be younger than ECON_LIVE_KEEP_MS. The change is measured from the previous session's last
-   PRINT of the same index (null when the series holds none — never 0), the chart gets the print as its last point. */
+   it); the print's NEW YORK date must be STRICTLY newer than the official reading's — except that while the bond
+   session is open a FRESH quote also replaces today's own official reading (Treasury's 3:30 pm snapshot is posted
+   mid-afternoon, and from then until the close it is older than the live quote beside it); an official reading that has
+   caught up and a quote that is no longer fresh leave the official number standing; it must sit within ECON_LIVE_TOL
+   of the official reading (a misread symbol or scale is not a move); and the fetch it came from must be younger than
+   ECON_LIVE_KEEP_MS. The change is measured from the previous session's close as CNBC reports it (null when it does
+   not — never 0), the chart gets the print as its last point. */
 function econLiveRow(r, now) {
   const q = Object.hasOwn(ECON_LIVE, r.id) ? econLive.q[r.id] : null;
   if (!q || DESK.mode === 'demo' || now - q.fetchedAt > (q.keepMs || ECON_LIVE_KEEP_MS)) return r;
   const official = fmtToNum(r.value);
   if (r.status !== 'ok' || !r.asOf || !Number.isFinite(official)) return r;
-  if (!(q.date > r.asOf) || Math.abs(q.price - official) > ECON_LIVE_TOL) return r;
+  const fresh = now - q.ts <= ECON_LIVE_FRESH_MS;
+  if (!(q.date > r.asOf || (q.date === r.asOf && fresh && econBondOpen(now))) || Math.abs(q.price - official) > ECON_LIVE_TOL) return r;
   const pts = Array.isArray(r.points) ? r.points : [];
   const lastPt = pts[pts.length - 1];
   /* a short span that fell back to its N latest readings (`pointsNote`: "daily - 6 latest") keeps N — the print replaces the
@@ -8185,13 +8249,31 @@ function econLiveRow(r, now) {
   return {
     ...r, value: q.price, delta: Number.isFinite(q.prevClose) ? Number((q.price - q.prevClose).toFixed(econDec(r))) : null,
     prev: q.prevClose, asOf: q.date, prevAsOf: q.prevDate, points, source: 'live', changed: false,
-    live: { symbol: ECON_LIVE[r.id], ts: q.ts, fresh: now - q.ts <= ECON_LIVE_FRESH_MS, official: { asOf: r.asOf, value: r.value, source: r.source } },
+    live: { symbol: q.symbol, ts: q.ts, fresh, official: { asOf: r.asOf, value: r.value, source: r.source } },
   };
 }
 /* the date cell of a live row: the Pacific CLOCK of its bar when the bar is from today (Pacific), else the date it is for */
 function econLiveWhen(r) {
   const d = new Date(r.live.ts);
   return ptDateKey(d) === ptDateKey(new Date()) ? fmtClockBare(d.toISOString()) : econDateLabel(r.asOf, 'daily');
+}
+/* Is the bond cash session open at `now`: a bond-market trading day (NYSE's days minus Columbus and Veterans Day), 07:55–17:05 ET. */
+function econBondOpen(now) {
+  const c = etTradingClock(new Date(now));
+  return !!c && !BOND_ONLY_HOLIDAYS.has(c.date) && c.minutes >= ECON_OPEN_MIN && c.minutes < ECON_CLOSE_MIN;
+}
+/* What a yield row says about its own liveness (owner, 2026-10-01: "if CNBC doesn't give me real time, I want to be aware"):
+     'live'    a CNBC quote whose own time is within ECON_LIVE_FRESH_MS            → LIVE
+     'last'    a quote that has stopped moving while the bond session is CLOSED    → LAST (normal: after the bell, a weekend)
+     'notlive' the session is OPEN and there is no fresh quote: CNBC is blocked, down, left the row out, was refused as a
+               misread, or its quote has stopped ticking                           → NOT LIVE, the official reading under it
+     ''        everything else: a row that is not a yield, demo, CNBC never asked yet (no tag before the first reply, so a
+               page load does not flash NOT LIVE), or a closed session with nothing live on the row. */
+function econLiveState(r, now) {
+  if (DESK.mode === 'demo' || !Object.hasOwn(ECON_LIVE, r.id) || !econLive.landedAt) return '';
+  const open = econBondOpen(now);
+  if (r.live) return r.live.fresh ? 'live' : open ? 'notlive' : 'last';
+  return open ? 'notlive' : '';
 }
 /* A live print stands in for an official reading: record that reading as seen (never announce it as NEW — the chip is
    for readings the viewer was not shown, and a live row is not a place to hang one). */
@@ -8215,27 +8297,24 @@ function econLiveRepaint() {
     const r = shown.rows.find(x => x.id === li.dataset.id);
     if (!r) continue;
     const live = econLiveRow(r, now);
-    if (live === r && !li.dataset.live) continue;   /* nothing live on it, nothing was: leave the row (and its NEW watch) alone */
     if (live !== r) econLiveSeen(r);
     const next = econRow(live, chartsMatch);
-    /* the 30s ticker calls this too (the date cell and LIVE→LAST depend on the CLOCK, not only on a new quote, so across Pacific
-       midnight or an idle ten minutes they go stale on their own — Codex, PR #297): rebuild only when something a viewer could
-       see differs, so a hover on the row (its tooltip) is not torn down every half minute */
-    if (live !== r && li.dataset.live && next.textContent === li.textContent && next.title === li.title) continue;
+    /* the 30s ticker calls this too (the date cell, LIVE→NOT LIVE→LAST and the session's open and close depend on the CLOCK, not
+       only on a new quote — Codex, PR #297): rebuild only when something a viewer could see differs, so a hover on the row
+       (its tooltip) is not torn down every half minute, and a row with nothing live on it keeps its NEW watch */
+    if (next.textContent === li.textContent && next.title === li.title) continue;
     li.replaceWith(next);
     if (next.classList.contains('is-new')) econWatch(next);
     rebuilt = true;
   }
   if (rebuilt) econArmNew();
 }
-/* How soon to ask again: every minute while the bond cash session runs (the proxy caches a minute), every ten
-   minutes around it on a trading day, hourly at weekends and holidays — NYSE holidays plus Columbus Day and Veterans Day
-   (BOND_ONLY_HOLIDAYS). Bond-market EARLY closes (14:00 before some holidays) are not modelled: the quote just sits at its
-   last print, tagged LAST, until 15:15. */
+/* How soon to ask again: every minute while the bond cash session runs, every ten minutes around it on a trading day,
+   hourly at weekends and holidays — NYSE holidays plus Columbus Day and Veterans Day (BOND_ONLY_HOLIDAYS). */
 function econLiveDelaySec(now) {
   const c = etTradingClock(new Date(now));
   if (!c || BOND_ONLY_HOLIDAYS.has(c.date)) return ECON_LIVE_OFF_S;   /* the bond market shuts on two days the NYSE does not (Codex, PR #297) */
-  return c.minutes >= 7 * 60 + 55 && c.minutes < 15 * 60 + 15 ? ECON_LIVE_FAST_S : ECON_LIVE_IDLE_S;
+  return econBondOpen(now) ? ECON_LIVE_FAST_S : ECON_LIVE_IDLE_S;
 }
 function econLiveArm(sec) {
   clearTimeout(econLive.timer);
@@ -8244,37 +8323,33 @@ function econLiveArm(sec) {
   if (document.hidden) return;   /* visibilitychange rearms */
   econLive.timer = setTimeout(() => { econLive.timer = 0; econLiveFetch(false); }, sec * 1000);
 }
-function econLiveQuote(sym, force) {
-  let t;
-  const cap = new Promise((_, reject) => { t = setTimeout(() => reject(new Error('quote-proxy timed out')), ECON_LIVE_TIMEOUT_MS); });
-  return Promise.race([deskQuote(sym, 'intraday', false, force ? { force: true } : undefined), cap]).finally(() => clearTimeout(t));
-}
-/* One quote per live row. NEVER throws (the caller may sit inside a Promise.all with the forced refresh). A failed
-   quote keeps the last good one, which ages out after ECON_LIVE_KEEP_MS; the repaint and the re-arm sit OUTSIDE the
-   fetch's try (renderAfterFetch). `force` bypasses quote-proxy's warm cache ("Refresh now"). */
+/* One CNBC request for every live row. NEVER throws (the caller may sit inside a Promise.all with the forced refresh). There is NO
+   second source: a request that fails, or a row CNBC leaves out, keeps the last good quote — which ages out after ECON_LIVE_KEEP_MS
+   and, once older than ECON_LIVE_FRESH_MS, makes the row say NOT LIVE while the session is open (econLiveState). The repaint and the
+   re-arm sit OUTSIDE the fetch's try (renderAfterFetch). `force` only claims the request slot (the masthead's "Refresh now" waits for
+   it): CNBC is asked fresh every time, there is no cache in front of it. */
 async function econLiveFetch(force) {
   if (DESK.mode === 'demo' || !DESK_DB.url) return;
   const forced = force === true;
   /* A FORCED quote owns the slot until it lands (Codex, PR #297): a timer coming due meanwhile — or an unforced call from
      boot / a tab coming back — would take the newer generation and get the forced reply thrown away, leaving the row on the
-     proxy's cached quote under a "Refresh now" that said it had refreshed. Every fetch clears the timer; the one that lands re-arms. */
+     last quote under a "Refresh now" that said it had refreshed. Every fetch clears the timer; the one that lands re-arms. */
   if (!forced && econLive.forcing) return;
   clearTimeout(econLive.timer); econLive.timer = 0; econLive.dueAt = 0;
   const gen = ++econLive.gen;
   if (forced) econLive.forcing = true;
-  const got = await Promise.all(Object.entries(ECON_LIVE).map(async ([id, sym]) => {
-    try {
-      const out = await econLiveQuote(sym, forced);
-      return [id, out && out.ok ? econLiveParse(out.series, Date.now()) : null];
-    } catch { return [id, null]; }
-  }));
+  let body = null, cnbc = {};
+  try { body = await econLiveCnbc(); } catch { body = null; }
+  try { cnbc = econLiveParseCnbc(body, Date.now()); } catch { cnbc = {}; }
   if (gen !== econLive.gen) return;   /* a newer request owns the state now */
   econLive.forcing = false;
-  let ok = false;
   const landed = Date.now();
-  for (const [id, q] of got) if (q) { econLive.q[id] = { ...q, fetchedAt: landed, keepMs: Math.max(ECON_LIVE_KEEP_MS, 2 * econLiveDelaySec(landed) * 1000) }; ok = true; }
+  econLive.landedAt = landed;
+  econLive.answered = body != null;
+  const ids = Object.keys(cnbc);
+  for (const id of ids) econLive.q[id] = { ...cnbc[id], fetchedAt: landed, keepMs: Math.max(ECON_LIVE_KEEP_MS, 2 * econLiveDelaySec(landed) * 1000) };
   renderAfterFetch(econLiveRepaint);
-  econLiveArm(ok ? econLiveDelaySec(Date.now()) : ECON_RETRY_S);
+  econLiveArm(ids.length ? econLiveDelaySec(Date.now()) : ECON_RETRY_S);
 }
 
 /* ── poller: the response's refreshInSec (clamped 30s..3600s) schedules the next fetch. The function

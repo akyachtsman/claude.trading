@@ -78,6 +78,17 @@ const BASE_URL = process.env.APP_URL || 'https://akyachtsman.github.io/claude.tr
    but both are built from these constants rather than from re-typed literals. */
 const FEED_ORIGIN = '.supabase.co/functions/v1/';
 const FEED_CORS = /Access-Control-Allow-Origin|access control checks/i;
+/* ONE optional third-party feed beside the desk's own (owner request 2026-10-01): the live 2Y/10Y/20Y come straight from the
+   visitor's BROWSER to CNBC's quote service, because CNBC refuses every server. It is an unofficial endpoint and, from a CI runner
+   or any blocked network, its refusal logs the same console errors a failed feed call does — which the app absorbs BY DESIGN (the
+   rows fall back to Treasury/FRED). Matched on this exact URL prefix and nothing wider: not CNBC's other hosts or pages, not a
+   look-alike host, and not another URL that merely CARRIES the prefix inside its query string (S57 pins all four). A location
+   URL must START with it (`optionalFeedUrl`); a message must hold it as a whole URL token — at the start or right after
+   whitespace, a quote or an opening bracket (`optionalFeedInText`) — never after `=`, `?` or `/`. */
+const OPTIONAL_FEED = 'https://quote.cnbc.com/quote-html-webservice/';
+const optionalFeedUrl = (u) => typeof u === 'string' && u.startsWith(OPTIONAL_FEED);
+const OPTIONAL_FEED_TOKEN = new RegExp(`(?:^|[\\s'"(])${OPTIONAL_FEED.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`);
+const optionalFeedInText = (s) => OPTIONAL_FEED_TOKEN.test(String(s || ''));
 /* The TradingView embed probes motion sensors from inside its OWN nested
    sub-frame, which an `allow=` on the outer iframe cannot reach (tried in
    PR #78). Exact string only — never a blanket console mute. */
@@ -114,7 +125,7 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.tes
 const benignCors = (text, src) => {
   const t = `${text || ''} ${src || ''}`;
   return FEED_CORS.test(text || '') &&
-    (t.includes(FEED_ORIGIN) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
+    (t.includes(FEED_ORIGIN) || optionalFeedUrl(src) || optionalFeedInText(text) || (LOCAL_ORIGIN && t.includes(OWN_ORIGIN)));
 };
 /* WebKit raises a blocked cross-origin fetch as a pageerror where Chromium only
    logs it, so this is the iphone project's half of the same rule. */
@@ -468,6 +479,7 @@ test('S1: page loads without JS errors', async ({ page, renderWitness }) => {
     if (m.type() !== 'error') return;
     const at = (m.location() && m.location().url) || '';
     if (m.text().includes(FEED_ORIGIN) || at.includes(FEED_ORIGIN)) return;
+    if (optionalFeedUrl(at)) return;   /* the CNBC quote call's "Failed to load resource" — see OPTIONAL_FEED at the top */
     /* A CORS REJECTION from the feed origin is the same allowlisted noise, but
        it arrives as a PAIR and only the second message names the URL — the
        first says "Origin http://localhost:8080 is not allowed by
@@ -702,7 +714,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
        fix, so it lands inside S3's sweep window. Matched on the TEXT as well as
        the source: the CORS pair's first message names the blocked origin rather
        than the URL, so a source-only test misses half of it. */
-    const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text);
+    const feed = FEED_ORIGIN_RE.test(src) || FEED_ORIGIN_RE.test(text) || optionalFeedUrl(src) || optionalFeedInText(text);
     if (feed && /Failed to load resource|Access-Control-Allow-Origin|access control checks/i.test(text)) return;
     /* The rule above demands the FEED ORIGIN appear in the text or the location,
        which the first message of WebKit's CORS pair supplies in neither — it
@@ -846,7 +858,7 @@ test('S3: interactive elements discovered and exercised without errors', async (
   /* feed-origin 5xx excluded — see the FEED_ORIGIN note on the console
      listener above; a persistent feed outage still fails loudly via S14 */
   const blocking = findings.filter(f =>
-    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN_RE.test(c.url || '')) ||
+    f.apiErrors.some(c => c.status >= 500 && !FEED_ORIGIN_RE.test(c.url || '') && !optionalFeedUrl(c.url)) ||
     f.consoleErrors.length > 0);
   expect(blocking, `Blocking anomalies found:\n${JSON.stringify(blocking, null, 2)}`).toHaveLength(0);
 });
@@ -5909,7 +5921,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     return {
       id: li.dataset.id, cadence: li.dataset.cadence, status: li.dataset.status,
       label: q('.econ-label').textContent, val: q('.econ-val').textContent, delta: q('.econ-delta').textContent,
-      date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
+      date: q('.econ-date').textContent, tag: q('.econ-tag:not(.econ-nolive)') ? q('.econ-tag:not(.econ-nolive)').textContent : null,   // NOT LIVE is a yield row's liveness chip (S57), not its data status
       isNew: !!q('.econ-new'), note: q('.econ-note') ? q('.econ-note').textContent : null,
       hasSvg: !!svg, d: line ? line.getAttribute('d') : null, noline: !!q('.econ-noline'),
       li: box(li), info: box(q('.econ-info')), val$: box(q('.econ-val')), delta$: box(q('.econ-delta')), chart: svg ? box(svg) : null,
@@ -6159,6 +6171,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     // the live 10Y (S56) asks quote-proxy beside desk-econ; S55 is about desk-econ's own poller, so the quote is stubbed OFF
     // (a rejection: the rows stay exactly what the server sent) instead of reaching for the network from a forced-live page
     window.deskQuote = () => Promise.reject(new Error('quote-proxy stubbed off in S55'));
+    window.econLiveCnbc = () => Promise.resolve(null);   // the live yields are S56/S57's business, not this scenario's
     window.deskEcon = (range, force) => {
       window.__calls.push({ range, force: force === true });
       const m = window.__mode;
@@ -6414,73 +6427,47 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   expect(await pressed()).toEqual(['1y']);
 });
 
-// S56 — The live 10Y (owner request 2026-10-01). FRED and Treasury publish a yield once a day, so the 10Y row is a business day
-// old by the afternoon; Yahoo's ^TNX through the existing quote-proxy is a live print. It is a CLIENT-side overlay on the row,
-// trusted only when the official row is healthy, the print is on a STRICTLY newer New York date, within 0.75 points of the
-// official reading and fetched in the last 30 minutes — otherwise the row is EXACTLY what the server sent (real data or nothing).
-// The 2Y and 20Y have no free live source and are untouched. Driven with a stubbed deskEcon and deskQuote on Playwright's fake
-// clock (a fixed Thursday morning Pacific, so "today" and the bond session are known) — never the network.
-test('S56: the live 10Y — a live ^TNX print stands in for the official reading only when it can be trusted', async ({ page, renderWitness }) => {
+// S56 — The live-yield RULES and POLLER, driven through the 10Y row (owner request 2026-10-01). FRED and Treasury publish a yield once a
+// day, so a yield row is a business day old by the afternoon; a CNBC quote is live. It is a CLIENT-side overlay on the row, trusted only
+// when the official row is healthy, the print is on a STRICTLY newer New York date (or, while the bond session is open, FRESH and on
+// today's date — a fresh quote replaces today's own 3:30 pm Treasury snapshot), within 0.75 points of the official reading and fetched
+// in the last 30 minutes — otherwise the row is EXACTLY what the server sent (real data or nothing). And there is NO fallback source
+// (owner, same day: "no fallbacks. If CNBC doesn't give me real time, I want to be aware"): while the bond session is open a yield row
+// without a fresh quote says NOT LIVE. S57 covers the three-row path end to end; this one pins the rules, the states, the cadence, the
+// forced-quote slot, a hidden tab, aging and the date cell. Driven with a stubbed deskEcon and a stubbed CNBC request on Playwright's
+// fake clock (a fixed Thursday morning Pacific, so "today" and the bond session are known) — never the network.
+test('S56: the live yield rules — a quote stands in for the official reading only when it can be trusted, and a yield that is not live says so', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(150_000);
   const T0 = '2026-10-01T15:45:00Z';   // Thu 11:45 ET = 08:45 PT: inside the bond cash session
   await page.clock.install({ time: new Date(T0) });
   await gotoDemo(page, '#econList .econ-row', 15000);
 
-  // ── 1. demo: nothing live — the panel never asks, and the 10Y row is the demo row
+  // ── 1. demo: nothing live — the panel never asks, and no row carries a LIVE / LAST / NOT LIVE tag
   expect(await page.evaluate(() => [econLive.gen, Object.keys(econLive.q).length, econState.shown.rows.some((r) => r.live)]),
     'demo never fetches a live quote or draws one').toEqual([0, 0, false]);
-  await expect(page.locator('#econList .econ-tag'), 'and no row carries a LIVE/LAST tag').toHaveCount(0);
+  await expect(page.locator('#econList .econ-tag'), 'and no row carries a LIVE/LAST/NOT LIVE tag').toHaveCount(0);
 
-  // test helpers, in the page: 5-minute UTC bars in quote-proxy's shape
+  // test helpers, in the page: a CNBC reply for the 10Y alone (the 2Y and 20Y are then "left out", which is what S57 pins for them)
   await page.evaluate(() => {
-    window.__bars = (date, from, to, a, b) => {
-      const out = [];
-      let t = Date.parse(`${date}T${from}:00Z`);
-      const n = Math.round((Date.parse(`${date}T${to}:00Z`) - t) / 300000) + 1;
-      for (let i = 0; i < n; i++, t += 300000) out.push([new Date(t).toISOString().slice(0, 16).replace('T', ' '), a + (b - a) * (n > 1 ? i / (n - 1) : 1)]);
-      return out;
+    window.__etStamp = (ms) => new Date(ms - 4 * 3600000).toISOString().slice(0, 19) + '.000-0400';   // ET as CNBC writes it (EDT in October)
+    window.__pt = (ms) => new Date(ms).toLocaleTimeString('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit' });
+    window.__cq10 = (o = {}) => {
+      const { price = 5.321, change = 0.028, at = Date.now() - 30000 } = o;
+      window.__lastAt = at;
+      return { FormattedQuoteResult: { FormattedQuote: [{ symbol: 'US10Y', code: 0, last: price + '%', last_time: window.__etStamp(at), change: String(change), change_pct: '+0.5%' }] } };
     };
-    window.__quote = (...sessions) => {
-      const bars = sessions.flat();
-      const col = (f) => bars.map(f);
-      return { ok: true, symbol: '^TNX', kind: 'intraday', prepost: false, asOf: bars[bars.length - 1][0],
-        series: { t: col((b) => b[0]), o: col((b) => b[1]), h: col((b) => b[1]), l: col((b) => b[1]), c: col((b) => b[1]), v: col(() => 0), x: col(() => 0) } };
-    };
-    window.__goodQuote = () => window.__quote(window.__bars('2026-09-30', '12:20', '18:55', 5.20, 5.293), window.__bars('2026-10-01', '12:20', '15:40', 5.30, 5.321));
   });
 
-  // ── 2. parsing a quote-proxy reply into the print and its baseline
-  const parsed = await page.evaluate(() => {
-    const now = Date.parse('2026-10-01T15:45:00Z');
-    const p = (q) => econLiveParse(q && q.series, now);
-    const good = p(window.__goodQuote());
-    const onlyToday = p(window.__quote(window.__bars('2026-10-01', '12:20', '15:40', 5.30, 5.321)));
-    const future = p(window.__quote(window.__bars('2026-10-01', '12:20', '16:00', 5.30, 5.321)));
-    const scale = p(window.__quote(window.__bars('2026-10-01', '12:20', '15:40', 52.9, 52.9)));
-    const mismatch = (() => { const q = window.__goodQuote(); q.series.c.pop(); return p(q); })();
-    const daily = p({ series: { t: ['2026-09-29', '2026-09-30'], c: [5.26, 5.29] } });
-    return { good, onlyToday, future, scale, mismatch, daily, none: p(null), empty: p({ series: { t: [], c: [] } }) };
-  });
-  expect(parsed.good.price, 'the newest bar is the print').toBeCloseTo(5.321, 6);
-  expect(parsed.good.ts, 'with its own instant').toBe(Date.parse('2026-10-01T15:40:00Z'));
-  expect([parsed.good.date, parsed.good.prevDate], 'the session is the NEW YORK date; the baseline is the previous session').toEqual(['2026-10-01', '2026-09-30']);
-  expect(parsed.good.prevClose, "the baseline is the previous session's LAST print of the same index").toBeCloseTo(5.293, 6);
-  expect([parsed.onlyToday.prevClose, parsed.onlyToday.prevDate], 'with no earlier session the baseline is unknown (null, never 0)').toEqual([null, null]);
-  expect([parsed.future, parsed.scale, parsed.mismatch, parsed.daily, parsed.none, parsed.empty],
-    'a bar from the future, a x10 scale fault, mismatched arrays, daily bars, nothing and an empty series are all refused').toEqual([null, null, null, null, null, null]);
-
-  // ── 3. force live and stub the two feeds; the trust rules, on fabricated rows through the real econLiveRow
+  // ── 2. force live and stub the feeds; the bond session clock and the liveness states, through the real functions
   await page.evaluate(() => {
     DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
     DESK.mode = 'live';
     localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
-    window.__qcalls = [];
-    window.__quoteFn = () => window.__goodQuote();
-    window.deskQuote = (sym, kind, prepost, opts) => {
-      window.__qcalls.push({ sym, kind, prepost: prepost === true, force: !!(opts && opts.force) });
-      try { return Promise.resolve(window.__quoteFn()); } catch (e) { return Promise.reject(e); }
-    };
+    window.__ccalls = 0;
+    window.__cnbcFn = () => window.__cq10();
+    window.econLiveCnbc = () => { window.__ccalls++; try { return Promise.resolve(window.__cnbcFn()); } catch { return Promise.resolve(null); } };
+    window.deskQuote = () => { window.__yahoo = (window.__yahoo || 0) + 1; return Promise.reject(new Error('Yahoo is not a source of the yields')); };
     window.__official = { value: 5.26, prev: 5.24, delta: 0.02, asOf: '2026-09-29', prevAsOf: '2026-09-28', status: 'ok', source: 'fred', changed: false };
     window.deskEcon = (range) => {
       const p = buildDemoEcon(range);
@@ -6493,17 +6480,45 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
       return Promise.resolve({ ...p, rows, range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false });
     };
   });
+  const session = await page.evaluate(() => Object.fromEntries([
+    ['0754 ET', '2026-10-01T11:54:00Z'], ['0755 ET', '2026-10-01T11:55:00Z'], ['1704 ET', '2026-10-01T21:04:00Z'], ['1705 ET', '2026-10-01T21:05:00Z'],
+    ['saturday', '2026-10-03T16:00:00Z'], ['thanksgiving', '2026-11-26T15:00:00Z'], ['columbus day', '2026-10-12T15:00:00Z'], ['day after it', '2026-10-13T15:00:00Z'],
+  ].map(([k, iso]) => [k, econBondOpen(Date.parse(iso))])));
+  expect(session, 'the bond session is 07:55–17:05 ET on a bond-market trading day: not at the weekend, not on an NYSE holiday, not on Columbus Day')
+    .toEqual({ '0754 ET': false, '0755 ET': true, '1704 ET': true, '1705 ET': false, saturday: false, thanksgiving: false, 'columbus day': false, 'day after it': true });
+  const states = await page.evaluate(() => {
+    const now = Date.parse('2026-10-01T15:45:00Z'), closed = Date.parse('2026-10-01T22:00:00Z');
+    const row = (o) => ({ id: 'ust10y', ...o });
+    const live = (fresh) => ({ symbol: 'US10Y', ts: now, fresh, official: {} });
+    econLive.landedAt = 0;
+    const never = econLiveState(row({}), now);   // CNBC was never asked: no tag before the first reply, so a page load does not flash NOT LIVE
+    econLive.landedAt = now;
+    const out = {
+      never,
+      freshOpen: econLiveState(row({ live: live(true) }), now), staleOpen: econLiveState(row({ live: live(false) }), now), staleClosed: econLiveState(row({ live: live(false) }), closed),
+      noneOpen: econLiveState(row({}), now), noneClosed: econLiveState(row({}), closed), nonYield: econLiveState({ id: 'cpi' }, now),
+    };
+    DESK.mode = 'demo'; out.demo = econLiveState(row({}), now); DESK.mode = 'live';
+    econLive.landedAt = 0;
+    return out;
+  });
+  expect(states, 'LIVE for a fresh quote; NOT LIVE for a stale quote or none while the session is open; LAST for a stopped quote and NOTHING for no quote once it is shut; nothing before CNBC was ever asked, for a row that is not a yield, or in demo')
+    .toEqual({ never: '', freshOpen: 'live', staleOpen: 'notlive', staleClosed: 'last', noneOpen: 'notlive', noneClosed: '', nonYield: '', demo: '' });
+
+  // ── 3. the trust rules, on fabricated rows through the real econLiveRow
   const rules = await page.evaluate(() => {
     const row = { id: 'ust10y', label: '10Y Treasury', value: 5.26, asOf: '2026-09-29', prev: 5.24, prevAsOf: '2026-09-28', delta: 0.02, status: 'ok',
       source: 'fred', decimals: 2, unit: '%', cadence: 'daily', changed: true, points: [['2026-09-25', 5.17], ['2026-09-28', 5.24], ['2026-09-29', 5.26]] };
-    const now = Date.now();
-    const q = (o) => ({ price: 5.321, ts: Date.parse('2026-10-01T15:40:00Z'), date: '2026-10-01', prevClose: 5.293, prevDate: '2026-09-30', fetchedAt: now, ...o });
-    const run = (r, o) => { econLive.q = { ust10y: q(o) }; return econLiveRow(r, now); };
-    const same = (r, o) => run(r, o) === r;   // the SAME object back = no overlay
+    const now = Date.now(), closedAt = Date.parse('2026-10-01T22:00:00Z');
+    const q = (o) => ({ price: 5.321, ts: now - 60000, date: '2026-10-01', prevClose: 5.293, prevDate: '2026-09-30', symbol: 'US10Y', fetchedAt: now, ...o });
+    const run = (r, o, at = now) => { econLive.q = { ust10y: q(o) }; return econLiveRow(r, at); };
+    const same = (r, o, at) => run(r, o, at) === r;   // the SAME object back = no overlay
     const out = run(row, {});
     const res = {
       out, inputIntact: [row.value, row.points.length, row.asOf],
-      sameDay: same({ ...row, asOf: '2026-10-01' }, {}),
+      // today's own official reading (Treasury's 3:30 pm snapshot): a FRESH quote replaces it while the session is open; a stale quote, or any once it is shut, does not
+      sameDayFresh: !same({ ...row, asOf: '2026-10-01' }, {}), sameDayStale: same({ ...row, asOf: '2026-10-01' }, { ts: now - 6 * 60000 }),
+      sameDayClosed: same({ ...row, asOf: '2026-10-01' }, { ts: closedAt - 60000, fetchedAt: closedAt }, closedAt),
       officialNewer: same({ ...row, asOf: '2026-10-02' }, {}),
       far: same(row, { price: 6.02 }), edge: !same(row, { price: 6.00 }),
       stale: same({ ...row, status: 'stale' }, {}), missing: same({ ...row, status: 'missing', value: null }, {}),
@@ -6511,12 +6526,13 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
       // a slower cadence keeps the print for two of its own intervals (an hourly weekend poll must not flicker the row off at +30 min)
       slowKept: !same(row, { fetchedAt: now - 119 * 60000, keepMs: 2 * 3600 * 1000 }), slowGone: same(row, { fetchedAt: now - 121 * 60000, keepMs: 2 * 3600 * 1000 }),
       noBaseline: run(row, { prevClose: null, prevDate: null }),
-      oldBar: run(row, { ts: now - 31 * 60000 }).live.fresh, newBar: run(row, { ts: now - 5 * 60000 }).live.fresh,
+      // fresh = the quote's OWN time within 5 minutes of now, inclusive
+      fresh: [run(row, { ts: now - 4 * 60000 }).live.fresh, run(row, { ts: now - 300000 }).live.fresh, run(row, { ts: now - 300001 }).live.fresh, run(row, { ts: now - 31 * 60000 }).live.fresh],
       onePoint: run({ ...row, points: [['2026-09-29', 5.26]] }, {}).points.length,
       // a short span that fell back to its N latest readings keeps N, so the caption (and the chart's accessible name) stay true
       noted: (() => { const six = ['09-22', '09-23', '09-24', '09-25', '09-28', '09-29'].map((d, i) => [`2026-${d}`, 5.2 + i / 100]);
         const o = run({ ...row, points: six, pointsNote: 'daily - 6 latest' }, {}); return [o.points.length, o.points[0][0], o.points[o.points.length - 1], o.pointsNote]; })(),
-      otherId: (() => { econLive.q = { ust2y: q({}), ust10y: q({}) }; const r2 = { ...row, id: 'ust2y' }; return econLiveRow(r2, now) === r2; })(),
+      otherId: (() => { econLive.q = { cpi: q({}), ust10y: q({}) }; const r2 = { ...row, id: 'cpi' }; return econLiveRow(r2, now) === r2; })(),
     };
     econLive.q = { ust10y: q({}) };
     DESK.mode = 'demo';
@@ -6527,34 +6543,37 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
     return res;
   });
   expect([rules.out.value, rules.out.delta, rules.out.prev, rules.out.asOf, rules.out.prevAsOf, rules.out.source, rules.out.changed],
-    'the print stands in: value, change from the previous session\'s last print (rounded to the row\'s decimals), dates, source').toEqual([5.321, 0.03, 5.293, '2026-10-01', '2026-09-30', 'live', false]);
+    'the print stands in: value, change from the previous close CNBC reports (rounded to the row\'s decimals), dates, source').toEqual([5.321, 0.03, 5.293, '2026-10-01', '2026-09-30', 'live', false]);
   expect(rules.out.points, 'the chart gets the print as its last point').toEqual([['2026-09-25', 5.17], ['2026-09-28', 5.24], ['2026-09-29', 5.26], ['2026-10-01', 5.321]]);
   expect(rules.out.live.official, 'and remembers the official reading it stands in for').toEqual({ asOf: '2026-09-29', value: 5.26, source: 'fred' });
   expect(rules.inputIntact, 'the server row is never mutated').toEqual([5.26, 3, '2026-09-29']);
-  expect([rules.sameDay, rules.officialNewer], 'an official reading that has caught up to (or passed) the print\'s date STANDS — never overwritten by a same-day quote').toEqual([true, true]);
+  expect([rules.sameDayFresh, rules.sameDayStale, rules.sameDayClosed], 'today\'s own official reading is replaced by a FRESH quote while the session is open, and STANDS against a stale one or once the session is shut').toEqual([true, true, true]);
+  expect(rules.officialNewer, 'an official reading NEWER than the print is never overwritten').toBe(true);
   expect([rules.far, rules.edge], 'a print more than 0.75 points from the official reading is a misread, 0.74 is a move').toEqual([true, true]);
   expect([rules.stale, rules.missing], 'never alone: a stale or missing official row gets no overlay').toEqual([true, true]);
   expect([rules.aged, rules.young], 'a quote fetched more than 30 minutes ago is dropped, 29 minutes is kept').toEqual([true, true]);
   expect([rules.slowKept, rules.slowGone], 'on the hourly cadence it is kept for two intervals, 119 minutes, and dropped at 121 (Codex, PR #297)').toEqual([true, true]);
   expect(rules.noBaselineText, 'no baseline: the change is an em dash, never "= 0.00"').toBe('—');
-  expect([rules.oldBar, rules.newBar], 'LIVE only while the bar is under 30 minutes old').toEqual([false, true]);
+  expect(rules.fresh, 'a quote is fresh while its own time is within 5 minutes (inclusive): 4 min and exactly 5 min are, 5 min and a millisecond and 31 minutes are not').toEqual([true, true, false, false]);
   expect(rules.onePoint, 'a chart that had fewer than two real points is not extended into a line').toBe(1);
   expect(rules.noted, 'a "daily - 6 latest" fallback stays SIX readings: the print replaces the oldest, the note stays true (Codex, PR #297)')
     .toEqual([6, '2026-09-23', ['2026-10-01', 5.321], 'daily - 6 latest']);
-  expect(rules.otherId, 'only the 10Y row is ever live — the 2Y and 20Y have no free live source').toBe(true);
+  expect(rules.otherId, 'only a row with a live symbol is ever live — CPI never is, whatever is stored under its id').toBe(true);
+  expect(rules.out.live.symbol, 'and the print names its CNBC symbol').toBe('US10Y');
   expect(rules.demo, 'and demo never overlays').toBe(true);
 
   // ── 4. the poll cadence: every minute in the bond session, ten around it on a trading day, hourly at weekends and holidays
   const delays = await page.evaluate(() => Object.fromEntries(
     [['open', '2026-10-01T15:45:00Z'], ['0800 ET', '2026-10-01T12:00:00Z'], ['0700 ET', '2026-10-01T11:00:00Z'], ['1514 ET', '2026-10-01T19:14:00Z'],
-      ['1515 ET', '2026-10-01T19:15:00Z'], ['evening', '2026-10-01T22:00:00Z'], ['saturday', '2026-10-03T16:00:00Z'], ['thanksgiving', '2026-11-26T15:00:00Z'],
+      ['1515 ET', '2026-10-01T19:15:00Z'], ['1704 ET', '2026-10-01T21:04:00Z'], ['1705 ET', '2026-10-01T21:05:00Z'], ['evening', '2026-10-01T22:00:00Z'],
+      ['saturday', '2026-10-03T16:00:00Z'], ['thanksgiving', '2026-11-26T15:00:00Z'],
       ['columbus day', '2026-10-12T15:00:00Z'], ['day after it', '2026-10-13T15:00:00Z'], ['veterans day', '2026-11-11T16:00:00Z'], ['veterans day 2027', '2027-11-11T16:00:00Z'],
     ].map(([k, iso]) => [k, econLiveDelaySec(Date.parse(iso))])));
-  expect(delays, 'the cadence follows the New York clock — and the BOND calendar: the NYSE is open on Columbus Day and Veterans Day, the bond market is not (Codex, PR #297)')
-    .toEqual({ open: 60, '0800 ET': 60, '0700 ET': 600, '1514 ET': 60, '1515 ET': 600, evening: 600, saturday: 3600, thanksgiving: 3600,
+  expect(delays, 'the cadence follows the New York clock — and the BOND calendar: the NYSE is open on Columbus Day and Veterans Day, the bond market is not (Codex, PR #297); the fast window is the whole session, to 17:05')
+    .toEqual({ open: 60, '0800 ET': 60, '0700 ET': 600, '1514 ET': 60, '1515 ET': 60, '1704 ET': 60, '1705 ET': 600, evening: 600, saturday: 3600, thanksgiving: 3600,
       'columbus day': 3600, 'day after it': 60, 'veterans day': 3600, 'veterans day 2027': 3600 });
 
-  // ── 5. the real poller end to end: a good quote draws the 10Y live; every other row is untouched
+  // ── 5. the real poller end to end: a good quote draws the 10Y live; the 2Y and 20Y (CNBC left them out) say NOT LIVE; the monthly rows are untouched
   const row10 = () => page.evaluate(() => {
     const li = document.querySelector('#econList .econ-row[data-id="ust10y"]');
     const q = (s) => li.querySelector(s);
@@ -6567,37 +6586,58 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
     };
   });
   const others = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].filter((li) => li.dataset.id !== 'ust10y')
-    .map((li) => [li.dataset.id, li.querySelector('.econ-val').textContent, li.querySelector('.econ-date').textContent, !!li.querySelector('.econ-tag'), li.title, li.querySelector('.econ-src') ? li.querySelector('.econ-src').textContent : null]));
-  const calls = () => page.evaluate(() => window.__qcalls.length);
+    .map((li) => [li.dataset.id, li.querySelector('.econ-val').textContent, li.querySelector('.econ-date').textContent, li.querySelector('.econ-tag') ? li.querySelector('.econ-tag').textContent : null, li.title, li.querySelector('.econ-src') ? li.querySelector('.econ-src').textContent : null]));
+  const calls = () => page.evaluate(() => window.__ccalls);
+  const ptOfLast = () => page.evaluate(() => window.__pt(window.__lastAt));
   await page.evaluate(() => { window.__official.changed = true; startEcon(); });
   await expect(page.locator('#econList .econ-row[data-id="ust10y"][data-live="1"]'), 'the 10Y row is drawn live').toHaveCount(1);
   let r10 = await row10();
-  expect([r10.val, r10.delta, r10.tag], 'the live print, its change from the previous session\'s last print, and the LIVE tag').toEqual(['5.32%', '▲ 0.03', 'LIVE']);
-  expect(r10.date, 'the date cell is the Pacific CLOCK of the bar (15:40Z = 08:40 PDT), not a date').toBe('08:40');
+  expect([r10.val, r10.delta, r10.tag], 'the live print, its change from the previous close CNBC reports, and the LIVE tag').toEqual(['5.32%', '▲ 0.03', 'LIVE']);
+  expect(r10.date, 'the date cell is the Pacific CLOCK of the quote, not a date').toBe(await ptOfLast());
   expect(r10.isNew, 'a live row never carries a NEW chip, although the server said `changed`').toBe(false);
   expect(await page.evaluate(() => econSeen.ust10y), 'the official reading it stands in for is recorded as seen').toBe('2026-09-29|5.26');
   expect(await page.evaluate(() => econState.shown.rows.find((r) => r.id === 'ust10y').value), 'the server row is untouched underneath').toBe(5.26);
   expect(r10.cap, 'the chart now runs to today').toMatch(/– Oct 1$/);
   const serverPoints = await page.evaluate(() => econState.shown.rows.find((r) => r.id === 'ust10y').points.length);
   expect(r10.aria, 'and has one reading more than the server sent').toContain(`${serverPoints + 1} readings`);
-  expect(r10.title, 'the tooltip names the quote, its bar and the official reading it stands in for').toMatch(/as of 2026-10-01 08:40 PDT \(5-minute bar start\)/);
-  expect(r10.title).toMatch(/source Yahoo Finance \^TNX live quote, may be delayed/);
+  expect(r10.title, 'the tooltip names the quote, its time and the official reading it stands in for').toMatch(/as of 2026-10-01 \d\d:\d\d PDT \(time of the last quote\)/);
+  expect(r10.title).toMatch(/source CNBC US10Y live quote, may be delayed/);
   expect(r10.title).toMatch(/latest official reading 5\.26% on Sep 29 \(FRED\)/);
   expect(r10.title, 'and is not labelled as FRED\'s own reading').not.toMatch(/source FRED/);
-  expect(r10.src, 'the 10Y row names Yahoo and the symbol on its own source line while the print stands in').toBe('Source: Yahoo ^TNX');
+  expect(r10.title, 'and a live row has no NOT LIVE note').not.toMatch(/NOT LIVE/);
+  expect(r10.src, 'the 10Y row names CNBC and the symbol on its own source line while the print stands in').toBe('Source: CNBC US10Y');
   expect(r10.clip, 'nothing in the left block is clipped (a clipped time is a wrong time)').toEqual({ src: false, label: false, date: false, sub: false });
   expect(r10.chart.l, 'the chart still starts to the right of the value block').toBeGreaterThanOrEqual(r10.info.r - 0.5);
   const oth = await others();
-  expect(oth.map((o) => [o[0], o[3]]), 'the other six rows carry no tag').toEqual(['ust2y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, false]));
-  expect(oth.filter((o) => /Yahoo|live/i.test(o[4])), 'and none names the live quote').toEqual([]);
+  expect(oth.map((o) => [o[0], o[3]]), 'the 2Y and 20Y — which CNBC did not deliver — say NOT LIVE; the four monthly rows carry no tag')
+    .toEqual([['ust2y', 'NOT LIVE'], ['ust20y', 'NOT LIVE'], ['unrate', null], ['cpi', null], ['pce', null], ['corepce', null]]);
+  expect(oth.filter((o) => /CNBC.*live quote/i.test(o[4])), 'and none of them names a live quote as its source').toEqual([]);
+  expect(oth.slice(0, 2).map((o) => o[4].includes('NOT LIVE — CNBC sent no usable real-time quote for this row; this is the latest official reading')), 'and their tooltips say why: CNBC answered, but not for them').toEqual([true, true]);
   expect(oth.map((o) => [o[0], o[5]]), 'the other six rows keep naming FRED (their official source), not the live quote')
     .toEqual(['ust2y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, 'Source: FRED']));
   expect(await page.locator('.econ-foot').count(), 'no footer: the source is per row').toBe(0);
-  expect(await page.evaluate(() => window.__qcalls[0]), 'one quote-proxy call, the intraday ^TNX, not forced').toEqual({ sym: '^TNX', kind: 'intraday', prepost: false, force: false });
+  expect(await calls(), 'one CNBC request carried the poll').toBe(1);
+  expect(await page.evaluate(() => window.__yahoo || 0), 'and Yahoo was never asked: it is not a source').toBe(0);
   expect(await page.evaluate(() => {
     const bad = ['--color-gain', '--color-loss', '--color-gain-dim', '--color-loss-dim', '--color-danger', '--color-status-live'].map((t) => { const e = document.createElement('i'); e.style.color = `var(${t})`; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; });
-    return [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] *')].filter((n) => bad.includes(getComputedStyle(n).color) || bad.includes(getComputedStyle(n).borderTopColor)).map((n) => n.className);
-  }), 'the LIVE tag is neutral ink: green and red stay P&L-only').toEqual([]);
+    return [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] *, #econList .econ-row[data-id="ust2y"] *')].filter((n) => bad.includes(getComputedStyle(n).color) || bad.includes(getComputedStyle(n).borderTopColor) || bad.includes(getComputedStyle(n).backgroundColor)).map((n) => n.className);
+  }), 'the LIVE tag and the NOT LIVE chip are neutral ink: green and red stay P&L-only').toEqual([]);
+
+  // 5a. the worst case for width: an unseen official reading (NEW) on a row that is also NOT LIVE — date + NOT LIVE + NEW are wider than the 104px block, so the
+  //     flex line WRAPS rather than hang into the chart column. What must hold in ANY font state (CI's web fonts swap in late, and its fallback sans is wider than
+  //     this sandbox's — the first, stricter version of this check, "NOT LIVE shares the date's line", failed there on mobile-chrome): both chips show, NOT LIVE is
+  //     never placed after NEW, every chip stays inside the value block, and nothing overflows it sideways
+  await page.evaluate(() => { delete econSeen.ust2y; econPending.ust2y = 'x'; econLiveRepaint(); });
+  await page.evaluate(() => document.fonts.ready);
+  const both = await page.evaluate(() => {
+    const li = document.querySelector('#econList .econ-row[data-id="ust2y"]');
+    const r = (s) => li.querySelector(s).getBoundingClientRect(), info = r('.econ-info');
+    const sub = li.querySelector('.econ-sub');
+    return { chips: [!!li.querySelector('.econ-nolive'), !!li.querySelector('.econ-new')], notAfterNew: r('.econ-nolive').top <= r('.econ-new').top + 0.5,
+      inside: ['.econ-date', '.econ-nolive', '.econ-new'].map((s) => r(s).right <= info.right + 0.5 && r(s).left >= info.left - 0.5), subOverflow: sub.scrollWidth > sub.clientWidth + 1 };
+  });
+  expect(both, 'NEW and NOT LIVE together: both show, NOT LIVE is never after NEW, every chip stays inside the value block and nothing overflows it').toEqual({ chips: [true, true], notAfterNew: true, inside: [true, true, true], subOverflow: false });
+  await page.evaluate(() => { delete econPending.ust2y; econSeen.ust2y = econSig(econState.shown.rows.find((r) => r.id === 'ust2y')); econLiveRepaint(); });
 
   // 5b. a FULL render (a server poll, a span change, another tab's storage event) draws the live print without waiting for a quote,
   //     and records the official reading as seen whichever of the two arrived first — the repaint path is not the only one
@@ -6606,7 +6646,7 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   expect([r10.val, r10.tag, r10.isNew], 'a full render keeps the live print (and no NEW chip)').toEqual(['5.32%', 'LIVE', false]);
   expect(await page.evaluate(() => [econSeen.ust10y, Object.hasOwn(econPending, 'ust10y')]), 'the official reading is recorded as seen and its pending mark cleared').toEqual(['2026-09-29|5.26', false]);
 
-  // ── 6. the cadence on the clock: a minute while the session runs, and a FORCED refresh asks for a fresh quote
+  // ── 6. the cadence on the clock: a minute while the session runs; "Refresh now" asks at once
   const left = await page.evaluate(() => econLive.dueAt - Date.now());
   expect(left, 'the next quote is a minute away').toBeGreaterThan(57_000);
   expect(left).toBeLessThanOrEqual(60_000);
@@ -6615,18 +6655,16 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   expect(await calls(), '58s in: not asked again').toBe(n);
   await page.clock.runFor(3_000);
   await expect.poll(calls, 'a minute in: asked again').toBe(n + 1);
-  expect((await page.evaluate(() => window.__qcalls[window.__qcalls.length - 1])).force, 'a timed poll is not forced').toBe(false);
   n = await calls();
   await page.evaluate(() => econLiveFetch(true));
-  expect(await page.evaluate(() => window.__qcalls[window.__qcalls.length - 1]), '"Refresh now" bypasses the proxy cache').toEqual({ sym: '^TNX', kind: 'intraday', prepost: false, force: true });
-  expect(await calls(), 'with exactly one call').toBe(n + 1);
-  // ...and the masthead's own "Refresh now" reaches it: its Promise.all holds the quote, forced, beside the feeds and desk-econ
+  expect(await calls(), 'a forced refresh asks at once, with exactly one request').toBe(n + 1);
+  // ...and the masthead's own "Refresh now" reaches it: its Promise.all holds the quote beside the feeds and desk-econ
   n = await calls();
   await page.evaluate(() => {
     window.feedPollTick = async () => {}; window.scheduleFeedPoll = () => {}; window.scheduleMarketPoll = () => {};
     return refreshNowClicked();
   });
-  expect(await page.evaluate((k) => window.__qcalls.slice(k).map((c) => c.force), n), '"Refresh now" asks for a forced quote').toEqual([true]);
+  expect(await calls(), '"Refresh now" asks CNBC exactly once').toBe(n + 1);
 
   // a ticker tick with nothing a viewer could see change leaves the live row alone (its tooltip survives a hover)
   await page.evaluate(() => { window.__node = document.querySelector('#econList .econ-row[data-id="ust10y"]'); });
@@ -6635,13 +6673,13 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
 
   // ── 6b. a FORCED quote owns the slot until it lands (Codex, PR #297): a poll timer coming due meanwhile — or an unforced call —
   //        would take the newer generation and get the forced reply thrown away
-  await page.evaluate(() => { window.__quoteFn = () => new Promise((res) => { window.__release = () => res(window.__goodQuote()); }); econLiveArm(10); });
+  await page.evaluate(() => { window.__cnbcFn = () => new Promise((res) => { window.__release = () => res(window.__cq10()); }); econLiveArm(10); });
   n = await calls();
   const fetchedBefore = await page.evaluate(() => econLive.q.ust10y.fetchedAt);
   await page.evaluate(() => { window.__forcedQ = econLiveFetch(true); });
   expect(await calls(), 'the forced quote is in flight').toBe(n + 1);
   expect(await page.evaluate(() => [econLive.timer, econLive.dueAt]), 'and the poll timer armed before it is cancelled').toEqual([0, 0]);
-  await page.clock.runFor(15_000);                                // past the 10s timer, inside the 20s cap on a quote
+  await page.clock.runFor(15_000);                                // past the 10s timer
   expect(await calls(), 'past the moment that timer was due: no second request').toBe(n + 1);
   await page.evaluate(() => econLiveFetch(false));
   expect(await calls(), 'an unforced call meanwhile (boot, a tab returning) waits too').toBe(n + 1);
@@ -6651,16 +6689,15 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   expect(rearm[0], 'the slot is released').toBe(false);
   expect(rearm[1], 'and the poll re-armed a minute out').toBeGreaterThan(58_000);
   expect(rearm[1]).toBeLessThanOrEqual(60_000);
-  // a quote that never answers is a failed quote after 20s, not a wedged poller
-  await page.evaluate(() => { window.__quoteFn = () => new Promise(() => {}); window.__hung = econLiveFetch(false); });
-  expect(await page.evaluate(() => econLive.dueAt), 'a hung request holds no timer').toBe(0);
-  await page.clock.runFor(21_000);
-  await page.evaluate(() => window.__hung);
-  const failedHung = await page.evaluate(() => [econLive.forcing, Math.round((econLive.dueAt - Date.now()) / 1000)]);
-  expect(failedHung[0], 'a hung quote leaves no forced slot held').toBe(false);
-  expect(failedHung[1], 'after 20s it counts as failed and the retry is a minute out').toBeGreaterThanOrEqual(59);
-  expect(failedHung[1]).toBeLessThanOrEqual(60);
-  await page.evaluate(() => { window.__quoteFn = () => window.__goodQuote(); return econLiveFetch(false); });
+  // a request that fails (the real econLiveCnbc answers null for a 403, a blocked call, a hang past 8 s, a non-JSON body) is a failed poll: retried in a minute
+  await page.evaluate(() => { window.__cnbcFn = () => null; return econLiveFetch(false); });
+  const failed = await page.evaluate(() => [econLive.forcing, econLive.answered, Math.round((econLive.dueAt - Date.now()) / 1000)]);
+  expect(failed[0], 'a failed request leaves no forced slot held').toBe(false);
+  expect(failed[1], 'and is recorded as "CNBC did not answer"').toBe(false);
+  expect(failed[2], 'and is retried a minute out').toBeGreaterThanOrEqual(59);
+  expect(failed[2]).toBeLessThanOrEqual(60);
+  await page.evaluate(() => { window.__cnbcFn = () => window.__cq10(); return econLiveFetch(false); });
+  expect(await page.evaluate(() => econLive.answered), 'and a good reply is recorded as answered').toBe(true);
 
   // ── 7. a hidden tab asks for nothing, and asks at once on return if a quote came due meanwhile
   await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); econVisibility(); });
@@ -6671,57 +6708,75 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   await page.evaluate(() => { delete document.hidden; econVisibility(); });
   await expect.poll(calls, 'visible again with a quote overdue: asked at once').toBe(n + 1);
 
-  // ── 8. LIVE becomes LAST once the quote stops moving (the same bar 30+ minutes on)
-  await page.clock.runFor(31 * 60_000);
+  // ── 8. CNBC keeps answering but its quote has STOPPED (a frozen stamp): the print stays on the row, flagged NOT LIVE with its age — an answer is not real time
+  await page.evaluate(() => { const at = Date.now() - 30000; window.__frozen = at; window.__cnbcFn = () => window.__cq10({ at: window.__frozen }); return econLiveFetch(false); });
   r10 = await row10();
-  expect([r10.val, r10.date, r10.tag], 'same print, same clock, tagged LAST — not LIVE').toEqual(['5.32%', '08:40', 'LAST']);
-
-  // ── 9. a failing quote keeps the last good print for 30 minutes from its last SUCCESS, then the row is the official one again
-  await page.evaluate(() => { window.__quoteFn = () => { throw new Error('quote-proxy → HTTP 502'); }; });
-  await page.clock.runFor(25 * 60_000);
-  r10 = await row10();
-  expect([r10.val, r10.tag], 'after 25 minutes of failures the last good print still stands (its own clock tells the truth)').toEqual(['5.32%', 'LAST']);
+  expect([r10.val, r10.tag], 'a quote 30 seconds old is LIVE').toEqual(['5.32%', 'LIVE']);
   await page.clock.runFor(6 * 60_000);
   r10 = await row10();
-  expect([r10.val, r10.delta, r10.date, r10.tag, r10.live], 'past 30 minutes with no success: the official reading, nothing live').toEqual(['5.26%', '▲ 0.02', 'Sep 29', null, null]);
-  expect(r10.title, 'and its tooltip is FRED\'s again').toMatch(/source FRED/);
+  expect([r10.val, r10.date, r10.tag, r10.live], 'six minutes on with the same stamp: same print, same clock, NOT LIVE (the session is open)').toEqual(['5.32%', await page.evaluate(() => window.__pt(window.__frozen)), 'NOT LIVE', '1']);
+  expect(r10.title, 'the tooltip names the age').toMatch(/NOT LIVE — CNBC's last quote for this row is [67] min old, so it is not real time/);
+  expect(r10.clip, 'the solid chip fits beside the date: nothing clipped').toEqual({ src: false, label: false, date: false, sub: false });
+  // ...and the bell: the 30s ticker alone flips NOT LIVE to LAST when the session closes (17:05 ET), with no quote fetched
+  await page.evaluate(() => { econLive.q.ust10y.fetchedAt = Date.now(); });
+  await page.clock.setSystemTime(new Date('2026-10-01T21:04:00Z'));   // 17:04 ET: still open
+  await page.evaluate(() => { econLive.q.ust10y.fetchedAt = Date.now(); econLiveRepaint(); });
+  expect((await row10()).tag, '17:04 ET with a quote hours old: NOT LIVE').toBe('NOT LIVE');
+  await page.clock.setSystemTime(new Date('2026-10-01T21:06:00Z'));   // 17:06 ET: shut
+  await page.evaluate(() => { econLive.q.ust10y.fetchedAt = Date.now(); });
+  await page.clock.runFor(31_000);
+  expect((await row10()).tag, 'two minutes later, the ticker alone: the session has closed, the stopped quote is the last print — LAST').toBe('LAST');
+  await page.clock.setSystemTime(new Date('2026-10-01T16:30:00Z'));   // back to 12:30 ET
+
+  // ── 9. a failing CNBC keeps the last good print for 30 minutes from its last SUCCESS — flagged NOT LIVE once it is not recent — then the row is the official one, still flagged
+  await page.evaluate(() => { econLive.q = {}; window.__cnbcFn = () => window.__cq10(); return econLiveFetch(false); });
+  expect((await row10()).tag, 'a fresh quote: LIVE').toBe('LIVE');
+  await page.evaluate(() => { window.__cnbcFn = () => null; });
+  await page.clock.runFor(25 * 60_000);
+  r10 = await row10();
+  expect([r10.val, r10.tag], 'after 25 minutes of failures the last good print is still the row — flagged NOT LIVE, never presented as live').toEqual(['5.32%', 'NOT LIVE']);
+  await page.clock.runFor(6 * 60_000);
+  r10 = await row10();
+  expect([r10.val, r10.delta, r10.date, r10.tag, r10.live], 'past 30 minutes with no success: the official reading, nothing live — and it says NOT LIVE').toEqual(['5.26%', '▲ 0.02', 'Sep 29', 'NOT LIVE', null]);
+  expect(r10.title, 'its tooltip is FRED\'s again and says CNBC did not answer').toMatch(/source FRED/);
+  expect(r10.title).toMatch(/NOT LIVE — CNBC did not answer \(blocked, offline or refused\), so there is no real-time yield; this is the latest official reading/);
   expect(r10.src, 'and so is its source line: the live quote no longer stands in').toBe('Source: FRED');
   expect(r10.isNew, 'with no NEW chip: the reading was recorded as seen while the live print stood in for it').toBe(false);
   // ...and recovers on the next quote
-  await page.evaluate(() => { window.__quoteFn = () => window.__goodQuote(); });
+  await page.evaluate(() => { window.__cnbcFn = () => window.__cq10(); });
   await page.clock.runFor(61_000);
-  await expect.poll(async () => (await row10()).tag, 'a good quote brings the live print back').toBe('LAST');
+  await expect.poll(async () => (await row10()).tag, 'a good quote brings the live print back').toBe('LIVE');
 
-  // ── 10. the official reading catching up to the print's date ends the overlay: the OFFICIAL number stands
+  // ── 10. today's own official reading (Treasury's 3:30 pm snapshot has posted): a FRESH quote still stands in while the session is open;
+  //        a quote that has stopped leaves the official number — flagged NOT LIVE
   await page.evaluate(() => { window.__official = { ...window.__official, value: 5.30, prev: 5.26, delta: 0.04, asOf: '2026-10-01', prevAsOf: '2026-09-29' }; return refreshEcon(false); });
-  await expect.poll(async () => (await row10()).live, 'the official reading is as new: the live print steps aside').toBe(null);
   r10 = await row10();
-  expect([r10.val, r10.date, r10.tag, r10.title.includes('source FRED')], 'the official number, its date, no tag, FRED named').toEqual(['5.30%', 'Oct 1', null, true]);
+  expect([r10.val, r10.tag, r10.live], 'the official reading is today\'s, the quote is fresh: the live print stays').toEqual(['5.32%', 'LIVE', '1']);
+  expect(r10.title).toMatch(/latest official reading 5\.30% on Oct 1 \(FRED\)/);
+  await page.evaluate(() => { window.__cnbcFn = () => window.__cq10({ at: Date.now() - 10 * 60000 }); econLive.q = {}; return Promise.all([refreshEcon(false), econLiveFetch(false)]); });
+  r10 = await row10();
+  expect([r10.val, r10.date, r10.tag, r10.live, r10.title.includes('source FRED')], 'the quote stopped 10 minutes ago: the OFFICIAL number stands, with its date — and NOT LIVE').toEqual(['5.30%', 'Oct 1', 'NOT LIVE', null, true]);
 
-  // ── 11. a misread never reaches the row: a print far from the official reading, and a x10 scale fault
+  // ── 11. a misread never reaches the row: a print far from the official reading, and a x10 scale fault — both leave the official row, flagged NOT LIVE
   await page.evaluate(() => { window.__official = { ...window.__official, value: 5.26, prev: 5.24, delta: 0.02, asOf: '2026-09-29', prevAsOf: '2026-09-28' }; econLive.q = {}; });
   for (const [what, price] of [['a print 1.24 points from the official reading', 6.5], ['a x10 scale fault', 52.9]]) {
-    await page.evaluate((p) => { window.__quoteFn = () => window.__quote(window.__bars('2026-09-30', '12:20', '18:55', p, p), window.__bars('2026-10-01', '12:20', '15:40', p, p)); econLive.q = {}; return Promise.all([refreshEcon(false), econLiveFetch(false)]); }, price);
+    await page.evaluate((p) => { window.__cnbcFn = () => window.__cq10({ price: p, change: 0.02 }); econLive.q = {}; return Promise.all([refreshEcon(false), econLiveFetch(false)]); }, price);
     r10 = await row10();
-    expect([r10.val, r10.tag, r10.live], `${what}: the row is the official one`).toEqual(['5.26%', null, null]);
+    expect([r10.val, r10.tag, r10.live], `${what}: the row is the official one — and says NOT LIVE`).toEqual(['5.26%', 'NOT LIVE', null]);
   }
 
-  // ── 12. an old print, a later day (the weekend): the date cell is the DATE, tagged LAST
-  await page.evaluate(() => { window.__quoteFn = () => window.__goodQuote(); econLive.q = {}; });
-  await page.clock.setSystemTime(new Date('2026-10-02T20:00:00Z'));
+  // ── 12. an old quote, the session shut (Saturday): the date cell is the DATE, tagged LAST
+  await page.evaluate(() => { window.__cnbcFn = () => window.__cq10({ at: Date.parse('2026-10-02T21:00:00Z') }); econLive.q = {}; });
+  await page.clock.setSystemTime(new Date('2026-10-03T16:00:00Z'));
   await page.evaluate(() => Promise.all([refreshEcon(false), econLiveFetch(false)]));
   r10 = await row10();
-  expect([r10.val, r10.date, r10.tag], 'Friday afternoon: yesterday\'s last print is a DATE (Oct 1), not a clock, and says LAST').toEqual(['5.32%', 'Oct 1', 'LAST']);
+  expect([r10.val, r10.date, r10.tag], 'Saturday: Friday\'s last quote is a DATE (Oct 2), not a clock, and says LAST — not NOT LIVE: nothing is trading').toEqual(['5.32%', 'Oct 2', 'LAST']);
 
   // ── 13. the date cell is re-read by the 30s ticker across Pacific midnight, not only when the row is rebuilt (Codex, PR #297)
   await page.clock.setSystemTime(new Date('2026-10-03T06:50:00Z'));   // Fri 23:50 PT
-  await page.evaluate(() => {
-    window.__quoteFn = () => window.__quote(window.__bars('2026-10-01', '12:20', '18:55', 5.20, 5.293), window.__bars('2026-10-02', '12:20', '18:55', 5.30, 5.321));
-    econLive.q = {};
-    return Promise.all([refreshEcon(false), econLiveFetch(false)]);
-  });
+  await page.evaluate(() => { window.__cnbcFn = () => window.__cq10({ at: Date.parse('2026-10-02T18:55:00Z') }); econLive.q = {}; return Promise.all([refreshEcon(false), econLiveFetch(false)]); });
   r10 = await row10();
-  expect([r10.val, r10.date, r10.tag], 'a bar from today (Pacific) shows its CLOCK').toEqual(['5.32%', '11:55', 'LAST']);
+  expect([r10.val, r10.date, r10.tag], 'a quote from today (Pacific) shows its CLOCK').toEqual(['5.32%', '11:55', 'LAST']);
   await page.clock.setSystemTime(new Date('2026-10-03T07:10:00Z'));   // twenty minutes on, past Pacific midnight
   await page.clock.runFor(31_000);                                      // the 30s ticker alone — no quote, no poll lands
   r10 = await row10();
@@ -6732,4 +6787,266 @@ test('S56: the live 10Y — a live ^TNX print stands in for the official reading
   await page.clock.runFor(31_000);
   r10 = await row10();
   expect([r10.val, r10.date, r10.tag], '55 minutes after an hourly weekend fetch the last print is still the row').toEqual(['5.32%', 'Oct 2', 'LAST']);
+});
+
+// ── S57 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The live 2Y, 10Y and 20Y from CNBC's quote service (owner request 2026-10-01: "Can this be built into the dashboard?"). FRED and
+// Treasury publish a yield once a day; CNBC's restQuote answers a page on THIS site with CORS (measured from the owner's browser,
+// 11:49 ET: 2Y 4.787, 10Y 5.253) though it refuses every server (Supabase and the build sandbox both get 403). So the dashboard makes
+// ONE request from the visitor's browser for all three rows, each row trusted on its own. There is NO fallback source (owner, same day:
+// "no fallbacks. If CNBC doesn't give me real time, I want to be aware"): when the bond session is open and a row has no fresh CNBC
+// quote it says NOT LIVE — a solid chip, with the reason in its tooltip — and keeps showing its official reading under its own date and
+// source; after the bell a stopped quote is LAST and nothing is flagged. An unofficial endpoint: it can change or be blocked at any time.
+// Driven with stubs on Playwright's fake clock (Thu 08:50:30 PT, inside the bond session) — never the network.
+test('S57: the live yields from CNBC — one browser request for all three, each row trusted on its own, NOT LIVE when CNBC is not real time', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(180_000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await page.clock.install({ time: new Date('2026-10-01T15:50:30Z') });
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  // a CNBC reply as it really arrives: strings with a trailing %, the time with its UTC offset and NO colon, `change` in points, and
+  // a `change_pct` that is not to be trusted (it read +0.19% beside a -0.10 change on the 2Y)
+  await page.evaluate(() => {
+    const base = { symbolType: 'symbol', code: 0, changetype: 'DOWN', type: 'BOND', subType: 'Government Bond', exchange: 'Tradeweb', source: 'Exchange', provider: 'CNBC Quote' };
+    window.__cq = (over = {}) => ({ FormattedQuoteResult: { FormattedQuote: [
+      { ...base, symbol: 'US2Y', name: 'U.S. 2 Year Treasury', last: '4.787%', last_timedate: '11:49 AM EDT', last_time: '2026-10-01T11:49:47.000-0400', open: '4.891%', high: '4.925%', low: '4.783%', change: '-0.10', change_pct: '+0.1914%', ...over.US2Y },
+      { ...base, symbol: 'US10Y', name: 'U.S. 10 Year Treasury', last: '5.253%', last_timedate: '11:49 AM EDT', last_time: '2026-10-01T11:49:41.000-0400', open: '5.289%', high: '5.344%', low: '5.245%', change: '-0.04', change_pct: '-0.7557%', ...over.US10Y },
+      { ...base, symbol: 'US20Y', name: 'U.S. 20 Year Treasury', last: '5.612%', last_timedate: '11:49 AM EDT', last_time: '2026-10-01T11:49:40.000-0400', open: '5.670%', high: '5.690%', low: '5.600%', change: '-0.07', change_pct: '-1.2%', ...over.US20Y },
+    ].filter((q) => !(over.drop || []).includes(q.symbol)) } });
+  });
+
+  // ── 1. parsing a CNBC reply into prints and baselines
+  const parsed = await page.evaluate(() => {
+    const now = Date.parse('2026-10-01T15:50:30Z');
+    const P = (b) => econLiveParseCnbc(b, now);
+    const one = (q) => P({ FormattedQuoteResult: { FormattedQuote: [{ symbol: 'US2Y', code: 0, last: '4.787%', last_time: '2026-10-01T11:49:47.000-0400', change: '-0.10', ...q }] } });
+    const n = (o) => Object.keys(o).length;
+    const good = P(window.__cq());
+    return {
+      good, ids: Object.keys(good).sort(),
+      single: P({ FormattedQuoteResult: { FormattedQuote: { symbol: 'US10Y', code: 0, last: '5.253', last_time: '2026-10-01T11:49:41.000-0400' } } }),
+      nothing: [P(null), P({}), P({ FormattedQuoteResult: {} }), P({ FormattedQuoteResult: { FormattedQuote: [] } }), P('x'), P([])].map(n),
+      unknownSymbol: n(P({ FormattedQuoteResult: { FormattedQuote: [{ symbol: 'US30Y', code: 0, last: '5.7%', last_time: '2026-10-01T11:49:47.000-0400' }] } })),
+      badCode: n(one({ code: 1 })), noCode: n(one({ code: undefined })), junkLast: n(one({ last: 'N/A' })), scale: n(one({ last: '47.87%' })),
+      future: n(one({ last_time: '2026-10-01T12:30:00.000-0400' })), noTime: n(one({ last_time: undefined })), junkTime: n(one({ last_time: 'yesterday' })),
+      noChange: one({ change: undefined }).ust2y.prevClose, absurd: one({ change: '9.9' }).ust2y.prevClose, junkChange: one({ change: 'n/a' }).ust2y.prevClose,
+      colonOffset: one({ last_time: '2026-10-01T11:49:47-04:00' }).ust2y.ts,
+      // Date.parse repairs these instead of refusing them (Feb 30 reads as Mar 2, 24:00 as the next day) — a quote is a number or nothing (Codex, PR #300)
+      impossible: [n(one({ last_time: '2026-02-30T11:49:47.000-0400' })), n(one({ last_time: '2026-02-29T11:49:47.000-0400' })), n(one({ last_time: '2026-04-31T11:49:47.000-0400' })),
+        n(one({ last_time: '2026-10-01T24:00:00.000-0400' })), n(one({ last_time: '2026-09-31T11:49:47-04:00' })), n(one({ last_time: '2026-10-01T11:49:47.000-1500' }))],
+      leapDay: n(one({ last_time: '2024-02-29T11:49:47.000-0400' })),   // a REAL leap day is still read
+    };
+  });
+  expect(parsed.ids, 'all three yields are read from one reply').toEqual(['ust10y', 'ust20y', 'ust2y']);
+  const g = parsed.good;
+  expect([g.ust2y.price, g.ust10y.price, g.ust20y.price], 'the print is `last`, its trailing % stripped').toEqual([4.787, 5.253, 5.612]);
+  expect([g.ust2y.prevClose, g.ust10y.prevClose, g.ust20y.prevClose], 'the previous close is last minus `change` (points) — change_pct is never used').toEqual([4.887, 5.293, 5.682]);
+  expect(g.ust2y.ts, 'the time is read with its UTC offset although it has no colon (-0400), as the standard form').toBe(Date.parse('2026-10-01T15:49:47Z'));
+  expect(parsed.colonOffset, 'and the colon form reads the same instant').toBe(g.ust2y.ts);
+  expect([g.ust2y.date, g.ust2y.symbol, g.ust2y.prevDate], 'the session is the NEW YORK date; it names its symbol; CNBC gives no baseline date').toEqual(['2026-10-01', 'US2Y', null]);
+  expect([parsed.single.ust10y.price, parsed.single.ust10y.prevClose], 'a single quote object (not an array) is read; no `change` means an unknown baseline (null, never 0)').toEqual([5.253, null]);
+  expect(parsed.nothing, 'null, {}, no result, an empty list, a string and an array are all nothing').toEqual([0, 0, 0, 0, 0, 0]);
+  expect([parsed.unknownSymbol, parsed.badCode, parsed.junkLast, parsed.scale, parsed.future, parsed.noTime, parsed.junkTime],
+    'an unlisted symbol, an error code, N/A, a x10 scale fault, a quote from the future, and a missing or junk time are all refused').toEqual([0, 0, 0, 0, 0, 0, 0]);
+  expect(parsed.impossible, 'a calendar-impossible time (Feb 30, Feb 29 in a common year, Apr 31, 24:00, Sep 31, a -15:00 offset) is refused, not repaired onto another day').toEqual([0, 0, 0, 0, 0, 0]);
+  expect(parsed.leapDay, 'while a real leap day is still read').toBe(1);
+  expect(parsed.noCode, 'a quote with no code field at all is still read').toBe(1);
+  expect([parsed.noChange, parsed.absurd, parsed.junkChange], 'a missing, absurd (9.9 points) or junk change leaves the baseline unknown, never a guess').toEqual([null, null, null]);
+
+  // ── 2. each row is trusted on its own, through the real econLiveRow
+  const rules = await page.evaluate(() => {
+    DESK.mode = 'live';   // econLiveRow never overlays in demo
+    const now = Date.now();
+    const q = econLiveParseCnbc(window.__cq(), now);
+    const mk = (id, label, value, prev) => ({ id, label, value, prev, delta: Number((value - prev).toFixed(2)), asOf: '2026-09-30', prevAsOf: '2026-09-29', status: 'ok',
+      source: 'treasury', decimals: 2, unit: '%', cadence: 'daily', changed: false, points: [['2026-09-26', prev - 0.05], ['2026-09-29', prev], ['2026-09-30', value]] });
+    const rows = { ust2y: mk('ust2y', '2Y Treasury', 4.88, 4.89), ust10y: mk('ust10y', '10Y Treasury', 5.29, 5.26), ust20y: mk('ust20y', '20Y Treasury', 5.68, 5.64) };
+    const load = (qq) => { econLive.q = Object.fromEntries(Object.entries(qq).map(([id, v]) => [id, { ...v, fetchedAt: now }])); };
+    load(q);
+    const drawn = Object.fromEntries(Object.entries(rows).map(([id, r]) => { const o = econLiveRow(r, now); return [id, { same: o === r, value: o.value, delta: o.delta, prev: o.prev, asOf: o.asOf, source: o.source,
+      live: o.live && { symbol: o.live.symbol, fresh: o.live.fresh, official: o.live.official } }]; }));
+    load({ ...q, ust2y: { ...q.ust2y, price: 6.03 } });   // a 2Y print 1.15 points off its official reading is a misread...
+    const far = Object.fromEntries(Object.keys(rows).map((id) => [id, econLiveRow(rows[id], now) === rows[id]]));   // ...for THAT row only
+    load(q);
+    // today's Treasury rate has posted for the 20Y (a 3:30 pm snapshot): a FRESH quote while the bond session is open is newer than it and
+    // replaces it; a quote that has stopped ticking, or any quote once the session is shut, leaves the official reading standing
+    const caught = { ...rows.ust20y, asOf: '2026-10-01' };
+    const closedAt = Date.parse('2026-10-01T22:00:00Z');   // 18:00 ET
+    const stands = { fresh: econLiveRow(caught, now) !== caught, stale: econLiveRow(caught, now + 6 * 60000) === caught, ust2y: econLiveRow(rows.ust2y, now) !== rows.ust2y };
+    econLive.q = { ust20y: { ...q.ust20y, ts: closedAt - 60000, fetchedAt: closedAt } };
+    stands.closed = econLiveRow(caught, closedAt) === caught;
+    econLive.q = {}; DESK.mode = 'demo';
+    return { drawn, far, stands };
+  });
+  expect(rules.drawn.ust2y, 'the 2Y: the print stands in, the change is from the previous close CNBC reports, and it says CNBC').toEqual({ same: false, value: 4.787, delta: -0.1, prev: 4.887, asOf: '2026-10-01', source: 'live',
+    live: { symbol: 'US2Y', fresh: true, official: { asOf: '2026-09-30', value: 4.88, source: 'treasury' } } });
+  expect([rules.drawn.ust10y.value, rules.drawn.ust10y.delta, rules.drawn.ust20y.value, rules.drawn.ust20y.delta, rules.drawn.ust20y.live.symbol],
+    'the 10Y and the 20Y alike').toEqual([5.253, -0.04, 5.612, -0.07, 'US20Y']);
+  expect(rules.far, 'a misread on one row (1.15 points off) leaves that row on its official reading and the other two live').toEqual({ ust2y: true, ust10y: false, ust20y: false });
+  expect(rules.stands, "today's own Treasury snapshot is replaced by a FRESH quote while the session is open, stands against a stale quote or once the session is shut").toEqual({ fresh: true, stale: true, ust2y: true, closed: true });
+
+  // ── 3. the real poller end to end: ONE request, three live rows, Yahoo untouched
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
+    window.__realCnbc = econLiveCnbc;
+    window.__ccalls = 0; window.__qcalls = [];
+    window.__cbody = window.__cq();
+    window.econLiveCnbc = () => { window.__ccalls++; return window.__cbody instanceof Error ? Promise.reject(window.__cbody) : Promise.resolve(window.__cbody); };
+    // Yahoo is NOT a source any more (owner: "no fallbacks"): anything that still reaches quote-proxy for a yield is recorded, and asserted absent
+    window.deskQuote = (sym, kind, prepost, opts) => { window.__qcalls.push({ sym, kind, force: !!(opts && opts.force) }); return Promise.reject(new Error('Yahoo is not a source of the yields')); };
+    // a CNBC reply whose quotes carry the given stamp (ET, as CNBC writes it); `__cqNow` stamps them `age` ms before now
+    window.__etStamp = (ms, off = 4) => new Date(ms - off * 3600000).toISOString().slice(0, 19) + '.000-0' + off + '00';
+    window.__cqAt = (stamp, extra = {}) => window.__cq({ US2Y: { last_time: stamp }, US10Y: { last_time: stamp }, US20Y: { last_time: stamp }, ...extra });
+    window.__cqNow = (age = 30000, extra = {}) => window.__cqAt(window.__etStamp(Date.now() - age), extra);
+    const official = { ust2y: [4.88, 4.89], ust10y: [5.29, 5.26], ust20y: [5.68, 5.64] };
+    window.deskEcon = (range) => {
+      const p = buildDemoEcon(range);
+      const rows = p.rows.map((r) => {
+        const o = official[r.id];
+        if (!o) return { ...r, source: 'fred' };
+        return { ...r, value: o[0], prev: o[1], delta: Number((o[0] - o[1]).toFixed(2)), asOf: '2026-09-30', prevAsOf: '2026-09-29', status: 'ok', source: 'treasury', changed: false,
+          points: r.points.filter((x) => x[0] < '2026-09-30').concat([['2026-09-30', o[0]]]) };
+      });
+      return Promise.resolve({ ...p, rows, range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false });
+    };
+  });
+  const rowsOf = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const q = (s) => li.querySelector(s);
+    return [li.dataset.id, { val: q('.econ-val').textContent, delta: q('.econ-delta').textContent, date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
+      isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null, title: li.title, live: li.dataset.live || null, cap: q('.econ-cap') ? q('.econ-cap').textContent : '',
+      clip: q('.econ-src') ? q('.econ-src').scrollWidth > q('.econ-src').clientWidth + 1 : null }];
+  })));
+  const state = () => page.evaluate(() => ({ c: window.__ccalls, y: window.__qcalls.map((x) => x.sym) }));
+  await page.evaluate(() => { startEcon(); });
+  await expect(page.locator('#econList .econ-row[data-live="1"]'), 'all three yield rows are drawn live').toHaveCount(3);
+  let R = await rowsOf();
+  expect([R.ust2y.val, R.ust2y.delta, R.ust2y.tag, R.ust2y.date, R.ust2y.src], 'the 2Y: the print, its change, LIVE, the Pacific CLOCK of the quote (15:49Z = 08:49 PDT), and CNBC named')
+    .toEqual(['4.79%', '▼ 0.10', 'LIVE', '08:49', 'Source: CNBC US2Y']);
+  expect([R.ust10y.val, R.ust10y.delta, R.ust10y.tag, R.ust10y.src], 'the 10Y').toEqual(['5.25%', '▼ 0.04', 'LIVE', 'Source: CNBC US10Y']);
+  expect([R.ust20y.val, R.ust20y.delta, R.ust20y.tag, R.ust20y.src], 'the 20Y').toEqual(['5.61%', '▼ 0.07', 'LIVE', 'Source: CNBC US20Y']);
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].isNew), 'a live row never carries a NEW chip').toEqual([false, false, false]);
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].clip), 'the longest source line ("Source: CNBC US10Y") fits its block').toEqual([false, false, false]);
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => /– Oct 1$/.test(R[id].cap)), 'and each chart now runs to today').toEqual([true, true, true]);
+  expect(R.ust2y.title, 'the tooltip names the quote, its time and the official reading it stands in for').toMatch(/as of 2026-10-01 08:49 PDT \(time of the last quote\)/);
+  expect(R.ust2y.title).toMatch(/source CNBC US2Y live quote, may be delayed/);
+  expect(R.ust2y.title).toMatch(/from the previous close CNBC reports/);
+  expect(R.ust2y.title).toMatch(/latest official reading 4\.88% on Sep 30 \(U\.S\. Treasury\)/);
+  expect(R.ust2y.title, 'and is not labelled as Treasury\'s own reading').not.toMatch(/source U\.S\. Treasury/);
+  expect(['unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, R[id].live, R[id].tag, R[id].src]), 'the four monthly rows are untouched and keep naming FRED')
+    .toEqual(['unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, null, null, 'Source: FRED']));
+  expect(await page.evaluate(() => [econSeen.ust2y, econSeen.ust10y, econSeen.ust20y]), 'the official readings the prints stand in for are recorded as seen').toEqual(['2026-09-30|4.88', '2026-09-30|5.29', '2026-09-30|5.68']);
+  expect(await state(), 'ONE CNBC request carried all three rows, and Yahoo was not asked at all').toEqual({ c: 1, y: [] });
+
+  // ── 4. the cadence: one request a minute for all three rows
+  await page.clock.runFor(58_000);
+  expect((await state()).c, '58 s in: not asked again').toBe(1);
+  await page.clock.runFor(4_000);
+  expect(await state(), 'a minute on: ONE more request (not three), still no Yahoo').toEqual({ c: 2, y: [] });
+
+  // ── 5. CNBC goes away: NOTHING stands in. The rows keep their last quote while it is still recent, say NOT LIVE once it is not,
+  //       and go back to the official reading (still saying NOT LIVE, and why) after 30 minutes
+  await page.evaluate(() => { window.__cbody = new Error('blocked by an extension'); });
+  await page.clock.runFor(61_000);   // ~15:52:35Z: the last quote (15:49:4xZ) is ~3 minutes old
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].tag, R[id].src]), 'CNBC just went quiet: the last quote is 3 minutes old and still LIVE')
+    .toEqual([['LIVE', 'Source: CNBC US2Y'], ['LIVE', 'Source: CNBC US10Y'], ['LIVE', 'Source: CNBC US20Y']]);
+  await page.clock.runFor(4 * 60_000);   // ~15:56:40Z: the quote is ~7 minutes old
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].tag, R[id].val]), 'seven minutes on, CNBC still silent: the row says NOT LIVE and still shows the last quote it has')
+    .toEqual([['NOT LIVE', '4.79%'], ['NOT LIVE', '5.25%'], ['NOT LIVE', '5.61%']]);
+  expect(R.ust2y.title, 'the tooltip says why: the quote is old, in minutes').toMatch(/NOT LIVE — CNBC's last quote for this row is [67] min old, so it is not real time/);
+  expect(R.ust2y.live, 'it is still the CNBC print on screen (a quote 7 minutes old is newer than yesterday\'s Treasury close) — flagged, not hidden').toBe('1');
+  await page.clock.runFor(31 * 60_000);
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].src, R[id].live, R[id].tag, R[id].val]),
+    'half an hour with no reply: the rows are back on their OFFICIAL reading — and say NOT LIVE (there is no second source to blame it on)')
+    .toEqual([['Source: U.S. Treasury', null, 'NOT LIVE', '4.88%'], ['Source: U.S. Treasury', null, 'NOT LIVE', '5.29%'], ['Source: U.S. Treasury', null, 'NOT LIVE', '5.68%']]);
+  expect(R.ust10y.title, 'and the tooltip says CNBC did not answer, so there is no real-time yield').toMatch(/NOT LIVE — CNBC did not answer \(blocked, offline or refused\), so there is no real-time yield; this is the latest official reading/);
+  expect(['unrate', 'cpi', 'pce', 'corepce'].map((id) => R[id].tag), 'the four monthly rows never carry the chip').toEqual([null, null, null, null]);
+  expect((await state()).y, 'no yield was ever asked of quote-proxy: Yahoo is not a source').toEqual([]);
+  // CNBC answers again but its quotes carry OLD stamps (a frozen feed): the quote is shown, flagged NOT LIVE with its age — an answer is not real time
+  await page.evaluate(() => { window.__cbody = window.__cq(); });
+  await page.clock.runFor(61_000);
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].src, R[id].tag]), 'CNBC answers with half-hour-old stamps: its quote is on screen and flagged NOT LIVE')
+    .toEqual([['Source: CNBC US2Y', 'NOT LIVE'], ['Source: CNBC US10Y', 'NOT LIVE'], ['Source: CNBC US20Y', 'NOT LIVE']]);
+  expect(R.ust2y.title).toMatch(/CNBC's last quote for this row is (3\d|4\d) min old/);
+  // CNBC delivers fresh quotes: LIVE
+  await page.evaluate(() => { window.__cbody = window.__cqNow(); });
+  await page.clock.runFor(61_000);
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].src, R[id].tag]), 'fresh quotes: every yield is LIVE from CNBC again')
+    .toEqual([['Source: CNBC US2Y', 'LIVE'], ['Source: CNBC US10Y', 'LIVE'], ['Source: CNBC US20Y', 'LIVE']]);
+  // CNBC leaves two rows out: the 2Y is live; the other two are official and say NOT LIVE — CNBC answered, but not for them
+  await page.evaluate(() => { econLive.q = {}; window.__cbody = window.__cqNow(30000, { drop: ['US10Y', 'US20Y'] }); });
+  await page.clock.runFor(61_000);
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].src, R[id].tag]), 'CNBC leaves two rows out: the 2Y is CNBC and LIVE, the others are official and NOT LIVE')
+    .toEqual([['Source: CNBC US2Y', 'LIVE'], ['Source: U.S. Treasury', 'NOT LIVE'], ['Source: U.S. Treasury', 'NOT LIVE']]);
+  expect(R.ust10y.title, 'and the tooltip says CNBC sent nothing usable for THIS row (it did answer)').toMatch(/NOT LIVE — CNBC sent no usable real-time quote for this row; this is the latest official reading/);
+  // the bond session is SHUT (Friday 18:30 ET): a quote that has stopped is simply the last print — LAST, never an alarm; a row with no live print says nothing
+  await page.clock.setSystemTime(new Date('2026-10-02T22:30:00Z'));
+  await page.evaluate(() => { econLive.q = {}; window.__cbody = window.__cqAt('2026-10-02T16:59:50.000-0400'); return econLiveFetch(false); });
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].tag, R[id].date]), 'after the bell the stopped quotes read LAST (their Pacific clock, 13:59 PDT) — no NOT LIVE')
+    .toEqual([['LAST', '13:59'], ['LAST', '13:59'], ['LAST', '13:59']]);
+  await page.evaluate(() => { econLive.q = {}; window.__cbody = new Error('blocked'); return econLiveFetch(false); });
+  R = await rowsOf();
+  expect(['ust2y', 'ust10y', 'ust20y'].map((id) => [R[id].live, R[id].tag]), 'after the bell with CNBC down and nothing live: the official reading and NO chip — real time is not expected').toEqual([[null, null], [null, null], [null, null]]);
+  await page.clock.setSystemTime(new Date('2026-10-01T15:50:30Z'));
+
+  // ── 6. the request itself: exactly the call that was measured, no extra options, and it NEVER throws
+  const real = await page.evaluate(async () => {
+    const f0 = window.fetch, calls = [], out = {};
+    try {
+      window.fetch = (url, init) => { calls.push([String(url), Object.keys(init || {})]); return Promise.resolve(new Response(JSON.stringify(window.__cq()), { status: 200, headers: { 'content-type': 'application/json' } })); };
+      out.ok = await window.__realCnbc();
+      window.fetch = () => Promise.resolve(new Response('denied', { status: 403 }));
+      out.denied = await window.__realCnbc();
+      window.fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+      out.blocked = await window.__realCnbc();
+      window.fetch = () => Promise.resolve(new Response('<html>not json</html>', { status: 200 }));
+      out.html = await window.__realCnbc();
+    } finally { window.fetch = f0; }
+    return { ok: !!(out.ok && out.ok.FormattedQuoteResult), denied: out.denied, blocked: out.blocked, html: out.html, calls };
+  });
+  expect(real.calls[0], 'the request is the measured URL with ONLY an abort signal — nothing that could turn it into a CORS preflight').toEqual([
+    'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=US2Y%7CUS10Y%7CUS20Y&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json&events=1', ['signal']]);
+  expect([real.ok, real.denied, real.blocked, real.html], 'a 200 gives the body; a 403, a blocked request and a body that is not JSON all give null, never a throw').toEqual([true, null, null, null]);
+  const hung = page.evaluate(async () => {
+    const f0 = window.fetch;
+    window.fetch = (u, init) => new Promise((_, rej) => init.signal.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))));
+    try { return { v: await window.__realCnbc() }; } finally { window.fetch = f0; }
+  });
+  const settled = (p) => Promise.race([p.then(() => true), new Promise((r) => setTimeout(() => r(false), 400))]);   // real-time look: the page clock also ticks on its own
+  await page.clock.runFor(7_000);
+  expect(await settled(hung), 'a request silent for 7 s is still waiting...').toBe(false);
+  await page.clock.runFor(1_500);
+  expect(await settled(hung), '...and by 8.5 s it has been given up on, so the Yahoo fallback is not held up behind it').toBe(true);
+  expect((await hung).v, 'as a failed request: null, never a throw').toBeNull();
+
+  // ── 7. the console allowlist S1/S3 share knows this ONE optional feed — and nothing wider
+  expect(benignCors("Access to fetch at 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=US2Y' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'CNBC\'s CORS refusal is allowlisted (the app falls back to the official numbers by design)').toBe(true);
+  expect(benignCors("Access to fetch at 'https://quote.cnbc.com.evil.example/quote-html-webservice/x' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'a look-alike host is not').toBe(false);
+  expect(benignCors("Access to fetch at 'https://www.cnbc.com/quotes/US10Y' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'and neither is any other CNBC URL').toBe(false);
+  // a foreign URL that merely CARRIES the permitted prefix in its query string (Codex, PR #300) — in the message, in the location, and in the 5xx rule's URL
+  const carrier = 'https://evil.example/fail?next=' + OPTIONAL_FEED;
+  expect(benignCors("Access to fetch at '" + carrier + "' from origin 'https://akyachtsman.github.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource."),
+    'a foreign URL carrying the prefix in its query is not allowlisted by its message').toBe(false);
+  const corsMsg = 'Fetch API cannot load due to access control checks.';
+  expect([benignCors(corsMsg, OPTIONAL_FEED + 'restQuote/x'), benignCors(corsMsg, carrier)],
+    'the same CORS message is allowlisted by a location that STARTS with the prefix and not by one that merely carries it').toEqual([true, false]);
+  expect([optionalFeedUrl(OPTIONAL_FEED + 'restQuote/x'), optionalFeedUrl(carrier), optionalFeedUrl(' ' + OPTIONAL_FEED), optionalFeedUrl(undefined)],
+    'a location URL must START with the prefix').toEqual([true, false, false, false]);
+  expect([optionalFeedInText("fetch at '" + OPTIONAL_FEED + "x'"), optionalFeedInText(OPTIONAL_FEED + 'x'), optionalFeedInText('load ' + OPTIONAL_FEED + 'x'),
+    optionalFeedInText(carrier), optionalFeedInText('x/' + OPTIONAL_FEED), optionalFeedInText(null)],
+    'a message names it only as a whole URL token (start, or after whitespace / a quote / a bracket), never after = ? or /').toEqual([true, true, true, false, false, false]);
+  expect(errs, 'no page errors').toEqual([]);
 });

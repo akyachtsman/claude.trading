@@ -772,7 +772,11 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 }
 .econ-row:first-child { border-top: 0; }
 .econ-info { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
-.econ-sub { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* wraps only when it must: the date, NOT LIVE and NEW (an unseen official reading while CNBC is down) are wider than the 104px block, so NEW drops to
+   a second line rather than hanging into the chart column — the chip that matters most (NOT LIVE) is placed before NEW, and kept compact (no border,
+   tight padding and tracking: ~46px against a 42px date) so that date + chip fit one line even in a wide fallback font before the web fonts swap in
+   (the first, bordered chip at ~57px wrapped on CI's phone viewport). If it ever does wrap it wraps whole: visible, inside the block, never clipped */
+.econ-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; min-width: 0; }
 .econ-label {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 500 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary);
@@ -788,6 +792,9 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 }
 .econ-new { background: var(--color-accent-light); color: var(--color-accent-bright); }
 .econ-tag { border: 1px solid var(--color-border-hover); color: var(--color-text-secondary); }
+/* NOT LIVE: the bond session is open and CNBC is not giving real time (owner 2026-10-01: "I want to be aware"). A SOLID chip in
+   plain ink, so it cannot be mistaken for the outlined LIVE/LAST tags beside it — and not red, because red is for losses here. */
+.econ-nolive { padding: 1px 3px; letter-spacing: .02em; border-width: 0; background: var(--color-text-primary); color: var(--color-surface); }
 /* the source of the number: as small as is still legible, a muted line under the date. Muted through the ink
    token, never `opacity` (that would dodge the contrast gate's pairs); clipped rather than wrapped so a long
    name can never push the row taller */
