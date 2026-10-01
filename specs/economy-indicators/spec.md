@@ -230,3 +230,14 @@ The function never trusts it. A row is **dropped** (and counted in `roster.dropp
 **Open.** Whether the feed answers a page on this site (CORS) and its real shape: read off the first live 1D view (the rows report it), then fix.
 
 **Guard.** S58, with S55 for the control.
+
+### 11d. Axes on every chart (owner request 2026-10-01: "numbers across vertical and horizontal lines", every range)
+
+**What.** Every drawn chart — each span, 1D included, and the monthly rows — gets a value axis down its right edge (up to three round values, each on the height the line draws it at, with a faint dashed gridline) and a time axis under it (up to three round clock times or dates, each at the x the line draws that instant at). The printed range caption ("Sep 24 – Oct 1", "21:02 – 14:05") is removed (owner: "I don't like this number dash number on the right"); the string survives as `data-span`, in the chart's accessible name and in the tooltip. The one caption that stays is the note on a span that fell back to the N latest readings ("monthly - 6 latest").
+
+**Why the fitting is in the browser.** The panel is 232px wide at its narrowest and the plot is ~68px of that, so how many labels fit cannot be decided when the markup is built: after layout, the outermost labels are kept first and any label that would touch a kept one is hidden (with its gridline, on the value axis). It re-runs on every markup change, resize and font load.
+
+**Decided.** Value axis on the RIGHT (the desk's last-price tab idiom; it also keeps the line's own start at the left edge). Time marks are calendar-round (Mondays, month/quarter/half-year/year starts, round Pacific clock steps; the date where Pacific midnight falls on a 1D chart), falling back to the first, middle and last reading. Year only at January for months ("Jan '26", "Jul").
+
+**Not decided / not done.** The demo's 1D bars still cover 08:00–17:00 ET while CNBC's real chart runs from 00:02 ET (seen on the owner's screenshot); no minor marks on the daily spans.
+

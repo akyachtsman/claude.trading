@@ -70,8 +70,10 @@ How the desk row (Markets | News | Ask | Economy), the accounts block at the bot
   **`flex: 1 1 0; min-height: 0`**: its content contributes nothing to the panel's height, so
   the panel is exactly Markets' height whatever the roster holds, and the body is an ordinary
   scroll container (plain `overflow-y: auto`, NO `overscroll-behavior`) that scrolls only when
-  the space it is given really is too small. Rows share the height (`flex: 1 1 56px`, capped at
-  104px, floored at 52px). Stacked (<1120) there is no Markets height to match: the body is
+  the space it is given really is too small. Rows share the height (`flex: 1 1 auto` — their own
+  content, so a wrapped chip row is taller rather than spilling out — capped at 104px, floored at
+  76px: a chart with its time axis and the info block need ~74px; the old 56px basis / 52px floor
+  let the content overflow its row in every stacked layout, which the chart axes made visible). Stacked (<1120) there is no Markets height to match: the body is
   uncapped and the page scrolls. The panel header WRAPS (title + lamp, then the stamp) because
   "Last updated 08:11, Sep 30" does not share a line with them at 232px. Two traps: a body
   that is not `flex: 1 1 0; min-height: 0` hands the row's height to the panel — take it out

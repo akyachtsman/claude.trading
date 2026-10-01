@@ -762,11 +762,15 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 }
 .econ-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
 /* rows share the height the panel is given (beside Markets it is a lot) but never grow past
-   ~104px, and never shrink below 52px: then the BODY scrolls rather than the rows squashing. The list
+   ~104px, and never shrink below 76px: then the BODY scrolls rather than the rows squashing. 76px holds the
+   chart WITH its time axis (and the note under a fallback span) and the info block (~60px) plus the 6px
+   padding either side; the old 52px floor and 56px basis let the content overflow its row in every stacked
+   layout (phone, tablet, a narrow desktop), and the axes made it plainly visible. The basis is the row's own
+   content (`auto`), so a row whose chips wrap onto a second line is taller instead of spilling out. The list
    deliberately keeps the default `min-height: auto` (its rows' minimum) — `min-height: 0` let it shrink
    below its rows. */
 .econ-row {
-  flex: 1 1 56px; min-height: 52px; max-height: 104px;
+  flex: 1 1 auto; min-height: 76px; max-height: 104px;
   display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: var(--space-2); align-items: stretch;
   padding: 6px 0; border-top: 1px solid var(--color-border);
 }
@@ -814,6 +818,33 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
   font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary);
 }
+/* The axes (owner 2026-10-01: "numbers across vertical and horizontal lines", on every range). The plot is the line and a value axis
+   beside it; the time axis sits under the line and is exactly as wide as the svg (it carries the same right margin as the value
+   axis is wide), so a tick's left % IS the x the line is drawn at. Small muted ink through the text token, never `opacity`
+   (that would dodge the contrast gate's pairs); the padding gives the top and bottom value labels room to overhang the line's own
+   3-unit margin without touching the time axis. */
+.econ-plot { --econ-yw: 26px; flex: 1 1 0; min-height: 26px; min-width: 0; display: flex; padding: 4px 0; }
+.econ-plot svg { flex: 1 1 0; min-width: 0; width: auto; align-self: stretch; }
+.econ-grid { stroke: var(--color-border); stroke-width: 1; stroke-dasharray: 2 3; }
+.econ-grid.is-hide, .econ-ytick.is-hide { visibility: hidden; }   /* econFitValueAxis: two values closer than a label is tall */
+.econ-yaxis { position: relative; flex: none; width: var(--econ-yw); }
+.econ-ytick {
+  position: absolute; left: 4px; transform: translateY(-50%); white-space: nowrap;
+  font: 400 9px/1 var(--font-mono); color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
+}
+.econ-axis {
+  position: relative; flex: none; height: 13px; margin-right: 26px;   /* 26px = the value axis (--econ-yw) */
+  border-top: 1px solid var(--color-border-hover);
+}
+.econ-tickmark { position: absolute; top: 0; width: 1px; height: 3px; background: var(--color-border-hover); }
+.econ-tickmark.is-minor { height: 2px; background: var(--color-border); }
+.econ-xtick {
+  position: absolute; top: 3px; transform: translateX(-50%); white-space: nowrap;
+  font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
+}
+.econ-xtick.is-hide { visibility: hidden; }   /* econFitAxis: it would touch a label already kept, or leave the axis */
+.econ-xtick.is-start { transform: none; }
+.econ-xtick.is-end { transform: translateX(-100%); }
 /* a span change whose reply is on the way: the old charts stay, dimmed, under the new label */
 .econ-list.is-pending .econ-chart { opacity: .35; }
 .econ-empty { padding: var(--space-4) 0; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); }

@@ -594,12 +594,46 @@ width); **S56** guards the live 10Y.
   for `econBars.p` once its `Promise.all` has settled) and on a tab coming back
   with bars older than a minute — only while 1D is the view (`econBarsFetch` guards it too),
   never while hidden. `econLiveRepaint` redraws the yield rows in place and compares the
-  chart's markup as well as the text, because new bars change no text. The caption is the
-  Pacific clock of the first and last bar (dated when the newest bar is not from today). The
+  chart's markup as well as the text, because new bars change no text. The first and last bar's
+  Pacific clock (dated when the newest bar is not from today) is `data-span`, not a printed caption
+  (see "The axes"). The
   S1/S3 console allowlist carries the chart feed's exact prefix (`OPTIONAL_FEED_CHARTS`) as
   well: S3 clicks every control, the 1D button included, and a CI runner is refused there.
-  **Open:** whether the feed answers a page on this site (CORS), and its real URL and shape —
-  to be read off the first live 1D view.
+  **Confirmed 2026-10-01** from the owner's screenshot of the live panel: the feed answers a page
+  on this site, the URL is right and the parser read it — bars 21:02 → 14:05 Pacific, i.e. CNBC's
+  chart carries the OVERNIGHT session from 00:02 ET (the demo's seeded bars still cover only
+  08:00–17:00 ET).
+- **The axes (owner 2026-10-01: "numbers across vertical and horizontal lines", asked for on the 1D
+  chart and then "every single range option"; guard S55 for every span, S58 for the 1D clock axis
+  and the pure builders).** Every drawn chart has a VALUE axis on its right and a TIME axis under
+  it, built by `econPlot` beside `econSpark`; the printed range caption ("Sep 24 – Oct 1",
+  "21:02 – 14:05") is gone (`data-span`, the accessible name and the tooltip keep it), the only
+  caption left being the `pointsNote` of a span that fell back ("monthly - 6 latest").
+  *Value axis* — `econYTicks`: up to three round values (a step of 1/2/5 × 10ⁿ leaving two or
+  three inside the data, never finer than the row's decimals, else the data's min and max, a flat
+  series its one value); `econYAxis` puts each label at `econSparkY(v)` — the very function the line
+  is drawn with — and `econSpark(points, label, grid)` draws a faint dashed `.econ-grid` line at each
+  value. *Time axis* — `econXAxis` is a baseline as wide as the svg (it carries the value axis' 26px
+  as a right margin), a mark per tick at `1 + 98·f` percent (the svg's own x for the point), a label
+  under the major ones. `f` is `econIdxFrac`: the line is drawn in INDEX order, so an instant is
+  placed between the two points around it, and a gap in the bars (or a weekend) compresses the
+  marks inside it. 1D (`econXTicksIntraday`): the smallest round Pacific clock step that leaves at
+  most three labels, each read off the Pacific clock at that instant (right on the clock-change
+  day), the DATE where Pacific midnight falls ("Oct 1 | 06:00 | 12:00" for the real 21:02 → 14:05
+  chart), an unlabelled mark at every other hour when the labels are further apart. Daily and
+  monthly series (`econXTicksDates`): calendar marks — Mondays, month, quarter, half-year, year,
+  every second year, every fifth — the smallest kind leaving two or three inside the span, else the
+  first, middle and last reading; a month is its name with the year only at January ("Jan '26",
+  "Jul"), a day "Sep 24", the long marks the year.
+  *Fitting* — how many labels fit is a pixel question (232px panel, ~68px plot at the narrowest):
+  after layout `econFitAxis` keeps the outermost labels first and HIDES (`.is-hide`) any that would
+  touch one kept (4px) or leave the axis; `econFitValueAxis` does the same vertically (1px) and hides
+  the label's gridline with it. `econWatchAxes` runs both from a MutationObserver on `#econList`
+  (every update path rebuilds a row's chart), a ResizeObserver and `document.fonts.ready` — not
+  rAF, which a paused test clock would stall — and the observer watches `childList` only, so
+  toggling a class cannot loop. Found by the first screenshots: without the fit, "Jul 1 Aug 1
+  Sep 1" and "2022 2024 2026" printed on top of each other at 232px, and two value labels touched
+  on a short row (tablet/phone) — both are asserted now.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
   real rows — FRED, with Treasury's daily rate on the three yields since v3 (the shared store)
   went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields

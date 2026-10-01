@@ -5899,6 +5899,73 @@ test('S54: the accounts sit at the bottom of the page, side by side, in line wit
   }
 });
 
+// ── the Economy charts' AXES (owner 2026-10-01: "numbers across vertical and horizontal lines", on every range) ──────────────
+// Read off the LIVE layout: for every drawn chart, the value axis (right of the plot) and the time axis (under it) with each label's
+// box, text and whether the fit pass hid it, plus the svg and the gridlines. `lo`/`hi` are the extremes of the series the line is drawn
+// from (read from the chart's own path-independent data: the payload row, or the demo bars on 1D) so a label's VALUE and HEIGHT can be
+// checked against what is drawn rather than against itself.
+async function readEconAxes(page, tf) {
+  return page.evaluate((frame) => [...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const chart = li.querySelector('.econ-chart'), svg = chart.querySelector('svg'), ax = chart.querySelector('.econ-axis'), ya = chart.querySelector('.econ-yaxis');
+    if (!svg) return { id: li.dataset.id, drawn: false };
+    const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+    const sr = box(svg), shown = econState.shown && econState.shown.rows.find((r) => r.id === li.dataset.id);
+    const vals = frame === '1d' ? buildDemoBars(li.dataset.id).map((p) => p[1]) : frame === '1d-live' ? (econBars.m[li.dataset.id] ? econBars.m[li.dataset.id].pts : []).map((p) => p[1]) : (shown && shown.points || []).map((p) => Number(p[1])).filter(Number.isFinite);
+    return {
+      id: li.dataset.id, cadence: li.dataset.cadence, drawn: true, svg: sr, chart: box(chart), axis: box(ax), span: chart.dataset.span || '',
+      lo: Math.min(...vals), hi: Math.max(...vals), n: vals.length,
+      y: [...ya.querySelectorAll('.econ-ytick')].map((t) => ({ text: t.textContent, hidden: getComputedStyle(t).visibility === 'hidden', ...box(t) })),
+      grid: [...svg.querySelectorAll('.econ-grid')].map((g) => ({ t: box(g).t, hidden: getComputedStyle(g).visibility === 'hidden' })),
+      x: [...ax.querySelectorAll('.econ-xtick')].map((t) => ({ text: t.textContent, hidden: getComputedStyle(t).visibility === 'hidden', ...box(t) })),
+      markX: [...ax.querySelectorAll('.econ-tickmark')].map((m) => { const r = m.getBoundingClientRect(); return (r.left + r.right) / 2; }), note: !!chart.querySelector('.econ-note'),
+    };
+  }), tf);
+}
+// `xlabel` is the pattern every VISIBLE time label of that span must match (a clock time, a day, a month, a year).
+function checkEconAxes(expect, rows, label, xlabel) {
+  const drawn = rows.filter((r) => r.drawn);
+  expect(drawn.length, `${label}: charts are drawn`).toBeGreaterThan(0);
+  for (const r of drawn) {
+    const w = `${label} [${r.id}]`;
+    // the time axis is exactly as wide as the line, directly under it — so a tick's position IS the line's x
+    expect([Math.abs(r.axis.l - r.svg.l) <= 1, Math.abs(r.axis.r - r.svg.r) <= 1, r.axis.t >= r.svg.b - 5], `${w}: the time axis spans the plot, under it`).toEqual([true, true, true]);
+    const vis = r.x.filter((l) => !l.hidden);
+    expect(vis.length, `${w}: at least one time label survives the fit`).toBeGreaterThanOrEqual(1);
+    for (const l of vis) {
+      expect(l.text, `${w}: time label "${l.text}"`).toMatch(xlabel);
+      expect(l.l >= r.axis.l - 1 && l.r <= r.axis.r + 1, `${w}: "${l.text}" is inside the axis (${l.l.toFixed(1)}–${l.r.toFixed(1)} in ${r.axis.l.toFixed(1)}–${r.axis.r.toFixed(1)})`).toBe(true);
+      expect(l.t >= r.svg.b - 5, `${w}: "${l.text}" is under the plot`).toBe(true);
+    }
+    const byX = [...vis].sort((a, b) => a.l - b.l);
+    for (let i = 1; i < byX.length; i++) expect(byX[i].l - byX[i - 1].r, `${w}: time labels "${byX[i - 1].text}" and "${byX[i].text}" do not touch`).toBeGreaterThanOrEqual(3);
+    // the value axis: one to three round values, to the RIGHT of the line, each on the height the line draws that value at. A label the fit
+    // pass hid (two values closer than a label is tall) takes its gridline with it, so the visible ones pair up in order.
+    const yv = r.y.filter((y) => !y.hidden), gv = r.grid.filter((g) => !g.hidden);
+    expect(yv.length >= 1 && yv.length <= 3, `${w}: one to three value labels (${yv.map((y) => y.text).join(' ')})`).toBe(true);
+    expect(r.grid.length, `${w}: a gridline for every value`).toBe(r.y.length);
+    expect(gv.length, `${w}: a visible gridline at every visible value label (and none without one)`).toBe(yv.length);
+    const span = r.hi - r.lo, tol = (y0) => 0.5 * Math.pow(10, -((y0.split('.')[1] || '').length)) + 1e-9;   // half a unit of the label's own last decimal
+    yv.forEach((y, i) => {
+      const shownV = Number(y.text.replace('−', '-')), t = tol(y.text);
+      expect(Number.isFinite(shownV), `${w}: "${y.text}" is a number`).toBe(true);
+      expect(y.l >= r.svg.r - 1 && y.r <= r.chart.r + 1, `${w}: "${y.text}" sits right of the plot, inside the chart column`).toBe(true);
+      // a label is either a round value at its own height, or — when no round step fits — the data's own minimum or maximum, rounded to the
+      // row's decimals ("3.0" for 3.008) and drawn at THAT extreme's height: it must match one of those readings
+      expect(shownV >= r.lo - t && shownV <= r.hi + t, `${w}: ${shownV} is within the data (${r.lo.toFixed(3)}–${r.hi.toFixed(3)})`).toBe(true);
+      if (span > 0) {
+        const yOf = (c) => r.svg.t + (32 - 3 - (c - r.lo) / span * 26) / 32 * (r.svg.b - r.svg.t);
+        const reads = [shownV, r.lo, r.hi].filter((c) => Math.abs(c - shownV) <= t);
+        const centre = (y.t + y.b) / 2;
+        expect(Math.min(...reads.map((c) => Math.abs(centre - yOf(c)))), `${w}: "${y.text}" is on the height the line draws it at`).toBeLessThanOrEqual(1.6);
+        expect(Math.min(...reads.map((c) => Math.abs(gv[i].t - yOf(c)))), `${w}: and so is its gridline`).toBeLessThanOrEqual(1.6);
+      }
+    });
+    const byY = [...yv].sort((a, b) => a.t - b.t);
+    for (let i = 1; i < byY.length; i++) expect(byY[i].t - byY[i - 1].b, `${w}: value labels do not touch`).toBeGreaterThanOrEqual(0);
+  }
+  return drawn;
+}
+
 // S55 — The Economy panel (owner request 2026-09-30): the desk row's 4th column. Seven indicators —
 // 2Y/10Y/20Y Treasury, unemployment, CPI, PCE, core PCE — each row a value, a change, the date the
 // reading is FOR and ITS OWN chart to the right, over a span the owner picks (1D 1W 1M 3M 6M 1Y 5Y; 1D is the yields' intraday
@@ -6038,11 +6105,11 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await expect(page.locator('#econList .econ-row')).toHaveCount(7);
   expect(await pressed(), '1Y survives a reload').toEqual(['1y']);
   expect(Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d])), 'and so does the drawing').toEqual(after);
-  // the caption under each chart names what it covers: on a year-long span a daily row's ends carry the YEAR, so
-  // "Sep 28 – Sep 28" (a five-year chart that reads as one day) can never appear
+  // each chart still knows what it covers (`data-span`, the old printed caption — the time axis carries it now): on a year-long span a
+  // daily row's ends carry the YEAR, so "Sep 28 – Sep 28" (a five-year chart that reads as one day) can never appear
   for (const tf of ['1y', '5y']) {
     await pick(tf);
-    const caps = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-cap').textContent]));
+    const caps = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-chart').dataset.span]));
     for (const [id, cadence, cap] of caps) {
       const [from, to] = cap.split(' – ');
       expect(from, `[${id}] @${tf}: the caption's two ends differ (${cap})`).not.toBe(to);
@@ -6050,8 +6117,22 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     }
   }
   await pick('3m');
-  for (const [id, cadence, cap] of await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-cap').textContent]))) {
+  for (const [id, cadence, cap] of await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-chart').dataset.span]))) {
     if (cadence === 'daily') expect(cap, `[${id}] @3M a daily caption is Mon D – Mon D (no year needed)`).toMatch(/^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/);
+  }
+  // ── the AXES, on EVERY range (owner 2026-10-01: "numbers across vertical and horizontal lines"): each drawn chart has up to three
+  // round VALUES down its right edge, each on the height the line draws it at (a faint dashed gridline across), and up to three round
+  // TIMES / DATES under it, on a baseline exactly as wide as the line — with no label touching another or leaving the chart, at this
+  // project's own width (the panel is 232px at its narrowest, so the fit pass has to drop labels there).
+  const DAYMON = /^([A-Z][a-z]{2} \d{1,2}|[A-Z][a-z]{2}( '\d{2})?)$/, MONYEAR = /^(\d{4}|[A-Z][a-z]{2}( '\d{2})?)$/;
+  for (const [tf, xlabel] of [['1d', /^(\d\d:\d\d|[A-Z][a-z]{2} \d{1,2})$/], ['1w', DAYMON], ['1m', DAYMON], ['3m', DAYMON], ['6m', DAYMON], ['1y', MONYEAR], ['5y', MONYEAR]]) {
+    await pick(tf);
+    const rowsAx = await readEconAxes(page, tf);
+    const drawn = checkEconAxes(expect, rowsAx, `@${tf}`, xlabel);
+    expect(drawn.length, `@${tf}: ${tf === '1d' ? 'the three yields' : 'all seven rows'} carry axes`).toBe(tf === '1d' ? 3 : 7);
+    const dailyLabels = (r) => r.x.filter((l) => !l.hidden).map((l) => l.text);
+    if (tf === '5y') for (const r of drawn.filter((x) => x.cadence === 'daily')) expect(dailyLabels(r).every((t) => /^\d{4}$/.test(t)), `@5y [${r.id}]: a five-year daily chart is labelled in YEARS (${dailyLabels(r)})`).toBe(true);
+    if (tf === '1y') for (const r of drawn.filter((x) => x.cadence === 'daily')) expect(dailyLabels(r).every((t) => /^[A-Z][a-z]{2}( '\d{2})?$/.test(t)), `@1y [${r.id}]: a year-long daily chart is labelled in months, the year at January (${dailyLabels(r)})`).toBe(true);
   }
   await pick('1y');
   // a hand-edited / stale stored span falls back to the default instead of pressing nothing
@@ -6146,7 +6227,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   expect(tight.scrolls, 'with 260px the seven rows do not fit, so the body scrolls').toBe(true);
   expect(tight.overflowY, 'an ordinary scrollbar').toBe('auto');
   expect(tight.overscroll, 'and NO overscroll-behavior (it kills the wheel over a short panel)').toEqual(['auto', 'auto']);
-  expect(tight.minRow, 'rows keep at least their 52px rather than squashing').toBeGreaterThanOrEqual(51);
+  expect(tight.minRow, 'rows keep at least their 76px (a chart with its time axis, and the info block) rather than squashing').toBeGreaterThanOrEqual(75);
 
   // ── 7. LIVE (forced): the real poller, a stubbed desk-econ, Playwright's fake clock
   await page.evaluate(() => {
@@ -6583,7 +6664,7 @@ test('S56: the live yield rules — a quote stands in for the official reading o
     const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right }; };
     return {
       val: q('.econ-val').textContent, delta: q('.econ-delta').textContent, date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
-      isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null, title: li.title, cap: q('.econ-cap').textContent, aria: q('.econ-chart svg') ? q('.econ-chart svg').getAttribute('aria-label') : null,
+      isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null, title: li.title, cap: q('.econ-chart').dataset.span || '', aria: q('.econ-chart svg') ? q('.econ-chart svg').getAttribute('aria-label') : null,
       live: li.dataset.live || null, info: box(q('.econ-info')), chart: q('.econ-chart svg') ? box(q('.econ-chart svg')) : null,
       clip: { src: q('.econ-src') ? q('.econ-src').scrollWidth > q('.econ-src').clientWidth + 1 : null, label: q('.econ-label').scrollWidth > q('.econ-label').clientWidth + 1, date: q('.econ-date').scrollWidth > q('.econ-date').clientWidth + 1, sub: q('.econ-sub').scrollWidth > q('.econ-sub').clientWidth + 1 },
     };
@@ -6920,7 +7001,7 @@ test('S57: the live yields from CNBC — one browser request for all three, each
   const rowsOf = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#econList .econ-row')].map((li) => {
     const q = (s) => li.querySelector(s);
     return [li.dataset.id, { val: q('.econ-val').textContent, delta: q('.econ-delta').textContent, date: q('.econ-date').textContent, tag: q('.econ-tag') ? q('.econ-tag').textContent : null,
-      isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null, title: li.title, live: li.dataset.live || null, cap: q('.econ-cap') ? q('.econ-cap').textContent : '',
+      isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null, title: li.title, live: li.dataset.live || null, cap: q('.econ-chart') ? q('.econ-chart').dataset.span || '' : '',
       clip: q('.econ-src') ? q('.econ-src').scrollWidth > q('.econ-src').clientWidth + 1 : null }];
   })));
   const state = () => page.evaluate(() => ({ c: window.__ccalls, y: window.__qcalls.map((x) => x.sym) }));
@@ -7076,7 +7157,7 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
 
   const rows1d = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#econList .econ-row')].map((li) => {
     const cap = li.querySelector('.econ-cap'), svg = li.querySelector('.econ-chart svg');
-    return [li.dataset.id, { svg: !!svg, cap: cap ? cap.textContent : '', capClip: cap ? cap.scrollWidth > cap.clientWidth + 1 : false, title: li.title, aria: svg ? svg.getAttribute('aria-label') : null }];
+    return [li.dataset.id, { svg: !!svg, span: li.querySelector('.econ-chart').dataset.span || '', cap: cap ? cap.textContent : '', capClip: cap ? cap.scrollWidth > cap.clientWidth + 1 : false, title: li.title, aria: svg ? svg.getAttribute('aria-label') : null }];
   })));
   const pressed = () => page.evaluate(() => [...document.querySelectorAll('#econTf button[aria-pressed="true"]')].map((b) => b.dataset.tf));
   const pick = async (tf) => { await page.locator(`#econTf button[data-tf="${tf}"]`).click(); await expect.poll(pressed).toEqual([tf]); };
@@ -7086,7 +7167,7 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   await page.evaluate(() => { window.__bcalls = 0; window.__realBars0 = econLiveBars; window.econLiveBars = () => { window.__bcalls++; return Promise.resolve({ ok: false, why: 'noanswer', detail: 'x' }); }; });
   await pick('1d');
   let R = await rows1d();
-  expect(YIELDS.map((id) => [R[id].svg, R[id].cap]), 'demo 1D: each yield draws a chart captioned with the Pacific clock of the bond session (08:00-17:00 ET)').toEqual(YIELDS.map(() => [true, '05:00 – 14:00']));
+  expect(YIELDS.map((id) => [R[id].svg, R[id].span]), 'demo 1D: each yield draws a chart spanning the Pacific clock of the bond session (08:00-17:00 ET), and prints no caption').toEqual(YIELDS.map(() => [true, '05:00 – 14:00']));
   expect(MONTHLY.map((id) => [R[id].svg, R[id].cap]), 'and every monthly row has no chart and says so').toEqual(MONTHLY.map(() => [false, 'no 1-day data']));
   expect(MONTHLY.every((id) => /no 1-day data: a monthly indicator has no intraday series/.test(R[id].title)), 'its tooltip says why').toBe(true);
   expect(Object.values(R).some((r) => r.capClip), 'no caption is clipped').toBe(false);
@@ -7161,6 +7242,39 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
     columbus: '2026-10-09T12:00:00.000Z', veterans: '2026-11-10T13:00:00.000Z', ordinary: '2026-10-13T12:00:00.000Z', thanksgiving: '2026-11-25T13:00:00.000Z',
   });
 
+  // the axes' pure builders (every result checked by hand): round value ticks, an instant's place along the DRAWN x, the clock axis of a day
+  // (with the DATE at Pacific midnight — the owner's own case: bars 21:02 → 14:05 Pacific), and the calendar axes of every other span
+  const ax = await page.evaluate(() => {
+    const bars = (fromIso, toIso, stepMin, skip) => { const a = Date.parse(fromIso), z = Date.parse(toIso), o = []; for (let t = a; t <= z; t += stepMin * 60000) if (!skip || !skip(t)) o.push([t, 5 + Math.sin(t / 3e6)]); return o; };
+    const dates = (list) => list.map((d, i) => [d, 4 + i / 10]);
+    const lab = (t) => t.filter((x) => x.label).map((x) => x.label + '@' + x.f.toFixed(3));
+    const biz = (from, n) => { const o = []; let d = new Date(from + 'T00:00:00Z'); while (o.length < n) { if (d.getUTCDay() % 6) o.push(d.toISOString().slice(0, 10)); d = new Date(d.getTime() + 864e5); } return o; };
+    const pm = econXTicksIntraday(bars('2026-10-01T04:02:00Z', '2026-10-01T21:05:00Z', 5));
+    return {
+      y: [econYTicks([4.78, 4.82], 2), econYTicks([4.76, 4.82], 2), econYTicks([5, 5], 2), econYTicks([4.1, 4.25], 1), econYTicks([0.3, 5.9], 2), econYTicks([4.1, 4.14], 1)].map((a) => a.map((v) => +v.toFixed(6))),
+      idx: [60, 5, -3, 500].map((t) => econIdxFrac([0, 10, 20, 100], t)),
+      pm: lab(pm), pmMinor: pm.filter((t) => t.minor).length,
+      morning: lab(econXTicksIntraday(bars('2026-10-01T12:00:00Z', '2026-10-01T15:50:00Z', 5))),
+      tiny: lab(econXTicksIntraday(bars('2026-10-01T12:03:00Z', '2026-10-01T12:11:00Z', 4))),
+      gap: lab(econXTicksIntraday(bars('2026-10-01T12:00:00Z', '2026-10-01T21:00:00Z', 5, (t) => t > Date.parse('2026-10-01T13:00:00Z') && t < Date.parse('2026-10-01T18:00:00Z')))),
+      dst: lab(econXTicksIntraday(bars('2026-11-01T07:00:00Z', '2026-11-01T21:00:00Z', 5))),
+      d1w: lab(econXTicksDates(dates(biz('2026-09-24', 6)), 'daily')), d1m: lab(econXTicksDates(dates(biz('2026-09-01', 23)), 'daily')),
+      d3m: lab(econXTicksDates(dates(biz('2026-07-01', 66)), 'daily')), d6m: lab(econXTicksDates(dates(biz('2026-04-01', 128)), 'daily')),
+      d1y: lab(econXTicksDates(dates(biz('2025-10-01', 262)), 'daily')), d5y: lab(econXTicksDates(dates(biz('2021-10-01', 1305)), 'daily')),
+      m6: lab(econXTicksDates(dates(['2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01']), 'monthly')),
+    };
+  });
+  expect(ax.y, 'value ticks: round steps of 2-3 values, else the data\'s min and max; flat is its one value; never finer than the row\'s decimals (4.10-4.14 at one decimal would print 4.1 three times: one label instead)').toEqual([[4.78, 4.8, 4.82], [4.76, 4.82], [5], [4.1, 4.2], [2, 4], [4.12]]);
+  expect(ax.idx.map((f) => +f.toFixed(4)), 'an instant\'s place along the drawn x is interpolated between the two points around it, clamped to the ends').toEqual([0.8333, 0.1667, 0, 1]);
+  expect([ax.pm, ax.pmMinor], 'the owner\'s case — bars 21:02 → 14:05 Pacific: the DATE where the day changes, then 06:00 and 12:00, and an unlabelled mark at every other hour').toEqual([['Oct 1@0.175', '06:00@0.527', '12:00@0.880'], 14]);
+  expect(ax.morning, 'a morning (05:00 → 08:50): the smallest round step with at most three labels').toEqual(['06:00@0.261', '08:00@0.783']);
+  expect(ax.tiny, 'a span too short for any round mark is labelled at its two ends').toEqual(['05:03@0.000', '05:11@1.000']);
+  expect(ax.gap[0] === '06:00@0.245' && ax.gap[1] === '09:00@0.257', 'a gap in the bars compresses the marks inside it onto the drawn x (06:00 and 09:00 land 1% apart: the fit pass drops one)').toBe(true);
+  expect(ax.dst, 'the day the clocks go back (Nov 1): marks are read off the Pacific clock at each instant, not a fixed offset').toEqual(['Nov 1@0.000', '06:00@0.500', '12:00@0.929']);
+  expect([ax.d1w, ax.d1m], 'a week: its first, middle and last reading; a month: the month starts inside it').toEqual([['Sep 24@0.000', 'Sep 29@0.600', 'Oct 1@1.000'], ['Sep 1@0.000', 'Oct 1@1.000']]);
+  expect([ax.d3m, ax.d6m], 'three months: month starts; six months: quarter starts').toEqual([['Jul 1@0.000', 'Aug 1@0.344', 'Sep 1@0.677'], ['Apr 1@0.000', 'Jul 1@0.512']]);
+  expect([ax.d1y, ax.d5y, ax.m6], 'a year: half-years with the year at January; five years: every second year; monthly readings: month names').toEqual([["Jan '26@0.253", 'Jul@0.747'], ['2022@0.050', '2024@0.449', '2026@0.850'], ['Apr@0.200', 'Jul@0.800']]);
+
   // ── 3. force live: stub the quote, desk-econ (recording the range it is asked) and the bars
   await page.evaluate(() => {
     DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
@@ -7192,7 +7306,7 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   expect(await page.evaluate(() => window.__bsyms.slice().sort()), 'for US2Y, US10Y and US20Y').toEqual(['US10Y', 'US20Y', 'US2Y']);
   await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-chart svg'), 'the 10Y draws its day').toHaveCount(1);
   R = await rows1d();
-  expect(YIELDS.map((id) => [R[id].svg, R[id].cap]), 'each yield: a chart captioned with the Pacific clock of its first and last bar (08:00 → 05:00, 11:50 → 08:50)').toEqual(YIELDS.map(() => [true, '05:00 – 08:50']));
+  expect(YIELDS.map((id) => [R[id].svg, R[id].span]), 'each yield: a chart spanning the Pacific clock of its first and last bar (08:00 → 05:00, 11:50 → 08:50)').toEqual(YIELDS.map(() => [true, '05:00 – 08:50']));
   expect(R.ust10y.aria, 'the chart\'s accessible name says what it is').toBe('10Y Treasury, 47 prices 05:00 – 08:50 Pacific');
   expect(R.ust2y.title, 'the tooltip names the source and the count').toContain('1-day chart: 47 CNBC US2Y prices, 05:00 – 08:50');
   expect(MONTHLY.map((id) => [R[id].svg, R[id].cap]), 'the monthly rows say they have no 1-day data').toEqual(MONTHLY.map(() => [false, 'no 1-day data']));
@@ -7200,6 +7314,20 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   expect(await page.evaluate((d) => econState.dueAt === d, dueBefore), 'and the desk-econ poll clock did not move').toBe(true);
   expect(await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] .econ-sub *')].map((e) => e.textContent).join('|')), 'the row\'s own liveness chip and date are untouched by the view').toMatch(/08:49|08:50|LIVE/);
   expect(Object.values(R).some((r) => r.capClip), 'no caption clipped').toBe(false);
+  // both axes on the live chart too, read off the layout: clock labels (06:00 / 08:00 for 05:00 → 08:50), values on the right, and the chart prints NO range caption
+  const live1d = checkEconAxes(expect, await readEconAxes(page, '1d-live'), 'live 1D', /^\d\d:\d\d$/);
+  expect(live1d.map((r) => r.id), 'the three yields carry axes on 1D').toEqual(YIELDS);
+  expect(live1d.every((r) => r.x.some((l) => l.text === '06:00') && r.span === '05:00 – 08:50'), 'each is labelled 06:00 (and 08:00 where it fits) and knows its span').toBe(true);
+  expect(await page.evaluate(() => [...document.querySelectorAll('#econList .econ-chart')].filter((c) => c.querySelector('svg') && c.querySelector('.econ-cap')).length), 'and there is no printed "05:00 – 08:50" caption under any drawn chart').toBe(0);
+  // a label sits at the x the line is drawn at for that instant: 06:00 PT (13:00Z) is bar 12 of 46 (the bars are 5 minutes apart), and the svg draws bar i
+  // at 1 + 98 * i/46 percent of its width — so the label's centre is measured against that, not against another label
+  for (const r of live1d) {
+    const l6 = r.x.find((l) => l.text === '06:00'), want = r.axis.l + (r.axis.r - r.axis.l) * (1 + 98 * 12 / 46) / 100;
+    expect(Math.abs((l6.l + l6.r) / 2 - want), `[${r.id}] the 06:00 label is centred on the line's own x for that bar (${(want).toFixed(1)}px)`).toBeLessThanOrEqual(1.5);
+    // and the mark of the FIRST bar (05:00) is where the line starts — 1 of its 100 units in, not at the svg's edge
+    const first = Math.min(...r.markX), startX = r.svg.l + (r.svg.r - r.svg.l) * 0.01;
+    expect(Math.abs(first - startX), `[${r.id}] the first mark (${first.toFixed(1)}px) is at the line's own start (${startX.toFixed(1)}px)`).toBeLessThanOrEqual(0.75);
+  }
 
   // the bars-versus-quote check also runs at RENDER time: bars stored while no reference existed (a boot on a saved 1D where a bars reply beats
   // the quote and the rows) are still refused once one does (Codex, PR #301)
