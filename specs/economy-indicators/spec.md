@@ -144,7 +144,7 @@ The owner asked for "one day, week, month, etc." selectors. The finest data that
 - **one reading per business day** for Treasury yields, and
 - **one reading per month** for unemployment, CPI and PCE (published about two weeks after the month ends).
 
-There is no intraday or "today" series for any of them — a yield is fixed once a day, an inflation rate once a month. So the span choices are **1W 1M 3M 6M 1Y 5Y** for every row, and there is no 1D: a one-day chart would be a single dot.
+There is no intraday or "today" series for any of them — a yield is fixed once a day, an inflation rate once a month. So the span choices are **1W 1M 3M 6M 1Y 5Y** for every row, and desk-econ has no 1D: a one-day chart of its data would be a single dot. *(The panel's own 1D view — the yields' intraday bars from CNBC, a view and never a range — is §11c.)*
 
 When a span holds **fewer than 6 readings** — every monthly row on 1W, 1M and 3M, or a yield on a holiday week — the row shows **its 6 latest readings instead** and the payload says so (`pointsNote: "monthly - 6 latest"`), so the panel can label it rather than draw a two-point line or a misleading flat one. A row with fewer than 2 readings in total draws no chart. 1W of yields normally holds 6 readings (start inclusive), so it draws its real week.
 
@@ -218,3 +218,15 @@ The function never trusts it. A row is **dropped** (and counted in `roster.dropp
 **Limits, stated.** It is an unofficial endpoint and may change or be blocked at any time (every failure is a NOT LIVE row, never an error). It works only in a browser that can reach `quote.cnbc.com` (an extension or a work/school network may block it) and only while the dashboard is open and visible; server code — `desk-ask`, scheduled asks — never sees these prices. CNBC sees each viewer's IP, user-agent and the page origin; no desk data crosses. How far behind CNBC's quote runs is unmeasured (one reading, seconds old); the 20Y item's shape was never seen. CI: S1/S3 allowlist exactly the CNBC quote URL prefix (`OPTIONAL_FEED`, matched at its start).
 
 **Guard.** S57.
+
+### 11c. 1D — the yields' intraday chart (owner request 2026-10-01: "add the one day chart" → "build it blind")
+
+**What.** A seventh span, **1D**, first in the control. It is a VIEW, never a range: desk-econ is not asked for it (an unknown range is answered with `3m`, which the poller treats as a failed reply), so picking it asks the server nothing and leaves the poll clock alone. On 1D the 2Y, 10Y and 20Y draw the day's price bars; the four monthly indicators have no intraday series and say "no 1-day data". The control's `title` says so.
+
+**Source.** CNBC's chart feed, `https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=US2Y|US10Y|US20Y`, one request per yield, from the visitor's browser (CNBC refuses servers) — only while 1D is showing, alongside each quote poll, never while the tab is hidden. **Built blind:** the URL and the reply's shape are from memory and were not measured (every CNBC host answers the build sandbox 403), so the parser accepts the plausible shapes (§ in `economy-panel.md`) and the design's promise is that **every failure is named on the row** — HTTP status, no answer, not JSON, unknown format (with the reply's keys), no bars, a last bar that disagrees with the quote — and **no chart is ever drawn from anything but real bars**: no substitute source (owner: "no fallbacks"), no demo bars in live. A failed refresh keeps the last good bars for 30 minutes, flagged in the tooltip.
+
+**Demo.** Seeded 5-minute bars over the last trading day's 08:00–17:00 ET bond session; no network.
+
+**Open.** Whether the feed answers a page on this site (CORS) and its real shape: read off the first live 1D view (the rows report it), then fix.
+
+**Guard.** S58, with S55 for the control.

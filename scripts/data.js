@@ -953,6 +953,33 @@ function buildDemoEcon(range, now) {
   };
 }
 
+/* ── 1D for the yields: an intraday series ───────────────────────────────────────────────────────────────────
+   etWallToMs turns a NEW YORK wall-clock instant ('YYYY-MM-DD' + minutes after midnight [+ seconds]) into epoch ms —
+   the inverse of etClock(), which is what CNBC's `tradeTime` strings need (they are New York local time with no
+   offset). Two refinements settle it across a DST change. buildDemoBars is the demo's twin of the live CNBC bars: a
+   seeded 5-minute walk over the last trading day's bond session (08:00–17:00 ET), ending on the demo row's own level,
+   so `?demo=1` draws a 1D chart with no network. Demo only — live never calls it (real data or nothing). */
+function etWallToMs(iso, minutes, seconds) {
+  const want = Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) + minutes * 60000;
+  let t = want;
+  for (let i = 0; i < 2; i++) {
+    const c = etClock(new Date(t));
+    t += want - (Date.parse(c.date + 'T00:00:00Z') + c.minutes * 60000);
+  }
+  return t + (seconds || 0) * 1000;
+}
+function buildDemoBars(id, now) {
+  const row = DEMO_ECON_ROWS.find(r => r[0] === id);
+  if (!row) return [];
+  const day = isoDate(lastTradingDay(now || new Date()));
+  const open = etWallToMs(day, 8 * 60), n = 9 * 12;
+  const rnd = lcg(row[4] * 31 + 5), end = row[5], step = row[6] / 14;
+  const vals = [end + (rnd() - 0.5) * step * 6];
+  for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (end - vals[i - 1]) * 0.02);
+  const shift = end - vals[n];
+  return vals.map((v, i) => [open + i * 300000, Number((v + shift).toFixed(3))]);
+}
+
 /* US equities session gate for the feed poller cadence (spec Clarification
    6). Mirrors the Deno copies in supabase/functions/desk-* — keep the
    holiday list in sync there when refreshing it annually (2026–2027). The
