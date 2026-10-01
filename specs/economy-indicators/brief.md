@@ -1,6 +1,6 @@
 # Brief — Economy indicators panel
 
-> **STATUS (2026-09-30): BACKEND BUILT AND DEPLOYED (v1, `verify_jwt` ON); UI BUILT (S55).** `desk-econ`, its roster and its checks are committed and the function is live; the panel is in `scripts/app.js`'s Economy block (`tasks.md` is history). Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
+> **STATUS (2026-09-30): BACKEND BUILT AND DEPLOYED (v1, `verify_jwt` ON); UI BUILT (S55); TREASURY SAME-DAY RATE ON FOR THE THREE YIELDS (roster change, v2 deploy pending owner approval).** `desk-econ`, its roster and its checks are committed and the function is live; the panel is in `scripts/app.js`'s Economy block (`tasks.md` is history). Where this and `CLAUDE.md` disagree, `CLAUDE.md` is authoritative.
 
 ## Problem (one sentence)
 The desk shows prices but none of the macro numbers the owner trades against — Treasury yields, unemployment, inflation — so reading them means leaving the desk.
@@ -23,7 +23,7 @@ Seven rows — 2Y, 10Y, 20Y Treasury, Unemployment, CPI YoY, PCE YoY, Core PCE Y
 - Nothing ships live until the owner approves its deploy, and only the dedicated Supabase project is touched. *(Historical: this read "nothing is deployed" while the function was being built. The owner approved the deploy on 2026-09-30 and `desk-econ` v1 is live — `docs/architecture/economy-panel.md`.)*
 
 ## Approach chosen
-One anon-callable feed function, `desk-econ`, in the same family as `desk-market` / `desk-maps`: FRED's public CSV as the spine for every series (full history, verified reachable), and — OFF by default, FRED-only to begin with (owner 2026-09-30) — the U.S. Treasury's daily par-yield CSV as an opt-in same-day tail for the three yields (FRED lags them 1–2 business days), a committed owner-editable roster (`config/econ-indicators.json`), and a refresh cadence that tightens around the scheduled release times. The history is fetched once (six-plus years) and every span is a slice of it. Detail: `spec.md`.
+One anon-callable feed function, `desk-econ`, in the same family as `desk-market` / `desk-maps`: FRED's public CSV as the spine for every series (full history, verified reachable), and the U.S. Treasury's daily par-yield CSV — a daily rate (a ~3:30 pm ET snapshot of bid-side quotes, not the actual close), never intraday — as a cross-checked same-day tail for the three yields (FRED lags them 1–2 business days): FRED-only at first (owner 2026-09-30, "can't you just use FRED to begin with?"), switched ON for the three yields later the same day (owner request: current 2Y/10Y yields; unverified against the live host, a silent fallback to FRED on any failure), a committed owner-editable roster (`config/econ-indicators.json`), and a refresh cadence that tightens around the scheduled release times. The history is fetched once (six-plus years) and every span is a slice of it. Detail: `spec.md`.
 
 ## Not chosen, and why
 - **BLS / BEA APIs directly**: BLS v2 needs a key; v1 is keyless but tightly rate-limited, and `api.bls.gov` was unreachable from the build sandbox. FRED republishes both within minutes to an hour of the 08:30 release, keyless.

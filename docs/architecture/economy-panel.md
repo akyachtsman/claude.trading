@@ -1,6 +1,6 @@
 # Economy panel and `desk-econ`
 
-The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55).
+The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55). Later the same day the owner asked for CURRENT 2Y/10Y yields, so the roster switched Treasury's same-day daily rate ON for the three yields (see Sources and Deploying: live via the Pages roster, v2 deploy pending, UNVERIFIED against the live host).
 
 - **What it serves.** Seven rows by default — 2Y / 10Y / 20Y Treasury, Unemployment,
   CPI YoY, PCE YoY, Core PCE YoY — each with `value`, `prev`, `delta`, `asOf`,
@@ -10,22 +10,37 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   single-flight, every upstream fetch bounded by an `AbortSignal`, always JSON.
   CORS is the **quote-proxy Origin allowlist** (site origin only; no Origin = 403)
   rather than the `*` the other five feeds use — a browser-enforced speed-bump.
-- **Sources, keyless — FRED ONLY TO BEGIN WITH** (owner 2026-09-30). FRED `fredgraph.csv` is the SPINE of every row (verified
-  reachable 2026-09-30; lags daily yields 1–2 business days: read the row's `asOf`).
-  The shipped roster and the built-in default name no Treasury column, so
-  Treasury is never called (`econ-check` asserts zero calls) and every row is
-  `source:"fred"`. The U.S. Treasury daily par-yield CSV is an OPT-IN same-day
-  TAIL for the three yields (add `"treasury": "10 Yr"` to a row's `sources`),
-  dormant until it can be checked against the live host, and
-  **UNVERIFIED-AGAINST-LIVE** — `home.treasury.gov` was unreachable from the build
-  sandbox, so its parser was written from the documented layout and tested on
-  constructed fixtures. It is used only when (1) it parses, (2) it AGREES with
-  FRED on every shared date (|Δ| ≤ 0.015) with at least one shared date, and (3)
-  it is strictly NEWER than FRED; otherwise the row is FRED-only, automatically.
-  It is never served alone (no FRED spine = `stale` or `missing`), a validated
-  print is kept 72h so a flaky host cannot flip a yield back to T-2, and a failed
-  fetch backs off 10 min. Columns are looked up BY NAME (Treasury inserted
-  `1.5 Month` in 2025, shifting every later column).
+- **Sources, keyless — FRED spine, plus Treasury's same-day daily RATE on the three yields**
+  (ON since 2026-09-30, owner request: current 2Y and 10Y yields. *Superseded: the same
+  day's "FRED only to begin with" ruling, under which the roster named no Treasury column
+  and Treasury was never called.* 20Y comes from the same Treasury file and is included so
+  no yield in the table sits a day behind its neighbours.) FRED `fredgraph.csv` is the SPINE
+  of every row (verified reachable 2026-09-30; lags daily yields 1–2 business days: read the
+  row's `asOf`). The shipped roster and the built-in default are IDENTICAL and name exactly
+  the `2 Yr` / `10 Yr` / `20 Yr` Treasury columns (`econ-check` asserts both). The U.S.
+  Treasury daily par-yield CSV is a **daily RATE: a snapshot of bid-side quotes taken at about
+  3:30 pm ET, published about 15:30–18:00 ET** — same day after the snapshot, NEVER intraday,
+  and on a volatile afternoon it can differ from the actual closing yield (Codex, PR #295),
+  so it is never called a "close": before it posts, a yield row shows the previous business
+  day's rate (Treasury's; FRED often carries that day only after its own afternoon update). It is **UNVERIFIED-AGAINST-LIVE** — `home.treasury.gov` was
+  unreachable from the build sandbox, so its parser was written from the documented layout
+  and tested on constructed fixtures only, and it has not yet run from Supabase. It is used
+  only when (1) it parses, (2) it AGREES with FRED on every shared date (|Δ| ≤ 0.015) with
+  at least one shared date, and (3) it is strictly NEWER than FRED; otherwise the row is
+  served from FRED — silently, per row, every refresh (the row's `source`, `"treasury"` or
+  `"fred"`, says which; a function log line says why). It is never served alone (no FRED
+  spine = `stale` or `missing`), a validated print is kept 72h so a flaky host cannot flip a
+  yield back to T-2, and a failed fetch (5xx, block page, timeout) backs off 10 min. Columns
+  are looked up BY NAME (Treasury inserted `1.5 Month` in 2025, shifting every later column).
+  **Known residuals** (found when the tail went ON, 2026-09-30; accepted, not fixed): (a) the
+  72h "never flip back" store is per server INSTANCE, so a fresh instance whose own Treasury
+  fetch fails can serve FRED's older date while a warm one serves today's — a yield row can
+  then step back a day between two replies, and its NEW chip (keyed on date + value) can
+  re-flag; the clean fix is a client rule that ignores a daily row whose date goes backwards,
+  or a shared store; (b) a single date where Treasury and FRED disagree (a revision FRED has
+  not picked up) makes that row drop the whole Treasury tail until FRED catches up; (c)
+  `home.treasury.gov` may refuse data-centre addresses (403 "Access Denied") or be slower
+  than the 5s timeout — either is a silent FRED fallback visible only in the function log.
 - **FRED holes are holes.** The documented missing marker is `.`, but MEASURED
   2026-09-30 the endpoint writes an EMPTY field (`2026-09-07,` Labor Day;
   `2025-10-01,` the shutdown month for CPI and UNRATE). `Number('')` is `0`, so
@@ -64,24 +79,44 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   rows dropped and counted (`roster.dropped`), deduped by `id`, capped at 12, the
   FRED id strictly patterned before it reaches a URL, Treasury only on a
   daily-level row.
-- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (24 checks, fresh `vm` isolate each,
+- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (25 checks, fresh `vm` isolate each,
   stubbed `fetch`, settable clock, real FRED captures + constructed Treasury
-  fixtures under `tools/fixtures/econ/`); `--mutants` proves 27 single-line
-  mutants are each caught (27/27 on 2026-09-30).
+  fixtures under `tools/fixtures/econ/`; the harness serves the COMMITTED roster, and the
+  no-Treasury path is tested on that roster with its `treasury` keys stripped); `--mutants`
+  proves 33 single-line source mutants plus 3 damages to the shipped roster (a re-blanked,
+  a wrong and a swapped Treasury column) are each caught (36/36 on 2026-09-30). A Treasury
+  outage — 503, 403 or 200 block page, network error, a hung host cut off by its
+  `AbortSignal` — is checked to leave all seven rows served from FRED, HTTP 200, none missing.
 - **Deploying.** Deployed 2026-09-30 (owner-approved, project
   `kwugzhyfjevzwgplhtsd`, version 1, `verify_jwt` **ON**, like `desk-maps` /
   `desk-heatmap` / `desk-watchlist`, which serve the browser's `deskPost` headers).
   Smoke test after deploy, anon key + `Origin: https://akyachtsman.github.io`:
-  POST `{range:'3m'}` 200 with 7 rows, all `source:"fred"` (zero Treasury calls);
+  POST `{range:'3m'}` 200 with 7 rows, all `source:"fred"` (zero Treasury calls — v1 on its
+  built-in FRED-only default, before the Treasury tail went on);
   `{range:'bogus'}` and a non-JSON body degrade to `3m`; `1w`/`1y`/`5y` slice the cached
   history; no Origin and a foreign Origin 403; GET 405; OPTIONS 200 with the allowlisted
   `Access-Control-Allow-Origin`; no `Authorization` header 401 (the `verify_jwt` gate).
   Values agreed with direct FRED pulls (10Y 5.24 on 2026-09-28; CPI YoY 3.397 against
   the 3.4 served). Logs read clean (no 5xx). Until `config/econ-indicators.json` is on
   Pages (first merge to `main`) the function reports `roster.source:"default"` — the
-  built-in roster is identical, so the rows are the same.
+  built-in roster is identical, so the rows are the same. *(True of v1 while both were
+  FRED-only. Since the Treasury columns went into the config, v1's built-in default and the
+  Pages roster DIFFER until v2 is deployed: `roster.source:"default"` on v1 now means the
+  yields are on FRED — see below.)*
   The repo spells the BOM strip `/^\uFEFF/`; the payload sent used the same escape, and
   the read-back may show the literal character instead — the same regex either way.
+  **Treasury tail ON (2026-09-30, owner request) — NOT redeployed.** The live function is
+  still v1, whose built-in default names no Treasury column. But v1 (deployed from `f78a03f`,
+  the same source as this file before the roster change) already carries the whole Treasury
+  path and reads the roster from Pages at runtime (cached 1h), so the three Treasury columns
+  take effect on the LIVE function within about an hour of `config/econ-indicators.json`
+  reaching Pages (the merge to `main`) — a merged roster edit IS a live change, deploy or
+  not. A v2 deploy (the built-in default naming the same three columns, so a Pages outage
+  does not drop the yields back to FRED) awaits the owner's separate approval. The Treasury
+  path is UNVERIFIED AGAINST THE LIVE HOST until it has run from Supabase: after Treasury
+  posts (inside 15:25–18:30 ET), `ust10y.source` should read `"treasury"` with today's `asOf`;
+  if it never does, the rows are silently on FRED — read the function logs for
+  `desk-econ: Treasury` / `treasury disagrees` / `no overlap` lines.
 
 ## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`
 
@@ -107,7 +142,13 @@ width).
   em dash through `fmtToNum` — never `0.00%`. A daily reading is `Sep 29`; a monthly one names
   its MONTH (`Aug`, the year only when it is not this one), by string slicing — never
   `new Date('2026-08-01')`, which is UTC midnight and reads Jul 31 in Pacific. The date is
-  deliberately prominent: the feed is FRED-only, so a yield is about a business day old.
+  deliberately prominent: a yield is a daily RATE — today's only once Treasury has posted it
+  (late afternoon ET), otherwise the previous business day's, and older when only FRED has it.
+  (Until 2026-09-30's switch this read "the feed is FRED-only".) The source note under the list
+  is true on both paths ("Yields: U.S. Treasury's daily rate (3:30 pm ET snapshot) once posted, else
+  FRED …"), and each row's tooltip names its own `source` ("source U.S. Treasury daily rate" /
+  "source FRED") — never "same day": before today's rate posts, Treasury supplies YESTERDAY's,
+  and `asOf` is what says so (Codex, PR #295).
 - **Status.** `missing` (or a null value): em dashes, a dashed placeholder, a `NO DATA` tag.
   `stale`: the row keeps its last good value and chart (spec §8), muted, tagged `STALE`
   (the tooltip carries the age).
@@ -167,5 +208,6 @@ width).
   as NEW. Each chart's accessible name says what is drawn — `pointsNote` ("monthly - 6 latest")
   when the span fell back, else "over 3M" — never a short span over a half-year of readings.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
-  real FRED rows. If the function is ever down, a live page lamps the panel `STALE` and retries
+  real rows — FRED, with Treasury's daily rate on the three yields once the roster naming those
+  columns is on Pages. If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
