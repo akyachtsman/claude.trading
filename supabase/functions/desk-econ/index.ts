@@ -14,19 +14,27 @@
 //   * U.S. Treasury "Daily Treasury Par Yield Curve Rates" CSV is a TAIL for the
 //     three yields only (ON in the roster since 2026-09-30) — it posts the day's
 //     RATE (a ~15:30 ET snapshot of bid-side quotes, not the actual close) the same afternoon
-//     (~15:30-18:00 ET), never intraday. UNVERIFIED-AGAINST-LIVE:
-//     home.treasury.gov was unreachable from the build sandbox (proxy policy),
-//     so its parser was written against the documented layout and exercised on
-//     CONSTRUCTED fixtures only. It is therefore never trusted on its own: a
-//     Treasury observation is used only when it is NEWER than FRED's newest AND
-//     the Treasury file agrees with FRED on every date the two share. Any fetch,
-//     parse or agreement failure falls back to FRED automatically.
+//     (~15:30-18:00 ET), never intraday. MEASURED from Supabase's servers 2026-10-01
+//     (throwaway desk-probe, 3 runs): the file's layout matches the parser below and
+//     its values equal FRED's DGS* on shared dates, but home.treasury.gov answers
+//     SLOWLY — 17-20 s per request regardless of size, once past 20 s. And every
+//     desk-econ request is served by a FRESH instance (measured the same day:
+//     generatedAt differed on calls 4 s apart), so nothing kept in module memory
+//     is ever seen again. Treasury's validated rows therefore live in the SHARED
+//     store desk_feed_cache (key `econ:treasury`), which every request reads; one
+//     request per interval takes a lease and does the slow fetch, AWAITED (see
+//     treasuryCycle). It is still never trusted on its own: a Treasury observation
+//     is used only when it is NEWER than FRED's newest AND agrees with FRED on
+//     every date the two share. Any fetch, parse, store or agreement failure
+//     leaves the row on FRED.
 //
 // Anon-callable PUBLIC feed, same family as desk-market / desk-maps: no caller
 // input reaches an upstream URL (the roster is committed config, validated here;
-// `range` is an allowlist token that only selects a slice of cached data). No
-// service key, no database, no secrets. CORS is the quote-proxy ORIGIN ALLOWLIST
-// (site origin only) — a browser-enforced speed-bump, not an auth wall.
+// `range` is an allowlist token that only selects a slice of cached data). It
+// holds the SERVICE KEY solely for desk_feed_cache (desk_006, RLS deny-all), which
+// stores public Treasury yield observations only — exactly as desk-heatmap and
+// desk-news do. No other database use, no other secret. CORS is the quote-proxy
+// ORIGIN ALLOWLIST (site origin only) — a browser-enforced speed-bump, not an auth wall.
 
 // ── CORS: origin allowlist (quote-proxy pattern) ─────────────────────────────
 const ALLOWED_ORIGINS = new Set([
@@ -48,15 +56,16 @@ const reply = (status: number, body: unknown, cors: Record<string, string>) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json' } });
 
 // The UA is for OUTBOUND third-party fetches (FRED, Treasury, the Pages-served
-// config) and nothing else. This function makes no Supabase REST call; if one is
-// ever added it must NOT carry this header (CLAUDE.md: a browser-shaped UA makes
-// the gateway refuse an sb_secret key with a 401 that a catch swallows).
+// config) and nothing else. The desk_feed_cache REST calls (storeHeaders) must
+// NEVER carry it (CLAUDE.md: a browser-shaped UA makes the gateway refuse an
+// sb_secret key with a 401 that a catch swallows — the store would silently read
+// as unavailable and the yields stay on FRED).
 const UA = { 'user-agent': 'Mozilla/5.0 (desk econ; +https://akyachtsman.github.io/claude.trading/)' };
 const CONFIG_URL = 'https://akyachtsman.github.io/claude.trading/config/econ-indicators.json';
 const FRED_CSV = 'https://fred.stlouisfed.org/graph/fredgraph.csv';
-// UNVERIFIED-AGAINST-LIVE: the documented month-scoped CSV download of the par
-// yield curve. Fetched for the current AND previous NY month so the tail never
-// falls into a month boundary (FRED can lag across the 1st).
+// The month-scoped CSV download of the par yield curve (reached from Supabase
+// 2026-10-01: HTTP 200 text/csv, 17-20 s). Fetched for the current AND previous NY
+// month so the tail never falls into a month boundary (FRED can lag across the 1st).
 const treasuryCsvUrl = (yyyymm: string) =>
   'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/all/'
   + `${yyyymm}?type=daily_treasury_yield_curve&field_tdr_date_value_month=${yyyymm}&page&_format=csv`;
@@ -66,11 +75,20 @@ const treasuryCsvUrl = (yyyymm: string) =>
 // the body read (res.text()).
 const CONFIG_TIMEOUT_MS = 5_000;
 const FRED_TIMEOUT_MS = 8_000;
-const TREASURY_TIMEOUT_MS = 5_000;
+// Treasury answers Supabase in 17-20 s (once past 20 s, 2026-10-01): the old 5 s
+// limit failed every time. Only the one request holding the lease waits on it.
+const TREASURY_TIMEOUT_MS = 45_000;
 const CONFIG_TTL_MS = 3_600_000;       // same as desk-charts' roster: edits land within the hour
-const TREASURY_BACKOFF_MS = 600_000;   // after a failed Treasury fetch, do not retry for 10 min
+const TREASURY_BACKOFF_MS = 600_000;   // after a failed Treasury attempt, no instance retries for 10 min
 const TREASURY_KEEP_MS = 72 * 3_600_000; // a validated Treasury observation is a fact; keep it 72h
 const TREASURY_TOL = 0.015;            // both publish 2 decimals: "agree" = equal after float noise
+const TREASURY_POSTING_EVERY_MS = 300_000;  // today's rate missing, weekday 15:25 ET to midnight: one attempt per 5 min
+const TREASURY_IDLE_EVERY_MS = 3_600_000;   // outside it, only while nothing has landed since the window last opened: hourly
+// The shared Treasury store (desk_feed_cache row). Bounded: a slow database costs
+// the Treasury tail for one reply, never the reply.
+const STORE_KEY = 'econ:treasury';
+const STORE_TIMEOUT_MS = 3_000;
+const STORE_SKEW_MS = 60_000;          // a stored stamp later than now + this is corrupt, not a lease
 
 // Refresh policy (see refreshPolicy): 60s inside release windows, 15 min on a
 // quiet weekday, a 60 min heartbeat at weekends, 2 min while any row is degraded.
@@ -108,10 +126,12 @@ type RosterRow = {
 // 20Y comes from the same Treasury file and is included so no yield in the table sits
 // a day behind its neighbours). Treasury's par-yield file is a daily RATE (a
 // snapshot of bid-side quotes taken ~15:30 ET, not the actual close) posted ~15:30-18:00 ET:
-// same day, never intraday. The path is
-// UNVERIFIED against the live host (tested on constructed fixtures only), which is
-// why stitchTreasury uses it only when it agrees with FRED and is newer; any failure
-// is a silent per-row fallback to FRED (the row's `source` says which). This roster
+// same day, never intraday. The layout was verified against the live file from
+// Supabase on 2026-10-01; the host is slow (17-20 s), so the tail lives in the shared
+// store desk_feed_cache and only the request holding the lease waits on a fetch
+// (treasuryCycle). stitchTreasury still uses it only when it
+// agrees with FRED and is newer; any failure is a silent per-row fallback to FRED
+// (the row's `source` says which). This roster
 // and config/econ-indicators.json must stay IDENTICAL and name exactly these three
 // Treasury columns — econ-check asserts both (the only reason this is exported).
 export const DEFAULT_ROSTER: unknown[] = [
@@ -314,9 +334,10 @@ function treasuryDate(s: string | undefined): string | null {
   return `${pad(y, 4)}-${pad(m)}-${pad(d)}`;
 }
 
-// UNVERIFIED-AGAINST-LIVE. Documented layout: a `Date` column (MM/DD/YYYY),
-// then one column per tenor NAMED in the header ("2 Yr", "10 Yr", "20 Yr", ...),
-// newest row first. Columns are looked up BY NAME, never by position — Treasury
+// Layout (documented, and VERIFIED against the live file fetched from Supabase on
+// 2026-10-01 — tools/fixtures/econ/treasury-real-20260930-head.csv): a `Date` column
+// (MM/DD/YYYY), then one column per tenor NAMED in the quoted header ("2 Yr",
+// "10 Yr", "20 Yr", ...), newest row first; \n or \r\n line endings both parse. Columns are looked up BY NAME, never by position — Treasury
 // inserted "1.5 Month" in 2025, which shifted every later column by one. A row
 // dated after `today` (NY) is dropped (a day/month swap produces exactly that),
 // as is any value outside a plausible yield range.
@@ -346,8 +367,8 @@ export function parseTreasuryCsv(text: string, today: string): Map<string, Obs[]
 
 // ── Treasury tail onto the FRED spine ────────────────────────────────────────
 // PREFER Treasury only when it is newer than FRED's newest observation, and only
-// when it AGREES with FRED on every date both carry (this is the guard for an
-// unverified parser: a misread column cannot agree with FRED by accident). No
+// when it AGREES with FRED on every date both carry (the guard against a future
+// layout change: a misread column cannot agree with FRED by accident). No
 // overlap = nothing to cross-check = not used. Only STRICTLY newer dates are
 // appended, so the result has no duplicate and no out-of-order date.
 export function stitchTreasury(spine: Obs[], tail: Obs[] | null | undefined):
@@ -464,9 +485,10 @@ const msg = (e: unknown) => String((e as Error)?.message ?? e);
 // Raw FRED history per series id, replaced only by a successful parse, so a
 // failed refresh leaves the last good history in place (stale-while-error).
 const fredStore = new Map<string, { at: number; obs: Obs[] }>();
-// Validated Treasury observations per tenor column, merged across fetches.
+// This request's working copy of the shared Treasury store (desk_feed_cache),
+// set by every refresh() from the row it read (plus, for the lease holder, what it
+// just fetched); null = no usable store this request. buildRow stitches from it.
 let treasuryStore: { at: number; cols: Map<string, Obs[]> } | null = null;
-let treasuryDownUntil = 0;
 // Newest (date|value) per row id as of the previous refresh — the `changed` bit.
 const lastNewest = new Map<string, string>();
 
@@ -482,21 +504,130 @@ async function refreshFred(id: string, cosd: string): Promise<boolean> {
   }
 }
 
-async function refreshTreasury(now: number, today: string): Promise<void> {
-  if (now < treasuryDownUntil) return; // backing off: a blocked host must not tax every refresh
+// ── Treasury: one shared store, refreshed under a lease (v3, 2026-10-01) ─────
+// MEASURED 2026-10-01: every desk-econ request runs on a FRESH instance, so the
+// v2 idea of a per-instance background fetch could never be seen by a later
+// request. The validated Treasury rows therefore live in desk_feed_cache under
+// `econ:treasury`: payload { cols: {"2 Yr": [[date, value], ...], ...},
+// fetchedAt (last COMPLETE success: every roster column validated), mergedAt
+// (last merge of any validated column — what the 72h keep is measured from),
+// attemptedAt (last attempt start = the lease), failedAt (last total failure, or
+// null), lease (the holder's id) }.
+// Every request reads it; at most one request per interval does the slow fetch.
+
+type StoreRow = {
+  cols: Map<string, Obs[]>; fetchedAt: number; mergedAt: number; attemptedAt: number; failedAt: number | null; lease: string | null;
+};
+const emptyRow = (): StoreRow => ({ cols: new Map(), fetchedAt: 0, mergedAt: 0, attemptedAt: 0, failedAt: null, lease: null });
+// How old the stored COLUMNS are (the 72h keep): the last merge of any of them.
+const keptAt = (r: StoreRow) => Math.max(r.mergedAt, r.fetchedAt);
+
+// Service-key headers for the desk_feed_cache REST calls. NO user-agent, ever (see UA).
+function storeHeaders(): Record<string, string> {
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  return { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' };
+}
+// Logs must never carry the service key: a PostgREST error body can echo request context.
+function scrubbed(s: unknown): string {
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const t = String(s);
+  return key ? t.split(key).join('[key]') : t;
+}
+
+// The stored payload is UNTRUSTED: re-validated field by field, never thrown on.
+// A foreign shape reads as an empty store (so the next lease rewrites it clean);
+// a column keeps only known tenor names, ISO dates no later than today (NY) and no
+// older than the 70-day window, and plausible yields. Even a well-formed but WRONG
+// value cannot reach a reply: rows only ever use it through stitchTreasury.
+function storeRowFrom(p: unknown, now: number, today: string): StoreRow {
+  const row = emptyRow();
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return row;
+  // deno-lint-ignore no-explicit-any
+  const o = p as any;
+  const stamp = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= now + STORE_SKEW_MS ? v : null);
+  row.fetchedAt = stamp(o.fetchedAt) ?? 0;
+  row.mergedAt = stamp(o.mergedAt) ?? 0;
+  row.attemptedAt = stamp(o.attemptedAt) ?? 0;
+  row.failedAt = stamp(o.failedAt);
+  row.lease = typeof o.lease === 'string' ? o.lease.slice(0, 64) : null;
+  const floor = shiftDays(today, -70);
+  if (o.cols && typeof o.cols === 'object' && !Array.isArray(o.cols)) {
+    for (const [c, obs] of Object.entries(o.cols)) {
+      if (!TREASURY_COLS.has(c) || !Array.isArray(obs)) continue;
+      const byDate = new Map<string, number>();
+      for (const pt of obs) {
+        if (!Array.isArray(pt) || pt.length !== 2) continue;
+        const [d, v] = pt;
+        if (typeof d !== 'string' || !ISO_RE.test(d) || d > today || d < floor) continue;
+        if (typeof v !== 'number' || !Number.isFinite(v) || v < -5 || v > 30) continue;
+        byDate.set(d, v);
+      }
+      if (byDate.size) row.cols.set(c, [...byDate.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+    }
+  }
+  return row;
+}
+
+// Resolves null ONLY for "no row yet". A failed read (HTTP error, timeout, a body
+// that is not a row list) THROWS — the caller treats that as "no store this
+// request": FRED only, and no Treasury attempt (an attempt it could not record
+// would be repeated by every request, each one ~20 s slow).
+async function readTreasuryRow(now: number, today: string): Promise<StoreRow | null> {
+  const url = Deno.env.get('SUPABASE_URL');
+  if (!url) throw new Error('SUPABASE_URL is not set');
+  const res = await fetch(`${url}/rest/v1/desk_feed_cache?select=at,payload&key=eq.${STORE_KEY}`,
+    { headers: storeHeaders(), signal: AbortSignal.timeout(STORE_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const rows = await res.json();
+  if (!Array.isArray(rows)) throw new Error('unexpected body');
+  return rows.length ? storeRowFrom(rows[0]?.payload, now, today) : null;
+}
+// An upsert of the WHOLE row (merge-duplicates replaces the payload column, so a
+// write always carries the cols it means to keep). true = stored. Never throws.
+async function writeTreasuryRow(row: StoreRow): Promise<boolean> {
+  const url = Deno.env.get('SUPABASE_URL');
+  if (!url) return false;
+  try {
+    const res = await fetch(`${url}/rest/v1/desk_feed_cache?on_conflict=key`, {
+      method: 'POST',
+      headers: { ...storeHeaders(), prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify([{
+        key: STORE_KEY, at: new Date().toISOString(),
+        payload: {
+          cols: Object.fromEntries(row.cols), fetchedAt: row.fetchedAt, mergedAt: row.mergedAt,
+          attemptedAt: row.attemptedAt, failedAt: row.failedAt, lease: row.lease,
+        },
+      }]),
+      signal: AbortSignal.timeout(STORE_TIMEOUT_MS),
+    });
+    // fetch RESOLVES on 401/409/5xx: a rejected write must be visible, not swallowed.
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.error(`desk-econ: Treasury store write failed HTTP ${res.status} ${scrubbed(detail).slice(0, 200)}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(`desk-econ: Treasury store write failed ${scrubbed(msg(e))}`);
+    return false;
+  }
+}
+
+// Both months, in parallel; a month that fails is logged and skipped.
+async function fetchTreasuryMonths(today: string): Promise<Map<string, Obs[]>[]> {
   const months = [today.slice(0, 7), shiftMonths(today, -1).slice(0, 7)].map((m) => m.replace('-', ''));
   const parsed = await Promise.all(months.map((m) =>
     getText(treasuryCsvUrl(m), TREASURY_TIMEOUT_MS)
       .then((t) => parseTreasuryCsv(t, today))
       .catch((e) => { console.warn(`desk-econ: Treasury ${m} failed: ${msg(e)}`); return null; })));
-  const good = parsed.filter((p): p is Map<string, Obs[]> => p !== null);
-  if (!good.length) { treasuryDownUntil = now + TREASURY_BACKOFF_MS; return; }
-  // Merge into what is kept (newer fetch wins a date), pruning anything older
-  // than the 70 days no FRED lag could ever need.
+  return parsed.filter((p): p is Map<string, Obs[]> => p !== null);
+}
+// Union per column (a later source wins a date), pruned to the 70 days no FRED lag
+// could ever need. `kept` first, then `good` with the CURRENT month last, so it wins.
+function mergeTreasury(kept: Map<string, Obs[]> | null, good: Map<string, Obs[]>[], today: string): Map<string, Obs[]> {
   const floor = shiftDays(today, -70);
   const merged = new Map<string, Map<string, number>>();
-  const keptFresh = treasuryStore && now - treasuryStore.at < TREASURY_KEEP_MS;
-  for (const src of [...(keptFresh ? [treasuryStore!.cols] : []), ...good.reverse()]) {
+  for (const src of [...(kept ? [kept] : []), ...good.slice().reverse()]) {
     for (const [c, obs] of src) {
       const m = merged.get(c) ?? new Map<string, number>();
       for (const [d, v] of obs) if (d >= floor) m.set(d, v);
@@ -505,7 +636,180 @@ async function refreshTreasury(now: number, today: string): Promise<void> {
   }
   const cols = new Map<string, Obs[]>();
   for (const [c, m] of merged) cols.set(c, [...m.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
-  treasuryStore = { at: Date.now(), cols };
+  return cols;
+}
+
+// Treasury posts the day's rate from about 15:30 ET (2026-09-30's was out by ~20:50
+// ET at the latest); from the afternoon window's opening to midnight NY, a missing
+// today's row is worth one attempt every 5 minutes. Weekends never post.
+function treasuryPosting(ms: number): boolean {
+  const w = nyWall(ms);
+  return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from;
+}
+// Today's rate is held — and FINAL — when every Treasury column the roster names
+// has an observation dated today (NY) that agrees with this request's FRED (a
+// column with no FRED spine this request cannot be checked, so its date decides).
+function treasuryHeld(row: StoreRow, rows: RosterRow[], today: string): boolean {
+  return rows.every((r) => {
+    if (!r.treasury) return true;
+    const col = row.cols.get(r.treasury);
+    if (!col || col[col.length - 1][0] !== today) return false;
+    const spine = fredStore.get(r.fred)?.obs;
+    return !spine || stitchTreasury(spine, col).reason === null;
+  });
+}
+// The stored columns still serve the roster THIS request runs on: every Treasury
+// column it names is present and, where this request has that row's FRED spine, still
+// agrees with it. `fetchedAt` only says a complete fetch happened under the roster of
+// that day; the hourly Pages roster can add a tenor or repoint a row since, and a
+// weekend add would otherwise stay on lagging FRED until Monday 15:25 ET (Codex, PR #296).
+function treasuryCovers(row: StoreRow, rows: RosterRow[]): boolean {
+  return rows.every((r) => {
+    if (!r.treasury) return true;
+    const col = row.cols.get(r.treasury);
+    if (!col) return false;
+    const spine = fredStore.get(r.fred)?.obs;
+    return spine ? stitchTreasury(spine, col).reason === null : true;
+  });
+}
+// The opening of the most recent posting window at or before `ms` — a weekday at
+// 15:25 ET: on a weekday before 15:25 it is the previous weekday's, on Sat/Sun and on
+// Monday before 15:25 it is Friday's. Walks back one NY day at a time from just before
+// each local midnight, so a DST Sunday (23 or 25 h long) cannot trip it.
+function lastPostingStart(ms: number): number {
+  let t = ms;
+  for (let i = 0; i < 9; i++) {
+    const w = nyWall(t);
+    if (w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from) return t - (w.sec - WINDOWS[1].from) * 1000;
+    t -= (w.sec + 1) * 1000;   // the previous NY day, 23:59:59
+  }
+  return 0;
+}
+// Whether THIS request should attempt a fetch, judged on the shared row (never on
+// instance memory). attemptedAt is the lease: one attempt per interval, whichever
+// instance makes it; failedAt is a 10-minute back-off every instance honours.
+function treasuryWanted(now: number, today: string, rows: RosterRow[], row: StoreRow): boolean {
+  // No FRED spine for any Treasury row this request: a fetched file could not be
+  // checked, so it could not be stored — do not spend ~20 s (or a lease) on it.
+  if (!rows.some((r) => r.treasury && fredStore.has(r.fred))) return false;
+  if (row.failedAt !== null && now - row.failedAt < TREASURY_BACKOFF_MS) return false; // backing off
+  if (treasuryPosting(now)) {
+    if (treasuryHeld(row, rows, today)) return false;                                // today's rate is final
+    return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;                       // the lease is free
+  }
+  // Outside the window nothing can have been published since it last opened: ask only
+  // if no COMPLETE fetch has SUCCEEDED since then (an empty store has fetchedAt 0, so
+  // the first request after a deploy asks at once) or the stored columns no longer
+  // cover the current roster. A host that keeps failing — or a column that keeps
+  // failing to validate — is asked hourly.
+  if (row.fetchedAt >= lastPostingStart(now) && treasuryCovers(row, rows)) return false;
+  return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;
+}
+const working = (row: StoreRow) => ({ at: keptAt(row), cols: row.cols });
+
+// Inside the posting window, while today's rate is not yet held, how long until
+// the next attempt is allowed: the 5-min lease from attemptedAt, or the end of a
+// failedAt back-off if that is later. refresh() caps the dataset TTL at it, so
+// refreshInSec brings the client back in time even after the 18:30 ET release
+// window has ended (a print as late as the measured ~20:50 ET one). null = no cap:
+// outside the window (its own rule), today's rate held, no Treasury column, or no
+// FRED spine this request (a degraded row already caps the TTL at 2 min).
+function treasuryRetryInMs(now: number, today: string, rows: RosterRow[], row: StoreRow): number | null {
+  if (!treasuryPosting(now)) return null;
+  if (!rows.some((r) => r.treasury && fredStore.has(r.fred))) return null;
+  if (treasuryHeld(row, rows, today)) return null;
+  let due = row.attemptedAt + TREASURY_POSTING_EVERY_MS;
+  if (row.failedAt !== null) due = Math.max(due, row.failedAt + TREASURY_BACKOFF_MS);
+  return Math.max(MIN_REFRESH_SEC * 1000, due - Date.now());
+}
+
+// One request's Treasury step, run AFTER the FRED sweep (it validates against
+// FRED) on the row read beside that sweep. Never throws. Usually it just hands the
+// store to buildRow. When an attempt is due it takes the lease, fetches AWAITED —
+// on purpose: detached background work proved unreliable on this runtime
+// (desk-heatmap), and a fresh instance would never see its result anyway — so
+// THIS reply already carries what it fetched. Every other request meanwhile finds
+// the lease taken and serves the store as it is.
+type TreasuryOutcome = { store: { at: number; cols: Map<string, Obs[]> }; row: StoreRow };
+async function treasuryCycle(now: number, today: string, rows: RosterRow[], seen: StoreRow): Promise<TreasuryOutcome> {
+  // `row` in every outcome = the shared row as this request now understands it
+  // (refresh() times the client's next poll from it); `store` = what buildRow uses.
+  const done = (store: StoreRow, row: StoreRow = store): TreasuryOutcome => ({ store: working(store), row });
+  if (!treasuryWanted(now, today, rows, seen)) return done(seen);
+  // Re-read just before taking the lease: the first read ran beside the FRED
+  // sweep, and another instance may have taken the lease since.
+  const latest = await readTreasuryRow(now, today).then((r) => r ?? emptyRow(), () => null);
+  if (!latest) return done(seen);
+  if (!treasuryWanted(now, today, rows, latest)) return done(latest);
+  const lease: StoreRow = { ...latest, attemptedAt: now, lease: `${now}-${Math.random().toString(36).slice(2, 10)}` };
+  // The lease is written BEFORE the fetch. If it cannot be written, do not fetch:
+  // an attempt nobody can see would be repeated by every request, ~20 s each.
+  if (!(await writeTreasuryRow(lease))) return done(latest, lease);
+  // Confirm it is ours: two instances that both read a free lease both write one,
+  // and only the last write survives — the other backs off here.
+  const mine = await readTreasuryRow(now, today).catch(() => null);
+  if (!mine || mine.lease !== lease.lease) return done(mine ?? latest, mine ?? lease);
+  const good = await fetchTreasuryMonths(today);
+  // Validate BEFORE writing: only a column that parsed AND agrees with this
+  // request's FRED (stitchTreasury's own check) is stored. A blocked, HTML or
+  // mislabelled file never reaches the store.
+  const fetched = mergeTreasury(null, good, today);
+  const agreed = new Map<string, Obs[]>();
+  const named = [...new Set(rows.map((r) => r.treasury).filter((c): c is string => !!c))];
+  for (const r of rows) {
+    if (!r.treasury) continue;
+    const col = fetched.get(r.treasury);
+    const spine = fredStore.get(r.fred)?.obs;
+    if (!col || !spine) continue;
+    const s = stitchTreasury(spine, col);
+    if (s.reason === null) agreed.set(r.treasury, col);
+    else console.warn(`desk-econ: Treasury ${r.treasury} not stored: ${s.reason}`);
+  }
+  // Re-read before writing: in the rare race where two instances both won a lease,
+  // the other may have stored rows since ours — a write here must not undo them.
+  // A FAILED re-read is not "no row": we cannot see what is stored now, so this
+  // request writes NOTHING (neither rows nor a failure) — a whole-payload write
+  // from our pre-fetch snapshot could erase a contender's fresher columns — and
+  // its reply serves what it validated. "No row" (null) is a legitimate base.
+  let cur: StoreRow | null = null;
+  let curFailed = false;
+  try { cur = await readTreasuryRow(now, today); } catch { curFailed = true; }
+  const base = cur ?? latest;
+  if (!agreed.size) {
+    // Nothing usable: record the failure so EVERY instance backs off for 10 min —
+    // but only while the lease is still ours. If anyone has written since, their
+    // row is the fresher truth: serve it, and never overwrite it with a failure.
+    if (curFailed) return done(latest, lease);
+    if (cur?.lease === lease.lease) {
+      const failed = { ...cur, failedAt: Date.now() };
+      // The client's next poll is timed from what the table holds: if the failure was not
+      // stored, that is still `cur` (our lease, retryable in 5 min) — not an unsaved 10-min
+      // back-off no other request will ever see (Codex, PR #296).
+      return (await writeTreasuryRow(failed)) ? done(cur, failed) : done(cur);
+    }
+    return done(base);
+  }
+  const kept = now - keptAt(base) < TREASURY_KEEP_MS ? base.cols : null;
+  // fetchedAt marks a COMPLETE success only (every Treasury column the roster
+  // names validated now): a partial one stores what validated but leaves
+  // fetchedAt, so outside the window the missing yield is still asked for (at
+  // most hourly) instead of waiting for the next window.
+  const complete = named.every((c) => agreed.has(c));
+  const at = Date.now();
+  const next: StoreRow = {
+    cols: mergeTreasury(kept, [agreed], today), fetchedAt: complete ? at : base.fetchedAt, mergedAt: at,
+    attemptedAt: now, failedAt: null, lease: lease.lease,
+  };
+  if (curFailed) {
+    console.warn('desk-econ: Treasury store re-read failed — this reply serves the fetch, nothing is stored');
+    return done(next, lease);
+  }
+  const stored = await writeTreasuryRow(next);   // best effort: a failed write still serves THIS reply
+  // …but the client's next poll is timed from what the table STILL holds: `next` reads as
+  // "today's rate held" and would lift the retry cap, while the persisted row (the lease,
+  // or the row seen just before) still has it pending, and the next request — a fresh
+  // instance — will read exactly that (Codex, PR #296).
+  return stored ? done(next) : done(next, cur ?? lease);
 }
 
 type Status = 'ok' | 'stale' | 'missing';
@@ -516,6 +820,9 @@ type Dataset = {
   fetchedAt: number; expiresAt: number; phase: string; rows: RowFull[];
   roster: { source: 'config' | 'default'; count: number; dropped: number };
 };
+// Per-instance cache + single-flight: kept because they are free and correct, but
+// best effort only — every request was MEASURED (2026-10-01) to land on a fresh
+// instance, so in practice each request sweeps FRED.
 let dataset: Dataset | null = null;
 let inflight: Promise<Dataset> | null = null; // single-flight: a concurrent burst shares one sweep
 
@@ -523,7 +830,7 @@ function buildRow(r: RosterRow, freshNow: boolean, now: number): RowFull {
   const stored = fredStore.get(r.fred);
   const missing: RowFull = { ...r, series: [], source: null, status: 'missing', fetchedAt: null, changed: false };
   // Treasury is never served alone: without a FRED spine it cannot be
-  // cross-checked, and its parser is unverified against the live host.
+  // cross-checked, and the cross-check is what makes a misread column harmless.
   if (!stored) return missing;
   let spine = stored.obs;
   let fromTreasury = 0;
@@ -546,7 +853,9 @@ function buildRow(r: RosterRow, freshNow: boolean, now: number): RowFull {
     status: freshNow ? 'ok' : 'stale',
     fetchedAt: stored.at,
     // Best effort, per isolate: a cold isolate has nothing to compare with and
-    // honestly says false.
+    // honestly says false — and since every request MEASURED on 2026-10-01 ran on a
+    // fresh instance, it is false in practice; the client's NEW marker (from asOf)
+    // is what actually works.
     changed: before !== undefined && before !== key,
   };
 }
@@ -557,14 +866,30 @@ async function refresh(): Promise<Dataset> {
   const today = nyWall(now).date;
   const cosd = shiftMonths(today, -HISTORY_MONTHS);
   const ids = [...new Set(roster.rows.map((r) => r.fred))];
-  const [fresh] = await Promise.all([
+  // The shared Treasury row is read BESIDE the FRED sweep (no added latency); a
+  // failed read is "no store this request" — FRED only, no Treasury attempt.
+  const wantsTreasury = roster.rows.some((r) => r.treasury);
+  const [fresh, seen] = await Promise.all([
     Promise.all(ids.map(async (id) => [id, await refreshFred(id, cosd)] as [string, boolean])).then((p) => new Map(p)),
-    roster.rows.some((r) => r.treasury) ? refreshTreasury(now, today) : Promise.resolve(),
+    wantsTreasury
+      ? readTreasuryRow(now, today).then((r) => r ?? emptyRow(), (e) => {
+        console.warn(`desk-econ: Treasury store read failed (${scrubbed(msg(e))}) — FRED only`);
+        return null;
+      })
+      : Promise.resolve(null),
   ]);
+  // After FRED (the step validates against it). Usually instant; the one request
+  // holding the lease waits here for Treasury, and its reply carries the result.
+  const tsy = seen ? await treasuryCycle(now, today, roster.rows, seen) : null;
+  treasuryStore = tsy ? tsy.store : null;
   const rows = roster.rows.map((r) => buildRow(r, fresh.get(r.fred) === true, now));
   const policy = refreshPolicy(now);
   const degraded = rows.some((r) => r.status !== 'ok');
-  const ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;
+  let ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;
+  // Today's rate still pending inside the posting window: come back when the next
+  // attempt is allowed, not when the release window's policy says (it ends 18:30).
+  const retry = tsy ? treasuryRetryInMs(now, today, roster.rows, tsy.row) : null;
+  if (retry !== null) ttl = Math.min(ttl, retry);
   const fetchedAt = Date.now();
   const ds: Dataset = {
     fetchedAt, expiresAt: fetchedAt + ttl, phase: policy.phase, rows,
@@ -622,7 +947,10 @@ function shape(ds: Dataset, range: string, now: number, wholeStale = false) {
 }
 
 // `force` ("Refresh now") is anon-callable and re-sweeps every series: honoured
-// at most once per 30s per isolate, the stamp handed back when it fails.
+// at most once per 30s per isolate, the stamp handed back when it fails. Per
+// isolate = best effort only: every request was MEASURED (2026-10-01) to land on a
+// fresh instance, so this guard rarely holds. The cost it bounds is FRED's (a
+// forced request does not bypass the shared Treasury lease).
 let lastForceAt = 0;
 
 async function handle(req: Request, allowed: boolean, cors: Record<string, string>): Promise<Response> {

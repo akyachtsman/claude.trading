@@ -127,15 +127,33 @@ its topic file** — the reasoning behind each rule is there, not here.
     base history for every row, plus U.S. Treasury's same-day par-yield RATE (a 3:30 pm ET snapshot) as a
     cross-checked tail on the 2Y/10Y/20Y rows — **ON since 2026-09-30** (owner request:
     current 2Y/10Y yields; supersedes that day's "FRED-only to begin with"). A 3:30 pm ET
-    snapshot of bid-side quotes (not the actual close) posted ~15:30–18:00 ET, never intraday; UNVERIFIED against the live host; any
-    failure is a silent fallback to FRED (the row's `source` says which). Roster in
-    `config/econ-indicators.json`; spans are slices of one cached history; it tells the
-    client when to ask again (`refreshInSec`, tight around 08:30 and the afternoon
-    yield window). **Deployed 2026-09-30** (v1, `verify_jwt` ON, from `f78a03f`; its
-    built-in default is FRED-only). v1 already carries the Treasury path and reads the
-    roster from Pages (cached 1h), so the Treasury columns go live when the config reaches
-    Pages; a v2 deploy (built-in default = the same roster) awaits owner approval.
+    snapshot of bid-side quotes (not the actual close) posted ~15:30–18:00 ET, never intraday; any
+    failure is a silent fallback to FRED (the row's `source` says which). MEASURED from
+    Supabase 2026-10-01: the file's layout matches the parser and its values equal FRED's,
+    but the host answers in 17–20 s (once past 20 s); and EVERY desk-econ request runs on a
+    FRESH instance (`generatedAt` differed on calls 4 s apart), so nothing in module memory
+    is ever reused. v3 therefore keeps the validated Treasury rows in the SHARED table
+    `desk_feed_cache` (row `econ:treasury`), read by every request beside the FRED sweep; at
+    most one request per interval takes a lease and fetches, AWAITED (45 s bound) — that one
+    reply takes ~20 s and already carries the rate, every other reply reads the row and
+    stays fast. Cost: roughly one slow (~20 s) request per 5 minutes ONLY while today's rate
+    is pending after ~15:30 ET (and once for the first request after a deploy); outside the
+    weekday 15:25 ET–midnight window nothing is fetched once a COMPLETE fetch (every yield
+    validated) has succeeded since it last opened; inside it, while today's rate is pending,
+    `refreshInSec` is capped at the next allowed attempt (≤5 min), so a print after 18:30 ET
+    is still seen. Roster in `config/econ-indicators.json`; spans are slices of one cached
+    history; it tells the client when to ask again (`refreshInSec`, tight around 08:30 and
+    the afternoon yield window). **Deployed 2026-09-30** (v1, `verify_jwt` ON, from
+    `f78a03f`): v1 reads the roster from Pages (cached 1h) and so attempts Treasury INLINE
+    with a 5 s limit on EVERY request — adding ~4–5 s to every desk-econ reply and still
+    ending FRED-only (live logs: `Signal timed out`). **v3 (the shared store) is NOT
+    deployed** until the owner approves; it needs no migration (the table exists).
     → details: `docs/architecture/economy-panel.md`
+  - **`desk-probe`** is a THROWAWAY diagnostic (owner-approved 2026-10-01, v1, `verify_jwt`
+    ON) that measured from Supabase's servers which public yield sources desk-econ can reach;
+    it self-expires at 2026-10-01T04:00:00Z (answers 410), the Supabase tools cannot delete a
+    function so delete it from the dashboard, and it is NOT part of the data layer (source kept
+    in `supabase/functions/desk-probe/` under the versioned-source rule).
   - **Deploying** (owner approval required every time): the Supabase MCP
     `deploy_edge_function`, one function per call, **`verify_jwt` preserved** — it is set
     ON for `desk-maps`/`desk-heatmap`/`desk-watchlist`/`desk-ibkr-sync`/`desk-cron-ask`/`desk-econ`
@@ -204,7 +222,7 @@ real-data rules stay in Project-Specific Coding Standards below.
 - `desk-news`: an owner-typed topic REPLACES THE WHOLE SWEEP; a topic matching nothing is a successful EMPTY result, not a throw; the topic is sanitised server-side (`cleanTopic`). → `edge-feeds-and-heatmap.md`
 - Economy panel, colour and numbers: a change is NEUTRAL ink with an arrow (`▲` `▼`, `=` for a real zero) and the chart line is the brass accent — green/red stay P&L-only and a rising yield is not a gain; unknown is an em dash, never `0.00%` (a missing row draws a dashed placeholder, never an invented line); a monthly reading names its MONTH by STRING SLICING (`new Date('2026-08-01')` is UTC midnight and reads Jul 31 in Pacific); a daily chart's caption carries the YEAR once its ends are about a year apart (`Sep '21 – Sep '26`, never `Sep 28 – Sep 28`). → `economy-panel.md`
 - Economy panel, poller: the next fetch is the reply's `refreshInSec` clamped to 30..3600s, a failed poll retries in 60s, polling pauses while the tab is hidden, a span change may only pull the next poll EARLIER and is only recorded (asked for when the reply lands, repeatedly until the span showing has landed) while a forced "Refresh now" is in flight; a NEW chip clears only once its row has been IN VIEW ~60s (IntersectionObserver, per-row timers that a re-render does not restart) and a server-hinted NEW stays pending (`econ_pending_v1`) after the hint goes quiet, never seeded as a silent first look; acknowledgement state is written as a MERGE of only the ids this tab changed (`econPersist`, two tabs must not overwrite each other) and demo state is NEVER persisted; a chart's accessible name reads `pointsNote` when the span fell back; a reply whose `range` is not the span asked is a FAILED poll (never drawn under the wrong label); the lamp AGES (STALE at 3 × `refreshInSec`) and renders sit OUTSIDE the fetch `try`; live never renders demo rows and `?demo=1` never calls the network for this panel; span is `econ_tf_v1`, validated against the presets on load. → `economy-panel.md`
-- `desk-econ`: FRED is the spine of every row; Treasury is the same-day tail on the three yield rows (ON since 2026-09-30, owner request — the shipped roster and the built-in default must stay IDENTICAL and name exactly the `2 Yr` / `10 Yr` / `20 Yr` columns), a daily rate (a 3:30 pm ET snapshot of bid-side quotes, posted that afternoon — never the actual close, never intraday), used only when it parses, AGREES with FRED on every shared date (at least one) and is strictly NEWER, never alone — otherwise the row silently stays on FRED (`source` says which); a FRED `.` or empty field is a gap, never 0; YoY is computed point by point, never interpolated; unknown is null; nothing ships live until the owner approves its deploy — and because the function reads its roster from Pages, merging a roster edit to `main` IS a live change. → `economy-panel.md`
+- `desk-econ`: FRED is the spine of every row; Treasury is the same-day tail on the three yield rows (ON since 2026-09-30, owner request — the shipped roster and the built-in default must stay IDENTICAL and name exactly the `2 Yr` / `10 Yr` / `20 Yr` columns), a daily rate (a 3:30 pm ET snapshot of bid-side quotes, posted that afternoon — never the actual close, never intraday), used only when it parses, AGREES with FRED on every shared date (at least one) and is strictly NEWER, never alone — otherwise the row silently stays on FRED (`source` says which); Treasury lives in the SHARED row `desk_feed_cache` `econ:treasury`, never in module memory (every request is a fresh instance — so `changed` and the `force` once-per-30s guard are best effort only): every request reads it (3 s bound; a failed read = FRED only and NO attempt), an attempt is due only on that row + the NY clock (never while no yield has a FRED spine this request, never within 10 min of `failedAt`, never once today's rate is held for every column AND agrees with FRED, inside the weekday 15:25 ET–midnight window at most every 5 min from `attemptedAt`; OUTSIDE it — before 15:25 ET and all weekend — only when no COMPLETE fetch has SUCCEEDED since the most recent weekday 15:25 ET (`fetchedAt`, advanced only when EVERY roster column validated — a partial success stores what validated and stamps `mergedAt`, which the 72h keep runs from, but leaves `fetchedAt`; Friday's over a weekend) OR the stored columns no longer cover the roster this request runs on (`treasuryCovers()`: every named column present and still agreeing with its FRED spine — a tenor added or a row repointed over a weekend is asked for at once), then at most hourly; no holiday table; inside the window, while today's rate is not held, `refreshInSec` is capped at the time to the next allowed attempt — 5 min from `attemptedAt`, or a `failedAt` back-off's end, never below 30 s — so the client keeps coming back after the 18:30 ET release window; no cap once held or outside the window), the attempt writes its lease (`attemptedAt`) BEFORE fetching and confirms it by re-reading, fetches AWAITED (45 s bound — detached background work is unreliable here and a fresh instance would never see it) so its own reply carries the rate, validates against FRED BEFORE writing (a blocked/HTML/mislabelled file is never stored), never writes a failure over a row someone else wrote since its lease (and when a failure or a final write is NOT stored, times the client's next poll from the row the table still holds — the lease, 5 min — not from the unsaved one), and writes NOTHING after its lease (neither rows nor a failure) when its final re-read FAILS — a failed read is not "no row yet" (`[]` is), and a whole-payload write from its pre-fetch snapshot could erase a contender's fresher columns — serving what it validated instead; the stored payload is untrusted and only ever reaches a row through `stitchTreasury`; the REST calls carry the service key and NO user-agent; a FRED `.` or empty field is a gap, never 0; YoY is computed point by point, never interpolated; unknown is null; nothing ships live until the owner approves its deploy — and because the function reads its roster from Pages, merging a roster edit to `main` IS a live change. → `economy-panel.md`
 - `quote-proxy` always answers JSON with the Origin-allowlist CORS headers; `prepost` is part of the intraday cache key; every intraday bar carries `x`; only extended bars are wick-de-spiked (`EXT_WICK_TOL`). → `edge-feeds-and-heatmap.md`
 - `buildAskContext()` hands the assistant TICKERS, NEVER money — withholding, not a prompt rule, is the enforcement point. → `desk-ask-and-cron.md`
 - The `desk-ask` tool loop must CARRY THE CODE-EXECUTION CONTAINER (`containerId`) on every later call and never send it on the first. → `desk-ask-and-cron.md`
@@ -250,7 +268,9 @@ real-data rules stay in Project-Specific Coding Standards below.
   ever leave it — payload byte-shape-identical to the formerly-committed
   public news.json. `desk-heatmap` holds it too, solely for the
   `desk_feed_cache` table (`desk_006`, RLS deny-all) that persists its daily
-  multi-period sweep — public market percentages only.
+  multi-period sweep — public market percentages only. `desk-econ` v3 (written
+  2026-10-01, NOT deployed until the owner approves) holds it too, solely for that
+  table's `econ:treasury` row — public Treasury yield observations only.
 - **Accepted residual — anonymous watchlist writes (audit 2026-09-29, C1).**
   `desk_get_watchlists_open` / `desk_set_watchlists_open` (`desk_012`/`desk_014`)
   are granted to ANON, per the owner ruling that watchlist edits do not depend on
