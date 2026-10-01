@@ -804,7 +804,7 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
    name can never push the row taller */
 .econ-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary); }
 .is-stale .econ-val, .is-missing .econ-val, .is-missing .econ-date, .is-missing .econ-delta { color: var(--color-text-secondary); }
-.econ-chart { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; transition: opacity .15s ease; }
+.econ-chart { position: relative; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; transition: opacity .15s ease; }
 .econ-chart svg { display: block; width: 100%; flex: 1 1 0; min-height: 26px; }
 .econ-line { stroke: var(--color-accent-bright); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
 .econ-area { fill: var(--color-accent-bright); fill-opacity: .10; stroke: none; }
@@ -825,6 +825,8 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
    3-unit margin without touching the time axis. */
 .econ-plot { --econ-yw: 26px; flex: 1 1 0; min-height: 26px; min-width: 0; display: flex; padding: 4px 0; }
 .econ-plot svg { flex: 1 1 0; min-width: 0; width: auto; align-self: stretch; }
+/* the chart's description in words (the axes are aria-hidden): visually hidden, still read by a screen reader */
+.econ-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .econ-grid { stroke: var(--color-border); stroke-width: 1; stroke-dasharray: 2 3; }
 .econ-grid.is-hide, .econ-ytick.is-hide { visibility: hidden; }   /* econFitValueAxis: two values closer than a label is tall */
 .econ-yaxis { position: relative; flex: none; width: var(--econ-yw); }

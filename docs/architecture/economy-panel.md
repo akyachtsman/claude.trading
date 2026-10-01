@@ -631,7 +631,13 @@ width); **S56** guards the live 10Y.
   the label's gridline with it. `econWatchAxes` runs both from a MutationObserver on `#econList`
   (every update path rebuilds a row's chart), a ResizeObserver and `document.fonts.ready` — not
   rAF, which a paused test clock would stall — and the observer watches `childList` only, so
-  toggling a class cannot loop. Found by the first screenshots: without the fit, "Jul 1 Aug 1
+  toggling a class cannot loop.
+  *Accessibility* (Codex, PR #302) — both axes are `aria-hidden` (a screen reader walking twenty
+  loose numbers is noise), so `econPlot` says it all once in words — "Chart spans Sep 24 – Oct 1.
+  Value axis 4.92%, 4.90%. Time axis Sep 23, Sep 28, Sep 30." — in a visually hidden `.econ-sr` node
+  that is the svg's `aria-describedby` (the accessible NAME stays "label, N readings over 3M") and
+  that is also returned for the row's tooltip. Before this the span the old caption carried was in
+  neither. Found by the first screenshots: without the fit, "Jul 1 Aug 1
   Sep 1" and "2022 2024 2026" printed on top of each other at 232px, and two value labels touched
   on a short row (tablet/phone) — both are asserted now.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders

@@ -8045,13 +8045,25 @@ function econWatchAxes(list) {
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
 }
 /* the chart with both axes, appended to the row's chart column: the plot (the svg and the value axis side by side) over the time axis */
-function econPlot(chart, pts, label, r, ticks) {
+function econPlot(chart, pts, label, r, ticks, span) {
   const dec = econDec(r), ya = econYAxis(pts.map(p => fmtToNum(p[1])), dec);
   const plot = el('div', 'econ-plot');
-  plot.appendChild(econSpark(pts, label, ya.ticks));
+  const svg = econSpark(pts, label, ya.ticks);
+  plot.appendChild(svg);
   plot.appendChild(ya.box);
   chart.appendChild(plot);
   chart.appendChild(econXAxis(ticks));
+  /* Both axes are aria-hidden (a screen reader walking 20 loose numbers is noise), so everything they say is also said ONCE, in words: the span
+     (what the printed caption used to carry), the values on the value axis and the labels on the time axis. It is the svg's accessible
+     DESCRIPTION (aria-describedby, on a visually hidden node — the accessible NAME stays what it was) and it is returned for the row's tooltip
+     (Codex, PR #302). */
+  const desc = 'Chart spans ' + span + '. Value axis ' + ya.ticks.map(v => econNum(v, dec) + (r.unit || '')).join(', ') + '. Time axis '
+    + (ticks.filter(t => t.label).map(t => t.label).join(', ') || 'none') + '.';
+  const sr = el('span', 'econ-sr', desc);
+  sr.id = 'econ-desc-' + r.id;
+  chart.appendChild(sr);
+  svg.setAttribute('aria-describedby', sr.id);
+  return desc;
 }
 
 /* ── chrome: the span control and the list are built here (the header's stamp too),
@@ -8335,8 +8347,9 @@ function econRow(r, chartsMatch) {
     const drawn = !missing && chartsMatch && pts.length >= 2;
     if (drawn) {
       /* both axes carry the span now; the first and last date stay on the chart column as `data-span` (and in the tooltip) */
-      econPlot(chart, pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econRange.toUpperCase()), r, econXTicksDates(pts, r.cadence));
-      chart.dataset.span = econSpanCaption(pts, r.cadence);
+      const span = econSpanCaption(pts, r.cadence);
+      chartTip = econPlot(chart, pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econRange.toUpperCase()), r, econXTicksDates(pts, r.cadence), span);
+      chart.dataset.span = span;
       /* the one caption left: a short span that fell back to the N latest readings says so (the axis alone would let it read as the span asked for) */
       if (r.pointsNote) chart.appendChild(el('span', 'econ-cap econ-note', String(r.pointsNote)));
     } else {
@@ -8701,10 +8714,10 @@ function econIntradayChart(chart, r, missing) {
   if (!e) return none('loading…', '1-day chart loading');
   if (e.pts.length >= 2) {
     const cap = econIntradayCaption(e.pts);
-    econPlot(chart, e.pts, (r.label || r.id) + ', ' + e.pts.length + ' prices ' + cap + ' Pacific', r, econXTicksIntraday(e.pts));
+    const desc = econPlot(chart, e.pts, (r.label || r.id) + ', ' + e.pts.length + ' prices ' + cap + ' Pacific', r, econXTicksIntraday(e.pts), cap + ' Pacific');
     chart.dataset.span = cap;   /* first and last bar on the Pacific clock: the accessible name, the tooltip and this — no longer a printed caption */
-    return DESK.mode === 'demo' ? '1-day chart: generated demo prices'
-      : '1-day chart: ' + e.pts.length + ' CNBC ' + ECON_LIVE[r.id] + ' prices, ' + cap + (e.why ? ' — the last refresh failed (' + e.detail + '), these are the last good prices' : '');
+    return (DESK.mode === 'demo' ? '1-day chart: generated demo prices'
+      : '1-day chart: ' + e.pts.length + ' CNBC ' + ECON_LIVE[r.id] + ' prices, ' + cap + (e.why ? ' — the last refresh failed (' + e.detail + '), these are the last good prices' : '')) + ' · ' + desc;
   }
   return none('1D ' + econBarsShort(e), '1-day chart unavailable: ' + e.detail);
 }

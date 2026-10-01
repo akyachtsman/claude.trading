@@ -5917,6 +5917,7 @@ async function readEconAxes(page, tf) {
       y: [...ya.querySelectorAll('.econ-ytick')].map((t) => ({ text: t.textContent, hidden: getComputedStyle(t).visibility === 'hidden', ...box(t) })),
       grid: [...svg.querySelectorAll('.econ-grid')].map((g) => ({ t: box(g).t, hidden: getComputedStyle(g).visibility === 'hidden' })),
       x: [...ax.querySelectorAll('.econ-xtick')].map((t) => ({ text: t.textContent, hidden: getComputedStyle(t).visibility === 'hidden', ...box(t) })),
+      desc: (document.getElementById(svg.getAttribute('aria-describedby') || '') || { textContent: null }).textContent, title: li.title, name: svg.getAttribute('aria-label'), srHidden: (() => { const d = document.getElementById(svg.getAttribute('aria-describedby') || ''); if (!d) return null; const r = d.getBoundingClientRect(); return r.width <= 2 && r.height <= 2; })(), axesHidden: [ax, ya].every((n) => n.getAttribute('aria-hidden') === 'true'),
       markX: [...ax.querySelectorAll('.econ-tickmark')].map((m) => { const r = m.getBoundingClientRect(); return (r.left + r.right) / 2; }), note: !!chart.querySelector('.econ-note'),
     };
   }), tf);
@@ -5927,6 +5928,13 @@ function checkEconAxes(expect, rows, label, xlabel) {
   expect(drawn.length, `${label}: charts are drawn`).toBeGreaterThan(0);
   for (const r of drawn) {
     const w = `${label} [${r.id}]`;
+    // the axes are aria-hidden, so everything they say is said once in WORDS (Codex, PR #302): the chart's accessible DESCRIPTION (a visually hidden
+    // node, the accessible NAME unchanged) and the row's tooltip both carry the span, every value label and every time label
+    expect([r.axesHidden, r.srHidden], `${w}: both axes are aria-hidden and the description node is visually hidden`).toEqual([true, true]);
+    const wordsOf = (txt) => [r.span, ...r.y.map((y) => y.text), ...r.x.map((l) => l.text)].filter((t) => !txt.includes(t));
+    expect(wordsOf(r.desc || ''), `${w}: the accessible description names the span and every value and time label (${r.desc})`).toEqual([]);
+    expect(r.title.includes(r.desc), `${w}: and so does the row's tooltip`).toBe(true);
+    expect(r.name, `${w}: the accessible name is unchanged — it carries the point count and the span`).toMatch(/\d+ (readings|prices)/);
     // the time axis is exactly as wide as the line, directly under it — so a tick's position IS the line's x
     expect([Math.abs(r.axis.l - r.svg.l) <= 1, Math.abs(r.axis.r - r.svg.r) <= 1, r.axis.t >= r.svg.b - 5], `${w}: the time axis spans the plot, under it`).toEqual([true, true, true]);
     const vis = r.x.filter((l) => !l.hidden);
