@@ -1,6 +1,6 @@
 # Economy panel and `desk-econ`
 
-The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55). Later the same day the owner asked for CURRENT 2Y/10Y yields, so the roster switched Treasury's same-day daily rate ON for the three yields (see Sources and Deploying). On 2026-10-01 a throwaway probe measured Treasury from Supabase's servers: the right data, but 17–20 s per request — so v2 fetches it in the BACKGROUND and a reply never waits on it. **v2 is NOT deployed** (owner approval pending); live is still v1, whose 5 s Treasury limit always times out, so the live yields are still FRED's.
+The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indicators.json`, `tools/econ-check.mjs`): sources, refresh policy, contract and limits. Owner request 2026-09-30; full contract in `specs/economy-indicators/spec.md`. Backend **deployed** 2026-09-30 (owner-approved, v1, `verify_jwt` ON — see Deploying below) and the panel UI built the same day (see "The panel (UI)" below; guarded by S55). Later the same day the owner asked for CURRENT 2Y/10Y yields, so the roster switched Treasury's same-day daily rate ON for the three yields (see Sources and Deploying). On 2026-10-01 a throwaway probe measured Treasury from Supabase's servers: the right data, but 17–20 s per request — and live calls the same day showed that EVERY desk-econ request runs on a FRESH instance. So v3 keeps Treasury's validated rows in the SHARED table `desk_feed_cache` and lets at most one request per interval do the slow fetch, under a lease (see "Treasury in the shared store"). **v3 is NOT deployed** (owner approval pending; no migration needed — the table exists); live is still v1, whose inline 5 s Treasury attempt runs on EVERY request, adds ~4–5 s to each reply, and still ends FRED-only. (A per-instance background design, v2, was written and checkpointed that morning and dropped once the fresh-instance measurement came in.)
 
 - **What it serves.** Seven rows by default — 2Y / 10Y / 20Y Treasury, Unemployment,
   CPI YoY, PCE YoY, Core PCE YoY — each with `value`, `prev`, `delta`, `asOf`,
@@ -36,49 +36,72 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   at least one shared date, and (3) it is strictly NEWER than FRED; otherwise the row is
   served from FRED — silently, per row, every refresh (the row's `source`, `"treasury"` or
   `"fred"`, says which; a function log line says why). It is never served alone (no FRED
-  spine = `stale` or `missing`), a validated print is kept 72h so a flaky host cannot flip a
-  yield back to T-2, and a failed fetch (5xx, block page, timeout) backs off 10 min. Columns
+  spine = `stale` or `missing`), a validated print is kept 72h in the SHARED store so a flaky
+  host cannot flip a yield back to T-2 on any instance, and a failed attempt (5xx, block page,
+  timeout, nothing that agrees with FRED) records `failedAt`, so EVERY instance backs off 10 min. Columns
   are looked up BY NAME (Treasury inserted `1.5 Month` in 2025, shifting every later column).
-  **Known residuals** (found when the tail went ON, 2026-09-30, revised 2026-10-01; accepted,
-  not fixed): (a) the 72h "never flip back" store is per server INSTANCE — and since v2 fetches
-  in the background, EVERY fresh instance's first reply is FRED (its store is empty), so a
-  yield row steps back a day whenever a poll lands on a fresh instance, until that instance's
-  fetch lands (~20 s; the reply tells the client to come back in 30 s), and its NEW chip (keyed
-  on date + value) can re-flag meanwhile; the clean fix is a client rule that never steps a
-  daily row's date backwards, or a store shared across instances; (b) a single date where
-  Treasury and FRED disagree (a revision FRED has not picked up) makes that row drop the whole
-  Treasury tail until FRED catches up; (c) *(superseded 2026-10-01: "may refuse data-centre
-  addresses or be slower than the 5s timeout" — measured: NOT refused, but 17–20 s, so the 5 s
-  limit failed every time)* a day slower than v2's 45 s bound is a silent FRED fallback with a
-  10-min back-off, visible only in the function log; (d) the background fetch only helps if
-  the instance LIVES past the reply (`EdgeRuntime.waitUntil`) and the NEXT request reaches the
-  SAME instance. Neither is guaranteed, and this repo has measured both going wrong before:
-  `desk-charts` found requests spread over short-lived isolates ("nearly every request was
-  already sweeping", `edge-feeds-and-heatmap.md`), and `desk-heatmap` records that
-  "waitUntil-style background work proved unreliable here (steps never ran post-response)".
-  If instances are rarely reused, the tail rarely reaches a reply AND the 30 s cap keeps an
-  open tab polling every 30 s (7 FRED + 2 Treasury fetches each). Check both in the logs after
-  the v2 deploy; the durable fix is the shared store in (a) (e.g. `desk_feed_cache`, which
-  needs the service key — an owner decision).
-- **Treasury in the background (v2, 2026-10-01 — NOT deployed yet).** `refresh()` never awaits
-  Treasury: after the FRED sweep it calls `kickTreasury()`, which starts ONE fetch pair
-  (current + previous NY month, in parallel; `treasuryInflight` makes it single-flight per
-  isolate, so concurrent requests share it), hands it to `EdgeRuntime.waitUntil` when that
-  exists so the worker outlives the reply, bounds each request at **45 s** (`TREASURY_TIMEOUT_MS`;
-  observed 17–20 s) and returns at once; the rows are then built from whatever the store held
-  (FRED alone on a cold isolate) — kicked right before the synchronous build, so a fetch
-  started there can never land between building those rows and caching them. Whether to start
-  one is `treasuryWanted()`: never while one is in flight or during the 10-min back-off; always
-  when nothing is held; never once the store holds TODAY's (NY date) rate for every column the
-  roster names (it is final); otherwise every 5 min from 15:25 ET to midnight on a weekday
-  (`treasuryPosting()`) and hourly at any other time. When a fetch merges something new it
-  sets the cached dataset's `expiresAt` to 0 IN PLACE — never nulls it, because the
-  whole-refresh-threw path serves the last good one — so the very next request re-sweeps FRED
-  and serves the tail, with `changed` true like any new reading. While a fetch is in flight the
-  dataset's TTL is capped at **30 s** (`TREASURY_PENDING_TTL_MS`), so `refreshInSec` brings the
-  client back to collect it instead of in 15 minutes; it is not capped otherwise. The
-  background chain never rejects (an unhandled rejection ends a Deno worker) and a failed fetch
-  never changes a reply. `treasuryIdle()` is exported for the checks only.
+  **Known residuals** (found when the tail went ON, 2026-09-30, revised for v3 2026-10-01;
+  accepted, not fixed): (a) the LEASE RACE — two instances whose first reads both predate
+  either's lease write can both take one. A re-read just before taking the lease and a confirm
+  read after writing it (the last write wins; the other backs off) narrow this to the case
+  where one instance's lease write lands after the other has already confirmed; then both
+  fetch (two ~20 s replies, one wasted fetch pair — both write valid rows, and a racer's
+  failure is only recorded while the lease is still its own, so it never overwrites the other's
+  success). An atomic compare-and-set (a PostgREST PATCH filtered on the row's `at`) would
+  close it, but rests on timestamp round-tripping that could not be tested here, and a wrong
+  guess would block Treasury for good — not worth it for one occasional extra fetch; (b) a
+  single date where Treasury and FRED disagree (a revision FRED has not picked up) makes that
+  row drop the whole Treasury tail until FRED catches up; (c) *(superseded 2026-10-01: "may
+  refuse data-centre addresses or be slower than the 5s timeout" — measured: NOT refused, but
+  17–20 s, so the 5 s limit failed every time)* the request that holds the lease takes ~20 s:
+  at most ONE such reply per 5 minutes while today's rate is pending (typically the first poll
+  after ~15:30 ET); the panel keeps its last render meanwhile (no client-side timeout on
+  `desk-econ`). A day slower than the 45 s bound is a silent FRED fallback with a 10-min
+  back-off, visible only in the function log; (d) the STORE — a failed read (5xx, timeout,
+  bad body) is a FRED-only reply with NO attempt (an attempt nobody can record would be
+  repeated by every request, ~20 s each); a lease that cannot be written means no attempt; a
+  final write that fails still serves THIS reply, and the next attempt waits for the interval;
+  (e) per-instance state is useless (MEASURED: every request is a fresh instance), so the
+  module dataset cache, `changed` (always `false` in practice — the client's NEW marker keys
+  on `asOf`), the `force` once-per-30s guard and FRED's stale-while-error (a failed series
+  reads `missing`, not `stale`, with no earlier copy) are best effort only; (f) the row stays
+  small: every write and every read prunes it to 70 days of the columns it holds (a few KB).
+- **Treasury in the shared store (v3, 2026-10-01 — NOT deployed yet).** MEASURED 2026-10-01:
+  every desk-econ request runs on a FRESH instance (`generatedAt` differed on calls 4 s apart,
+  and v1's per-instance 10-minute back-off never held — every call re-attempted Treasury), so
+  module memory is never reused and any per-instance or background design can never be seen by
+  a later request. The validated rows therefore live in `desk_feed_cache` (`desk_006`, RLS
+  deny-all, service key — as `desk-heatmap` / `desk-news` use it) under the key
+  `econ:treasury`: payload `{ cols: {"2 Yr": [[date, value], …], "10 Yr": …, "20 Yr": …},
+  fetchedAt, attemptedAt, failedAt, lease }` (`fetchedAt` = the last successful merge,
+  `attemptedAt` = the last attempt's start = the lease, `failedAt` = the last total failure or
+  null, `lease` = the holder's random id). Every request reads it BESIDE the FRED sweep
+  (`readTreasuryRow`, 3 s bound — no added latency); a failed read is a FRED-only reply and NO
+  attempt. After FRED, `treasuryCycle()` judges on the ROW and the NY clock
+  (`treasuryWanted()`): no attempt while no yield has a FRED spine this request (a file could
+  not be checked), within 10 min of `failedAt`, or once the row holds today's NY-date rate for
+  every column the roster names AND it agrees with FRED (`treasuryHeld()` — final); otherwise
+  at most every 5 min weekdays 15:25 ET–midnight (`treasuryPosting()`) and hourly at other
+  times, measured from `attemptedAt` — that interval IS the lease. When an attempt is due it
+  re-reads (the first read ran beside FRED), writes the lease BEFORE fetching, re-reads to
+  confirm the lease is its own, then fetches both months AWAITED with the 45 s bound — on
+  purpose: `desk-heatmap` found detached work unreliable on this runtime, and a fresh instance
+  would never see its result. The fetched columns are validated BEFORE anything is written
+  (parsed, and agreeing with this request's FRED by `stitchTreasury`'s own check — a blocked,
+  HTML or mislabelled file never reaches the store); nothing usable records `failedAt` (only
+  while the lease is still its own); otherwise the merged row (pruned to 70 days) is written
+  with `fetchedAt`, re-read first so it merges onto whatever is stored by then. Either way
+  THIS reply is built from the result, so the lease holder's own reply already carries the
+  rate, while every other request meanwhile finds the lease taken and serves the row as it
+  is. The stored payload is UNTRUSTED (`storeRowFrom()`): re-validated field by field — known
+  tenor names, ISO dates no later than today (NY) and within 70 days, plausible values,
+  stamps no later than now + 60 s; a foreign shape reads as an empty store (the next lease
+  rewrites it clean) — and it only ever reaches a row through `stitchTreasury`, so a corrupt
+  row cannot show a wrong yield. The REST calls (`storeHeaders()`) carry the service key and
+  NO user-agent (a browser-shaped UA makes the gateway refuse the secret key — CLAUDE.md), and
+  log through `scrubbed()`. Expected cost (not yet measured from Supabase): at most ONE slow
+  (~20 s) reply per 5 minutes while today's rate is pending; every other reply makes one extra
+  store read (expected ~50–100 ms) that runs beside the FRED sweep.
 - **Live-yield candidates, measured from Supabase 2026-10-01 (for the record; none is used).**
   CNBC's quote API: HTTP 403 "Access Denied" (Akamai) — dead. Stooq's yield symbols `2yusy.b` /
   `10yusy.b`: timed out at 20 s — dead. Yahoo `^TNX` (the CBOE 10-year yield index): HTTP 200 in
@@ -106,39 +129,45 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   wall clock (ONE hoisted formatter, `NY_CLOCK` — the `NY_DATE` rule): 60 s inside
   Mon–Fri 08:25–09:15 (BLS/BEA 08:30) and 15:25–18:30 (Treasury), 15 min on a
   quiet weekday but never past today's next window opening, a 60 min heartbeat at
-  weekends, ≤2 min while any row is degraded, ≤30 s while a background Treasury fetch is in
-  flight (v2). The client is told when to ask
+  weekends, ≤2 min while any row is degraded. The client is told when to ask
   again (`refreshInSec`, ≥30). Holidays are not excluded (cheaper than a table).
 - **Failure semantics.** One failed series degrades its own row only: `stale`
   with its last good values and `staleSec` if this isolate held a copy, else
   `missing` with every value `null` (never 0). Every series down on a cold isolate
   → 502 `{ok:false}` (the client keeps its last good render). A refresh that
   throws with a previous dataset → 200, every row `stale`. `changed` is
-  per-isolate best effort (a cold isolate says `false`); the UI's NEW marker is
-  client-side from `asOf`.
+  per-isolate best effort (a cold isolate says `false` — and since every request was
+  MEASURED to be a fresh instance, 2026-10-01, it is `false` in practice, as `stale` is in
+  practice `missing`); the UI's NEW marker is client-side from `asOf`.
 - **Roster.** `config/econ-indicators.json` is a bare JSON array of row objects,
   read from Pages at runtime (5s timeout, cached 1 hour, built-in identical default
   on failure — `econ-check` asserts the two match). Validated, never trusted: bad
   rows dropped and counted (`roster.dropped`), deduped by `id`, capped at 12, the
   FRED id strictly patterned before it reaches a URL, Treasury only on a
   daily-level row.
-- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (29 checks, fresh `vm` isolate each,
-  stubbed `fetch`, settable clock, real FRED captures + constructed Treasury
-  fixtures + the REAL Treasury head captured from Supabase under `tools/fixtures/econ/`; the
-  harness serves the COMMITTED roster, and the no-Treasury path is tested on that roster with
-  its `treasury` keys stripped); `--mutants` proves 44 single-line source mutants plus 3
-  damages to the shipped roster (a re-blanked, a wrong and a swapped Treasury column) are each
-  caught (47/47 on 2026-10-01; 36/36 before the background fetch). A Treasury outage — 503,
-  403 or 200 block page, network error, a hung host cut off by its `AbortSignal` — is checked
-  to leave all seven rows served from FRED, HTTP 200, none missing, before and after the failed
-  fetch. A Treasury that answers only when the test releases it must not delay any reply
-  (first reply FRED within 2 s of real time, `refreshInSec` ≤ 30, one fetch pair handed to
-  `waitUntil`, none started during the flight even past the 5-min cadence; on landing the
-  cached body is expired and the next reply serves the tail with `changed:true`); a "30 s"
-  answer still lands under the 45 s bound (time scaled); the cadence (today's rate final,
-  5 min in the posting window incl. 23:00 ET, hourly otherwise, the back-off beating the
-  5-min mark) is checked; and the real rows parse with `\n` and `\r\n`, equal the FRED capture
-  on 09-28 and append 09-29/09-30 onto it.
+- **Checks.** `npm ci --prefix tools` once (installs the esbuild pinned in `tools/package.json`; the check never downloads anything itself), then `node tools/econ-check.mjs` (34 checks, fresh `vm` isolate each,
+  stubbed `fetch`, settable clock, real FRED captures + constructed Treasury fixtures + the REAL
+  Treasury head captured from Supabase under `tools/fixtures/econ/`, and `fakeDb()` — a stateful
+  in-memory `desk_feed_cache` behind the stubbed fetch, SHARED by several vm contexts of one
+  check to play several cold instances, and playing the gateway's 401 for a browser-shaped
+  user-agent; the harness serves the COMMITTED roster, and the no-Treasury path is tested on
+  that roster with its `treasury` keys stripped); `--mutants` proves 54 single-line source
+  mutants plus 3 damages to the shipped roster are each caught (57/57 on 2026-10-01; a mutant
+  that does not transpile is reported INVALID). The v3 checks: cold instance A holds the lease,
+  waits for a "18 s" Treasury (time scaled) and serves it in its OWN reply, while instance C
+  arriving during that wait gets the store at once without fetching, and instance B afterwards
+  serves the stored rows with ZERO Treasury requests; two cold instances at once make exactly
+  one fetch pair, nothing inside the 5-min interval, one after it, and an instance whose first
+  read predates another's landing re-reads and serves it; a racer's stale failure never
+  overwrites a fresher row; the cadence (today's rate final, 5 min in the posting window incl.
+  23:00 ET, hourly otherwise, `failedAt` binding a DIFFERENT instance); Treasury 503 / 403 /
+  200-HTML / network / a hang cut by the 45 s signal / garbage columns → HTTP 200, seven FRED
+  rows, nothing but the failure stored; a store read failing (500, timeout, non-JSON, not a
+  row list) → FRED only with no attempt and no write, a foreign-shaped or corrupt payload never
+  served and rewritten clean by the next lease; a lease write failing → no attempt, a final
+  write failing → this reply still carries the fetched rows (and the log never the key); every
+  REST call goes to `SUPABASE_URL` with the service key, no user-agent, bounded; and the real
+  rows parse with `\n` and `\r\n`, equal the FRED capture on 09-28 and append 09-29/09-30 onto it.
 - **Deploying.** Deployed 2026-09-30 (owner-approved, project
   `kwugzhyfjevzwgplhtsd`, version 1, `verify_jwt` **ON**, like `desk-maps` /
   `desk-heatmap` / `desk-watchlist`, which serve the browser's `deskPost` headers).
@@ -153,7 +182,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   Pages (first merge to `main`) the function reports `roster.source:"default"` — the
   built-in roster is identical, so the rows are the same. *(True of v1 while both were
   FRED-only. Since the Treasury columns went into the config, v1's built-in default and the
-  Pages roster DIFFER until v2 is deployed: `roster.source:"default"` on v1 now means the
+  Pages roster DIFFER until the next deploy (the v3 source): `roster.source:"default"` on v1 now means the
   yields are on FRED — see below.)*
   The repo spells the BOM strip `/^\uFEFF/`; the payload sent used the same escape, and
   the read-back may show the literal character instead — the same regex either way.
@@ -163,27 +192,35 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   path and reads the roster from Pages at runtime (cached 1h), so the three Treasury columns
   take effect on the LIVE function within about an hour of `config/econ-indicators.json`
   reaching Pages (the merge to `main`) — a merged roster edit IS a live change, deploy or
-  not. A v2 deploy (the built-in default naming the same three columns, so a Pages outage
+  not. The next deploy (the built-in default naming the same three columns, so a Pages outage
   does not drop the yields back to FRED) awaits the owner's separate approval. The Treasury
   path is UNVERIFIED AGAINST THE LIVE HOST until it has run from Supabase: after Treasury
   posts (inside 15:25–18:30 ET), `ust10y.source` should read `"treasury"` with today's `asOf`;
   if it never does, the rows are silently on FRED — read the function logs for
   `desk-econ: Treasury` / `treasury disagrees` / `no overlap` lines. *(Superseded 2026-10-01:
   it ran, and never did — see the next paragraph.)*
-  **2026-10-01 — live v1 never serves Treasury; v2 fixes it but is NOT deployed.** With the
-  roster on Pages, live v1 asks Treasury on every refresh, INLINE, with a 5 s limit; the live
-  logs show `desk-econ: Treasury 202609 failed: Signal timed out` each time (then a 10-min
-  back-off), so the live yields are still FRED's — safe, a day behind. The throwaway
-  `desk-probe` (owner-approved 2026-10-01, `verify_jwt` ON, self-expiring at
-  2026-10-01T04:00:00Z; source in `supabase/functions/desk-probe/`; the Supabase tools cannot
-  delete a function — delete it from the dashboard) then measured why: 17–20 s per request
-  (see Sources). The fix is v2's background fetch (above), in this repo and checked, deployed
-  only on the owner's approval, `verify_jwt` ON as v1. After the deploy, verify: a cold
-  reply's `refreshInSec` is 30 and its yields are FRED; the next poll ~30 s later reads
+  **2026-10-01 — live v1 never serves Treasury and costs EVERY reply ~4–5 s; v3 fixes both but
+  is NOT deployed.** With the roster on Pages, live v1 attempts Treasury INLINE with a 5 s limit.
+  Every request runs on a fresh instance, so v1's per-instance 10-min back-off never holds:
+  EVERY desk-econ request waits ~5 s for an attempt that always times out (`desk-econ: Treasury
+  202609 failed: Signal timed out`) — calls at +0 / +4 / +30 / +90 s each took ~5.5 s and each
+  had its own `generatedAt` — and the yields stay FRED's. The throwaway `desk-probe`
+  (owner-approved 2026-10-01, `verify_jwt` ON, self-expiring at 2026-10-01T04:00:00Z; source in
+  `supabase/functions/desk-probe/`; the Supabase tools cannot delete a function — delete it from
+  the dashboard) measured why: 17–20 s per request (see Sources). A per-instance background
+  design (v2) was written and checkpointed (commit `34939b8`, draft PR #296) and dropped once
+  the fresh-instance measurement came in. The fix is v3 (see "Treasury in the shared store"):
+  deploy only on the owner's approval, `verify_jwt` ON as v1, NO migration (the table exists;
+  the first lease creates the row). It reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from
+  the function env, which Supabase provides to every edge function (`desk-heatmap` relies on
+  the same pair today). After the deploy, verify: (1) an ordinary reply is fast again (no
+  ~5 s Treasury wait); (2) the first reply after an attempt falls due takes ~20 s and reads
   `ust10y.source:"treasury"` (today's `asOf` once Treasury has posted, else the prior business
-  day's); the logs carry no `Signal timed out`; and the invocation rate per open tab drops
-  back to the release-window / quiet cadence once the tail is held (if it stays at one call
-  per 30 s, residual (d) is happening).
+  day's); (3) the next call — a different instance — is fast and shows the same rows; (4)
+  `desk_feed_cache` row `econ:treasury` holds `cols` for exactly `2 Yr` / `10 Yr` / `20 Yr`,
+  with `attemptedAt` moving at most every 5 min in the window and never once today's rate is
+  held; (5) the logs carry no `Signal timed out`, no `Treasury store read failed` / `store write
+  failed` and no `401` (a browser UA on the REST call would surface as a failed read).
 
 ## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`
 
@@ -237,8 +274,7 @@ width).
   for); demo names the newest reading's date.
 - **Poller.** The next fetch is `refreshInSec` clamped to 30..3600s (`econClamp`; the
   function already tightens it to 60s inside the 08:25–09:15 and 15:25–18:30 ET release
-  windows, to 30s while a background Treasury fetch is in flight (v2), and relaxes it at
-  weekends), scheduled by `econArm()`. A failed poll retries in 60s.
+  windows and relaxes it at weekends), scheduled by `econArm()`. A failed poll retries in 60s.
   Paused while the tab is hidden, resumed on return (at once if it came due meanwhile).
   Renders sit OUTSIDE the fetch `try` (`renderAfterFetch`). A span change passes `keepClock`:
   it may only pull the next poll EARLIER, never reset a pending one. `force` is sent only by
@@ -276,7 +312,7 @@ width).
   as NEW. Each chart's accessible name says what is drawn — `pointsNote` ("monthly - 6 latest")
   when the span fell back, else "over 3M" — never a short span over a half-year of readings.
 - **Deployed.** `desk-econ` went live 2026-09-30 (see Deploying above), so a live page renders
-  real rows — FRED, with Treasury's daily rate on the three yields once v2 (the background
-  fetch) is deployed; v1's inline 5 s Treasury fetch always times out, so until then the yields
-  are FRED's. If the function is ever down, a live page lamps the panel `STALE` and retries
+  real rows — FRED, with Treasury's daily rate on the three yields once v3 (the shared store)
+  is deployed; v1's inline 5 s Treasury attempt always times out, so until then the yields are
+  FRED's (and every reply carries that ~5 s). If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
