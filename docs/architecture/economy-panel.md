@@ -573,8 +573,14 @@ width); **S56** guards the live 10Y.
   reads these back**, so a wrong guess about the feed costs one look at the panel, not a
   console session. A failed refresh keeps the last GOOD bars for `ECON_BARS_KEEP_MS` (30 min)
   with "the last refresh failed (…)" in the tooltip, then only the reason is shown.
+  The same check runs at every RENDER (`econBarsMismatch` in `econBarsFor`): a page that boots
+  on a saved 1D can have a bars reply land before any quote or desk-econ row exists, and those
+  bars must still be refused once a reference does (Codex, PR #301). Concurrent fetches are
+  coalesced (`econBars.p`): a tab coming back starts the quote poll and asks for fresh bars, and
+  must make three requests at the unofficial endpoint, not six.
   **The monthly rows** (unemployment, CPI, PCE, core PCE) have no intraday series: no chart,
-  caption `no 1-day data`, tooltip "a monthly indicator has no intraday series". **Demo**
+  caption `no 1-day data`, tooltip "a monthly indicator has no intraday series" — also when their
+  official reading is `missing`. **Demo**
   draws `buildDemoBars` (seeded 5-minute bars over the last trading day's 08:00–17:00 ET bond
   session, caption `05:00 – 14:00` Pacific) and never calls the network. **Cadence:** the bars
   are fetched at once on picking 1D, alongside each quote poll (`econLiveFetch`, 60 s while the

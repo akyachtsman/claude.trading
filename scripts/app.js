@@ -8387,7 +8387,7 @@ const ECON_CHART_URL = (sym) => 'https://ts-api.cnbc.com/harmony/app/charts/1D.j
 const ECON_BARS_MAX = 150;                  /* thinned with the panel's own min/max bucketing: every kept point is a real bar */
 const ECON_BARS_MISMATCH = 1.5;             /* points: a last bar further than this from the quote is another instrument or a scale fault */
 const ECON_BARS_KEEP_MS = 30 * 60000;       /* a failed refresh keeps the last good bars this long, then the row says why there are none */
-const econBars = { m: {}, gen: 0, at: 0 };  /* m: row id → { pts: [[ms, price]…], fetchedAt, why, detail } */
+const econBars = { m: {}, p: null, at: 0 };  /* m: row id → { pts: [[ms, price]…], fetchedAt, why, detail }; p: the batch in flight */
 
 /* The request: a plain GET from this browser, 8 s, NEVER throws — { ok, body } or { ok: false, why, detail }. */
 async function econLiveBars(sym) {
@@ -8455,33 +8455,52 @@ function econBarsEntry(id, res, prev, now) {
   else {
     const p = econBarsParse(res.body, now);
     pts = p.pts; why = p.why; detail = p.detail;
-    const ref = econBarsRef(id), last = pts.length ? pts[pts.length - 1][1] : NaN;
-    if (pts.length && Number.isFinite(ref) && Math.abs(last - ref) > ECON_BARS_MISMATCH) {
-      pts = []; why = 'mismatch';
-      detail = 'the last bar (' + last.toFixed(3) + ') is ' + Math.abs(last - ref).toFixed(2) + ' points from the quote (' + ref.toFixed(3) + ')';
-    }
+    const bad = pts.length ? econBarsMismatch(id, pts) : '';
+    if (bad) { pts = []; why = 'mismatch'; detail = bad; }
   }
   if (pts.length) return { pts, fetchedAt: now, why: '', detail: '' };
   if (prev && prev.pts.length && now - prev.fetchedAt <= ECON_BARS_KEEP_MS) return { pts: prev.pts, fetchedAt: prev.fetchedAt, why, detail };
   return { pts: [], fetchedAt: 0, why, detail };
 }
 /* Fetch all three rows' bars (only while 1D is the view; never in demo, which draws seeded bars). Newest request wins. */
-async function econBarsFetch() {
-  if (DESK.mode === 'demo' || !DESK_DB.url || econTf !== '1d') return;
-  const gen = ++econBars.gen;
-  const res = await Promise.all(Object.keys(ECON_LIVE).map(async (id) => {
-    let r;
-    try { r = await econLiveBars(ECON_LIVE[id]); } catch { r = { ok: false, why: 'noanswer', detail: 'no answer' }; }
-    return [id, r];
-  }));
-  if (gen !== econBars.gen) return;
-  const now = Date.now();
-  for (const [id, r] of res) econBars.m[id] = econBarsEntry(id, r, econBars.m[id], now);
-  econBars.at = now;
-  renderAfterFetch(econLiveRepaint);
+function econBarsFetch() {
+  if (DESK.mode === 'demo' || !DESK_DB.url || econTf !== '1d') return Promise.resolve();
+  /* ONE batch at a time: a second caller (a tab coming back starts the quote poll AND asks for fresh bars) gets the batch already in
+     flight, so a visibility return is three requests, not six at an unofficial endpoint (Codex, PR #301) */
+  if (econBars.p) return econBars.p;
+  econBars.p = (async () => {
+    try {
+      const res = await Promise.all(Object.keys(ECON_LIVE).map(async (id) => {
+        let r;
+        try { r = await econLiveBars(ECON_LIVE[id]); } catch { r = { ok: false, why: 'noanswer', detail: 'no answer' }; }
+        return [id, r];
+      }));
+      const now = Date.now();
+      for (const [id, r] of res) econBars.m[id] = econBarsEntry(id, r, econBars.m[id], now);
+      econBars.at = now;
+      renderAfterFetch(econLiveRepaint);
+    } catch (e) {   /* reading a reply must not leave an unhandled rejection or a silent blank: name it on every row */
+      const now = Date.now();
+      for (const id of Object.keys(ECON_LIVE)) econBars.m[id] = econBarsEntry(id, { ok: false, why: 'format', detail: 'could not read the reply (' + ((e && e.message) || e) + ')' }, econBars.m[id], now);
+      renderAfterFetch(econLiveRepaint);
+    } finally { econBars.p = null; }
+  })();
+  return econBars.p;
+}
+/* What the bars must agree with, checked AGAIN at every render: the fetch-time check in econBarsEntry has no reference when the page
+   boots on a saved 1D and a bar reply beats the quote and the desk-econ rows, so a plausible but wrong instrument or scale would be
+   stored unchecked (Codex, PR #301). A row is only ever drawn once desk-econ has landed, so a reference exists by then. */
+function econBarsMismatch(id, pts) {
+  const ref = econBarsRef(id), last = pts.length ? pts[pts.length - 1][1] : NaN;
+  if (!Number.isFinite(ref) || !Number.isFinite(last) || Math.abs(last - ref) <= ECON_BARS_MISMATCH) return '';
+  return 'the last bar (' + last.toFixed(3) + ') is ' + Math.abs(last - ref).toFixed(2) + ' points from the quote (' + ref.toFixed(3) + ')';
 }
 function econBarsFor(id) {
-  return DESK.mode === 'demo' ? { pts: buildDemoBars(id), why: '', detail: '' } : econBars.m[id] || null;
+  if (DESK.mode === 'demo') return { pts: buildDemoBars(id), why: '', detail: '' };
+  const e = econBars.m[id];
+  if (!e) return null;
+  const bad = e.pts.length ? econBarsMismatch(id, e.pts) : '';
+  return bad ? { pts: [], fetchedAt: 0, why: 'mismatch', detail: bad } : e;
 }
 /* the caption under a 1D chart: its first and last bar on the Pacific clock, dated when they are not from today */
 function econIntradayCaption(pts) {
@@ -8492,8 +8511,9 @@ const econBarsShort = e => e.why === 'http' ? e.detail : ({ noanswer: 'no answer
 /* The 1D chart column of one row; returns the sentence that joins the row's tooltip. */
 function econIntradayChart(chart, r, missing) {
   const none = (cap, tip) => { chart.appendChild(el('span', 'econ-noline')); if (cap) chart.appendChild(el('span', 'econ-cap', cap)); return tip; };
-  if (missing) return none('', '');
+  /* the lack of an intraday series does not depend on whether the official reading is available (Codex, PR #301) */
   if (!Object.hasOwn(ECON_LIVE, r.id)) return none('no 1-day data', 'no 1-day data: a ' + (r.cadence || 'monthly') + ' indicator has no intraday series');
+  if (missing) return none('', '');
   const e = econBarsFor(r.id);
   if (!e) return none('loading…', '1-day chart loading');
   if (e.pts.length >= 2) {

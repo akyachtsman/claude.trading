@@ -7186,6 +7186,23 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   expect(await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] .econ-sub *')].map((e) => e.textContent).join('|')), 'the row\'s own liveness chip and date are untouched by the view').toMatch(/08:49|08:50|LIVE/);
   expect(Object.values(R).some((r) => r.capClip), 'no caption clipped').toBe(false);
 
+  // the bars-versus-quote check also runs at RENDER time: bars stored while no reference existed (a boot on a saved 1D where a bars reply beats
+  // the quote and the rows) are still refused once one does (Codex, PR #301)
+  await page.evaluate(() => {
+    const open = Date.parse('2026-10-01T12:00:00Z');
+    econBars.m.ust10y = { pts: [[open, 7.5], [open + 300000, 7.5]], fetchedAt: Date.now(), why: '', detail: '' };   // stored with no reference to check against
+    renderEcon(econState.shown);
+  });
+  R = await rows1d();
+  expect([R.ust10y.svg, R.ust10y.cap], 'unchecked bars 2.2 points from the quote are not drawn once the quote is there').toEqual([false, '1D bars ≠ quote']);
+  expect(R.ust10y.title, 'and the tooltip says so').toContain('points from the quote');
+  // a MONTHLY row whose official reading is missing still says it has no 1-day data (not an unlabeled placeholder)
+  await page.evaluate(() => { renderEcon({ ...econState.shown, rows: econState.shown.rows.map((r) => (r.id === 'cpi' ? { ...r, status: 'missing', value: null, prev: null, delta: null, asOf: null, points: [] } : r)) }); });
+  R = await rows1d();
+  expect([R.cpi.svg, R.cpi.cap, /no 1-day data/.test(R.cpi.title)], 'a missing monthly row on 1D: still "no 1-day data", with its tooltip').toEqual([false, 'no 1-day data', true]);
+  await page.evaluate(() => { econBars.m = {}; return econBarsFetch(); });
+  await expect.poll(async () => (await rows1d()).ust10y.svg, 'the next good fetch draws the 10Y again').toBe(true);
+
   // ── 5. a span change from 1D: a NEW span asks desk-econ once; 1D again and back to the span that is showing ask nothing
   await pick('1w');
   expect(await page.evaluate(() => window.__ranges), 'from 1D to 1W: desk-econ is asked for 1w').toEqual(['3m', '1w']);
@@ -7251,7 +7268,8 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   await page.clock.runFor(180_000);
   expect(await page.evaluate(() => window.__bsyms.length), 'hidden for three minutes: no bars requests').toBe(n);
   await page.evaluate(() => { delete document.hidden; econVisibility(); });
-  await expect.poll(() => page.evaluate(() => window.__bsyms.length), 'visible again with old bars: asked at once').toBeGreaterThan(n);
+  // both clocks have expired (the quote poll AND the bars are due), yet it is ONE batch — three requests, not six (Codex, PR #301)
+  expect(await page.evaluate(() => window.__bsyms.length), 'visible again with old bars: asked at once, once').toBe(n + 3);
   await pick('3m');
   n = await page.evaluate(() => window.__bsyms.length);
   await page.clock.runFor(125_000);
