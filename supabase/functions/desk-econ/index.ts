@@ -509,14 +509,18 @@ async function refreshFred(id: string, cosd: string): Promise<boolean> {
 // v2 idea of a per-instance background fetch could never be seen by a later
 // request. The validated Treasury rows therefore live in desk_feed_cache under
 // `econ:treasury`: payload { cols: {"2 Yr": [[date, value], ...], ...},
-// fetchedAt (last successful merge), attemptedAt (last attempt start = the
-// lease), failedAt (last total failure, or null), lease (the holder's id) }.
+// fetchedAt (last COMPLETE success: every roster column validated), mergedAt
+// (last merge of any validated column — what the 72h keep is measured from),
+// attemptedAt (last attempt start = the lease), failedAt (last total failure, or
+// null), lease (the holder's id) }.
 // Every request reads it; at most one request per interval does the slow fetch.
 
 type StoreRow = {
-  cols: Map<string, Obs[]>; fetchedAt: number; attemptedAt: number; failedAt: number | null; lease: string | null;
+  cols: Map<string, Obs[]>; fetchedAt: number; mergedAt: number; attemptedAt: number; failedAt: number | null; lease: string | null;
 };
-const emptyRow = (): StoreRow => ({ cols: new Map(), fetchedAt: 0, attemptedAt: 0, failedAt: null, lease: null });
+const emptyRow = (): StoreRow => ({ cols: new Map(), fetchedAt: 0, mergedAt: 0, attemptedAt: 0, failedAt: null, lease: null });
+// How old the stored COLUMNS are (the 72h keep): the last merge of any of them.
+const keptAt = (r: StoreRow) => Math.max(r.mergedAt, r.fetchedAt);
 
 // Service-key headers for the desk_feed_cache REST calls. NO user-agent, ever (see UA).
 function storeHeaders(): Record<string, string> {
@@ -542,6 +546,7 @@ function storeRowFrom(p: unknown, now: number, today: string): StoreRow {
   const o = p as any;
   const stamp = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= now + STORE_SKEW_MS ? v : null);
   row.fetchedAt = stamp(o.fetchedAt) ?? 0;
+  row.mergedAt = stamp(o.mergedAt) ?? 0;
   row.attemptedAt = stamp(o.attemptedAt) ?? 0;
   row.failedAt = stamp(o.failedAt);
   row.lease = typeof o.lease === 'string' ? o.lease.slice(0, 64) : null;
@@ -589,8 +594,8 @@ async function writeTreasuryRow(row: StoreRow): Promise<boolean> {
       body: JSON.stringify([{
         key: STORE_KEY, at: new Date().toISOString(),
         payload: {
-          cols: Object.fromEntries(row.cols), fetchedAt: row.fetchedAt, attemptedAt: row.attemptedAt,
-          failedAt: row.failedAt, lease: row.lease,
+          cols: Object.fromEntries(row.cols), fetchedAt: row.fetchedAt, mergedAt: row.mergedAt,
+          attemptedAt: row.attemptedAt, failedAt: row.failedAt, lease: row.lease,
         },
       }]),
       signal: AbortSignal.timeout(STORE_TIMEOUT_MS),
@@ -684,7 +689,23 @@ function treasuryWanted(now: number, today: string, rows: RosterRow[], row: Stor
   if (row.fetchedAt >= lastPostingStart(now)) return false;
   return now - row.attemptedAt >= TREASURY_IDLE_EVERY_MS;
 }
-const working = (row: StoreRow) => ({ at: row.fetchedAt, cols: row.cols });
+const working = (row: StoreRow) => ({ at: keptAt(row), cols: row.cols });
+
+// Inside the posting window, while today's rate is not yet held, how long until
+// the next attempt is allowed: the 5-min lease from attemptedAt, or the end of a
+// failedAt back-off if that is later. refresh() caps the dataset TTL at it, so
+// refreshInSec brings the client back in time even after the 18:30 ET release
+// window has ended (a print as late as the measured ~20:50 ET one). null = no cap:
+// outside the window (its own rule), today's rate held, no Treasury column, or no
+// FRED spine this request (a degraded row already caps the TTL at 2 min).
+function treasuryRetryInMs(now: number, today: string, rows: RosterRow[], row: StoreRow): number | null {
+  if (!treasuryPosting(now)) return null;
+  if (!rows.some((r) => r.treasury && fredStore.has(r.fred))) return null;
+  if (treasuryHeld(row, rows, today)) return null;
+  let due = row.attemptedAt + TREASURY_POSTING_EVERY_MS;
+  if (row.failedAt !== null) due = Math.max(due, row.failedAt + TREASURY_BACKOFF_MS);
+  return Math.max(MIN_REFRESH_SEC * 1000, due - Date.now());
+}
 
 // One request's Treasury step, run AFTER the FRED sweep (it validates against
 // FRED) on the row read beside that sweep. Never throws. Usually it just hands the
@@ -693,27 +714,32 @@ const working = (row: StoreRow) => ({ at: row.fetchedAt, cols: row.cols });
 // (desk-heatmap), and a fresh instance would never see its result anyway — so
 // THIS reply already carries what it fetched. Every other request meanwhile finds
 // the lease taken and serves the store as it is.
-async function treasuryCycle(now: number, today: string, rows: RosterRow[], seen: StoreRow): Promise<{ at: number; cols: Map<string, Obs[]> }> {
-  if (!treasuryWanted(now, today, rows, seen)) return working(seen);
+type TreasuryOutcome = { store: { at: number; cols: Map<string, Obs[]> }; row: StoreRow };
+async function treasuryCycle(now: number, today: string, rows: RosterRow[], seen: StoreRow): Promise<TreasuryOutcome> {
+  // `row` in every outcome = the shared row as this request now understands it
+  // (refresh() times the client's next poll from it); `store` = what buildRow uses.
+  const done = (store: StoreRow, row: StoreRow = store): TreasuryOutcome => ({ store: working(store), row });
+  if (!treasuryWanted(now, today, rows, seen)) return done(seen);
   // Re-read just before taking the lease: the first read ran beside the FRED
   // sweep, and another instance may have taken the lease since.
   const latest = await readTreasuryRow(now, today).then((r) => r ?? emptyRow(), () => null);
-  if (!latest) return working(seen);
-  if (!treasuryWanted(now, today, rows, latest)) return working(latest);
+  if (!latest) return done(seen);
+  if (!treasuryWanted(now, today, rows, latest)) return done(latest);
   const lease: StoreRow = { ...latest, attemptedAt: now, lease: `${now}-${Math.random().toString(36).slice(2, 10)}` };
   // The lease is written BEFORE the fetch. If it cannot be written, do not fetch:
   // an attempt nobody can see would be repeated by every request, ~20 s each.
-  if (!(await writeTreasuryRow(lease))) return working(latest);
+  if (!(await writeTreasuryRow(lease))) return done(latest, lease);
   // Confirm it is ours: two instances that both read a free lease both write one,
   // and only the last write survives — the other backs off here.
   const mine = await readTreasuryRow(now, today).catch(() => null);
-  if (!mine || mine.lease !== lease.lease) return working(mine ?? latest);
+  if (!mine || mine.lease !== lease.lease) return done(mine ?? latest, mine ?? lease);
   const good = await fetchTreasuryMonths(today);
   // Validate BEFORE writing: only a column that parsed AND agrees with this
   // request's FRED (stitchTreasury's own check) is stored. A blocked, HTML or
   // mislabelled file never reaches the store.
   const fetched = mergeTreasury(null, good, today);
   const agreed = new Map<string, Obs[]>();
+  const named = [...new Set(rows.map((r) => r.treasury).filter((c): c is string => !!c))];
   for (const r of rows) {
     if (!r.treasury) continue;
     const col = fetched.get(r.treasury);
@@ -725,19 +751,43 @@ async function treasuryCycle(now: number, today: string, rows: RosterRow[], seen
   }
   // Re-read before writing: in the rare race where two instances both won a lease,
   // the other may have stored rows since ours — a write here must not undo them.
-  const cur = await readTreasuryRow(now, today).catch(() => null);
+  // A FAILED re-read is not "no row": we cannot see what is stored now, so this
+  // request writes NOTHING (neither rows nor a failure) — a whole-payload write
+  // from our pre-fetch snapshot could erase a contender's fresher columns — and
+  // its reply serves what it validated. "No row" (null) is a legitimate base.
+  let cur: StoreRow | null = null;
+  let curFailed = false;
+  try { cur = await readTreasuryRow(now, today); } catch { curFailed = true; }
+  const base = cur ?? latest;
   if (!agreed.size) {
     // Nothing usable: record the failure so EVERY instance backs off for 10 min —
     // but only while the lease is still ours. If anyone has written since, their
     // row is the fresher truth: serve it, and never overwrite it with a failure.
-    if (cur?.lease === lease.lease) await writeTreasuryRow({ ...cur, failedAt: Date.now() });
-    return working(cur ?? latest);
+    if (curFailed) return done(latest, lease);
+    if (cur?.lease === lease.lease) {
+      const failed = { ...cur, failedAt: Date.now() };
+      await writeTreasuryRow(failed);
+      return done(cur, failed);
+    }
+    return done(base);
   }
-  const base = cur ?? latest;   // a success merges onto whatever is stored NOW
-  const kept = now - base.fetchedAt < TREASURY_KEEP_MS ? base.cols : null;
-  const next: StoreRow = { cols: mergeTreasury(kept, [agreed], today), fetchedAt: Date.now(), attemptedAt: now, failedAt: null, lease: lease.lease };
+  const kept = now - keptAt(base) < TREASURY_KEEP_MS ? base.cols : null;
+  // fetchedAt marks a COMPLETE success only (every Treasury column the roster
+  // names validated now): a partial one stores what validated but leaves
+  // fetchedAt, so outside the window the missing yield is still asked for (at
+  // most hourly) instead of waiting for the next window.
+  const complete = named.every((c) => agreed.has(c));
+  const at = Date.now();
+  const next: StoreRow = {
+    cols: mergeTreasury(kept, [agreed], today), fetchedAt: complete ? at : base.fetchedAt, mergedAt: at,
+    attemptedAt: now, failedAt: null, lease: lease.lease,
+  };
+  if (curFailed) {
+    console.warn('desk-econ: Treasury store re-read failed — this reply serves the fetch, nothing is stored');
+    return done(next, lease);
+  }
   await writeTreasuryRow(next);   // best effort: a failed write still serves THIS reply
-  return working(next);
+  return done(next);
 }
 
 type Status = 'ok' | 'stale' | 'missing';
@@ -808,11 +858,16 @@ async function refresh(): Promise<Dataset> {
   ]);
   // After FRED (the step validates against it). Usually instant; the one request
   // holding the lease waits here for Treasury, and its reply carries the result.
-  treasuryStore = seen ? await treasuryCycle(now, today, roster.rows, seen) : null;
+  const tsy = seen ? await treasuryCycle(now, today, roster.rows, seen) : null;
+  treasuryStore = tsy ? tsy.store : null;
   const rows = roster.rows.map((r) => buildRow(r, fresh.get(r.fred) === true, now));
   const policy = refreshPolicy(now);
   const degraded = rows.some((r) => r.status !== 'ok');
-  const ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;
+  let ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;
+  // Today's rate still pending inside the posting window: come back when the next
+  // attempt is allowed, not when the release window's policy says (it ends 18:30).
+  const retry = tsy ? treasuryRetryInMs(now, today, roster.rows, tsy.row) : null;
+  if (retry !== null) ttl = Math.min(ttl, retry);
   const fetchedAt = Date.now();
   const ds: Dataset = {
     fetchedAt, expiresAt: fetchedAt + ttl, phase: policy.phase, rows,

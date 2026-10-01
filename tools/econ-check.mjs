@@ -161,6 +161,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ── desk_feed_cache, faked: shared across the fresh vm contexts of one check ───
 function fakeDb() {
   const db = { rows: new Map(), log: [], read: null, write: null };
+  db.posts = () => db.log.filter((c) => c.method === 'POST').map((c) => JSON.parse(c.body)[0].payload);
   db.payload = (key = 'econ:treasury') => db.rows.get(key)?.payload ?? null;
   db.seed = (payload, key = 'econ:treasury') => db.rows.set(key, { key, at: new Date(T0).toISOString(), payload: JSON.parse(JSON.stringify(payload)) });
   db.reads = () => db.log.filter((c) => c.method === 'GET').length;
@@ -174,7 +175,8 @@ function fakeDb() {
     if (h.get('apikey') !== SERVICE_KEY || h.get('authorization') !== `Bearer ${SERVICE_KEY}`) return new Response('{"message":"Invalid API key"}', { status: 401 });
     if (u.pathname !== '/rest/v1/desk_feed_cache') return new Response('{"message":"not found"}', { status: 404 });
     if (method === 'GET') {
-      if (db.read) return db.read(u, init);
+      // an override that answers nothing (undefined) falls through to the real read
+      if (db.read) { const forced = await db.read(u, init); if (forced) return forced; }
       const key = u.searchParams.get('key') || '';
       if (u.searchParams.get('select') !== 'at,payload' || !key.startsWith('eq.')) return new Response('{"message":"bad query"}', { status: 400 });
       const r = db.rows.get(key.slice(3));
@@ -603,6 +605,33 @@ const TESTS = [
     eq((await inst(de, B + 10 * 60_000, down(503)))[0], 2, '16:10: attempted again once the back-off is over');
   }],
 
+  ["RETRY CAP: while today's rate is pending inside the posting window, refreshInSec brings the client back when the next attempt is allowed — after the 18:30 ET release window too (the quiet 15 min would miss a late print); the back-off after a failure; no cap once held, or outside the window", async (code) => {
+    const poll = async (db, ms, treasury) => {
+      const e = boot(code, { db, now: ms, treasury });
+      const r = await e.call();
+      return [r.json.refreshInSec, e.fetchCount('home.treasury.gov'), r];
+    };
+    for (const [label, iso] of [['Wed 19:00 ET', '2026-09-30T23:00:00Z'], ['Wed 23:00 ET', '2026-10-01T03:00:00Z']]) {
+      const db = fakeDb(), N = at(iso);
+      const [s, n, r] = await poll(db, N, noTodayTsy);
+      eq([n, r.json.phase, s], [2, 'quiet', 300], `${label}, today's rate not out: attempted, and back in 5 min (the quiet phase alone says 15)`);
+      eq((await poll(db, N + 2 * 60_000, noTodayTsy)).slice(0, 2), [180, 0], `${label} +2 min (another instance): no attempt, back when the lease frees`);
+      eq((await poll(db, N + 290_000, noTodayTsy)).slice(0, 2), [30, 0], `${label} +4:50: never below the 30 s client clamp`);
+      // the client came back on time: the lease is free, the late print lands, and the cap lifts
+      const [s5, n5, r5] = await poll(db, N + 5 * 60_000);
+      eq([n5, YIELDS.map((id) => row(r5, id).asOf), s5], [2, ['2026-09-30', '2026-09-30', '2026-09-30'], 900], `${label} +5 min: attempted, today's rate held, the quiet policy again`);
+    }
+    eq((await poll(fakeDb(), at('2026-09-30T19:30:00Z'), noTodayTsy))[0], 60, "15:30 ET: the release window's own 60 s is already sooner — unchanged");
+    const h = fakeDb();
+    eq((await poll(h, at('2026-09-30T23:00:00Z')))[0], 900, "19:00 ET, today's rate fetched and held: no cap");
+    eq((await poll(h, at('2026-09-30T23:03:00Z')))[0], 900, 'and none for a later instance');
+    const f = fakeDb();
+    eq((await poll(f, at('2026-09-30T23:00:00Z'), down(503))).slice(0, 2), [600, 2], '19:00 ET, Treasury down: back when the 10-min back-off ends, not at 5 min');
+    eq((await poll(f, at('2026-09-30T23:04:00Z'), down(503))).slice(0, 2), [360, 0], '19:04 (another instance): the back-off remaining');
+    eq((await poll(fakeDb(), at('2026-09-30T14:00:00Z'), noTodayTsy))[0], 900, '10:00 ET (outside the posting window): the quiet policy, no cap');
+    eq((await poll(fakeDb(), at('2026-10-03T22:00:00Z'), noTodayTsy))[0], 3600, 'Saturday: the weekend heartbeat, no cap');
+  }],
+
   ['OUTSIDE the posting window: no attempt once a fetch has succeeded since the last window opened (weekday 15:25 ET; Friday\'s over a weekend, DST weekends included); a store older than that gets ONE attempt; a failing host costs at most one per hour', async (code) => {
     // a row as a real successful attempt leaves it, re-stamped to `fetchedAt`
     const seeded = async (fetchedAt) => {
@@ -651,6 +680,33 @@ const TESTS = [
       eq([r.status, row(r, 'ust10y').source, row(r, 'ust10y').asOf], [200, 'treasury', '2026-09-30'], `${iso}: HTTP 200, the stored rate`);
     }
     eq(fails, [2, 0, 0, 2], 'a failing host: 10:00 asked, 10:11 (back-off over) and 10:59 not, 11:01 asked again');
+  }],
+
+  ['PARTIAL success (one yield cannot validate — its FRED spine is down): the columns that did are stored and served, but fetchedAt does NOT move, so outside the window the missing one is still asked for, hourly; once all validate, fetchedAt advances and the asking stops', async (code) => {
+    const db = fakeDb();
+    const dgs20Down = { DGS20: down(503) };
+    const visit = async (iso, fred) => {
+      const e = boot(code, { db, now: at(iso), fred, treasury: noTodayTsy });
+      const r = await e.call();
+      return [e.fetchCount('home.treasury.gov'), r];
+    };
+    const T1 = at('2026-09-30T14:00:00Z');   // Wed 10:00 ET: outside the posting window, nothing stored
+    const [n1, r1] = await visit('2026-09-30T14:00:00Z', dgs20Down);
+    eq(n1, 2, '10:00: asked');
+    eq(YIELDS.map((id) => [row(r1, id).source, row(r1, id).status]), [['treasury', 'ok'], ['treasury', 'ok'], [null, 'missing']], '2Y and 10Y from Treasury; 20Y has no FRED spine to check it against');
+    const p1 = db.payload();
+    eq([Object.keys(p1.cols).sort(), p1.fetchedAt, p1.mergedAt, p1.attemptedAt, p1.failedAt], [['10 Yr', '2 Yr'], 0, T1, T1, null],
+      'the two validated columns stored; fetchedAt NOT advanced (not every roster column validated), mergedAt is');
+    const [n2, r2] = await visit('2026-09-30T14:30:00Z', dgs20Down);
+    eq([n2, row(r2, 'ust2y').source, row(r2, 'ust10y').source, row(r2, 'ust10y').asOf], [0, 'treasury', 'treasury', '2026-09-29'],
+      '10:30 (another instance): inside the hourly interval no attempt — and the stored columns serve (their 72h keep runs from mergedAt)');
+    const [n3] = await visit('2026-09-30T15:01:00Z', dgs20Down);
+    eq([n3, db.payload().fetchedAt], [2, 0], '11:01: the hour is up and no COMPLETE success since the window opened: asked again (still partial)');
+    const T4 = at('2026-09-30T16:05:00Z');
+    const [n4, r4] = await visit('2026-09-30T16:05:00Z');   // FRED's DGS20 is back
+    eq([n4, YIELDS.map((id) => [row(r4, id).source, row(r4, id).asOf])], [2, YIELDS.map(() => ['treasury', '2026-09-29'])], '12:05, FRED recovered: asked, all three yields from Treasury');
+    eq([Object.keys(db.payload().cols).sort(), db.payload().fetchedAt, db.payload().mergedAt], [['10 Yr', '2 Yr', '20 Yr'], T4, T4], 'the third column stored and fetchedAt advanced: a COMPLETE success');
+    eq((await visit('2026-09-30T17:10:00Z'))[0], 0, '13:10: complete since the window opened — nothing more before 15:25 ET');
   }],
 
   ['STORE READ failure (500, timeout, non-JSON, not a row list) = a FRED-only reply with NO Treasury attempt; a foreign-shaped or corrupt payload never reaches a reply, and the next lease rewrites it clean', async (code) => {
@@ -718,6 +774,52 @@ const TESTS = [
     eq(db2.payload().cols, {}, 'nothing was stored');
     assert(f.warns.some((w) => /store write failed HTTP 503/.test(w)), 'the failed write is logged');
     assert(!f.warns.some((w) => w.includes(SERVICE_KEY)), 'and the log never carries the service key');
+  }],
+
+  ["FINAL RE-READ failure (500, timeout) is not 'no row yet': nothing is written after the lease — a contender's fresher row stands byte for byte, and no failure is recorded — while the reply serves what THIS request validated; a real 'no row yet' is still a base it writes on", async (code) => {
+    const KEY = 'econ:treasury';
+    // A contender (which also won a lease) stored today's rate while this instance was fetching.
+    const contender = {
+      cols: { '2 Yr': [['2026-09-28', 4.92], ['2026-09-29', 4.95], ['2026-09-30', 4.9]], '10 Yr': [['2026-09-28', 5.24], ['2026-09-29', 5.27], ['2026-09-30', 5.21]], '20 Yr': [['2026-09-28', 5.6], ['2026-09-29', 5.63], ['2026-09-30', 5.58]] },
+      fetchedAt: T0 + 9_000, mergedAt: T0 + 9_000, attemptedAt: T0 + 1_000, failedAt: null, lease: 'contender',
+    };
+    let unboundedRead = false;
+    const hang = (u, init) => new Promise((_, reject) => {
+      const guard = setTimeout(() => { unboundedRead = true; reject(new Error('never aborted')); }, 3000);
+      init?.signal?.addEventListener('abort', () => { clearTimeout(guard); reject(init.signal.reason); }, { once: true });
+    });
+    for (const [name, failRead, extra] of [
+      ['HTTP 500', () => new Response('{"message":"boom"}', { status: 500 })],
+      ['timeout', hang, { timeoutScale: 0.01 }],
+    ]) {
+      // (a) Treasury answers (without today's rate); the contender writes; then the store stops answering reads
+      const db = fakeDb();
+      let snapshot = null;
+      const x = boot(code, { db, ...extra, treasury: (m) => {
+        if (!db.read) { db.seed(contender); snapshot = JSON.stringify(db.rows.get(KEY)); db.read = failRead; }
+        return noTodayTsy(m);
+      } });
+      const rx = await x.call();
+      eq([rx.status, x.fetchCount('home.treasury.gov'), db.writes()], [200, 2, 1], `${name}: fetched, and the lease is the ONLY write`);
+      eq(JSON.stringify(db.rows.get(KEY)), snapshot, `${name}: the contender's row stands byte for byte (never overwritten from the pre-fetch snapshot)`);
+      eq(YIELDS.map((id) => [row(rx, id).source, row(rx, id).asOf]), YIELDS.map(() => ['treasury', '2026-09-29']), `${name}: this reply serves what this request validated`);
+      // (b) Treasury down too: the failure is NOT recorded — the lease row stands as written, and the client
+      //     is sent back when that lease frees (19:00 ET, so the quiet 15 min is what it would otherwise be)
+      const g = fakeDb(), N = at('2026-09-30T23:00:00Z');
+      const y = boot(code, { db: g, now: N, ...extra, treasury: () => { g.read ??= failRead; return new Response('upstream down', { status: 503 }); } });
+      const ry = await y.call();
+      eq([ry.status, y.fetchCount('home.treasury.gov'), g.writes()], [200, 2, 1], `${name}, Treasury down: attempted, and the lease is the ONLY write`);
+      eq([g.payload().attemptedAt, g.payload().failedAt, g.payload().lease], [N, null, g.posts()[0].lease], `${name}, Treasury down: no failedAt written blind`);
+      eq([YIELDS.map((id) => row(ry, id).source), ry.json.refreshInSec], [['fred', 'fred', 'fred'], 300], `${name}, Treasury down: FRED, back when the lease frees`);
+    }
+    eq(unboundedRead, false, 'the hung re-read was cut off by its own signal');
+    // (c) the row vanished between the confirm and the final read: [] is "no row yet", a real base — written
+    const db = fakeDb();
+    const z = boot(code, { db, treasury: (m) => { db.rows.delete(KEY); return tsyResponse(m); } });
+    const rz = await z.call();
+    const p = db.payload();
+    eq([db.writes(), Object.keys(p.cols).sort(), p.fetchedAt, p.lease], [2, ['10 Yr', '2 Yr', '20 Yr'], T0, db.posts()[0].lease], "'no row yet': the validated rows ARE written, under this request's lease");
+    eq(YIELDS.map((id) => [row(rz, id).source, row(rz, id).asOf]), YIELDS.map(() => ['treasury', '2026-09-30']), "'no row yet': and served");
   }],
 
   ['REST hygiene: every desk_feed_cache call goes to SUPABASE_URL with the service key, NO user-agent at all, and a bounded signal; no env = FRED only', async (code) => {
@@ -851,7 +953,7 @@ const TESTS = [
       eq([p.phase, p.ttlMs / 1000], [phase, sec], iso);
     }
     // Through the handler on a roster that names no Treasury column: this is the NY-clock policy
-    // alone (a cold isolate's pending Treasury fetch caps it at 30s — its own check, below).
+    // alone (the Treasury retry cap inside the posting window is its own check, RETRY CAP).
     const fo = fredOnly(CONFIG);
     const q = boot(code, { config: fo, now: at('2026-09-30T13:20:00Z') });
     eq([(await q.call()).json.refreshInSec, (await q.call()).json.phase], [900, 'quiet'], 'quiet weekday through the handler');
@@ -1116,23 +1218,23 @@ const MUTANTS = [
   ['origin allowlist bypassed', 'const allowed = ALLOWED_ORIGINS.has(origin);', 'const allowed = true;'],
   ['delta not rounded (float noise on the wire)', 'const delta = value !== null && prevV !== null ? roundTo(value - prevV, r.decimals) : null;', 'const delta = value !== null && prevV !== null ? value - prevV : null;'],
   ['a dead feed answers HTTP 200', 'const send = (out: ReturnType<typeof shape>) => reply(out.ok ? 200 : 502, out, cors);', 'const send = (out: ReturnType<typeof shape>) => reply(200, out, cors);'],
-  ['degraded feed waits the full quiet TTL','const ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;', 'const ttl = policy.ttlMs;'],
+  ['degraded feed waits the full quiet TTL', 'let ttl = degraded ? Math.min(policy.ttlMs, DEGRADED_TTL_MS) : policy.ttlMs;', 'let ttl = policy.ttlMs;'],
   ['built-in default re-blanks the 10Y Treasury column (the fallback silently goes FRED-only)', "sources: { fred: 'DGS10', treasury: '10 Yr' }", "sources: { fred: 'DGS10' }"],
   ['built-in default names the wrong tenor on the 20Y row', "sources: { fred: 'DGS20', treasury: '20 Yr' }", "sources: { fred: 'DGS20', treasury: '30 Yr' }"],
   // the shared Treasury store under a lease (v3, 2026-10-01)
-  ['Treasury never attempted although rows name a column', 'treasuryStore = seen ? await treasuryCycle(now, today, roster.rows, seen) : null;', 'treasuryStore = seen ? working(seen) : null;'],
+  ['Treasury never attempted although rows name a column', 'const tsy = seen ? await treasuryCycle(now, today, roster.rows, seen) : null;', 'const tsy = seen ? { store: working(seen), row: seen } : null;'],
   ['the store read although no row names a Treasury column', 'const wantsTreasury = roster.rows.some((r) => r.treasury);', 'const wantsTreasury = true;'],
   ['the old 5 s Treasury timeout (Treasury answers Supabase in 17-20 s)', 'const TREASURY_TIMEOUT_MS = 45_000;', 'const TREASURY_TIMEOUT_MS = 5_000;'],
   ['lease check removed (an attempt on every request that finds today missing)', 'return now - row.attemptedAt >= TREASURY_POSTING_EVERY_MS;', 'return true;'],
-  ['the lease is not confirmed (two racing instances both fetch)', 'if (!mine || mine.lease !== lease.lease) return working(mine ?? latest);', 'if (!mine) return working(latest);'],
-  ['no re-read before taking the lease (a stale first read refetches what just landed)', 'if (!treasuryWanted(now, today, rows, latest)) return working(latest);', 'if (!latest.cols) return working(latest);'],
+  ['the lease is not confirmed (two racing instances both fetch)', 'if (!mine || mine.lease !== lease.lease) return done(mine ?? latest, mine ?? lease);', 'if (!mine) return done(latest, lease);'],
+  ['no re-read before taking the lease (a stale first read refetches what just landed)', 'if (!treasuryWanted(now, today, rows, latest)) return done(latest);', 'if (!latest.cols) return done(latest);'],
   ['attemptedAt not written before the fetch (the lease row does not move the clock)', 'const lease: StoreRow = { ...latest, attemptedAt: now, lease: `${now}-${Math.random().toString(36).slice(2, 10)}` };', 'const lease: StoreRow = { ...latest, lease: `${now}-${Math.random().toString(36).slice(2, 10)}` };'],
   ['the fetch made fire-and-forget (not awaited by the lease holder)', 'const good = await fetchTreasuryMonths(today);', 'const good: Map<string, Obs[]>[] = []; void fetchTreasuryMonths(today);'],
   ['write-before-validate (a column that disagrees with FRED is stored)', 'if (s.reason === null) agreed.set(r.treasury, col);', 'if (s.reason === null || true) agreed.set(r.treasury, col);'],
   ['garbage not recorded as a failure (no shared back-off after a mislabelled file)', 'if (!agreed.size) {', 'if (!good.length) {'],
   ['the store read ignored (every read says "no row yet")', 'return rows.length ? storeRowFrom(rows[0]?.payload, now, today) : null;', 'return null;'],
-  ['a failure not recorded (no back-off shared between instances)', 'if (cur?.lease === lease.lease) await writeTreasuryRow({ ...cur, failedAt: Date.now() });', 'if (cur?.lease === lease.lease) await writeTreasuryRow({ ...cur });'],
-  ["a racer's stale failure clobbers a fresher row", 'if (cur?.lease === lease.lease) await writeTreasuryRow({ ...cur, failedAt: Date.now() });', 'await writeTreasuryRow({ ...lease, failedAt: Date.now() });'],
+  ['a failure not recorded (no back-off shared between instances)', 'const failed = { ...cur, failedAt: Date.now() };', 'const failed = { ...cur };'],
+  ["a racer's stale failure clobbers a fresher row", 'if (cur?.lease === lease.lease) {', 'if (cur) {'],
   ['the recorded back-off ignored', 'if (row.failedAt !== null && now - row.failedAt < TREASURY_BACKOFF_MS) return false;', 'if (row.failedAt === -1) return false;'],
   ["today's-row stop removed (attempted again all evening)", 'if (treasuryHeld(row, rows, today)) return false;', 'if (rows.length < 0) return false;'],
   ['a stored "today" that disagrees with FRED counts as final', 'return !spine || stitchTreasury(spine, col).reason === null;', 'return true;'],
@@ -1150,6 +1252,19 @@ const MUTANTS = [
   ['posting window stops at 18:30 (a late post waits an hour)', "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from;", "return w.dow !== 'Sat' && w.dow !== 'Sun' && w.sec >= WINDOWS[1].from && w.sec < WINDOWS[1].to;"],
   ['a Treasury tail sharing no date with FRED is trusted', "if (!overlap) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };", "if (overlap < 0) return { obs: spine, fromTreasury: 0, reason: 'treasury: no overlap with FRED to cross-check' };"],
   ['upstream fetch left unbounded (a hung Treasury host hangs the sweep)', 'const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(ms) });', 'const res = await fetch(url, { headers: UA });'],
+  // Codex review of v3 (PR #296): final re-read failure, the retry cap after 18:30 ET, partial success
+  ["a FAILED final re-read read as 'no row yet' (the pre-fetch snapshot overwrites a contender's fresher row)", 'try { cur = await readTreasuryRow(now, today); } catch { curFailed = true; }', 'try { cur = await readTreasuryRow(now, today); } catch { cur = null; }'],
+  ['a failed final re-read still writes the fetched rows', 'if (curFailed) {', 'if (false) {'],
+  ["'no row yet' on the final re-read treated as a failure (a first fetch is never stored)", 'try { cur = await readTreasuryRow(now, today); } catch { curFailed = true; }', 'try { cur = await readTreasuryRow(now, today); curFailed = !cur; } catch { curFailed = true; }'],
+  ['a failed final re-read on the failure path times the client from the pre-lease row (back in 30 s, not when the lease frees)', 'if (curFailed) return done(latest, lease);', 'if (curFailed) return done(latest);'],
+  ['no retry cap: after 18:30 ET a pending rate waits the quiet 15 min', 'if (retry !== null) ttl = Math.min(ttl, retry);', 'if (retry === -1) ttl = Math.min(ttl, retry);'],
+  ['the retry cap ignores the back-off (clients poll every 5 min into a 10-min back-off)', 'if (row.failedAt !== null) due = Math.max(due, row.failedAt + TREASURY_BACKOFF_MS);', 'if (row.failedAt === -1) due = Math.max(due, row.failedAt + TREASURY_BACKOFF_MS);'],
+  ["the retry cap kept once today's rate is held", 'if (treasuryHeld(row, rows, today)) return null;', 'if (rows.length < 0) return null;'],
+  ['the retry cap applied outside the posting window', 'if (!treasuryPosting(now)) return null;', 'if (rows.length < 0) return null;'],
+  ['fetchedAt advanced on a PARTIAL success (the missing yield then waits for the next window)', 'fetchedAt: complete ? at : base.fetchedAt', 'fetchedAt: at'],
+  ['mergedAt not stamped on a merge (a partial store is dropped by the 72h keep at once)', 'mergedAt: at,', 'mergedAt: base.mergedAt,'],
+  ['the 72h keep measured from fetchedAt only', 'const keptAt = (r: StoreRow) => Math.max(r.mergedAt, r.fetchedAt);', 'const keptAt = (r: StoreRow) => r.fetchedAt;'],
+  ['mergedAt not read back from the store', 'row.mergedAt = stamp(o.mergedAt) ?? 0;', 'row.mergedAt = 0;'],
 ];
 
 // ...and each damage to the SHIPPED roster (config/econ-indicators.json, the file the live function
