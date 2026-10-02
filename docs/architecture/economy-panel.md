@@ -334,10 +334,23 @@ width); **S56** guards the live 10Y.
   series is a level line through the middle; fewer than two real values draws a DASHED
   PLACEHOLDER, never an invented line). `pointsNote` ("monthly - 6 latest") is the caption
   under the chart (`.econ-note`); otherwise the caption is the chart's first and last date.
-- **Neutral colour.** Green/red are P&L-only on this desk and a yield or inflation rate
-  rising is not a gain: the change is neutral ink with an arrow (`▲` `▼`, `=` for a real
-  zero), the line is the brass accent. S55 scans every element's computed colour against the
-  gain/loss tokens.
+- **Colour (owner 2026-10-02: "if it's lower, make it red … if it's higher, green" → "I'm only
+  talking about the digit after the up pointer and the digit after the down pointer").** The
+  change is its arrow (`▲` `▼`, `=` for a real zero) in the usual muted ink with ONLY the digits
+  after it coloured: `.econ-delta-n.up` is `--color-gain`, `.econ-delta-n.down` is `--color-loss`
+  (both text on white at 5.2 / 5.5:1), inside `.econ-delta` — `econRow` splits the text once
+  (`/^([▲▼=]) (.+)$/`), so `textContent` still reads `▼ 0.10` end to end. This SUPERSEDES the
+  earlier "neutral ink, green/red are P&L-only, a rising yield is not a gain" ruling for this
+  ONE figure and nothing else. Consequences worth knowing: it is the DIRECTION of the latest
+  reading's move against the previous one (not the selected span's change, which the panel
+  never showed), so a rising unemployment rate or CPI shows green exactly like a rising
+  yield — a direction, not a verdict; a real zero (`=`), an unknown change (an em dash) and a
+  STALE row (its number is not today's: `.is-stale .econ-delta-n` is muted) are never
+  coloured; the arrow, the value, the chart line (brass accent), every chip and every axis
+  stay neutral. A live row's digits colour the same way (the change from CNBC's previous
+  close). S55 reads the colour of every row's digits, arrow and value against the tokens
+  (the demo has rows that rose, fell and did not move) and still scans everything ELSE in
+  the panel for a gain/loss colour or P&L class; S56/S57 check the live ▲ and ▼ digits.
 - **Decimals and dates.** Value and change print at the row's own `decimals`; null/NaN is an
   em dash through `fmtToNum` — never `0.00%`. A daily reading is `Sep 29`; a monthly one names
   its MONTH (`Aug`, the year only when it is not this one), by string slicing — never
@@ -583,9 +596,11 @@ width); **S56** guards the live 10Y.
   **The monthly rows** (unemployment, CPI, PCE, core PCE) have no intraday series: no chart,
   caption `no 1-day data`, tooltip "a monthly indicator has no intraday series" — also when their
   official reading is `missing`. **Demo**
-  draws `buildDemoBars` (seeded 5-minute bars over the last BOND session day's 08:00–17:00 ET —
-  NYSE trading days minus Columbus and Veterans Day, `BOND_ONLY_HOLIDAYS`, Codex PR #301 —
-  caption `05:00 – 14:00` Pacific) and never calls the network. **Cadence:** the bars
+  draws `buildDemoBars` (seeded 5-minute bars over the last BOND session day, 00:00–17:00 ET
+  like the real feed's overnight session since 2026-10-02 — NYSE trading days minus Columbus and
+  Veterans Day, `BOND_ONLY_HOLIDAYS`, Codex PR #301 — `data-span` `21:00 – 14:00` Pacific, the
+  evening before to the afternoon, so a demo chart carries the same `Oct 1 | 06:00 | 12:00`
+  axis the live one does) and never calls the network. **Cadence:** the bars
   are fetched at once on picking 1D, alongside each quote poll (`econLiveFetch`, 60 s while the
   bond session runs, 10 min around it, hourly at weekends/holidays; concurrent with the quote and
   AWAITED, so the masthead's "Refresh now" stays pending until the bars have landed — Codex, PR #301;
@@ -601,8 +616,8 @@ width); **S56** guards the live 10Y.
   well: S3 clicks every control, the 1D button included, and a CI runner is refused there.
   **Confirmed 2026-10-01** from the owner's screenshot of the live panel: the feed answers a page
   on this site, the URL is right and the parser read it — bars 21:02 → 14:05 Pacific, i.e. CNBC's
-  chart carries the OVERNIGHT session from 00:02 ET (the demo's seeded bars still cover only
-  08:00–17:00 ET).
+  chart carries the OVERNIGHT session from 00:02 ET (the demo's seeded bars match it since
+  2026-10-02).
 - **The axes (owner 2026-10-01: "numbers across vertical and horizontal lines", asked for on the 1D
   chart and then "every single range option"; guard S55 for every span, S58 for the 1D clock axis
   and the pure builders).** Every drawn chart has a VALUE axis on its right and a TIME axis under

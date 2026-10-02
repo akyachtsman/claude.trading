@@ -6064,20 +6064,45 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     expect(gap, 'the rows fill the column Markets sets (a body capped at 320px leaves ~400px of empty panel)').toBeLessThanOrEqual(40);
   }
 
-  // ── 2. green and red are P&L-ONLY: nothing in the panel is painted in a gain/loss colour
+  // ── 2. green and red: ONLY the change DIGITS (owner 2026-10-02: "only the digit after the up pointer and the digit after the down pointer", not the
+  //    value): the digits after ▲ are green, after ▼ red, a real zero stays neutral; the arrow, the value, the chart, the chips, the axes and every
+  //    other element are never painted in a gain/loss/danger/status colour or carry a P&L class
   const pl = await page.evaluate(() => {
     const probe = (c) => { const e = document.createElement('i'); e.style.color = c; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; };
     const bad = ['--color-gain', '--color-loss', '--color-gain-dim', '--color-loss-dim', '--color-danger', '--color-status-live'].map((t) => probe(`var(${t})`));
     const offenders = [];
     for (const n of document.querySelectorAll('#econBody *')) {
+      if (n.matches('.econ-delta-n.up, .econ-delta-n.down')) continue;   // the one thing that may be green or red
       const cs = getComputedStyle(n);
       for (const p of ['color', 'backgroundColor', 'borderTopColor']) if (bad.includes(cs[p])) offenders.push(`${n.className || n.tagName}:${p}`);
       if (n instanceof SVGElement) for (const p of ['stroke', 'fill']) if (bad.includes(cs[p])) offenders.push(`${n.getAttribute('class') || n.tagName}:${p}`);
       if (/\b(gain|loss|pill|up|down)\b|pill--/.test(n.getAttribute('class') || '')) offenders.push(`class ${n.getAttribute('class')}`);
     }
-    return offenders;
+    const [gain, loss, neutral] = [probe('var(--color-gain)'), probe('var(--color-loss)'), probe('var(--color-text-secondary)')];
+    const rows = [...document.querySelectorAll('#econList .econ-row')].map((li) => {
+      const d = li.querySelector('.econ-delta'), n = d.querySelector('.econ-delta-n'), v = li.querySelector('.econ-val');
+      return { id: li.dataset.id, text: d.textContent, digits: n ? n.textContent : null, cls: n ? n.className : null, digitColour: n ? getComputedStyle(n).color : null, arrowColour: getComputedStyle(d).color, valColour: getComputedStyle(v).color };
+    });
+    // a stale row keeps its muted ink: its number is not today's
+    const li = document.querySelector('#econList .econ-row .econ-delta-n.down, #econList .econ-row .econ-delta-n.up').closest('.econ-row');
+    li.classList.add('is-stale');
+    const stale = getComputedStyle(li.querySelector('.econ-delta-n')).color;
+    li.classList.remove('is-stale');
+    return { offenders, rows, gain, loss, neutral, stale };
   });
-  expect(pl, 'no gain/loss colour or P&L class anywhere in the Economy panel — a rising yield is not a gain').toEqual([]);
+  expect(pl.offenders, 'nothing in the Economy panel but the change digits is green or red — not the value, the arrow, the chart, a chip or an axis').toEqual([]);
+  for (const r of pl.rows) {
+    const arrow = r.text[0];
+    expect(r.valColour, `[${r.id}] the value is never green or red`).not.toBe(pl.gain);
+    expect(r.valColour, `[${r.id}] the value is never green or red`).not.toBe(pl.loss);
+    expect(r.arrowColour, `[${r.id}] the arrow stays in the muted ink`).toBe(pl.neutral);
+    expect(r.digits, `[${r.id}] the coloured thing is exactly the digits after the arrow`).toBe(r.text.slice(2));
+    if (arrow === '▲') expect([r.cls, r.digitColour], `[${r.id}] digits after ▲ are green`).toEqual(['econ-delta-n up', pl.gain]);
+    else if (arrow === '▼') expect([r.cls, r.digitColour], `[${r.id}] digits after ▼ are red`).toEqual(['econ-delta-n down', pl.loss]);
+    else expect([r.cls, r.digitColour], `[${r.id}] a real zero stays neutral`).toEqual(['econ-delta-n', pl.neutral]);
+  }
+  expect(new Set(pl.rows.map((r) => r.text[0])), 'the demo has rows that rose, fell and did not move, so all three cases were checked').toEqual(new Set(['▲', '▼', '=']));
+  expect(pl.stale, 'a stale row keeps its muted digits').toBe(pl.neutral);
 
   // ── 3. the span control: seven presets (1D first — S58), 3M pressed, and the title says what 1D is and what has no 1-day data
   const tfLabels = await page.locator('#econTf button').allTextContents();
@@ -6685,6 +6710,7 @@ test('S56: the live yield rules — a quote stands in for the official reading o
   await expect(page.locator('#econList .econ-row[data-id="ust10y"][data-live="1"]'), 'the 10Y row is drawn live').toHaveCount(1);
   let r10 = await row10();
   expect([r10.val, r10.delta, r10.tag], 'the live print, its change from the previous close CNBC reports, and the LIVE tag').toEqual(['5.32%', '▲ 0.03', 'LIVE']);
+  expect(await page.evaluate(() => { const n = document.querySelector('#econList .econ-row[data-id="ust10y"] .econ-delta-n'), e = document.createElement('i'); e.style.color = 'var(--color-gain)'; document.body.appendChild(e); const g = getComputedStyle(e).color; e.remove(); return [n.className, getComputedStyle(n).color === g]; }), 'a live ▲ change: its digits are green').toEqual(['econ-delta-n up', true]);
   expect(r10.date, 'the date cell is the Pacific CLOCK of the quote, not a date').toBe(await ptOfLast());
   expect(r10.isNew, 'a live row never carries a NEW chip, although the server said `changed`').toBe(false);
   expect(await page.evaluate(() => econSeen.ust10y), 'the official reading it stands in for is recorded as seen').toBe('2026-09-29|5.26');
@@ -6712,8 +6738,8 @@ test('S56: the live yield rules — a quote stands in for the official reading o
   expect(await page.evaluate(() => window.__yahoo || 0), 'and Yahoo was never asked: it is not a source').toBe(0);
   expect(await page.evaluate(() => {
     const bad = ['--color-gain', '--color-loss', '--color-gain-dim', '--color-loss-dim', '--color-danger', '--color-status-live'].map((t) => { const e = document.createElement('i'); e.style.color = `var(${t})`; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; });
-    return [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] *, #econList .econ-row[data-id="ust2y"] *')].filter((n) => bad.includes(getComputedStyle(n).color) || bad.includes(getComputedStyle(n).borderTopColor) || bad.includes(getComputedStyle(n).backgroundColor)).map((n) => n.className);
-  }), 'the LIVE tag and the NOT LIVE chip are neutral ink: green and red stay P&L-only').toEqual([]);
+    return [...document.querySelectorAll('#econList .econ-row[data-id="ust10y"] *, #econList .econ-row[data-id="ust2y"] *')].filter((n) => !n.matches('.econ-delta-n.up, .econ-delta-n.down') && (bad.includes(getComputedStyle(n).color) || bad.includes(getComputedStyle(n).borderTopColor) || bad.includes(getComputedStyle(n).backgroundColor))).map((n) => n.className);
+  }), 'the LIVE tag and the NOT LIVE chip are neutral ink (only the change digits are ever green or red)').toEqual([]);
 
   // 5a. the worst case for width: an unseen official reading (NEW) on a row that is also NOT LIVE — date + NOT LIVE + NEW are wider than the 104px block, so the
   //     flex line WRAPS rather than hang into the chart column. What must hold in ANY font state (CI's web fonts swap in late, and its fallback sans is wider than
@@ -7020,6 +7046,7 @@ test('S57: the live yields from CNBC — one browser request for all three, each
     .toEqual(['4.79%', '▼ 0.10', 'LIVE', '08:49', 'Source: CNBC US2Y']);
   expect([R.ust10y.val, R.ust10y.delta, R.ust10y.tag, R.ust10y.src], 'the 10Y').toEqual(['5.25%', '▼ 0.04', 'LIVE', 'Source: CNBC US10Y']);
   expect([R.ust20y.val, R.ust20y.delta, R.ust20y.tag, R.ust20y.src], 'the 20Y').toEqual(['5.61%', '▼ 0.07', 'LIVE', 'Source: CNBC US20Y']);
+  expect(await page.evaluate(() => { const e = document.createElement('i'); e.style.color = 'var(--color-loss)'; document.body.appendChild(e); const l = getComputedStyle(e).color; e.remove(); return ['ust2y', 'ust10y', 'ust20y'].map((id) => { const n = document.querySelector(`#econList .econ-row[data-id="${id}"] .econ-delta-n`); return [n.className, getComputedStyle(n).color === l]; }); }), 'live ▼ changes: the digits after each arrow are red').toEqual(Array(3).fill(['econ-delta-n down', true]));
   expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].isNew), 'a live row never carries a NEW chip').toEqual([false, false, false]);
   expect(['ust2y', 'ust10y', 'ust20y'].map((id) => R[id].clip), 'the longest source line ("Source: CNBC US10Y") fits its block').toEqual([false, false, false]);
   expect(['ust2y', 'ust10y', 'ust20y'].map((id) => /– Oct 1$/.test(R[id].cap)), 'and each chart now runs to today').toEqual([true, true, true]);
@@ -7175,7 +7202,7 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   await page.evaluate(() => { window.__bcalls = 0; window.__realBars0 = econLiveBars; window.econLiveBars = () => { window.__bcalls++; return Promise.resolve({ ok: false, why: 'noanswer', detail: 'x' }); }; });
   await pick('1d');
   let R = await rows1d();
-  expect(YIELDS.map((id) => [R[id].svg, R[id].span]), 'demo 1D: each yield draws a chart spanning the Pacific clock of the bond session (08:00-17:00 ET), and prints no caption').toEqual(YIELDS.map(() => [true, '05:00 – 14:00']));
+  expect(YIELDS.map((id) => [R[id].svg, R[id].span]), 'demo 1D: each yield draws a chart spanning the Pacific clock of the whole bond day (00:00-17:00 ET, as CNBC\'s real chart does), and prints no caption').toEqual(YIELDS.map(() => [true, '21:00 – 14:00']));
   expect(MONTHLY.map((id) => [R[id].svg, R[id].cap]), 'and every monthly row has no chart and says so').toEqual(MONTHLY.map(() => [false, 'no 1-day data']));
   expect(MONTHLY.every((id) => /no 1-day data: a monthly indicator has no intraday series/.test(R[id].title)), 'its tooltip says why').toBe(true);
   expect(Object.values(R).some((r) => r.capClip), 'no caption is clipped').toBe(false);
@@ -7235,19 +7262,19 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   expect(parsed.formats[4][1], 'and an empty one lists a bar\'s keys').toMatch(/1 bars in the reply, 0 usable \(a bar's keys: a\)/);
   expect(parsed.thinned, 'a day of one-minute bars is thinned to at most 150 real points').toBeLessThanOrEqual(150);
 
-  // the demo's bars are seeded on the last day the BOND session ran: Columbus Day and Veterans Day (shut for the yields, open for the NYSE)
+  // the demo's bars (00:00 → 17:00 ET, like the real feed) are seeded on the last day the BOND session ran: Columbus Day and Veterans Day (shut for the yields, open for the NYSE)
   // fall back to the day before, ordinary days are untouched, and the NYSE's own holidays still fall back as before (Codex, PR #301)
   const demoDay = await page.evaluate(() => {
     const first = (iso) => new Date(buildDemoBars('ust10y', new Date(iso))[0][0]).toISOString();
     return {
-      columbus: first('2026-10-12T19:00:00Z'),    // Mon Oct 12 (Columbus Day) 12:00 PT → Fri Oct 9, 08:00 EDT
-      veterans: first('2026-11-11T20:00:00Z'),    // Wed Nov 11 (Veterans Day) 12:00 PT → Tue Nov 10, 08:00 EST
+      columbus: first('2026-10-12T19:00:00Z'),    // Mon Oct 12 (Columbus Day) 12:00 PT → Fri Oct 9, 00:00 EDT
+      veterans: first('2026-11-11T20:00:00Z'),    // Wed Nov 11 (Veterans Day) 12:00 PT → Tue Nov 10, 00:00 EST
       ordinary: first('2026-10-13T19:00:00Z'),    // Tue Oct 13 → itself
-      thanksgiving: first('2026-11-26T20:00:00Z'), // Thu Nov 26 (NYSE closed) → Wed Nov 25, 08:00 EST
+      thanksgiving: first('2026-11-26T20:00:00Z'), // Thu Nov 26 (NYSE closed) → Wed Nov 25, 00:00 EST
     };
   });
-  expect(demoDay, 'demo bars start at 08:00 ET on the last BOND session day').toEqual({
-    columbus: '2026-10-09T12:00:00.000Z', veterans: '2026-11-10T13:00:00.000Z', ordinary: '2026-10-13T12:00:00.000Z', thanksgiving: '2026-11-25T13:00:00.000Z',
+  expect(demoDay, 'demo bars start at 00:00 ET on the last BOND session day').toEqual({
+    columbus: '2026-10-09T04:00:00.000Z', veterans: '2026-11-10T05:00:00.000Z', ordinary: '2026-10-13T04:00:00.000Z', thanksgiving: '2026-11-25T05:00:00.000Z',
   });
 
   // the axes' pure builders (every result checked by hand): round value ticks, an instant's place along the DRAWN x, the clock axis of a day

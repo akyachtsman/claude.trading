@@ -804,6 +804,11 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
    name can never push the row taller */
 .econ-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary); }
 .is-stale .econ-val, .is-missing .econ-val, .is-missing .econ-date, .is-missing .econ-delta { color: var(--color-text-secondary); }
+/* the change DIGITS only (owner 2026-10-02): green when the reading rose, red when it fell — the desk's own gain/loss tokens, text on white at
+   5.2 / 5.5:1. A stale row keeps its muted ink (its number is not today's), as it always did. */
+.econ-delta-n.up { color: var(--color-gain); }
+.econ-delta-n.down { color: var(--color-loss); }
+.is-stale .econ-delta-n.up, .is-stale .econ-delta-n.down { color: var(--color-text-secondary); }
 .econ-chart { position: relative; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; transition: opacity .15s ease; }
 .econ-chart svg { display: block; width: 100%; flex: 1 1 0; min-height: 26px; }
 .econ-line { stroke: var(--color-accent-bright); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }

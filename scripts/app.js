@@ -8316,7 +8316,15 @@ function econRow(r, chartsMatch) {
 
   const figs = el('div', 'econ-figs');
   figs.appendChild(el('span', 'econ-val', econValueText(r)));
-  figs.appendChild(el('span', 'econ-delta', missing ? '—' : econDeltaText(r)));
+  /* the change: its arrow in the usual muted ink and ONLY the digits after it green (up) or red (down) — owner 2026-10-02: "only the digit
+     after the up pointer and the digit after the down pointer", never the value; a real zero or an unknown change stays neutral. The text
+     is still "▼ 0.10" end to end (textContent), the arrow is still there for anyone who cannot tell the colours apart. */
+  const dText = missing ? '—' : econDeltaText(r), dEl = el('span', 'econ-delta'), dm = /^([▲▼=]) (.+)$/.exec(dText);
+  if (dm) {
+    const dn = fmtToNum(r.delta);
+    dEl.append(dm[1] + ' ', el('span', 'econ-delta-n' + (dm[1] === '▲' && dn > 0 ? ' up' : dm[1] === '▼' && dn < 0 ? ' down' : ''), dm[2]));
+  } else dEl.textContent = dText;
+  figs.appendChild(dEl);
   info.appendChild(figs);
   /* the date the reading is FOR — the honest signal: a yield is a daily RATE (Treasury's 3:30 pm ET snapshot, posted late in the
      afternoon, or FRED's a business day later), never intraday — with the row's tag (NEW / STALE / NO DATA) beside it */

@@ -225,7 +225,7 @@ The function never trusts it. A row is **dropped** (and counted in `roster.dropp
 
 **Source.** CNBC's chart feed, `https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=US2Y|US10Y|US20Y`, one request per yield, from the visitor's browser (CNBC refuses servers) — only while 1D is showing, alongside each quote poll, never while the tab is hidden. **Built blind:** the URL and the reply's shape are from memory and were not measured (every CNBC host answers the build sandbox 403), so the parser accepts the plausible shapes (§ in `economy-panel.md`) and the design's promise is that **every failure is named on the row** — HTTP status, no answer, not JSON, unknown format (with the reply's keys), no bars, a last bar that disagrees with the quote — and **no chart is ever drawn from anything but real bars**: no substitute source (owner: "no fallbacks"), no demo bars in live. A failed refresh keeps the last good bars for 30 minutes, flagged in the tooltip.
 
-**Demo.** Seeded 5-minute bars over the last trading day's 08:00–17:00 ET bond session; no network.
+**Demo.** Seeded 5-minute bars over the last bond session day, 00:00–17:00 ET (the overnight session CNBC's real chart carries; 08:00–17:00 ET until 2026-10-02); no network.
 
 **Open.** Whether the feed answers a page on this site (CORS) and its real shape: read off the first live 1D view (the rows report it), then fix.
 
@@ -239,5 +239,15 @@ The function never trusts it. A row is **dropped** (and counted in `roster.dropp
 
 **Decided.** Value axis on the RIGHT (the desk's last-price tab idiom; it also keeps the line's own start at the left edge). Time marks are calendar-round (Mondays, month/quarter/half-year/year starts, round Pacific clock steps; the date where Pacific midnight falls on a 1D chart), falling back to the first, middle and last reading. Year only at January for months ("Jan '26", "Jul").
 
-**Not decided / not done.** The demo's 1D bars still cover 08:00–17:00 ET while CNBC's real chart runs from 00:02 ET (seen on the owner's screenshot); no minor marks on the daily spans.
+**Not decided / not done.** No minor marks on the daily spans. (The demo's 1D bars now start at 00:00 ET like CNBC's real chart — 2026-10-02.)
 
+
+### 11e. Green and red on the change digits (owner request 2026-10-02: "if it's lower, make it red … if it's higher, green" → "only the digit after the up pointer and the digit after the down pointer")
+
+**What.** In each row's change figure ("▼ 0.10"), the digits after `▲` are green (`--color-gain`) and the digits after `▼` are red (`--color-loss`). Nothing else changes colour: not the arrow, not the value or its percentage, not the chart line, not a chip, not an axis. A real zero (`=`), an unknown change (an em dash) and a STALE row keep the muted ink. It applies to all seven rows, live yield rows included (their change is from CNBC's previous close).
+
+**Decided.** The colour is the DIRECTION of the latest reading against the previous one, for every row alike — so a rising unemployment rate or CPI shows green just as a rising yield does; it is a direction, not a verdict on whether the move is good. This supersedes the 2026-09 "neutral ink; green/red are P&L-only" ruling for this one figure only (the coding-standard line in `CLAUDE.md` names it as the single exception). The text node is unchanged (`▼ 0.10`), so a reader who cannot tell the colours apart still has the arrow.
+
+**Not decided / not done.** The change is the latest move, never the selected span's (the panel has never shown a span change); if the owner meant a span change with the line coloured too, that is a separate change. The arrow stays muted (the literal reading of "only the digit").
+
+**Guard.** S55 (every row's digits, arrow and value read against the tokens, a real zero, a stale row, everything else still scanned), S56/S57 (live ▲ and ▼).
