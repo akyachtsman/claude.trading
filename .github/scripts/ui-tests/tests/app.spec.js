@@ -2125,10 +2125,25 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // evaluate below can land a frame before that paint — the position is deterministic once
   // it has, so wait for it rather than sample once.
   const markerOk = (v, dTop = 2) => !!v && Math.abs(v.dLeft + 1) <= 3 && Math.abs(v.dTop) <= dTop && Math.abs(v.dH) <= 2;
+  // The pointer is re-aimed at where the target tile IS at each attempt (a late roster repaint or a
+  // font arriving can move the tiles between the measurement above and the paint), and a miss
+  // reports the geometry it saw instead of a bare `false` — tablet flaked once on CI with no clue.
+  const liveAim = (idx, title, fx) => page.evaluate(({ idx, title, fx }) => {
+    const zone = [...document.querySelectorAll('.mkt-group-tiles[data-band]')].find(z => z.dataset.title === title);
+    const t = zone && zone.querySelectorAll('.wl-tile')[idx];
+    if (!t) return null;
+    const r = t.getBoundingClientRect();
+    return { x: r.left + r.width * fx, y: r.top + r.height / 2 };
+  }, { idx, title, fx });
   let nudge = 0;
-  await expect.poll(async () => { await page.mouse.move(aim.to.x + (nudge++ % 2), aim.to.y); return markerOk(await markerVs(3, aim.title)); }, {
-    message: 'the insertion marker sits on the left edge of the FOURTH tile, level with it', timeout: 5000,
-  }).toBe(true);
+  await expect.poll(async () => {
+    const to = (await liveAim(2, aim.title, 0.75)) || aim.to;
+    await page.mouse.move(to.x + (nudge++ % 2), to.y);
+    const v = await markerVs(3, aim.title);
+    return markerOk(v) ? 'ok' : 'marker ' + JSON.stringify(v) + ' pointer ' + JSON.stringify(to);
+  }, {
+    message: 'the insertion marker sits on the left edge of the FOURTH tile, level with it', timeout: 8000,
+  }).toBe('ok');
   const writesInBand = await rosterWrites(page);
   await page.mouse.up();
   await expect.poll(() => rosterWrites(page), { message: 'the in-band drop is exactly one write' })
@@ -2177,9 +2192,14 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.mouse.move(wrap.from.x + 40, wrap.from.y + 20, { steps: 5 });
   await page.mouse.move(wrap.to.x, wrap.to.y, { steps: 8 });
   let nudgeW = 0;
-  await expect.poll(async () => { await page.mouse.move(wrap.to.x + (nudgeW++ % 2), wrap.to.y); return markerOk(await markerVs(wrap.n1, wrap.title)); }, {
-    message: 'the marker sits on the left edge of the first tile of ROW TWO, where the pointer is', timeout: 5000,
-  }).toBe(true);
+  await expect.poll(async () => {
+    const to = (await liveAim(wrap.n1, wrap.title, 0.25)) || wrap.to;
+    await page.mouse.move(to.x + (nudgeW++ % 2), to.y);
+    const v = await markerVs(wrap.n1, wrap.title);
+    return markerOk(v) ? 'ok' : 'marker ' + JSON.stringify(v) + ' pointer ' + JSON.stringify(to);
+  }, {
+    message: 'the marker sits on the left edge of the first tile of ROW TWO, where the pointer is', timeout: 8000,
+  }).toBe('ok');
   const writesWrap = await rosterWrites(page);
   await page.mouse.up();
   await expect.poll(() => rosterWrites(page), { message: 'the drop on the second row is exactly one write' })
@@ -2730,7 +2750,7 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
       { sym: 'BIGPX', last: 1234567.89, pct: 1234.56, ext: true, spark },
       { sym: 'P8', last: 1234.56, pct: -12.34, spark },
       { sym: 'P9', last: 12345.67, pct: 12.34, spark },
-      { sym: 'P10', last: 123456.78, pct: -10.5, spark },
+      { sym: 'P10', last: 123456.78, pct: -12345.67, spark },
       { sym: '^GSPC', last: 6318.42, pct: 0.54, index: true, spark },
       { sym: '^IXIC', last: 23104.88, pct: -24.21, index: true, spark },
       { sym: 'BTC-USD', last: 64216, pct: -0.77, ext: true, spark },
@@ -2785,6 +2805,14 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
       // the tile instead of clipping (scrollWidth never exceeds its own box):
       // what can be measured is whether it stays inside the tile that owns it.
       pills: inside('.wl-pct'),
+      // HEADROOM, not just containment: the gap between each worst-case pill's right edge and the
+      // tile's content box. Containment alone passed locally with 0.6px to spare while CI's
+      // Chromium drew the same pills wider and failed, so the sandbox could not see the near miss.
+      pillSlack: Math.min(...[...band.children].map(t => {
+        const p = t.querySelector('.wl-pct'), cs = getComputedStyle(t);
+        const right = t.getBoundingClientRect().right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
+        return right - p.getBoundingClientRect().right;
+      })),
       worstWidth: Math.round(band.querySelector('.wl-tile').getBoundingClientRect().width),
       // The session badge is an unbreakable inline-block: where it does not fit
       // beside the ticker it drops WHOLE to the next line. A badge in two
@@ -2803,14 +2831,20 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
   expect(m.orders, 'reading order must be ticker → price → change → line, on every tile')
     .toEqual(['mkt-name > mkt-last > wl-pct > wl-spark']);
   // The two that matter. Long values step down a font size (wlTile sets
-  // `is-long` / `is-xlong` / `is-xxlong` by string length, since CSS cannot branch
+  // `is-long` / `is-xlong` / `is-xxlong` / `is-xxxlong` by string length, since CSS cannot branch
   // on text length); if that ever stops happening, six-figure index prices
   // truncate mid-number.
   expect(m.prices, 'a clipped price is a wrong price').toEqual([]);
   expect(m.names, 'tickers are how this panel is scanned').toEqual([]);
   // The change pill is the number the panel exists to show, and it keeps the
-  // price's size on the promise that nothing clips.
+  // price's size on the promise that nothing clips. It was the pill that failed CI the
+  // second time (PR #306): a 7-character pill ("-12.34%") at 11px filled the 51px a
+  // worst-case tile leaves with 0.6px to spare, and CI's Chromium drew it wider than the
+  // sandbox's; the sum had left the pill's own 4px of padding out. Seven-, eight-, nine-
+  // and ten-character pills (P8/P9/BRK.A/^IXIC, MSTR/ABCDEFGHIJ, BIGPX, P10) each
+  // step down a size now.
   expect(m.pills, 'the change pill stays inside its tile').toEqual([]);
+  expect(m.pillSlack, 'with at least 2px to spare in the narrowest column, so a font a shade wider cannot push it out').toBeGreaterThanOrEqual(2);
   expect(m.splitBadges, 'the EXT / CLOSE badge never breaks inside the word').toEqual([]);
   expect(m.badgesOut, 'and stays inside its tile').toEqual([]);
   expect(m.sparks, 'the sparkline stays inside its tile').toEqual([]);

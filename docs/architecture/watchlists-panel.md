@@ -57,11 +57,20 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     price is 11px, `is-long` (8 chars, `1,234.56`) 10px, `is-xlong` (9) 9px,
     `is-xxlong` (10, `123,456.78`) 8px and `is-xxxlong` (12, `1,234,567.89`) 7px
     (an 11- or 13-character price cannot occur: two decimals, a comma every three
-    digits); the change pill is 11px, `is-long` (>7 chars, `+100.50%`) 10px,
-    `is-xlong` (>8, `+1234.56%`) 8px; a ticker over 5 characters is `is-long` and
+    digits); the change pill is 11px (6 chars, `+0.54%`), `is-long` (7, `-24.21%`)
+    10px, `is-xlong` (8, `+100.50%`) 9px, `is-xxlong` (9, `+1234.56%`) 8px and
+    `is-xxxlong` (10, `+12345.67%`) 7px; a ticker over 5 characters is `is-long` and
     wraps (`overflow-wrap: anywhere`) rather than shrinking further. Plex Mono and
     the usual fallbacks advance ~0.6em a character (0.62 taken for safety), a tile
-    leaves 52px, and every tier stays under ~49px at 0.62em (48 / 48 / 46 / 49).
+    leaves 52px, and every PRICE tier stays under ~49px at 0.62em (48 / 48 / 46 / 49).
+    **A pill carries 4px of padding of its own** (`padding: 0 2px`), so its TEXT is
+    held to ~45px (the pill tiers land at 42 / 42.5 / 42.5 / 41 at 0.62em): PR #306's
+    first cut counted the text alone, a 7-character pill at 11px filled the 50px of a
+    worst-case tile with 0.6px to spare, and **CI's Chromium drew it wider than the
+    sandbox's** (desktop and mobile-chrome failed, with WebKit passing) — the second
+    CI failure of the PR, after the 12-character price. S27 therefore asserts
+    **headroom** (`pillSlack` ≥ 2px in the narrowest column), not only containment,
+    because containment passed locally on the very build CI rejected.
     **The first cut of PR #306 got this wrong and CI caught it**: the 12-character
     price was put at 8px on "12 at 8px = 54px, against 52" — arithmetic that
     already said it overflowed — and clipped by ~2px against the real font, while
@@ -166,7 +175,7 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
   request 2026-08-21: "bigger, but try to not resize the boxes"). It was the
   smallest thing on a tile whose whole job is to show a move. It was 12px on the
   76px tile; at the 60px grid column of 2026-10-04 it is 11px beside the price's
-  11px, and a longer figure steps down a tier (`is-long`, `is-xlong`, above) so
+  11px, and a longer figure steps down a tier (`is-long` … `is-xxxlong`, above) so
   the widest real value still sits inside the 52px of usable width with nothing
   clipped (S27 guards exactly this, against worst cases built by `wlTile`).
   **`Radar` is the inbox list** (owner request 2026-07-30): the panel-header `+`

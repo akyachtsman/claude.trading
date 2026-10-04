@@ -899,13 +899,18 @@ function wlTile(r, pending) {
 
   if (r.pct != null) {
     /* The same length tiers as the price (60px grid column, 2026-10-04): the pill is
-       11px for the usual "+0.54%" / "-24.21%", 10px from 8 characters
-       ("+100.50%") and 8px from 9 ("+1,234.56%"). A figure never clips and the
-       box never grows to hold it. */
+       11px for the usual "+0.54%" (6 characters), 10px from 7 ("-24.21%"), 9px from 8
+       ("+100.50%"), 8px from 9 ("+1234.56%") and 7px from 10. The pill carries 4px of
+       its own padding, which the first cut of PR #306 left out of the sum: a 7-character
+       pill at 11px filled the 50px a worst-case tile leaves with nothing to spare, and
+       CI's Chromium drew it wider than this sandbox's. A figure never clips and the box
+       never grows to hold it. */
     const pt = fmtPct(r.pct);
     const pill = el('span', (r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' wl-pct', pt);
-    if (pt.length > 7) pill.classList.add('is-long');
-    if (pt.length > 8) pill.classList.add('is-xlong');
+    if (pt.length > 6) pill.classList.add('is-long');
+    if (pt.length > 7) pill.classList.add('is-xlong');
+    if (pt.length > 8) pill.classList.add('is-xxlong');
+    if (pt.length > 9) pill.classList.add('is-xxxlong');
     tile.appendChild(pill);
   }
 

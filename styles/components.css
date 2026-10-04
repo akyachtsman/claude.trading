@@ -379,11 +379,18 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* The change pill keeps the PRICE's size (owner request 2026-08-21: "bigger") —
    11px beside the price's 11px; the 12px it had was the cost of the 76px tile.
    A longer figure steps down a tier like the price does — see wlTile(), which
-   sets the classes by string length: +100.50% is 8 characters, +1,234.56%
-   is 10. Four tiers of the same idea, one per size, none of them a clip. */
+   sets the classes by string length: +0.54% is 6 characters (11px), -24.21% 7
+   (10px), +100.50% 8 (9px), +1234.56% 9 (8px), +12345.67% 10 (7px). The pill
+   carries 4px of padding of its own, so each tier's text is sized to ~45px of
+   the 52px a tile leaves (0.62em an advance), not the 49px the price may use:
+   PR #306's first cut left the padding out and a 7-character pill at 11px
+   filled the box with nothing to spare — CI's Chromium drew it wider than the
+   sandbox's. Five tiers, none of them a clip. */
 .wl-strip .wl-pct { order: 3; align-self: flex-start; font-size: 11px; line-height: 1.05; padding: 0 2px; }
 .wl-strip .wl-pct.is-long { font-size: 10px; letter-spacing: -.02em; }
-.wl-strip .wl-pct.is-xlong { font-size: 8px; letter-spacing: -.03em; }
+.wl-strip .wl-pct.is-xlong { font-size: 9px; letter-spacing: -.03em; }
+.wl-strip .wl-pct.is-xxlong { font-size: 8px; letter-spacing: -.03em; }
+.wl-strip .wl-pct.is-xxxlong { font-size: 7px; letter-spacing: -.03em; }
 .wl-strip .wl-spark { order: 4; display: block; width: 100%; margin-top: 2px; opacity: .9; }
 /* Full tile width; the SVG carries a viewBox (sparkline() in app.js), so it
    scales cleanly. 13px tall (was 15) — the line is context, the number is the
