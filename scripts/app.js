@@ -950,7 +950,7 @@ const WL_DRAG_SLOP = 6;
    is what they objected to, and removal still goes through a dialog. */
 const WL_TOUCH_ARM_MS = 300;
 
-const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null, x: 0, y: 0, zone: null };
+const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null, raf: 0, x: 0, y: 0, zone: null };
 
 /* Transient feedback for a drag that could not be committed. The staging row
    that used to carry this is gone (owner ruling 2026-07-31), so it borrows the
@@ -1045,17 +1045,48 @@ function wlDragPaint(x, y) {
   wlDrag.marker = mark;
 }
 
+/* A wrapped band can be taller than the screen (a 40-tile list is eleven rows at phone
+   width, the roster allows 2,000 symbols a list), and the pointer owns the drag: an armed
+   touch drag is `touch-action: none`, so a finger cannot scroll the page, and a mouse
+   wheel is not always to hand. Without help a slot on a row that is off screen — or in a
+   band far below the grabbed tile — is unreachable inside one gesture (Codex review, PR
+   #306). Holding the pointer within WL_PAGE_EDGE_PX of the viewport's top or bottom edge
+   scrolls the PAGE, faster the closer to the edge, until it runs out; `wlDragPaint` is
+   redone after every step because the tiles move under a STILL pointer. One rAF loop,
+   running only while the pointer sits in an edge zone that can still scroll; every pointer
+   move re-arms it and `wlDragEnd` cancels it. (This replaces the SIDEWAYS auto-scroll of
+   the single-row band, `wlAutoScroll`/`WL_EDGE_PX`, which is gone with that row.) */
+const WL_PAGE_EDGE_PX = 64, WL_PAGE_MAX_STEP = 22;
+function wlPageScroll() {
+  const d = wlDrag;
+  d.raf = 0;
+  if (!d.on) return;
+  const h = window.innerHeight;
+  const up = 1 - Math.min(1, Math.max(0, d.y) / WL_PAGE_EDGE_PX);        /* 0 outside the top edge zone, →1 at the edge */
+  const down = 1 - Math.min(1, Math.max(0, h - d.y) / WL_PAGE_EDGE_PX);
+  const push = down - up;
+  if (!push) return;
+  const before = window.scrollY;
+  const max = Math.max(0, document.documentElement.scrollHeight - h);
+  const to = Math.min(max, Math.max(0, before + Math.sign(push) * Math.max(1, Math.round(Math.abs(push) * WL_PAGE_MAX_STEP))));
+  if (Math.abs(to - before) < 1) return;   /* at the end: stop until the pointer moves again */
+  window.scrollTo({ top: to, behavior: 'instant' });
+  wlDragPaint(d.x, d.y);
+  d.raf = requestAnimationFrame(wlPageScroll);
+}
+
 function wlDragMove(ev) {
   if (!wlDrag.on) return;
   wlDrag.x = ev.clientX; wlDrag.y = ev.clientY;
   wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
   wlDragPaint(ev.clientX, ev.clientY);
+  if (!wlDrag.raf) wlDrag.raf = requestAnimationFrame(wlPageScroll);
 }
 
 function wlDragEnd(ev, cancelled) {
   const d = wlDrag;
   clearTimeout(d.armed);
-  d.zone = null;
+  cancelAnimationFrame(d.raf); d.raf = 0; d.zone = null;
   if (!d.on) { d.sym = null; d.tile = null; return; }
   /* A drop still delivers a `click` to the tile it started from. Without this
      stamp, arranging the panel would open a detail window on every drop. */

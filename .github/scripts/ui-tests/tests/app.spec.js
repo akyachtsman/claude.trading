@@ -1867,6 +1867,17 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // first: on a loaded runner the panels above the watchlist can still be settling (a late
   // render shifts the band down a few px) and a pointer aimed at the old position lands in
   // another band. Waits until the document height and the panel's page position hold still.
+  // A drag within WL_PAGE_EDGE_PX (64) of the viewport's top or bottom edge now scrolls the PAGE
+  // (Codex review, PR #306), so every drag below is aimed well INSIDE the viewport: SAFE px
+  // from either edge. `alignTop` puts a band's first row at a safe height, `alignBoundary` the
+  // seam between the first two bands at the middle of the screen.
+  const SAFE = 84;
+  const alignTop = async (i) => {
+    await page.evaluate((i) => {
+      const r = document.querySelectorAll('.mkt-group-tiles[data-band]')[i].getBoundingClientRect();
+      window.scrollBy(0, r.top - 150);
+    }, i);
+  };
   const settleLayout = async () => {
     let prev = '', same = 0;
     for (let i = 0; i < 50 && same < 4; i++) {
@@ -1949,21 +1960,25 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // Scroll to the BOUNDARY between two bands first, so the last tile of one band
   // and the top of the next are on screen together.
   await page.locator('.mkt-group-tiles[data-band]').nth(1).scrollIntoViewIfNeeded();
-  await page.waitForTimeout(200);
+  await page.evaluate(() => {
+    const r = document.querySelectorAll('.mkt-group-tiles[data-band]')[1].getBoundingClientRect();
+    window.scrollBy(0, r.top - window.innerHeight / 2);
+  });
+  await settleLayout();
   // BOTH ENDS are chosen by hit-testing the page, not from bounding boxes: a tile
   // is only a grab point if it is actually on screen and nothing covers it (a long
   // band's later tiles are scrolled out of its own row, and on a phone only about
   // three are inside it), and the drop point must hit a band that is not the
   // source's. Asking the DOM what is actually under a point is the only form that
   // holds on both mobile projects, whose viewports differ by ~60px.
-  const findPts = () => page.evaluate(() => {
+  const findPts = () => page.evaluate((SAFE) => {
     const vw = window.innerWidth, vh = window.innerHeight;
     const visible = (el) => {
       const b = el.getBoundingClientRect();
       const x = b.left + b.width / 2, y = b.top + b.height / 2;
-      if (x < 0 || x > vw || y < 0 || y > vh) return null;
+      if (x < 0 || x > vw || y < SAFE || y > vh - SAFE) return null;
       const hit = document.elementFromPoint(x, y);
-      return hit && el.contains(hit) ? { x, y } : null;
+      return hit && el.contains(hit) ? { x, y, sym: el.dataset.sym } : null;
     };
     const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
     for (const z of zones) {
@@ -1971,10 +1986,13 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
       if (!tile) continue;
       for (const other of zones) {
         if (other === z) continue;
+        // not a band that already lists this symbol: the drop would put a DUPLICATE in it,
+        // and the later in-band checks read tiles by position within a band's own symbols
+        if ([...other.querySelectorAll('.wl-tile')].some(t => t.dataset.sym === tile.sym)) continue;
         const b = other.getBoundingClientRect();
         for (const fy of [0.5, 0.2, 0.8, 0.05, 0.95]) {
           const y = b.top + b.height * fy, x = b.left + Math.min(30, b.width / 2);
-          if (x < 0 || x > vw || y < 0 || y > vh) continue;
+          if (x < 0 || x > vw || y < SAFE || y > vh - SAFE) continue;
           const hit = document.elementFromPoint(x, y);
           if (hit && hit.closest('.mkt-group-tiles[data-band]') === other) {
             return { from: tile, to: { x, y } };
@@ -1983,7 +2001,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
       }
     }
     return null;
-  });
+  }, SAFE);
   const pts = await findPts();
   expect(pts, 'a tile and a different band are both on screen for the drag').not.toBeNull();
   // What the drop is EXPECTED to do, read off the page before the pointer moves:
@@ -2054,11 +2072,13 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // precede, and level with it.
   const inBand = await page.evaluate(() => {
     const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
-    const i = zones.findIndex(z => z.querySelectorAll('.wl-tile').length >= 6);
+    const uniq = z => { const a = [...z.querySelectorAll('.wl-tile')].map(t => t.dataset.sym); return new Set(a).size === a.length; };
+    const i = zones.findIndex(z => z.querySelectorAll('.wl-tile').length >= 6 && uniq(z));
     return i < 0 ? null : i;
   });
   expect(inBand, 'some band has enough tiles to reorder within').not.toBeNull();
   await page.locator('.mkt-group-tiles[data-band]').nth(inBand).scrollIntoViewIfNeeded();
+  await alignTop(inBand);
   await settleLayout();
   const aim = await page.evaluate((i) => {
     const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
@@ -2080,21 +2100,22 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.mouse.move(aim.from.x + 40, aim.from.y + 20, { steps: 5 });
   await page.mouse.move(aim.to.x, aim.to.y, { steps: 8 });
   // where the marker is drawn, against the tile it should precede
-  // `title` pins the band: a symbol appears in several lists, and a marker in the WRONG band
-  // must not be compared against that band's copy of the tile.
-  const markerVs = (sym, title) => page.evaluate(({ s, title }) => {
+  // The tile is named by its POSITION in the band (`idx`), and the band by its title: a symbol
+  // appears in several lists and can even repeat inside one, so looking a tile up by symbol can
+  // compare the marker against a different copy of it.
+  const markerVs = (idx, title) => page.evaluate(({ idx, title }) => {
     const zone = [...document.querySelectorAll('.mkt-group-tiles[data-band]')].find(z => z.dataset.title === title);
     const m = zone && zone.querySelector('.wl-drop-marker');
-    const t = zone && [...zone.querySelectorAll('.wl-tile')].find(x => x.dataset.sym === s);
+    const t = zone && zone.querySelectorAll('.wl-tile')[idx];
     if (!m || !t || !zone.classList.contains('wl-drop-over')) return null;
     const a = m.getBoundingClientRect(), b = t.getBoundingClientRect();
     return { dLeft: Math.round(a.left - b.left), dTop: Math.round(a.top - b.top), dH: Math.round(a.height - b.height) };
-  }, { s: sym, title });
+  }, { idx, title });
   // POLLED: the marker is repainted by the last pointer move, and on a loaded runner the
   // evaluate below can land a frame before that paint — the position is deterministic once
   // it has, so wait for it rather than sample once.
   const markerOk = (v, dTop = 2) => !!v && Math.abs(v.dLeft + 1) <= 3 && Math.abs(v.dTop) <= dTop && Math.abs(v.dH) <= 2;
-  await expect.poll(async () => markerOk(await markerVs(aim.syms[3], aim.title)), {
+  await expect.poll(async () => markerOk(await markerVs(3, aim.title)), {
     message: 'the insertion marker sits on the left edge of the FOURTH tile, level with it', timeout: 5000,
   }).toBe(true);
   const writesInBand = await rosterWrites(page);
@@ -2117,11 +2138,13 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   const wrapped = await page.evaluate(() => {
     const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
     const rowsOf = z => new Set([...z.querySelectorAll('.wl-tile')].map(t => Math.round(t.getBoundingClientRect().top))).size;
-    const i = zones.findIndex(z => rowsOf(z) >= 2);
+    const uniq = z => { const a = [...z.querySelectorAll('.wl-tile')].map(t => t.dataset.sym); return new Set(a).size === a.length; };
+    const i = zones.findIndex(z => rowsOf(z) >= 2 && uniq(z));
     return i < 0 ? null : i;
   });
   expect(wrapped, 'some band is long enough to wrap onto a second row').not.toBeNull();
   await page.locator('.mkt-group-tiles[data-band]').nth(wrapped).scrollIntoViewIfNeeded();
+  await alignTop(wrapped);
   await settleLayout();
   const wrap = await page.evaluate((i) => {
     const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
@@ -2142,7 +2165,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.mouse.down();
   await page.mouse.move(wrap.from.x + 40, wrap.from.y + 20, { steps: 5 });
   await page.mouse.move(wrap.to.x, wrap.to.y, { steps: 8 });
-  await expect.poll(async () => markerOk(await markerVs(wrap.symN1, wrap.title)), {
+  await expect.poll(async () => markerOk(await markerVs(wrap.n1, wrap.title)), {
     message: 'the marker sits on the left edge of the first tile of ROW TWO, where the pointer is', timeout: 5000,
   }).toBe(true);
   const writesWrap = await rosterWrites(page);
@@ -2171,7 +2194,8 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
       const rows = new Set(tiles.map(t => Math.round(t.getBoundingClientRect().top))).size;
       return { z, tiles, last, zr, rows, room: last.right + 14 < zr.right - 2, fits: zr.height < window.innerHeight - 140 };
     };
-    const all = zones.map(info).filter(Boolean).filter(x => x.room && x.fits);   // both ends of the drag must be on screen at once
+    const uniq = z => { const a = [...z.querySelectorAll('.wl-tile')].map(t => t.dataset.sym); return new Set(a).size === a.length; };
+    const all = zones.map(info).filter(Boolean).filter(x => x.room && x.fits && uniq(x.z));   // both ends of the drag must be on screen at once
     const pick = all.find(x => x.rows >= 2) || all[0];
     if (!pick) return null;
     pick.z.scrollIntoView({ block: 'center' });
@@ -2203,13 +2227,60 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   const orderT = await page.evaluate((t) => window.__roster.find(l => l.title === t).symbols, tail.title);
   expect(orderT[orderT.length - 1], 'the tile landed at the END of the list').toBe(tail.sym0);
 
-  // ── nothing scrolls sideways any more, so there is no edge auto-scroll ────
+  // ── nothing scrolls SIDEWAYS any more; the PAGE scrolls at the viewport edge ─
   // The 2026-09-30 band was one row scrolled sideways, and a drag at its edge had to
-  // scroll it (Codex review, PR #294). The band wraps now, every slot is on screen,
-  // and that machinery is GONE — holding the pointer at a band's right edge moves
-  // nothing and leaves no frame queued.
+  // scroll it (Codex review, PR #294). The band wraps now, so that machinery is GONE —
+  // not dormant. What replaces it is vertical: a wrapped band can be taller than the
+  // screen (eleven rows at phone width), and an armed touch drag is `touch-action:
+  // none`, so a finger cannot scroll the page itself. Holding the pointer within
+  // WL_PAGE_EDGE_PX of the viewport's bottom / top edge scrolls the PAGE until it runs
+  // out, and the loop stops with the drag (Codex review, PR #306).
   expect(await page.evaluate(() => typeof wlAutoScroll + '/' + typeof WL_EDGE_PX),
-    'the sideways auto-scroll is removed, not dormant').toBe('undefined/undefined');
+    'the SIDEWAYS auto-scroll is removed, not dormant').toBe('undefined/undefined');
+  await settleLayout();
+  await page.evaluate(() => {
+    const r = document.querySelector('.mkt-group-tiles[data-band]').getBoundingClientRect();
+    window.scrollBy(0, r.top + Math.min(r.height / 2, 200) - window.innerHeight / 2);
+  });
+  await settleLayout();
+  const edgePts = await page.evaluate((SAFE) => {
+    const vh = window.innerHeight;
+    for (const t of document.querySelectorAll('.mkt-group-tiles[data-band] .wl-tile')) {
+      const b = t.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2;
+      if (y < SAFE || y > vh - SAFE || x < 0 || x > window.innerWidth) continue;
+      const hit = document.elementFromPoint(x, y);
+      if (hit && t.contains(hit)) return { from: { x, y } };
+    }
+    return null;
+  }, SAFE);
+  expect(edgePts, 'a tile is on screen, clear of the edge zones, to start the page-edge drag from').not.toBeNull();
+  const edgeVp = await page.evaluate(() => ({ h: window.innerHeight, max: document.documentElement.scrollHeight - window.innerHeight }));
+  expect(edgeVp.max, 'the page is taller than the viewport, so there is something to scroll').toBeGreaterThan(300);
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const writesEdge = await rosterWrites(page);
+  await page.mouse.move(edgePts.from.x, edgePts.from.y);
+  await page.mouse.down();
+  await page.mouse.move(edgePts.from.x + 40, edgePts.from.y + 20, { steps: 5 });
+  await page.mouse.move(edgePts.from.x + 40, edgeVp.h / 2, { steps: 4 });
+  const mid0 = await scrollY();
+  await page.waitForTimeout(250);
+  expect(await scrollY(), 'in the middle of the screen the page does not scroll').toBe(mid0);
+  await page.mouse.move(edgePts.from.x + 40, edgeVp.h - 6, { steps: 4 });
+  await expect.poll(scrollY, { message: 'holding the pointer at the bottom edge scrolls the page down', timeout: 6000 })
+    .toBeGreaterThan(mid0 + 120);
+  const atBottom = await scrollY();
+  await page.mouse.move(edgePts.from.x + 40, 6, { steps: 6 });
+  await expect.poll(scrollY, { message: 'and at the top edge scrolls it back up', timeout: 10000 })
+    .toBeLessThan(atBottom - 120);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  expect(await page.locator('.wl-ghost').count(), 'Escape ended the drag').toBe(0);
+  expect(await rosterWrites(page), 'an abandoned page-edge drag writes nothing').toBe(writesEdge);
+  expect(await page.evaluate(() => wlDrag.raf), 'the scroll loop is cancelled with the drag').toBe(0);
+  const restedAt = await scrollY();
+  await page.waitForTimeout(250);
+  expect(await scrollY(), 'and the page stays where it was left').toBe(restedAt);
 
   // ── no staging tray survives anywhere ──────────────────────────────────
   // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,

@@ -94,11 +94,25 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     full row onto the next row at every pointer move; the old 3px flex child could
     also nudge the row's scroll width, which is what made the edge auto-scroll loop
     (now moot).
-  - **Gone with the row: the edge auto-scroll** (`wlAutoScroll`, `WL_EDGE_PX` 56,
-    `WL_EDGE_MAX_STEP` 24, the rAF loop in `wlDrag`, added after Codex's review of PR
-    #294). It existed because the pointer owns a drag and a row's scrollbar cannot be
-    used at the same time; a wrapping band has every slot on screen. S26 asserts
+  - **Gone with the row: the SIDEWAYS edge auto-scroll** (`wlAutoScroll`, `WL_EDGE_PX`
+    56, `WL_EDGE_MAX_STEP` 24, added after Codex's review of PR #294). It existed
+    because the pointer owns a drag and a row's scrollbar cannot be used at the same
+    time; a wrapping band has every slot of a row on screen. S26 asserts
     `typeof wlAutoScroll`/`WL_EDGE_PX` are `undefined`.
+  - **A drag within `WL_PAGE_EDGE_PX` (64) of the viewport's top or bottom edge
+    scrolls the PAGE** (`wlPageScroll`, `WL_PAGE_MAX_STEP` 22; Codex review of
+    PR #306). A wrapped band can be taller than the screen — a 40-tile list is eleven
+    rows at phone width and the roster allows 2,000 symbols a list — and the pointer
+    owns the drag: an armed touch drag keeps `touch-action: none` (`.wl-armed`), so a
+    finger cannot scroll the page itself, and without this a slot on an off-screen row,
+    or in a band far from the grabbed tile, could not be reached inside one gesture.
+    Faster the nearer the edge; `wlDragPaint` is redone after every step because the
+    tiles move under a STILL pointer; one rAF loop (`wlDrag.raf`) that runs only while
+    the pointer sits in an edge zone that can still scroll, is re-armed by every pointer
+    move and cancelled in `wlDragEnd`. `window.scrollTo({ behavior: 'instant' })`, so a
+    smooth-scroll setting cannot fight the per-frame step. The consequence for tests: a
+    drag aimed within 64px of an edge scrolls the page, so S26 aims every drag at
+    least `SAFE` (84px) inside the viewport and says why.
   - **Removed for good, not dormant**: `wlSyncPaging`, `attachPaging`, the ▲/▼
     `.wl-page-bar`/`.wl-page` footer and its CSS, the drag-rests-on-▼ stepping
     (`WL_DRAG_STEP_MS`, `wlDragStepAt`, `_wlStep`), the resize listener that
