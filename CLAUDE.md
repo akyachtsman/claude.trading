@@ -168,11 +168,13 @@ its topic file** — the reasoning behind each rule is there, not here.
     to the `f78a03f` branch commit v1 was deployed from, which the squash left unreachable), with
     `verify_jwt` ON.
     → details: `docs/architecture/economy-panel.md`
-  - **`desk-probe`** is a THROWAWAY diagnostic (owner-approved 2026-10-01, v1, `verify_jwt`
-    ON) that measured from Supabase's servers which public yield sources desk-econ can reach;
-    it self-expires at 2026-10-01T04:00:00Z (answers 410), the Supabase tools cannot delete a
-    function so delete it from the dashboard, and it is NOT part of the data layer (source kept
-    in `supabase/functions/desk-probe/` under the versioned-source rule).
+  - **`desk-probe`** was a THROWAWAY diagnostic (owner-approved 2026-10-01, v1, `verify_jwt`
+    ON) that measured from Supabase's servers which public yield sources desk-econ can reach.
+    It self-expired at 2026-10-01T04:00:00Z (answered 410) and was **DELETED from the Supabase
+    dashboard by the owner (2026-10-04; `list_edge_functions` then shows 12 functions, none
+    named `desk-probe`)** — the Supabase tools cannot delete a function. It was never part of
+    the data layer; its source stays in `supabase/functions/desk-probe/` under the
+    versioned-source rule, so redeploying it (owner approval) is the only way back.
   - **Deploying** (owner approval required every time): the Supabase MCP
     `deploy_edge_function`, one function per call, **`verify_jwt` preserved** — it is set
     ON for `desk-maps`/`desk-heatmap`/`desk-watchlist`/`desk-ibkr-sync`/`desk-cron-ask`/`desk-econ`

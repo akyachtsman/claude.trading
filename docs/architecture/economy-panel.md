@@ -281,8 +281,8 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   202609 failed: Signal timed out`) — calls at +0 / +4 / +30 / +90 s each took ~5.5 s and each
   had its own `generatedAt` — and the yields stay FRED's. The throwaway `desk-probe`
   (owner-approved 2026-10-01, `verify_jwt` ON, self-expiring at 2026-10-01T04:00:00Z; source in
-  `supabase/functions/desk-probe/`; the Supabase tools cannot delete a function — delete it from
-  the dashboard) measured why: 17–20 s per request (see Sources). A per-instance background
+  `supabase/functions/desk-probe/`; DELETED from the dashboard by the owner 2026-10-04, since the
+  Supabase tools cannot delete a function) measured why: 17–20 s per request (see Sources). A per-instance background
   design (v2) was written and checkpointed (commit `34939b8`, draft PR #296) and dropped once
   the fresh-instance measurement came in. The fix is v3 (see "Treasury in the shared store"):
   deploy only on the owner's approval, `verify_jwt` ON as v1, NO migration (the table exists;
