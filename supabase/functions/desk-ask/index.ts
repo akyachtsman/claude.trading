@@ -636,8 +636,8 @@ async function handle(req: Request): Promise<Response> {
      iteration cap, the resume cap) therefore lands here with it still set, and
      the turn is REJECTED: a clean JSON+CORS error, nothing stored — never the
      stale response, which is a half-finished thought, an unsearched draft the
-     search gate exists to stop, or one the audit just found unsupported. A call
-     that throws, aborts or is refused leaves through the error paths instead. */
+     search gate exists to stop, or one the audit just found unsupported. A
+     call that throws, aborts or is refused leaves through the error paths instead. */
   type Pending = 'pause-resume' | 'tool-result' | 'forced-search' | 'grounding-rewrite';
   let pendingFollowUp: Pending | null = null;
   /* The code-execution container this turn is bound to, once the API has made

@@ -12,8 +12,12 @@
 --
 -- The day is a text key the CALLER supplies ('YYYY-MM-DD', its Pacific date — every
 -- clock on the desk is Pacific); the function checks the shape and nothing else, so
--- it is a counter, not a calendar. Rows older than a week are pruned on the way
--- through, which keeps the table at a handful of rows with no cron job.
+-- it is a counter, not a calendar. There is NO pruning: the table gains one tiny
+-- row per day an open question was asked (~365 a year), so it needs no cron job and
+-- no clean-up inside the function. (An in-function prune was written and dropped —
+-- the Supabase MCP holds any statement containing a destructive keyword for
+-- confirmation and the apply timed out; a year of rows is a few KB. Tidy by hand if
+-- ever wanted.)
 --
 -- Same posture as desk_006: RLS is enabled with NO policy (deny-all), and only the
 -- service role may call the function — the browser's anon key can neither read the
@@ -43,9 +47,6 @@ declare
 begin
   if p_cap is null or p_cap < 1 then return false; end if;
   if p_day is null or p_day !~ '^\d{4}-\d{2}-\d{2}$' then return false; end if;
-
-  delete from public.desk_open_ask_quota
-   where day < to_char(p_day::date - 7, 'YYYY-MM-DD');
 
   insert into public.desk_open_ask_quota as q (day, n)
   values (p_day, 1)

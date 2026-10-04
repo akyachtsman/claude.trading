@@ -192,7 +192,11 @@ its topic file** — the reasoning behind each rule is there, not here.
     v3 = Supabase version 2, 2026-10-01, both owner-approved) is also `verify_jwt` ON;
     rolling v3 back = redeploy that file at `cd5f920` (v1) with `verify_jwt` ON, and taking it out
     of service means deleting it (owner approval), after which the panel lamps STALE with an
-    empty state.
+    empty state. **`desk-ask` v28 DEPLOYED 2026-10-04** (owner-approved, `verify_jwt` OFF, the
+    open-question path of PR #305; migration `desk_020` applied first): byte-identical to
+    `supabase/functions/desk-ask/index.ts` as merged by that PR; rollback = redeploy that file
+    as of `076e2d2` (the pre-open source) with `verify_jwt` OFF, or — with no deploy — set the
+    function secret `OPEN_ASK_DAILY_CAP=0`.
     → details: `docs/architecture/edge-feeds-and-heatmap.md` (Deploying)
 - `supabase/migrations/` — `desk_001`–`desk_006` were applied out-of-band and are
   RECONSTRUCTED from the live catalog (not the original text; `desk_003_seed` is a
