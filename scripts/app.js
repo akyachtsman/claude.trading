@@ -883,7 +883,8 @@ function wlTile(r, pending) {
   const last = el('span', 'mkt-last', px);
   if (px && px.length > 7) last.classList.add('is-long'); /* see the note above */
   if (px && px.length > 8) last.classList.add('is-xlong');
-  if (px && px.length > 10) last.classList.add('is-xxlong');
+  if (px && px.length > 9) last.classList.add('is-xxlong');
+  if (px && px.length > 11) last.classList.add('is-xxxlong');
   row.appendChild(last);
   /* The line is coloured by the DAY's direction so it agrees with the pill
      below it; a green line over a red pill would be two answers to one

@@ -392,15 +392,20 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* Long values step down one size rather than clipping — see the note in
    wlTile(), which sets these classes by string length. A clipped price would be
    a wrong price. */
-/* Three tiers, sized for HEADROOM rather than to just fit. A single tier was
+/* Four tiers, sized for HEADROOM rather than to just fit. A single tier was
    once verified in a sandbox where the IBM Plex webfont could not load, so it
    was measured against fallback metrics — CI, with the real font, still
-   clipped. Plex Mono and the usual fallbacks all advance ~0.6em a character, so
-   the arithmetic is: usable 54px; 8 chars at 10px = 46; 9 at 9px = 46; 10 at
-   9px = 51; 11-12 at 8px = 49-54. */
+   clipped; and PR #306's first cut put a 12-character price (1,234,567.89) at 8px
+   on the same arithmetic ("~54px against 52") and CI clipped it by ~2px. Plex
+   Mono and the usual fallbacks advance ~0.6em a character (take 0.62 for safety),
+   the tile leaves 52px, and every tier below stays under ~49px at 0.62em:
+   8 chars (1,234.56) at 10px = 48; 9 (12,345.67) at 9px = 48; 10 (123,456.78) at
+   8px = 46; 12 (1,234,567.89) at 7px = 49. An 11- or 13-character price cannot
+   occur (two decimals, a comma every three digits). */
 .wl-strip .mkt-last.is-long { font-size: 10px; letter-spacing: -.02em; }
 .wl-strip .mkt-last.is-xlong { font-size: 9px; letter-spacing: -.03em; }
 .wl-strip .mkt-last.is-xxlong { font-size: 8px; letter-spacing: -.04em; }
+.wl-strip .mkt-last.is-xxxlong { font-size: 7px; letter-spacing: -.04em; }
 /* Last-resort guard: even if a value still overruns, it must not paint over the
    tile's neighbour — the box clips instead, which S27 then catches as a real
    finding rather than letting it bleed silently across the band. */

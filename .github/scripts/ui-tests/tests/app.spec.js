@@ -1878,10 +1878,20 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
       window.scrollBy(0, r.top - 150);
     }, i);
   };
+  // The panel also REPAINTS when a write's roster read-back lands, which can be well after
+  // `rosterWrites` has moved on (slow runner): every tile is replaced, and a drag in progress
+  // loses its lit band and marker until the pointer next moves. Repaints are counted, and a
+  // settled page is one with no layout change AND no repaint for ~0.5s.
   const settleLayout = async () => {
+    await page.evaluate(() => {   // installed on first use: the page is not loaded when this helper is defined
+      if (window.__wlObs) return;
+      window.__wlMut = 0;
+      window.__wlObs = new MutationObserver(l => { window.__wlMut += l.length; });
+      window.__wlObs.observe(document.getElementById('wlStrip'), { childList: true });
+    });
     let prev = '', same = 0;
     for (let i = 0; i < 50 && same < 4; i++) {
-      const now = await page.evaluate(() => document.documentElement.scrollHeight + ':' +
+      const now = await page.evaluate(() => document.documentElement.scrollHeight + ':' + window.__wlMut + ':' +
         Math.round(document.querySelector('.area-watchlist').getBoundingClientRect().top + window.scrollY));
       same = now === prev ? same + 1 : 0;
       prev = now;
@@ -2115,7 +2125,8 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // evaluate below can land a frame before that paint — the position is deterministic once
   // it has, so wait for it rather than sample once.
   const markerOk = (v, dTop = 2) => !!v && Math.abs(v.dLeft + 1) <= 3 && Math.abs(v.dTop) <= dTop && Math.abs(v.dH) <= 2;
-  await expect.poll(async () => markerOk(await markerVs(3, aim.title)), {
+  let nudge = 0;
+  await expect.poll(async () => { await page.mouse.move(aim.to.x + (nudge++ % 2), aim.to.y); return markerOk(await markerVs(3, aim.title)); }, {
     message: 'the insertion marker sits on the left edge of the FOURTH tile, level with it', timeout: 5000,
   }).toBe(true);
   const writesInBand = await rosterWrites(page);
@@ -2165,7 +2176,8 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.mouse.down();
   await page.mouse.move(wrap.from.x + 40, wrap.from.y + 20, { steps: 5 });
   await page.mouse.move(wrap.to.x, wrap.to.y, { steps: 8 });
-  await expect.poll(async () => markerOk(await markerVs(wrap.n1, wrap.title)), {
+  let nudgeW = 0;
+  await expect.poll(async () => { await page.mouse.move(wrap.to.x + (nudgeW++ % 2), wrap.to.y); return markerOk(await markerVs(wrap.n1, wrap.title)); }, {
     message: 'the marker sits on the left edge of the first tile of ROW TWO, where the pointer is', timeout: 5000,
   }).toBe(true);
   const writesWrap = await rosterWrites(page);
@@ -2213,13 +2225,14 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.mouse.down();
   await page.mouse.move(tail.from.x + 40, tail.from.y + 20, { steps: 5 });
   await page.mouse.move(tail.to.x, tail.to.y, { steps: 8 });
-  await expect.poll(() => page.evaluate(() => {
+  let nudgeT = 0;
+  await expect.poll(async () => { await page.mouse.move(tail.to.x + (nudgeT++ % 2), tail.to.y); return page.evaluate(() => {
     const m = document.querySelector('.wl-drop-marker');
     const tiles = [...document.querySelectorAll('.wl-strip .mkt-group-tiles.wl-drop-over .wl-tile')];
     if (!m || !tiles.length) return false;
     const last = tiles[tiles.length - 1].getBoundingClientRect(), a = m.getBoundingClientRect();
     return Math.abs(a.left - last.right + 1) <= 3 && Math.abs(a.top - last.top) <= 2;
-  }), { message: 'past the last tile the marker sits on its right edge', timeout: 5000 }).toBe(true);
+  }); }, { message: 'past the last tile the marker sits on its right edge', timeout: 5000 }).toBe(true);
   const writesTail = await rosterWrites(page);
   await page.mouse.up();
   await expect.poll(() => rosterWrites(page), { message: 'the drop at the end is exactly one write' })
@@ -2686,6 +2699,17 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
   await page.evaluate(() => { try { localStorage.clear(); } catch { /* private mode */ } });
   await page.reload();
   await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+  // Measure with the REAL web fonts, as CI does. The first cut of this scenario passed here and
+  // failed on CI (a 12-character price clipped by ~2px) because the fonts are fetched lazily:
+  // a measurement taken before they arrive reads the fallback's metrics. Asked for explicitly
+  // (the glyphs this panel uses), then waited for; harmless where the fonts cannot be fetched.
+  await page.evaluate(async () => {
+    try {
+      await Promise.all(['600 11px "IBM Plex Mono"', '500 11px "IBM Plex Mono"', '500 8px "IBM Plex Sans"', '600 9px "IBM Plex Sans"']
+        .map(f => document.fonts.load(f, '0123456789,.+-%EXTCLOSE')));
+      await document.fonts.ready;
+    } catch { /* no web fonts reachable: the fallback metrics are all there is */ }
+  });
 
   const m = await page.evaluate(() => {
     const KINDS = ['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark'];
@@ -2704,13 +2728,18 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
       { sym: 'ABCDEFGHIJ', last: 1234.5, pct: 123.45, ext: true, spark },
       { sym: 'BRK.A', last: 700000.12, pct: -99.99, ext: true, spark },
       { sym: 'BIGPX', last: 1234567.89, pct: 1234.56, ext: true, spark },
+      { sym: 'P8', last: 1234.56, pct: -12.34, spark },
+      { sym: 'P9', last: 12345.67, pct: 12.34, spark },
+      { sym: 'P10', last: 123456.78, pct: -10.5, spark },
       { sym: '^GSPC', last: 6318.42, pct: 0.54, index: true, spark },
       { sym: '^IXIC', last: 23104.88, pct: -24.21, index: true, spark },
       { sym: 'BTC-USD', last: 64216, pct: -0.77, ext: true, spark },
       { sym: 'MSTR', last: 1034.5, pct: 100.5, spark },
     ];
-    /* Appended to a SCRATCH band pinned to the NARROWEST column the grid ever
-       draws — `repeat(7, var(--wl-tile-w))`, no `1fr` stretch. A tile in a real
+    /* Appended to a SCRATCH band pinned to a column TWO PIXELS NARROWER than the grid ever
+       draws — `repeat(10, calc(var(--wl-tile-w) - 2px))`, no `1fr` stretch: the real minimum
+       plus a margin, so a tier that fits by a hair (and clips on a font whose digits are a
+       shade wider than this sandbox's) fails HERE instead of on CI. A tile in a real
        band is up to a few pixels wider than the minimum (the leftover width is
        shared out), and a value that only fits THAT wide would pass here and clip
        the moment a viewport lands on an exact multiple. The scratch band is
@@ -2719,7 +2748,7 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
     const band = document.createElement('div');
     band.className = 'mkt-group-tiles';
     band.id = 'wlWorstCases';
-    band.style.cssText = 'grid-template-columns: repeat(7, var(--wl-tile-w)); width: max-content; margin-top: 8px';
+    band.style.cssText = 'grid-template-columns: repeat(10, calc(var(--wl-tile-w) - 2px)); width: max-content; margin-top: 8px';
     strip.appendChild(band);
     for (const r of worst) band.appendChild(wlTile(r, false));
     const tiles = [...document.querySelectorAll('.wl-strip .wl-tile')];
@@ -2730,8 +2759,12 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
     const orderOf = tile => [...tile.querySelectorAll('.mkt-name, .mkt-last, .wl-pct, .wl-spark')]
       .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
       .map(e => [...e.classList].find(c => KINDS.includes(c))).join(' > ');
+    // ZERO tolerance: scrollWidth and clientWidth are whole pixels, so "+ 1" hid a price clipped
+    // by up to a pixel (a 12-character price at 8px overran its 53px box by 0.95px here and by
+    // ~2px against the real font on CI). Every tier is sized for >= 3px of headroom, so an exact
+    // comparison cannot fire on a value that fits.
     const over = sel => [...document.querySelectorAll('.wl-strip ' + sel)]
-      .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent.trim());
+      .filter(e => e.scrollWidth > e.clientWidth).map(e => e.textContent.trim());
     /* Inside the tile's CONTENT box (past its 1px border and 3px padding), not
        merely its border box: a pill that pokes into the padding still "fits" the
        tile and still reads as touching the edge. */
@@ -2764,8 +2797,8 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
   });
 
   expect(m.count, 'the demo panel carries a real roster').toBeGreaterThan(20);
-  expect(m.withWorst, 'the worst-case tiles joined the grid').toBe(m.count + 7);
-  expect(m.worstWidth, 'and sit in the NARROWEST column the grid draws (60px + the 1px seam overlap)').toBeLessThanOrEqual(62);
+  expect(m.withWorst, 'the worst-case tiles joined the grid').toBe(m.count + 10);
+  expect(m.worstWidth, 'and sit in a column narrower than any the grid draws (58px + the 1px seam overlap)').toBeLessThanOrEqual(60);
   expect(m.maxW, 'no tile is wider than the compact grid column (60px stretched by a few px), nowhere near the old 76px or 132px').toBeLessThanOrEqual(72);
   expect(m.orders, 'reading order must be ticker → price → change → line, on every tile')
     .toEqual(['mkt-name > mkt-last > wl-pct > wl-spark']);

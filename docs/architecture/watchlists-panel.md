@@ -54,19 +54,30 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     width.
   - **The size is held by the TYPE, never by clipping.** `wlTile()` sets a length
     tier from the formatted string, because CSS cannot branch on text length: the
-    price is 11px, `is-long` (>7 chars) 10px, `is-xlong` (>8) 9px, `is-xxlong` (>10)
-    8px; the change pill is 11px, `is-long` (>7 chars, `+100.50%`) 10px,
+    price is 11px, `is-long` (8 chars, `1,234.56`) 10px, `is-xlong` (9) 9px,
+    `is-xxlong` (10, `123,456.78`) 8px and `is-xxxlong` (12, `1,234,567.89`) 7px
+    (an 11- or 13-character price cannot occur: two decimals, a comma every three
+    digits); the change pill is 11px, `is-long` (>7 chars, `+100.50%`) 10px,
     `is-xlong` (>8, `+1234.56%`) 8px; a ticker over 5 characters is `is-long` and
     wraps (`overflow-wrap: anywhere`) rather than shrinking further. Plex Mono and
-    the usual fallbacks advance ~0.6em a character, so the arithmetic is: 8 chars at
-    10px = 46px, 10 chars at 9px = 51px, 12 at 8px = 54px, against 52. S27 builds
-    seven worst cases through `wlTile` itself and measures each against its own
-    tile. The EXT/CLOSE badge is an `inline-block; white-space: nowrap` at 6.5px
-    with the ticker's tracking trimmed to .02em: where ticker and badge do not
-    fit on one line the whole badge drops to the next line — it must never split
-    inside the word (`CLOS`/`E`, which `overflow-wrap: anywhere` did at 62px). One
-    wrapped badge makes its WHOLE grid row 8px taller (tiles stretch), which is why
-    the tracking and size were trimmed until `^GSPC CLOSE` and `BTC-USD EXT` fit.
+    the usual fallbacks advance ~0.6em a character (0.62 taken for safety), a tile
+    leaves 52px, and every tier stays under ~49px at 0.62em (48 / 48 / 46 / 49).
+    **The first cut of PR #306 got this wrong and CI caught it**: the 12-character
+    price was put at 8px on "12 at 8px = 54px, against 52" — arithmetic that
+    already said it overflowed — and clipped by ~2px against the real font, while
+    the sandbox run passed (it reads whatever font has loaded, and the web fonts
+    arrive lazily). S27 now waits for the fonts, builds ten worst cases through
+    `wlTile` itself, pins them in a scratch band **two pixels narrower than the
+    narrowest column the grid draws**, and compares `scrollWidth` to `clientWidth`
+    with ZERO tolerance — scroll and client widths are whole pixels, so the old
+    "+ 1" hid a price clipped by up to a pixel. A tier that fits by a hair now fails
+    in the sandbox rather than on CI. The EXT/CLOSE badge is an
+    `inline-block; white-space: nowrap` at 6.5px with the ticker's tracking trimmed
+    to .02em: where ticker and badge do not fit on one line the whole badge drops to
+    the next line — it must never split inside the word (`CLOS`/`E`, which
+    `overflow-wrap: anywhere` did at 62px). One wrapped badge makes its WHOLE grid
+    row 8px taller (tiles stretch), which is why the tracking and size were trimmed
+    until `^GSPC CLOSE` and `BTC-USD EXT` fit.
   - **The empty cells of a part-filled last row are part of the drop zone** (the
     zone is the whole grid box); a pointer there, level with the last row, is
     past every tile in it and drops at the END.
