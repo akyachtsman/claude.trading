@@ -6,7 +6,8 @@
 // desk") a browser on the site's own origin may send NO PIN: an OPEN question,
 // capped per day (desk_open_ask_take, desk_020) and answered as an anonymous
 // visitor — no saved conversation read or written, no account data, no verify
-// pass. The question then runs
+// pass, and under the PUBLIC DEFAULT_SYSTEM below, never the owner's live-edited
+// desk_system_prompt (a PIN-gated row that exists nowhere else). The question then runs
 // through an agentic Anthropic loop with: prior-conversation replay from
 // desk_chat_memory (continuity), web_search/web_fetch (research), a get_quote
 // tool that pulls live quote+fundamentals via quote-proxy, and a get_technicals
@@ -71,12 +72,12 @@ const PANE_ORDER_NOTE =
   + 'pane by its DOCTRINE NAME, and when a chart reading in the snapshot carries a '
   + 'caption, trust that caption over any number in this prompt.';
 
-/* Appended LAST for an open (PIN-less) question, after PANE_ORDER_NOTE. The stored
-   prompt says the reader is the owner, talking about their own accounts — true for
-   the PIN and cron paths, false here, and nothing else in the request says so. The
-   real protection is that none of the owner's data is in the request (no accounts
-   in the snapshot, no saved conversation); this stops the model from role-playing
-   an owner it was never shown. */
+/* Appended LAST for an open (PIN-less) question, after PANE_ORDER_NOTE. Both prompts
+   (DEFAULT_SYSTEM and the owner's stored row) say the reader is the owner, talking
+   about their own accounts — true for the PIN and cron paths, false here, and nothing
+   else in the request says so. The real protection is that none of the owner's data is
+   in the request (no accounts in the snapshot, no saved conversation, not even the
+   stored prompt); this stops the model from role-playing an owner it was never shown. */
 const OPEN_SESSION_NOTE =
   '\n\nOPEN SESSION (authoritative — supersedes anything above). This question came from an '
   + 'anonymous visitor to the public page, NOT the owner. In this session you have no access to the '
@@ -365,7 +366,11 @@ async function handle(req: Request): Promise<Response> {
   // desk_009: the owner's live-edited system prompt — non-fatal read, falls
   // back to DEFAULT_SYSTEM on any failure (table unreachable, empty, etc).
   let SYSTEM = DEFAULT_SYSTEM;
-  try {
+  /* An open question is answered under DEFAULT_SYSTEM, which is in this PUBLIC repo — never the
+     stored row. That row is PIN-gated (desk_get_system_prompt) and is the only copy of the owner's
+     current prompt (CLAUDE.md: "accepted residual"); a visitor can coax a model into repeating
+     whatever it was given, so it is not given. Security review, 2026-10-04. */
+  if (!anonymous) try {
     const spRes = await fetch(`${supaUrl}/rest/v1/desk_system_prompt?select=content&id=eq.true`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
     if (spRes.ok) {
       const rows: { content: string }[] = await spRes.json();

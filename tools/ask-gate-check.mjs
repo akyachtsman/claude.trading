@@ -36,6 +36,7 @@ const PIN = '4242';
 const SALT = 'salty';
 const USER_ID = '11111111-1111-1111-1111-111111111111';
 const OWNER_PROMPT = 'OWNER-PROMPT: you are talking to the owner about their own accounts.';
+const PUBLIC_MARK = 'You are the desk assistant embedded in';   // the first words of DEFAULT_SYSTEM, which is committed
 const T0 = Date.parse('2026-10-04T18:00:00Z');        // Sun 11:00 PDT, Oct 4 Pacific
 
 // ── assertions ────────────────────────────────────────────────────────────────
@@ -165,6 +166,8 @@ const TESTS = [
     eq(e.db.touched('desk_chat_memory').filter((c) => c.method === 'GET').length, 3, 'the saved conversation is read for each');
     eq(e.db.memPosts.map((m) => [m.user_id, m.origin]), Array(3).fill([USER_ID, 'typed']), 'and appended, as the owner, as typed');
     assert(e.systemOf().startsWith(OWNER_PROMPT), 'the owner prompt leads');
+    assert(!e.systemOf().includes(PUBLIC_MARK), 'and the public default does not');
+    eq(e.db.touched('desk_system_prompt').length, 3, 'the stored prompt is read for each PIN question');
     assert(!/OPEN SESSION/.test(e.systemOf()), 'no open-session note for the owner');
     assert(/earlier Q/.test(e.userTextOf()) && /ZZZ/.test(e.userTextOf()), 'memory and the positions reach the model');
   }],
@@ -196,7 +199,9 @@ const TESTS = [
     eq(e.db.touched('desk_users').length, 0, 'no PIN lookup');
     eq(e.db.touched('desk_chat_memory').length, 0, 'the saved conversation is neither read nor written');
     eq(e.models.length, 1, 'ONE model call: verify is ignored for an open question');
-    assert(e.systemOf().startsWith(OWNER_PROMPT), 'the owner-edited prompt still leads (the doctrine is the product)');
+    eq(e.db.touched('desk_system_prompt').length, 0, 'the owner\'s PIN-gated stored prompt is never even read');
+    assert(!e.systemOf().includes(OWNER_PROMPT), 'so it cannot reach the model (a visitor can coax a model into repeating its prompt)');
+    assert(e.systemOf().includes(PUBLIC_MARK), 'a visitor is answered under the PUBLIC default, which is in this repo');
     assert(/OPEN SESSION[^]*anonymous visitor[^]*NOT the owner/.test(e.systemOf()), 'and the open-session note follows it');
     assert(e.systemOf().indexOf('OPEN SESSION') > e.systemOf().indexOf('PANE NUMBERING'), 'LAST, after the pane note, so it supersedes');
     assert(!/FORGED|ZZZ/.test(e.userTextOf()), 'a forged accounts block never reaches the model');
@@ -311,6 +316,7 @@ const MUTANTS = [
   ['the day key is UTC, not Pacific', 'PT_DAY.format(new Date())', 'new Date().toISOString().slice(0, 10)'],
   ['PIN and cron questions are counted against the open quota', 'if (anonymous) {\n    const cap = openAskCap();', 'if (true) {\n    const cap = openAskCap();'],
   ['a wrong PIN is let through as an open question', "if (!userId) return reply(401, { ok: false, error: 'PIN not recognized.' });", 'if (!userId) { /* downgraded */ }'],
+  ['the owner\'s stored prompt is READ for an open question (a visitor can coax it out)', 'if (!anonymous) try {\n    const spRes', 'try {\n    const spRes'],
   ['the saved conversation is READ for an open question', 'if (userId) try {\n    const since', 'try {\n    const since'],
   ['an open answer is WRITTEN into the owner conversation', 'if (userId) try {\n    const mres', 'try {\n    const mres'],
   ['a forged accounts block reaches the model of an open question', 'if (anonymous) delete ctx.accounts;', ''],
