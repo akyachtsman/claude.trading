@@ -288,6 +288,18 @@ const TESTS = [
     eq(e.models.length, 2, 'a PIN question with verify: the answer and its grounding pass');
     assert(!/OPEN SESSION/.test(e.systemOf(0)), 'no open note on the owner path');
   }],
+
+  ['the owner\'s ASK_VERIFY=1 secret forces the grounding pass for the PIN path only — never for a visitor (Codex, PR #305)', async (code) => {
+    const e = boot(code, { env: { ASK_VERIFY: '1' } });
+    await e.pin();
+    eq(e.models.length, 2, 'ASK_VERIFY=1: every PIN question is verified (the owner asked for that)');
+    const v = boot(code, { env: { ASK_VERIFY: '1' } });
+    const r = await v.open();
+    eq([r.status, v.models.length], [200, 1], 'ASK_VERIFY=1: an open question still costs ONE model call');
+    const w = boot(code, { env: { ASK_VERIFY: '1' } });
+    await w.open({ verify: true });
+    eq(w.models.length, 1, '...and arming verify on it changes nothing');
+  }],
 ];
 
 async function runSuite(code, { verbose = false } = {}) {
@@ -321,7 +333,8 @@ const MUTANTS = [
   ['an open answer is WRITTEN into the owner conversation', 'if (userId) try {\n    const mres', 'try {\n    const mres'],
   ['a forged accounts block reaches the model of an open question', 'if (anonymous) delete ctx.accounts;', ''],
   ['the open-session note dropped', 'if (anonymous) SYSTEM += OPEN_SESSION_NOTE;', ''],
-  ['verify honoured for an open question (double the cost)', '(askedToVerify && !anonymous)', 'askedToVerify'],
+  ['verify honoured for an open question (double the cost)', '!anonymous && (VERIFY_ALWAYS || askedToVerify)', 'VERIFY_ALWAYS || askedToVerify'],
+  ['ASK_VERIFY=1 forces the grounding pass on an open question (the first version of the guard; Codex, PR #305)', '!anonymous && (VERIFY_ALWAYS || askedToVerify)', 'VERIFY_ALWAYS || (askedToVerify && !anonymous)'],
   ['the empty-question check dropped (an empty open question spends the quota)', "if (!question) return reply(400, { ok: false, error: 'question is required' });", ''],
   ['open answers not marked open', '...(anonymous ? { open: true } : {}),', ''],
 ];

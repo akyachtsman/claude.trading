@@ -288,9 +288,10 @@ async function handle(req: Request): Promise<Response> {
   // marker below still works for anyone reaching for the keyboard.
   const askedToVerify = payload.verify === true || VERIFY_MARK.test(rawQuestion);
   const question = rawQuestion.replace(VERIFY_MARK, ' ').replace(/\s+/g, ' ').trim();
-  // An open question never arms the grounding pass: it roughly doubles the cost of a
-  // question nobody has authenticated for, and the cap counts questions, not tokens.
-  const verifyThisTurn = VERIFY_ALWAYS || (askedToVerify && !anonymous);
+  // An open question never runs the grounding pass — neither armed per question NOR forced by the
+  // owner's ASK_VERIFY=1 secret (Codex, PR #305): it roughly doubles the cost of a question nobody
+  // has authenticated for, and the cap counts questions, not tokens.
+  const verifyThisTurn = !anonymous && (VERIFY_ALWAYS || askedToVerify);
 
   const supaUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
