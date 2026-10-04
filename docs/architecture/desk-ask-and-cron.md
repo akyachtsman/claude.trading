@@ -1,6 +1,29 @@
 # Assistant, IBKR sync and scheduled asks
 
-`desk-ask` (agentic assistant, PIN or cron-secret), `desk-ibkr-sync`, `desk-cron-ask` and the retired `desk-brief` (`supabase/functions/`, `app.js` Ask panel; scenarios S15-S19, S29, S32, S33).
+`desk-ask` (agentic assistant: PIN, cron-secret, or — since 2026-10-04 — an OPEN question), `desk-ibkr-sync`, `desk-cron-ask` and the retired `desk-brief` (`supabase/functions/`, `app.js` Ask panel; scenarios S15-S19, S29, S32, S33, S59, S60).
+
+## Open questions (no PIN) and the remembered PIN — owner, 2026-10-04
+
+> "remove the PIN for ask the desk, keep it for accounts at the bottom but leave it unlocked for now"
+
+Asked back before building (both answers the owner's): Ask = **open + a daily cap** (not "fully open", not "remember the PIN"); accounts = **remember the PIN on this device** (not "open to everyone", which would have made real balances readable by anyone holding the public anon key).
+
+| Piece | What it does | Where |
+|---|---|---|
+| Three doors into `desk-ask` | PIN (the owner, as before), `x-cron-secret` (`desk-cron-ask`, as before), or NO credential — an open question. `anonymous = !viaCron && !pin`, decided once; a PIN that is sent and wrong is a 401, never a downgrade | `desk-ask/index.ts` `handle()` |
+| The open gate | exact `Origin` = `SITE_ORIGIN`, then ONE atomic `desk_open_ask_take(p_day, p_cap)` (`desk_020`): `INSERT … ON CONFLICT (day) DO UPDATE SET n = n + 1 WHERE n < cap`. Anything but a definite `true` refuses: HTTP error → 503, unreachable → 5xx, `false`/`null`/other → 429 (fail closed) | `openAskCap()`, `PT_DAY`, the `if (anonymous)` block |
+| The cap | function secret `OPEN_ASK_DAILY_CAP`: UNSET = 25 per Pacific day, across all visitors; a whole number ≥ 1 = that; `0`, blank or junk = the open path is OFF (answers the old 400). Change it in the Supabase dashboard — no deploy. PIN and cron questions are never counted | `openAskCap()` |
+| What a visitor is answered as | the stored prompt still leads, `OPEN_SESSION_NOTE` follows LAST (the reader is not the owner; no access to accounts or saved conversations); no saved conversation read (`userId` null) or written; a forged `accounts` block is deleted from the snapshot; `verify` ignored; the reply carries `open: true` | the `if (userId)` guards, `delete ctx.accounts`, `verifyThisTurn` |
+| The client | `deskAsk` sends no `pin` key for a visitor; `renderAsk()` draws the composer whether or not the desk is unlocked — history replay, Clear, Verify, ⏱ and ⚙ only when `DESK.authed` (they are PIN RPCs); a stopped open question says it is not saved | `data.js` `deskAsk`, `app.js` `renderAsk` |
+| The remembered PIN | `sessionStorage 'desk_pin'` is still the working copy; `localStorage 'desk_pin_device_v1'` outlives the tab. Boot: tab's PIN else the device's → `desk_login` → success re-seeds the tab and writes the device copy; a definite refusal forgets BOTH; a failed call (blip) forgets neither. Unlock writes both, a wrong PIN neither, **Lock forgets both** | `data.js` `deskPinDeviceGet/Set`, `deskPinForget`; `app.js` `boot()`, `renderLockedPanels()`, the Lock button |
+
+**Why the cap is a SQL function.** Every desk-ask request runs on a fresh isolate, so a counter cannot live in memory, and a counter read and then written back lets a burst all read "0 so far": 100 parallel requests would all pass. The single statement serialises on the row lock; `tools/ask-gate-check.mjs` fires 40 parallel questions at a cap of 5 and requires exactly 5 answers and exactly 40 RPC calls (the function never touches the counter table itself).
+
+**What this is not.** The Origin check is browser-enforced and unspoofable from page JS but forgeable by a script, exactly like `quote-proxy`'s: a speed bump that keeps other sites' visitors off the quota. The cap is the real bound — at most `OPEN_ASK_DAILY_CAP` questions a day, each up to `MAX_ITERS` tool calls — and it is the same for a forged Origin. The visitor still reaches the owner's live prompt (retrievable by asking for it; a backup is committed under `config/prompts/` anyway). The accounts are NOT open: `desk_get_dashboard` and every other PIN RPC are unchanged, and nothing in this repo or `config.js` holds a PIN.
+
+**Deploy order and rollback (owner approval at each step, per CLAUDE.md).** (1) apply migration `desk_020` to the dedicated project; (2) deploy `desk-ask` (`verify_jwt` OFF, as before; the previous Supabase version is the rollback — it simply rejects a PIN-less request with the old 400); (3) merge the client (an old server answers a PIN-less question 400 `pin and question are required`, which a visitor would see). To switch the open path off without a deploy: set `OPEN_ASK_DAILY_CAP=0`. `desk_020`'s `-- revert:` line says how to drop it (redeploy `desk-ask` without the open path first).
+
+**Verified how.** `node tools/ask-gate-check.mjs --mutants` (11 checks, 19 single-line mutants — every door, the cap, the Pacific day roll, the burst, the off switch, fail-closed, no memory, no accounts, no verify); S59 (the open panel and the wire body) and S60 (the remembered PIN through the real boot) in `app.spec.js`. The SQL itself is exercised against the live database when the migration is applied, on a scratch day key that is deleted afterwards.
 
   rendered as `Invalid Date`. PIN-gated: `desk-ask` — an **agentic**
   desk assistant (not plain Q&A): replays prior exchanges from `desk_chat_memory`

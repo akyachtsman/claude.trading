@@ -183,7 +183,9 @@ function renderMasthead() {
       /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
          leaving them live after a lock would let a drag change the order and
          then silently revert (Codex review, PR #190) */
-      lock.addEventListener('click', () => { try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ } DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
+      /* deskPinForget: the session copy AND the one this device remembers — otherwise Lock
+         would lock until the next reload and then quietly unlock itself again */
+      lock.addEventListener('click', () => { deskPinForget(); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
       wrap.appendChild(lock);
     }
   }
@@ -3150,17 +3152,19 @@ function renderAsk() {
   if (DESK.mode === 'demo') {
     lampEl.className = 'lamp lamp--demo'; lampEl.textContent = 'Demo';
     body.appendChild(el('p', 'lock-explain',
-      'Ask Claude about anything on this page — positions, moves, headlines. The window unlocks with the desk PIN in live mode; demo data has nothing private to discuss.'));
-    return;
-  }
-  if (!DESK.authed) {
-    lampEl.className = 'lamp lamp--locked'; lampEl.textContent = 'Locked';
-    body.appendChild(el('p', 'lock-explain', 'Unlocks with the desk PIN.'));
+      'Ask Claude about anything on this page — positions, moves, headlines. In live mode anyone can ask, and the desk PIN adds saved history, your positions and scheduled questions; demo data has nothing private to discuss.'));
     return;
   }
 
+  /* OPEN to visitors (owner ruling 2026-10-04: "remove the PIN for ask the desk"). The composer is
+     here whether or not the desk is unlocked; what the PIN adds is everything PRIVATE — the saved
+     conversation and its Clear, the Verify pass, ⏱ schedules and the ⚙ prompt editor. An open
+     question is sent with no PIN at all (deskAsk), is capped per day on the server, is saved
+     nowhere and is shown no accounts. `authed` decides which of the two panels this is; `pin` is
+     read only when it is true, so a blocked sessionStorage cannot take the open panel down. */
+  const authed = DESK.authed;
   lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live';
-  const pin = sessionStorage.getItem('desk_pin');
+  const pin = authed ? sessionStorage.getItem('desk_pin') : null;
 
   const toolbar = el('div', 'ask-toolbar');
   const clearBtn = el('button', 'ask-clear', 'Clear'); clearBtn.type = 'button'; clearBtn.hidden = true;
@@ -3216,10 +3220,18 @@ function renderAsk() {
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin, sysBtn));
   const err = el('p', 'lock-error', ''); err.hidden = true;
-  form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn); form.appendChild(verifyBtn); form.appendChild(schedBtn); form.appendChild(sysBtn);
-  body.appendChild(toolbar); body.appendChild(thread); body.appendChild(form); body.appendChild(err);
-  body.appendChild(el('p', 'ai-disclaimer',
-    'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'));
+  form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn);
+  /* Verify costs extra and the server ignores it for an open question; ⏱ and ⚙ are PIN RPCs */
+  if (authed) { form.appendChild(verifyBtn); form.appendChild(schedBtn); form.appendChild(sysBtn); }
+  if (authed) body.appendChild(toolbar);   /* Clear wipes the saved conversation — a PIN RPC; an open visitor has none */
+  body.appendChild(thread); body.appendChild(form); body.appendChild(err);
+  body.appendChild(el('p', 'ai-disclaimer', authed
+    ? 'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'
+    : 'The desk assistant researches the web and pulls live quotes, and gives directional views. AI-generated; can make mistakes. Not financial advice.'));
+  if (!authed) {
+    body.appendChild(el('p', 'lock-explain ask-open-note',
+      'Open to visitors — a limited number of questions a day, nothing is saved, and it knows nothing about the accounts. Unlock the desk for saved history, your positions and scheduled questions.'));
+  }
 
   /* sources footer (FR-TR2): web citations rendered as safe links (textContent) */
   const appendSources = sources => {
@@ -3243,33 +3255,36 @@ function renderAsk() {
   /* replay the stored conversation on load (FR-MEM5). Hold input until the
      replay settles: a question submitted mid-hydration would append above the
      replayed history and land the transcript out of chronological order. */
-  input.disabled = true; btn.disabled = true;
-  deskChatHistory(pin).then(rows => {
-    /* A failed read is not an empty history — an empty thread would tell the
-       owner there is nothing saved when it may all still be there. */
-    if (rows === null) {
-      err.textContent = 'Could not load your saved conversation — earlier questions may exist but are not shown.';
-      err.hidden = false;
-    }
-    (rows || []).forEach(r => {
-      /* Replay the scheduled marker the live path already draws (desk_019).
-         The styling and the intent predate this — what was missing is that
-         REPLAYED rows had no way to know, so every brief the desk asked itself
-         came back looking like a question the owner had typed and forgotten.
-         Rows written before desk_019 have no origin and render unmarked, which
-         is honest: nothing recorded where they came from. */
-      const sched = r.origin === 'scheduled';
-      const qEl = el('p', 'ask-q' + (sched ? ' ask-q--sched' : ''), r.question);
-      if (sched) qEl.title = 'Asked automatically on a schedule';
-      thread.appendChild(qEl);
-      thread.appendChild(el('p', 'ask-a', r.answer));
-      appendSources(r.sources);
+  /* An open visitor has no saved conversation to replay (a PIN RPC), so nothing is held back. */
+  if (authed) {
+    input.disabled = true; btn.disabled = true;
+    deskChatHistory(pin).then(rows => {
+      /* A failed read is not an empty history — an empty thread would tell the
+         owner there is nothing saved when it may all still be there. */
+      if (rows === null) {
+        err.textContent = 'Could not load your saved conversation — earlier questions may exist but are not shown.';
+        err.hidden = false;
+      }
+      (rows || []).forEach(r => {
+        /* Replay the scheduled marker the live path already draws (desk_019).
+           The styling and the intent predate this — what was missing is that
+           REPLAYED rows had no way to know, so every brief the desk asked itself
+           came back looking like a question the owner had typed and forgotten.
+           Rows written before desk_019 have no origin and render unmarked, which
+           is honest: nothing recorded where they came from. */
+        const sched = r.origin === 'scheduled';
+        const qEl = el('p', 'ask-q' + (sched ? ' ask-q--sched' : ''), r.question);
+        if (sched) qEl.title = 'Asked automatically on a schedule';
+        thread.appendChild(qEl);
+        thread.appendChild(el('p', 'ask-a', r.answer));
+        appendSources(r.sources);
+      });
+      clearBtn.hidden = !(rows && rows.length);
+      thread.scrollTop = thread.scrollHeight;
+    }).catch(() => {}).finally(() => {
+      input.disabled = false; btn.disabled = false;
     });
-    clearBtn.hidden = !(rows && rows.length);
-    thread.scrollTop = thread.scrollHeight;
-  }).catch(() => {}).finally(() => {
-    input.disabled = false; btn.disabled = false;
-  });
+  }
 
   clearBtn.addEventListener('click', async () => {
     if (!confirm('Clear the entire saved conversation? This permanently deletes all stored history.')) return;
@@ -3333,7 +3348,9 @@ function renderAsk() {
          going on the server, so the answer lands in desk_chat_memory and WILL
          replay on the next reload. Saying so here is the only thing that stops
          that looking like a bug later. */
-      const note = el('p', 'ask-a ask-a--stopped', 'Stopped. The desk finishes this one anyway — its answer will appear in the history on your next reload.');
+      const note = el('p', 'ask-a ask-a--stopped', authed
+        ? 'Stopped. The desk finishes this one anyway — its answer will appear in the history on your next reload.'
+        : 'Stopped. The desk finishes this one anyway — it still counts toward today’s open questions, and the answer is not saved.');
       note.title = 'Stopping ends the wait in this tab; it cannot call back a question already sent.';
       thread.appendChild(note);
       clearBtn.hidden = false;
@@ -3472,7 +3489,7 @@ function renderLockedPanels(why) {
   lockPanel.appendChild(head);
   const body = el('div', 'panel-body');
   body.appendChild(el('p', 'lock-explain', why ||
-    'Account balances and charts are private — enter the desk PIN to unlock.'));
+    'Account balances and charts are private — enter the desk PIN to unlock. It then stays unlocked on this device until you press Lock.'));
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
@@ -3493,6 +3510,7 @@ function renderLockedPanels(why) {
     btn.disabled = false; btn.textContent = 'Unlock';
     if (res && res.ok) {
       sessionStorage.setItem('desk_pin', input.value);
+      deskPinDeviceSet(input.value);   /* stays unlocked on this device until Lock (owner ruling 2026-10-04) */
       DESK.authed = true;
       await loadPrivate(input.value);
       renderMasthead();
@@ -3506,8 +3524,9 @@ function renderLockedPanels(why) {
     }
   });
 
-  /* ask panel shows a locked shell; the system-prompt modal only ever opens
-     from an authed Ask-the-desk trigger, so just make sure it's not stuck open */
+  /* Ask-the-desk is OPEN while the accounts are locked (owner ruling 2026-10-04) — renderAsk
+     draws the visitor's composer; the system-prompt modal only ever opens from an authed
+     trigger, so just make sure it's not stuck open */
   renderAsk();
   closeSysPromptModal();
 }
@@ -7281,7 +7300,7 @@ function renderPrivate() {
     renderAsk();
     if (DESK.mode === 'demo') closeSysPromptModal(); /* demo has no live assistant to configure */
   } else {
-    renderLockedPanels(); /* renders the ask panel's locked shell too */
+    renderLockedPanels(); /* renders the OPEN ask panel too — only the accounts are locked */
   }
 }
 
@@ -9072,13 +9091,23 @@ async function boot() {
   startFeedPolling();
   let pin = null;
   try { pin = sessionStorage.getItem('desk_pin'); } catch { /* storage blocked — the locked shell below */ }
+  /* This tab's PIN first, else the one this device remembers (owner ruling 2026-10-04: the
+     accounts stay locked to everyone else but open here until Lock). Either way it is
+     validated by the server below, never trusted for being stored. */
+  if (!pin) pin = deskPinDeviceGet();
   if (pin) {
     /* null = the login call itself failed (network, HTTP). That is NOT a wrong
        PIN: only a definite {ok:false} discards the stored one, or a blip at
        reload would sign the owner out. */
     const res = await deskLogin(pin).catch(() => null);
-    if (res && res.ok) { DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return; }
-    if (res) { try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ } }
+    if (res && res.ok) {
+      /* re-seed the working copy, and remember a PIN this tab already held (an unlocked tab
+         at deploy time becomes an unlocked device) */
+      try { sessionStorage.setItem('desk_pin', pin); } catch { /* private mode */ }
+      deskPinDeviceSet(pin);
+      DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return;
+    }
+    if (res) deskPinForget();
   }
   renderLockedPanels();
 }

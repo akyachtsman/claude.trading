@@ -7576,3 +7576,219 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   expect((await hung).why, 'as "no answer"').toBe('noanswer');
   expect(errs, 'no page errors').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S59 — Ask the desk is OPEN to visitors (owner ruling 2026-10-04: "remove the PIN for
+// ask the desk, keep it for accounts at the bottom"). With the desk LOCKED the composer is
+// still there, and a question goes out with NO pin at all; the PIN adds what is private —
+// the saved conversation and its Clear, Verify, ⏱ schedules and the ⚙ prompt editor. The
+// server's gate (Origin + a daily cap, desk_020) is checked by tools/ask-gate-check.mjs,
+// not here: a PR runner cannot reach Supabase.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S59: Ask the desk takes a question without the PIN, and only the PIN adds the private parts', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '#askBody', 15000);
+
+  // ── 1. live, desk LOCKED: the panel is the open one ───────────────────────────
+  await page.evaluate(() => {
+    DESK.mode = 'live'; DESK.authed = false;
+    sessionStorage.removeItem('desk_pin');
+    window.__realDeskAsk = deskAsk;
+    window.__hist = []; window.__asks = []; window.__reply = null;
+    window.deskChatHistory = (pin) => { window.__hist.push(pin); return Promise.resolve([]); };
+    window.deskAsk = (pin, q, ctx, signal, verify) => {
+      window.__asks.push({ pin, q, verify });
+      return Promise.resolve(window.__reply || { ok: true, answer: 'open answer', sources: [] });
+    };
+    renderAsk();
+  });
+  const form = page.locator('#askBody form');
+  const sysBtn = page.locator('#askBody button[aria-label="Edit the Ask-the-desk system prompt"]');
+  await expect(page.locator('#askLamp'), 'a locked desk no longer locks the Ask panel').toHaveText('Live');
+  await expect(form.locator('input.input'), 'the composer is offered with no PIN').toBeEnabled();
+  await expect(page.locator('#askBody .ask-open-note'), 'and the panel says what an open question is').toContainText(/nothing is saved/i);
+  for (const [sel, what] of [['.ask-verify', 'Verify (costs extra; the server ignores it for a visitor)'], ['.ask-sched-btn', '⏱ schedules (a PIN RPC)'], ['.ask-clear', 'Clear (wipes the saved conversation)']]) {
+    await expect(page.locator('#askBody ' + sel), `no ${what} for a visitor`).toHaveCount(0);
+  }
+  await expect(sysBtn, 'no ⚙ prompt editor for a visitor').toHaveCount(0);
+  expect(await page.evaluate(() => window.__hist), 'a visitor has no saved conversation, so none is requested (it is a PIN RPC)').toEqual([]);
+
+  await form.locator('input.input').fill('how is NVDA doing?');
+  await form.locator('button[type=submit]').click();
+  await expect(page.locator('#askBody .ask-a').last()).toHaveText('open answer');
+  const first = await page.evaluate(() => window.__asks);
+  expect(first, 'the question went to deskAsk with NO pin, and unverified').toEqual([{ pin: null, q: 'how is NVDA doing?', verify: false }]);
+  await expect(page.locator('#askBody .ask-clear'), 'an answer does not summon Clear: nothing was saved').toHaveCount(0);
+
+  // the cap (or any refusal) is shown as the red line, the composer stays usable
+  await page.evaluate(() => { window.__reply = { ok: false, error: 'Today’s open questions are used up — unlock the desk with its PIN, or try again tomorrow (Pacific time).' }; });
+  await form.locator('input.input').fill('and AMD?');
+  await form.locator('button[type=submit]').click();
+  await expect(page.locator('#askBody .lock-error'), 'the daily cap is said out loud').toContainText(/used up/i);
+  await expect(form.locator('input.input')).toBeEnabled();
+
+  // a stopped open question does not promise a history it will never have
+  await page.evaluate(() => {
+    window.deskAsk = (pin, q, ctx, signal) => new Promise((_res, rej) => {
+      signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); });
+    });
+    renderAsk();
+  });
+  await form.locator('input.input').fill('a slow one');
+  await form.locator('button[type=submit]').click();
+  await page.locator('.ask-stop').click();
+  const stopped = page.locator('.ask-a--stopped');
+  await expect(stopped).toContainText(/not saved/i);
+  await expect(stopped, 'and does not point at a history').not.toContainText(/history|reload/i);
+
+  // ── 2. what actually goes on the wire: no pin KEY for a visitor, the PIN for the owner ──
+  const bodies = [];
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+  await page.route('https://stub.invalid/functions/v1/desk-ask', async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    bodies.push(JSON.parse(req.postData() || '{}'));
+    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: '{"ok":true,"answer":"x","sources":[]}' });
+  });
+  await page.evaluate(async () => {
+    const real = DESK_DB.url;
+    DESK_DB.url = 'https://stub.invalid';
+    try {
+      await window.__realDeskAsk(null, 'open q', { a: 1 }, undefined, true);
+      await window.__realDeskAsk('', 'empty pin q', {}, undefined, false);
+      await window.__realDeskAsk('0000', 'owner q', {}, undefined, true);
+    } finally { DESK_DB.url = real; }
+  });
+  expect(bodies.map((b) => Object.keys(b)), 'a visitor\'s body carries no pin key at all; the owner\'s carries it first')
+    .toEqual([['question', 'context', 'verify'], ['question', 'context', 'verify'], ['pin', 'question', 'context', 'verify']]);
+  expect(bodies.map((b) => b.verify), 'verify is passed through as given (the server decides who may use it)').toEqual([true, false, true]);
+  expect(bodies[2].pin, 'the owner\'s PIN is sent as typed').toBe('0000');
+
+  // ── 3. the desk UNLOCKED: the same panel gains the private parts, and the PIN goes with the question ──
+  await page.evaluate(() => {
+    DESK.authed = true; sessionStorage.setItem('desk_pin', '0000');
+    window.__hist = []; window.__asks = [];
+    window.deskAsk = (pin, q, ctx, signal, verify) => { window.__asks.push({ pin, q, verify }); return Promise.resolve({ ok: true, answer: 'owner answer', sources: [] }); };
+    renderAsk();
+  });
+  await expect(page.locator('#askBody .ask-open-note'), 'no open-visitor note once unlocked').toHaveCount(0);
+  for (const sel of ['.ask-verify', '.ask-sched-btn', '.ask-clear']) await expect(page.locator('#askBody ' + sel), sel + ' appears with the PIN').toHaveCount(1);
+  await expect(sysBtn, '⚙ appears with the PIN').toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.__hist), 'the saved conversation is requested with the PIN').toEqual(['0000']);
+  await form.locator('input.input').fill('owner question');
+  await form.locator('button[type=submit]').click();
+  await expect(page.locator('#askBody .ask-a').last()).toHaveText('owner answer');
+  expect((await page.evaluate(() => window.__asks))[0].pin, 'an unlocked question carries the PIN').toBe('0000');
+
+  await page.evaluate(() => { sessionStorage.removeItem('desk_pin'); });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S60 — the accounts keep their PIN but this DEVICE remembers it (owner ruling 2026-10-04:
+// "keep it for accounts at the bottom but leave it unlocked for now"). The server stays the
+// gate: a remembered PIN is validated by desk_login at every boot and re-seeds the tab's
+// copy; an unlock writes both; Lock and a PIN the server definitely refuses forget both; a
+// network blip forgets nothing. Run through the REAL boot against a stubbed backend.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S60: the desk PIN is remembered on this device — validated at every boot, forgotten by Lock and by a refusal, kept through a network blip', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  const DEVICE = 'desk_pin_device_v1', GOOD = '4321';
+  const base = (await (await page.request.get('scripts/config.js')).text()).match(/url:\s*'([^']*)'/)[1];
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+  const logins = [];
+  let blip = false;
+  await page.route(`${base}/**`, async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    if (new URL(req.url()).pathname.endsWith('/rpc/desk_login')) {
+      const pin = JSON.parse(req.postData() || '{}').pin;
+      logins.push(pin);
+      if (blip) return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{}' });
+      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: pin === GOOD }) });
+    }
+    // every other desk call (feeds, dashboard, roster) is out of scope: fail it fast and quietly
+    return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{"ok":false}' });
+  });
+
+  const stores = () => page.evaluate(([k]) => ({ session: sessionStorage.getItem('desk_pin'), device: localStorage.getItem(k) }), [DEVICE]);
+  const loadLive = async (seed = {}) => {
+    await page.goto('./?demo=1');
+    await page.evaluate(([k, s]) => {
+      localStorage.clear(); sessionStorage.clear();
+      if (s.device) localStorage.setItem(k, s.device);
+      if (s.session) sessionStorage.setItem('desk_pin', s.session);
+    }, [DEVICE, seed]);
+    logins.length = 0;
+    await page.goto('./');
+    await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
+  };
+  const lockForm = page.locator('#accountGrid .panel-lock .lock-form input.input');
+  const lockBtn = page.getByRole('button', { name: 'Lock', exact: true });
+  const sysBtn = page.locator('#askBody button[aria-label="Edit the Ask-the-desk system prompt"]');
+  const authed = () => page.evaluate(() => DESK.authed);
+
+  // A. nothing stored: no login call, the accounts are locked, Ask is open
+  await loadLive();
+  expect(logins, 'nothing remembered, so nothing is validated').toEqual([]);
+  await expect(lockForm, 'the accounts ask for the PIN').toBeVisible();
+  expect(await authed()).toBe(false);
+  await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is then remembered').toContainText(/stays unlocked on this device/i);
+  await expect(page.locator('#askBody form input.input'), 'while Ask is open without it').toBeEnabled();
+  await expect(sysBtn).toHaveCount(0);
+
+  // B. a wrong PIN stores nothing anywhere; the right one is remembered by BOTH copies
+  await lockForm.fill('0000');
+  await page.locator('#accountGrid .panel-lock .lock-form button').click();
+  await expect(page.locator('.panel-lock .lock-error')).toBeVisible();
+  expect(await stores(), 'a wrong PIN is remembered nowhere').toEqual({ session: null, device: null });
+  expect(await authed()).toBe(false);
+  await lockForm.fill(GOOD);
+  await page.locator('#accountGrid .panel-lock .lock-form button').click();
+  await expect.poll(authed).toBe(true);
+  expect(await stores(), 'the right PIN is kept for the tab AND the device').toEqual({ session: GOOD, device: GOOD });
+
+  // C. a new tab/session with only the device's copy: validated, re-seeded, unlocked
+  await loadLive({ device: GOOD });
+  expect(logins, 'the remembered PIN is checked by the server at boot, not trusted for being stored').toEqual([GOOD]);
+  expect(await authed(), 'and unlocks the desk').toBe(true);
+  expect(await stores(), 'the tab\'s working copy is re-seeded').toEqual({ session: GOOD, device: GOOD });
+  await expect(lockForm, 'no PIN form on an unlocked device').toHaveCount(0);
+  await expect(lockBtn).toBeVisible();
+  await expect(sysBtn, 'and Ask has its private parts').toHaveCount(1);
+
+  // D. a tab that was ALREADY unlocked becomes an unlocked device (nothing to retype after this ships)
+  await loadLive({ session: GOOD });
+  expect(await authed()).toBe(true);
+  expect(await stores(), 'the tab\'s PIN is now remembered by the device too').toEqual({ session: GOOD, device: GOOD });
+
+  // E. a PIN the server definitely refuses (it was changed) is forgotten everywhere
+  await loadLive({ device: '9999' });
+  expect(logins).toEqual(['9999']);
+  expect(await authed()).toBe(false);
+  expect(await stores(), 'a refused PIN is dropped from both copies').toEqual({ session: null, device: null });
+  await expect(lockForm).toBeVisible();
+
+  // F. a network blip is NOT a wrong PIN: locked this time, but the device keeps it for the next load
+  blip = true;
+  await loadLive({ device: GOOD });
+  expect(logins).toEqual([GOOD]);
+  expect(await authed(), 'the blip leaves the desk locked for now').toBe(false);
+  expect((await stores()).device, 'but does not sign the owner out of this device').toBe(GOOD);
+  blip = false;
+
+  // G. Lock really locks: it forgets BOTH copies, so a reload does not quietly unlock again
+  await loadLive({ device: GOOD });
+  expect(await authed()).toBe(true);
+  await lockBtn.click();
+  expect(await authed()).toBe(false);
+  expect(await stores(), 'Lock forgets the tab\'s copy and the device\'s').toEqual({ session: null, device: null });
+  await expect(lockForm).toBeVisible();
+  await expect(sysBtn, 'Ask drops its private parts but stays open').toHaveCount(0);
+  await expect(page.locator('#askBody form input.input')).toBeEnabled();
+  logins.length = 0;
+  await page.reload();
+  await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
+  expect(logins, 'after Lock a reload has nothing to validate').toEqual([]);
+  expect(await authed()).toBe(false);
+});
