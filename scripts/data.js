@@ -517,6 +517,25 @@ async function deskLogin(pin) {
   const out = await deskRpc('desk_login', pin);
   return out && out.ok ? out : { ok: false, error: 'PIN not recognized — try again.' };
 }
+
+/* The desk PIN, remembered on THIS DEVICE (owner ruling 2026-10-04: "keep it for accounts at the
+   bottom but leave it unlocked for now"). The working copy is still sessionStorage 'desk_pin' —
+   every reader in app.js uses it — and this is the copy that outlives the tab: boot re-validates
+   it with desk_login (the server stays the gate: nobody else's device holds it) and re-seeds the
+   session copy; an unlock writes both; Lock, and a PIN the server definitely refuses, forget
+   BOTH, so Lock still locks. Residual, accepted by the owner: localStorage is shared by every
+   page on akyachtsman.github.io, so a script on any of the owner's other Pages sites could read it. */
+const DESK_PIN_DEVICE_KEY = 'desk_pin_device_v1';
+function deskPinDeviceGet() {
+  try { return localStorage.getItem(DESK_PIN_DEVICE_KEY) || null; } catch { return null; }
+}
+function deskPinDeviceSet(pin) {
+  try { localStorage.setItem(DESK_PIN_DEVICE_KEY, pin); } catch { /* storage blocked: the session copy still works */ }
+}
+function deskPinForget() {
+  try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ }
+  try { localStorage.removeItem(DESK_PIN_DEVICE_KEY); } catch { /* private mode */ }
+}
 async function deskGetDashboard(pin) {
   const out = await deskRpc('desk_get_dashboard', pin);
   return out && out.ok ? out : null;
@@ -564,9 +583,12 @@ function deskSetAskSchedule(pin, rows) { return deskRpcOk('desk_set_ask_schedule
 /* `verify` arms the server's grounding check for THIS question only (owner
    request 2026-08-05). It is a flag rather than text appended to the question,
    so nothing about the request plumbing ends up inside the question the model
-   reads or the history it replays. */
+   reads or the history it replays.
+   `pin` may be absent: the OPEN question (owner ruling 2026-10-04). Then NO pin key is
+   sent at all — like deskRpcOpen, the body says what the call is — and the server answers an
+   anonymous visitor: counted against a daily cap, nothing saved, no accounts, no verify. */
 async function deskAsk(pin, question, context, signal, verify) {
-  const res = await deskPost('/functions/v1/desk-ask', { pin, question, context, verify: verify === true }, { signal });
+  const res = await deskPost('/functions/v1/desk-ask', { ...(pin ? { pin } : {}), question, context, verify: verify === true }, { signal });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-ask → HTTP ' + res.status);
   return out; /* {ok:true, answer, sources} | {ok:false, error} */
