@@ -287,12 +287,10 @@
      safe on something GUARANTEED to overflow, and nothing here is. The cost of
      dropping it is that reaching the bottom of a long thread carries on
      scrolling the page — ordinary web behaviour, and far better than a dead
-     wheel. (ONE exception, and it is the axis-scoped form: the watchlist
-     bands, horizontal again since 2026-09-30, carry `overscroll-behavior-x:
-     contain` so a sideways swipe off the end of a band is not taken for
-     browser back-navigation. Their vertical axis is `overflow-y: hidden` and
-     left at `auto`, so the wheel still moves the page. Nothing else carries the
-     property in any form — S42 scans every rule for the shorthand and `-y`.) */
+     wheel. (There WAS one exception, the axis-scoped `overscroll-behavior-x:
+     contain` on the watchlist bands' single scrolling row; since 2026-10-04 the
+     bands wrap instead of scrolling and nothing on the page carries the property
+     in any form — S42 still scans every rule for the shorthand and `-y`.) */
   .ask-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   /* Ask | Economy: the last two columns of the desk row. The right-hand column
      held the ACCOUNTS until 2026-09-30, when they moved to the bottom of the
@@ -1054,7 +1052,7 @@
      first. A coarse pointer (phone, tablet) gets the 44px target design.md asks
      for; `pointer: fine` (every desktop) never matches, so nothing here moves a
      desktop pixel. Deliberately NOT covered: the band head's ↑/↓/× cluster (three
-     18px controls share a ~104px head — 44px each cannot fit without redesigning
+     18px controls share an ~84px head — 44px each cannot fit without redesigning
      the head), the symbol rail's rows (a 100-slot
      scroller whose S40/S45 geometry is measured at these sizes), and the pane
      bars' ⚙/🔓 (three bars share ~390px on a phone: two 44px buttons per ~85px

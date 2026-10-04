@@ -410,14 +410,10 @@ async function discoverElements(page) {
              the news reel, the ask thread — CAN be scrolled to the element, and
              those have always swept fine; excluding them too would quietly drop
              real coverage.
-             KNOWN GAP (2026-09-30, watchlists back to horizontal bands): a band
-             is `overflow-x: scroll; overflow-y: hidden`, and the test below
-             treats EITHER axis hiding as clipping, so a tile beyond a band's
-             visible width is counted in `clippedSkipped` instead of swept, though
-             it could be scrolled to. Testing each axis only against its own
-             overflow would restore that coverage. NOT done: S3 only sweeps with a
-             live credential (locally it skips at the auth gate), so the wider
-             sweep's runtime against the live roster could not be checked. */
+             (The 2026-09-30 KNOWN GAP — a tile beyond a scrolling band's visible
+             width counted in `clippedSkipped` instead of being swept — is CLOSED:
+             since 2026-10-04 a band wraps instead of scrolling, so every tile is on
+             screen and none is clipped.) */
           for (let p = el.parentElement; p; p = p.parentElement) {
             const o = getComputedStyle(p);
             const hides = /hidden|clip/.test(o.overflowY) || /hidden|clip/.test(o.overflowX);
@@ -1864,6 +1860,23 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
 // an ADDITION to double-click removal rather than a replacement.
 test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Escape writes nothing', async ({ page, renderWitness }) => {
   renderWitness();
+  // Six real drags (cross-band, Escape, in-band, second row, end of list) on a phone-sized
+  // WebKit run past the 30s default; this is a long scenario, not a slow one.
+  test.setTimeout(90_000);
+  // A drag aims at coordinates read from the page, so the page must have STOPPED moving
+  // first: on a loaded runner the panels above the watchlist can still be settling (a late
+  // render shifts the band down a few px) and a pointer aimed at the old position lands in
+  // another band. Waits until the document height and the panel's page position hold still.
+  const settleLayout = async () => {
+    let prev = '', same = 0;
+    for (let i = 0; i < 50 && same < 4; i++) {
+      const now = await page.evaluate(() => document.documentElement.scrollHeight + ':' +
+        Math.round(document.querySelector('.area-watchlist').getBoundingClientRect().top + window.scrollY));
+      same = now === prev ? same + 1 : 0;
+      prev = now;
+      await page.waitForTimeout(120);
+    }
+  };
   await gotoDemo(page, '.wl-strip .wl-tile', 10000);
 
   // Demo has no backend to write to, so no write surface may render at all —
@@ -2031,16 +2044,14 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   await page.waitForTimeout(400);
   expect(await rosterWrites(page), 'an abandoned drag writes nothing').toBe(writesAtEscape);
 
-  // ── an in-band drop is decided by the pointer's X, not its Y ─────────────
-  // A band is ONE row that never wraps, so the slot is where the pointer is ALONG
-  // the row. The pointer is held 1px under the tiles — still inside the drop zone
-  // (over the row's padding, or its scrollbar where the browser draws one) but
-  // BELOW every tile — because a slot worked out from Y as well counts every tile
-  // as passed there and drops at the END of the list wherever you aimed. Not the
-  // zone's own last pixel: bands overlap by 1px (collapsed borders), so the next
-  // band's border can sit exactly there and WebKit rounds the pointer onto it.
-  // Dragged: the band's first tile. Aimed at: the right half of its THIRD tile, so
-  // it must land after the second and third and before the fourth.
+  // ── an in-band drop lands at the slot the pointer's POSITION chose ───────
+  // A band is a GRID that wraps (owner request 2026-10-04), so the slot is decided in
+  // READING ORDER: Y picks the row, X the place along it. Dragged: the band's first
+  // tile. Aimed at: the right half of its THIRD tile, at the tile's own height — so it
+  // must land after the second and third and before the fourth. The insertion marker
+  // is ABSOLUTELY placed (it takes no grid cell), so it is found by geometry, not by
+  // being a sibling: its left edge sits on the left edge of the tile the drop would
+  // precede, and level with it.
   const inBand = await page.evaluate(() => {
     const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
     const i = zones.findIndex(z => z.querySelectorAll('.wl-tile').length >= 6);
@@ -2048,34 +2059,44 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   });
   expect(inBand, 'some band has enough tiles to reorder within').not.toBeNull();
   await page.locator('.mkt-group-tiles[data-band]').nth(inBand).scrollIntoViewIfNeeded();
-  await page.waitForTimeout(200);
+  await settleLayout();
   const aim = await page.evaluate((i) => {
     const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
     const tiles = [...zone.querySelectorAll('.wl-tile')];
-    const z = zone.getBoundingClientRect();
     const grab = tiles[0].getBoundingClientRect(), third = tiles[2].getBoundingClientRect();
-    const to = { x: third.left + third.width * 0.75, y: third.bottom + 1 };
+    const to = { x: third.left + third.width * 0.75, y: third.top + third.height / 2 };
     const hit = document.elementFromPoint(to.x, to.y);
     return {
       from: { x: grab.left + grab.width / 2, y: grab.top + grab.height / 2 }, to,
+      sameRow: Math.abs(third.top - grab.top) < 2,
       inZone: !!hit && hit.closest('.mkt-group-tiles[data-band]') === zone,
-      belowTiles: to.y > third.bottom,
       syms: tiles.slice(0, 4).map(t => t.dataset.sym), title: zone.dataset.title,
     };
   }, inBand);
   expect(aim.inZone, 'the aim point is inside the band\'s drop zone').toBe(true);
-  expect(aim.belowTiles, 'and below its tiles, where a Y comparison would pass them all').toBe(true);
+  expect(aim.sameRow, 'and the first three tiles share a row').toBe(true);
   await page.mouse.move(aim.from.x, aim.from.y);
   await page.mouse.down();
   await page.mouse.move(aim.from.x + 40, aim.from.y + 20, { steps: 5 });
   await page.mouse.move(aim.to.x, aim.to.y, { steps: 8 });
-  const markerAt = await page.evaluate(() => {
-    const m = document.querySelector('.wl-drop-marker');
-    const next = m && m.nextElementSibling;
-    return next ? next.dataset.sym : null;
-  });
-  expect(markerAt, 'the insertion marker sits before the FOURTH tile, following the pointer along the row')
-    .toBe(aim.syms[3]);
+  // where the marker is drawn, against the tile it should precede
+  // `title` pins the band: a symbol appears in several lists, and a marker in the WRONG band
+  // must not be compared against that band's copy of the tile.
+  const markerVs = (sym, title) => page.evaluate(({ s, title }) => {
+    const zone = [...document.querySelectorAll('.mkt-group-tiles[data-band]')].find(z => z.dataset.title === title);
+    const m = zone && zone.querySelector('.wl-drop-marker');
+    const t = zone && [...zone.querySelectorAll('.wl-tile')].find(x => x.dataset.sym === s);
+    if (!m || !t || !zone.classList.contains('wl-drop-over')) return null;
+    const a = m.getBoundingClientRect(), b = t.getBoundingClientRect();
+    return { dLeft: Math.round(a.left - b.left), dTop: Math.round(a.top - b.top), dH: Math.round(a.height - b.height) };
+  }, { s: sym, title });
+  // POLLED: the marker is repainted by the last pointer move, and on a loaded runner the
+  // evaluate below can land a frame before that paint — the position is deterministic once
+  // it has, so wait for it rather than sample once.
+  const markerOk = (v, dTop = 2) => !!v && Math.abs(v.dLeft + 1) <= 3 && Math.abs(v.dTop) <= dTop && Math.abs(v.dH) <= 2;
+  await expect.poll(async () => markerOk(await markerVs(aim.syms[3], aim.title)), {
+    message: 'the insertion marker sits on the left edge of the FOURTH tile, level with it', timeout: 5000,
+  }).toBe(true);
   const writesInBand = await rosterWrites(page);
   await page.mouse.up();
   await expect.poll(() => rosterWrites(page), { message: 'the in-band drop is exactly one write' })
@@ -2086,85 +2107,109 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   expect(order.indexOf(aim.syms[3]), '…and immediately before the fourth')
     .toBe(order.indexOf(aim.syms[0]) + 1);
 
-  // ── a long band auto-scrolls at its edges, so every slot is reachable (Codex review, PR #294) ──
-  // The pointer owns the drag, so the row's scrollbar cannot be used at the same time: without help a tile could
-  // only be dropped among the slots on screen. Holding the pointer near the row's right edge scrolls it, near the
-  // left edge scrolls it back, and a drop at the far end lands at a slot that was off screen when the drag began.
-  const longBand = await page.evaluate(() => {
+  // ── a WRAPPED band: Y chooses the row (owner request 2026-10-04) ─────────
+  // A list longer than a row wraps onto rows below, so the drop slot is read in
+  // reading order. Dragged: the band's first tile. Aimed at: the LEFT half of the
+  // first tile of the SECOND row, at that tile's height. Every tile of the first row
+  // is above the pointer, so the tile lands at the end of row one, immediately
+  // before that second-row tile — and the marker is drawn on THAT tile's left edge
+  // (row two), not at the end of row one, because the pointer is in row two.
+  const wrapped = await page.evaluate(() => {
     const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
-    const i = zones.findIndex(z => z.scrollWidth > z.clientWidth + 150 && z.querySelectorAll('.wl-tile').length >= 6);
+    const rowsOf = z => new Set([...z.querySelectorAll('.wl-tile')].map(t => Math.round(t.getBoundingClientRect().top))).size;
+    const i = zones.findIndex(z => rowsOf(z) >= 2);
     return i < 0 ? null : i;
   });
-  expect(longBand, 'some band is wider than its row').not.toBeNull();
-  await page.locator('.mkt-group-tiles[data-band]').nth(longBand).scrollIntoViewIfNeeded();
-  await page.evaluate((i) => { document.querySelectorAll('.mkt-group-tiles[data-band]')[i].scrollLeft = 0; }, longBand);
-  await page.waitForTimeout(200);
-  const edge = await page.evaluate((i) => {
+  expect(wrapped, 'some band is long enough to wrap onto a second row').not.toBeNull();
+  await page.locator('.mkt-group-tiles[data-band]').nth(wrapped).scrollIntoViewIfNeeded();
+  await settleLayout();
+  const wrap = await page.evaluate((i) => {
     const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
-    const z = zone.getBoundingClientRect(), t = zone.querySelector('.wl-tile').getBoundingClientRect();
-    const y = t.top + t.height / 2;
-    return { grab: { x: t.left + t.width / 2, y }, right: { x: z.right - 6, y }, left: { x: z.left + 6, y }, mid: { x: z.left + z.width / 2, y },
-      symsAtStart: [...zone.querySelectorAll('.wl-tile')].map(x => x.dataset.sym), title: zone.dataset.title };
-  }, longBand);
-  const scrollLeftOf = () => page.evaluate((i) => document.querySelectorAll('.mkt-group-tiles[data-band]')[i].scrollLeft, longBand);
-  const writesEdge = await rosterWrites(page);
-  await page.mouse.move(edge.grab.x, edge.grab.y);
+    const tiles = [...zone.querySelectorAll('.wl-tile')];
+    const top0 = Math.round(tiles[0].getBoundingClientRect().top);
+    const n1 = tiles.filter(t => Math.round(t.getBoundingClientRect().top) === top0).length;
+    const g = tiles[0].getBoundingClientRect(), t2 = tiles[n1].getBoundingClientRect();
+    const to = { x: t2.left + t2.width * 0.25, y: t2.top + t2.height / 2 };
+    const hit = document.elementFromPoint(to.x, to.y);
+    return { n1, from: { x: g.left + g.width / 2, y: g.top + g.height / 2 }, to,
+      inZone: !!hit && hit.closest('.mkt-group-tiles[data-band]') === zone,
+      sym0: tiles[0].dataset.sym, symN1: tiles[n1].dataset.sym, title: zone.dataset.title,
+      second: t2.top > g.top + 20 };
+  }, wrapped);
+  expect(wrap.second, 'the tile aimed at really is on a row BELOW the grabbed one').toBe(true);
+  expect(wrap.inZone, 'and the aim point is in the band\'s drop zone').toBe(true);
+  await page.mouse.move(wrap.from.x, wrap.from.y);
   await page.mouse.down();
-  await page.mouse.move(edge.mid.x, edge.mid.y, { steps: 6 });
-  expect(await scrollLeftOf(), 'in the middle of the row nothing scrolls').toBe(0);
-  await page.mouse.move(edge.right.x, edge.right.y, { steps: 4 });
-  await expect.poll(scrollLeftOf, { message: 'holding the pointer at the right edge scrolls the row', timeout: 6000 }).toBeGreaterThan(120);
-  const markerAfterScroll = await page.evaluate(() => {
-    const m = document.querySelector('.wl-drop-marker'), next = m && m.nextElementSibling;
-    return { marker: !!m, before: next ? next.dataset.sym : null };
-  });
-  expect(markerAfterScroll.marker, 'the insertion marker follows the tiles as the row scrolls').toBe(true);
-  const markerSlot = markerAfterScroll.before === null ? edge.symsAtStart.length : edge.symsAtStart.indexOf(markerAfterScroll.before);   // null = the end of the list
-  expect(markerSlot, 'the marker now sits at a slot that was OFF screen when the drag began').toBeGreaterThan(2);
-  // Hold at the right edge until the row runs out, then it must STOP. The insertion marker is a 3px flex child, so
-  // with it in the row the row can scroll 3px past its last tile; repainting the marker clamps it back and the next
-  // frame "moves" again — a loop of DOM mutation and layout that never ends at the boundary (Codex review, PR #294).
-  // The pointer has not moved, so the loop is still running: put the row a few frames short of its end (waiting out
-  // 2400px at a slow frame rate proves nothing more) and let the LOOP finish the job. It must then queue no further
-  // frame, and a settled row must be left alone — not rewritten every frame.
-  await page.evaluate((i) => {
-    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
-    zone.scrollLeft = zone.scrollWidth - zone.clientWidth - 60;
-  }, longBand);
-  await expect.poll(() => page.evaluate(() => wlDrag.raf), {
-    message: 'the auto-scroll loop stops queuing frames once the row has run out (an unsettled loop keeps one queued forever)',
-    timeout: 15000,
-  }).toBe(0);
-  const atEnd = await page.evaluate((i) => {
-    const zone = document.querySelectorAll('.mkt-group-tiles[data-band]')[i];
-    const last = [...zone.querySelectorAll('.wl-tile')].pop().getBoundingClientRect(), z = zone.getBoundingClientRect();
-    window.__edgeMut = 0;
-    window.__edgeObs = new MutationObserver(list => { window.__edgeMut += list.length; });
-    window.__edgeObs.observe(zone, { childList: true });
-    return { lastTileInView: last.right <= z.right + 1, pointerHeld: wlDrag.on, marker: !!zone.querySelector('.wl-drop-marker'),
-      numbers: { lastRight: last.right, zoneRight: z.right, scrollLeft: zone.scrollLeft, scrollWidth: zone.scrollWidth, clientWidth: zone.clientWidth } };
-  }, longBand);
-  expect(atEnd.pointerHeld, 'the drag is still in progress while the row sits at its end').toBe(true);
-  expect(atEnd.lastTileInView, 'the row really did scroll as far as its last tile ' + JSON.stringify(atEnd.numbers)).toBe(true);
-  expect(atEnd.marker, 'and the insertion marker is still painted at the end of the row').toBe(true);
-  await page.waitForTimeout(450);
-  const idle = await page.evaluate(() => {
-    window.__edgeObs.disconnect();
-    return { mutations: window.__edgeMut, raf: wlDrag.raf };
-  });
-  expect(idle.mutations, 'a row held at its end is not rewritten every frame (the marker is not re-inserted in a loop)').toBe(0);
-  expect(idle.raf, 'and no animation frame is left queued at the end').toBe(0);
-  const restedAt = await scrollLeftOf();
-  await page.mouse.move(edge.left.x, edge.left.y, { steps: 6 });
-  await expect.poll(scrollLeftOf, { message: 'and the left edge scrolls it back (and wakes the loop the end had stopped)', timeout: 10000 }).toBeLessThan(restedAt - 100);
-  await page.keyboard.press('Escape');
+  await page.mouse.move(wrap.from.x + 40, wrap.from.y + 20, { steps: 5 });
+  await page.mouse.move(wrap.to.x, wrap.to.y, { steps: 8 });
+  await expect.poll(async () => markerOk(await markerVs(wrap.symN1, wrap.title)), {
+    message: 'the marker sits on the left edge of the first tile of ROW TWO, where the pointer is', timeout: 5000,
+  }).toBe(true);
+  const writesWrap = await rosterWrites(page);
   await page.mouse.up();
-  await page.waitForTimeout(300);
-  expect(await page.locator('.wl-ghost').count(), 'Escape ended the drag').toBe(0);
-  expect(await rosterWrites(page), 'an abandoned auto-scroll drag writes nothing').toBe(writesEdge);
-  const scrollAtRest = await scrollLeftOf();
-  await page.waitForTimeout(250);
-  expect(await scrollLeftOf(), 'the auto-scroll loop stopped with the drag').toBe(scrollAtRest);
+  await expect.poll(() => rosterWrites(page), { message: 'the drop on the second row is exactly one write' })
+    .toBe(writesWrap + 1);
+  const orderW = await page.evaluate((t) => window.__roster.find(l => l.title === t).symbols, wrap.title);
+  expect(orderW.indexOf(wrap.sym0), 'the tile landed immediately before the second-row tile it was aimed at')
+    .toBe(orderW.indexOf(wrap.symN1) - 1);
+
+  // ── and in the empty cells past the LAST tile: the end of the list ───────
+  // A last row that is not full leaves empty cells to its right. The pointer there
+  // is level with the last row and past every tile in it, so the slot is the END —
+  // and the marker is drawn on the right edge of the last tile.
+  // The band is chosen IN THE PAGE: one whose last row is not full, preferring one that
+  // wraps. (Which band that is depends on the viewport — at four columns a 40-tile list
+  // fills its last row exactly and leaves no empty cell to aim at — so it is asked for,
+  // not assumed.)
+  await settleLayout();
+  const tail = await page.evaluate(() => {
+    const zones = [...document.querySelectorAll('.mkt-group-tiles[data-band]')];
+    const info = (z) => {
+      const tiles = [...z.querySelectorAll('.wl-tile')];
+      if (tiles.length < 3) return null;
+      const last = tiles[tiles.length - 1].getBoundingClientRect(), zr = z.getBoundingClientRect();
+      const rows = new Set(tiles.map(t => Math.round(t.getBoundingClientRect().top))).size;
+      return { z, tiles, last, zr, rows, room: last.right + 14 < zr.right - 2, fits: zr.height < window.innerHeight - 140 };
+    };
+    const all = zones.map(info).filter(Boolean).filter(x => x.room && x.fits);   // both ends of the drag must be on screen at once
+    const pick = all.find(x => x.rows >= 2) || all[0];
+    if (!pick) return null;
+    pick.z.scrollIntoView({ block: 'center' });
+    const g = pick.tiles[0].getBoundingClientRect(), last = pick.tiles[pick.tiles.length - 1].getBoundingClientRect();
+    const to = { x: last.right + 14, y: last.top + last.height / 2 };
+    const hit = document.elementFromPoint(to.x, to.y);
+    return { from: { x: g.left + g.width / 2, y: g.top + g.height / 2 }, to,
+      room: true, inZone: !!hit && hit.closest('.mkt-group-tiles[data-band]') === pick.z,
+      sym0: pick.tiles[0].dataset.sym, title: pick.z.dataset.title, wrapped: pick.rows >= 2 };
+  });
+  expect(tail, 'some band\'s last row is not full, so there is a drop zone past its last tile').not.toBeNull();
+  await page.waitForTimeout(200);
+  expect(tail.inZone, 'and the aim point past its last tile is inside that band\'s drop zone').toBe(true);
+  await page.mouse.move(tail.from.x, tail.from.y);
+  await page.mouse.down();
+  await page.mouse.move(tail.from.x + 40, tail.from.y + 20, { steps: 5 });
+  await page.mouse.move(tail.to.x, tail.to.y, { steps: 8 });
+  await expect.poll(() => page.evaluate(() => {
+    const m = document.querySelector('.wl-drop-marker');
+    const tiles = [...document.querySelectorAll('.wl-strip .mkt-group-tiles.wl-drop-over .wl-tile')];
+    if (!m || !tiles.length) return false;
+    const last = tiles[tiles.length - 1].getBoundingClientRect(), a = m.getBoundingClientRect();
+    return Math.abs(a.left - last.right + 1) <= 3 && Math.abs(a.top - last.top) <= 2;
+  }), { message: 'past the last tile the marker sits on its right edge', timeout: 5000 }).toBe(true);
+  const writesTail = await rosterWrites(page);
+  await page.mouse.up();
+  await expect.poll(() => rosterWrites(page), { message: 'the drop at the end is exactly one write' })
+    .toBe(writesTail + 1);
+  const orderT = await page.evaluate((t) => window.__roster.find(l => l.title === t).symbols, tail.title);
+  expect(orderT[orderT.length - 1], 'the tile landed at the END of the list').toBe(tail.sym0);
+
+  // ── nothing scrolls sideways any more, so there is no edge auto-scroll ────
+  // The 2026-09-30 band was one row scrolled sideways, and a drag at its edge had to
+  // scroll it (Codex review, PR #294). The band wraps now, every slot is on screen,
+  // and that machinery is GONE — holding the pointer at a band's right edge moves
+  // nothing and leaves no frame queued.
+  expect(await page.evaluate(() => typeof wlAutoScroll + '/' + typeof WL_EDGE_PX),
+    'the sideways auto-scroll is removed, not dormant').toBe('undefined/undefined');
 
   // ── no staging tray survives anywhere ──────────────────────────────────
   // The tray was removed wholesale (owner ruling 2026-07-31), so its markup,
@@ -2180,8 +2225,14 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // ── double-click removal is KEPT (owner ruling 2026-07-31) ──────────────
   // The trash is the drag-native equivalent, not a replacement, so the fast
   // path must still reach the confirm dialog.
-  await page.locator('.wl-strip .wl-tile').first().dblclick();
-  await expect(page.locator('#wlRmBackdrop'), 'double-click still removes').toBeVisible();
+  // The last drop above is a real write, and the panel repaints when the roster read-back
+  // lands — which on a loaded runner can fall BETWEEN the two clicks of a double-click (a
+  // tile replaced mid-gesture never sees a `dblclick`). The gesture is retried as a whole, so
+  // a regression (no `dblclick` wired, the dialog never opening) still fails every attempt.
+  await expect(async () => {
+    await page.locator('.wl-strip .wl-tile').first().dblclick();
+    await expect(page.locator('#wlRmBackdrop'), 'double-click still removes').toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 15000, intervals: [250, 500, 1000] });
   await page.keyboard.press('Escape');
   expect(await page.locator('#wlTrash').count(), 'the trash is a real button, reachable without a pointer').toBe(1);
 
@@ -2539,15 +2590,20 @@ test('S19: clear empties the conversation (opt-in, live only)', async ({ page, r
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCENARIO 27 — Watchlist tile: half width, stacked, and NOTHING clipped.
-// The 2026-07-31 layout (owner-approved from a mock) halves the tile to fit
-// twice as many symbols per band, which put every value under width pressure.
+// SCENARIO 27 — Watchlist tile: compact, stacked, and NOTHING clipped.
+// The 2026-07-31 layout (owner-approved from a mock) halved the tile to 76px;
+// the 2026-10-04 request ("shrink the watch list as much as possible, but keep
+// all the data still intact") took it to a 60px grid column, which put every
+// value under more width pressure still.
 // The geometry is the cheap half of this test; the clipping assertions are the
 // point. A clipped price is a WRONG price, and it fails silently — the tile
 // still looks like a tile. Guarding it by measuring scrollWidth against
 // clientWidth catches a regression that no screenshot review reliably would.
+// The demo roster alone does not reach the extremes the tile has to survive, so
+// a set of WORST-CASE tiles is built through the page's own `wlTile` and measured
+// the same way.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S27: watchlist tiles are half-width, stacked, and never clip a value', async ({ page, renderWitness }) => {
+test('S27: watchlist tiles are compact, stacked, and never clip a value', async ({ page, renderWitness }) => {
   renderWitness();
   await page.goto('./?demo=1');
   // Start from a clean slate. This test runs late in the file, after S13 (which
@@ -2562,9 +2618,39 @@ test('S27: watchlist tiles are half-width, stacked, and never clip a value', asy
 
   const m = await page.evaluate(() => {
     const KINDS = ['mkt-name', 'mkt-last', 'wl-pct', 'wl-spark'];
-    /* EVERY tile, not the first: a long ticker, a six-figure price or a missing
-       sparkline changes a tile's own shape, and the first tile is the one the
-       layout was tuned on. */
+    /* The demo's own tiles are measured BEFORE the worst cases join them, so the
+       width cap is about the real layout. */
+    const real = [...document.querySelectorAll('.wl-strip .wl-tile')];
+    const maxW = Math.max(...real.map(t => Math.round(t.getBoundingClientRect().width)));
+    const realCount = real.length;
+    /* WORST CASES, appended to the first band so they sit in the real grid: a
+       10-character ticker and a badge, a six-figure price (BRK.A), a seven-figure
+       one, a +100% and a +1,000% move, an index with its CLOSE badge, a crypto pair
+       with EXT. Built by wlTile itself, so the length tiers it sets are what is
+       tested — a tier that stopped being applied would clip here. */
+    const spark = [1, 2, 1.5, 3, 2.5, 4];
+    const worst = [
+      { sym: 'ABCDEFGHIJ', last: 1234.5, pct: 123.45, ext: true, spark },
+      { sym: 'BRK.A', last: 700000.12, pct: -99.99, ext: true, spark },
+      { sym: 'BIGPX', last: 1234567.89, pct: 1234.56, ext: true, spark },
+      { sym: '^GSPC', last: 6318.42, pct: 0.54, index: true, spark },
+      { sym: '^IXIC', last: 23104.88, pct: -24.21, index: true, spark },
+      { sym: 'BTC-USD', last: 64216, pct: -0.77, ext: true, spark },
+      { sym: 'MSTR', last: 1034.5, pct: 100.5, spark },
+    ];
+    /* Appended to a SCRATCH band pinned to the NARROWEST column the grid ever
+       draws — `repeat(7, var(--wl-tile-w))`, no `1fr` stretch. A tile in a real
+       band is up to a few pixels wider than the minimum (the leftover width is
+       shared out), and a value that only fits THAT wide would pass here and clip
+       the moment a viewport lands on an exact multiple. The scratch band is
+       inside `.wl-strip`, so every rule that styles a real one applies. */
+    const strip = document.querySelector('.wl-strip');
+    const band = document.createElement('div');
+    band.className = 'mkt-group-tiles';
+    band.id = 'wlWorstCases';
+    band.style.cssText = 'grid-template-columns: repeat(7, var(--wl-tile-w)); width: max-content; margin-top: 8px';
+    strip.appendChild(band);
+    for (const r of worst) band.appendChild(wlTile(r, false));
     const tiles = [...document.querySelectorAll('.wl-strip .wl-tile')];
     // Visual top-to-bottom order. `.wl-vals` is `display: contents`, so it has
     // no box of its own and its children lay out as tile children — that is the
@@ -2575,35 +2661,55 @@ test('S27: watchlist tiles are half-width, stacked, and never clip a value', asy
       .map(e => [...e.classList].find(c => KINDS.includes(c))).join(' > ');
     const over = sel => [...document.querySelectorAll('.wl-strip ' + sel)]
       .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent.trim());
+    /* Inside the tile's CONTENT box (past its 1px border and 3px padding), not
+       merely its border box: a pill that pokes into the padding still "fits" the
+       tile and still reads as touching the edge. */
+    const inside = (sel) => tiles.filter(t => {
+      const p = t.querySelector(sel);
+      if (!p) return false;
+      const cs = getComputedStyle(t);
+      const a = p.getBoundingClientRect(), b = t.getBoundingClientRect();
+      const left = b.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft);
+      const right = b.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
+      return a.right > right + 0.5 || a.left < left - 0.5;
+    }).map(t => t.dataset.sym);
     return {
-      count: tiles.length,
-      maxW: Math.max(...tiles.map(t => Math.round(t.getBoundingClientRect().width))),
+      count: realCount, withWorst: tiles.length, maxW,
       orders: [...new Set(tiles.map(orderOf))],
       prices: over('.mkt-last'), names: over('.mkt-name'),
       // The pill has no overflow rule of its own, so a too-wide one GROWS past
       // the tile instead of clipping (scrollWidth never exceeds its own box):
       // what can be measured is whether it stays inside the tile that owns it.
-      pills: tiles.filter(t => {
-        const p = t.querySelector('.wl-pct');
-        if (!p) return false;
-        const a = p.getBoundingClientRect(), b = t.getBoundingClientRect();
-        return a.right > b.right + 0.5 || a.left < b.left - 0.5;
-      }).map(t => t.dataset.sym),
+      pills: inside('.wl-pct'),
+      worstWidth: Math.round(band.querySelector('.wl-tile').getBoundingClientRect().width),
+      // The session badge is an unbreakable inline-block: where it does not fit
+      // beside the ticker it drops WHOLE to the next line. A badge in two
+      // fragments (`CLOS` / `E`) is the line breaking inside the word.
+      splitBadges: tiles.filter(t => { const b = t.querySelector('.wl-mark'); return b && b.getClientRects().length > 1; }).map(t => t.dataset.sym),
+      badgesOut: inside('.wl-mark'),
+      // every sparkline inside its tile too
+      sparks: inside('.wl-spark'),
     };
   });
 
   expect(m.count, 'the demo panel carries a real roster').toBeGreaterThan(20);
-  expect(m.maxW, 'no tile should be wider than the half-width 66px layout, not the old 132px').toBeLessThanOrEqual(80);
+  expect(m.withWorst, 'the worst-case tiles joined the grid').toBe(m.count + 7);
+  expect(m.worstWidth, 'and sit in the NARROWEST column the grid draws (60px + the 1px seam overlap)').toBeLessThanOrEqual(62);
+  expect(m.maxW, 'no tile is wider than the compact grid column (60px stretched by a few px), nowhere near the old 76px or 132px').toBeLessThanOrEqual(72);
   expect(m.orders, 'reading order must be ticker → price → change → line, on every tile')
     .toEqual(['mkt-name > mkt-last > wl-pct > wl-spark']);
   // The two that matter. Long values step down a font size (wlTile sets
-  // `is-long` by string length, since CSS cannot branch on text length); if that
-  // ever stops happening, six-figure index prices truncate mid-number.
+  // `is-long` / `is-xlong` / `is-xxlong` by string length, since CSS cannot branch
+  // on text length); if that ever stops happening, six-figure index prices
+  // truncate mid-number.
   expect(m.prices, 'a clipped price is a wrong price').toEqual([]);
   expect(m.names, 'tickers are how this panel is scanned').toEqual([]);
-  // The change pill is the number the panel exists to show, and it was widened to
-  // the price's size (12px) on the promise that nothing clips.
+  // The change pill is the number the panel exists to show, and it keeps the
+  // price's size on the promise that nothing clips.
   expect(m.pills, 'the change pill stays inside its tile').toEqual([]);
+  expect(m.splitBadges, 'the EXT / CLOSE badge never breaks inside the word').toEqual([]);
+  expect(m.badgesOut, 'and stays inside its tile').toEqual([]);
+  expect(m.sparks, 'the sparkline stays inside its tile').toEqual([]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4110,22 +4216,27 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   expect(errs, 'no page errors').toEqual([]);
 });
 
-/* S42 — each watchlist band is a SIDEWAYS scroller, the PAGE stays the page, and
-   nothing is paged. Owner request 2026-09-30 put the bands back to horizontal,
-   which WITHDREW the 2026-08-20 ruling this scenario used to guard ("the columns
-   are paged, not scrolled"): the ▲/▼ pager, its footer and the drag-rests-on-▼
-   stepping existed only to tame a column's VERTICAL overflow and went with it.
+/* S42 — a watchlist band NEVER scrolls sideways: its tiles fill a grid as wide as
+   the band and the EXCESS WRAPS onto rows below; the PAGE stays the page; and
+   nothing is paged. Owner request 2026-10-04 ("shrink the watch list as much as
+   possible … cap the number of stocks to this widescreen to fit it so I don't
+   have to scroll back and forth. And if there's any excess, just create another
+   watch list below it so I can see what I need to get rid of") WITHDREW the
+   2026-07-29 ruling this scenario used to guard (one row per list, scrolled
+   sideways, with an always-visible bar), and with it the axis-scoped
+   `overscroll-behavior-x: contain` that existed only to stop a sideways swipe off
+   a band's end from triggering back-navigation. The 2026-08-20 pager stays gone
+   (the ▲/▼ footer existed only to tame a column's vertical overflow).
 
    What still has to hold, because the owner's original complaint (2026-08-07,
    three times) was a wheel that died over a panel:
-     - the wheel belongs to the PAGE. The row is `overflow-y: hidden`, so a
-       vertical wheel over a band has nothing to grab and moves the page;
-     - the ONLY `overscroll-behavior` on the page is the axis-scoped
-       `overscroll-behavior-x: contain` on these rows (a sideways swipe off the
-       end of a band must not trigger browser back-navigation). The shorthand
-       and the `-y` form stay banned: they apply just as hard to a container with
-       nothing to scroll, and then they eat the wheel. */
-test('S42: watchlist bands scroll sideways, the page never does, and nothing is paged', async ({ page, browserName, renderWitness }) => {
+     - the wheel belongs to the PAGE: no band is a scroll container at all, so a
+       vertical wheel over one moves the page;
+     - NO `overscroll-behavior` shorthand and no `-y` form anywhere on the page:
+       they apply just as hard to a container with nothing to scroll, and then
+       they eat the wheel. (`-x: contain` is gone from the bands, so nothing on
+       the page carries any overscroll rule now.) */
+test('S42: watchlist bands never scroll sideways — the excess wraps below — the page never does, and nothing is paged', async ({ page, browserName, renderWitness }) => {
   renderWitness();
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '1512' });
@@ -4135,61 +4246,62 @@ test('S42: watchlist bands scroll sideways, the page never does, and nothing is 
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
 
-  // ── every band's tile row is a sideways scroller ─────────────────────────
-  const rows = await page.evaluate(() =>
+  const bands = () => page.evaluate(() =>
     [...document.querySelectorAll('.wl-strip .mkt-group-tiles')].map(b => {
       const cs = getComputedStyle(b);
+      const tiles = [...b.querySelectorAll('.wl-tile')];
+      const tops = [...new Set(tiles.map(t => Math.round(t.getBoundingClientRect().top)))];
       return {
-        x: cs.overflowX, y: cs.overflowY, wrap: cs.flexWrap,
-        osx: cs.overscrollBehaviorX, osy: cs.overscrollBehaviorY, sbw: cs.scrollbarWidth,
-        bar: getComputedStyle(b, '::-webkit-scrollbar').height,
-        fits: b.scrollWidth <= b.clientWidth + 1,
-        tiles: b.querySelectorAll('.wl-tile').length,
+        x: cs.overflowX, y: cs.overflowY, display: cs.display,
+        osx: cs.overscrollBehaviorX, osy: cs.overscrollBehaviorY,
+        over: b.scrollWidth - b.clientWidth,
+        tiles: tiles.length, rows: tops.length,
+        perRow: tiles.filter(t => Math.round(t.getBoundingClientRect().top) === tops[0]).length,
       };
     }));
-  expect(rows.length, 'there are several bands to check').toBeGreaterThan(1);
-  // `scroll`, not `auto`: the track stays present even where a short list would
-  // fit, so bands do not change height as symbols come and go.
-  expect(rows.every(r => r.x === 'scroll' && r.y === 'hidden'),
-    'every band scrolls sideways and never vertically').toBe(true);
-  expect(rows.every(r => r.wrap === 'nowrap'), 'tiles never wrap onto a second row').toBe(true);
-  // From Chrome 121 `scrollbar-width` takes precedence over the ::-webkit-
-  // scrollbar rules and would switch the always-visible bar off. Phrased as "not
-  // thin/none": an engine without the property reports '' or 'auto', which is
-  // not a failure.
-  expect(rows.filter(r => /thin|none/.test(r.sbw)),
-    'no `scrollbar-width` — it would cancel the always-visible bar').toEqual([]);
-  expect(rows.every(r => r.bar === '8px'), 'the 8px scrollbar is styled on every band').toBe(true);
-  // The row must actually RESERVE that track where the browser draws classic
-  // scrollbars. Headless Chromium hides them (--hide-scrollbars), which makes the
-  // reserved height 0 whatever the CSS says — so whether this browser draws one is
-  // probed first, and the measurement is skipped, aloud, where it cannot be made.
-  const track = await page.evaluate(() => {
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:absolute;left:-9999px;width:50px;height:50px;overflow:scroll';
-    document.body.appendChild(probe);
-    const drawn = probe.offsetHeight - probe.clientHeight > 0;
-    probe.remove();
-    const b = document.querySelector('.wl-strip .mkt-group-tiles');
-    return { drawn, reserved: b.offsetHeight - b.clientHeight };
-  });
-  if (track.drawn) expect(track.reserved, 'the row reserves the 8px track under its tiles').toBe(8);
-  else test.info().annotations.push({ type: 'note',
-    description: 'this browser draws no classic scrollbar, so the reserved track height cannot be measured here; the computed overflow-x and the styled ::-webkit-scrollbar height above carry the rule' });
-  // One band fits and one does not: a scroller on BOTH is what `scroll` means.
-  expect(rows.some(r => !r.fits), 'demo has a list wider than its band').toBe(true);
-  expect(rows.some(r => r.fits), 'and a short one that fits, which still carries the scroller').toBe(true);
+  const pageSideways = () => page.evaluate(() => ({
+    scrollX: window.scrollX,
+    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  }));
 
-  // ── overscroll-behavior: the axis-scoped x form and nothing else ─────────
-  const xSupported = await page.evaluate(() => CSS.supports('overscroll-behavior-x', 'contain'));
-  if (xSupported) {
-    expect(rows.every(r => r.osx === 'contain'),
-      'a sideways swipe off the end of a band is contained (no browser back-nav)').toBe(true);
-  }
+  // ── no band is a scroller: the tiles wrap into rows instead ──────────────
+  const wide = await bands();
+  expect(wide.length, 'there are several bands to check').toBeGreaterThan(1);
+  expect(wide.every(r => r.display === 'grid'), 'every band lays its tiles out as a grid').toBe(true);
+  expect(wide.filter(r => /scroll|auto/.test(r.x) || /scroll|auto/.test(r.y)),
+    'no band is a scroll container on either axis — nothing to eat the wheel, nothing to drag sideways').toEqual([]);
+  expect(wide.filter(r => r.over > 1), 'nothing in any band runs past its width').toEqual([]);
+  // One list is longer than a row and one is not: the long one wraps, the short one stays on one line.
+  const longest = wide.reduce((a, r) => (r.tiles > a.tiles ? r : a), wide[0]);
+  const shortest = wide.filter(r => r.tiles > 0).reduce((a, r) => (r.tiles < a.tiles ? r : a));
+  expect(longest.rows, 'the longest demo list wraps onto further rows instead of scrolling').toBeGreaterThanOrEqual(2);
+  expect(longest.perRow, 'a row holds as many tiles as the width allows, not just a few').toBeGreaterThan(10);
+  expect(longest.perRow, '…and fewer than the whole list').toBeLessThan(longest.tiles);
+  expect(shortest.rows, 'a short list stays on a single row').toBe(1);
+  // A band has nothing to scroll: setting a scroll position does nothing.
+  const after = await page.evaluate(() => {
+    const b = document.querySelector('.wl-strip .mkt-group-tiles'); b.scrollLeft = 300; return b.scrollLeft;
+  });
+  expect(after, 'a band has nothing to scroll sideways').toBe(0);
+  expect(await pageSideways(), 'and the page itself never scrolls sideways').toEqual({ scrollX: 0, sideways: false });
+
+  // ── the width decides how many fit; the rest goes below ──────────────────
+  await page.setViewportSize({ width: 900, height: 1000 });
+  await page.waitForTimeout(400);
+  const narrow = await bands();
+  const longestN = narrow[wide.indexOf(longest)];
+  expect(longestN.perRow, 'a narrower screen holds fewer tiles per row…').toBeLessThan(longest.perRow);
+  expect(longestN.rows, '…and the excess goes onto MORE rows below').toBeGreaterThan(longest.rows);
+  expect(narrow.filter(r => r.over > 1), 'still nothing runs past a band at 900px').toEqual([]);
+  expect(await pageSideways(), 'and the page still never scrolls sideways').toEqual({ scrollX: 0, sideways: false });
+  await page.setViewportSize({ width: 1512, height: 1000 });
+  await page.waitForTimeout(300);
+
+  // ── overscroll-behavior: no shorthand, no -y form, anywhere ──────────────
   // Phrased as "not contain/none" for the vertical axis: an engine without the
   // property reports '' , which is not a failure.
-  expect(rows.filter(r => /contain|none/.test(r.osy)),
-    'no band carries a VERTICAL overscroll-behavior — that is what eats the wheel').toEqual([]);
+  expect(wide.filter(r => /contain|none/.test(r.osy) || /contain|none/.test(r.osx)),
+    'no band carries an overscroll-behavior — there is nothing in it left to contain').toEqual([]);
   // The whole PAGE, not only this panel: the ban is page-wide. Any rule setting
   // the shorthand expands to `overscroll-behavior-y` in the CSSOM, so reading the
   // -y longhand catches both the shorthand and the -y form, and leaves `-x` alone.
@@ -4215,28 +4327,10 @@ test('S42: watchlist bands scroll sideways, the page never does, and nothing is 
   });
   expect(offenders, 'no overscroll-behavior shorthand or -y form anywhere on the page').toEqual([]);
 
-  // ── a long list scrolls sideways, and the PAGE does not ──────────────────
-  const longest = await page.evaluate(() => {
-    const bands = [...document.querySelectorAll('.wl-strip .mkt-group-tiles')];
-    let k = 0;
-    bands.forEach((b, i) => { if (b.querySelectorAll('.wl-tile').length > bands[k].querySelectorAll('.wl-tile').length) k = i; });
-    const b = bands[k];
-    return { k, over: b.scrollWidth - b.clientWidth };
-  });
-  expect(longest.over, 'the longest demo list runs past its band').toBeGreaterThan(20);
-  const band = page.locator('.wl-strip .mkt-group-tiles').nth(longest.k);
-  const after = await band.evaluate(b => { b.scrollLeft = 300; return b.scrollLeft; });
-  expect(after, 'the row scrolls sideways').toBeGreaterThan(0);
-  const pageX = await page.evaluate(() => ({
-    scrollX: window.scrollX,
-    sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-  }));
-  expect(pageX, 'and the page itself never scrolls sideways').toEqual({ scrollX: 0, sideways: false });
-  await band.evaluate(b => { b.scrollLeft = 0; });
-
   // The wheel, where it can be driven. Chromium only: a mobile WebKit context has
   // no mouse wheel to dispatch (page.mouse.wheel does not scroll there), so on that
   // project the computed-style checks above carry the rule.
+  const band = page.locator('.wl-strip .mkt-group-tiles').nth(wide.indexOf(longest));
   if (browserName === 'chromium') {
     // A VERTICAL wheel over a band moves the PAGE. Measured from wherever hover()
     // left the page — it scrolls the band into view first, so an absolute
@@ -4247,12 +4341,11 @@ test('S42: watchlist bands scroll sideways, the page never does, and nothing is 
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => window.scrollY) - y0,
       'the vertical wheel scrolls the page, not the list').toBeGreaterThan(100);
-    expect(await band.evaluate(b => b.scrollLeft), 'and leaves the band where it was').toBe(0);
-    // A HORIZONTAL wheel over the same band moves the BAND, not the page.
+    // A HORIZONTAL wheel over the same band has nothing to move: not the band, not the page.
     await band.hover();
     await page.mouse.wheel(300, 0);
     await page.waitForTimeout(300);
-    expect(await band.evaluate(b => b.scrollLeft), 'the horizontal wheel scrolls the band').toBeGreaterThan(0);
+    expect(await band.evaluate(b => b.scrollLeft), 'a horizontal wheel moves no band').toBe(0);
     expect(await page.evaluate(() => window.scrollX), 'and never the page').toBe(0);
   }
 
@@ -4273,12 +4366,15 @@ test('S42: watchlist bands scroll sideways, the page never does, and nothing is 
   expect(errs, 'no page errors').toEqual([]);
 });
 
-/* S41 — each watchlist is ONE horizontal band: the list's name and controls in
-   a block on the left, its tiles in a single row to their right, the bands
-   stacked top to bottom. Owner request 2026-09-30 ("I need each of the watch list
-   to go back to displaying horizontal"), reversing the 2026-08-17 vertical-column
-   layout this scenario used to assert. */
-test('S41: each watchlist is one horizontal band, stacked above the charts', async ({ page, renderWitness }) => {
+/* S41 — each watchlist is ONE band: the list's name and controls in a block on
+   the left, its tiles in a grid to their right that WRAPS onto rows below when the
+   list is longer than the width, the bands stacked top to bottom. Owner request
+   2026-09-30 ("I need each of the watch list to go back to displaying
+   horizontal") reversed the 2026-08-17 vertical-column layout; the 2026-10-04
+   request ("cap the number of stocks to this widescreen to fit it … if there's any
+   excess, just create another watch list below it") replaced its single scrolling
+   row with the wrapping grid asserted here. */
+test('S41: each watchlist is one band — head on the left, tiles wrapping below — stacked above the charts', async ({ page, renderWitness }) => {
   renderWitness();
   // Sized to a DESK, not a phone: the head-beside-the-tiles arrangement is the
   // wide-screen design (under 640px it stacks head-over-tiles, asserted at the
@@ -4297,13 +4393,28 @@ test('S41: each watchlist is one horizontal band, stacked above the charts', asy
     const bands = groups.map(g => {
       const tiles = [...g.querySelectorAll('.wl-tile')];
       const head = rect(g.querySelector('.wl-band-head')), box = rect(g.querySelector('.mkt-group-tiles'));
+      // reading order in ROWS: tiles grouped by their line, each line left to right
+      const lines = [];
+      for (const t of tiles) {
+        const top = Math.round(rect(t).top);
+        let l = lines.find(x => Math.abs(x.top - top) < 3);
+        if (!l) { l = { top, tiles: [] }; lines.push(l); }
+        l.tiles.push(t);
+      }
       return {
-        n: tiles.length,
-        // ONE row: every tile of the band sits on the first tile's line. A wrapped
-        // or stacked band puts some of them on another.
-        oneRow: tiles.every(t => Math.abs(rect(t).top - rect(tiles[0]).top) < 2),
-        // and they run LEFT TO RIGHT
-        leftToRight: tiles.every((t, i) => i === 0 || rect(t).left > rect(tiles[i - 1]).left + 5),
+        n: tiles.length, rows: lines.length,
+        // every row runs LEFT TO RIGHT…
+        leftToRight: lines.every(l => l.tiles.every((t, i) => i === 0 || rect(t).left > rect(l.tiles[i - 1]).left + 5)),
+        // …every later row starts back at the FIRST row's left edge, one row lower…
+        rowsAligned: lines.every((l, i) => i === 0 || (Math.abs(rect(l.tiles[0]).left - rect(lines[0].tiles[0]).left) < 3 && l.top > lines[i - 1].top + 20)),
+        // …and every row but the last is FULL (a wrapped list fills a row before it starts the next)
+        fullRows: lines.every((l, i) => i === lines.length - 1 || l.tiles.length === lines[0].tiles.length),
+        perRow: lines[0].tiles.length,
+        tileW: Math.round(rect(tiles[0]).width),
+        // borders overlap by ONE pixel (`margin: 0 -1px -1px 0`), so a seam between
+        // tiles is a single line, not two — across a row and, on a wrapped band, down a row
+        seam: lines[0].tiles.length > 1 ? Math.abs(rect(lines[0].tiles[1]).left - rect(lines[0].tiles[0]).right + 1) : 0,
+        vseam: lines.length > 1 ? Math.abs(rect(lines[1].tiles[0]).top - rect(lines[0].tiles[0]).bottom + 1) : 0,
         left: Math.round(rect(g).left), width: Math.round(rect(g).width),
         top: rect(g).top, bottom: rect(g).bottom,
         // the head is a block to the LEFT of the tiles, level with them
@@ -4325,9 +4436,17 @@ test('S41: each watchlist is one horizontal band, stacked above the charts', asy
   });
 
   expect(shape.bands.length, 'every list renders').toBeGreaterThan(1);
-  expect(shape.bands.filter(b => !b.oneRow).length, 'every band is a single row of tiles').toBe(0);
   expect(shape.bands.filter(b => b.n > 1 && !b.leftToRight).length, 'tiles sit side by side, left to right').toBe(0);
-  expect(Math.max(...shape.bands.map(b => b.n)), 'including a long list, which does not wrap').toBeGreaterThan(20);
+  expect(shape.bands.filter(b => !b.rowsAligned).length, 'each further row starts back at the band\'s left edge, one row lower').toBe(0);
+  expect(shape.bands.filter(b => !b.fullRows).length, 'a row is filled before the next begins').toBe(0);
+  // The long list wraps (the excess goes BELOW, not off to the side); a short one is one row.
+  expect(Math.max(...shape.bands.map(b => b.n)), 'the demo has a long list').toBeGreaterThan(20);
+  expect(Math.max(...shape.bands.map(b => b.rows)), 'which wraps onto a second row instead of scrolling').toBeGreaterThanOrEqual(2);
+  expect(Math.min(...shape.bands.map(b => b.rows)), 'while a short list is a single row').toBe(1);
+  expect(shape.bands.filter(b => b.seam > 0.6 || b.vseam > 0.6).length,
+    'neighbouring tiles overlap by one pixel: a seam is one line, not two').toBe(0);
+  // One grid for every band: same column width, so lists line up with one another.
+  expect(new Set(shape.bands.map(b => b.tileW)).size, 'every band uses the same column width').toBe(1);
   // Bands STACK top to bottom, each the full width of the panel and lined up on
   // one left edge — not columns sitting side by side.
   expect(shape.bands.every((b, i) => i === 0 || b.top > shape.bands[i - 1].top + 20
@@ -4341,7 +4460,7 @@ test('S41: each watchlist is one horizontal band, stacked above the charts', asy
   expect(shape.wlBottom, 'watchlists sit above the charts panel').toBeLessThanOrEqual(shape.chartsTop);
   expect(shape.wlLeft, 'and share its left edge, both full-bleed').toBe(shape.chartsLeft);
   expect(shape.sideways, 'the page never scrolls sideways').toBe(false);
-  expect(shape.innerScroll, 'the panel runs at full length, no inner crop').toBe(false);
+  expect(shape.innerScroll, 'the panel runs at full length, no inner crop and nothing to scroll sideways').toBe(false);
 
   // The reorder controls now move a list UP or DOWN the stack, and must not
   // impersonate a back button — a bare ← on a button reads as navigation to
@@ -4355,8 +4474,8 @@ test('S41: each watchlist is one horizontal band, stacked above the charts', asy
   expect(moves.every(m => /^Move .+ (earlier|later)$/.test(m.label)), 'and keep their earlier/later labels').toBe(true);
 
   // Phone width: the page never scrolls sideways, the panel is never cropped, and
-  // the band keeps its one sideways-scrolling row — with its head now ABOVE the
-  // tiles (under 640px the band stacks, as it always did).
+  // the long list wraps into MORE rows (nothing scrolls) — with its head now ABOVE
+  // the tiles (under 640px the band stacks, as it always did).
   // See S4 — same `viewport-override` marker, same reason.
   test.info().annotations.push({ type: 'viewport-override', description: '390' });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -4367,13 +4486,15 @@ test('S41: each watchlist is one horizontal band, stacked above the charts', asy
     const groups = [...document.querySelectorAll('.wl-strip .mkt-group')];
     const first = groups[0];
     const box = first.querySelector('.mkt-group-tiles');
+    const rowsOf = g => new Set([...g.querySelectorAll('.wl-tile')].map(t => Math.round(rect(t).top))).size;
     return {
       sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       innerScroll: strip.scrollHeight > strip.clientHeight + 2,
       tiles: document.querySelectorAll('.wl-strip .wl-tile').length,
       headAbove: rect(first.querySelector('.wl-band-head')).bottom <= rect(box).top + 2,
-      oneRow: groups.every(g => { const t = [...g.querySelectorAll('.wl-tile')]; return t.every(x => Math.abs(rect(x).top - rect(t[0]).top) < 2); }),
-      rowScrolls: getComputedStyle(box).overflowX === 'scroll' && box.scrollWidth > box.clientWidth + 2,
+      rows: Math.max(...groups.map(rowsOf)),
+      boxOver: Math.max(...groups.map(g => { const b = g.querySelector('.mkt-group-tiles'); return b.scrollWidth - b.clientWidth; })),
+      tileInside: groups.every(g => { const b = rect(g.querySelector('.mkt-group-tiles')); return [...g.querySelectorAll('.wl-tile')].every(t => rect(t).right <= b.right + 2); }),
       stacked: groups.every((g, i) => i === 0 || rect(g).top >= rect(groups[i - 1]).bottom - 2),
     };
   });
@@ -4381,8 +4502,9 @@ test('S41: each watchlist is one horizontal band, stacked above the charts', asy
   expect(narrow.innerScroll, 'the panel is not cropped at phone width').toBe(false);
   expect(narrow.tiles, 'every tile still renders at phone width').toBeGreaterThan(0);
   expect(narrow.headAbove, 'under 640px the head stacks above its tiles').toBe(true);
-  expect(narrow.oneRow, 'tiles still never wrap at phone width').toBe(true);
-  expect(narrow.rowScrolls, 'the long list scrolls sideways inside its band').toBe(true);
+  expect(narrow.rows, 'the long list wraps into many rows at phone width').toBeGreaterThan(5);
+  expect(narrow.boxOver, 'and nothing in a band scrolls sideways there either').toBeLessThanOrEqual(1);
+  expect(narrow.tileInside, 'every tile sits inside its band').toBe(true);
   expect(narrow.stacked, 'bands still stack').toBe(true);
 });
 

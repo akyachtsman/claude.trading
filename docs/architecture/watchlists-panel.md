@@ -7,82 +7,104 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
   **Rendered as TILES, not a table** (owner request the same day, after seeing
   the table). The band/tile chrome is the shared `.mkt-group`/`.mkt-tile` CSS in
   `styles/layout.css`; `.wl-strip` widens it for a full-page panel.
-  **EACH LIST IS A HORIZONTAL BAND** (owner request 2026-09-30: "I need each of
-  the watch list to go back to displaying horizontal. I don't like the vertical
-  anymore."). Bands stack top to bottom, ONE per list, each the full width of the
-  panel; inside a band the head (list name + its controls) is a fixed 104px
-  block on the LEFT and the tiles run in ONE row to its right. **This WITHDRAWS
-  two earlier rulings**: 2026-08-17 ("each category is a COLUMN") and
-  2026-08-20 ("the columns are PAGED, not scrolled") — the pager existed only to
-  tame a column's vertical overflow and went with the columns. The layout is the
-  one the panel had from 2026-07-29 to 2026-08-17. The **markup never changed**
-  through any of it — `.mkt-group` > `.wl-band-head` + `.mkt-group-tiles` —
-  because drag-to-arrange, quick add, double-click removal, the detail window
-  and create/delete all hang off it; only the CSS axis flips.
+  **EACH LIST IS A BAND, AND A BAND NEVER SCROLLS SIDEWAYS** (owner requests
+  2026-09-30, "I need each of the watch list to go back to displaying horizontal.
+  I don't like the vertical anymore.", and 2026-10-04, "shrink the watch list as
+  much as possible, but keep all the data still intact. I want to cap the number
+  of stocks to this widescreen to fit it so I don't have to scroll back and forth.
+  And if there's any excess, just create another watch list below it so I can see
+  what I need to get rid of."). Bands stack top to bottom, ONE per list, each the
+  full width of the panel; inside a band the head (list name + its controls) is a
+  fixed 84px block on the LEFT and the tiles fill a GRID to its right whose rows
+  wrap: the tiles that fit the width make row one, **the excess is the next row
+  BELOW it** — the "other watch list underneath" — so a long list is seen,
+  counted and pruned in full. **This WITHDRAWS three earlier rulings**:
+  2026-08-17 ("each category is a COLUMN"), 2026-08-20 ("the columns are PAGED,
+  not scrolled") and 2026-07-29 (one row per list, scrolled sideways under an
+  always-visible bar; its 76px tile and the edge auto-scroll that serviced it).
+  The **markup never changed** through any of it — `.mkt-group` >
+  `.wl-band-head` + `.mkt-group-tiles` — because drag-to-arrange, quick add,
+  double-click removal, the detail window and create/delete all hang off it; only
+  the CSS display of the tile area changes.
+  The excess is NOT a second list in the roster: no write happens and
+  `desk_watchlists` is untouched; it is the same list drawn on further rows.
   Load-bearing, each with the failure it prevents:
-  - **The row never wraps and scrolls SIDEWAYS**: `.wl-strip .mkt-group-tiles` is
-    `flex-wrap: nowrap; overflow-x: scroll; overflow-y: hidden`. `scroll`, not
-    `auto`, so the 8px track is present even where a short list would fit and
-    bands do not change height as symbols come and go. The bar is styled ONLY by
-    the `::-webkit-scrollbar*` rules and the row carries **NO `scrollbar-width`**:
-    from Chrome 121 that property takes precedence over the pseudo-elements and
-    would switch the always-visible bar off (Firefox keeps its own overlay bar).
-    Playwright's headless Chromium hides scrollbars outright, so the reserved
-    track height is measurable in WebKit only; S42 probes whether the browser
-    draws one and says so when it cannot measure.
-  - **`overscroll-behavior-x: contain` is the ONLY overscroll rule on the page**,
-    the axis-scoped form, so a sideways swipe off the end of a band does not
-    trigger browser back-navigation. The shorthand and every `-y` form stay
-    banned (`CLAUDE.md` → *NEVER use `overscroll-behavior: contain`*): the row is
-    `overflow-y: hidden`, so a vertical wheel over a band has nothing to grab and
-    moves the PAGE — the owner's dead-wheel complaint of 2026-08-07 stays fixed.
-    S42 scans every stylesheet rule (including `@media`) and every inline style
-    for the shorthand and the `-y` longhand.
-  - **`.wl-tile` is `flex: 0 0 76px`**. In a ROW `flex-basis` is the tile's
-    WIDTH, so a fixed basis keeps the tile a fixed size while the band scrolls;
-    `flex: 0 0 auto` (the column-era value) would size every tile to its content.
-    It is 76, not the 66 it carried before 2026-08-17: the tile now measures
-    76 × 63 and the owner asked that it not be resized (2026-08-21, "try to not
-    resize the boxes", when the change pill grew to the price's size); S27 holds
-    it to ≤ 80. The column era's trap was the mirror image: in
-    a COLUMN the same basis set the HEIGHT and drew every tile 66px tall.
-  - **The empty-list placeholder** (`.wl-band-empty`) is a one-line, no-wrap row
-    one tile tall, so an empty band keeps its shape and stays a drop target.
-  - **Under 640px the band stacks**: head above the tiles, the tile row the full
-    width of the band and still scrolling sideways. The shared `.mkt-group` goes
-    to `flex-direction: column` there, where `flex: 1 1 0` on the tile row would
-    set a ZERO HEIGHT basis and collapse the band to its padding (Codex review,
-    PR #190), so the stacked block resets it to `flex: 0 0 auto`, and the head's
-    fixed 104px resets to its content height.
-  - **Drag: the slot is decided by X alone** (`wlDropIndex(zone, x)`); Y only
-    picks WHICH band (the drop zone under the pointer). A band is one row that
-    never wraps, and a comparison on Y as well counts every tile as passed the
-    moment the pointer sits on the row's own scrollbar — dropping at the END of the
-    list wherever you aimed (S26 holds the pointer at the row's bottom edge).
-  - **Drag: a long band auto-scrolls at its edges** (`wlAutoScroll`, `WL_EDGE_PX`
-    56, `WL_EDGE_MAX_STEP` 24; added after Codex's review of PR #294). The pointer
-    owns the drag, so the row's scrollbar cannot be used at the same time and, without
-    this, a tile could only be dropped among the slots already on screen. Holding the
-    pointer within 56px of a row's left/right edge scrolls it (faster nearer the edge)
-    until it runs out; `wlDragPaint` redraws the marker after every step because the
-    tiles move under a STILL pointer; the rAF loop runs only while the pointer sits in
-    an edge zone that can still scroll, is re-armed by every pointer move and is
-    cancelled in `wlDragEnd`. The keyboard path is Alt+←/→.
-    **The end of the row is measured WITHOUT the insertion marker** (second Codex
-    round): the marker is a 3px flex child of the scrolling row, so with it in place
-    the row can scroll 3px past its last tile, `wlDragPaint` removes it, the row clamps
-    back, the marker returns and "did it move?" passes again — a frame loop of DOM
-    mutation and layout that never ended at the boundary (measured: 56–60 child-list
-    mutations in 450ms while holding the pointer at the right edge). `wlAutoScroll`
-    clears the marker, reads `scrollWidth − clientWidth`, clamps its target to it and
-    stops when the target is within 1px of where the row already is, repainting the
-    marker on every path out. S26 holds the pointer at the end and asserts ZERO
-    mutations and no queued frame.
+  - **The tile area is a GRID, not a scroller**: `.wl-strip .mkt-group-tiles` is
+    `display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--wl-tile-w),
+    1fr)); overflow: visible; position: relative; padding: 0 1px 1px 0`, with
+    `--wl-tile-w: 60px` on `.wl-strip`. `auto-fill` packs as many columns as the
+    band's width holds and `1fr` shares the few leftover pixels evenly, so every
+    band has the SAME column width and its right edge is flush; a flex wrap would
+    stretch or ragged-end its last line. **There is no `overflow-x: scroll`, no
+    `::-webkit-scrollbar` rule and no `overscroll-behavior-x`** — nothing in a band
+    scrolls (S42), so the old 8px always-visible bar, the `scrollbar-width`
+    trap that disabled it from Chrome 121, and the back-navigation guard all went
+    with the row. (Do NOT write the max as a definite `minmax(60px, 80px)`:
+    `auto-fill` counts columns by the MAX when it is definite, so it would pack
+    fewer, wider columns.) `overflow: visible` and the 1px right/bottom padding pay
+    for the seam overlap below. The empty-list placeholder (`.wl-band-empty`)
+    spans every column (`grid-column: 1 / -1`) and keeps a tile's height so an empty
+    band is still a drop target.
+  - **`.wl-tile` is a grid item, 60px at its narrowest** (it was `flex: 0 0 76px`,
+    64px tall; it is ~62–66px wide and 57px tall now). Its `margin: 0 -1px -1px 0`
+    overlaps neighbouring borders so a seam is one line, not two; it is written at
+    THREE classes of specificity (`.wl-strip .mkt-group-tiles .wl-tile`) because the
+    shared `.mkt-tile + .mkt-tile { margin-left: -1px }` would otherwise pull only
+    the second tile of each row left. Padding is 3px, so a tile has 52px of usable
+    width.
+  - **The size is held by the TYPE, never by clipping.** `wlTile()` sets a length
+    tier from the formatted string, because CSS cannot branch on text length: the
+    price is 11px, `is-long` (>7 chars) 10px, `is-xlong` (>8) 9px, `is-xxlong` (>10)
+    8px; the change pill is 11px, `is-long` (>7 chars, `+100.50%`) 10px,
+    `is-xlong` (>8, `+1234.56%`) 8px; a ticker over 5 characters is `is-long` and
+    wraps (`overflow-wrap: anywhere`) rather than shrinking further. Plex Mono and
+    the usual fallbacks advance ~0.6em a character, so the arithmetic is: 8 chars at
+    10px = 46px, 10 chars at 9px = 51px, 12 at 8px = 54px, against 52. S27 builds
+    seven worst cases through `wlTile` itself and measures each against its own
+    tile. The EXT/CLOSE badge is an `inline-block; white-space: nowrap` at 6.5px
+    with the ticker's tracking trimmed to .02em: where ticker and badge do not
+    fit on one line the whole badge drops to the next line — it must never split
+    inside the word (`CLOS`/`E`, which `overflow-wrap: anywhere` did at 62px). One
+    wrapped badge makes its WHOLE grid row 8px taller (tiles stretch), which is why
+    the tracking and size were trimmed until `^GSPC CLOSE` and `BTC-USD EXT` fit.
+  - **The empty cells of a part-filled last row are part of the drop zone** (the
+    zone is the whole grid box); a pointer there, level with the last row, is
+    past every tile in it and drops at the END.
+  - **Under 640px the band stacks**: head above the tiles, the tile grid the full
+    width of the band and wrapping there too (four columns at 390px). The shared
+    `.mkt-group` goes to `flex-direction: column` there, where `flex: 1 1 0` on the
+    tile area would set a ZERO HEIGHT basis and collapse the band to its padding
+    (Codex review, PR #190), so the stacked block resets it to `flex: 0 0 auto`, and
+    the head's fixed 84px resets to its content height.
+  - **Drag: the slot is read in READING ORDER** (`wlDropIndex(zone, x, y)`): a tile
+    is "passed" when the pointer is below its row, or level with its row and past its
+    horizontal middle, and the slot is the number of LEADING tiles passed — so Y
+    picks the row and X the place along it, and a pointer below every row or past the
+    last tile is the end. (The single-row design decided the slot on X ALONE, because
+    a Y comparison counted every tile as passed once the pointer sat on the row's own
+    scrollbar; a wrapping band has no scrollbar and several rows, and X alone would
+    always answer with the first row.) Y still picks WHICH band, via the drop zone
+    under the pointer. S26 drops onto the third tile of a row, onto the first tile of
+    the SECOND row, and past the last tile.
+  - **Drag: the insertion marker is ABSOLUTE**, positioned by `wlDragPaint` with
+    `left/top/height` inside the tile area (`position: relative`): on the left edge
+    of the tile the drop would precede, or — past the last tile, or where the pointer
+    is still in the row above a tile that opens a new row — on the right edge of the
+    previous one. As a grid cell it would take a column and push the last tile of a
+    full row onto the next row at every pointer move; the old 3px flex child could
+    also nudge the row's scroll width, which is what made the edge auto-scroll loop
+    (now moot).
+  - **Gone with the row: the edge auto-scroll** (`wlAutoScroll`, `WL_EDGE_PX` 56,
+    `WL_EDGE_MAX_STEP` 24, the rAF loop in `wlDrag`, added after Codex's review of PR
+    #294). It existed because the pointer owns a drag and a row's scrollbar cannot be
+    used at the same time; a wrapping band has every slot on screen. S26 asserts
+    `typeof wlAutoScroll`/`WL_EDGE_PX` are `undefined`.
   - **Removed for good, not dormant**: `wlSyncPaging`, `attachPaging`, the ▲/▼
     `.wl-page-bar`/`.wl-page` footer and its CSS, the drag-rests-on-▼ stepping
     (`WL_DRAG_STEP_MS`, `wlDragStepAt`, `_wlStep`), the resize listener that
-    re-measured overflow, and the `max-height` caps on the column. S42 asserts no
-    pager markup and `typeof wlSyncPaging === 'undefined'`.
+    re-measured overflow, the `max-height` caps on the column, and (2026-10-04) the
+    sideways auto-scroll. S42 asserts no pager markup and
+    `typeof wlSyncPaging === 'undefined'`.
   The reorder controls are **`↑`/`↓`, NOT a bare `←`/`→`/`‹`**. The bands stack top
   to bottom, so up/down names the direction a list actually moves. (They were
   `«`/`»` from 2026-08-17 to 2026-09-30, when the lists sat side by side; before
@@ -101,8 +123,8 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
   out-of-flow arrangement (see below) rather than porting it.
   Every list renders at once, so **the bands ARE the navigation** and there are
   no tabs. A tile shows ticker / last / day-% pill; bid, ask, volume and the long
-  name move to its `title` tooltip rather than being dropped. A long price wraps
-  its pill to a second line.
+  name move to its `title` tooltip rather than being dropped. A long price steps down a
+  size tier (it never wraps and never clips).
   **This panel replaced the market strip** (owner ruling 2026-07-29). The strip
   was a left-column stack of the same labelled bands — Global & income, Macro,
   US sectors, Industry & metals, Treasuries — fed by `desk-market`. Once
@@ -115,13 +137,13 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
   it, as does the assistant's market context. With the strip's column freed,
   `.top-band > .col-markets` went 420 → 860px so Markets and Ask-the-desk split
   the row about evenly instead of leaving Ask stretched across dead space.
-  **The watchlist change pill reads at the PRICE's size** (`.wl-pct`, 9 → 12px,
-  owner request 2026-08-21: "bigger, but try to not resize the boxes"). It was
-  the smallest thing on a tile whose whole job is to show a move. The tile is
-  held at 76 × 63 by paying for the type out of the pill's own leading and side
-  padding — 9px at 1.3 is 11.7px tall, 12px at 1.05 is 12.6 — so the row grows
-  by **one pixel**, not four, and the widest real value still sits inside the
-  66px of usable width with nothing clipped (S27 guards exactly this).
+  **The watchlist change pill reads at the PRICE's size** (`.wl-pct`, owner
+  request 2026-08-21: "bigger, but try to not resize the boxes"). It was the
+  smallest thing on a tile whose whole job is to show a move. It was 12px on the
+  76px tile; at the 60px grid column of 2026-10-04 it is 11px beside the price's
+  11px, and a longer figure steps down a tier (`is-long`, `is-xlong`, above) so
+  the widest real value still sits inside the 52px of usable width with nothing
+  clipped (S27 guards exactly this, against worst cases built by `wlTile`).
   **`Radar` is the inbox list** (owner request 2026-07-30): the panel-header `+`
   routes every new symbol there rather than asking which list, and it is dragged
   onward from there. It is an ordinary row in `desk_watchlists` — nothing in the

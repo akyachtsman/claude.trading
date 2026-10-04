@@ -237,71 +237,62 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    .mkt-group in styles/layout.css and these rules only widen it for a full-width
    panel. Class-plus-class beats those single-class rules on specificity, so
    source order is irrelevant. */
-/* EACH LIST IS A HORIZONTAL BAND again (owner request 2026-09-30: "I need each
-   of the watch list to go back to displaying horizontal. I don't like the
-   vertical anymore."). That WITHDRAWS two rulings: the 2026-08-17 one that made
-   every category a COLUMN, and the 2026-08-20 one that PAGED the columns — the
-   pager existed only to tame a column's vertical overflow, so it went with the
-   columns it served.
+/* EACH LIST IS A BAND (owner request 2026-09-30: horizontal, not the vertical
+   columns of 2026-08-17..09-30) AND IT NEVER SCROLLS SIDEWAYS (owner request
+   2026-10-04: "shrink the watch list as much as possible, but keep all the data
+   still intact. I want to cap the number of stocks to this widescreen to fit it
+   so I don't have to scroll back and forth. And if there's any excess, just
+   create another watch list below it so I can see what I need to get rid of.").
+   That WITHDRAWS the 2026-07-29 ruling (one row per list, scrolled sideways, with
+   an always-visible bar) and the 76px tile that went with it.
+
    Bands stack top to bottom, ONE per list, every list still on screen at once
    (the bands ARE the navigation, there are still no tabs). Inside a band the
-   head (name + controls) sits in a fixed block on the LEFT and the tiles run
-   in ONE row to its right.
+   head (name + controls) sits in a fixed block on the LEFT and the tiles fill a
+   GRID to its right: `repeat(auto-fill, minmax(var(--wl-tile-w), 1fr))` packs as
+   many columns as the band's width holds and the EXCESS WRAPS onto further rows
+   BELOW — the "other watch list underneath" — so a long list is read, counted and
+   pruned in full instead of being dragged through a scrollbar. Uniform columns,
+   not a flex wrap: a flex row's last line stretches or ragged-ends, a grid's does
+   not.
    The band MARKUP never changed — .mkt-group > .wl-band-head + .mkt-group-tiles
    — so drag-to-arrange, quick add, double-click removal, the detail window and
-   the create/delete controls needed nothing; only the axis flipped back. */
-.wl-strip { display: flex; flex-direction: column; gap: 0; }
-/* ONE row per list (owner request 2026-07-29): tiles never wrap, the row scrolls
-   sideways instead, and the scrollbar is always visible so it is obvious there
-   is more list off-screen. `overflow-x: scroll` (not auto) keeps the track
-   present even when a short list would fit, so bands do not jump height as
-   symbols are added or removed. */
-/* NOTE: no `scrollbar-width` here, deliberately. From Chrome 121 that property
-   takes precedence and makes the ::-webkit-scrollbar rules below be IGNORED —
-   and those rules are the only way to force a persistent, space-reserving bar
-   instead of the overlay one macOS/Chrome fade out by default. Setting both
-   cancels the always-visible behaviour the owner asked for. Firefox has no
-   equivalent override and keeps its own overlay bar. */
-/* `overscroll-behavior-x` — the AXIS-SCOPED form, and only that one. A sideways
-   swipe that runs off the end of a band must not chain to the browser's
-   back-navigation gesture, and a long list makes that swipe easy to make by
-   accident. The shorthand `overscroll-behavior: contain` stays banned on this
-   page (CLAUDE.md): on a container with nothing to scroll it eats the mouse
-   wheel. Here the VERTICAL axis is left at its default — `overflow-y: hidden`
-   gives the wheel nothing to grab on this box — so a wheel over a band always
-   moves the PAGE, and only a horizontal gesture is contained. No `-y` form and
-   no shorthand, ever: S42 reads both axes off the computed style. */
+   the create/delete controls hang off it exactly as before; only the tile area's
+   display changed. */
+.wl-strip { --wl-tile-w: 60px; display: flex; flex-direction: column; gap: 0; }
+/* No `overflow-x: scroll`, no scrollbar rules, no `overscroll-behavior-x`: nothing
+   in a band scrolls any more (S42 asserts that, and still scans every rule for
+   the banned `overscroll-behavior` shorthand and any `-y` form). `overflow:
+   visible` is deliberate — the tiles' 1px border overlap (below) pokes one pixel
+   past the last column, which the box's own right/bottom padding pays for.
+   `position: relative` is the anchor of the absolutely placed drop marker. */
 .wl-strip .mkt-group-tiles {
-  max-width: none; flex-wrap: nowrap; overflow-x: scroll; overflow-y: hidden;
-  overscroll-behavior-x: contain; padding-bottom: 2px;
+  max-width: none; display: grid; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(var(--wl-tile-w), 1fr));
+  overflow: visible; position: relative; padding: 0 1px 1px 0;
 }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar { height: 8px; }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar-track { background: var(--color-bg); border-radius: 4px; }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb { background: var(--color-border-hover); border-radius: 4px; }
-.wl-strip .mkt-group-tiles::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
 /* Placeholder for a list with no symbols. Height is a tile's height so the
    band keeps its shape and stays a drop target; muted and italic so it never
-   reads as a ticker. One line, never wrapped: it is a row again, and a wrapped
-   placeholder would make an empty band taller than a full one. */
+   reads as a ticker. One line, never wrapped, and it spans EVERY column — in a
+   grid it would otherwise be squeezed into the first 60px cell. */
 .wl-band-empty {
-  display: flex; align-items: center;
-  min-height: 66px; padding: 0 var(--space-3);
+  display: flex; align-items: center; grid-column: 1 / -1;
+  min-height: 56px; padding: 0 var(--space-3);
   font-size: var(--font-xs); font-style: italic;
   color: var(--color-text-secondary); white-space: nowrap;
 }
-/* the band must be free to shrink, or a 41-tile row would stretch it instead */
+/* the band must be free to shrink: the grid's tracks come from the box's width */
 .wl-strip .mkt-group { align-items: stretch; }
 .wl-strip .mkt-group-tiles { flex: 1 1 0; min-width: 0; }
 /* Under 640px .mkt-group turns into a COLUMN (styles/layout.css): the head sits
-   above the tiles and the tile row takes the band's full width, still scrolling
-   sideways. In a column flex-basis governs HEIGHT, so the head's fixed 104px
-   block resets to its content height (see .wl-band-head below). */
+   above the tiles and the tile grid takes the band's full width and wraps there
+   too (at 390px: five columns). In a column flex-basis governs HEIGHT, so the
+   head's fixed block resets to its content height (see .wl-band-head below). */
 @media (max-width: 640px) {
   /* .mkt-group turns into a COLUMN here, so `flex: 1 1 0` above would set a
-     ZERO HEIGHT basis on the tile row instead of a width one — and because that
-     row is also an overflow container, its automatic minimum does not rescue
-     the tiles' height, collapsing the band to its padding and clipping every
-     tile (Codex review, PR #190). Height must come from content on mobile. */
+     ZERO HEIGHT basis on the tile area instead of a width one, collapsing the
+     band to its padding and clipping every tile (Codex review, PR #190). Height
+     must come from content on mobile. */
   .wl-strip .mkt-group-tiles { flex: 0 0 auto; }
 }
 
@@ -361,41 +352,55 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    ordered below the pill — which is a SIBLING of the wrapper — while the
    wrapper generated a box. Dissolving it promotes both to direct flex children
    of the tile, and `order` can then place all four. */
-/* `flex: 0 0 76px`: in a ROW flex-basis is the tile's WIDTH, so the tile has a
-   fixed usable width and the band scrolls sideways instead of squeezing it —
-   `flex: 0 0 auto` would size every tile to its own content. 76px, not the
-   66px this rule carried before the column layout: the tile measures 76 x 63
-   today (owner 2026-08-21: "try to not resize the boxes", see the pill note
-   below) and S27 holds it to <= 80.
-   (The column era's trap was the mirror image: there flex-basis set the HEIGHT,
-   so a 66px basis would have drawn every tile as a 66px-tall box.) */
-.wl-strip .wl-tile { flex: 0 0 76px; padding: 4px 5px; gap: 0; display: flex; flex-direction: column; align-items: stretch; }
+/* SHRUNK TO 60px (owner request 2026-10-04: "shrink the watch list as much as
+   possible, but keep all the data still intact" — it was 76px, 64px tall, with
+   the one-row scrolling band). The tile is now a GRID ITEM: its width is the
+   column the band's `auto-fill` grid gives it — never narrower than
+   `--wl-tile-w`, stretched evenly (at most a few px) so the band's right edge is
+   flush — not a `flex-basis`, so there is no `flex` shorthand here at all. What
+   holds the size down is what holds it up: nothing on the tile may be clipped,
+   so the TYPE steps down by string length (price and pill tiers below) instead
+   of the box growing, exactly as it did at 76px, one notch smaller. 60px leaves
+   52px of usable width (1px borders, 3px padding) and the worst real values
+   sit inside it: `700,000.00` (BRK.A) at the 9px tier is ~51px, `+100.50%` at
+   the 10px pill tier ~50px. S27 measures every value against its own tile.
+   The 1px negative right/bottom margin overlaps neighbouring borders so a seam is
+   one line, not two — the grid-era form of the old `.mkt-tile + .mkt-tile
+   { margin-left: -1px }`, which would have pulled only the SECOND tile of each
+   row left. Three classes, so it outranks that rule without leaning on source
+   order. */
+.wl-strip .mkt-group-tiles .wl-tile {
+  margin: 0 -1px -1px 0; padding: 3px; gap: 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: stretch;
+}
 .wl-strip .wl-vals { display: contents; }
-.wl-strip .mkt-name { order: 1; font-size: 9px; }
-.wl-strip .mkt-last { order: 2; font-size: 12px; line-height: 1.15; }
-/* The change pill reads at the PRICE's size, not two steps under it (owner
-   request 2026-08-21: "bigger, but try to not resize the boxes"). 9px was the
-   smallest thing on a tile whose whole job is to show a move. The tile is held
-   at its existing 76 x 63 by paying for the 3px of type out of the pill's own
-   leading and side padding — 9px at 1.3 is 11.7px tall, 12px at 1.05 is 12.6,
-   so the row grows by one pixel rather than four, and the widest real value
-   (-24.21%) still sits inside the 66px of usable tile width. */
-.wl-strip .wl-pct { order: 3; align-self: flex-start; font-size: 12px; line-height: 1.05; padding: 0 3px; }
+.wl-strip .mkt-name { order: 1; font-size: 8px; letter-spacing: .02em; }
+.wl-strip .mkt-last { order: 2; font-size: 11px; line-height: 1.15; }
+/* The change pill keeps the PRICE's size (owner request 2026-08-21: "bigger") —
+   11px beside the price's 11px; the 12px it had was the cost of the 76px tile.
+   A longer figure steps down a tier like the price does — see wlTile(), which
+   sets the classes by string length: +100.50% is 8 characters, +1,234.56%
+   is 10. Four tiers of the same idea, one per size, none of them a clip. */
+.wl-strip .wl-pct { order: 3; align-self: flex-start; font-size: 11px; line-height: 1.05; padding: 0 2px; }
+.wl-strip .wl-pct.is-long { font-size: 10px; letter-spacing: -.02em; }
+.wl-strip .wl-pct.is-xlong { font-size: 8px; letter-spacing: -.03em; }
 .wl-strip .wl-spark { order: 4; display: block; width: 100%; margin-top: 2px; opacity: .9; }
-/* Full tile width now, not a fixed 48px. The SVG carries a viewBox (sparkline()
-   in app.js), so it scales cleanly — the line is actually more legible at 66px
-   wide than it was at 48 inside the old 132px tile. */
-.wl-strip .wl-spark svg { display: block; width: 100%; height: 15px; }
+/* Full tile width; the SVG carries a viewBox (sparkline() in app.js), so it
+   scales cleanly. 13px tall (was 15) — the line is context, the number is the
+   answer, and a band that now wraps pays for every pixel twice. */
+.wl-strip .wl-spark svg { display: block; width: 100%; height: 13px; }
 /* Long values step down one size rather than clipping — see the note in
    wlTile(), which sets these classes by string length. A clipped price would be
    a wrong price. */
-/* Two tiers, not one, and sized for HEADROOM rather than to just fit. The
-   single 10px tier was verified in a sandbox where the IBM Plex webfont could
-   not load, so it was measured against fallback metrics — CI, with the real
-   font, still clipped. A 9-character price like 23,104.88 needs more than a
-   1px margin at 66px, so the longest values step down again. */
+/* Three tiers, sized for HEADROOM rather than to just fit. A single tier was
+   once verified in a sandbox where the IBM Plex webfont could not load, so it
+   was measured against fallback metrics — CI, with the real font, still
+   clipped. Plex Mono and the usual fallbacks all advance ~0.6em a character, so
+   the arithmetic is: usable 54px; 8 chars at 10px = 46; 9 at 9px = 46; 10 at
+   9px = 51; 11-12 at 8px = 49-54. */
 .wl-strip .mkt-last.is-long { font-size: 10px; letter-spacing: -.02em; }
 .wl-strip .mkt-last.is-xlong { font-size: 9px; letter-spacing: -.03em; }
+.wl-strip .mkt-last.is-xxlong { font-size: 8px; letter-spacing: -.04em; }
 /* Last-resort guard: even if a value still overruns, it must not paint over the
    tile's neighbour — the box clips instead, which S27 then catches as a real
    finding rather than letting it bleed silently across the band. */
@@ -420,15 +425,24 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    overflow, whatever the typeface does, so `scrollWidth > clientWidth` is
    impossible here by construction instead of by a size that happens to fit.
    Costs one line of height on the few tiles with a long ticker AND a session
-   badge (BTC-USD EXT); the owner accepted extra height for width. */
+   badge (BTC-USD EXT) — and in a grid every tile in that row is as tall as the
+   tallest, so one such tile makes its whole row one line taller; the owner
+   accepted extra height for width. */
 .wl-strip .mkt-name.is-long { font-size: 8px; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
-/* The EXT/CLOSE badge shares the ticker line, so it tightens to match. */
-.wl-strip .wl-mark { font-size: 7px; padding: 0 1px; margin-left: 2px; letter-spacing: 0; }
+/* The EXT/CLOSE badge shares the ticker line, so it tightens to match. It is an
+   inline-block that does NOT wrap: where ticker + badge do not fit on one line
+   the whole badge drops to the next line, instead of the line breaking inside
+   the word (`CLOS` / `E`) the way `overflow-wrap: anywhere` would split it at
+   60px. The tracking is trimmed to .02em and the badge to 6.5px so ^GSPC +
+   CLOSE and BTC-USD + EXT still share one line (measured: at .05em / 7px each
+   wrapped, and one wrapped badge makes its WHOLE grid row 8px taller). */
+.wl-strip .wl-mark { display: inline-block; white-space: nowrap; font-size: 6.5px; padding: 0; margin-left: 1px; letter-spacing: 0; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
 /* ── quick add / hold-to-remove (owner request 2026-07-30) ─────────────────
    The list name and its controls share the band's LEFT block. It is a fixed
-   104px (the bare label's old 78px widened to fit the controls); the label
+   84px (104px until 2026-10-04, when the tiles shrank and the band's width went
+   to them; the three 18px controls need ~58px); the label
    inside gives up its own flex-basis so a long name still wraps rather than
    shoving the controls out of view.
    Scoped under .wl-strip so these two-class rules outrank the shared
@@ -436,7 +450,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 /* CONTROLS ON TOP, NAME BENEATH, packed tight (owner report 2026-08-20: "a lot
    of wasted space in the heading of watchlist — put the name below the little
    icons and compact it as much as possible"). That report was made against the
-   column layout; it holds in the band's 104px block just as well, where three
+   column layout; it holds in the band's head block just as well, where three
    18px controls and a name cannot share a line either, so something wraps
    whatever the order. Putting the CONTROLS first means what wraps is the name,
    which reads fine on its own line and is the only item that can use the full
@@ -451,10 +465,10 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    two lines sit centred in the band (`align-content`, because the head is
    stretched to the band's height and a wrapped flex container would otherwise
    spread its lines apart to fill it).
-   `flex: 0 0 104px` is a WIDTH here — the band is a row — and is reset to the
+   `flex: 0 0 84px` is a WIDTH here — the band is a row — and is reset to the
    content height in the stacked mobile block below. */
 .wl-strip .wl-band-head {
-  flex: 0 0 104px; display: flex; flex-wrap: wrap; align-items: center; align-content: center;
+  flex: 0 0 84px; display: flex; flex-wrap: wrap; align-items: center; align-content: center;
   gap: 1px 2px; min-width: 0;
 }
 .wl-strip .wl-band-head .wl-move, .wl-strip .wl-band-head .wl-del { order: 1; }
@@ -568,8 +582,12 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .wl-tile.wl-armed { touch-action: none; outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
 body.wl-drag-active { cursor: grabbing; }
 body.wl-drag-active .wl-tile { cursor: grabbing; }
+/* Placed by wlDragPaint with left/top/height — ABSOLUTE, so it takes no grid cell
+   and can never push a tile onto the next row (the 3px flex child of the
+   single-row era could, and made the end-of-row autoscroll loop). The tile area
+   is its `position: relative` anchor. */
 .wl-drop-marker {
-  flex: 0 0 auto; width: 3px; align-self: stretch; min-height: 26px;
+  position: absolute; width: 3px; z-index: 2; pointer-events: none;
   background: var(--color-accent-bright); border-radius: 2px;
 }
 

@@ -883,6 +883,7 @@ function wlTile(r, pending) {
   const last = el('span', 'mkt-last', px);
   if (px && px.length > 7) last.classList.add('is-long'); /* see the note above */
   if (px && px.length > 8) last.classList.add('is-xlong');
+  if (px && px.length > 10) last.classList.add('is-xxlong');
   row.appendChild(last);
   /* The line is coloured by the DAY's direction so it agrees with the pill
      below it; a green line over a red pill would be two answers to one
@@ -896,7 +897,15 @@ function wlTile(r, pending) {
   tile.appendChild(row);
 
   if (r.pct != null) {
-    tile.appendChild(el('span', (r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' wl-pct', fmtPct(r.pct)));
+    /* The same length tiers as the price (60px grid column, 2026-10-04): the pill is
+       11px for the usual "+0.54%" / "-24.21%", 10px from 8 characters
+       ("+100.50%") and 8px from 9 ("+1,234.56%"). A figure never clips and the
+       box never grows to hold it. */
+    const pt = fmtPct(r.pct);
+    const pill = el('span', (r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' wl-pct', pt);
+    if (pt.length > 7) pill.classList.add('is-long');
+    if (pt.length > 8) pill.classList.add('is-xlong');
+    tile.appendChild(pill);
   }
 
   /* Bid/ask/volume/name lost their columns in the tile layout. They stay
@@ -941,7 +950,7 @@ const WL_DRAG_SLOP = 6;
    is what they objected to, and removal still goes through a dialog. */
 const WL_TOUCH_ARM_MS = 300;
 
-const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null, raf: 0, x: 0, y: 0, zone: null };
+const wlDrag = { on: false, armed: 0, sym: null, from: null, ghost: null, tile: null, marker: null, x: 0, y: 0, zone: null };
 
 /* Transient feedback for a drag that could not be committed. The staging row
    that used to carry this is gone (owner ruling 2026-07-31), so it borrows the
@@ -971,21 +980,22 @@ function wlEnsureManual() {
 
 const wlDropZones = () => [...document.querySelectorAll('.mkt-group-tiles[data-band], #wlTrash')];
 
-/* Which slot the pointer is over: a tile counts as "already passed" once the
-   pointer is past its horizontal middle. A band is ONE row that never wraps, so
-   the index is decided on the X axis alone — the Y axis only picks WHICH band
-   (the drop zone under the pointer, in wlDragMove/wlDragEnd). A comparison on Y
-   as well would count every tile as passed the moment the pointer sat over the
-   row's own scrollbar, dropping at the end of the list wherever you aimed.
-   Rects are read in viewport coordinates, as is the pointer, so a row scrolled
-   sideways needs no correction: tiles scrolled off to the left are simply
-   before it, and tiles off to the right are after it. */
-function wlDropIndex(zone, x) {
+/* Which slot the pointer is over, in READING ORDER over a band that wraps (owner
+   request 2026-10-04: a band is a grid of rows now, no longer ONE row scrolled
+   sideways — the old comment that this was decided on X alone, and why, is
+   retired with the row it was true of). A tile counts as "already passed" when
+   the pointer is below its row, or level with its row and past its horizontal
+   middle; the first tile that is not passed ends the count, so the slot is the
+   number of leading tiles passed. Y is therefore decisive between rows and X
+   within one — a pointer in the gap or the padding below the last row has
+   passed every tile and drops at the END. Rects and the pointer are both in
+   viewport coordinates; nothing in a band scrolls, so no correction is needed. */
+function wlDropIndex(zone, x, y) {
   const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
   let i = 0;
   for (const t of tiles) {
     const r = t.getBoundingClientRect();
-    if (x > r.left + r.width / 2) i++;
+    if (y >= r.bottom || (y >= r.top && x > r.left + r.width / 2)) i++;
     else break;
   }
   return i;
@@ -998,8 +1008,10 @@ function wlClearMarker() {
 }
 
 /* Paint the drop feedback for a pointer at (x, y): the band under it lights up and the
-   insertion marker goes where a drop there would land. Also called from the edge
-   auto-scroll below, because scrolling a row moves its tiles under a STILL pointer. */
+   insertion marker goes where a drop there would land — on the LEFT edge of the tile the
+   dragged one would take the place of, or, past the last tile of a row, on that tile's
+   right edge. The marker is positioned absolutely inside the tile area, so it never takes
+   a grid cell and can never push a tile onto another row. */
 function wlDragPaint(x, y) {
   wlClearMarker();
   const under = document.elementFromPoint(x, y);
@@ -1008,43 +1020,29 @@ function wlDragPaint(x, y) {
   if (!zone) return;
   zone.classList.add('wl-drop-over');
   if (zone.id === 'wlTrash') return;
-  const at = wlDropIndex(zone, x);
-  const mark = el('div', 'wl-drop-marker');
+  const at = wlDropIndex(zone, x, y);
   const tiles = [...zone.querySelectorAll('.wl-tile')].filter(t => t !== wlDrag.tile);
-  zone.insertBefore(mark, tiles[at] || null);
+  const mark = el('div', 'wl-drop-marker');
+  const zr = zone.getBoundingClientRect();
+  const next = tiles[at], prev = tiles[at - 1];
+  /* Slot `at` is "before `next`" — which, where `next` opens a new row, is also "after
+     `prev`" at the end of the row above. The two draw in different places, so the
+     POINTER decides: level with (or below) `next`'s row it is the left edge of `next`;
+     still up in `prev`'s row it is the right edge of `prev`; past the last tile it is
+     always the right edge of the last one. */
+  let ref = next, edge = 'left';
+  if (prev && (!next || (next.getBoundingClientRect().top > prev.getBoundingClientRect().top + 1
+      && y < next.getBoundingClientRect().top))) { ref = prev; edge = 'right'; }
+  if (ref) {
+    const rr = ref.getBoundingClientRect();
+    mark.style.left = (Math.round((edge === 'left' ? rr.left : rr.right) - zr.left - 1) - zone.clientLeft) + 'px';
+    mark.style.top = (Math.round(rr.top - zr.top) - zone.clientTop) + 'px';
+    mark.style.height = Math.round(rr.height) + 'px';
+  } else {
+    mark.style.left = '0px'; mark.style.top = '0px'; mark.style.height = '56px';   /* an empty band */
+  }
+  zone.appendChild(mark);
   wlDrag.marker = mark;
-}
-
-/* A band is wider than its row once a list is long, and the pointer owns the drag — the
-   scrollbar cannot be used at the same time — so without help a tile could only ever be
-   dropped among the slots already on screen. Holding the pointer within WL_EDGE_PX of a
-   row's left or right edge scrolls it, faster the closer to the edge, until it runs out
-   (Codex review, PR #294). One rAF loop, running only while the pointer sits in an edge
-   zone that can still scroll; every pointer move re-arms it. */
-const WL_EDGE_PX = 56, WL_EDGE_MAX_STEP = 24;
-function wlAutoScroll() {
-  const d = wlDrag;
-  d.raf = 0;
-  const zone = d.zone;
-  if (!d.on || !zone || zone.id === 'wlTrash') return;
-  const r = zone.getBoundingClientRect();
-  const left = 1 - Math.min(1, Math.max(0, d.x - r.left) / WL_EDGE_PX);    /* 0 outside the left edge zone, →1 at the edge */
-  const right = 1 - Math.min(1, Math.max(0, r.right - d.x) / WL_EDGE_PX);
-  const push = right - left;
-  if (!push) return;
-  /* Measure the row WITHOUT the insertion marker. It is a 3px flex child, so with it in place
-     the row can scroll 3px past its last tile; wlDragPaint then removes it, the row clamps
-     back, the marker returns and "did it move?" passes again — a frame loop that never ends
-     at the boundary (Codex review, PR #294). The end is decided here, from the tiles alone,
-     and wlDragPaint puts the marker back on every path out. */
-  wlClearMarker();
-  const before = zone.scrollLeft;
-  const max = Math.max(0, zone.scrollWidth - zone.clientWidth);
-  const to = Math.min(max, Math.max(0, before + Math.sign(push) * Math.max(1, Math.round(Math.abs(push) * WL_EDGE_MAX_STEP))));
-  if (Math.abs(to - before) < 1) { wlDragPaint(d.x, d.y); return; }   /* at the end: stop until the pointer moves again */
-  zone.scrollLeft = to;
-  wlDragPaint(d.x, d.y);
-  d.raf = requestAnimationFrame(wlAutoScroll);
 }
 
 function wlDragMove(ev) {
@@ -1052,20 +1050,19 @@ function wlDragMove(ev) {
   wlDrag.x = ev.clientX; wlDrag.y = ev.clientY;
   wlDrag.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
   wlDragPaint(ev.clientX, ev.clientY);
-  if (!wlDrag.raf) wlDrag.raf = requestAnimationFrame(wlAutoScroll);
 }
 
 function wlDragEnd(ev, cancelled) {
   const d = wlDrag;
   clearTimeout(d.armed);
-  cancelAnimationFrame(d.raf); d.raf = 0; d.zone = null;
+  d.zone = null;
   if (!d.on) { d.sym = null; d.tile = null; return; }
   /* A drop still delivers a `click` to the tile it started from. Without this
      stamp, arranging the panel would open a detail window on every drop. */
   wlDragClickAt = Date.now();
   const under = cancelled ? null : document.elementFromPoint(ev.clientX, ev.clientY);
   const zone = under && under.closest('.mkt-group-tiles[data-band], #wlTrash');
-  const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX) : 0;
+  const at = zone && zone.id !== 'wlTrash' ? wlDropIndex(zone, ev.clientX, ev.clientY) : 0;
   wlClearMarker();
   if (d.ghost) d.ghost.remove();
   if (d.tile) d.tile.classList.remove('wl-dragging');
