@@ -101,8 +101,14 @@ Where the roster lives (`desk_watchlists`), the version-guarded replace-all (`de
     `deskSetWatchlists` directly, not through `wlMutate`), so it takes the same turn (Codex, third round):
     refused while any other write is in flight ("Another roster change is being saved" in the editor), and
     counted in `wlInFlight` itself so a split, a drop or a dialog started meanwhile is refused. (Its long-lived
-    DRAFT going stale is the designed case the version guard answers with the in-place reload.) S61 asserts both
-    orderings and the editor (eleven mutants).
+    DRAFT going stale is the designed case the version guard answers with the in-place reload.) **A drop
+    (`wlCommitMove`) and a band move (`wlMoveBand`) take the same turn** (Codex, fourth round: the editor can be
+    dismissed with Escape or the backdrop while its save is still pending, which leaves the panel interactive
+    with a write in flight that `wlSplitting` knows nothing about): both call `wlMoveRefused()` — a split keeps
+    its own wording, anything else in flight says "Another roster change is being saved" — so a second move
+    pressed while the first is still saving is refused with that note rather than racing it (the drop's ghost
+    is already cleaned up; nothing is written). S61 asserts both orderings, the editor and the two move entry
+    points against it (fourteen mutants).
   - `wlSplitting` stops a second press while a write is in flight; the repaint
     inside `wlMutate` draws the new buttons while it is still set, so
     `wlSplitBand` re-syncs once more in its `finally` (otherwise the NEW list's own

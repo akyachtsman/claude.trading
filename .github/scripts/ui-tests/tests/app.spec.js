@@ -8245,6 +8245,16 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
     await wlSplitBand(0, 'Radar', document.querySelector('#wlStrip .wl-split:not([hidden])'));
     out.splitNote = document.getElementById('wlNote').textContent;
     openWlQuickAdd(0, 'Radar', null); out.quick = !document.getElementById('wlQuickBackdrop').hidden;
+    // (c) ...and a drop and a band move (Codex, PR #307, fourth round): the editor can be dismissed while its save is pending, leaving the panel
+    // interactive, so the two move entry points honour the shared guard too — not only `wlSplitting`
+    document.getElementById('wlNote').textContent = '';
+    const w0 = (window.__rosterWrites || []).length;
+    await wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');
+    out.dropNote = document.getElementById('wlNote').textContent;
+    document.getElementById('wlNote').textContent = '';
+    await wlMoveBand(0, 1);
+    out.bandNote = document.getElementById('wlNote').textContent;
+    out.moveWrites = (window.__rosterWrites || []).length - w0;
     await sv;
     out.after = [wlInFlight, wlBusy, wlSplitting];
     return out;
@@ -8255,6 +8265,9 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   expect(editor.counted, 'an editor save in flight is counted').toBe(1);
   expect(editor.splitNote, 'so a split pressed meanwhile is refused').toContain('Another roster change is being saved');
   expect(editor.quick, 'and so is a dialog').toBe(false);
+  expect(editor.dropNote, 'a drop pressed while the save is out is refused, and says why').toContain('Another roster change is being saved');
+  expect(editor.bandNote, 'as is a band move').toContain('Another roster change is being saved');
+  expect(editor.moveWrites, 'and neither writes').toBe(0);
   expect(editor.after, 'and the guard is released afterwards').toEqual([0, false, false]);
 
   // ── 7. the desk keeps at most 50 lists: refuse, say why, write nothing ──────

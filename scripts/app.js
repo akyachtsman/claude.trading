@@ -1156,6 +1156,15 @@ const saveWlLock = () => {
   try { localStorage.setItem(WL_LOCK_KEY, wlLocked ? '1' : '0'); } catch { /* private mode */ }
 };
 
+/* A band move and a drop are roster writes like any other, so they take the same turn (Codex, PR #307, fourth round: the editor's save can be
+   dismissed with Escape while its RPC is still pending, leaving the panel interactive with a write in flight that `wlSplitting` knows nothing
+   about). `wlWriting()` covers a split, a dialog's write, the editor's save and another move; a split keeps its own wording. */
+function wlMoveRefused() {
+  if (wlSplitting) { wlNote('A split is being saved — try again in a moment'); return true; }
+  if (wlWriting()) { wlNote(WL_SAVING); return true; }
+  return false;
+}
+
 /* Move a whole list one place. Splices inside wlMutate's callback, so the read
    and the write are ONE atomic replace-all against the authoritative roster —
    never a patch of the rendered payload, which omits unresolved symbols and can
@@ -1164,7 +1173,7 @@ const saveWlLock = () => {
    row. */
 async function wlMoveBand(idx, delta) {
   if (wlLocked) { wlNote('Arrangement is locked'); return; }
-  if (wlSplitting) { wlNote('A split is being saved — try again in a moment'); return; }
+  if (wlMoveRefused()) return;
   const cur = (wlState.payload && wlState.payload.lists) || [];
   const title = cur[idx] && cur[idx].title;
   if (title == null) return;
@@ -1188,7 +1197,7 @@ async function wlCommitMove(from, to, sym) {
      lesson as the scheduled-ask floor, which only held once it moved out of the
      input handler and into the save. */
   if (wlLocked && to.band !== 'trash') { wlNote('Arrangement is locked'); return; }
-  if (wlSplitting) { wlNote('A split is being saved — try again in a moment'); return; }
+  if (wlMoveRefused()) return;
   if (from.band === to.band && to.band !== 'trash' && from.idx === to.idx) return;   /* dropped where it started */
 
   const res = await wlMutate(lists => {
