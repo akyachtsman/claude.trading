@@ -1213,6 +1213,136 @@ async function wlCommitMove(from, to, sym) {
   if (!res.ok && res.err) wlNote(res.err);
 }
 
+/* ── split the excess into a real list (owner request 2026-10-05) ──────────────
+   A band wraps onto rows below when it holds more than one row of tiles (owner
+   request 2026-10-04); this makes that excess a LIST of its own — saved, named,
+   draggable and deletable like any other — so "what I need to get rid of" can be
+   looked at, pruned or kept apart. It is an ACTION, never automatic: how many
+   tiles fit a row depends on the screen being used (26 at 1822px, 5 on a phone),
+   and a split that ran at render time would let a phone carve the owner's
+   roster into five-tile pieces. The count is read off the layout THIS tab is
+   showing, at the moment of the click — "this widescreen", as asked.
+
+   What moves is the tiles DRAWN below the first row, by symbol, in drawn order;
+   saved symbols that drew nothing (a typo, no quote) stay where they are. The new
+   list goes directly after its source, named "<name> 2" (a trailing number on a
+   list whose base exists is replaced, so "Radar 2" splits into "Radar 3", never
+   "Radar 2 2"), and the whole thing is ONE wlMutate replace-all. */
+const WL_MAX_LISTS = 50;   /* desk_014: 'too many lists (max 50)'; titles are cut at 60 */
+/* Offered only where a row holds at least this many tiles. The cut is read off the
+   screen in use, so on a phone (4 a row) one tap of "Split off 56" would carve the
+   owner's roster into slivers they never asked for; a widescreen is what the
+   request was about, and a laptop or a tablet held sideways still clears it. */
+const WL_SPLIT_MIN_ROW = 12;
+let wlSplitting = false;
+
+function wlRowCapacity(box) {
+  const tiles = box.querySelectorAll('.wl-tile');
+  if (!tiles.length) return { cap: 0, total: 0 };
+  /* offsetTop, not a bounding rect: whole pixels, relative to the band (it is
+     `position: relative`), and every tile of a row shares one. */
+  const top0 = tiles[0].offsetTop;
+  let cap = 0;
+  while (cap < tiles.length && tiles[cap].offsetTop === top0) cap++;
+  return { cap, total: tiles.length };
+}
+
+function wlSplitTitle(titles, title) {
+  const norm = x => String(x || '').trim().toLowerCase();
+  const have = new Set(titles.map(norm));
+  let base = String(title).trim();
+  const m = /^(.*\S)\s+\d+$/.exec(base);
+  if (m && have.has(norm(m[1]))) base = m[1];
+  for (let n = 2; ; n++) {
+    const suffix = ' ' + n;
+    const t = base.slice(0, 60 - suffix.length).trimEnd() + suffix;
+    if (!have.has(norm(t))) return t;
+  }
+}
+
+/* Reveal the button on every band that wraps, with its count, and keep the
+   label, the tooltip and the lock in step. Reads layout, so it runs after the
+   strip is built and again when the strip's WIDTH changes (a ResizeObserver,
+   below) — a band that fits one row on a widescreen wraps on a laptop. */
+function wlSyncSplit() {
+  const titles = (((wlState.payload && wlState.payload.lists) || []).map(l => l.title));
+  document.querySelectorAll('#wlStrip .mkt-group').forEach(group => {
+    const btn = group.querySelector('.wl-split');
+    const box = group.querySelector('.mkt-group-tiles');
+    if (!btn || !box) return;
+    const { cap, total } = wlRowCapacity(box);
+    const excess = total - cap;
+    btn.hidden = !(cap >= WL_SPLIT_MIN_ROW && excess > 0);
+    if (btn.hidden) { btn.dataset.excess = ''; return; }
+    const title = group.getAttribute('aria-label') || '';
+    const next = wlSplitTitle(titles, title);
+    btn.dataset.excess = String(excess);
+    btn.textContent = 'Split off ' + excess;
+    btn.disabled = wlLocked || wlSplitting;
+    btn.setAttribute('aria-label', 'Move the ' + excess + ' stocks that do not fit on the first row of ' + title + ' into a new list, ' + next);
+    btn.title = wlLocked
+      ? 'Unlock the arrangement to split “' + title + '”'
+      : 'Move the ' + excess + ' that do not fit this row into a new list, “' + next + '”';
+  });
+}
+
+async function wlSplitBand(idx, title, btn) {
+  /* Enforced HERE as well as on the button: a disabled control is a hint, the
+     keyboard path and a stale render reach this function directly (the same
+     reason wlCommitMove and wlMoveBand carry their own check). */
+  if (wlLocked) { wlNote('Arrangement is locked'); return; }
+  if (wlSplitting || wlBusy) return;
+  const group = btn ? btn.closest('.mkt-group') : document.querySelectorAll('#wlStrip .mkt-group')[idx];
+  const box = group && group.querySelector('.mkt-group-tiles');
+  if (!box) return;
+  const { cap } = wlRowCapacity(box);
+  const syms = [...box.querySelectorAll('.wl-tile')].slice(cap).map(t => t.dataset.sym);
+  if (!cap || !syms.length) { wlNote('Everything fits on one row'); return; }
+  if (cap < WL_SPLIT_MIN_ROW) { wlNote('Open this on a wider screen to split — a row here holds only ' + cap); return; }
+
+  wlSplitting = true;
+  if (btn) btn.disabled = true;
+  let made = '', moved = 0, why = '';
+  try {
+    const res = await wlMutate(lists => {
+      const src = wlPick(lists, idx, title);
+      if (!src) { why = 'That list changed — try again'; return false; }
+      if (lists.length >= WL_MAX_LISTS) { why = 'The desk keeps at most ' + WL_MAX_LISTS + ' lists — delete one first'; return false; }
+      const held = new Set(src.symbols);
+      const mv = syms.filter(sym => held.has(sym));
+      if (!mv.length) { why = 'That list changed — try again'; return false; }
+      const gone = new Set(mv);
+      src.symbols = src.symbols.filter(sym => !gone.has(sym));
+      made = wlSplitTitle(lists.map(l => l.title), src.title);
+      lists.splice(lists.indexOf(src) + 1, 0, { title: made, symbols: mv });
+      moved = mv.length;
+      return true;
+    });
+    if (res.ok) wlNote('Moved ' + moved + ' to “' + made + '”');
+    else if (res.err || why) wlNote(res.err || why);
+  } finally {
+    /* The repaint inside wlMutate ran while this was still true, so every button
+       it drew came up disabled; one more sync now that the write is over. */
+    wlSplitting = false;
+    wlSyncSplit();
+  }
+}
+
+/* A band's wrap depends on the strip's width, so the buttons follow it. Only a
+   WIDTH change matters (the strip's height changes with every repaint), which
+   also keeps this from re-triggering itself. */
+(function wlWatchSplit() {
+  const strip = document.getElementById('wlStrip');
+  if (!strip || typeof ResizeObserver !== 'function') return;
+  let w = strip.clientWidth, t = 0;
+  new ResizeObserver(() => {
+    if (strip.clientWidth === w) return;
+    w = strip.clientWidth;
+    clearTimeout(t);
+    t = setTimeout(wlSyncSplit, 60);
+  }).observe(strip);
+})();
+
 /* Pointer wiring. Kept off the tile's own click/dblclick handlers entirely:
    a drag only begins after WL_DRAG_SLOP of movement (or a rested finger), so
    the double-click removal path is untouched. */
@@ -1410,6 +1540,16 @@ function renderWatchlist(payload, lamp) {
         : 'Delete “' + l.title + '”';
       del.addEventListener('click', () => openWlDelList(li, l.title, del));
       head.appendChild(del);
+      /* "Split off N": move what does not fit on the first row into a REAL list
+         below this one (owner request 2026-10-05: "make the excess a real second
+         list"). Born hidden — whether a band wraps is a question about layout,
+         so `wlSyncSplit()` reveals it once the band is on screen and found to
+         have a second row, and again whenever the strip's width changes. */
+      const split = el('button', 'wl-split', 'Split off');
+      split.type = 'button';
+      split.hidden = true;
+      split.addEventListener('click', () => wlSplitBand(li, l.title, split));
+      head.appendChild(split);
     }
     group.appendChild(head);
     const box = el('div', 'mkt-group-tiles');
@@ -1462,6 +1602,7 @@ function renderWatchlist(payload, lamp) {
   });
   if (emptyEl) emptyEl.hidden = total > 0;
   wlSyncWriteControls();
+  wlSyncSplit();
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn
      "BRK B" into BRK + B — both look like real symbols, so the only honest

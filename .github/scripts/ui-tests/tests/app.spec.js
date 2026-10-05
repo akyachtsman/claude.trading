@@ -8052,3 +8052,129 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   expect(logins, 'after Lock a reload has nothing to validate').toEqual([]);
   expect(await authed()).toBe(false);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 61 — The excess of a wrapped watchlist can be made a REAL second list.
+// Owner request 2026-10-05 ("make the excess a real second list"), after
+// 2026-10-04's "if there's any excess, just create another watch list below it so
+// I can see what I need to get rid of" shipped as wrapped rows of the SAME list.
+//
+// A band that wraps carries "Split off N" in its head; pressing it moves the N
+// tiles drawn below the first row, by symbol and in drawn order, into a new saved
+// list directly after it. It is an ACTION — never automatic, because how many
+// tiles fit a row depends on the screen in use, and a phone must not carve the
+// roster into slivers — so everything here is driven through the real control
+// against a stateful stand-in for the roster RPCs, and the CI never touches the
+// owner's live roster.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S61: a wrapped watchlist can split its excess into a real second list', async ({ page, renderWitness }) => {
+  renderWitness();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
+  expect(await page.locator('.wl-split:visible').count(), 'demo has no roster to write, so no split control').toBe(0);
+
+  await installFakeRoster(page);
+  const SYMS = Array.from({ length: 120 }, (_, i) => 'T' + String(i + 1).padStart(3, '0'));
+  const seed = async (lists) => {
+    await page.evaluate(async (l) => {
+      window.__roster = l; window.__rosterWrites = [];
+      DESK.mode = 'live'; DESK.authed = true; wlLocked = false;
+      await loadWatchlist(true);
+    }, lists);
+    await page.waitForFunction(() => document.querySelectorAll('#wlStrip .wl-tile').length > 0);
+  };
+  const bands = () => page.evaluate(() => [...document.querySelectorAll('#wlStrip .mkt-group')].map(g => {
+    const b = g.querySelector('.wl-split');
+    return { title: g.getAttribute('aria-label'), tiles: g.querySelectorAll('.wl-tile').length,
+      split: b && !b.hidden ? { text: b.textContent, disabled: b.disabled, label: b.getAttribute('aria-label'), title: b.title } : null };
+  }));
+  const rosterOf = () => page.evaluate(() => window.__roster.map(l => [l.title, l.symbols.slice()]));
+  /* What a band really shows on its first row, measured from the drawn boxes, NOT
+     through the app's own capacity helper. */
+  const firstRow = (title) => page.evaluate((t) => {
+    const g = [...document.querySelectorAll('#wlStrip .mkt-group')].find(x => x.getAttribute('aria-label') === t);
+    const tiles = [...g.querySelectorAll('.wl-tile')];
+    const top = Math.round(tiles[0].getBoundingClientRect().top);
+    return tiles.filter(x => Math.round(x.getBoundingClientRect().top) === top).length;
+  }, title);
+
+  // ── 1. only a band that WRAPS offers it, with the count it would move ──────
+  // A pre-existing "radar 2" (lower case) makes the unique-name rule visible.
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'radar 2', symbols: ['TLT'] }, { title: 'Macro', symbols: ['GLD', 'SLV'] }]);
+  const cap1 = await firstRow('Radar');
+  expect(cap1, 'a widescreen row holds a good many tiles').toBeGreaterThanOrEqual(12);
+  expect(cap1, 'and Radar really wraps').toBeLessThan(120);
+  let b = await bands();
+  expect(b[0].split && b[0].split.text, 'Radar offers the split, naming how many it would move').toBe('Split off ' + (120 - cap1));
+  expect(b[1].split, 'a one-tile list offers nothing').toBeNull();
+  expect(b[2].split, 'nor does a two-tile list').toBeNull();
+  expect(b[0].split.title, 'the tooltip says what happens and what the new list is called (the existing "radar 2" is taken)').toContain('“Radar 3”');
+  expect(b[0].split.label, 'and the accessible name says it too').toContain(String(120 - cap1));
+
+  // ── 2. the split: one write, the right tiles, a unique name, in the right place ─
+  await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
+  await expect.poll(() => rosterWrites(page), { message: 'the split is exactly one replace-all' }).toBe(1);
+  let ro = await rosterOf();
+  expect(ro.map(r => r[0]), 'the new list goes directly after its source, and takes the first free number case-insensitively')
+    .toEqual(['Radar', 'Radar 3', 'radar 2', 'Macro']);
+  expect(ro[0][1], 'Radar keeps what fits on its first row, in order').toEqual(SYMS.slice(0, cap1));
+  expect(ro[1][1], 'the new list takes exactly the rest, in order').toEqual(SYMS.slice(cap1));
+  expect(ro[2][1], 'the other lists are untouched').toEqual(['TLT']);
+  expect(ro[3][1]).toEqual(['GLD', 'SLV']);
+  await expect(page.locator('#wlNote')).toContainText('Moved ' + (120 - cap1) + ' to “Radar 3”');
+  b = await bands();
+  expect(b.map(x => x.title), 'and the panel shows it').toEqual(['Radar', 'Radar 3', 'radar 2', 'Macro']);
+  expect(b[0].split, 'Radar now fits one row and stops offering it').toBeNull();
+  expect(b[1].tiles).toBe(120 - cap1);
+
+  // ── 3. the new list is a list like any other: it wraps, so it can split again ─
+  expect(b[1].split && b[1].split.text, 'Radar 3 still wraps, so it offers its own split').toBe('Split off ' + (120 - 2 * cap1));
+  expect(b[1].split.title, 'a trailing number on a list whose base exists is replaced: Radar 3 → Radar 4, never "Radar 3 2"').toContain('“Radar 4”');
+  await page.locator('#wlStrip .mkt-group').nth(1).locator('.wl-split').click();
+  await expect.poll(() => rosterWrites(page)).toBe(2);
+  ro = await rosterOf();
+  expect(ro.map(r => r[0])).toEqual(['Radar', 'Radar 3', 'Radar 4', 'radar 2', 'Macro']);
+  const all = ro.flatMap(r => r[1]);
+  expect(all.length, 'no symbol is lost or duplicated by either split (120 + the three in the other lists)').toBe(123);
+  expect(new Set(all).size).toBe(123);
+  expect(ro[0][1].concat(ro[1][1], ro[2][1]), 'the three halves put back together are the original list').toEqual(SYMS);
+
+  // ── 4. the lock covers it, at the button AND in the function ───────────────
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await page.evaluate(() => { wlLocked = true; renderWatchlist(); });
+  b = await bands();
+  expect(b[0].split && b[0].split.disabled, 'locked: the button is disabled, not hidden').toBe(true);
+  expect(b[0].split.title).toContain('Unlock');
+  await page.evaluate(() => wlSplitBand(0, 'Radar', null));
+  expect(await rosterWrites(page), 'and the function refuses even when called directly').toBe(0);
+  await page.evaluate(() => { wlLocked = false; renderWatchlist(); });
+
+  // ── 5. it follows the screen: a narrower strip holds fewer per row, so MORE is excess ─
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await expect.poll(async () => (await bands())[0].split && (await bands())[0].split.text, { message: 'the count tracks the width' })
+    .toBe('Split off ' + (120 - await firstRow('Radar')));
+  const wide = (await bands())[0].split.text;
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect.poll(async () => (await bands())[0].split && (await bands())[0].split.text, { message: 'narrower: a bigger excess' })
+    .not.toBe(wide);
+  const narrowCap = await firstRow('Radar');
+  expect(narrowCap).toBeLessThan(cap1);
+  await expect.poll(async () => (await bands())[0].split && (await bands())[0].split.text).toBe('Split off ' + (120 - narrowCap));
+
+  // ── 6. a phone must not be able to shatter the roster ───────────────────────
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect.poll(async () => (await bands())[0].split, { message: 'a row of a few tiles offers no split' }).toBeNull();
+  await page.evaluate(() => wlSplitBand(0, 'Radar', null));
+  expect(await rosterWrites(page), 'and calling it anyway writes nothing').toBe(0);
+  await expect(page.locator('#wlNote')).toContainText('wider screen');
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // ── 7. the desk keeps at most 50 lists: refuse, say why, write nothing ──────
+  const many = [{ title: 'Radar', symbols: SYMS }].concat(Array.from({ length: 49 }, (_, i) => ({ title: 'L' + i, symbols: ['AAA'] })));
+  await seed(many);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
+  await expect(page.locator('#wlNote')).toContainText('at most 50 lists');
+  expect(await rosterWrites(page), 'a full roster is not written').toBe(0);
+  expect((await rosterOf()).length).toBe(50);
+});

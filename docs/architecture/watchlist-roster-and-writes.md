@@ -57,6 +57,41 @@ Where the roster lives (`desk_watchlists`), the version-guarded replace-all (`de
   silently unaddressable. Both route through `wlMutate()` like every other
   write, and the delete resolves its target through `wlPick` so a roster that
   shifted under an open dialog deletes the list the owner POINTED AT or nothing.
+  **Split the excess into a real list** (owner request 2026-10-05). A band that
+  wraps (owner request 2026-10-04: the excess drops onto rows below) shows
+  "Split off N" in its head; `wlSplitBand` moves those N tiles into a NEW saved
+  list placed directly after the source, in ONE `wlMutate` replace-all — so a list
+  can be pruned, kept apart or dragged like any other. Decisions that are
+  deliberate, not accidental:
+  - **An action, never automatic.** The cut is read off the layout THIS tab is
+    showing at the click (`wlRowCapacity`: tiles sharing the first tile's
+    `offsetTop`), because how many fit a row depends on the screen (26 at 1822px, 4
+    on a phone). A split that ran at render time would let a phone cut the owner's
+    roster into slivers on every poll. For the same reason the button is offered
+    only where a row holds `WL_SPLIT_MIN_ROW` (12) tiles or more, and
+    `wlSplitBand` refuses below that even when called directly.
+  - **What moves** is the tiles drawn below the first row, by symbol and in drawn
+    order (under a sort key that is not the saved order — the owner moves what they
+    SEE below the row). Saved symbols that drew nothing (a typo, no quote) stay in
+    the source list. The source is resolved through `wlPick`, so a roster that
+    shifted under the click moves nothing ("That list changed — try again").
+  - **The name** is `"<name> 2"`, the first number ≥ 2 not taken, compared
+    case-insensitively (`wlPick` needs unique titles) and cut so it stays inside
+    the server's 60 characters (`left(t, 60)` in `desk_014`). A trailing number on
+    a list whose base exists is replaced: "Radar 2" splits into "Radar 3", never
+    "Radar 2 2"; "Top 10" with no "Top" list becomes "Top 10 2".
+  - **The lock covers it** (it is an arrangement change): the button is disabled,
+    never hidden, and `wlSplitBand` refuses under `wlLocked` itself. Creating the
+    list is not what is gated, moving the tiles is.
+  - **At most 50 lists** (`WL_MAX_LISTS`, `desk_014`): a full roster is refused with
+    a note, nothing is written.
+  - `wlSplitting` stops a second press while a write is in flight; the repaint
+    inside `wlMutate` draws the new buttons while it is still set, so
+    `wlSplitBand` re-syncs once more in its `finally` (otherwise the NEW list's own
+    button came up disabled — found by driving the real control, S61).
+  The ✎ editor still creates and renames lists the long way round; none of this
+  changes it. Covered by S61 (a stateful fake roster; the live roster is never
+  touched).
   Editing is the ✎ in the panel header (live + authed only)
   → a modal in the system-prompt idiom; symbols are free text because the
   owner's source is a pasted broker table, normalised client-side for the count
