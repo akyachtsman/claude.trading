@@ -1622,10 +1622,16 @@ async function installFakeRoster(page) {
         window.__rosterWrites.push(window.__roster.map(l => ({ title: l.title, symbols: l.symbols.slice() })));
         return json({ ok: true, version: 'v' + window.__rosterWrites.length });
       }
-      if (u.includes('/functions/v1/desk-watchlist'))
-        return json({ ok: true, range: wlTf, lists: window.__roster.map(l => ({
-          title: l.title, symbols: l.symbols.slice(),
-          rows: l.symbols.map(sym => ({ sym, last: 100, pct: 1, spark: [1, 2] })) })) });
+      if (u.includes('/functions/v1/desk-watchlist')) {
+        /* `window.__feedCap` (unset = no cap) mirrors the real feed, which prices only the first N UNIQUE symbols across the whole roster in
+           roster order and reports the rest as missing — so the rendered rows can hold fewer symbols than the roster does. */
+        const cap = window.__feedCap || Infinity;
+        const quoted = new Set([...new Set(window.__roster.flatMap(l => l.symbols))].slice(0, cap));
+        return json({ ok: true, range: wlTf, missing: [...new Set(window.__roster.flatMap(l => l.symbols))].filter(x => !quoted.has(x)),
+          lists: window.__roster.map(l => ({
+            title: l.title, symbols: l.symbols.slice(),
+            rows: l.symbols.filter(sym => quoted.has(sym)).map(sym => ({ sym, last: 100, pct: 1, spark: [1, 2] })) })) });
+      }
       return realFetch(url, init);
     };
   });
@@ -8051,4 +8057,351 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
   expect(logins, 'after Lock a reload has nothing to validate').toEqual([]);
   expect(await authed()).toBe(false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 61 — The excess of a wrapped watchlist can be made a REAL second list.
+// Owner request 2026-10-05 ("make the excess a real second list"), after
+// 2026-10-04's "if there's any excess, just create another watch list below it so
+// I can see what I need to get rid of" shipped as wrapped rows of the SAME list.
+//
+// A band that wraps carries "Split off N" in its head; pressing it moves the N
+// tiles drawn below the first row, by symbol and in drawn order, into a new saved
+// list directly after it. It is an ACTION — never automatic, because how many
+// tiles fit a row depends on the screen in use, and a phone must not carve the
+// roster into slivers — so everything here is driven through the real control
+// against a stateful stand-in for the roster RPCs, and the CI never touches the
+// owner's live roster.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S61: a wrapped watchlist can split its excess into a real second list', async ({ page, renderWitness }) => {
+  renderWitness();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
+  expect(await page.locator('.wl-split:visible').count(), 'demo has no roster to write, so no split control').toBe(0);
+
+  await installFakeRoster(page);
+  const SYMS = Array.from({ length: 120 }, (_, i) => 'T' + String(i + 1).padStart(3, '0'));
+  const seed = async (lists) => {
+    await page.evaluate(async (l) => {
+      window.__roster = l; window.__rosterWrites = [];
+      DESK.mode = 'live'; DESK.authed = true; wlLocked = false;
+      await loadWatchlist(true);
+    }, lists);
+    await page.waitForFunction(() => document.querySelectorAll('#wlStrip .wl-tile').length > 0);
+  };
+  const bands = () => page.evaluate(() => [...document.querySelectorAll('#wlStrip .mkt-group')].map(g => {
+    const b = g.querySelector('.wl-split');
+    return { title: g.getAttribute('aria-label'), tiles: g.querySelectorAll('.wl-tile').length,
+      split: b && !b.hidden ? { text: b.textContent, disabled: b.disabled, label: b.getAttribute('aria-label'), title: b.title } : null };
+  }));
+  const rosterOf = () => page.evaluate(() => window.__roster.map(l => [l.title, l.symbols.slice()]));
+  /* What a band really shows on its first row, measured from the drawn boxes, NOT
+     through the app's own capacity helper. */
+  const firstRow = (title) => page.evaluate((t) => {
+    const g = [...document.querySelectorAll('#wlStrip .mkt-group')].find(x => x.getAttribute('aria-label') === t);
+    const tiles = [...g.querySelectorAll('.wl-tile')];
+    const top = Math.round(tiles[0].getBoundingClientRect().top);
+    return tiles.filter(x => Math.round(x.getBoundingClientRect().top) === top).length;
+  }, title);
+
+  // ── 1. only a band that WRAPS offers it, with the count it would move ──────
+  // A pre-existing "radar 2" (lower case) makes the unique-name rule visible.
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'radar 2', symbols: ['TLT'] }, { title: 'Macro', symbols: ['GLD', 'SLV'] }]);
+  const cap1 = await firstRow('Radar');
+  expect(cap1, 'a widescreen row holds a good many tiles').toBeGreaterThanOrEqual(12);
+  expect(cap1, 'and Radar really wraps').toBeLessThan(120);
+  let b = await bands();
+  expect(b[0].split && b[0].split.text, 'Radar offers the split, naming how many it would move').toBe('Split off ' + (120 - cap1));
+  expect(b[1].split, 'a one-tile list offers nothing').toBeNull();
+  expect(b[2].split, 'nor does a two-tile list').toBeNull();
+  expect(b[0].split.title, 'the tooltip says what happens and what the new list is called (the existing "radar 2" is taken)').toContain('“Radar 3”');
+  expect(b[0].split.label, 'and the accessible name says it too').toContain(String(120 - cap1));
+
+  // ── 2. the split: one write, the right tiles, a unique name, in the right place ─
+  await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
+  await expect.poll(() => rosterWrites(page), { message: 'the split is exactly one replace-all' }).toBe(1);
+  let ro = await rosterOf();
+  expect(ro.map(r => r[0]), 'the new list goes directly after its source, and takes the first free number case-insensitively')
+    .toEqual(['Radar', 'Radar 3', 'radar 2', 'Macro']);
+  expect(ro[0][1], 'Radar keeps what fits on its first row, in order').toEqual(SYMS.slice(0, cap1));
+  expect(ro[1][1], 'the new list takes exactly the rest, in order').toEqual(SYMS.slice(cap1));
+  expect(ro[2][1], 'the other lists are untouched').toEqual(['TLT']);
+  expect(ro[3][1]).toEqual(['GLD', 'SLV']);
+  await expect(page.locator('#wlNote')).toContainText('Moved ' + (120 - cap1) + ' to “Radar 3”');
+  b = await bands();
+  expect(b.map(x => x.title), 'and the panel shows it').toEqual(['Radar', 'Radar 3', 'radar 2', 'Macro']);
+  expect(b[0].split, 'Radar now fits one row and stops offering it').toBeNull();
+  expect(b[1].tiles).toBe(120 - cap1);
+
+  // ── 3. the new list is a list like any other: it wraps, so it can split again ─
+  expect(b[1].split && b[1].split.text, 'Radar 3 still wraps, so it offers its own split').toBe('Split off ' + (120 - 2 * cap1));
+  expect(b[1].split.title, 'a trailing number on a list whose base exists is replaced: Radar 3 → Radar 4, never "Radar 3 2"').toContain('“Radar 4”');
+  await page.locator('#wlStrip .mkt-group').nth(1).locator('.wl-split').click();
+  await expect.poll(() => rosterWrites(page)).toBe(2);
+  ro = await rosterOf();
+  expect(ro.map(r => r[0])).toEqual(['Radar', 'Radar 3', 'Radar 4', 'radar 2', 'Macro']);
+  const all = ro.flatMap(r => r[1]);
+  expect(all.length, 'no symbol is lost or duplicated by either split (120 + the three in the other lists)').toBe(123);
+  expect(new Set(all).size).toBe(123);
+  expect(ro[0][1].concat(ro[1][1], ro[2][1]), 'the three halves put back together are the original list').toEqual(SYMS);
+
+  // ── 4. the lock covers it, at the button AND in the function ───────────────
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await page.evaluate(() => { wlLocked = true; renderWatchlist(); });
+  b = await bands();
+  expect(b[0].split && b[0].split.disabled, 'locked: the button is disabled, not hidden').toBe(true);
+  expect(b[0].split.title).toContain('Unlock');
+  await page.evaluate(() => wlSplitBand(0, 'Radar', null));
+  expect(await rosterWrites(page), 'and the function refuses even when called directly').toBe(0);
+  await page.evaluate(() => { wlLocked = false; renderWatchlist(); });
+
+  // ── 5. it follows the screen: a narrower strip holds fewer per row, so MORE is excess ─
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await expect.poll(async () => (await bands())[0].split && (await bands())[0].split.text, { message: 'the count tracks the width' })
+    .toBe('Split off ' + (120 - await firstRow('Radar')));
+  const wide = (await bands())[0].split.text;
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect.poll(async () => (await bands())[0].split && (await bands())[0].split.text, { message: 'narrower: a bigger excess' })
+    .not.toBe(wide);
+  const narrowCap = await firstRow('Radar');
+  expect(narrowCap).toBeLessThan(cap1);
+  await expect.poll(async () => (await bands())[0].split && (await bands())[0].split.text).toBe('Split off ' + (120 - narrowCap));
+
+  // ── 6. a phone must not be able to shatter the roster ───────────────────────
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect.poll(async () => (await bands())[0].split, { message: 'a row of a few tiles offers no split' }).toBeNull();
+  await page.evaluate(() => wlSplitBand(0, 'Radar', null));
+  expect(await rosterWrites(page), 'and calling it anyway writes nothing').toBe(0);
+  await expect(page.locator('#wlNote')).toContainText('wider screen');
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // ── 6b. one roster write at a time: a split in flight holds the SHARED guard (Codex, PR #307) ───────────────────────────────────────
+  // The quick-add, remove, create and delete dialogs, a drag-drop and a band move all read-modify-write the roster; one started while the split's
+  // read was out would read the same version and the version guard would refuse whichever finished second — a valid action failing.
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  const overlap = await page.evaluate(async () => {
+    const out = {}, wasOpen = (id) => !document.getElementById(id).hidden;
+    const p = wlSplitBand(0, 'Radar', document.querySelector('#wlStrip .wl-split:not([hidden])'));   // NOT awaited: its flags are set before its first await
+    out.guard = [wlBusy, wlSplitting];
+    openWlQuickAdd(0, 'Radar', null); out.quick = wasOpen('wlQuickBackdrop');
+    openWlRemove('T001', 0, 'Radar', null); out.remove = wasOpen('wlRmBackdrop');
+    openWlNewList(null); out.create = wasOpen('wlNewBackdrop');
+    openWlDelList(0, 'Radar', null); out.del = wasOpen('wlDelBackdrop');
+    const writesBefore = (window.__rosterWrites || []).length;
+    await wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');   // a drop meanwhile
+    await wlMoveBand(0, 1);                                                                               // a band move meanwhile
+    out.note = document.getElementById('wlNote').textContent;
+    out.refusedWrites = (window.__rosterWrites || []).length - writesBefore;
+    await p;
+    out.after = [wlBusy, wlSplitting, (window.__rosterWrites || []).length];
+    return out;
+  });
+  expect(overlap.guard, 'a split holds the shared write guard for its whole run').toEqual([true, true]);
+  expect([overlap.quick, overlap.remove, overlap.create, overlap.del], 'so no roster dialog opens meanwhile').toEqual([false, false, false, false]);
+  expect(overlap.refusedWrites, 'a drag-drop and a band move meanwhile write nothing').toBe(0);
+  expect(overlap.note, 'and say why').toContain('A split is being saved');
+  expect(overlap.after, 'the guard is released afterwards and the split was the ONE write').toEqual([false, false, 1]);
+
+  // ── 6c. ...and the OTHER ordering (Codex, PR #307, second round): a write that began BEFORE the split ───────────────────────────────────
+  // A drag-drop or an arrow reorder does not set `wlBusy`, so a guard that only covered writes begun after the split let the split start beside
+  // them. `wlMutate` now counts every roster write in flight and every entry point that starts one refuses meanwhile.
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  const reverse = await page.evaluate(async () => {
+    const out = {}, wasOpen = (id) => !document.getElementById(id).hidden;
+    const m = wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');   // a drop in flight: NOT awaited
+    out.counted = wlInFlight;
+    const before = (window.__rosterWrites || []).length;
+    await wlSplitBand(0, 'Radar', document.querySelector('#wlStrip .wl-split:not([hidden])'));
+    out.splitNote = document.getElementById('wlNote').textContent;
+    openWlQuickAdd(0, 'Radar', null); openWlRemove('T002', 0, 'Radar', null); openWlNewList(null); openWlDelList(0, 'Radar', null);
+    out.dialogs = ['wlQuickBackdrop', 'wlRmBackdrop', 'wlNewBackdrop', 'wlDelBackdrop'].map(wasOpen);
+    out.writesDuring = (window.__rosterWrites || []).length - before;
+    await m;
+    out.after = [wlInFlight, wlBusy, wlSplitting, (window.__rosterWrites || []).length];
+    return out;
+  });
+  expect(reverse.counted, 'a write begun by a drop is counted the moment it starts').toBe(1);
+  expect(reverse.splitNote, 'so a split pressed meanwhile is refused, and says why').toContain('Another roster change is being saved');
+  expect(reverse.dialogs, 'as is every roster dialog').toEqual([false, false, false, false]);
+  expect(reverse.after, 'the drop is the ONE write, and nothing is left counted in flight afterwards').toEqual([0, false, false, 1]);
+
+
+  // ── 6d. ...and the full ✎ editor (Codex, PR #307, third round): its save is a roster write that bypasses wlMutate, so it takes the same turn ──
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  await page.evaluate(async () => { await openWlEditor(); });
+  expect(await page.evaluate(() => wlEditLoaded), 'the editor loaded its draft').toBe(true);
+  const editor = await page.evaluate(async () => {
+    const out = {};
+    // (a) a write already in flight: the editor's save is refused, with a message in the editor
+    const m = wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');
+    const before = (window.__rosterWrites || []).length;
+    await saveWlEditor();
+    out.refusedMsg = document.getElementById('wlEditErr').textContent;
+    out.refusedWrites = (window.__rosterWrites || []).length - before;
+    await m;
+    out.afterMove = [wlInFlight, (window.__rosterWrites || []).length];
+    // (b) a save in flight: it is counted, and a split and a dialog are refused meanwhile
+    document.getElementById('wlEditErr').textContent = '';
+    await reloadWlEditorDraft();   // the draft the move just changed, at its current version
+    const sv = saveWlEditor();     // NOT awaited
+    out.counted = wlInFlight;
+    await wlSplitBand(0, 'Radar', document.querySelector('#wlStrip .wl-split:not([hidden])'));
+    out.splitNote = document.getElementById('wlNote').textContent;
+    openWlQuickAdd(0, 'Radar', null); out.quick = !document.getElementById('wlQuickBackdrop').hidden;
+    // (c) ...and a drop and a band move (Codex, PR #307, fourth round): the editor can be dismissed while its save is pending, leaving the panel
+    // interactive, so the two move entry points honour the shared guard too — not only `wlSplitting`
+    document.getElementById('wlNote').textContent = '';
+    const w0 = (window.__rosterWrites || []).length;
+    await wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');
+    out.dropNote = document.getElementById('wlNote').textContent;
+    document.getElementById('wlNote').textContent = '';
+    await wlMoveBand(0, 1);
+    out.bandNote = document.getElementById('wlNote').textContent;
+    out.moveWrites = (window.__rosterWrites || []).length - w0;
+    await sv;
+    out.after = [wlInFlight, wlBusy, wlSplitting];
+    return out;
+  });
+  expect(editor.refusedMsg, 'the editor\'s save is refused while another roster write is in flight').toContain('Another roster change is being saved');
+  expect(editor.refusedWrites, 'and writes nothing').toBe(0);
+  expect(editor.afterMove, 'the move was the one write and nothing is left counted').toEqual([0, 1]);
+  expect(editor.counted, 'an editor save in flight is counted').toBe(1);
+  expect(editor.splitNote, 'so a split pressed meanwhile is refused').toContain('Another roster change is being saved');
+  expect(editor.quick, 'and so is a dialog').toBe(false);
+  expect(editor.dropNote, 'a drop pressed while the save is out is refused, and says why').toContain('Another roster change is being saved');
+  expect(editor.bandNote, 'as is a band move').toContain('Another roster change is being saved');
+  expect(editor.moveWrites, 'and neither writes').toBe(0);
+  expect(editor.after, 'and the guard is released afterwards').toEqual([0, false, false]);
+
+  // ── 7. the desk keeps at most 50 lists: refuse, say why, write nothing ──────
+  const many = [{ title: 'Radar', symbols: SYMS }].concat(Array.from({ length: 49 }, (_, i) => ({ title: 'L' + i, symbols: ['AAA'] })));
+  await seed(many);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
+  await expect(page.locator('#wlNote')).toContainText('at most 50 lists');
+  expect(await rosterWrites(page), 'a full roster is not written').toBe(0);
+  expect((await rosterOf()).length).toBe(50);
+
+  // ── 8. a roster the quote feed cannot cover (Codex, PR #307, fifth round) ───────────────────────────────────────────────────────────
+  // desk-watchlist prices only the first 1,000 UNIQUE symbols across the whole roster, in roster order. The split leaves the symbols that drew
+  // nothing in the source, ahead of the new list, so above that cap the moved symbols fall past it: the new list would draw no quotes and the
+  // source a different set. Refused with the count, written nowhere; at exactly the cap (and with repeats counted once) it still works.
+  const big = (n) => Array.from({ length: n }, (_, i) => 'B' + String(i + 1).padStart(4, '0'));
+  await page.evaluate(() => { window.__feedCap = 1000; });   // the stub now prices only what the real feed does
+  const splitFirst = async () => {
+    await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+    await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
+  };
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Big', symbols: big(881) }]);   // 120 + 881 = 1,001 unique
+  await splitFirst();
+  await expect(page.locator('#wlNote')).toContainText('1,001 symbols');
+  await expect(page.locator('#wlNote')).toContainText('first 1,000');
+  await expect(page.locator('#wlNote')).toContainText('remove 1 before splitting');
+  expect(await rosterWrites(page), 'a roster past the feed cap is not written').toBe(0);
+  expect((await rosterOf()).map(r => r[0]), 'and no list was added').toEqual(['Radar', 'Big']);
+  expect(await page.evaluate(() => [wlBusy, wlSplitting, wlInFlight]), 'the guard is released after a refusal').toEqual([false, false, 0]);
+
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Big', symbols: big(880) }]);   // 120 + 880 = exactly 1,000
+  await splitFirst();
+  await expect(page.locator('#wlNote')).toContainText('Moved ');
+  expect(await rosterWrites(page), 'exactly at the cap it still splits, in one write').toBe(1);
+  expect((await rosterOf()).map(r => r[0]), 'the new list sits right after its source').toEqual(['Radar', 'Radar 2', 'Big']);
+
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Copy', symbols: SYMS }, { title: 'Big', symbols: big(880) }]);   // 1,120 saved, 1,000 unique
+  await splitFirst();
+  await expect(page.locator('#wlNote')).toContainText('Moved ');
+  expect(await rosterWrites(page), 'a symbol repeated across lists counts once, as the feed counts it').toBe(1);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 62 — The watchlist sorts: Price orders each list by price, % Change by
+// day move with the biggest GAINERS first.
+// Owner report 2026-10-05, two rounds: "sort is not working" and then, with a
+// screenshot of a correct price sort, "I mean sorted by percent gain and percent
+// loss". The Price sort had always worked (each list in price order, one list at a
+// time); what was wanted was the green stocks together at one end and the red ones
+// at the other — the % Change key — and its first click used to put the biggest
+// LOSERS first, under an ↑ that read as "up". Now the first click is gainers first,
+// ↑ means up-movers first and ↓ down-movers first. Read off the DRAWN tiles, per
+// list, not off the data.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S62: Price sorts each list by price; % Change puts the biggest gainers first', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
+  await page.evaluate(() => { try { localStorage.removeItem('wl_sort_v1'); } catch { /* private mode */ } });
+  await page.reload();
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+
+  /* Each band's drawn tiles as numbers: the price and the day move. A dash is a
+     missing figure (it must sink, never lead). */
+  const bands = () => page.evaluate(() => {
+    const num = s => { const m = /^([+−-]?)([\d,]+(?:\.\d+)?)%?$/.exec((s || '').trim()); return m ? (m[1] === '−' || m[1] === '-' ? -1 : 1) * parseFloat(m[2].replace(/,/g, '')) : null; };
+    return [...document.querySelectorAll('#wlStrip .mkt-group')].map(g => ({
+      title: g.getAttribute('aria-label'),
+      px: [...g.querySelectorAll('.wl-tile')].map(t => num((t.querySelector('.mkt-last') || {}).textContent)),
+      pct: [...g.querySelectorAll('.wl-tile')].map(t => num((t.querySelector('.wl-pct') || {}).textContent)),
+    }));
+  });
+  const nonDecreasing = (a) => a.filter(v => v != null).every((v, i, all) => i === 0 || all[i - 1] <= v);
+  const nonIncreasing = (a) => a.filter(v => v != null).every((v, i, all) => i === 0 || all[i - 1] >= v);
+  const btn = key => page.locator('#wlSort button[data-key="' + key + '"]');
+  const dirOf = key => btn(key).locator('.wl-dir').textContent();
+
+  // the keys are named for what they do
+  await expect(btn('pct'), 'the move key says it is a percentage').toHaveText(/% Change/);
+  await expect(btn('manual')).toHaveAttribute('aria-pressed', 'true');
+
+  // ── Price: every list in ascending price order, ↑ = cheapest first ──────────
+  await btn('price').click();
+  await expect(btn('price')).toHaveAttribute('aria-pressed', 'true');
+  expect(await dirOf('price'), 'Price ↑ is ascending').toBe('↑');
+  let b = await bands();
+  expect(b.length).toBeGreaterThan(3);
+  for (const band of b) expect(nonDecreasing(band.px), band.title + ': price ascending, left to right').toBe(true);
+  expect(b.some(x => x.px.length > 5 && !nonDecreasing(x.pct)), 'and it is NOT also in % order (the colours do mix under a price sort — that is the point)').toBe(true);
+  await btn('price').click();
+  expect(await dirOf('price')).toBe('↓');
+  b = await bands();
+  for (const band of b) expect(nonIncreasing(band.px), band.title + ': price descending after the second click').toBe(true);
+
+  // ── % Change: the FIRST click is gainers first, greens then reds ────────────
+  await btn('pct').click();
+  await expect(btn('pct')).toHaveAttribute('aria-pressed', 'true');
+  expect(await dirOf('pct'), '↑ means up-movers first').toBe('↑');
+  await expect(btn('pct')).toHaveAttribute('title', /gainers first/);
+  b = await bands();
+  for (const band of b) {
+    expect(nonIncreasing(band.pct), band.title + ': biggest gain first, biggest loss last').toBe(true);
+    const signs = band.pct.filter(v => v != null && v !== 0).map(v => Math.sign(v));
+    expect(signs.join(','), band.title + ': no green after a red').not.toMatch(/-1,1/);
+  }
+  const mixed = b.find(x => x.pct.some(v => v > 0) && x.pct.some(v => v < 0));
+  expect(mixed, 'the demo has a list with both gains and losses to order').toBeTruthy();
+  expect(mixed.pct[0], 'it starts on its best mover').toBe(Math.max(...mixed.pct.filter(v => v != null)));
+  expect(mixed.pct[mixed.pct.length - 1], 'and ends on its worst').toBe(Math.min(...mixed.pct.filter(v => v != null)));
+
+  // the second click reverses it: losers first, ↓
+  await btn('pct').click();
+  expect(await dirOf('pct'), '↓ means down-movers first').toBe('↓');
+  await expect(btn('pct')).toHaveAttribute('title', /losers first/);
+  b = await bands();
+  for (const band of b) expect(nonDecreasing(band.pct), band.title + ': biggest loss first after the second click').toBe(true);
+
+  // a different key and back starts gainers first again (the choice is per key, not remembered)
+  await btn('sym').click();
+  await btn('pct').click();
+  expect(await dirOf('pct')).toBe('↑');
+  b = await bands();
+  for (const band of b) expect(nonIncreasing(band.pct)).toBe(true);
+
+  // and the choice survives a reload, direction included
+  await page.reload();
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+  await expect(btn('pct')).toHaveAttribute('aria-pressed', 'true');
+  expect(await dirOf('pct')).toBe('↑');
+  b = await bands();
+  for (const band of b) expect(nonIncreasing(band.pct)).toBe(true);
 });

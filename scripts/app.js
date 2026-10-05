@@ -798,7 +798,7 @@ const WL_SORTS = [
   ['manual', 'Saved', 'the order your lists are saved in'],
   ['sym', 'A–Z', 'alphabetical by ticker'],
   ['price', 'Price', 'by last price'],
-  ['pct', 'Change', 'by day change %'],
+  ['pct', '% Change', 'by day change % — biggest gainers first'],
 ];
 let wlSort = { key: 'manual', dir: 1 };
 try {
@@ -834,14 +834,23 @@ function renderWlSort() {
     b.dataset.key = key;
     const on = wlSort.key === key;
     b.setAttribute('aria-pressed', String(on));
+    /* The % Change key reads in MOVES, not in numbers (owner 2026-10-05: "sorted by
+       percent gain and percent loss"; the first cut read ↑ as "ascending", and a
+       trader reads ↑ as "up"): ↑ = the biggest gainers first, ↓ = the biggest losers
+       first, and the FIRST click is gainers first. Price and A–Z keep the numeric
+       reading — ↑ is ascending, cheapest/A first. Internally `dir` is still the sign
+       of the comparison, so % Change's first click is dir -1 (the largest value first). */
+    const up = key === 'pct' ? wlSort.dir === -1 : wlSort.dir === 1;
     /* the active key doubles as the direction toggle — clicking it again flips */
-    b.title = on && key !== 'manual'
-      ? (wlSort.dir === 1 ? 'Ascending — click to reverse' : 'Descending — click to reverse')
-      : 'Sort ' + why;
-    if (on && key !== 'manual') b.appendChild(el('span', 'wl-dir', wlSort.dir === 1 ? '↑' : '↓'));
+    b.title = on && key === 'pct'
+      ? (up ? 'Biggest gainers first — click for biggest losers first' : 'Biggest losers first — click for biggest gainers first')
+      : on && key !== 'manual'
+        ? (wlSort.dir === 1 ? 'Ascending — click to reverse' : 'Descending — click to reverse')
+        : 'Sort ' + why;
+    if (on && key !== 'manual') b.appendChild(el('span', 'wl-dir', up ? '↑' : '↓'));
     b.addEventListener('click', () => {
       if (wlSort.key === key && key !== 'manual') wlSort.dir = -wlSort.dir;
-      else wlSort = { key, dir: 1 };
+      else wlSort = { key, dir: key === 'pct' ? -1 : 1 };
       saveWlSort();
       renderWatchlist();
       /* Re-render REPLACES these buttons, so the one just activated leaves the
@@ -1147,6 +1156,15 @@ const saveWlLock = () => {
   try { localStorage.setItem(WL_LOCK_KEY, wlLocked ? '1' : '0'); } catch { /* private mode */ }
 };
 
+/* A band move and a drop are roster writes like any other, so they take the same turn (Codex, PR #307, fourth round: the editor's save can be
+   dismissed with Escape while its RPC is still pending, leaving the panel interactive with a write in flight that `wlSplitting` knows nothing
+   about). `wlWriting()` covers a split, a dialog's write, the editor's save and another move; a split keeps its own wording. */
+function wlMoveRefused() {
+  if (wlSplitting) { wlNote('A split is being saved — try again in a moment'); return true; }
+  if (wlWriting()) { wlNote(WL_SAVING); return true; }
+  return false;
+}
+
 /* Move a whole list one place. Splices inside wlMutate's callback, so the read
    and the write are ONE atomic replace-all against the authoritative roster —
    never a patch of the rendered payload, which omits unresolved symbols and can
@@ -1155,6 +1173,7 @@ const saveWlLock = () => {
    row. */
 async function wlMoveBand(idx, delta) {
   if (wlLocked) { wlNote('Arrangement is locked'); return; }
+  if (wlMoveRefused()) return;
   const cur = (wlState.payload && wlState.payload.lists) || [];
   const title = cur[idx] && cur[idx].title;
   if (title == null) return;
@@ -1178,6 +1197,7 @@ async function wlCommitMove(from, to, sym) {
      lesson as the scheduled-ask floor, which only held once it moved out of the
      input handler and into the save. */
   if (wlLocked && to.band !== 'trash') { wlNote('Arrangement is locked'); return; }
+  if (wlMoveRefused()) return;
   if (from.band === to.band && to.band !== 'trash' && from.idx === to.idx) return;   /* dropped where it started */
 
   const res = await wlMutate(lists => {
@@ -1212,6 +1232,153 @@ async function wlCommitMove(from, to, sym) {
   });
   if (!res.ok && res.err) wlNote(res.err);
 }
+
+/* ── split the excess into a real list (owner request 2026-10-05) ──────────────
+   A band wraps onto rows below when it holds more than one row of tiles (owner
+   request 2026-10-04); this makes that excess a LIST of its own — saved, named,
+   draggable and deletable like any other — so "what I need to get rid of" can be
+   looked at, pruned or kept apart. It is an ACTION, never automatic: how many
+   tiles fit a row depends on the screen being used (26 at 1822px, 5 on a phone),
+   and a split that ran at render time would let a phone carve the owner's
+   roster into five-tile pieces. The count is read off the layout THIS tab is
+   showing, at the moment of the click — "this widescreen", as asked.
+
+   What moves is the tiles DRAWN below the first row, by symbol, in drawn order;
+   saved symbols that drew nothing (a typo, no quote) stay where they are. The new
+   list goes directly after its source, named "<name> 2" (a trailing number on a
+   list whose base exists is replaced, so "Radar 2" splits into "Radar 3", never
+   "Radar 2 2"), and the whole thing is ONE wlMutate replace-all. */
+const WL_MAX_LISTS = 50;   /* desk_014: 'too many lists (max 50)'; titles are cut at 60 */
+/* Offered only where a row holds at least this many tiles. The cut is read off the
+   screen in use, so on a phone (4 a row) one tap of "Split off 56" would carve the
+   owner's roster into slivers they never asked for; a widescreen is what the
+   request was about, and a laptop or a tablet held sideways still clears it. */
+const WL_SPLIT_MIN_ROW = 12;
+/* The quote feed (desk-watchlist `MAX_SYMBOLS`) prices only the first 1,000 UNIQUE symbols across the whole roster, in roster order — keep
+   this in step with it. Above that a split cannot do what it promises (Codex, PR #307, fifth round): the symbols that drew nothing stay in
+   the source, ahead of the new list, so on a roster the feed cannot cover they push the moved symbols past the cap and the new list draws no
+   quotes while the source draws a different set. At or below the cap everything is priced whatever the order, so nothing is at risk. */
+const WL_FEED_CAP = 1000;
+let wlSplitting = false;
+
+function wlRowCapacity(box) {
+  const tiles = box.querySelectorAll('.wl-tile');
+  if (!tiles.length) return { cap: 0, total: 0 };
+  /* offsetTop, not a bounding rect: whole pixels, relative to the band (it is
+     `position: relative`), and every tile of a row shares one. */
+  const top0 = tiles[0].offsetTop;
+  let cap = 0;
+  while (cap < tiles.length && tiles[cap].offsetTop === top0) cap++;
+  return { cap, total: tiles.length };
+}
+
+function wlSplitTitle(titles, title) {
+  const norm = x => String(x || '').trim().toLowerCase();
+  const have = new Set(titles.map(norm));
+  let base = String(title).trim();
+  const m = /^(.*\S)\s+\d+$/.exec(base);
+  if (m && have.has(norm(m[1]))) base = m[1];
+  for (let n = 2; ; n++) {
+    const suffix = ' ' + n;
+    const t = base.slice(0, 60 - suffix.length).trimEnd() + suffix;
+    if (!have.has(norm(t))) return t;
+  }
+}
+
+/* Reveal the button on every band that wraps, with its count, and keep the
+   label, the tooltip and the lock in step. Reads layout, so it runs after the
+   strip is built and again when the strip's WIDTH changes (a ResizeObserver,
+   below) — a band that fits one row on a widescreen wraps on a laptop. */
+function wlSyncSplit() {
+  const titles = (((wlState.payload && wlState.payload.lists) || []).map(l => l.title));
+  document.querySelectorAll('#wlStrip .mkt-group').forEach(group => {
+    const btn = group.querySelector('.wl-split');
+    const box = group.querySelector('.mkt-group-tiles');
+    if (!btn || !box) return;
+    const { cap, total } = wlRowCapacity(box);
+    const excess = total - cap;
+    btn.hidden = !(cap >= WL_SPLIT_MIN_ROW && excess > 0);
+    if (btn.hidden) { btn.dataset.excess = ''; return; }
+    const title = group.getAttribute('aria-label') || '';
+    const next = wlSplitTitle(titles, title);
+    btn.dataset.excess = String(excess);
+    btn.textContent = 'Split off ' + excess;
+    btn.disabled = wlLocked || wlSplitting;
+    btn.setAttribute('aria-label', 'Move the ' + excess + ' stocks that do not fit on the first row of ' + title + ' into a new list, ' + next);
+    btn.title = wlLocked
+      ? 'Unlock the arrangement to split “' + title + '”'
+      : 'Move the ' + excess + ' that do not fit this row into a new list, “' + next + '”';
+  });
+}
+
+async function wlSplitBand(idx, title, btn) {
+  /* Enforced HERE as well as on the button: a disabled control is a hint, the
+     keyboard path and a stale render reach this function directly (the same
+     reason wlCommitMove and wlMoveBand carry their own check). */
+  if (wlLocked) { wlNote('Arrangement is locked'); return; }
+  if (wlSplitting || wlBusy) return;
+  if (wlInFlight) { wlNote(WL_SAVING); return; }
+  const group = btn ? btn.closest('.mkt-group') : document.querySelectorAll('#wlStrip .mkt-group')[idx];
+  const box = group && group.querySelector('.mkt-group-tiles');
+  if (!box) return;
+  const { cap } = wlRowCapacity(box);
+  const syms = [...box.querySelectorAll('.wl-tile')].slice(cap).map(t => t.dataset.sym);
+  if (!cap || !syms.length) { wlNote('Everything fits on one row'); return; }
+  if (cap < WL_SPLIT_MIN_ROW) { wlNote('Open this on a wider screen to split — a row here holds only ' + cap); return; }
+
+  /* Holds the SHARED write guard for the whole split, not only `wlSplitting`: the quick-add, remove, create and delete dialogs all
+     read-modify-write the roster behind `wlBusy`, and one that started while the split's read was in flight would read the same
+     version — the guard (desk_014) would then refuse whichever write finished second and a valid action would fail (Codex, PR #307).
+     A drag-drop or a band move meanwhile is refused for the same reason (wlCommitMove, wlMoveBand). */
+  wlSplitting = true; wlBusy = true;
+  if (btn) btn.disabled = true;
+  let made = '', moved = 0, why = '';
+  try {
+    const res = await wlMutate(lists => {
+      const src = wlPick(lists, idx, title);
+      if (!src) { why = 'That list changed — try again'; return false; }
+      if (lists.length >= WL_MAX_LISTS) { why = 'The desk keeps at most ' + WL_MAX_LISTS + ' lists — delete one first'; return false; }
+      /* Counted on the AUTHORITATIVE roster this write is built from (never the rendered payload, which omits what drew nothing). */
+      const saved = new Set(lists.flatMap(l => l.symbols)).size;
+      if (saved > WL_FEED_CAP) {
+        why = 'Your lists hold ' + saved.toLocaleString('en-US') + ' symbols and the quote feed prices only the first ' + WL_FEED_CAP.toLocaleString('en-US')
+          + ' — remove ' + (saved - WL_FEED_CAP).toLocaleString('en-US') + ' before splitting, or the new list would show no quotes';
+        return false;
+      }
+      const held = new Set(src.symbols);
+      const mv = syms.filter(sym => held.has(sym));
+      if (!mv.length) { why = 'That list changed — try again'; return false; }
+      const gone = new Set(mv);
+      src.symbols = src.symbols.filter(sym => !gone.has(sym));
+      made = wlSplitTitle(lists.map(l => l.title), src.title);
+      lists.splice(lists.indexOf(src) + 1, 0, { title: made, symbols: mv });
+      moved = mv.length;
+      return true;
+    });
+    if (res.ok) wlNote('Moved ' + moved + ' to “' + made + '”');
+    else if (res.err || why) wlNote(res.err || why);
+  } finally {
+    /* The repaint inside wlMutate ran while this was still true, so every button
+       it drew came up disabled; one more sync now that the write is over. */
+    wlSplitting = false; wlBusy = false;
+    wlSyncSplit();
+  }
+}
+
+/* A band's wrap depends on the strip's width, so the buttons follow it. Only a
+   WIDTH change matters (the strip's height changes with every repaint), which
+   also keeps this from re-triggering itself. */
+(function wlWatchSplit() {
+  const strip = document.getElementById('wlStrip');
+  if (!strip || typeof ResizeObserver !== 'function') return;
+  let w = strip.clientWidth, t = 0;
+  new ResizeObserver(() => {
+    if (strip.clientWidth === w) return;
+    w = strip.clientWidth;
+    clearTimeout(t);
+    t = setTimeout(wlSyncSplit, 60);
+  }).observe(strip);
+})();
 
 /* Pointer wiring. Kept off the tile's own click/dblclick handlers entirely:
    a drag only begins after WL_DRAG_SLOP of movement (or a rested finger), so
@@ -1410,6 +1577,16 @@ function renderWatchlist(payload, lamp) {
         : 'Delete “' + l.title + '”';
       del.addEventListener('click', () => openWlDelList(li, l.title, del));
       head.appendChild(del);
+      /* "Split off N": move what does not fit on the first row into a REAL list
+         below this one (owner request 2026-10-05: "make the excess a real second
+         list"). Born hidden — whether a band wraps is a question about layout,
+         so `wlSyncSplit()` reveals it once the band is on screen and found to
+         have a second row, and again whenever the strip's width changes. */
+      const split = el('button', 'wl-split', 'Split off');
+      split.type = 'button';
+      split.hidden = true;
+      split.addEventListener('click', () => wlSplitBand(li, l.title, split));
+      head.appendChild(split);
     }
     group.appendChild(head);
     const box = el('div', 'mkt-group-tiles');
@@ -1462,6 +1639,7 @@ function renderWatchlist(payload, lamp) {
   });
   if (emptyEl) emptyEl.hidden = total > 0;
   wlSyncWriteControls();
+  wlSyncSplit();
 
   /* Unknown tickers, named. A pasted broker table split on whitespace can turn
      "BRK B" into BRK + B — both look like real symbols, so the only honest
@@ -1543,6 +1721,13 @@ const wlCanEdit = () => DESK.mode !== 'demo';
    input, or closing and reopening the dialog for another list, reached the
    submit path while a request was still in flight. */
 let wlBusy = false;
+/* EVERY roster write in flight, whoever started it (Codex, PR #307: a split guarded only against the writes that began AFTER it; one that began
+   BEFORE — an arrow reorder, a drag-drop — ran unseen, read the same version, and desk_014 refused whichever finished second). `wlMutate` is
+   the one place a roster write happens, so it counts itself in and out; the entry points that start a write refuse while it is above zero.
+   `wlBusy` stays what it was: the dialogs' own "my write is in flight" flag. */
+let wlInFlight = 0;
+const wlWriting = () => wlBusy || wlInFlight > 0;
+const WL_SAVING = 'Another roster change is being saved — try again in a moment';
 
 /* Resolve the band the owner acted on inside the AUTHORITATIVE roster.
    Targeting by title alone was wrong (Codex review, PR #196): the editor
@@ -1578,6 +1763,10 @@ function wlPick(lists, idx, title) {
 }
 
 async function wlMutate(mutate) {
+  wlInFlight++;
+  try { return await wlMutateRun(mutate); } finally { wlInFlight--; }
+}
+async function wlMutateRun(mutate) {
   /* No PIN needed — the watchlist RPCs are open (desk_011). Still a
      read-modify-write against the AUTHORITATIVE roster, never a patch of the
      rendered payload: that omits unresolved symbols and can be an hour stale. */
@@ -1631,7 +1820,7 @@ function modalErr(id, msg) {
 function wlQuickErr(msg) { modalErr('wlQuickErr', msg); }
 
 function openWlQuickAdd(idx, title, invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   wlQuickList = { idx, title };
   const back = document.getElementById('wlQuickBackdrop');
   const head = document.getElementById('wlQuickTitle');
@@ -1660,6 +1849,7 @@ async function submitWlQuickAdd() {
   const input = document.getElementById('wlQuickInput');
   const btn = document.getElementById('wlQuickSaveBtn');
   if (!input || !wlQuickList || wlBusy) return;
+  if (wlInFlight) { wlQuickErr(WL_SAVING); return; }
   /* Same parse the editor uses, so "BRK.B, SPY" and a pasted broker column
      behave identically here (and the RPC re-validates regardless). */
   const syms = wlParseSyms(input.value);
@@ -1703,7 +1893,7 @@ let wlRmTarget = null;            /* {sym, idx, title} awaiting confirmation */
 function wlRmErr(msg) { modalErr('wlRmErr', msg); }
 
 function openWlRemove(sym, idx, title, invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   wlRmTarget = { sym, idx, title };
   const back = document.getElementById('wlRmBackdrop');
   const text = document.getElementById('wlRmText');
@@ -1722,6 +1912,7 @@ function closeWlRemove() {
 
 async function confirmWlRemove() {
   if (!wlRmTarget || wlBusy) return;
+  if (wlInFlight) { wlRmErr(WL_SAVING); return; }
   const { sym, idx, title } = wlRmTarget;
   const btn = document.getElementById('wlRmConfirmBtn');
   wlBusy = true;
@@ -1756,7 +1947,7 @@ function wlNewErr(msg) { modalErr('wlNewErr', msg); }
 function wlDelErr(msg) { modalErr('wlDelErr', msg); }
 
 function openWlNewList(invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   const back = document.getElementById('wlNewBackdrop');
   const input = document.getElementById('wlNewInput');
   if (!back || !input) return;
@@ -1773,6 +1964,7 @@ function closeWlNewList() {
 
 async function submitWlNewList() {
   if (wlBusy) return;
+  if (wlInFlight) { wlNewErr(WL_SAVING); return; }
   const input = document.getElementById('wlNewInput');
   const btn = document.getElementById('wlNewSaveBtn');
   const name = String((input && input.value) || '').trim().slice(0, 60);
@@ -1804,7 +1996,7 @@ async function submitWlNewList() {
 }
 
 function openWlDelList(idx, title, invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   /* Enforced HERE and not only on the button, the same way wlCommitMove and
      wlMoveBand enforce it rather than trusting their controls. A disabled
      button is a hint; the keyboard path, a stale render and a console call all
@@ -1839,6 +2031,7 @@ function closeWlDelList() {
 
 async function confirmWlDelList() {
   if (!wlDelTarget || wlBusy) return;
+  if (wlInFlight) { wlDelErr(WL_SAVING); return; }
   const { idx, title } = wlDelTarget;
   const btn = document.getElementById('wlDelConfirmBtn');
   wlBusy = true;
@@ -2539,9 +2732,16 @@ async function saveWlEditor() {
   /* An empty submission wipes every list. That is a legitimate thing to want,
      but never something to do by accident on a replace-all. */
   if (!lists.length && !confirm('Save with no lists at all? This removes every watchlist.')) return;
+  /* The editor's save is a roster write too — it goes to deskSetWatchlists directly, not through wlMutate — so it takes the same turn as every
+     other write (Codex, PR #307, third round): refused while any other write is in flight, and counted in `wlInFlight` itself so that a split,
+     a drop or a dialog started meanwhile is refused. Without this a save and a split could read the same version and desk_014 would refuse
+     whichever finished second. (The editor's long-lived DRAFT going stale is a different, designed case: the version guard answers it with the
+     in-place reload below.) */
+  if (wlWriting()) { wlEditErr(WL_SAVING); return; }
   const btn = document.getElementById('wlSaveBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   wlEditErr('');
+  wlInFlight++;
   try {
     const out = await deskSetWatchlists(pin, lists, wlEditVersion);
     if (out && out.error === 'conflict') {
@@ -2566,6 +2766,7 @@ async function saveWlEditor() {
   } catch {
     wlEditErr('Could not reach the desk to save.');
   } finally {
+    wlInFlight--;
     if (btn) { btn.disabled = !wlEditLoaded; btn.textContent = 'Save & exit'; }
   }
 }
