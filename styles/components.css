@@ -871,7 +871,11 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
    axis is wide), so a tick's left % IS the x the line is drawn at. Small muted ink through the text token, never `opacity`
    (that would dodge the contrast gate's pairs); the padding gives the top and bottom value labels room to overhang the line's own
    3-unit margin without touching the time axis. */
-.econ-plot { --econ-yw: 26px; flex: 1 1 0; min-height: 26px; min-width: 0; display: flex; padding: 4px 0; }
+/* the value axis' width lives on the chart column so the time axis (a sibling of the plot) can read it too; a currency row (the
+   crude-oil prices, `.is-px`) needs 38px — its labels run to six characters ("100.25") where a yield's run to four ("4.90") */
+.econ-chart { --econ-yw: 26px; }
+.econ-chart.is-px { --econ-yw: 38px; }
+.econ-plot { flex: 1 1 0; min-height: 26px; min-width: 0; display: flex; padding: 4px 0; }
 .econ-plot svg { flex: 1 1 0; min-width: 0; width: auto; align-self: stretch; }
 /* the chart's description in words (the axes are aria-hidden): visually hidden, still read by a screen reader */
 .econ-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
@@ -883,7 +887,7 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   font: 400 9px/1 var(--font-mono); color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
 }
 .econ-axis {
-  position: relative; flex: none; height: 13px; margin-right: 26px;   /* 26px = the value axis (--econ-yw) */
+  position: relative; flex: none; height: 13px; margin-right: var(--econ-yw, 26px);   /* = the value axis (--econ-yw) */
   border-top: 1px solid var(--color-border-hover);
 }
 .econ-tickmark { position: absolute; top: 0; width: 1px; height: 3px; background: var(--color-border-hover); }

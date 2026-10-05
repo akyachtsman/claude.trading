@@ -660,3 +660,47 @@ width); **S56** guards the live 10Y.
   went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields
   were FRED's and every reply carried that ~5 s). If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
+- **Crude oil: WTI and Brent futures (owner request 2026-10-05: "add price of crude oil to the economy table").**
+  Two rows right after the three yields (`econWithCrude`). The owner chose the LIVE futures price over FRED's
+  EIA daily spot (`DCOILWTICO`), which on the day this was built had its newest reading on 2026-09-29 while
+  the yields' was 2026-10-01 — a week behind, shown under its own date. So the rows are NOT FRED rows (nothing in
+  `desk-econ` or `config/econ-indicators.json` changed; merging IS shipping) and NOT CNBC rows: the price is the
+  FRONT-MONTH FUTURES `CL=F` / `BZ=F` from the quote feed the watchlists and charts already use (`deskQuote` →
+  `quote-proxy` → Yahoo), fetched by the browser on its own clock (`econCrudeFetch`: 60 s while the futures market
+  is open, 10 min while shut, paused while the tab is hidden, "Refresh now" forces it).
+  - **Measured 2026-10-01..05 from the live site:** `CL=F` and `BZ=F` answer all three kinds (`intraday` 5-minute
+    bars for 5 days, `info`, `daily` 800 bars ≈ 3.2 years) in under a second; the newest intraday bar was **10
+    minutes old** at the poll (Yahoo's futures are delayed ~10 min), and `info.change` equalled the price less the
+    previous daily close to the cent.
+  - **The price and its time are the newest 5-minute bar** (one consistent pair; `info` is cached up to 15 min outside
+    the NYSE day in `quote-proxy` and would lag the tape). **The change is that price less the previous close,
+    `info.price − info.change`** — constant for the whole session whatever the price has done — and an unknown
+    previous close is a null change (an em dash, never 0). `econCrudeIntra` skips a time that does not exist (Feb 30,
+    minute 70), a non-positive price and a bar from the future; it keeps the newest 24 hours, thinned to ≤ 150 real
+    bars (`econDownsample`).
+  - **Liveness words** (`econCrudeState`): a bar within `ECON_CRUDE_FRESH_MS` (20 min) → **DELAYED** (never LIVE:
+    Yahoo runs ~10 minutes behind, and the owner's rule is to be told when it is not real time); older while the
+    futures market is open (`econCrudeOpen`: Sunday 18:00 ET to Friday 17:00 ET, shut 17:00–18:00 ET Mon–Thu, NYSE
+    holidays counted as shut — coarse, and it only decides the WORD for a stopped quote, since a quote that is still
+    arriving reads DELAYED whatever it says) → the solid ink **NOT LIVE** chip; older with the market shut → **LAST**.
+    No second source. A row keeps its last good quote for `ECON_CRUDE_KEEP_MS` (30 min, or two poll intervals when
+    slower), then says **NO DATA** with the feed's reason in its tooltip. Before the first reply there are no oil rows;
+    if desk-econ has delivered nothing AND the quote feed has nothing usable, the panel's own empty state says so once
+    instead of two lonely NO DATA rows.
+  - **Charts:** 1D is the last **24 hours** of 5-minute bars (futures trade round the clock, so a 1D view is a rolling
+    day, not a session; the caption carries BOTH dates — a day ending on the clock time it began would read as one
+    instant); 1W–5Y are the daily closes sliced exactly like every other daily row (`econSpanSlice`, shared with the demo),
+    and because the feed holds ~3 years a 5Y chart says `since Aug '23` (`pointsNote`) rather than pass for five. The daily
+    bars are re-asked every 5 minutes (`ECON_CRUDE_DAILY_MS`); the oil charts redraw on a span pick without waiting for
+    desk-econ (their history is already here).
+  - **Presentation:** `pre: '$'` — `econValueText` prints a currency sign BEFORE the number; the change is in dollars
+    (`▲ 1.25`, digits green/red by the panel's own direction rule); the date cell is the Pacific CLOCK of the newest bar
+    when it is from today; the source line reads `Source: Yahoo CL=F`. A currency row's chart gets `.is-px`: a 38px value
+    axis (`--econ-yw`, now on `.econ-chart` so the time axis reads it too) and labels at the fewest decimals that show
+    every value EXACTLY (`econYAxis(…, px)`: "90", "90.5" — never 100.5 as "101"); a yield keeps its own decimals.
+  - **Never NEW** (a price ticking by the minute is not a release: the oil rows skip the seen/pending bookkeeping), **never
+    demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
+    oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
+    of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
+  - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
+    "Refresh now", a hidden tab; 15 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
