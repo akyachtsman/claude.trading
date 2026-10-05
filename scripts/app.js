@@ -8646,7 +8646,9 @@ function econRow(r, chartsMatch) {
     (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
     liveState === 'notlive' ? 'NOT LIVE — ' + econNotLiveWhy(r, now) : '',
     crudeState === 'notlive' ? 'NOT LIVE — no new price for ' + Math.round((now - r.crude.ts) / 60000) + ' min while the futures market is open; this is the last price the quote feed sent' : '',
-    crudeState === 'last' ? 'LAST — the futures market is shut; this is its last price' : '',
+    crudeState === 'last' ? (econCrudeHoliday(now) && econCrudeOpen(now)
+      ? 'LAST — an NYSE holiday, when CME\'s own hours differ: this price has stopped, and a stalled feed cannot be told from a closed market'
+      : 'LAST — the futures market is shut; this is its last price') : '',
     /* a retained price says its latest refresh failed (Codex, PR #308): the quote is kept for the keep window, and without this line it would read as current */
     r.crude && r.crude.why ? 'the last refresh of the price failed (' + r.crude.why + '); this is the price read ' + Math.round((now - r.crude.fetchedAt) / 60000) + ' min ago' : '',
     r.crude && r.crude.chgWhy ? r.crude.chgWhy : '',
@@ -9092,24 +9094,27 @@ function econCrudeNearTurnover(ms) {
   const m = etClock(new Date(ms)).minutes;
   return m >= 17 * 60 && m < 18 * 60 + 15;
 }
-/* Is the futures market (CME Globex energy) open: Sunday 18:00 ET to Friday 17:00 ET, shut 17:00–18:00 ET Mon–Thu. NYSE holidays count
-   as closed — a coarse stand-in for CME's own calendar, which only matters for the words: a quote that is still arriving reads DELAYED
-   whatever this says; it decides only whether a STOPPED quote is NOT LIVE (open) or LAST (shut). */
+/* Is the futures market (CME Globex energy) open by its WEEKLY schedule: Sunday 18:00 ET to Friday 17:00 ET, shut 17:00–18:00 ET Mon–Thu.
+   Holidays are NOT applied here (Codex, PR #308): CME's own holiday calendar differs from the NYSE's — shortened sessions, reopened evenings
+   (Thanksgiving evening) — and this file carries no CME calendar, so a holiday is a separate question (econCrudeHoliday). A quote that is still
+   arriving reads DELAYED whatever this says; it decides the polling cadence and whether a STOPPED quote is NOT LIVE (open) or LAST (shut). */
 function econCrudeOpen(now) {
   const c = etClock(new Date(now));
-  if (NYSE_HOLIDAYS.has(c.date)) return false;
   const dow = new Date(c.date + 'T12:00:00Z').getUTCDay();
   if (dow === 6) return false;
   if (dow === 0) return c.minutes >= 18 * 60;
   if (dow === 5) return c.minutes < 17 * 60;
   return !(c.minutes >= 17 * 60 && c.minutes < 18 * 60);
 }
+/* A weekday on which the NYSE is shut: CME energy may trade a shortened or reopened session, may be shut all day — the code cannot tell which,
+   so it neither claims the market is closed (it keeps polling at the open cadence) nor claims a stopped price is a stall (LAST, saying why). */
+function econCrudeHoliday(now) { return NYSE_HOLIDAYS.has(etClock(new Date(now)).date); }
 /* What a crude row says about its own liveness: 'delayed' (a price within ECON_CRUDE_FRESH_MS), 'notlive' (older while the market is
    open: the feed has stalled), 'last' (older with the market shut — normal overnight, at weekends), '' for anything else. */
 function econCrudeState(r, now) {
   if (DESK.mode === 'demo' || !r.crude) return '';
   if (now - r.crude.ts <= ECON_CRUDE_FRESH_MS) return 'delayed';
-  return econCrudeOpen(now) ? 'notlive' : 'last';
+  return econCrudeOpen(now) && !econCrudeHoliday(now) ? 'notlive' : 'last';
 }
 function econCrudeDelaySec(now) { return econCrudeOpen(now) ? ECON_CRUDE_FAST_S : ECON_CRUDE_IDLE_S; }
 /* the date cell: the Pacific CLOCK of the newest price when it is from today (Pacific), else the date it is for */

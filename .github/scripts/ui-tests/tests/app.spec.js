@@ -8486,6 +8486,9 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
       // Sunday 17:59 / 18:00 ET, Friday 16:59 / 17:00 ET, Saturday, the Wednesday halt, Thursday night, an NYSE holiday
       open: [open('2026-10-04T21:59:00Z'), open('2026-10-04T22:00:00Z'), open('2026-10-09T20:59:00Z'), open('2026-10-09T21:00:00Z'), open('2026-10-10T15:00:00Z'),
         open('2026-10-07T21:30:00Z'), open('2026-10-08T07:00:00Z'), open('2026-11-26T15:00:00Z')],
+      holiday: [econCrudeHoliday(Date.parse('2026-11-26T15:00:00Z')), econCrudeHoliday(Date.parse('2026-11-26T23:30:00Z')), econCrudeHoliday(Date.parse('2026-11-27T15:00:00Z')), econCrudeHoliday(Date.parse('2026-10-08T15:00:00Z'))],
+      // the poll cadence on an ordinary Thursday, on Thanksgiving, on the shut Saturday after, and on Thanksgiving evening (18:30 ET, after the daily halt)
+      holidayDelay: [econCrudeDelaySec(Date.parse('2026-10-08T15:00:00Z')), econCrudeDelaySec(Date.parse('2026-11-26T15:00:00Z')), econCrudeDelaySec(Date.parse('2026-11-28T15:00:00Z')), econCrudeDelaySec(Date.parse('2026-11-26T23:30:00Z'))],
     };
   });
   expect(pure.n, 'the intraday series is thinned to at most 150 real bars').toBeLessThanOrEqual(150);
@@ -8499,8 +8502,12 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   expect(pure.session, 'a futures session runs from 18:00 ET to 17:00 ET the next day (Sunday 18:30 and Monday 16:59 are ONE session), the 17:00–18:00 halt is a session of its own, and Monday 18:01 begins Tuesday\'s')
     .toEqual(['2026-10-05 trade', '2026-10-05 trade', '2026-10-05 halt', '2026-10-05 halt', '2026-10-06 trade', '2026-10-06 trade']);
   expect(pure.prev, 'the previous close is price − change; anything missing, a failed reply or a non-positive result is null — never 0').toEqual([91.11, null, null, null, null, null]);
-  expect(pure.open, 'the futures market: shut Sun 17:59 ET, open from 18:00; open Fri 16:59, shut from 17:00; shut Saturday and in the Mon–Thu 17:00–18:00 halt; open Thursday night; shut on an NYSE holiday')
-    .toEqual([false, true, true, false, false, false, true, false]);
+  expect(pure.open, 'the futures market by its WEEKLY schedule: shut Sun 17:59 ET, open from 18:00; open Fri 16:59, shut from 17:00; shut Saturday and in the Mon–Thu 17:00–18:00 halt; open Thursday night; and open on a Thursday that happens to be an NYSE holiday (CME\'s calendar is not the NYSE\'s)')
+    .toEqual([false, true, true, false, false, false, true, true]);
+  expect(pure.holiday, 'a weekday NYSE holiday is its own question: Thanksgiving yes (morning and evening), the Friday after no, an ordinary Thursday no').toEqual([true, true, false, false]);
+  const FAST = await page.evaluate(() => ECON_CRUDE_FAST_S), IDLE = await page.evaluate(() => ECON_CRUDE_IDLE_S);
+  expect(pure.holidayDelay, 'the poll cadence: every minute on an open Thursday AND on Thanksgiving (CME may be trading a shortened or reopened session — Codex, PR #308), slow only on the shut Saturday; Thanksgiving evening is open too')
+    .toEqual([FAST, FAST, IDLE, FAST]);
 
   // ── 3. force live; the feed is stubbed with quote-proxy's reply shapes and records every call
   await page.evaluate(() => {
@@ -8769,6 +8776,26 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   });
   expect(spanMismatch.oil, 'the oil rows keep their charts when desk-econ\'s payload is for another span').toEqual([true, true]);
   expect([spanMismatch.yieldSvg, spanMismatch.yieldCap], 'while the yields\' charts (which ARE desk-econ\'s) are withheld and say so').toEqual([false, 'span unavailable']);
+
+  // ── 7h. a weekday NYSE holiday (Codex, PR #308, eighth round) ────────────────────────────────────────────────────────────────────
+  // CME energy often trades a shortened or reopened session on an NYSE holiday (Thanksgiving evening), and this file carries no CME calendar: it
+  // polls at the OPEN cadence all day (see the pure checks) and labels a STOPPED price LAST — never NOT LIVE (a false alarm on a day CME is shut)
+  // and never silently "shut" — saying why in the tooltip. A fresh price is DELAYED as ever.
+  const states = await page.evaluate(() => [
+    econCrudeState({ crude: { ts: Date.parse('2026-10-08T12:00:00Z') } }, Date.parse('2026-10-08T15:00:00Z')),   // an ordinary Thursday, bar 3 h old
+    econCrudeState({ crude: { ts: Date.parse('2026-11-26T12:00:00Z') } }, Date.parse('2026-11-26T15:00:00Z')),   // Thanksgiving, bar 3 h old
+    econCrudeState({ crude: { ts: Date.parse('2026-11-28T12:00:00Z') } }, Date.parse('2026-11-28T15:00:00Z')),   // the shut Saturday after
+    econCrudeState({ crude: { ts: Date.parse('2026-11-26T14:50:00Z') } }, Date.parse('2026-11-26T15:00:00Z')),   // Thanksgiving, a fresh bar
+  ]);
+  expect(states, 'a stopped quote: NOT LIVE on an ordinary open Thursday, LAST on Thanksgiving and on the shut Saturday; a fresh one on the holiday is DELAYED').toEqual(['notlive', 'last', 'last', 'delayed']);
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.dailyDown = false; });
+  await page.clock.setSystemTime(new Date('2026-11-26T15:00:00Z'));   // Thanksgiving 10:00 ET
+  await page.evaluate(() => { window.__oil.frozenAt = Date.now() - 3 * 3600000; });   // the newest bar is three hours old
+  await page.evaluate(() => econCrudeFetch(false));
+  const holiday = await info('wti');
+  expect([holiday.tag, holiday.nolive, holiday.state], 'on Thanksgiving a stopped price reads LAST, not NOT LIVE').toEqual(['LAST', false, 'last']);
+  expect(holiday.title, 'and the tooltip says why a stall cannot be told from a closure').toContain('LAST — an NYSE holiday, when CME\'s own hours differ');
+  await page.evaluate(() => { window.__oil.frozenAt = 0; });
 
   // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
   await page.evaluate(() => { window.__oil.calls.length = 0; });

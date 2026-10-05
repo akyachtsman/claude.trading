@@ -697,9 +697,15 @@ width); **S56** guards the live 10Y.
     bars (`econDownsample`).
   - **Liveness words** (`econCrudeState`): a bar within `ECON_CRUDE_FRESH_MS` (20 min) → **DELAYED** (never LIVE:
     Yahoo runs ~10 minutes behind, and the owner's rule is to be told when it is not real time); older while the
-    futures market is open (`econCrudeOpen`: Sunday 18:00 ET to Friday 17:00 ET, shut 17:00–18:00 ET Mon–Thu, NYSE
-    holidays counted as shut — coarse, and it only decides the WORD for a stopped quote, since a quote that is still
-    arriving reads DELAYED whatever it says) → the solid ink **NOT LIVE** chip; older with the market shut → **LAST**.
+    futures market is open (`econCrudeOpen`: the WEEKLY schedule only — Sunday 18:00 ET to Friday 17:00 ET, shut
+    17:00–18:00 ET Mon–Thu — and it also sets the poll cadence, 60 s open / 10 min shut) → the solid ink **NOT LIVE**
+    chip; older with the market shut → **LAST**. **NYSE holidays are NOT treated as closures** (Codex, PR #308, eighth
+    round): CME's calendar is not the NYSE's (shortened sessions, reopened evenings such as Thanksgiving) and this file
+    carries no CME calendar, so `econCrudeHoliday` marks a weekday NYSE holiday as an UNKNOWN: polling stays at the
+    open cadence all day, a fresh bar reads DELAYED as ever, and a STOPPED price reads **LAST** (never NOT LIVE — a
+    false alarm on a day CME may be shut) with the tooltip "LAST — an NYSE holiday, when CME's own hours differ: this
+    price has stopped, and a stalled feed cannot be told from a closed market". Encoding a CME calendar needs the
+    owner's say (it would have to be kept current yearly, like `NYSE_HOLIDAYS`).
     No second source. A row keeps its last good quote for `ECON_CRUDE_KEEP_MS` (30 min, or two poll intervals when
     slower), then says **NO DATA** with the feed's reason in its tooltip. Before the first reply there are no oil rows;
     if desk-econ has delivered nothing AND the quote feed has nothing usable, the panel's own empty state says so once
@@ -747,4 +753,4 @@ width); **S56** guards the live 10Y.
     feed returns) the whole panel is composed again with `renderEcon(econState.shown)`. With desk-econ rows present the oil
     rows still say NO DATA IN PLACE and the yields' nodes are left alone.
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window, the price and change notes and the span independence; 55 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window, the price and change notes, the span independence and the holiday handling; 60 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
