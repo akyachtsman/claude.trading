@@ -9159,7 +9159,14 @@ function econCrudeRepaint() {
   if (!list || DESK.mode === 'demo') return;
   const rows = econCrudeRows(Date.now());
   if (!rows.length) return;
-  if (!ECON_CRUDE_IDS.every(id => list.querySelector('.econ-row[data-id="' + id + '"]'))) { renderEcon(econState.shown); return; }
+  /* Does the COMPOSED panel carry the oil rows at all? With nothing from desk-econ and both quotes gone, econWithCrude drops them so the panel's
+     own empty state speaks once (Codex, PR #308): rows already in the page must not turn into two lonely NO DATA rows, so whenever what should be
+     drawn differs from what is, the whole panel is composed again */
+  const base = econState.shown && Array.isArray(econState.shown.rows) ? econState.shown.rows : [];
+  const wanted = econWithCrude(base, rows).some(r => Object.hasOwn(ECON_CRUDE, r.id));
+  const inPage = ECON_CRUDE_IDS.filter(id => list.querySelector('.econ-row[data-id="' + id + '"]')).length;
+  if (wanted ? inPage !== ECON_CRUDE_IDS.length : inPage > 0) { renderEcon(econState.shown); return; }
+  if (!wanted) return;
   for (const r of rows) {
     const li = list.querySelector('.econ-row[data-id="' + r.id + '"]'), next = econRow(r, true);
     const nc = next.querySelector('.econ-chart'), oc = li.querySelector('.econ-chart');

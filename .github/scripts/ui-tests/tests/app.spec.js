@@ -8684,6 +8684,39 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   const histBack = await info('wti');
   expect([histBack.svg, /history .*failed|no 1W–5Y chart/.test(histBack.title)], 'the feed returns: the chart is back and the tooltip is quiet again').toEqual([true, false]);
 
+  // ── 7e. nothing from desk-econ and both oil quotes expire (Codex, PR #308, fourth round) ────────────────────────────────────────────
+  // With desk-econ empty the oil rows can be the only rows in the page. When both quotes later age out, the composed panel drops them so the
+  // panel's own empty state speaks ONCE — the in-place repaint must not swap them for two lonely NO DATA rows.
+  // (a) WITH desk-econ rows present, expired quotes become two NO DATA rows IN PLACE — the yields' rows are the very same nodes (a whole-panel rebuild
+  // would restart every NEW watch, which is why the oil rows repaint alone)
+  await page.evaluate(() => { window.__oil.mode = 'fail'; window.__oil.infoDown = false; window.__oil.dailyDown = false; document.querySelector('#econList .econ-row[data-id="ust10y"]').__kept = 7; });
+  await page.clock.setSystemTime(new Date('2026-10-07T23:25:00Z'));   // 34 minutes since the last quote
+  await page.evaluate(() => econCrudeFetch(false));
+  const noData = await page.evaluate(() => ({ kept: (document.querySelector('#econList .econ-row[data-id="ust10y"]') || {}).__kept, tags: ['wti', 'brent'].map((i) => (document.querySelector(`#econList .econ-row[data-id="${i}"] .econ-tag`) || {}).textContent) }));
+  expect(noData.tags, 'with the quotes gone the two oil rows say NO DATA beside the yields').toEqual(['NO DATA', 'NO DATA']);
+  expect(noData.kept, 'and the yields\' rows were not rebuilt to say so').toBe(7);
+  await page.evaluate(() => { window.__oil.mode = 'ok'; });
+  await page.clock.setSystemTime(new Date('2026-10-07T23:26:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).val, 'the feed returns').toBe('$88.40');
+  // (b) NOTHING from desk-econ: the oil rows stand alone, and when both quotes expire the panel's own empty state speaks once
+  await page.evaluate(() => { window.__shownBackup = econState.shown; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-07T23:30:00Z'));
+  await page.evaluate(async () => { renderEcon({ rows: [], range: econRange, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false }); await econCrudeFetch(false); });
+  const rowIds = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => li.dataset.id));
+  expect(await rowIds(), 'desk-econ has nothing but the oil quotes are real: the two oil rows stand alone').toEqual(['wti', 'brent']);
+  await page.evaluate(() => { window.__oil.mode = 'fail'; });
+  await page.clock.setSystemTime(new Date('2026-10-08T00:10:00Z'));   // 40 minutes with no quote at all
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await rowIds(), 'both quotes gone and nothing else to show: no lonely NO DATA rows').toEqual([]);
+  expect(await page.locator('#econList .econ-empty').count(), 'the panel\'s own empty state speaks once instead').toBe(1);
+  await page.evaluate(() => { window.__oil.mode = 'ok'; });
+  await page.clock.setSystemTime(new Date('2026-10-08T00:11:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await rowIds(), 'the feed returns: the oil rows come back').toEqual(['wti', 'brent']);
+  expect(await page.locator('#econList .econ-empty').count(), 'and the empty state goes').toBe(0);
+  await page.evaluate(() => { renderEcon(window.__shownBackup); });   // back to the full panel for the sections below
+
   // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
   await page.evaluate(() => { window.__oil.calls.length = 0; });
   await page.evaluate(() => econCrudeFetch(true));

@@ -723,5 +723,12 @@ width); **S56** guards the live 10Y.
     last refresh of the 1W–5Y history failed (…); the charts show the history read N min ago"), then the chart is DROPPED
     — caption `no chart`, tooltip "no 1W–5Y chart: <reason>" — never an ageing chart that looks current. The daily bars
     are re-asked on every poll once they are 5 minutes old, so a recovery brings the chart straight back.
+  - **The in-place repaint follows the COMPOSED panel** (Codex, PR #308, fourth round): `econCrudeRepaint` redraws the oil
+    rows alone (a price ticks every minute; a whole-panel rebuild restarts every NEW watch), but it first asks
+    `econWithCrude` whether the composed panel carries the oil rows at all. With desk-econ empty and both quotes gone the
+    composition drops them so the panel's own empty state speaks ONCE; rows already in the page must not turn into two lonely
+    NO DATA rows, so whenever what should be drawn differs from what is (rows to remove, or missing ones to restore when the
+    feed returns) the whole panel is composed again with `renderEcon(econState.shown)`. With desk-econ rows present the oil
+    rows still say NO DATA IN PLACE and the yields' nodes are left alone.
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh; 34 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh and the composed empty state; 38 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
