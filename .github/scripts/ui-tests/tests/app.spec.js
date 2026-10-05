@@ -8197,6 +8197,30 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   expect(overlap.note, 'and say why').toContain('A split is being saved');
   expect(overlap.after, 'the guard is released afterwards and the split was the ONE write').toEqual([false, false, 1]);
 
+  // ── 6c. ...and the OTHER ordering (Codex, PR #307, second round): a write that began BEFORE the split ───────────────────────────────────
+  // A drag-drop or an arrow reorder does not set `wlBusy`, so a guard that only covered writes begun after the split let the split start beside
+  // them. `wlMutate` now counts every roster write in flight and every entry point that starts one refuses meanwhile.
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  const reverse = await page.evaluate(async () => {
+    const out = {}, wasOpen = (id) => !document.getElementById(id).hidden;
+    const m = wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');   // a drop in flight: NOT awaited
+    out.counted = wlInFlight;
+    const before = (window.__rosterWrites || []).length;
+    await wlSplitBand(0, 'Radar', document.querySelector('#wlStrip .wl-split:not([hidden])'));
+    out.splitNote = document.getElementById('wlNote').textContent;
+    openWlQuickAdd(0, 'Radar', null); openWlRemove('T002', 0, 'Radar', null); openWlNewList(null); openWlDelList(0, 'Radar', null);
+    out.dialogs = ['wlQuickBackdrop', 'wlRmBackdrop', 'wlNewBackdrop', 'wlDelBackdrop'].map(wasOpen);
+    out.writesDuring = (window.__rosterWrites || []).length - before;
+    await m;
+    out.after = [wlInFlight, wlBusy, wlSplitting, (window.__rosterWrites || []).length];
+    return out;
+  });
+  expect(reverse.counted, 'a write begun by a drop is counted the moment it starts').toBe(1);
+  expect(reverse.splitNote, 'so a split pressed meanwhile is refused, and says why').toContain('Another roster change is being saved');
+  expect(reverse.dialogs, 'as is every roster dialog').toEqual([false, false, false, false]);
+  expect(reverse.after, 'the drop is the ONE write, and nothing is left counted in flight afterwards').toEqual([0, false, false, 1]);
+
   // ── 7. the desk keeps at most 50 lists: refuse, say why, write nothing ──────
   const many = [{ title: 'Radar', symbols: SYMS }].concat(Array.from({ length: 49 }, (_, i) => ({ title: 'L' + i, symbols: ['AAA'] })));
   await seed(many);

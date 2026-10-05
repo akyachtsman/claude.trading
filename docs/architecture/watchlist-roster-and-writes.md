@@ -90,7 +90,14 @@ Where the roster lives (`desk_watchlists`), the version-guarded replace-all (`de
     behind `wlBusy`, and one that started while the split's read was in flight would read the same
     version — `desk_014` would refuse whichever write finished second and a valid action would
     fail. A drag-drop (`wlCommitMove`) and a band move (`wlMoveBand`) are refused for the same
-    reason ("A split is being saved"). S61 asserts all of it (four mutants).
+    reason ("A split is being saved"). **And the other ordering** (Codex, second round on PR #307): a
+    write that began BEFORE the split — an arrow reorder, a drag-drop — never set `wlBusy`, so a guard that
+    only covered writes begun after the split let it start beside them. `wlMutate` therefore counts every
+    roster write in flight (`wlInFlight`, in a `try/finally` around the whole read-modify-write — it is the
+    one place a roster write happens) and every entry point that STARTS one refuses while it is above zero:
+    the split, the four dialogs' openers and their submits (`wlWriting()`; the note/error reads "Another
+    roster change is being saved — try again in a moment"). `wlBusy` stays the dialogs' own "my write is in
+    flight" flag. S61 asserts both orderings (eight mutants).
   - `wlSplitting` stops a second press while a write is in flight; the repaint
     inside `wlMutate` draws the new buttons while it is still set, so
     `wlSplitBand` re-syncs once more in its `finally` (otherwise the NEW list's own

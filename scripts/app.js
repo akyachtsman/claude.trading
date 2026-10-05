@@ -1303,6 +1303,7 @@ async function wlSplitBand(idx, title, btn) {
      reason wlCommitMove and wlMoveBand carry their own check). */
   if (wlLocked) { wlNote('Arrangement is locked'); return; }
   if (wlSplitting || wlBusy) return;
+  if (wlInFlight) { wlNote(WL_SAVING); return; }
   const group = btn ? btn.closest('.mkt-group') : document.querySelectorAll('#wlStrip .mkt-group')[idx];
   const box = group && group.querySelector('.mkt-group-tiles');
   if (!box) return;
@@ -1699,6 +1700,13 @@ const wlCanEdit = () => DESK.mode !== 'demo';
    input, or closing and reopening the dialog for another list, reached the
    submit path while a request was still in flight. */
 let wlBusy = false;
+/* EVERY roster write in flight, whoever started it (Codex, PR #307: a split guarded only against the writes that began AFTER it; one that began
+   BEFORE — an arrow reorder, a drag-drop — ran unseen, read the same version, and desk_014 refused whichever finished second). `wlMutate` is
+   the one place a roster write happens, so it counts itself in and out; the entry points that start a write refuse while it is above zero.
+   `wlBusy` stays what it was: the dialogs' own "my write is in flight" flag. */
+let wlInFlight = 0;
+const wlWriting = () => wlBusy || wlInFlight > 0;
+const WL_SAVING = 'Another roster change is being saved — try again in a moment';
 
 /* Resolve the band the owner acted on inside the AUTHORITATIVE roster.
    Targeting by title alone was wrong (Codex review, PR #196): the editor
@@ -1734,6 +1742,10 @@ function wlPick(lists, idx, title) {
 }
 
 async function wlMutate(mutate) {
+  wlInFlight++;
+  try { return await wlMutateRun(mutate); } finally { wlInFlight--; }
+}
+async function wlMutateRun(mutate) {
   /* No PIN needed — the watchlist RPCs are open (desk_011). Still a
      read-modify-write against the AUTHORITATIVE roster, never a patch of the
      rendered payload: that omits unresolved symbols and can be an hour stale. */
@@ -1787,7 +1799,7 @@ function modalErr(id, msg) {
 function wlQuickErr(msg) { modalErr('wlQuickErr', msg); }
 
 function openWlQuickAdd(idx, title, invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   wlQuickList = { idx, title };
   const back = document.getElementById('wlQuickBackdrop');
   const head = document.getElementById('wlQuickTitle');
@@ -1816,6 +1828,7 @@ async function submitWlQuickAdd() {
   const input = document.getElementById('wlQuickInput');
   const btn = document.getElementById('wlQuickSaveBtn');
   if (!input || !wlQuickList || wlBusy) return;
+  if (wlInFlight) { wlQuickErr(WL_SAVING); return; }
   /* Same parse the editor uses, so "BRK.B, SPY" and a pasted broker column
      behave identically here (and the RPC re-validates regardless). */
   const syms = wlParseSyms(input.value);
@@ -1859,7 +1872,7 @@ let wlRmTarget = null;            /* {sym, idx, title} awaiting confirmation */
 function wlRmErr(msg) { modalErr('wlRmErr', msg); }
 
 function openWlRemove(sym, idx, title, invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   wlRmTarget = { sym, idx, title };
   const back = document.getElementById('wlRmBackdrop');
   const text = document.getElementById('wlRmText');
@@ -1878,6 +1891,7 @@ function closeWlRemove() {
 
 async function confirmWlRemove() {
   if (!wlRmTarget || wlBusy) return;
+  if (wlInFlight) { wlRmErr(WL_SAVING); return; }
   const { sym, idx, title } = wlRmTarget;
   const btn = document.getElementById('wlRmConfirmBtn');
   wlBusy = true;
@@ -1912,7 +1926,7 @@ function wlNewErr(msg) { modalErr('wlNewErr', msg); }
 function wlDelErr(msg) { modalErr('wlDelErr', msg); }
 
 function openWlNewList(invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   const back = document.getElementById('wlNewBackdrop');
   const input = document.getElementById('wlNewInput');
   if (!back || !input) return;
@@ -1929,6 +1943,7 @@ function closeWlNewList() {
 
 async function submitWlNewList() {
   if (wlBusy) return;
+  if (wlInFlight) { wlNewErr(WL_SAVING); return; }
   const input = document.getElementById('wlNewInput');
   const btn = document.getElementById('wlNewSaveBtn');
   const name = String((input && input.value) || '').trim().slice(0, 60);
@@ -1960,7 +1975,7 @@ async function submitWlNewList() {
 }
 
 function openWlDelList(idx, title, invoker) {
-  if (!wlCanEdit() || wlBusy) return;
+  if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   /* Enforced HERE and not only on the button, the same way wlCommitMove and
      wlMoveBand enforce it rather than trusting their controls. A disabled
      button is a hint; the keyboard path, a stale render and a console call all
@@ -1995,6 +2010,7 @@ function closeWlDelList() {
 
 async function confirmWlDelList() {
   if (!wlDelTarget || wlBusy) return;
+  if (wlInFlight) { wlDelErr(WL_SAVING); return; }
   const { idx, title } = wlDelTarget;
   const btn = document.getElementById('wlDelConfirmBtn');
   wlBusy = true;
