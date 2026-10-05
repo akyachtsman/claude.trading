@@ -719,6 +719,12 @@ width); **S56** guards the live 10Y.
     demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
     of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
+  - **The oil charts do not depend on desk-econ's span** (Codex, PR #308, seventh round): `renderEcon` passes the
+    "does this payload belong to the span showing" flag (`chartsMatch`, which withholds a chart labelled with the wrong
+    window) to the desk-econ rows only. An oil row's charts are sliced from the quote feed's OWN daily history for the
+    span showing (`econCrudeRows` → `econSpanSlice(…, econRange)`), so they always match: when a span change's
+    desk-econ request fails and the retained payload still belongs to the old span, the yields' charts say `span
+    unavailable` and the healthy oil charts stay.
   - **Every leg names its failure on the row** (Codex, PR #308, sixth round, with the same rule applied to its
     sibling): the price (`crude.why`, from `m.why`/`m.detail`) — "the last refresh of the price failed (…); this is the
     price read N min ago", cleared by the next good read, the age measured from the READ (`fetchedAt`), not from the
@@ -741,4 +747,4 @@ width); **S56** guards the live 10Y.
     feed returns) the whole panel is composed again with `renderEcon(econState.shown)`. With desk-econ rows present the oil
     rows still say NO DATA IN PLACE and the yields' nodes are left alone.
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window and the price and change notes; 53 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window, the price and change notes and the span independence; 55 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).

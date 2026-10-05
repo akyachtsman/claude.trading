@@ -8756,6 +8756,20 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(() => econCrudeFetch(false));
   expect((await page.evaluate(() => window.__oil.calls.filter((c) => c.kind === 'info').map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort())), 'and once a current baseline is stored, the ordinary call again').toEqual(['BZ=F:info', 'CL=F:info']);
 
+  // ── 7g. the oil charts do not depend on desk-econ's span (Codex, PR #308, seventh round) ──────────────────────────────────────────────
+  // The oil rows slice the quote feed's own daily history for the span showing. When a span change's desk-econ request fails, the retained payload
+  // still belongs to the OLD span, so the yields' charts are withheld ("span unavailable") — the healthy oil charts must not go with them.
+  const spanMismatch = await page.evaluate(() => {
+    const shown = econState.shown;
+    renderEcon({ ...shown, range: econRange === '1w' ? '3m' : '1w' });   // a payload that is NOT for the span showing
+    const q = (id) => document.querySelector(`#econList .econ-row[data-id="${id}"]`);
+    const out = { oil: ['wti', 'brent'].map((id) => !!q(id).querySelector('.econ-chart svg')), yieldCap: (q('ust10y').querySelector('.econ-cap') || {}).textContent || null, yieldSvg: !!q('ust10y').querySelector('.econ-chart svg') };
+    renderEcon(shown);
+    return out;
+  });
+  expect(spanMismatch.oil, 'the oil rows keep their charts when desk-econ\'s payload is for another span').toEqual([true, true]);
+  expect([spanMismatch.yieldSvg, spanMismatch.yieldCap], 'while the yields\' charts (which ARE desk-econ\'s) are withheld and say so').toEqual([false, 'span unavailable']);
+
   // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
   await page.evaluate(() => { window.__oil.calls.length = 0; });
   await page.evaluate(() => econCrudeFetch(true));

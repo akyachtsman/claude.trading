@@ -8520,7 +8520,9 @@ function renderEcon(payload) {
   const chartsMatch = !payload || !payload.range || payload.range === econRange;
   const seededSet = {}, pendSet = {}, now = Date.now();
   for (const r of rows) {
-    if (Object.hasOwn(ECON_CRUDE, r.id)) { list.appendChild(econRow(r, chartsMatch)); continue; }   /* a price, never NEW: no seen/pending bookkeeping */
+    /* a price, never NEW: no seen/pending bookkeeping. Its charts are sliced from the quote feed's OWN history for the span showing (econCrudeRows), so
+       they never depend on which span desk-econ's retained payload belongs to (Codex, PR #308): a failed span change must not blank a healthy oil chart */
+    if (Object.hasOwn(ECON_CRUDE, r.id)) { list.appendChild(econRow(r, true)); continue; }
     const live = econLiveRow(r, now);   /* a live print standing in for the official reading, or the row itself */
     if (live !== r) econLiveSeen(r);
     else if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && !Object.hasOwn(econSeen, r.id)) {
