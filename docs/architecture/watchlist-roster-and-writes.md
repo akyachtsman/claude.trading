@@ -85,6 +85,12 @@ Where the roster lives (`desk_watchlists`), the version-guarded replace-all (`de
     list is not what is gated, moving the tiles is.
   - **At most 50 lists** (`WL_MAX_LISTS`, `desk_014`): a full roster is refused with
     a note, nothing is written.
+  - **A split holds the SHARED write guard** (`wlBusy`, Codex PR #307) for its whole run, not only
+    `wlSplitting`: the quick-add / remove / create / delete dialogs all read-modify-write the roster
+    behind `wlBusy`, and one that started while the split's read was in flight would read the same
+    version — `desk_014` would refuse whichever write finished second and a valid action would
+    fail. A drag-drop (`wlCommitMove`) and a band move (`wlMoveBand`) are refused for the same
+    reason ("A split is being saved"). S61 asserts all of it (four mutants).
   - `wlSplitting` stops a second press while a write is in flight; the repaint
     inside `wlMutate` draws the new buttons while it is still set, so
     `wlSplitBand` re-syncs once more in its `finally` (otherwise the NEW list's own

@@ -1164,6 +1164,7 @@ const saveWlLock = () => {
    row. */
 async function wlMoveBand(idx, delta) {
   if (wlLocked) { wlNote('Arrangement is locked'); return; }
+  if (wlSplitting) { wlNote('A split is being saved — try again in a moment'); return; }
   const cur = (wlState.payload && wlState.payload.lists) || [];
   const title = cur[idx] && cur[idx].title;
   if (title == null) return;
@@ -1187,6 +1188,7 @@ async function wlCommitMove(from, to, sym) {
      lesson as the scheduled-ask floor, which only held once it moved out of the
      input handler and into the save. */
   if (wlLocked && to.band !== 'trash') { wlNote('Arrangement is locked'); return; }
+  if (wlSplitting) { wlNote('A split is being saved — try again in a moment'); return; }
   if (from.band === to.band && to.band !== 'trash' && from.idx === to.idx) return;   /* dropped where it started */
 
   const res = await wlMutate(lists => {
@@ -1309,7 +1311,11 @@ async function wlSplitBand(idx, title, btn) {
   if (!cap || !syms.length) { wlNote('Everything fits on one row'); return; }
   if (cap < WL_SPLIT_MIN_ROW) { wlNote('Open this on a wider screen to split — a row here holds only ' + cap); return; }
 
-  wlSplitting = true;
+  /* Holds the SHARED write guard for the whole split, not only `wlSplitting`: the quick-add, remove, create and delete dialogs all
+     read-modify-write the roster behind `wlBusy`, and one that started while the split's read was in flight would read the same
+     version — the guard (desk_014) would then refuse whichever write finished second and a valid action would fail (Codex, PR #307).
+     A drag-drop or a band move meanwhile is refused for the same reason (wlCommitMove, wlMoveBand). */
+  wlSplitting = true; wlBusy = true;
   if (btn) btn.disabled = true;
   let made = '', moved = 0, why = '';
   try {
@@ -1332,7 +1338,7 @@ async function wlSplitBand(idx, title, btn) {
   } finally {
     /* The repaint inside wlMutate ran while this was still true, so every button
        it drew came up disabled; one more sync now that the write is over. */
-    wlSplitting = false;
+    wlSplitting = false; wlBusy = false;
     wlSyncSplit();
   }
 }

@@ -8169,6 +8169,34 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   await expect(page.locator('#wlNote')).toContainText('wider screen');
   await page.setViewportSize({ width: 1440, height: 900 });
 
+  // ── 6b. one roster write at a time: a split in flight holds the SHARED guard (Codex, PR #307) ───────────────────────────────────────
+  // The quick-add, remove, create and delete dialogs, a drag-drop and a band move all read-modify-write the roster; one started while the split's
+  // read was out would read the same version and the version guard would refuse whichever finished second — a valid action failing.
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  const overlap = await page.evaluate(async () => {
+    const out = {}, wasOpen = (id) => !document.getElementById(id).hidden;
+    const p = wlSplitBand(0, 'Radar', document.querySelector('#wlStrip .wl-split:not([hidden])'));   // NOT awaited: its flags are set before its first await
+    out.guard = [wlBusy, wlSplitting];
+    openWlQuickAdd(0, 'Radar', null); out.quick = wasOpen('wlQuickBackdrop');
+    openWlRemove('T001', 0, 'Radar', null); out.remove = wasOpen('wlRmBackdrop');
+    openWlNewList(null); out.create = wasOpen('wlNewBackdrop');
+    openWlDelList(0, 'Radar', null); out.del = wasOpen('wlDelBackdrop');
+    const writesBefore = (window.__rosterWrites || []).length;
+    await wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');   // a drop meanwhile
+    await wlMoveBand(0, 1);                                                                               // a band move meanwhile
+    out.note = document.getElementById('wlNote').textContent;
+    out.refusedWrites = (window.__rosterWrites || []).length - writesBefore;
+    await p;
+    out.after = [wlBusy, wlSplitting, (window.__rosterWrites || []).length];
+    return out;
+  });
+  expect(overlap.guard, 'a split holds the shared write guard for its whole run').toEqual([true, true]);
+  expect([overlap.quick, overlap.remove, overlap.create, overlap.del], 'so no roster dialog opens meanwhile').toEqual([false, false, false, false]);
+  expect(overlap.refusedWrites, 'a drag-drop and a band move meanwhile write nothing').toBe(0);
+  expect(overlap.note, 'and say why').toContain('A split is being saved');
+  expect(overlap.after, 'the guard is released afterwards and the split was the ONE write').toEqual([false, false, 1]);
+
   // ── 7. the desk keeps at most 50 lists: refuse, say why, write nothing ──────
   const many = [{ title: 'Radar', symbols: SYMS }].concat(Array.from({ length: 49 }, (_, i) => ({ title: 'L' + i, symbols: ['AAA'] })));
   await seed(many);
