@@ -8645,6 +8645,9 @@ function econRow(r, chartsMatch) {
     liveState === 'notlive' ? 'NOT LIVE — ' + econNotLiveWhy(r, now) : '',
     crudeState === 'notlive' ? 'NOT LIVE — no new price for ' + Math.round((now - r.crude.ts) / 60000) + ' min while the futures market is open; this is the last price the quote feed sent' : '',
     crudeState === 'last' ? 'LAST — the futures market is shut; this is its last price' : '',
+    /* a retained price says its latest refresh failed (Codex, PR #308): the quote is kept for the keep window, and without this line it would read as current */
+    r.crude && r.crude.why ? 'the last refresh of the price failed (' + r.crude.why + '); this is the price read ' + Math.round((now - r.crude.fetchedAt) / 60000) + ' min ago' : '',
+    r.crude && r.crude.chgWhy ? r.crude.chgWhy : '',
     r.crude && r.crude.histWhy ? r.crude.histWhy : '',
     missing && r.why ? 'no price: ' + r.why : '',
     missing ? '' : r.crude ? 'as of ' + fmtStampDateTime(new Date(r.crude.ts).toISOString()) + ' (time of the newest price)'
@@ -9135,6 +9138,9 @@ function econCrudeRows(now) {
       /* the feed holds ~3 years: a 5Y chart must say what it covers, not pass for five */
       if (!note && sl.start < econShiftDays(m.daily[0][0], -10)) note = 'since ' + econEndLabel(m.daily[0][0], 'monthly');
     }
+    /* the change's own note: why it is a dash, or that it rests on a close read earlier in this session */
+    const chgWhy = !m.infoWhy ? '' : m.prevClose == null ? 'no change shown: ' + m.infoWhy
+      : 'the last refresh of the previous close failed (' + m.infoWhy + '); the change uses the close read earlier in this session';
     if (m.dailyWhy) histWhy = points.length
       ? 'the last refresh of the 1W–5Y history failed (' + m.dailyWhy + '); the charts show the history read ' + Math.round(histAge / 60000) + ' min ago'
       : 'no 1W–5Y chart: ' + m.dailyWhy;
@@ -9144,7 +9150,7 @@ function econCrudeRows(now) {
       delta: m.prevClose == null ? null : Number((price - m.prevClose).toFixed(2)),
       asOf: ptDateKey(new Date(m.ts)), prevAsOf: null, points,
       ...(note ? { pointsNote: note } : {}),
-      crude: { symbol, ts: m.ts, why: m.why ? m.detail : '', histWhy },
+      crude: { symbol, ts: m.ts, why: m.why ? m.detail : '', histWhy, chgWhy, fetchedAt: m.fetchedAt },
     };
   });
 }
@@ -9225,9 +9231,13 @@ async function econCrudeFetch(force) {
        session's close, which would show a multi-day move as today's. `prevKey` stays the OLD session while the baseline is missing, so
        the next poll asks fresh again. */
     const pv = econCrudePrev(x.info), endSession = econCrudeSession(landed);
-    if (pv != null && startSession === endSession) { m.prevClose = pv; m.prevKey = endSession; }
-    else if (pv != null) { m.prevClose = null; m.prevKey = startSession; }   /* the request straddled a turnover (Codex, PR #308): the `force` decision was made for the session it STARTED in, so the reply may still be the old session's cached close — never stored under the new one; ask again fresh */
-    else if (m.prevKey !== endSession) m.prevClose = null;
+    if (pv != null && startSession === endSession) { m.prevClose = pv; m.prevKey = endSession; m.infoWhy = ''; }
+    else if (pv != null) { m.prevClose = null; m.prevKey = startSession; m.infoWhy = 'the reply crossed a session turnover, so it may be the old close; asking again'; }   /* the request straddled a turnover (Codex, PR #308): the `force` decision was made for the session it STARTED in, so the reply may still be the old session's cached close — never stored under the new one; ask again fresh */
+    else {
+      /* the previous-close leg failed: its reason is kept for the tooltip (a dash or a retained change must say why) */
+      m.infoWhy = x.info && x.info.ok ? 'the quote feed sent no previous close' : fail(x.info);
+      if (m.prevKey !== endSession) m.prevClose = null;
+    }
     if (x.daily !== undefined) {
       const d = x.daily && x.daily.ok ? econCrudeDaily(x.daily.series) : null;
       /* A failed daily leg keeps the last good history but SAYS so (Codex, PR #308): the 1W–5Y charts would otherwise age in silence while the

@@ -8516,6 +8516,7 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
       if (o.mode === 'fail') throw new Error('quote-proxy → HTTP 502');
       if (o.mode === 'refuse') return { ok: false, error: 'no ' + kind + ' data found for ' + sym };
       if (o.gate && kind === 'info') await o.gate;   // holds the info leg open so a request can straddle a session turnover
+      if (o.infoEmpty && kind === 'info') return { ok: true, symbol: sym, kind, info: { price: null, change: null } };   // answers, but with no close in it
       if (o.infoDown && kind === 'info') return { ok: false, error: 'no info data found for ' + sym };   // ONE leg down: the bars still flow
       if (o.dailyDown && kind === 'daily') return { ok: false, error: 'no daily data found for ' + sym };
       const px = o.px[sym];
@@ -8549,6 +8550,7 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   expect([wti.src, brent.src], 'each names its own source and contract').toEqual(['Source: Yahoo CL=F', 'Source: Yahoo BZ=F']);
   expect([wti.isNew, brent.isNew], 'a price ticking by the minute is never NEW').toEqual([false, false]);
   expect(wti.title, 'the tooltip says what it is and how late').toContain('source Yahoo Finance CL=F front-month futures, about 10 minutes behind');
+  expect(wti.title, 'and a healthy row says nothing about a failed refresh').not.toMatch(/refresh of the (price|1W–5Y history) failed/);
   expect(wti.title).toContain('change ▲ 1.25 dollars from the previous close');
   expect(wti.title, 'and the time of the newest price').toContain('time of the newest price');
 
@@ -8596,6 +8598,8 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.clock.runFor(10 * 60_000);
   const kept = await info('wti');
   expect([kept.val, kept.tag === 'DELAYED' || kept.tag === 'NOT LIVE'], 'ten minutes into an outage the row still shows its last good price').toEqual(['$88.40', true]);
+  expect(kept.title, 'and its tooltip says the latest refresh failed, why, and how old the price is (Codex, PR #308: a retained price must not read as current)')
+    .toMatch(/the last refresh of the price failed \(no answer from the quote feed\); this is the price read (9|10|11) min ago/);
   await page.clock.runFor(25 * 60_000);
   const gone = await info('wti');
   expect([gone.val, gone.delta, gone.date, gone.tag, gone.svg], 'thirty minutes on: NO DATA — em dashes, never an old number — and no chart').toEqual(['—', '—', '—', 'NO DATA', false]);
@@ -8606,6 +8610,7 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(() => { window.__oil.mode = 'ok'; });
   await page.clock.runFor(61_000);
   expect([(await info('wti')).val, (await info('wti')).tag], 'the feed returns and so does the price').toEqual(['$88.40', 'DELAYED']);
+  expect((await info('wti')).title, 'and the failure note goes with the outage').not.toContain('refresh of the price failed');
 
   // ── 7b. the previous close belongs to its futures session (Codex, PR #308) ──────────────────────────────────────────────────────────
   // The change is the price less the previous close, read from `info`. If `info` fails while the bars still flow, the stored baseline may be
@@ -8621,12 +8626,19 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(() => econCrudeFetch(false));
   const sameSession = await info('wti');
   expect([sameSession.val, sameSession.delta, sameSession.tag], 'info down inside the session: the baseline it read still stands').toEqual(['$88.40', '▲ 1.25', 'DELAYED']);
+  expect(sameSession.title, 'and the tooltip says the change rests on a close read earlier, and why').toContain('the last refresh of the previous close failed (no info data found for CL=F); the change uses the close read earlier in this session');
+  await page.evaluate(() => { window.__oil.infoEmpty = true; });
+  await page.clock.setSystemTime(new Date('2026-10-06T16:31:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).title, 'an info reply that ANSWERED without a close in it is named too').toContain('the last refresh of the previous close failed (the quote feed sent no previous close)');
+  await page.evaluate(() => { window.__oil.infoEmpty = false; });
   expect(await kinds(), 'and info is asked for the ordinary (cached) way').toContain('CL=F:info');
   await page.evaluate(() => { window.__oil.calls.length = 0; });
   await page.clock.setSystemTime(new Date('2026-10-06T22:30:00Z'));   // 18:30 ET: the next session has opened
   await page.evaluate(() => econCrudeFetch(false));
   const turned = await info('wti');
   expect([turned.val, turned.delta, turned.tag], 'info down across the turnover: the price is the new one, the change an em dash — never the old close\'s').toEqual(['$88.40', '—', 'DELAYED']);
+  expect(turned.title, 'the tooltip says why there is no change').toContain('no change shown: no info data found for CL=F');
   expect(await kinds(), 'and info was asked for FRESH, past quote-proxy\'s cache').toEqual(expect.arrayContaining(['BZ=F:info:force', 'CL=F:info:force']));
   await page.evaluate(() => { window.__oil.calls.length = 0; });
   await page.clock.setSystemTime(new Date('2026-10-06T22:31:00Z'));
@@ -8635,7 +8647,9 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(() => { window.__oil.infoDown = false; window.__oil.prev['CL=F'] = 88.0; window.__oil.calls.length = 0; });
   await page.clock.setSystemTime(new Date('2026-10-06T22:32:00Z'));
   await page.evaluate(() => econCrudeFetch(false));
-  expect((await info('wti')).delta, 'info back: the new session\'s own previous close (88.40 − 88.00)').toBe('▲ 0.40');
+  const infoBack = await info('wti');
+  expect(infoBack.delta, 'info back: the new session\'s own previous close (88.40 − 88.00)').toBe('▲ 0.40');
+  expect(infoBack.title, 'and the previous-close notes go').not.toMatch(/no change shown|previous close failed/);
   await page.evaluate(() => { window.__oil.calls.length = 0; });
   await page.clock.setSystemTime(new Date('2026-10-06T22:33:00Z'));
   await page.evaluate(() => econCrudeFetch(false));
@@ -8656,6 +8670,7 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(async () => { window.__oil.gate = null; window.__oil.release(); await window.__oilReq; });   // info answers with the OLD close (88.00), as a cache would
   const straddled = await info('wti');
   expect([straddled.val, straddled.delta], 'the price lands, but a close from a request that crossed the turnover is not trusted: an em dash').toEqual(['$88.40', '—']);
+  expect(straddled.title, 'and the tooltip says why').toContain('no change shown: the reply crossed a session turnover, so it may be the old close; asking again');
   await page.evaluate(() => { window.__oil.prev['CL=F'] = 87.0; window.__oil.calls.length = 0; });   // the new session\'s own previous close
   await page.clock.setSystemTime(new Date('2026-10-07T22:01:00Z'));
   await page.evaluate(() => econCrudeFetch(false));

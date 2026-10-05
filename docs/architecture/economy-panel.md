@@ -719,6 +719,13 @@ width); **S56** guards the live 10Y.
     demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
     of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
+  - **Every leg names its failure on the row** (Codex, PR #308, sixth round, with the same rule applied to its
+    sibling): the price (`crude.why`, from `m.why`/`m.detail`) — "the last refresh of the price failed (…); this is the
+    price read N min ago", cleared by the next good read, the age measured from the READ (`fetchedAt`), not from the
+    bar; the previous close (`crude.chgWhy`, from `m.infoWhy`) — "no change shown: …" when the change is a dash (the
+    leg failed, answered without a close, or its reply crossed a turnover), or "the last refresh of the previous close
+    failed (…); the change uses the close read earlier in this session" when a baseline from this session stands;
+    and the history (next bullet). A retained value must never read as current.
   - **The history leg fails loudly too** (Codex, PR #308, third round): the 1W–5Y charts come from the DAILY leg and the
     price from the intraday leg, so a failed daily refresh used to leave the row `ok` while its history aged in silence.
     A failed daily leg is recorded (`m.dailyWhy`, cleared by the next success) and follows the price's own rule: the last
@@ -734,4 +741,4 @@ width); **S56** guards the live 10Y.
     feed returns) the whole panel is composed again with `renderEcon(econState.shown)`. With desk-econ rows present the oil
     rows still say NO DATA IN PLACE and the yields' nodes are left alone.
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state and the cold-load window; 44 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window and the price and change notes; 53 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
