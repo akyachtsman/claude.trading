@@ -1622,10 +1622,16 @@ async function installFakeRoster(page) {
         window.__rosterWrites.push(window.__roster.map(l => ({ title: l.title, symbols: l.symbols.slice() })));
         return json({ ok: true, version: 'v' + window.__rosterWrites.length });
       }
-      if (u.includes('/functions/v1/desk-watchlist'))
-        return json({ ok: true, range: wlTf, lists: window.__roster.map(l => ({
-          title: l.title, symbols: l.symbols.slice(),
-          rows: l.symbols.map(sym => ({ sym, last: 100, pct: 1, spark: [1, 2] })) })) });
+      if (u.includes('/functions/v1/desk-watchlist')) {
+        /* `window.__feedCap` (unset = no cap) mirrors the real feed, which prices only the first N UNIQUE symbols across the whole roster in
+           roster order and reports the rest as missing — so the rendered rows can hold fewer symbols than the roster does. */
+        const cap = window.__feedCap || Infinity;
+        const quoted = new Set([...new Set(window.__roster.flatMap(l => l.symbols))].slice(0, cap));
+        return json({ ok: true, range: wlTf, missing: [...new Set(window.__roster.flatMap(l => l.symbols))].filter(x => !quoted.has(x)),
+          lists: window.__roster.map(l => ({
+            title: l.title, symbols: l.symbols.slice(),
+            rows: l.symbols.filter(sym => quoted.has(sym)).map(sym => ({ sym, last: 100, pct: 1, spark: [1, 2] })) })) });
+      }
       return realFetch(url, init);
     };
   });
@@ -8278,6 +8284,36 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   await expect(page.locator('#wlNote')).toContainText('at most 50 lists');
   expect(await rosterWrites(page), 'a full roster is not written').toBe(0);
   expect((await rosterOf()).length).toBe(50);
+
+  // ── 8. a roster the quote feed cannot cover (Codex, PR #307, fifth round) ───────────────────────────────────────────────────────────
+  // desk-watchlist prices only the first 1,000 UNIQUE symbols across the whole roster, in roster order. The split leaves the symbols that drew
+  // nothing in the source, ahead of the new list, so above that cap the moved symbols fall past it: the new list would draw no quotes and the
+  // source a different set. Refused with the count, written nowhere; at exactly the cap (and with repeats counted once) it still works.
+  const big = (n) => Array.from({ length: n }, (_, i) => 'B' + String(i + 1).padStart(4, '0'));
+  await page.evaluate(() => { window.__feedCap = 1000; });   // the stub now prices only what the real feed does
+  const splitFirst = async () => {
+    await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+    await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
+  };
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Big', symbols: big(881) }]);   // 120 + 881 = 1,001 unique
+  await splitFirst();
+  await expect(page.locator('#wlNote')).toContainText('1,001 symbols');
+  await expect(page.locator('#wlNote')).toContainText('first 1,000');
+  await expect(page.locator('#wlNote')).toContainText('remove 1 before splitting');
+  expect(await rosterWrites(page), 'a roster past the feed cap is not written').toBe(0);
+  expect((await rosterOf()).map(r => r[0]), 'and no list was added').toEqual(['Radar', 'Big']);
+  expect(await page.evaluate(() => [wlBusy, wlSplitting, wlInFlight]), 'the guard is released after a refusal').toEqual([false, false, 0]);
+
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Big', symbols: big(880) }]);   // 120 + 880 = exactly 1,000
+  await splitFirst();
+  await expect(page.locator('#wlNote')).toContainText('Moved ');
+  expect(await rosterWrites(page), 'exactly at the cap it still splits, in one write').toBe(1);
+  expect((await rosterOf()).map(r => r[0]), 'the new list sits right after its source').toEqual(['Radar', 'Radar 2', 'Big']);
+
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Copy', symbols: SYMS }, { title: 'Big', symbols: big(880) }]);   // 1,120 saved, 1,000 unique
+  await splitFirst();
+  await expect(page.locator('#wlNote')).toContainText('Moved ');
+  expect(await rosterWrites(page), 'a symbol repeated across lists counts once, as the feed counts it').toBe(1);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

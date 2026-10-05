@@ -109,6 +109,18 @@ Where the roster lives (`desk_watchlists`), the version-guarded replace-all (`de
     pressed while the first is still saving is refused with that note rather than racing it (the drop's ghost
     is already cleaned up; nothing is written). S61 asserts both orderings, the editor and the two move entry
     points against it (fourteen mutants).
+  - **A split refuses on a roster the quote feed cannot cover** (Codex, PR #307, fifth round). `desk-watchlist`
+    prices only the first 1,000 UNIQUE symbols across the whole roster, in roster order (`MAX_SYMBOLS`; the client
+    mirror is `WL_FEED_CAP` — keep them in step), and a split deliberately leaves the symbols that drew nothing in
+    the source, ahead of the new list. Above the cap that tail pushes the moved symbols past it: the new list would
+    draw no quotes and the source a different set. So inside the split's `wlMutate` callback — counted on the
+    AUTHORITATIVE roster (a repeat across lists counts once, as the feed counts it; the rendered payload would
+    under-count, since the feed leaves what it did not price out of `rows`) — a roster of more than 1,000 unique
+    symbols is refused with the count and how many to remove ("Your lists hold 1,001 symbols and the quote feed
+    prices only the first 1,000 — remove 1 before splitting, or the new list would show no quotes"), nothing is
+    written, and the guard is released. At or below the cap everything is priced whatever the order, so a split is
+    safe. S61 section 8 drives it against a stub that prices only what the real feed does (`window.__feedCap`;
+    four mutants: no check, `>=`, repeats counted twice, counted on the rendered payload).
   - `wlSplitting` stops a second press while a write is in flight; the repaint
     inside `wlMutate` draws the new buttons while it is still set, so
     `wlSplitBand` re-syncs once more in its `finally` (otherwise the NEW list's own

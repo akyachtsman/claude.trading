@@ -1254,6 +1254,11 @@ const WL_MAX_LISTS = 50;   /* desk_014: 'too many lists (max 50)'; titles are cu
    owner's roster into slivers they never asked for; a widescreen is what the
    request was about, and a laptop or a tablet held sideways still clears it. */
 const WL_SPLIT_MIN_ROW = 12;
+/* The quote feed (desk-watchlist `MAX_SYMBOLS`) prices only the first 1,000 UNIQUE symbols across the whole roster, in roster order — keep
+   this in step with it. Above that a split cannot do what it promises (Codex, PR #307, fifth round): the symbols that drew nothing stay in
+   the source, ahead of the new list, so on a roster the feed cannot cover they push the moved symbols past the cap and the new list draws no
+   quotes while the source draws a different set. At or below the cap everything is priced whatever the order, so nothing is at risk. */
+const WL_FEED_CAP = 1000;
 let wlSplitting = false;
 
 function wlRowCapacity(box) {
@@ -1333,6 +1338,13 @@ async function wlSplitBand(idx, title, btn) {
       const src = wlPick(lists, idx, title);
       if (!src) { why = 'That list changed — try again'; return false; }
       if (lists.length >= WL_MAX_LISTS) { why = 'The desk keeps at most ' + WL_MAX_LISTS + ' lists — delete one first'; return false; }
+      /* Counted on the AUTHORITATIVE roster this write is built from (never the rendered payload, which omits what drew nothing). */
+      const saved = new Set(lists.flatMap(l => l.symbols)).size;
+      if (saved > WL_FEED_CAP) {
+        why = 'Your lists hold ' + saved.toLocaleString('en-US') + ' symbols and the quote feed prices only the first ' + WL_FEED_CAP.toLocaleString('en-US')
+          + ' — remove ' + (saved - WL_FEED_CAP).toLocaleString('en-US') + ' before splitting, or the new list would show no quotes';
+        return false;
+      }
       const held = new Set(src.symbols);
       const mv = syms.filter(sym => held.has(sym));
       if (!mv.length) { why = 'That list changed — try again'; return false; }
