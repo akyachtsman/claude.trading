@@ -6176,7 +6176,10 @@ async function readEconAxes(page, tf) {
     if (!svg) return { id: li.dataset.id, drawn: false };
     const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
     const sr = box(svg), shown = econState.shown && econState.shown.rows.find((r) => r.id === li.dataset.id);
-    const vals = frame === '1d' ? buildDemoBars(li.dataset.id).map((p) => p[1]) : frame === '1d-live' ? (econBars.m[li.dataset.id] ? econBars.m[li.dataset.id].pts : []).map((p) => p[1]) : (shown && shown.points || []).map((p) => Number(p[1])).filter(Number.isFinite);
+    const oil = Object.hasOwn(ECON_CRUDE, li.dataset.id);   // the crude-oil rows draw their own 24-hour bars (S63), not CNBC's
+    const vals = frame === '1d' ? (oil ? buildDemoCrudeBars(li.dataset.id, Date.now()) : buildDemoBars(li.dataset.id)).map((p) => p[1])
+      : frame === '1d-live' ? (oil ? ((econCrude.m[li.dataset.id] || {}).pts || []) : (econBars.m[li.dataset.id] ? econBars.m[li.dataset.id].pts : [])).map((p) => p[1])
+      : (shown && shown.points || []).map((p) => Number(p[1])).filter(Number.isFinite);
     return {
       id: li.dataset.id, cadence: li.dataset.cadence, drawn: true, svg: sr, chart: box(chart), axis: box(ax), span: chart.dataset.span || '',
       lo: Math.min(...vals), hi: Math.max(...vals), n: vals.length,
@@ -6249,13 +6252,14 @@ function checkEconAxes(expect, rows, label, xlabel) {
 // the real poller through a stubbed `deskEcon` on Playwright's clock (installed BEFORE navigation so the
 // page's own 30s lamp ticker is faked too), so "the next fetch follows refreshInSec" is asserted in
 // fake seconds, never by sleeping.
-test('S55: the Economy panel — seven rows, each with its own chart to the right, over a selectable span', async ({ page, renderWitness }) => {
+test('S55: the Economy panel — nine rows, each with its own chart to the right, over a selectable span', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(150_000);
   await page.clock.install();
   await gotoDemo(page, '#econList .econ-row', 15000);
 
-  const IDS = ['ust2y', 'ust10y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'];
+  const IDS = ['ust2y', 'ust10y', 'ust20y', 'wti', 'brent', 'unrate', 'cpi', 'pce', 'corepce'];   // the two crude-oil rows sit after the yields (S63)
+  const OIL = ['wti', 'brent'];
   const rowsInfo = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => {
     const q = (s) => li.querySelector(s);
     const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
@@ -6279,15 +6283,15 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await expect(page.locator('#econLamp'), '#econLamp must read exactly Demo in demo mode').toHaveText(/^demo$/i);
   await expect(page.locator('#econStamp'), 'the panel carries an as-of stamp (the design signature)').toHaveText(/Last updated/);
   let rows = await rowsInfo();
-  expect(rows.map((r) => r.id), 'the seven default indicators, in order').toEqual(IDS);
+  expect(rows.map((r) => r.id), 'the nine default rows (three yields, two crude-oil prices, four monthly indicators), in order').toEqual(IDS);
   // demo's acknowledgement state is session-only (Codex review, PR #294): its synthetic readings must never reach the keys a REAL
   // visit reads, or the first live visit afterwards would mark all seven indicators NEW
   expect(await page.evaluate(() => [localStorage.getItem('econ_seen_v1'), localStorage.getItem('econ_pending_v1')]),
     'demo persists no acknowledgement state').toEqual([null, null]);
-  expect(rows.map((r) => r.label)).toEqual(['2Y Treasury', '10Y Treasury', '20Y Treasury', 'Unemployment', 'CPI YoY', 'PCE YoY', 'Core PCE YoY']);
+  expect(rows.map((r) => r.label)).toEqual(['2Y Treasury', '10Y Treasury', '20Y Treasury', 'WTI crude', 'Brent crude', 'Unemployment', 'CPI YoY', 'PCE YoY', 'Core PCE YoY']);
   for (const r of rows) {
     const who = `[${r.id}]`;
-    expect(r.val, `${who} a value with its unit`).toMatch(/^\d+\.\d+%$/);
+    expect(r.val, `${who} a value with its unit`).toMatch(OIL.includes(r.id) ? /^\$\d+\.\d{2}$/ : /^\d+\.\d+%$/);
     expect(r.delta, `${who} a change: an arrow (or "=") and the size of the move`).toMatch(/^[▲▼=] \d+\.\d+$/);
     expect(r.date, `${who} carries the date its reading is FOR`).toMatch(/^[A-Z][a-z]{2}( \d{1,2}| \d{4})?$/);
     expect(r.hasSvg && r.d && r.d.length > 20, `${who} has its own drawn chart`).toBeTruthy();
@@ -6299,7 +6303,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   }
   // the value and the change print at the row's own `decimals` (yields 2, unemployment/inflation 1), not one house format
   const decs = await page.evaluate(() => econState.shown.rows.map((r) => [r.id, r.decimals]));
-  expect(rows.map((r) => [r.id, r.val.replace('%', '').split('.')[1].length]), 'the value prints at its own decimals').toEqual(decs);
+  expect(rows.map((r) => [r.id, r.val.replace(/[%$]/g, '').split('.')[1].length]), 'the value prints at its own decimals').toEqual(decs);
   expect(rows.map((r) => [r.id, r.delta.split('.')[1].length]), 'and so does the change').toEqual(decs);
   // the arrow agrees with the sign of the payload's own delta, and a yield and an inflation rate both read as neutral ink
   const sign = await page.evaluate(() => econState.shown.rows.map((r) => [r.id, r.delta > 0 ? '▲' : r.delta < 0 ? '▼' : '=']));
@@ -6401,7 +6405,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   for (const id of IDS) expect(after[id], `[${id}] 1Y is a different chart from 3M`).not.toBe(before[id]);
   expect(await page.evaluate(() => localStorage.getItem('econ_tf_v1')), 'persisted under econ_tf_v1').toBe('1y');
   await page.reload();
-  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  await expect(page.locator('#econList .econ-row')).toHaveCount(9);   // 7 from desk-econ + the two crude-oil rows
   expect(await pressed(), '1Y survives a reload').toEqual(['1y']);
   expect(Object.fromEntries((await rowsInfo()).map((r) => [r.id, r.d])), 'and so does the drawing').toEqual(after);
   // each chart still knows what it covers (`data-span`, the old printed caption — the time axis carries it now): on a year-long span a
@@ -6428,7 +6432,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     await pick(tf);
     const rowsAx = await readEconAxes(page, tf);
     const drawn = checkEconAxes(expect, rowsAx, `@${tf}`, xlabel);
-    expect(drawn.length, `@${tf}: ${tf === '1d' ? 'the three yields' : 'all seven rows'} carry axes`).toBe(tf === '1d' ? 3 : 7);
+    expect(drawn.length, `@${tf}: ${tf === '1d' ? 'the three yields and the two crude-oil prices' : 'all nine rows'} carry axes`).toBe(tf === '1d' ? 5 : 9);
     const dailyLabels = (r) => r.x.filter((l) => !l.hidden).map((l) => l.text);
     if (tf === '5y') for (const r of drawn.filter((x) => x.cadence === 'daily')) expect(dailyLabels(r).every((t) => /^\d{4}$/.test(t)), `@5y [${r.id}]: a five-year daily chart is labelled in YEARS (${dailyLabels(r)})`).toBe(true);
     if (tf === '1y') for (const r of drawn.filter((x) => x.cadence === 'daily')) expect(dailyLabels(r).every((t) => /^[A-Z][a-z]{2}( '\d{2})?$/.test(t)), `@1y [${r.id}]: a year-long daily chart is labelled in months, the year at January (${dailyLabels(r)})`).toBe(true);
@@ -6437,19 +6441,20 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   // a hand-edited / stale stored span falls back to the default instead of pressing nothing
   await page.evaluate(() => localStorage.setItem('econ_tf_v1', '2y'));
   await page.reload();
-  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  await expect(page.locator('#econList .econ-row')).toHaveCount(9);   // 7 from desk-econ + the two crude-oil rows
   expect(await pressed(), 'a stored span that is not a preset falls back to 3M').toEqual(['3m']);
 
   // ── 6. unknown is an em dash, never 0 — forged payloads through the real renderer
   await page.evaluate(() => {
     const base = buildDemoEcon(econTf);
-    const r = base.rows.slice(0, 5).map((x) => ({ ...x }));
+    const std = base.rows.filter((x) => !Object.hasOwn(ECON_CRUDE, x.id));   // the seven desk-econ rows; the oil rows are S63's
+    const r = std.slice(0, 5).map((x) => ({ ...x }));
     r[0] = { ...r[0], status: 'missing', value: null, prev: null, delta: null, asOf: null, prevAsOf: null, source: null, points: [] };
     r[1] = { ...r[1], delta: null, prev: null, prevAsOf: null };
     r[2] = { ...r[2], value: null };
     r[3] = { ...r[3], points: [['2026-08-01', 3.3]] };
     r[4] = { ...r[4], status: 'stale', staleSec: 600 };
-    r.push({ ...base.rows[5], points: [0, 1, 2, 3, 4, 5].map((i) => [`2026-0${i + 1}-01`, 3.3]) });   // a constant series
+    r.push({ ...std[5], points: [0, 1, 2, 3, 4, 5].map((i) => [`2026-0${i + 1}-01`, 3.3]) });   // a constant series
     renderEcon({ ...base, rows: r });
   });
   rows = await rowsInfo();
@@ -6476,8 +6481,8 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
     const e = li.querySelector('.econ-src'); const cs = e ? getComputedStyle(e) : null;
     return { id: li.dataset.id, text: e ? e.textContent : null, title: li.title.includes('source demo data'), px: cs ? parseFloat(cs.fontSize) : null, clip: e ? e.scrollWidth > e.clientWidth + 1 : null };
   }));
-  expect(demoSrc.map((d) => [d.id, d.text, d.title]), 'demo: every one of the seven rows says its numbers are demo data, on the row and in its tooltip')
-    .toEqual(['ust2y', 'ust10y', 'ust20y', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, 'Source: Demo data', true]));
+  expect(demoSrc.map((d) => [d.id, d.text, d.title]), 'demo: every one of the nine rows says its numbers are demo data, on the row and in its tooltip')
+    .toEqual(['ust2y', 'ust10y', 'ust20y', 'wti', 'brent', 'unrate', 'cpi', 'pce', 'corepce'].map((id) => [id, 'Source: Demo data', true]));
   for (const d of demoSrc) {
     expect(d.px, `[${d.id}] the source line is VERY small (9px, below the 11px of the figures around it)`).toBeLessThanOrEqual(10);
     expect(d.clip, `[${d.id}] and nothing is clipped (a clipped source is a wrong source)`).toBe(false);
@@ -6590,7 +6595,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   // 7b. a good reply: LIVE, seven rows, the stamp, and the next fetch scheduled from refreshInSec
   await setMode('ok');
   await refresh();
-  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  await expect(page.locator('#econList .econ-row')).toHaveCount(9);   // 7 from desk-econ + the two crude-oil rows
   expect(await lamp(), 'last poll ok, not stale: LIVE').toMatch(/^live$/i);
   await expect(page.locator('#econStamp'), 'live stamp: the Pacific clock of the last check').toHaveText(/^Last updated \d\d:\d\d, [A-Z][a-z]{2} \d{1,2}$/);
   expect(await due(), 'the next fetch is refreshInSec (90s) away').toBeGreaterThan(88_000);
@@ -6802,7 +6807,7 @@ test('S55: the Economy panel — seven rows, each with its own chart to the righ
   await page.locator('#econTf button[data-tf="1y"]').click();
   expect(await last(), 'the new span is requested (a server-side slice)').toEqual({ range: '1y', force: false });
   await expect(page.locator('#econList'), 'old charts stay, dimmed, until the reply').toHaveClass(/is-pending/);
-  expect((await rowsInfo()).length, 'rows stay on screen while it is in flight').toBe(7);
+  expect((await rowsInfo()).length, 'rows stay on screen while it is in flight').toBe(9);
   await setMode('ok');
   await page.evaluate(() => refreshEcon(false, { span: true }));
   await expect(page.locator('#econList')).not.toHaveClass(/is-pending/);
@@ -6850,7 +6855,8 @@ test('S56: the live yield rules — a quote stands in for the official reading o
     window.__ccalls = 0;
     window.__cnbcFn = () => window.__cq10();
     window.econLiveCnbc = () => { window.__ccalls++; try { return Promise.resolve(window.__cnbcFn()); } catch { return Promise.resolve(null); } };
-    window.deskQuote = () => { window.__yahoo = (window.__yahoo || 0) + 1; return Promise.reject(new Error('Yahoo is not a source of the yields')); };
+    // the two crude-oil rows (S63) legitimately ask the quote feed for CL=F / BZ=F; the assertion is that NO YIELD is ever asked of it
+    window.deskQuote = (sym) => { if (sym !== 'CL=F' && sym !== 'BZ=F') window.__yahoo = (window.__yahoo || 0) + 1; return Promise.reject(new Error('Yahoo is not a source of the yields')); };
     window.__official = { value: 5.26, prev: 5.24, delta: 0.02, asOf: '2026-09-29', prevAsOf: '2026-09-28', status: 'ok', source: 'fred', changed: false };
     window.deskEcon = (range) => {
       const p = buildDemoEcon(range);
@@ -6968,7 +6974,7 @@ test('S56: the live yield rules — a quote stands in for the official reading o
       clip: { src: q('.econ-src') ? q('.econ-src').scrollWidth > q('.econ-src').clientWidth + 1 : null, label: q('.econ-label').scrollWidth > q('.econ-label').clientWidth + 1, date: q('.econ-date').scrollWidth > q('.econ-date').clientWidth + 1, sub: q('.econ-sub').scrollWidth > q('.econ-sub').clientWidth + 1 },
     };
   });
-  const others = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].filter((li) => li.dataset.id !== 'ust10y')
+  const others = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].filter((li) => li.dataset.id !== 'ust10y' && !Object.hasOwn(ECON_CRUDE, li.dataset.id))
     .map((li) => [li.dataset.id, li.querySelector('.econ-val').textContent, li.querySelector('.econ-date').textContent, li.querySelector('.econ-tag') ? li.querySelector('.econ-tag').textContent : null, li.title, li.querySelector('.econ-src') ? li.querySelector('.econ-src').textContent : null]));
   const calls = () => page.evaluate(() => window.__ccalls);
   const ptOfLast = () => page.evaluate(() => window.__pt(window.__lastAt));
@@ -7281,7 +7287,8 @@ test('S57: the live yields from CNBC — one browser request for all three, each
     window.__cbody = window.__cq();
     window.econLiveCnbc = () => { window.__ccalls++; return window.__cbody instanceof Error ? Promise.reject(window.__cbody) : Promise.resolve(window.__cbody); };
     // Yahoo is NOT a source any more (owner: "no fallbacks"): anything that still reaches quote-proxy for a yield is recorded, and asserted absent
-    window.deskQuote = (sym, kind, prepost, opts) => { window.__qcalls.push({ sym, kind, force: !!(opts && opts.force) }); return Promise.reject(new Error('Yahoo is not a source of the yields')); };
+    // the crude-oil rows (S63) ask the quote feed for CL=F / BZ=F by design; only a YIELD asked of it would be a defect
+    window.deskQuote = (sym, kind, prepost, opts) => { if (sym !== 'CL=F' && sym !== 'BZ=F') window.__qcalls.push({ sym, kind, force: !!(opts && opts.force) }); return Promise.reject(new Error('Yahoo is not a source of the yields')); };
     // a CNBC reply whose quotes carry the given stamp (ET, as CNBC writes it); `__cqNow` stamps them `age` ms before now
     window.__etStamp = (ms, off = 4) => new Date(ms - off * 3600000).toISOString().slice(0, 19) + '.000-0' + off + '00';
     window.__cqAt = (stamp, extra = {}) => window.__cq({ US2Y: { last_time: stamp }, US10Y: { last_time: stamp }, US20Y: { last_time: stamp }, ...extra });
@@ -7589,6 +7596,7 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
     window.__base = { US2Y: 4.79, US10Y: 5.25, US20Y: 5.61 };
     window.__bfn = (sym) => window.__good(window.__base[sym]);
     window.econLiveBars = (sym) => { window.__bsyms.push(sym); return Promise.resolve(window.__bfn(sym)); };
+    window.deskQuote = () => Promise.reject(new Error('quote-proxy stubbed off in S58'));   // the crude-oil rows (S63) ask it; an un-stubbed call to the stub host is a page error on WebKit
     window.deskEcon = (range) => {
       window.__ranges.push(range);
       const p = buildDemoEcon(range);
@@ -7799,6 +7807,7 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
     DESK_DB.url = DESK_DB.url || 'https://stub.invalid'; DESK.mode = 'live';
     window.__ranges = []; window.__bsyms = []; window.__realBars = econLiveBars;
     window.econLiveCnbc = () => Promise.resolve(null);
+    window.deskQuote = () => Promise.reject(new Error('quote-proxy stubbed off in S58'));   // see the first live block above
     window.econLiveBars = (sym) => { window.__bsyms.push(sym); return Promise.resolve({ ok: false, why: 'http', detail: 'HTTP 403' }); };
     window.deskEcon = (range) => { window.__ranges.push(range); return Promise.resolve({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false }); };
     startEcon();
@@ -7806,7 +7815,7 @@ test('S58: 1D — the yields draw CNBC\'s intraday bars, desk-econ is never aske
   await expect.poll(() => page.evaluate(() => window.__ranges.length)).toBeGreaterThan(0);
   expect(await page.evaluate(() => [econTf, econRange, window.__ranges[0]]), 'saved 1D: the view is 1D, the range 3m, and desk-econ is asked for 3m').toEqual(['1d', '3m', '3m']);
   await expect.poll(() => page.evaluate(() => window.__bsyms.length), 'and the bars are asked for at boot').toBe(3);
-  await expect(page.locator('#econList .econ-row')).toHaveCount(7);
+  await expect(page.locator('#econList .econ-row')).toHaveCount(9);   // 7 from desk-econ + the two crude-oil rows
   await expect.poll(async () => YIELDS.map((id) => /* R */ 0).length && (await rows1d()).ust2y.cap, 'CNBC refusing (403) at boot is named on the yields').toBe('1D HTTP 403');
   R = await rows1d();
   expect(YIELDS.map((id) => R[id].cap), 'on every yield').toEqual(YIELDS.map(() => '1D HTTP 403'));
@@ -8075,6 +8084,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
 // ─────────────────────────────────────────────────────────────────────────────
 test('S61: a wrapped watchlist can split its excess into a real second list', async ({ page, renderWitness }) => {
   renderWitness();
+  test.setTimeout(90_000);   // the scenario grew past the 30 s default (26.6 s locally on iPhone's WebKit, which timed out on CI's runner)
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoDemo(page, '.wl-strip .wl-tile', 10000);
   expect(await page.locator('.wl-split:visible').count(), 'demo has no roster to write, so no split control').toBe(0);
@@ -8290,7 +8300,10 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   // nothing in the source, ahead of the new list, so above that cap the moved symbols fall past it: the new list would draw no quotes and the
   // source a different set. Refused with the count, written nowhere; at exactly the cap (and with repeats counted once) it still works.
   const big = (n) => Array.from({ length: n }, (_, i) => 'B' + String(i + 1).padStart(4, '0'));
-  await page.evaluate(() => { window.__feedCap = 1000; });   // the stub now prices only what the real feed does
+  // The stub prices only the first 150 unique symbols (the real feed's cap is 1,000, mirrored by WL_FEED_CAP, which counts SAVED symbols and so still
+  // sees 1,001): 1,000 drawn tiles took WebKit on CI past the test's time limit, and the rendered payload staying far below the saved roster is exactly
+  // what the "counted on the rendered payload" mutant needs to be caught.
+  await page.evaluate(() => { window.__feedCap = 150; });
   const splitFirst = async () => {
     await expect.poll(async () => (await bands())[0].split).not.toBeNull();
     await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
@@ -8404,4 +8417,400 @@ test('S62: Price sorts each list by price; % Change puts the biggest gainers fir
   expect(await dirOf('pct')).toBe('↑');
   b = await bands();
   for (const band of b) expect(nonIncreasing(band.pct)).toBe(true);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 63 — Crude oil in the Economy panel: WTI and Brent futures.
+// Owner request 2026-10-05 ("add price of crude oil to the economy table"); the owner chose the LIVE futures price over FRED's EIA daily
+// spot (a week behind on the day this was built). Two rows right after the yields, from the quote feed (quote-proxy → Yahoo CL=F / BZ=F),
+// fetched by the browser. Yahoo's futures run ~10 minutes behind, so a flowing price is DELAYED, never LIVE; a price that stops while
+// the market is open says NOT LIVE; with the market shut, LAST; a feed that goes away says NO DATA after 30 minutes with the reason.
+// Driven through the real functions against a stubbed `deskQuote` shaped like quote-proxy's replies, on a fake clock.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIVE when the feed stalls, NO DATA when it goes away', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await page.clock.install({ time: new Date('2026-10-05T17:00:00Z') });   // Monday 13:00 ET / 10:00 PT: the futures market is open
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  const OIL = ['wti', 'brent'];
+  const rowOf = (id) => page.locator(`#econList .econ-row[data-id="${id}"]`);
+  const info = (id) => page.evaluate((i) => {
+    const li = document.querySelector(`#econList .econ-row[data-id="${i}"]`);
+    if (!li) return null;
+    const q = (s) => li.querySelector(s);
+    return { val: q('.econ-val').textContent, delta: q('.econ-delta').textContent, date: q('.econ-date').textContent,
+      tag: q('.econ-tag') ? q('.econ-tag').textContent : null, nolive: !!q('.econ-nolive'), isNew: !!q('.econ-new'), src: q('.econ-src') ? q('.econ-src').textContent : null,
+      state: li.dataset.crude || '', title: li.title, span: q('.econ-chart').dataset.span || '', note: q('.econ-note') ? q('.econ-note').textContent : null,
+      cap: q('.econ-cap') ? q('.econ-cap').textContent : null, svg: !!q('.econ-chart svg'), up: !!q('.econ-delta-n.up'), down: !!q('.econ-delta-n.down') };
+  }, id);
+
+  // ── 1. demo: the two rows are there, in order, seeded, never asking the network, 1D = the last 24 hours with both dates
+  expect(await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => li.dataset.id)),
+    'the oil rows sit right after the three yields').toEqual(['ust2y', 'ust10y', 'ust20y', 'wti', 'brent', 'unrate', 'cpi', 'pce', 'corepce']);
+  for (const id of OIL) {
+    const d = await info(id);
+    expect(d.val, `[${id}] a dollar price at two decimals`).toMatch(/^\$\d+\.\d{2}$/);
+    expect([d.src, d.tag, d.isNew], `[${id}] demo says its numbers are demo data, carries no liveness tag and is never NEW`).toEqual(['Source: Demo data', null, false]);
+  }
+  await page.locator('#econTf button[data-tf="1d"]').click();
+  for (const id of OIL) {
+    const d = await info(id);
+    expect(d.svg, `[${id}] 1D draws a chart`).toBe(true);
+    expect(d.span, `[${id}] a rolling 24 hours: the caption carries BOTH dates (a day ending on the clock time it began would read as one instant)`)
+      .toMatch(/^[A-Z][a-z]{2} \d{1,2} \d\d:\d\d – [A-Z][a-z]{2} \d{1,2} \d\d:\d\d$/);
+  }
+  expect(await page.evaluate(() => ['unrate', 'cpi'].map((id) => document.querySelector(`#econList .econ-row[data-id="${id}"] .econ-cap`).textContent)),
+    'the monthly rows still have no 1-day data').toEqual(['no 1-day data', 'no 1-day data']);
+  await page.locator('#econTf button[data-tf="3m"]').click();
+
+  // ── 2. the pure functions, through the REAL ones
+  const pure = await page.evaluate(() => {
+    const T = Date.parse('2026-10-05T17:00:00Z');
+    const bars = (t, c) => ({ t, c });
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+    const okSeries = bars(Array.from({ length: 400 }, (_, i) => iso(T - (400 - i) * 300000 + 600000)), Array.from({ length: 400 }, (_, i) => 90 + i / 100));
+    const intra = econCrudeIntra(okSeries, T);
+    const dirty = econCrudeIntra(bars(['2026-10-05 15:00', '2026-10-05 15:05', '2026-02-30 10:00', '2026-10-05 99:70', '2026-10-05 15:10', '2026-10-05 15:15', '2026-10-05 15:20', '2026-10-06 15:00', '2026-10-05 15:25'],
+      [90, 91, 92, 93, 'x', -5, 0, 95, null]), T);
+    const open = (iso) => econCrudeOpen(Date.parse(iso));
+    return {
+      n: intra.pts.length, last: intra.price, lastIsNewest: intra.ts === Date.parse('2026-10-05 16:50'.replace(' ', 'T') + ':00Z') || intra.ts,
+      within24h: intra.pts[intra.pts.length - 1][0] - intra.pts[0][0] <= 86400000, sorted: intra.pts.every((p, i, a) => !i || a[i - 1][0] <= p[0]),
+      dirtyPts: dirty && dirty.pts.map((p) => p[1]), dirtyNull: econCrudeIntra(bars(['2026-10-05 15:00'], [90]), T), none: econCrudeIntra(null, T),
+      daily: econCrudeDaily(bars(['2026-10-01', 'oops', '2026-10-02', '2026-10-05'], [90, 91, -1, 92])), dailyNull: econCrudeDaily(bars(['2026-10-01'], [90])),
+      nearTurnover: ['2026-10-05T20:59:00Z', '2026-10-05T21:00:00Z', '2026-10-05T21:59:00Z', '2026-10-05T22:14:00Z', '2026-10-05T22:15:00Z', '2026-10-05T16:00:00Z'].map((t) => econCrudeNearTurnover(Date.parse(t))),
+    session: ['2026-10-04T22:30:00Z', '2026-10-05T20:59:00Z', '2026-10-05T21:01:00Z', '2026-10-05T21:59:00Z', '2026-10-05T22:01:00Z', '2026-10-06T13:00:00Z'].map((t) => econCrudeSession(Date.parse(t))),
+    prev: [econCrudePrev({ ok: true, info: { price: 90.25, change: -0.86 } }), econCrudePrev({ ok: true, info: { price: 90.25, change: null } }), econCrudePrev({ ok: true, info: { price: null, change: 1 } }),
+        econCrudePrev({ ok: false }), econCrudePrev(null), econCrudePrev({ ok: true, info: { price: 1, change: 5 } })].map((v) => v == null ? null : Number(v.toFixed(2))),
+      // Sunday 17:59 / 18:00 ET, Friday 16:59 / 17:00 ET, Saturday, the Wednesday halt, Thursday night, an NYSE holiday
+      open: [open('2026-10-04T21:59:00Z'), open('2026-10-04T22:00:00Z'), open('2026-10-09T20:59:00Z'), open('2026-10-09T21:00:00Z'), open('2026-10-10T15:00:00Z'),
+        open('2026-10-07T21:30:00Z'), open('2026-10-08T07:00:00Z'), open('2026-11-26T15:00:00Z')],
+      holiday: [econCrudeHoliday(Date.parse('2026-11-26T15:00:00Z')), econCrudeHoliday(Date.parse('2026-11-26T23:30:00Z')), econCrudeHoliday(Date.parse('2026-11-27T15:00:00Z')), econCrudeHoliday(Date.parse('2026-10-08T15:00:00Z'))],
+      // the poll cadence on an ordinary Thursday, on Thanksgiving, on the shut Saturday after, and on Thanksgiving evening (18:30 ET, after the daily halt)
+      holidayDelay: [econCrudeDelaySec(Date.parse('2026-10-08T15:00:00Z')), econCrudeDelaySec(Date.parse('2026-11-26T15:00:00Z')), econCrudeDelaySec(Date.parse('2026-11-28T15:00:00Z')), econCrudeDelaySec(Date.parse('2026-11-26T23:30:00Z'))],
+    };
+  });
+  expect(pure.n, 'the intraday series is thinned to at most 150 real bars').toBeLessThanOrEqual(150);
+  expect([pure.within24h, pure.sorted], 'and covers the newest 24 hours, oldest first').toEqual([true, true]);
+  expect(pure.dirtyPts, 'a date that does not exist, minute 70, a non-number, a negative price, a zero, a null and a bar from the future are all skipped, never repaired').toEqual([90, 91]);
+  expect([pure.dirtyNull, pure.none], 'one bar or nothing is not a series').toEqual([null, null]);
+  expect(pure.daily, 'the daily series keeps real dated positive closes only').toEqual([['2026-10-01', 90], ['2026-10-05', 92]]);
+  expect(pure.dailyNull, 'one daily bar is not a series').toBeNull();
+  expect(pure.nearTurnover, 'a read that is not forced may be stale from 17:00 ET (the halt) until 18:15 ET (15 minutes after the open): 16:59 no, 17:00 yes, 17:59 yes, 18:14 yes, 18:15 no, midday no')
+    .toEqual([false, true, true, true, false, false]);
+  expect(pure.session, 'a futures session runs from 18:00 ET to 17:00 ET the next day (Sunday 18:30 and Monday 16:59 are ONE session), the 17:00–18:00 halt is a session of its own, and Monday 18:01 begins Tuesday\'s')
+    .toEqual(['2026-10-05 trade', '2026-10-05 trade', '2026-10-05 halt', '2026-10-05 halt', '2026-10-06 trade', '2026-10-06 trade']);
+  expect(pure.prev, 'the previous close is price − change; anything missing, a failed reply or a non-positive result is null — never 0').toEqual([91.11, null, null, null, null, null]);
+  expect(pure.open, 'the futures market by its WEEKLY schedule: shut Sun 17:59 ET, open from 18:00; open Fri 16:59, shut from 17:00; shut Saturday and in the Mon–Thu 17:00–18:00 halt; open Thursday night; and open on a Thursday that happens to be an NYSE holiday (CME\'s calendar is not the NYSE\'s)')
+    .toEqual([false, true, true, false, false, false, true, true]);
+  expect(pure.holiday, 'a weekday NYSE holiday is its own question: Thanksgiving yes (morning and evening), the Friday after no, an ordinary Thursday no').toEqual([true, true, false, false]);
+  const FAST = await page.evaluate(() => ECON_CRUDE_FAST_S), IDLE = await page.evaluate(() => ECON_CRUDE_IDLE_S);
+  expect(pure.holidayDelay, 'the poll cadence: every minute on an open Thursday AND on Thanksgiving (CME may be trading a shortened or reopened session — Codex, PR #308), slow only on the shut Saturday; Thanksgiving evening is open too')
+    .toEqual([FAST, FAST, IDLE, FAST]);
+
+  // ── 3. force live; the feed is stubbed with quote-proxy's reply shapes and records every call
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+    window.__oil = { mode: 'ok', calls: [], frozenAt: 0, px: { 'CL=F': 88.40, 'BZ=F': 99.10 }, prev: { 'CL=F': 87.15, 'BZ=F': 99.60 } };
+    window.econLiveCnbc = () => Promise.resolve(null);   // the yields are not what is under test here
+    window.deskQuote = async (sym, kind, prepost, opts) => {
+      const o = window.__oil;
+      o.calls.push({ sym, kind, force: !!(opts && opts.force) });
+      if (o.mode === 'fail') throw new Error('quote-proxy → HTTP 502');
+      if (o.mode === 'refuse') return { ok: false, error: 'no ' + kind + ' data found for ' + sym };
+      if (o.gate && kind === 'info') await o.gate;   // holds the info leg open so a request can straddle a session turnover
+      if (o.infoEmpty && kind === 'info') return { ok: true, symbol: sym, kind, info: { price: null, change: null } };   // answers, but with no close in it
+      if (o.infoDown && kind === 'info') return { ok: false, error: 'no info data found for ' + sym };   // ONE leg down: the bars still flow
+      if (o.dailyDown && kind === 'daily') return { ok: false, error: 'no daily data found for ' + sym };
+      const px = o.px[sym];
+      if (kind === 'info') return { ok: true, symbol: sym, kind, info: { price: px, change: px - o.prev[sym] } };
+      if (kind === 'intraday') {
+        const end = (o.frozenAt || Date.now() - 600000), n = 320;   // newest bar ~10 minutes old, as Yahoo's futures are
+        const t = [], c = [];
+        for (let i = 0; i < n; i++) { t.push(iso(end - (n - 1 - i) * 300000)); c.push(Number((px - (n - 1 - i) * 0.003).toFixed(2))); }
+        return { ok: true, symbol: sym, kind, series: { t, c } };
+      }
+      const t = [], c = [];
+      let d = new Date('2026-10-05T00:00:00Z');
+      while (t.length < 800) { if (d.getUTCDay() % 6) { t.unshift(d.toISOString().slice(0, 10)); c.unshift(Number((px + 3 * Math.sin(t.length / 9)).toFixed(2))); } d = new Date(d.getTime() - 86400000); }
+      c[c.length - 1] = px;
+      return { ok: true, symbol: sym, kind, series: { t, c } };
+    };
+    // desk-econ is stubbed with the demo payload (which carries generated oil rows: live must NOT draw them)
+    window.deskEcon = (range) => Promise.resolve({ ...buildDemoEcon(range), range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false });
+    econState.payload = null; econState.shown = null; econCrude.m = {}; econCrude.landedAt = 0;
+    startEcon();
+  });
+  await expect(rowOf('wti').locator('.econ-val'), 'live: the real WTI price, not the demo row\'s seeded one').toHaveText('$88.40');
+  await expect(rowOf('brent').locator('.econ-val')).toHaveText('$99.10');
+  expect(await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => li.dataset.id)),
+    'live: the same nine rows in the same order — and only one of each (the demo payload\'s generated oil rows were dropped)').toEqual(['ust2y', 'ust10y', 'ust20y', 'wti', 'brent', 'unrate', 'cpi', 'pce', 'corepce']);
+  const wti = await info('wti'), brent = await info('brent');
+  expect([wti.delta, brent.delta], 'the change is the price less the previous close (88.40 − 87.15, 99.10 − 99.60), in dollars').toEqual(['▲ 1.25', '▼ 0.50']);
+  expect([wti.up, wti.down, brent.up, brent.down], 'its digits follow the panel\'s rule: green after ▲, red after ▼').toEqual([true, false, false, true]);
+  expect(wti.date, 'the date cell is the PACIFIC clock of the newest bar (10:00 PT less ten minutes)').toBe('09:50');
+  expect([wti.tag, wti.nolive, wti.state, brent.tag], 'a flowing futures price is DELAYED — Yahoo runs ~10 minutes behind, so never LIVE').toEqual(['DELAYED', false, 'delayed', 'DELAYED']);
+  expect([wti.src, brent.src], 'each names its own source and contract').toEqual(['Source: Yahoo CL=F', 'Source: Yahoo BZ=F']);
+  expect([wti.isNew, brent.isNew], 'a price ticking by the minute is never NEW').toEqual([false, false]);
+  expect(wti.title, 'the tooltip says what it is and how late').toContain('source Yahoo Finance CL=F front-month futures, about 10 minutes behind');
+  expect(wti.title, 'and a healthy row says nothing about a failed refresh').not.toMatch(/refresh of the (price|1W–5Y history) failed/);
+  expect(wti.title).toContain('change ▲ 1.25 dollars from the previous close');
+  expect(wti.title, 'and the time of the newest price').toContain('time of the newest price');
+
+  // ── 4. the polling: each poll asks both contracts for intraday + info, the daily bars only the first time (then every 5 minutes), nothing forced
+  const kinds = () => page.evaluate(() => window.__oil.calls.map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort());
+  expect(await kinds(), 'the first poll: intraday, info and daily for each of the two contracts').toEqual(['BZ=F:daily', 'BZ=F:info', 'BZ=F:intraday', 'CL=F:daily', 'CL=F:info', 'CL=F:intraday']);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.runFor(61_000);
+  expect(await kinds(), 'a minute later (the market is open): intraday + info again, and no daily bars yet').toEqual(['BZ=F:info', 'BZ=F:intraday', 'CL=F:info', 'CL=F:intraday']);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.runFor(5 * 60_000);
+  expect((await kinds()).filter((k) => k.endsWith(':daily')), 'and the daily bars are re-asked once five minutes have passed').toEqual(['BZ=F:daily', 'CL=F:daily']);
+  expect(await page.evaluate(() => [econCrude.dueAt - Date.now() <= 60_000, econCrude.dueAt - Date.now() > 0]), 'the next poll is at most a minute away').toEqual([true, true]);
+
+  // ── 5. the spans: 1W..5Y are the daily closes sliced like every other row; 5Y says what it really covers; 1D is the last 24 hours
+  await page.locator('#econTf button[data-tf="1w"]').click();
+  expect((await info('wti')).span, 'one week of daily closes').toMatch(/^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/);
+  expect((await info('wti')).note, 'and says nothing about a short span: a week holds its six readings').toBeNull();
+  await page.locator('#econTf button[data-tf="5y"]').click();
+  expect((await info('wti')).note, 'the feed holds ~3 years, so a 5Y chart says since when instead of passing for five').toMatch(/^since [A-Z][a-z]{2} '\d\d$/);
+  await page.locator('#econTf button[data-tf="1d"]').click();
+  const d1 = await info('wti');
+  expect(d1.svg, 'live 1D draws the last 24 hours of the bars it fetched').toBe(true);
+  expect(d1.span, 'with both dates').toMatch(/^[A-Z][a-z]{2} \d{1,2} \d\d:\d\d – [A-Z][a-z]{2} \d{1,2} \d\d:\d\d$/);
+  expect(d1.span.endsWith('Oct 5 ' + d1.date), 'and ends on the newest bar — the very time the row\'s date cell shows').toBe(true);
+  await page.locator('#econTf button[data-tf="3m"]').click();
+
+  // ── 6. a price that STOPS while the market is open says NOT LIVE (and keeps the last price it has); the clock then turns it to LAST
+  await page.evaluate(() => { window.__oil.frozenAt = Date.now() - 600000; });
+  await page.clock.runFor(25 * 60_000);
+  const stuck = await info('wti');
+  expect([stuck.tag, stuck.nolive, stuck.state, stuck.val], 'no new bar for 35 minutes, market open: the solid NOT LIVE chip, the last price kept').toEqual(['NOT LIVE', true, 'notlive', '$88.40']);
+  expect(stuck.title, 'and the tooltip says why').toMatch(/NOT LIVE — no new price for 3\d min while the futures market is open/);
+  const closedStates = await page.evaluate(() => {
+    const r = { crude: { ts: Date.parse('2026-10-09T20:50:00Z') } };   // Friday 16:50 ET: the last bar before the close
+    return [econCrudeState(r, Date.parse('2026-10-09T21:05:00Z')), econCrudeState(r, Date.parse('2026-10-09T21:30:00Z')), econCrudeState(r, Date.parse('2026-10-10T12:00:00Z')), econCrudeState(r, Date.parse('2026-10-09T20:55:00Z'))];
+  });
+  expect(closedStates, 'a bar 15 minutes old reads DELAYED, 40 minutes old after the Friday close reads LAST, and a Saturday reads LAST (the market is shut, so nothing is wrong)').toEqual(['delayed', 'last', 'last', 'delayed']);
+
+  // ── 7. recovery, then a feed that goes away: the last good price is kept for 30 minutes, then NO DATA with the reason
+  await page.evaluate(() => { window.__oil.frozenAt = 0; });
+  await page.clock.runFor(61_000);
+  expect((await info('wti')).tag, 'new bars again: DELAYED again').toBe('DELAYED');
+  await page.evaluate(() => { window.__oil.mode = 'fail'; });
+  await page.clock.runFor(10 * 60_000);
+  const kept = await info('wti');
+  expect([kept.val, kept.tag === 'DELAYED' || kept.tag === 'NOT LIVE'], 'ten minutes into an outage the row still shows its last good price').toEqual(['$88.40', true]);
+  expect(kept.title, 'and its tooltip says the latest refresh failed, why, and how old the price is (Codex, PR #308: a retained price must not read as current)')
+    .toMatch(/the last refresh of the price failed \(no answer from the quote feed\); this is the price read (9|10|11) min ago/);
+  await page.clock.runFor(25 * 60_000);
+  const gone = await info('wti');
+  expect([gone.val, gone.delta, gone.date, gone.tag, gone.svg], 'thirty minutes on: NO DATA — em dashes, never an old number — and no chart').toEqual(['—', '—', '—', 'NO DATA', false]);
+  expect(gone.title, 'with the reason in the tooltip').toContain('no price: ');
+  await page.evaluate(() => { window.__oil.mode = 'refuse'; });
+  await page.clock.runFor(61_000);
+  expect((await info('wti')).title, 'a refusal from the feed is named in the tooltip').toContain('no intraday data found for CL=F');
+  await page.evaluate(() => { window.__oil.mode = 'ok'; });
+  await page.clock.runFor(61_000);
+  expect([(await info('wti')).val, (await info('wti')).tag], 'the feed returns and so does the price').toEqual(['$88.40', 'DELAYED']);
+  expect((await info('wti')).title, 'and the failure note goes with the outage').not.toContain('refresh of the price failed');
+
+  // ── 7b. the previous close belongs to its futures session (Codex, PR #308) ──────────────────────────────────────────────────────────
+  // The change is the price less the previous close, read from `info`. If `info` fails while the bars still flow, the stored baseline may be
+  // kept only inside the session it was read in: across a turnover it would measure a new session's price against the old session's close and
+  // show a multi-day move as today's. Dropped, the change is an em dash; and while the baseline is missing or from a past session the next
+  // `info` call asks FRESH (quote-proxy caches it up to 15 minutes outside the NYSE day, which would hand back the old close).
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.px['CL=F'] = 88.40; window.__oil.prev['CL=F'] = 87.15; });
+  await page.clock.setSystemTime(new Date('2026-10-06T16:00:00Z'));   // Tuesday 12:00 ET
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).delta, 'a baseline is read from info').toBe('▲ 1.25');
+  await page.evaluate(() => { window.__oil.infoDown = true; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T16:30:00Z'));   // 12:30 ET: the same session
+  await page.evaluate(() => econCrudeFetch(false));
+  const sameSession = await info('wti');
+  expect([sameSession.val, sameSession.delta, sameSession.tag], 'info down inside the session: the baseline it read still stands').toEqual(['$88.40', '▲ 1.25', 'DELAYED']);
+  expect(sameSession.title, 'and the tooltip says the change rests on a close read earlier, and why').toContain('the last refresh of the previous close failed (no info data found for CL=F); the change uses the close read earlier in this session');
+  await page.evaluate(() => { window.__oil.infoEmpty = true; });
+  await page.clock.setSystemTime(new Date('2026-10-06T16:31:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).title, 'an info reply that ANSWERED without a close in it is named too').toContain('the last refresh of the previous close failed (the quote feed sent no previous close)');
+  await page.evaluate(() => { window.__oil.infoEmpty = false; });
+  expect(await kinds(), 'and info is asked for the ordinary (cached) way').toContain('CL=F:info');
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:30:00Z'));   // 18:30 ET: the next session has opened
+  await page.evaluate(() => econCrudeFetch(false));
+  const turned = await info('wti');
+  expect([turned.val, turned.delta, turned.tag], 'info down across the turnover: the price is the new one, the change an em dash — never the old close\'s').toEqual(['$88.40', '—', 'DELAYED']);
+  expect(turned.title, 'the tooltip says why there is no change').toContain('no change shown: no info data found for CL=F');
+  expect(await kinds(), 'and info was asked for FRESH, past quote-proxy\'s cache').toEqual(expect.arrayContaining(['BZ=F:info:force', 'CL=F:info:force']));
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:31:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await kinds(), 'still down a minute on: it keeps asking fresh').toContain('CL=F:info:force');
+  await page.evaluate(() => { window.__oil.infoDown = false; window.__oil.prev['CL=F'] = 88.0; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:32:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  const infoBack = await info('wti');
+  expect(infoBack.delta, 'info back: the new session\'s own previous close (88.40 − 88.00)').toBe('▲ 0.40');
+  expect(infoBack.title, 'and the previous-close notes go').not.toMatch(/no change shown|previous close failed/);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:33:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await kinds(), 'with a baseline from the current session, info goes back to the ordinary cached call').toEqual(expect.arrayContaining(['CL=F:info']));
+  expect((await kinds()).some((k) => k.endsWith(':info:force')), 'no forced info once the baseline is current').toBe(false);
+
+  // ── 7c. a request that STRADDLES a turnover (Codex, PR #308, second round) ───────────────────────────────────────────────────────
+  // The decision to ask `info` fresh is made when a request STARTS; if it lands after the turnover, a reply served from quote-proxy's cache can
+  // still be the old session's close, and stamping it with the new session would hide that from every later poll. It is discarded instead (an em
+  // dash for one poll) and the next poll asks fresh.
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.prev['CL=F'] = 88.0; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-07T21:50:00Z'));   // Wednesday 17:50 ET: the halt
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).delta, 'a baseline read inside the halt').toBe('▲ 0.40');
+  await page.clock.setSystemTime(new Date('2026-10-07T21:59:50Z'));   // 17:59:50 ET, ten seconds before the session opens
+  await page.evaluate(() => { window.__oil.gate = new Promise((r) => { window.__oil.release = r; }); window.__oilReq = econCrudeFetch(false); });   // NOT awaited: info is held open
+  await page.clock.setSystemTime(new Date('2026-10-07T22:00:10Z'));   // 18:00:10 ET: the session has opened while the request was in flight
+  await page.evaluate(async () => { window.__oil.gate = null; window.__oil.release(); await window.__oilReq; });   // info answers with the OLD close (88.00), as a cache would
+  const straddled = await info('wti');
+  expect([straddled.val, straddled.delta], 'the price lands, but a close from a request that crossed the turnover is not trusted: an em dash').toEqual(['$88.40', '—']);
+  expect(straddled.title, 'and the tooltip says why').toContain('no change shown: the reply crossed a session turnover, so it may be the old close; asking again');
+  await page.evaluate(() => { window.__oil.prev['CL=F'] = 87.0; window.__oil.calls.length = 0; });   // the new session\'s own previous close
+  await page.clock.setSystemTime(new Date('2026-10-07T22:01:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await kinds(), 'the next poll asks info FRESH').toContain('CL=F:info:force');
+  expect((await info('wti')).delta, 'and reads the new session\'s close (88.40 − 87.00)').toBe('▲ 1.40');
+
+  // ── 7d. a failed refresh of the DAILY history is not silent (Codex, PR #308, third round) ───────────────────────────────────────────
+  // The 1W–5Y charts come from the daily leg, the price from the intraday leg, so the row stays `ok` while the history ages. Same rule as the
+  // price: the last good series is kept for 30 minutes with the failure named in the tooltip, then the chart is dropped and only the reason is left.
+  await page.evaluate(() => { window.__oil.infoDown = false; window.__oil.dailyDown = false; window.__oil.prev['CL=F'] = 87.0; });
+  await page.clock.setSystemTime(new Date('2026-10-07T22:10:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  const histOk = await info('wti');
+  expect([histOk.svg, /history .*failed/.test(histOk.title)], 'a healthy history: the chart is drawn and the tooltip says nothing about it').toEqual([true, false]);
+  await page.evaluate(() => { window.__oil.dailyDown = true; });
+  await page.clock.setSystemTime(new Date('2026-10-07T22:20:00Z'));   // the daily bars are due again (every 5 minutes) and the feed refuses them
+  await page.evaluate(() => econCrudeFetch(false));
+  const histKept = await info('wti');
+  expect([histKept.val, histKept.tag, histKept.svg], 'the price keeps flowing and the last good history is still drawn').toEqual(['$88.40', 'DELAYED', true]);
+  expect(histKept.title, 'but the tooltip says the history refresh failed, why, and how old the charts are').toMatch(/the last refresh of the 1W–5Y history failed \(no daily data found for CL=F\); the charts show the history read 10 min ago/);
+  await page.clock.setSystemTime(new Date('2026-10-07T22:50:00Z'));   // 40 minutes since the last good history
+  await page.evaluate(() => econCrudeFetch(false));
+  const histGone = await info('wti');
+  expect([histGone.val, histGone.tag, histGone.svg, histGone.cap], 'past the keep window the price is still there and the chart is not: no ageing history passing for current').toEqual(['$88.40', 'DELAYED', false, 'no chart']);
+  expect(histGone.title, 'and the reason is in the tooltip').toContain('no 1W–5Y chart: no daily data found for CL=F');
+  await page.evaluate(() => { window.__oil.dailyDown = false; });
+  await page.clock.setSystemTime(new Date('2026-10-07T22:51:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  const histBack = await info('wti');
+  expect([histBack.svg, /history .*failed|no 1W–5Y chart/.test(histBack.title)], 'the feed returns: the chart is back and the tooltip is quiet again').toEqual([true, false]);
+
+  // ── 7e. nothing from desk-econ and both oil quotes expire (Codex, PR #308, fourth round) ────────────────────────────────────────────
+  // With desk-econ empty the oil rows can be the only rows in the page. When both quotes later age out, the composed panel drops them so the
+  // panel's own empty state speaks ONCE — the in-place repaint must not swap them for two lonely NO DATA rows.
+  // (a) WITH desk-econ rows present, expired quotes become two NO DATA rows IN PLACE — the yields' rows are the very same nodes (a whole-panel rebuild
+  // would restart every NEW watch, which is why the oil rows repaint alone)
+  await page.evaluate(() => { window.__oil.mode = 'fail'; window.__oil.infoDown = false; window.__oil.dailyDown = false; document.querySelector('#econList .econ-row[data-id="ust10y"]').__kept = 7; });
+  await page.clock.setSystemTime(new Date('2026-10-07T23:25:00Z'));   // 34 minutes since the last quote
+  await page.evaluate(() => econCrudeFetch(false));
+  const noData = await page.evaluate(() => ({ kept: (document.querySelector('#econList .econ-row[data-id="ust10y"]') || {}).__kept, tags: ['wti', 'brent'].map((i) => (document.querySelector(`#econList .econ-row[data-id="${i}"] .econ-tag`) || {}).textContent) }));
+  expect(noData.tags, 'with the quotes gone the two oil rows say NO DATA beside the yields').toEqual(['NO DATA', 'NO DATA']);
+  expect(noData.kept, 'and the yields\' rows were not rebuilt to say so').toBe(7);
+  await page.evaluate(() => { window.__oil.mode = 'ok'; });
+  await page.clock.setSystemTime(new Date('2026-10-07T23:26:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).val, 'the feed returns').toBe('$88.40');
+  // (b) NOTHING from desk-econ: the oil rows stand alone, and when both quotes expire the panel's own empty state speaks once
+  await page.evaluate(() => { window.__shownBackup = econState.shown; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-07T23:30:00Z'));
+  await page.evaluate(async () => { renderEcon({ rows: [], range: econRange, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false }); await econCrudeFetch(false); });
+  const rowIds = () => page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => li.dataset.id));
+  expect(await rowIds(), 'desk-econ has nothing but the oil quotes are real: the two oil rows stand alone').toEqual(['wti', 'brent']);
+  await page.evaluate(() => { window.__oil.mode = 'fail'; });
+  await page.clock.setSystemTime(new Date('2026-10-08T00:10:00Z'));   // 40 minutes with no quote at all
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await rowIds(), 'both quotes gone and nothing else to show: no lonely NO DATA rows').toEqual([]);
+  expect(await page.locator('#econList .econ-empty').count(), 'the panel\'s own empty state speaks once instead').toBe(1);
+  await page.evaluate(() => { window.__oil.mode = 'ok'; });
+  await page.clock.setSystemTime(new Date('2026-10-08T00:11:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await rowIds(), 'the feed returns: the oil rows come back').toEqual(['wti', 'brent']);
+  expect(await page.locator('#econList .econ-empty').count(), 'and the empty state goes').toBe(0);
+  await page.evaluate(() => { renderEcon(window.__shownBackup); });   // back to the full panel for the sections below
+
+  // ── 7f. a cold load (no baseline stored) just after a turnover asks fresh too (Codex, PR #308, fifth round) ────────────────────────
+  // With nothing stored to compare with there is no "the session has ended" to see, but quote-proxy's `info` cache can still hold the OLD session's
+  // close for 15 minutes past the turnover — so from 17:00 to 18:15 ET a missing baseline is read fresh; at any other time the ordinary call.
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.dailyDown = false; });
+  const coldPoll = async (iso) => {
+    await page.evaluate(() => { econCrude.m = {}; econCrude.landedAt = 0; window.__oil.calls.length = 0; });
+    await page.clock.setSystemTime(new Date(iso));
+    await page.evaluate(() => econCrudeFetch(false));
+    return page.evaluate(() => window.__oil.calls.filter((c) => c.kind === 'info').map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort());
+  };
+  expect(await coldPoll('2026-10-08T22:05:00Z'), 'a cold load at 18:05 ET (five minutes into the session): info is asked FRESH for both contracts').toEqual(['BZ=F:info:force', 'CL=F:info:force']);
+  expect(await coldPoll('2026-10-08T20:00:00Z'), 'a cold load at 16:00 ET: the ordinary (cached) call').toEqual(['BZ=F:info', 'CL=F:info']);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-08T22:06:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));   // the cold-start read at 16:00 ET stored a 'trade' baseline; 22:06Z is the NEXT session, so it is read fresh
+  expect((await page.evaluate(() => window.__oil.calls.filter((c) => c.kind === 'info').map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort())), 'a baseline from the session that has ended is read fresh').toEqual(['BZ=F:info:force', 'CL=F:info:force']);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-08T22:07:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await page.evaluate(() => window.__oil.calls.filter((c) => c.kind === 'info').map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort())), 'and once a current baseline is stored, the ordinary call again').toEqual(['BZ=F:info', 'CL=F:info']);
+
+  // ── 7g. the oil charts do not depend on desk-econ's span (Codex, PR #308, seventh round) ──────────────────────────────────────────────
+  // The oil rows slice the quote feed's own daily history for the span showing. When a span change's desk-econ request fails, the retained payload
+  // still belongs to the OLD span, so the yields' charts are withheld ("span unavailable") — the healthy oil charts must not go with them.
+  const spanMismatch = await page.evaluate(() => {
+    const shown = econState.shown;
+    renderEcon({ ...shown, range: econRange === '1w' ? '3m' : '1w' });   // a payload that is NOT for the span showing
+    const q = (id) => document.querySelector(`#econList .econ-row[data-id="${id}"]`);
+    const out = { oil: ['wti', 'brent'].map((id) => !!q(id).querySelector('.econ-chart svg')), yieldCap: (q('ust10y').querySelector('.econ-cap') || {}).textContent || null, yieldSvg: !!q('ust10y').querySelector('.econ-chart svg') };
+    renderEcon(shown);
+    return out;
+  });
+  expect(spanMismatch.oil, 'the oil rows keep their charts when desk-econ\'s payload is for another span').toEqual([true, true]);
+  expect([spanMismatch.yieldSvg, spanMismatch.yieldCap], 'while the yields\' charts (which ARE desk-econ\'s) are withheld and say so').toEqual([false, 'span unavailable']);
+
+  // ── 7h. a weekday NYSE holiday (Codex, PR #308, eighth round) ────────────────────────────────────────────────────────────────────
+  // CME energy often trades a shortened or reopened session on an NYSE holiday (Thanksgiving evening), and this file carries no CME calendar: it
+  // polls at the OPEN cadence all day (see the pure checks) and labels a STOPPED price LAST — never NOT LIVE (a false alarm on a day CME is shut)
+  // and never silently "shut" — saying why in the tooltip. A fresh price is DELAYED as ever.
+  const states = await page.evaluate(() => [
+    econCrudeState({ crude: { ts: Date.parse('2026-10-08T12:00:00Z') } }, Date.parse('2026-10-08T15:00:00Z')),   // an ordinary Thursday, bar 3 h old
+    econCrudeState({ crude: { ts: Date.parse('2026-11-26T12:00:00Z') } }, Date.parse('2026-11-26T15:00:00Z')),   // Thanksgiving, bar 3 h old
+    econCrudeState({ crude: { ts: Date.parse('2026-11-28T12:00:00Z') } }, Date.parse('2026-11-28T15:00:00Z')),   // the shut Saturday after
+    econCrudeState({ crude: { ts: Date.parse('2026-11-26T14:50:00Z') } }, Date.parse('2026-11-26T15:00:00Z')),   // Thanksgiving, a fresh bar
+  ]);
+  expect(states, 'a stopped quote: NOT LIVE on an ordinary open Thursday, LAST on Thanksgiving and on the shut Saturday; a fresh one on the holiday is DELAYED').toEqual(['notlive', 'last', 'last', 'delayed']);
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.dailyDown = false; });
+  await page.clock.setSystemTime(new Date('2026-11-26T15:00:00Z'));   // Thanksgiving 10:00 ET
+  await page.evaluate(() => { window.__oil.frozenAt = Date.now() - 3 * 3600000; });   // the newest bar is three hours old
+  await page.evaluate(() => econCrudeFetch(false));
+  const holiday = await info('wti');
+  expect([holiday.tag, holiday.nolive, holiday.state], 'on Thanksgiving a stopped price reads LAST, not NOT LIVE').toEqual(['LAST', false, 'last']);
+  expect(holiday.title, 'and the tooltip says why a stall cannot be told from a closure').toContain('LAST — an NYSE holiday, when CME\'s own hours differ');
+  await page.evaluate(() => { window.__oil.frozenAt = 0; });
+
+  // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.evaluate(() => econCrudeFetch(true));
+  expect((await kinds()).every((k) => k.endsWith(':force')) && (await kinds()).length === 6, 'a forced refresh asks fresh for intraday, info and daily of both contracts').toBe(true);
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); econVisibility(); });
+  expect(await page.evaluate(() => econCrude.timer), 'hidden: no timer').toBe(0);
+  // a request already in flight when the tab was hidden lands afterwards: it must not arm a timer on a hidden tab either
+  await page.evaluate(async () => { await econCrudeFetch(false); });
+  expect(await page.evaluate(() => [econCrude.timer, econCrude.dueAt > 0]), 'a reply landing while hidden re-arms nothing (the return does)').toEqual([0, true]);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.runFor(120_000);
+  expect(await kinds(), 'and nothing is asked while it stays hidden').toEqual([]);
+  await page.evaluate(() => { delete document.hidden; econVisibility(); });
+  await expect.poll(async () => (await kinds()).length, { message: 'back on screen with a poll due: it asks at once' }).toBeGreaterThan(0);
+  // oil is never a yield: not once did the CNBC machinery or the yield rows see it
+  expect(await page.evaluate(() => Object.keys(econLive.q)), 'no CNBC quote is ever stored for an oil row').toEqual([]);
 });

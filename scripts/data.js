@@ -907,6 +907,18 @@ function econDownsample(pts, max) {
   return [...keep].sort((a, b) => a - b).map(i => pts[i]);
 }
 
+/* A series cut to a span the way desk-econ cuts it (and the demo always did): from `last − span` (a week is 7 days, the rest
+   are calendar months), and a span holding fewer than ECON_MIN_POINTS readings falls back to the N latest with a note that
+   SAYS so (`pointsNote`) — the axis alone would let it read as the span asked for. Shared by the demo rows and the crude-oil
+   rows, whose history comes from the quote feed rather than FRED. `series` is [[YYYY-MM-DD, value], …], oldest first. */
+function econSpanSlice(series, rk, cadence) {
+  const last = series[series.length - 1];
+  const start = rk === '1w' ? econShiftDays(last[0], -7) : econShiftMonths(last[0], -{ '1m': 1, '3m': 3, '6m': 6, '1y': 12, '5y': 60 }[rk]);
+  let slice = series.filter(([d]) => d >= start), note = null;
+  if (slice.length < ECON_MIN_POINTS) { slice = series.slice(-ECON_MIN_POINTS); note = cadence + ' - ' + slice.length + ' latest'; }
+  return { start, slice, note };
+}
+
 /* [id, label, decimals, cadence, seed, latest value, walk step, mean-reversion].
    Levels sit near the repo's own FRED captures (tools/fixtures/econ) so the demo
    reads like the real desk. Yields walk in whole basis points (2 decimals, as
@@ -919,6 +931,12 @@ const DEMO_ECON_ROWS = [
   ['cpi',     'CPI YoY',      1, 'monthly', 7215, 3.4,  0.22,  0.10],
   ['pce',     'PCE YoY',      1, 'monthly', 7216, 3.0,  0.16,  0.10],
   ['corepce', 'Core PCE YoY', 1, 'monthly', 7217, 3.2,  0.13,  0.10],
+];
+/* [id, label, symbol, seed, latest price, daily volatility] — the crude-oil rows (owner request 2026-10-05). Levels sit near
+   the live futures on the day they were added so the demo reads like the real desk. */
+const DEMO_CRUDE_ROWS = [
+  ['wti',   'WTI crude',   'CL=F', 7311, 90.25,  0.018],
+  ['brent', 'Brent crude', 'BZ=F', 7312, 100.92, 0.017],
 ];
 /* rows whose newest print is "new" in the demo (exercises the NEW chip path) */
 const DEMO_ECON_CHANGED = new Set(['ust10y', 'unrate']);
@@ -953,9 +971,7 @@ function buildDemoEcon(range, now) {
     const level = !monthly || id === 'unrate';
     const series = dates.map((d, i) => [d, Number((vals[i] + shift).toFixed(level ? dec : 4))]);
     const last = series[series.length - 1], prev = series[series.length - 2];
-    const start = rk === '1w' ? econShiftDays(last[0], -7) : econShiftMonths(last[0], -{ '1m': 1, '3m': 3, '6m': 6, '1y': 12, '5y': 60 }[rk]);
-    let slice = series.filter(([d]) => d >= start), note = null;
-    if (slice.length < ECON_MIN_POINTS) { slice = series.slice(-ECON_MIN_POINTS); note = cadence + ' - ' + slice.length + ' latest'; }
+    const { slice, note } = econSpanSlice(series, rk, cadence);
     const row = {
       id, label, unit: '%', decimals: dec, transform: level ? 'level' : 'yoy', cadence,
       value: Number(last[1].toFixed(dec)), prev: Number(prev[1].toFixed(dec)),
@@ -968,6 +984,25 @@ function buildDemoEcon(range, now) {
     if (note) row.pointsNote = note;
     return row;
   });
+  /* WTI and Brent (owner request 2026-10-05) sit right after the three yields. Futures trade through today, so unlike the
+     FRED-shaped rows these end on the last trading day itself; their source is the quote feed, not FRED. */
+  const oil = DEMO_CRUDE_ROWS.map(([id, label, symbol, seed, end, vol]) => {
+    const rnd = lcg(seed), n = dailyDates.length, vals = [end * (1 + (rnd() - 0.5) * 0.3)];
+    for (let i = 1; i < n; i++) vals.push(vals[i - 1] * (1 + (rnd() - 0.5) * 2 * vol + (end - vals[i - 1]) / end * 0.004));
+    const k = end / vals[n - 1];
+    const series = dailyDates.map((d, i) => [d, Number((vals[i] * k).toFixed(2))]);
+    const last = series[n - 1], prev = series[n - 2];
+    const { slice, note } = econSpanSlice(series, rk, 'daily');
+    const row = {
+      id, label, unit: '', pre: '$', decimals: 2, transform: 'level', cadence: 'daily', symbol,
+      value: last[1], prev: prev[1], delta: Number((last[1] - prev[1]).toFixed(2)),
+      asOf: last[0], prevAsOf: prev[0], source: 'yahoo', status: 'ok', changed: false, staleSec: null,
+      points: econDownsample(slice, ECON_MAX_POINTS),
+    };
+    if (note) row.pointsNote = note;
+    return row;
+  });
+  rows.splice(3, 0, ...oil);
   const iso = at.toISOString();
   return {
     ok: true, generatedAt: iso, fetchedAt: iso, range: rk, refreshInSec: 900, phase: 'quiet',
@@ -1006,6 +1041,20 @@ function buildDemoBars(id, now) {
   for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (end - vals[i - 1]) * 0.02);
   const shift = end - vals[n];
   return vals.map((v, i) => [open + i * 300000, Number((v + shift).toFixed(3))]);
+}
+
+/* The demo's twin of the live crude-oil 1D chart: a seeded 5-minute walk over the LAST 24 HOURS ending at `now` (futures trade
+   round the clock, so a 1D view is a rolling day, not a session), ending on the demo row's own level. Demo only — live never
+   calls it (real data or nothing). Returns [[ms, price], …] like econBarsParse. */
+function buildDemoCrudeBars(id, now) {
+  const row = DEMO_CRUDE_ROWS.find(r => r[0] === id);
+  if (!row) return [];
+  const end = Math.floor((now || Date.now()) / 300000) * 300000, n = 288;
+  const rnd = lcg(row[3] * 17 + 3), top = row[4], step = top * row[5] / 9;
+  const vals = [top + (rnd() - 0.5) * step * 8];
+  for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (top - vals[i - 1]) * 0.02);
+  const shift = top - vals[n];
+  return econDownsample(vals.map((v, i) => [end - (n - i) * 300000, Number((v + shift).toFixed(2))]), 150);
 }
 
 /* US equities session gate for the feed poller cadence (spec Clarification

@@ -7941,7 +7941,7 @@ async function refreshNowClicked() {
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   clearTimeout(feedPollTimer); clearTimeout(marketPollTimer);
   try {
-    await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true)]);
+    await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true), econCrudeFetch(true)]);
     /* 1D picked after the quote had landed but while desk-econ was still out starts its bars on its own: still part of this refresh */
     if (econBars.p) await econBars.p.catch(() => {});
   } finally {
@@ -7971,7 +7971,7 @@ const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1', ECON_PENDING_K
 const ECON_TFS = [['1d', '1D', '1 day'], ['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
   ['6m', '6M', '6 months'], ['1y', '1Y', '1 year'], ['5y', '5Y', '5 years']];
 const ECON_DEFAULT_TF = '3m';
-const ECON_TF_TITLE = 'Chart span. 1D is the intraday chart of the three yields (CNBC); the monthly indicators have no 1-day data.';
+const ECON_TF_TITLE = 'Chart span. 1D is the intraday chart of the three yields (CNBC) and the last 24 hours of WTI and Brent; the monthly indicators have no 1-day data.';
 const ECON_MIN_S = 30, ECON_MAX_S = 3600;   /* clamp on the server's refreshInSec */
 const ECON_RETRY_S = 60;                    /* fast retry after a failed poll */
 const ECON_STALE_X = 3;                     /* STALE once the last success is older than 3 × refreshInSec */
@@ -8081,7 +8081,7 @@ function econNum(v, dec) {
 }
 function econValueText(r) {
   const s = econNum(r.value, econDec(r));
-  return s === '—' ? s : s + (r.unit || '');
+  return s === '—' ? s : (r.pre || '') + s + (r.unit || '');   /* `pre`: a currency sign before the number ("$90.25"), never after */
 }
 /* an arrow and the size of the move, in the row's own unit (percentage points). Neutral ink. */
 function econDeltaText(r) {
@@ -8168,16 +8168,24 @@ function econYTicks(vals, dec) {
 }
 /* the value axis: the labels, each at the height `econSparkY` draws its value at. Returns the element and the values (the chart
    draws a dashed line at each). aria-hidden: the chart's own accessible name and the row's tooltip carry the numbers. */
-function econYAxis(vals, dec) {
+function econYAxis(vals, dec, px) {
   const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo, ticks = econYTicks(vals, dec);
+  /* A currency row (the crude-oil prices, `px`) has a wider axis (38px against 26) and prints its labels at the FEWEST decimals that
+     show every value EXACTLY — "90", "91" for a dollar step, "90.5" for a half — so a label is as short as it can be without ever
+     naming a different number (100.5 must not read "101"). A yield keeps its own decimals ("4.90"). */
+  let d = dec;
+  if (px) for (let k = 0; k <= dec; k++) if (ticks.every(v => Math.abs(Number(v.toFixed(k)) - v) < 1e-6)) { d = k; break; }
   const box = el('div', 'econ-yaxis');
   box.setAttribute('aria-hidden', 'true');
+  const labels = [];
   for (const v of ticks) {
-    const t = el('span', 'econ-ytick', econNum(v, dec));
+    const label = econNum(v, d);
+    labels.push(label);
+    const t = el('span', 'econ-ytick', label);
     t.style.top = (econSparkY(v, lo, span) / ECON_SPARK_H * 100).toFixed(2) + '%';
     box.appendChild(t);
   }
-  return { box, ticks };
+  return { box, ticks, labels };
 }
 /* where an instant falls along the DRAWN x (0..1): the line is drawn in index order, so an instant between two points sits
    proportionally between their positions — whatever the spacing of the points (gaps, a thinned day, weekends) */
@@ -8300,7 +8308,8 @@ function econWatchAxes(list) {
 }
 /* the chart with both axes, appended to the row's chart column: the plot (the svg and the value axis side by side) over the time axis */
 function econPlot(chart, pts, label, r, ticks, span) {
-  const dec = econDec(r), ya = econYAxis(pts.map(p => fmtToNum(p[1])), dec);
+  const dec = econDec(r), ya = econYAxis(pts.map(p => fmtToNum(p[1])), dec, !!r.pre);
+  if (r.pre) chart.classList.add('is-px');   /* the wider value axis of a currency row */
   const plot = el('div', 'econ-plot');
   const svg = econSpark(pts, label, ya.ticks);
   plot.appendChild(svg);
@@ -8311,7 +8320,7 @@ function econPlot(chart, pts, label, r, ticks, span) {
      (what the printed caption used to carry), the values on the value axis and the labels on the time axis. It is the svg's accessible
      DESCRIPTION (aria-describedby, on a visually hidden node — the accessible NAME stays what it was) and it is returned for the row's tooltip
      (Codex, PR #302). */
-  const desc = 'Chart spans ' + span + '. Value axis ' + ya.ticks.map(v => econNum(v, dec) + (r.unit || '')).join(', ') + '. Time axis '
+  const desc = 'Chart spans ' + span + '. Value axis ' + ya.labels.map(t => t + (r.unit || '')).join(', ') + '. Time axis '
     + (ticks.filter(t => t.label).map(t => t.label).join(', ') || 'none') + '.';
   const sr = el('span', 'econ-sr', desc);
   sr.id = 'econ-desc-' + r.id;
@@ -8342,7 +8351,7 @@ function econChrome() {
       const b = el('button', '', label);
       b.type = 'button';
       b.dataset.tf = key;
-      b.title = key === '1d' ? 'Intraday chart of the three yields (CNBC); the monthly indicators have no 1-day data' : 'Charts show the last ' + words;
+      b.title = key === '1d' ? 'Intraday chart of the three yields (CNBC) and the last 24 hours of WTI and Brent; the monthly indicators have no 1-day data' : 'Charts show the last ' + words;
       b.addEventListener('click', () => econPickSpan(key));
       tf.appendChild(b);
     }
@@ -8368,6 +8377,7 @@ function econPickSpan(key) {
   saveEconTf();
   syncEconTf();
   if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econRange)); return; }
+  econCrudeRepaint();   /* the oil's daily history is already here: its charts follow the pick without waiting for desk-econ */
   /* 1D — or back from 1D to the span that is still showing — changes the VIEW, not the range: nothing is asked of desk-econ, so
      the poll clock, a forced refresh in flight and the generation counter are all left alone. Only the intraday bars are fetched. */
   if (econRange === before) {
@@ -8419,7 +8429,7 @@ function paintEconStamp() {
   } else { applyStamp(st, '', '', ''); st.textContent = '—'; }
 }
 /* a lamp AGES even when its poll fails: re-read it against Date.now() with nothing fetched */
-function relampEcon() { paintEconLamp(); renderAfterFetch(econLiveRepaint); }
+function relampEcon() { paintEconLamp(); renderAfterFetch(econLiveRepaint); renderAfterFetch(econCrudeRepaint); }
 setInterval(relampEcon, STAMP_TICK_MS);
 
 /* ── NEW: a reading this browser has not looked at yet. A row is NEW when its newest reading differs
@@ -8428,6 +8438,7 @@ setInterval(relampEcon, STAMP_TICK_MS);
    first look seeds the record silently, so a fresh browser is not greeted by a wall of NEW chips.
    A chip clears on hover/click of its row, or once ITS ROW has been in view ~60s with the tab visible. */
 function econRowIsNew(r) {
+  if (Object.hasOwn(ECON_CRUDE, r.id)) return false;   /* a futures price is not a release */
   if (r.live) return false;   /* a live print ticks by the minute: the chip is for official readings (econLiveSeen records the one it stands in for) */
   if (r.status === 'missing' || !Number.isFinite(fmtToNum(r.value)) || !r.asOf) return false;   /* no reading, nothing to be new */
   if (!Object.hasOwn(econSeen, r.id)) return r.changed === true || Object.hasOwn(econPending, r.id);
@@ -8495,7 +8506,7 @@ function renderEcon(payload) {
   econState.shown = payload || null;
   list.textContent = '';
   list.classList.toggle('is-pending', econState.pending);
-  const rows = payload && Array.isArray(payload.rows) ? payload.rows : [];
+  const rows = econWithCrude(payload && Array.isArray(payload.rows) ? payload.rows : [], econCrudeRows(Date.now()));
 
   if (!rows.length) {
     const live = DESK.mode !== 'demo';
@@ -8509,6 +8520,9 @@ function renderEcon(payload) {
   const chartsMatch = !payload || !payload.range || payload.range === econRange;
   const seededSet = {}, pendSet = {}, now = Date.now();
   for (const r of rows) {
+    /* a price, never NEW: no seen/pending bookkeeping. Its charts are sliced from the quote feed's OWN history for the span showing (econCrudeRows), so
+       they never depend on which span desk-econ's retained payload belongs to (Codex, PR #308): a failed span change must not blank a healthy oil chart */
+    if (Object.hasOwn(ECON_CRUDE, r.id)) { list.appendChild(econRow(r, true)); continue; }
     const live = econLiveRow(r, now);   /* a live print standing in for the official reading, or the row itself */
     if (live !== r) econLiveSeen(r);
     else if (r.status === 'ok' && Number.isFinite(fmtToNum(r.value)) && r.asOf && !Object.hasOwn(econSeen, r.id)) {
@@ -8540,6 +8554,7 @@ function renderEcon(payload) {
    never a guess. */
 function econSourceLabel(r) {
   if (DESK.mode === 'demo') return 'Demo data';
+  if (r.crude) return 'Yahoo ' + r.crude.symbol;
   if (r.live) return 'CNBC ' + r.live.symbol;
   return r.source === 'treasury' ? 'U.S. Treasury' : r.source === 'fred' ? 'FRED' : '';
 }
@@ -8587,11 +8602,16 @@ function econRow(r, chartsMatch) {
      LIVE while the quote is fresh, LAST once it has stopped moving with the bond session CLOSED (after the bell, a weekend) —
      and NOT LIVE, in a solid chip, whenever the session is OPEN and there is no fresh quote: the owner wants to KNOW when CNBC
      is not giving real time (no fallback stands in; the row keeps its official reading, its date and its own source) */
-  const now = Date.now(), liveState = missing ? '' : econLiveState(r, now);
-  sub.appendChild(el('span', 'econ-date', missing ? '—' : r.live ? econLiveWhen(r) : econDateLabel(r.asOf, r.cadence)));
+  const now = Date.now(), liveState = missing ? '' : econLiveState(r, now), crudeState = missing ? '' : econCrudeState(r, now);
+  sub.appendChild(el('span', 'econ-date', missing ? '—' : r.crude ? econCrudeWhen(r) : r.live ? econLiveWhen(r) : econDateLabel(r.asOf, r.cadence)));
   if (r.live) li.dataset.live = '1';
+  if (r.crude) li.dataset.crude = crudeState;
   if (liveState === 'live' || liveState === 'last') sub.appendChild(el('span', 'econ-tag', liveState === 'live' ? 'LIVE' : 'LAST'));
   else if (liveState === 'notlive') { sub.appendChild(el('span', 'econ-tag econ-nolive', 'NOT LIVE')); li.dataset.notlive = '1'; }
+  /* a futures price: DELAYED while it is arriving (Yahoo runs ~10 minutes behind, so it is never called LIVE), LAST once the market is
+     shut, and the solid NOT LIVE chip when the market is open and no new price has come */
+  if (crudeState === 'delayed' || crudeState === 'last') sub.appendChild(el('span', 'econ-tag', crudeState === 'delayed' ? 'DELAYED' : 'LAST'));
+  else if (crudeState === 'notlive') { sub.appendChild(el('span', 'econ-tag econ-nolive', 'NOT LIVE')); li.dataset.notlive = '1'; }
   if (isNew) sub.appendChild(el('span', 'econ-new', 'NEW'));
   if (stale) sub.appendChild(el('span', 'econ-tag', 'STALE'));
   else if (missing) sub.appendChild(el('span', 'econ-tag', 'NO DATA'));
@@ -8625,10 +8645,21 @@ function econRow(r, chartsMatch) {
   const why = [
     (r.label || r.id) + ' ' + (missing ? 'unavailable' : econValueText(r)),
     liveState === 'notlive' ? 'NOT LIVE — ' + econNotLiveWhy(r, now) : '',
-    missing ? '' : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (time of the last quote)'
+    crudeState === 'notlive' ? 'NOT LIVE — no new price for ' + Math.round((now - r.crude.ts) / 60000) + ' min while the futures market is open; this is the last price the quote feed sent' : '',
+    crudeState === 'last' ? (econCrudeHoliday(now) && econCrudeOpen(now)
+      ? 'LAST — an NYSE holiday, when CME\'s own hours differ: this price has stopped, and a stalled feed cannot be told from a closed market'
+      : 'LAST — the futures market is shut; this is its last price') : '',
+    /* a retained price says its latest refresh failed (Codex, PR #308): the quote is kept for the keep window, and without this line it would read as current */
+    r.crude && r.crude.why ? 'the last refresh of the price failed (' + r.crude.why + '); this is the price read ' + Math.round((now - r.crude.fetchedAt) / 60000) + ' min ago' : '',
+    r.crude && r.crude.chgWhy ? r.crude.chgWhy : '',
+    r.crude && r.crude.histWhy ? r.crude.histWhy : '',
+    missing && r.why ? 'no price: ' + r.why : '',
+    missing ? '' : r.crude ? 'as of ' + fmtStampDateTime(new Date(r.crude.ts).toISOString()) + ' (time of the newest price)'
+      : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (time of the last quote)'
       : 'as of ' + econDateLabel(r.asOf, r.cadence) + (r.prevAsOf ? ' (previous ' + econDateLabel(r.prevAsOf, r.cadence) + ')' : ''),
-    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + ' percentage points' + (r.live ? ' from the previous close CNBC reports' : ''),
+    missing || !Number.isFinite(fmtToNum(r.delta)) ? '' : 'change ' + econDeltaText(r) + (r.pre === '$' ? ' dollars from the previous close' : ' percentage points') + (r.live ? ' from the previous close CNBC reports' : ''),
     DESK.mode === 'demo' ? 'source demo data (generated, not real)'
+      : r.crude ? 'source Yahoo Finance ' + r.crude.symbol + ' front-month futures, about 10 minutes behind'
       : r.live ? 'source CNBC ' + r.live.symbol + ' live quote, may be delayed'
       : r.source === 'treasury' ? 'source U.S. Treasury daily rate (a ~3:30 pm ET snapshot of bid-side quotes)' : r.source === 'fred' ? 'source FRED' : '',
     r.live ? 'latest official reading ' + econNum(r.live.official.value, dec) + (r.unit || '') + ' on ' + econDateLabel(r.live.official.asOf, 'daily')
@@ -8969,6 +9000,7 @@ const econBarsShort = e => e.why === 'http' ? e.detail : ({ noanswer: 'no answer
 /* The 1D chart column of one row; returns the sentence that joins the row's tooltip. */
 function econIntradayChart(chart, r, missing) {
   const none = (cap, tip) => { chart.appendChild(el('span', 'econ-noline')); if (cap) chart.appendChild(el('span', 'econ-cap', cap)); return tip; };
+  if (Object.hasOwn(ECON_CRUDE, r.id)) return econCrudeIntradayChart(chart, r, missing);   /* oil trades round the clock: its 1D is the last 24 hours */
   /* the lack of an intraday series does not depend on whether the official reading is available (Codex, PR #301) */
   if (!Object.hasOwn(ECON_LIVE, r.id)) return none('no 1-day data', 'no 1-day data: a ' + (r.cadence || 'monthly') + ' indicator has no intraday series');
   if (missing) return none('', '');
@@ -8982,6 +9014,267 @@ function econIntradayChart(chart, r, missing) {
       : '1-day chart: ' + e.pts.length + ' CNBC ' + ECON_LIVE[r.id] + ' prices, ' + cap + (e.why ? ' — the last refresh failed (' + e.detail + '), these are the last good prices' : '')) + ' · ' + desc;
   }
   return none('1D ' + econBarsShort(e), '1-day chart unavailable: ' + e.detail);
+}
+
+/* ── crude oil: WTI and Brent futures (owner request 2026-10-05: "add price of crude oil to the economy table"; the owner chose the
+   LIVE futures price over FRED's EIA daily spot, which lagged a week on the day this was built) ──────────────────────────────────
+   Two rows right after the yields. They are neither FRED rows nor CNBC rows: the price is the FRONT-MONTH FUTURES (CL=F, BZ=F) from
+   the quote feed the watchlists and charts already use (quote-proxy → Yahoo), fetched by the browser like the live yields, with its
+   own clock and its own honesty:
+     – Yahoo's futures run about TEN MINUTES behind (measured 2026-10-05: the newest bar was 10 min old at the poll), so a flowing
+       quote is tagged DELAYED, never LIVE. Older than ECON_CRUDE_FRESH_MS while the futures market is open it says NOT LIVE (the
+       feed has stalled); with the market shut it says LAST. There is no second source.
+     – the price AND its time are the newest 5-minute bar of the intraday series (one consistent pair; `info` is cached up to 15 min
+       outside the NYSE day and would lag the tape), the day's change is that price less the previous close (`info.price − info.change`,
+       constant for the whole session), and an unknown previous close is a null change — an em dash, never 0.
+     – the charts: 1D is the last 24 HOURS of 5-minute bars (futures trade round the clock, so a 1D view is a rolling day, not a
+       session), 1W–5Y are the daily closes sliced exactly like every other daily row (`econSpanSlice`); the feed holds ~3 years, so a
+       5Y chart says "since Aug '23" rather than pass for five.
+     – never NEW (a price ticking by the minute is not a release), never in demo from the network (demo draws seeded rows).
+   Failure: a row keeps its last good quote for ECON_CRUDE_KEEP_MS, then says NO DATA with the reason in its tooltip. */
+const ECON_CRUDE = { wti: { symbol: 'CL=F', label: 'WTI crude' }, brent: { symbol: 'BZ=F', label: 'Brent crude' } };
+const ECON_CRUDE_IDS = Object.keys(ECON_CRUDE);
+const ECON_CRUDE_FRESH_MS = 20 * 60000;    /* DELAYED while the newest bar is within this: Yahoo's ~10 min plus a 5-minute bar and slack */
+const ECON_CRUDE_KEEP_MS = 30 * 60000;     /* a reading whose last successful fetch is older than this is dropped (or 2 poll intervals when slower) */
+const ECON_CRUDE_DAILY_MS = 5 * 60000;     /* the daily bars are re-asked this often (quote-proxy caches them 5 min) */
+const ECON_CRUDE_FAST_S = 60, ECON_CRUDE_IDLE_S = 600;
+const econCrude = { m: {}, timer: 0, dueAt: 0, gen: 0, forcing: false, landedAt: 0 };   /* m: row id → { price, ts, pts, prevClose, daily, dailyAt, fetchedAt, why, detail } */
+
+/* The intraday series (quote-proxy: t = 'YYYY-MM-DD HH:mm' UTC, c = closes) → { pts: [[ms, price]…] thinned, ts, price } for the
+   newest 24 hours, or null. A time that does not exist (Feb 30, minute 70), a non-positive price and a bar from the future are
+   skipped, never repaired. */
+function econCrudeIntra(series, now) {
+  if (!series || !Array.isArray(series.t) || !Array.isArray(series.c)) return null;
+  const out = [];
+  for (let i = 0; i < series.t.length; i++) {
+    const t = String(series.t[i]), m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(t), px = series.c[i] == null ? NaN : Number(series.c[i]);
+    if (!m || !Number.isFinite(px) || !(px > 0)) continue;
+    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+    if (new Date(ms).toISOString().slice(0, 16).replace('T', ' ') !== t || ms > now + 120000) continue;
+    out.push([ms, px]);
+  }
+  out.sort((a, b) => a[0] - b[0]);
+  if (out.length < 2) return null;
+  const last = out[out.length - 1], day = out.filter(p => p[0] >= last[0] - 86400000);
+  if (day.length < 2) return null;
+  return { pts: econDownsample(day, ECON_BARS_MAX), ts: last[0], price: last[1] };
+}
+/* The daily series → [[YYYY-MM-DD, close]…] oldest first, or null. */
+function econCrudeDaily(series) {
+  if (!series || !Array.isArray(series.t) || !Array.isArray(series.c)) return null;
+  const out = [];
+  for (let i = 0; i < series.t.length; i++) {
+    const t = String(series.t[i]), px = series.c[i] == null ? NaN : Number(series.c[i]);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t) && Number.isFinite(px) && px > 0) out.push([t, px]);
+  }
+  return out.length >= 2 ? out : null;
+}
+/* The previous close from the `info` reply: its price less its change — the same pair Yahoo computed the change from, so it holds
+   for the whole session whatever the price has done since. Anything missing is null (never 0). */
+function econCrudePrev(info) {
+  const i = info && info.ok && info.info;
+  if (!i || i.price == null || i.change == null) return null;
+  const prev = Number(i.price) - Number(i.change);
+  return Number.isFinite(prev) && prev > 0 ? prev : null;
+}
+/* Which futures trading day an instant belongs to, so a cached previous close can be told from one that has since rolled over (Codex,
+   PR #308). Yahoo moves the previous close somewhere inside the 17:00–18:00 ET halt (at the settlement or at the next open), so the
+   halt is a session of its own and a baseline read before or during it is never carried across it: Sunday 18:30 and Monday 16:59 are
+   one session, the halt after it another, and Monday 18:01 the next. */
+function econCrudeSession(ms) {
+  const c = etClock(new Date(ms));
+  if (c.minutes >= 18 * 60) return econShiftDays(c.date, 1) + ' trade';
+  return c.date + (c.minutes >= 17 * 60 ? ' halt' : ' trade');
+}
+/* Could quote-proxy's `info` cache still hold a close from BEFORE this session's turnover? It keeps `info` up to 15 minutes outside the NYSE
+   day, Yahoo moves the previous close somewhere inside the 17:00–18:00 ET halt, and an entry cached just before the move lives 15 minutes past
+   it: so from 17:00 until 18:15 ET a read that is not forced may be stale. Used where there is no stored baseline to compare with (a cold page
+   load, or every earlier `info` read failed) — Codex, PR #308. */
+function econCrudeNearTurnover(ms) {
+  const m = etClock(new Date(ms)).minutes;
+  return m >= 17 * 60 && m < 18 * 60 + 15;
+}
+/* Is the futures market (CME Globex energy) open by its WEEKLY schedule: Sunday 18:00 ET to Friday 17:00 ET, shut 17:00–18:00 ET Mon–Thu.
+   Holidays are NOT applied here (Codex, PR #308): CME's own holiday calendar differs from the NYSE's — shortened sessions, reopened evenings
+   (Thanksgiving evening) — and this file carries no CME calendar, so a holiday is a separate question (econCrudeHoliday). A quote that is still
+   arriving reads DELAYED whatever this says; it decides the polling cadence and whether a STOPPED quote is NOT LIVE (open) or LAST (shut). */
+function econCrudeOpen(now) {
+  const c = etClock(new Date(now));
+  const dow = new Date(c.date + 'T12:00:00Z').getUTCDay();
+  if (dow === 6) return false;
+  if (dow === 0) return c.minutes >= 18 * 60;
+  if (dow === 5) return c.minutes < 17 * 60;
+  return !(c.minutes >= 17 * 60 && c.minutes < 18 * 60);
+}
+/* A weekday on which the NYSE is shut: CME energy may trade a shortened or reopened session, may be shut all day — the code cannot tell which,
+   so it neither claims the market is closed (it keeps polling at the open cadence) nor claims a stopped price is a stall (LAST, saying why). */
+function econCrudeHoliday(now) { return NYSE_HOLIDAYS.has(etClock(new Date(now)).date); }
+/* What a crude row says about its own liveness: 'delayed' (a price within ECON_CRUDE_FRESH_MS), 'notlive' (older while the market is
+   open: the feed has stalled), 'last' (older with the market shut — normal overnight, at weekends), '' for anything else. */
+function econCrudeState(r, now) {
+  if (DESK.mode === 'demo' || !r.crude) return '';
+  if (now - r.crude.ts <= ECON_CRUDE_FRESH_MS) return 'delayed';
+  return econCrudeOpen(now) && !econCrudeHoliday(now) ? 'notlive' : 'last';
+}
+function econCrudeDelaySec(now) { return econCrudeOpen(now) ? ECON_CRUDE_FAST_S : ECON_CRUDE_IDLE_S; }
+/* the date cell: the Pacific CLOCK of the newest price when it is from today (Pacific), else the date it is for */
+function econCrudeWhen(r) {
+  const d = new Date(r.crude.ts);
+  return ptDateKey(d) === ptDateKey(new Date()) ? fmtClockBare(d.toISOString()) : econDateLabel(r.asOf, 'daily');
+}
+
+/* The rows for what is held. Before the first reply has landed there are none (the rows appear a moment after the yields); after
+   it, a row with nothing usable is a NO DATA row with the reason, never an invented number. */
+function econCrudeRows(now) {
+  if (DESK.mode === 'demo' || !econCrude.landedAt) return [];
+  const keep = Math.max(ECON_CRUDE_KEEP_MS, 2 * econCrudeDelaySec(econCrude.landedAt) * 1000);
+  return ECON_CRUDE_IDS.map(id => {
+    const { symbol, label } = ECON_CRUDE[id], m = econCrude.m[id];
+    const base = { id, label, unit: '', pre: '$', decimals: 2, transform: 'level', cadence: 'daily', symbol, changed: false, staleSec: null, source: 'yahoo' };
+    if (!m || !Number.isFinite(m.price) || now - m.fetchedAt > keep) {
+      return { ...base, status: 'missing', value: null, prev: null, delta: null, asOf: null, prevAsOf: null, points: [], why: (m && m.detail) || 'no answer from the quote feed' };
+    }
+    let points = [], note = null, histWhy = '';
+    /* the history leg follows the same rule as the price: a failed refresh keeps the last good series for `keep` with the failure named,
+       then the chart is dropped and only the reason is left — never an ageing chart that looks current */
+    const histAge = now - (m.dailyAt || 0), histDropped = !!m.dailyWhy && histAge > keep;
+    if (Array.isArray(m.daily) && m.daily.length >= 2 && !histDropped) {
+      const sl = econSpanSlice(m.daily, econRange, 'daily');
+      points = econDownsample(sl.slice, ECON_MAX_POINTS);
+      note = sl.note;
+      /* the feed holds ~3 years: a 5Y chart must say what it covers, not pass for five */
+      if (!note && sl.start < econShiftDays(m.daily[0][0], -10)) note = 'since ' + econEndLabel(m.daily[0][0], 'monthly');
+    }
+    /* the change's own note: why it is a dash, or that it rests on a close read earlier in this session */
+    const chgWhy = !m.infoWhy ? '' : m.prevClose == null ? 'no change shown: ' + m.infoWhy
+      : 'the last refresh of the previous close failed (' + m.infoWhy + '); the change uses the close read earlier in this session';
+    if (m.dailyWhy) histWhy = points.length
+      ? 'the last refresh of the 1W–5Y history failed (' + m.dailyWhy + '); the charts show the history read ' + Math.round(histAge / 60000) + ' min ago'
+      : 'no 1W–5Y chart: ' + m.dailyWhy;
+    const price = Number(m.price.toFixed(2));
+    return {
+      ...base, status: 'ok', value: price, prev: m.prevClose == null ? null : Number(m.prevClose.toFixed(2)),
+      delta: m.prevClose == null ? null : Number((price - m.prevClose).toFixed(2)),
+      asOf: ptDateKey(new Date(m.ts)), prevAsOf: null, points,
+      ...(note ? { pointsNote: note } : {}),
+      crude: { symbol, ts: m.ts, why: m.why ? m.detail : '', histWhy, chgWhy, fetchedAt: m.fetchedAt },
+    };
+  });
+}
+/* The base rows with the crude rows slotted in after the last yield (or first, with no yields yet). Demo rows already carry theirs. */
+function econWithCrude(base, crude) {
+  /* live never draws a generated crude row (real data or nothing): a payload that carries one (only a test's demo-built payload does) loses it */
+  const rest = DESK.mode === 'demo' ? base : base.filter(r => !Object.hasOwn(ECON_CRUDE, r.id));
+  if (!crude.length) return rest;
+  /* nothing from desk-econ and nothing usable from the quote feed: the panel's own empty state ("unavailable — retrying") says it once,
+     rather than two lonely NO DATA rows under it */
+  if (!rest.length && crude.every(r => r.status === 'missing')) return rest;
+  let at = 0;
+  rest.forEach((r, i) => { if (Object.hasOwn(ECON_LIVE, r.id)) at = i + 1; });
+  return rest.slice(0, at).concat(crude, rest.slice(at));
+}
+/* Redraw ONLY the crude rows in place (a price ticks every minute; a whole-panel rebuild would restart every NEW watch), and only
+   when something a viewer could see differs — the 30 s ticker calls this too, since DELAYED → NOT LIVE → LAST depends on the clock. */
+function econCrudeRepaint() {
+  const list = document.getElementById('econList');
+  if (!list || DESK.mode === 'demo') return;
+  const rows = econCrudeRows(Date.now());
+  if (!rows.length) return;
+  /* Does the COMPOSED panel carry the oil rows at all? With nothing from desk-econ and both quotes gone, econWithCrude drops them so the panel's
+     own empty state speaks once (Codex, PR #308): rows already in the page must not turn into two lonely NO DATA rows, so whenever what should be
+     drawn differs from what is, the whole panel is composed again */
+  const base = econState.shown && Array.isArray(econState.shown.rows) ? econState.shown.rows : [];
+  const wanted = econWithCrude(base, rows).some(r => Object.hasOwn(ECON_CRUDE, r.id));
+  const inPage = ECON_CRUDE_IDS.filter(id => list.querySelector('.econ-row[data-id="' + id + '"]')).length;
+  if (wanted ? inPage !== ECON_CRUDE_IDS.length : inPage > 0) { renderEcon(econState.shown); return; }
+  if (!wanted) return;
+  for (const r of rows) {
+    const li = list.querySelector('.econ-row[data-id="' + r.id + '"]'), next = econRow(r, true);
+    const nc = next.querySelector('.econ-chart'), oc = li.querySelector('.econ-chart');
+    if (next.textContent === li.textContent && next.title === li.title && nc && oc && nc.innerHTML === oc.innerHTML) continue;
+    li.replaceWith(next);
+  }
+}
+/* One request set for both rows: the intraday bars (the price, its time, the 1D chart), `info` (the previous close) and — every
+   ECON_CRUDE_DAILY_MS, or at once when forced — the daily bars (the 1W–5Y charts). NEVER throws. A failed piece keeps the last good
+   one and records WHY. `force` bypasses quote-proxy's caches (the masthead's "Refresh now") and claims the slot, as econLiveFetch does. */
+async function econCrudeFetch(force) {
+  if (DESK.mode === 'demo' || !DESK_DB.url) return;
+  const forced = force === true;
+  if (!forced && econCrude.forcing) return;
+  clearTimeout(econCrude.timer); econCrude.timer = 0; econCrude.dueAt = 0;
+  const gen = ++econCrude.gen;
+  if (forced) econCrude.forcing = true;
+  const t0 = Date.now(), opts = forced ? { force: true } : undefined;
+  const fail = (r) => r && r.ok === false ? String(r.error || 'the quote feed refused the request') : 'no answer from the quote feed';
+  let results = [];
+  try {
+    results = await Promise.all(ECON_CRUDE_IDS.map(async id => {
+      const sym = ECON_CRUDE[id].symbol, m = econCrude.m[id];
+      const needDaily = forced || !m || !m.daily || t0 - (m.dailyAt || 0) >= ECON_CRUDE_DAILY_MS;
+      /* `info` is cached by quote-proxy for up to 15 minutes outside the NYSE day, so across a session turnover it can still hold the old
+         session's previous close: while the stored baseline is from a session that has ended — or there is none yet and the turnover is
+         recent enough to be cached — ask for it fresh (one extra uncached call per contract per poll until a baseline from the current
+         session lands) */
+      /* with a baseline stored: has its session ended? with none (cold load, or no `info` has ever answered): is a cached read still possibly the old session's? */
+      const rolled = !m || m.prevKey == null ? econCrudeNearTurnover(t0) : m.prevKey !== econCrudeSession(t0);
+      const call = (kind, o) => deskQuote(sym, kind, false, o).catch(() => null);
+      const [intra, info, daily] = await Promise.all([call('intraday', opts), call('info', rolled ? { force: true } : opts), needDaily ? call('daily', opts) : Promise.resolve(undefined)]);
+      return { id, intra, info, daily };
+    }));
+  } catch { results = []; }
+  if (gen !== econCrude.gen) return;   /* a newer request owns the state now */
+  econCrude.forcing = false;
+  const landed = Date.now(), startSession = econCrudeSession(t0);
+  econCrude.landedAt = landed;
+  let any = false;
+  for (const x of results) {
+    const m = econCrude.m[x.id] || (econCrude.m[x.id] = {});
+    const it = x.intra && x.intra.ok ? econCrudeIntra(x.intra.series, landed) : null;
+    if (it) { Object.assign(m, { price: it.price, ts: it.ts, pts: it.pts, fetchedAt: landed, why: '', detail: '' }); any = true; }
+    else { m.why = 'intraday'; m.detail = x.intra && x.intra.ok ? 'the quote feed sent no usable prices' : fail(x.intra); }
+    /* The previous close belongs to the futures session it was read in: a failed `info` leg keeps it only inside that session. Across a
+       turnover it is dropped (the change reads as an em dash) — a price from the new session must never be measured against the old
+       session's close, which would show a multi-day move as today's. `prevKey` stays the OLD session while the baseline is missing, so
+       the next poll asks fresh again. */
+    const pv = econCrudePrev(x.info), endSession = econCrudeSession(landed);
+    if (pv != null && startSession === endSession) { m.prevClose = pv; m.prevKey = endSession; m.infoWhy = ''; }
+    else if (pv != null) { m.prevClose = null; m.prevKey = startSession; m.infoWhy = 'the reply crossed a session turnover, so it may be the old close; asking again'; }   /* the request straddled a turnover (Codex, PR #308): the `force` decision was made for the session it STARTED in, so the reply may still be the old session's cached close — never stored under the new one; ask again fresh */
+    else {
+      /* the previous-close leg failed: its reason is kept for the tooltip (a dash or a retained change must say why) */
+      m.infoWhy = x.info && x.info.ok ? 'the quote feed sent no previous close' : fail(x.info);
+      if (m.prevKey !== endSession) m.prevClose = null;
+    }
+    if (x.daily !== undefined) {
+      const d = x.daily && x.daily.ok ? econCrudeDaily(x.daily.series) : null;
+      /* A failed daily leg keeps the last good history but SAYS so (Codex, PR #308): the 1W–5Y charts would otherwise age in silence while the
+         intraday price keeps the row `ok`. econCrudeRows names it in the tooltip and, past the keep window, stops drawing the chart. */
+      if (d) { m.daily = d; m.dailyAt = landed; m.dailyWhy = ''; }
+      else m.dailyWhy = x.daily && x.daily.ok ? 'the quote feed sent no usable daily prices' : fail(x.daily);
+    }
+  }
+  renderAfterFetch(econCrudeRepaint);
+  econCrudeArm(any ? econCrudeDelaySec(Date.now()) : ECON_RETRY_S);
+}
+function econCrudeArm(sec) {
+  clearTimeout(econCrude.timer);
+  econCrude.timer = 0;
+  econCrude.dueAt = Date.now() + sec * 1000;
+  if (document.hidden) return;   /* visibilitychange rearms */
+  econCrude.timer = setTimeout(() => { econCrude.timer = 0; econCrudeFetch(false); }, sec * 1000);
+}
+/* The 1D chart column of a crude row: the last 24 hours of bars (live) or the seeded demo bars. Returns the sentence for the tooltip. */
+function econCrudeIntradayChart(chart, r, missing) {
+  const none = (cap, tip) => { chart.appendChild(el('span', 'econ-noline')); if (cap) chart.appendChild(el('span', 'econ-cap', cap)); return tip; };
+  if (missing) return none('', '');
+  const demo = DESK.mode === 'demo', pts = demo ? buildDemoCrudeBars(r.id, Date.now()) : ((econCrude.m[r.id] || {}).pts || []);
+  if (pts.length < 2) return none('1D no bars', '1-day chart unavailable: the quote feed sent no intraday prices for ' + ECON_CRUDE[r.id].symbol);
+  /* a rolling 24 hours ends on the clock time it began, so "09:55 – 09:55" would read as one instant: the caption carries both dates */
+  const a = new Date(pts[0][0]), b = new Date(pts[pts.length - 1][0]);
+  const cap = fmtShortDate(ptDateKey(a)) + ' ' + fmtClockBare(a.toISOString()) + ' – ' + (ptDateKey(a) === ptDateKey(b) ? '' : fmtShortDate(ptDateKey(b)) + ' ') + fmtClockBare(b.toISOString());
+  const desc = econPlot(chart, pts, (r.label || r.id) + ', ' + pts.length + ' prices ' + cap + ' Pacific', r, econXTicksIntraday(pts), cap + ' Pacific');
+  chart.dataset.span = cap;
+  return (demo ? '1-day chart: generated demo prices' : '1-day chart: the last 24 hours, ' + pts.length + ' ' + ECON_CRUDE[r.id].symbol + ' prices, ' + cap) + ' · ' + desc;
 }
 
 /* ── poller: the response's refreshInSec (clamped 30s..3600s) schedules the next fetch. The function
@@ -9054,6 +9347,7 @@ function econVisibility() {
   if (document.hidden) {
     clearTimeout(econState.timer); econState.timer = 0;
     clearTimeout(econLive.timer); econLive.timer = 0;
+    clearTimeout(econCrude.timer); econCrude.timer = 0;
     for (const h of econState.newTimers.values()) clearTimeout(h);
     econState.newTimers.clear();
     return;
@@ -9065,6 +9359,13 @@ function econVisibility() {
     const left = econLive.dueAt - Date.now();
     if (left <= 0) econLiveFetch(false);
     else econLiveArm(left / 1000);
+  }
+  if (DESK.mode !== 'demo' && DESK_DB.url && econCrude.dueAt) {
+    /* the same for the oil: a tab that sat hidden must not come back showing an hour-old price as flowing */
+    renderAfterFetch(econCrudeRepaint);
+    const left = econCrude.dueAt - Date.now();
+    if (left <= 0) econCrudeFetch(false);
+    else econCrudeArm(left / 1000);
   }
   if (econTf === '1d' && DESK.mode !== 'demo' && DESK_DB.url && Date.now() - econBars.at > 60000) econBarsFetch();   /* the bars are old */
   if (DESK.mode !== 'demo' && DESK_DB.url && econState.dueAt) {
@@ -9087,6 +9388,7 @@ function startEcon() {
   renderEcon(null);
   refreshEcon(false);
   econLiveFetch(false);
+  econCrudeFetch(false);
 }
 
 /* ── market widgets: embedded third-party (TradingView) widgets. Each loads as

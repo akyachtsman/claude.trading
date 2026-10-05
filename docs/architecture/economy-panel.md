@@ -660,3 +660,97 @@ width); **S56** guards the live 10Y.
   went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields
   were FRED's and every reply carried that ~5 s). If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
+- **Crude oil: WTI and Brent futures (owner request 2026-10-05: "add price of crude oil to the economy table").**
+  Two rows right after the three yields (`econWithCrude`). The owner chose the LIVE futures price over FRED's
+  EIA daily spot (`DCOILWTICO`), which on the day this was built had its newest reading on 2026-09-29 while
+  the yields' was 2026-10-01 — a week behind, shown under its own date. So the rows are NOT FRED rows (nothing in
+  `desk-econ` or `config/econ-indicators.json` changed; merging IS shipping) and NOT CNBC rows: the price is the
+  FRONT-MONTH FUTURES `CL=F` / `BZ=F` from the quote feed the watchlists and charts already use (`deskQuote` →
+  `quote-proxy` → Yahoo), fetched by the browser on its own clock (`econCrudeFetch`: 60 s while the futures market
+  is open, 10 min while shut, paused while the tab is hidden, "Refresh now" forces it).
+  - **Measured 2026-10-01..05 from the live site:** `CL=F` and `BZ=F` answer all three kinds (`intraday` 5-minute
+    bars for 5 days, `info`, `daily` 800 bars ≈ 3.2 years) in under a second; the newest intraday bar was **10
+    minutes old** at the poll (Yahoo's futures are delayed ~10 min), and `info.change` equalled the price less the
+    previous daily close to the cent.
+  - **The price and its time are the newest 5-minute bar** (one consistent pair; `info` is cached up to 15 min outside
+    the NYSE day in `quote-proxy` and would lag the tape). **The change is that price less the previous close,
+    `info.price − info.change`** — constant for the whole session whatever the price has done — and an unknown
+    previous close is a null change (an em dash, never 0). **The previous close belongs to its futures session**
+    (Codex, PR #308): each baseline is stored with `econCrudeSession(ms)` — a session runs from 18:00 ET to 17:00 ET
+    the next day (Sunday 18:30 and Monday 16:59 are one), and the 17:00–18:00 halt is a session of its own, because
+    Yahoo moves the previous close somewhere inside it. A failed `info` leg keeps the stored baseline only inside the
+    session it was read in; across a turnover it is DROPPED (an em dash — a new session's price is never measured
+    against the old session's close, which would show a multi-day move as today's), and `prevKey` stays the OLD
+    session while the baseline is missing, so each later poll asks `info` FRESH (`{ force: true }`, past
+    quote-proxy's up-to-15-minute `info` cache outside the NYSE day, which would hand the old close back) until a
+    baseline from the current session lands; with one current, `info` goes back to the ordinary cached call. **A
+    request that STRADDLES a turnover** (Codex, second round: the `force` decision is made when it STARTS, so a reply
+    that lands after the turnover can still be the old session's cached close) never stores its baseline under the new
+    session: the stored one is dropped (an em dash for that poll) and `prevKey` is set to the session it STARTED in,
+    so the next poll asks fresh. **With NO baseline stored** (a cold page load, or no `info` has ever answered —
+    Codex, fifth round; this was a documented residual until then) there is no "the session has ended" to see, yet the
+    cache can still hold the old close: `econCrudeNearTurnover` (17:00 ET until 18:15 ET — Yahoo moves the close
+    somewhere inside the 17:00–18:00 halt, and an entry cached just before the move lives 15 minutes past it) makes a
+    missing baseline read FRESH inside that window and the ordinary cached call at any other time, so an ordinary cold
+    load costs nothing extra. `econCrudeIntra` skips a time that does not exist (Feb 30,
+    minute 70), a non-positive price and a bar from the future; it keeps the newest 24 hours, thinned to ≤ 150 real
+    bars (`econDownsample`).
+  - **Liveness words** (`econCrudeState`): a bar within `ECON_CRUDE_FRESH_MS` (20 min) → **DELAYED** (never LIVE:
+    Yahoo runs ~10 minutes behind, and the owner's rule is to be told when it is not real time); older while the
+    futures market is open (`econCrudeOpen`: the WEEKLY schedule only — Sunday 18:00 ET to Friday 17:00 ET, shut
+    17:00–18:00 ET Mon–Thu — and it also sets the poll cadence, 60 s open / 10 min shut) → the solid ink **NOT LIVE**
+    chip; older with the market shut → **LAST**. **NYSE holidays are NOT treated as closures** (Codex, PR #308, eighth
+    round): CME's calendar is not the NYSE's (shortened sessions, reopened evenings such as Thanksgiving) and this file
+    carries no CME calendar, so `econCrudeHoliday` marks a weekday NYSE holiday as an UNKNOWN: polling stays at the
+    open cadence all day, a fresh bar reads DELAYED as ever, and a STOPPED price reads **LAST** (never NOT LIVE — a
+    false alarm on a day CME may be shut) with the tooltip "LAST — an NYSE holiday, when CME's own hours differ: this
+    price has stopped, and a stalled feed cannot be told from a closed market". Encoding a CME calendar needs the
+    owner's say (it would have to be kept current yearly, like `NYSE_HOLIDAYS`).
+    No second source. A row keeps its last good quote for `ECON_CRUDE_KEEP_MS` (30 min, or two poll intervals when
+    slower), then says **NO DATA** with the feed's reason in its tooltip. Before the first reply there are no oil rows;
+    if desk-econ has delivered nothing AND the quote feed has nothing usable, the panel's own empty state says so once
+    instead of two lonely NO DATA rows.
+  - **Charts:** 1D is the last **24 hours** of 5-minute bars (futures trade round the clock, so a 1D view is a rolling
+    day, not a session; the caption carries BOTH dates — a day ending on the clock time it began would read as one
+    instant); 1W–5Y are the daily closes sliced exactly like every other daily row (`econSpanSlice`, shared with the demo),
+    and because the feed holds ~3 years a 5Y chart says `since Aug '23` (`pointsNote`) rather than pass for five. The daily
+    bars are re-asked every 5 minutes (`ECON_CRUDE_DAILY_MS`); the oil charts redraw on a span pick without waiting for
+    desk-econ (their history is already here).
+  - **Presentation:** `pre: '$'` — `econValueText` prints a currency sign BEFORE the number; the change is in dollars
+    (`▲ 1.25`, digits green/red by the panel's own direction rule); the date cell is the Pacific CLOCK of the newest bar
+    when it is from today; the source line reads `Source: Yahoo CL=F`. A currency row's chart gets `.is-px`: a 38px value
+    axis (`--econ-yw`, now on `.econ-chart` so the time axis reads it too) and labels at the fewest decimals that show
+    every value EXACTLY (`econYAxis(…, px)`: "90", "90.5" — never 100.5 as "101"); a yield keeps its own decimals.
+  - **Never NEW** (a price ticking by the minute is not a release: the oil rows skip the seen/pending bookkeeping), **never
+    demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
+    oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
+    of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
+  - **The oil charts do not depend on desk-econ's span** (Codex, PR #308, seventh round): `renderEcon` passes the
+    "does this payload belong to the span showing" flag (`chartsMatch`, which withholds a chart labelled with the wrong
+    window) to the desk-econ rows only. An oil row's charts are sliced from the quote feed's OWN daily history for the
+    span showing (`econCrudeRows` → `econSpanSlice(…, econRange)`), so they always match: when a span change's
+    desk-econ request fails and the retained payload still belongs to the old span, the yields' charts say `span
+    unavailable` and the healthy oil charts stay.
+  - **Every leg names its failure on the row** (Codex, PR #308, sixth round, with the same rule applied to its
+    sibling): the price (`crude.why`, from `m.why`/`m.detail`) — "the last refresh of the price failed (…); this is the
+    price read N min ago", cleared by the next good read, the age measured from the READ (`fetchedAt`), not from the
+    bar; the previous close (`crude.chgWhy`, from `m.infoWhy`) — "no change shown: …" when the change is a dash (the
+    leg failed, answered without a close, or its reply crossed a turnover), or "the last refresh of the previous close
+    failed (…); the change uses the close read earlier in this session" when a baseline from this session stands;
+    and the history (next bullet). A retained value must never read as current.
+  - **The history leg fails loudly too** (Codex, PR #308, third round): the 1W–5Y charts come from the DAILY leg and the
+    price from the intraday leg, so a failed daily refresh used to leave the row `ok` while its history aged in silence.
+    A failed daily leg is recorded (`m.dailyWhy`, cleared by the next success) and follows the price's own rule: the last
+    good series is KEPT for `keep` (30 min, from `dailyAt`) with the failure named in the tooltip (`crude.histWhy`: "the
+    last refresh of the 1W–5Y history failed (…); the charts show the history read N min ago"), then the chart is DROPPED
+    — caption `no chart`, tooltip "no 1W–5Y chart: <reason>" — never an ageing chart that looks current. The daily bars
+    are re-asked on every poll once they are 5 minutes old, so a recovery brings the chart straight back.
+  - **The in-place repaint follows the COMPOSED panel** (Codex, PR #308, fourth round): `econCrudeRepaint` redraws the oil
+    rows alone (a price ticks every minute; a whole-panel rebuild restarts every NEW watch), but it first asks
+    `econWithCrude` whether the composed panel carries the oil rows at all. With desk-econ empty and both quotes gone the
+    composition drops them so the panel's own empty state speaks ONCE; rows already in the page must not turn into two lonely
+    NO DATA rows, so whenever what should be drawn differs from what is (rows to remove, or missing ones to restore when the
+    feed returns) the whole panel is composed again with `renderEcon(econState.shown)`. With desk-econ rows present the oil
+    rows still say NO DATA IN PLACE and the yields' nodes are left alone.
+  - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window, the price and change notes, the span independence and the holiday handling; 60 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
