@@ -8084,6 +8084,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
 // ─────────────────────────────────────────────────────────────────────────────
 test('S61: a wrapped watchlist can split its excess into a real second list', async ({ page, renderWitness }) => {
   renderWitness();
+  test.setTimeout(90_000);   // the scenario grew past the 30 s default (26.6 s locally on iPhone's WebKit, which timed out on CI's runner)
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoDemo(page, '.wl-strip .wl-tile', 10000);
   expect(await page.locator('.wl-split:visible').count(), 'demo has no roster to write, so no split control').toBe(0);
@@ -8299,7 +8300,10 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   // nothing in the source, ahead of the new list, so above that cap the moved symbols fall past it: the new list would draw no quotes and the
   // source a different set. Refused with the count, written nowhere; at exactly the cap (and with repeats counted once) it still works.
   const big = (n) => Array.from({ length: n }, (_, i) => 'B' + String(i + 1).padStart(4, '0'));
-  await page.evaluate(() => { window.__feedCap = 1000; });   // the stub now prices only what the real feed does
+  // The stub prices only the first 150 unique symbols (the real feed's cap is 1,000, mirrored by WL_FEED_CAP, which counts SAVED symbols and so still
+  // sees 1,001): 1,000 drawn tiles took WebKit on CI past the test's time limit, and the rendered payload staying far below the saved roster is exactly
+  // what the "counted on the rendered payload" mutant needs to be caught.
+  await page.evaluate(() => { window.__feedCap = 150; });
   const splitFirst = async () => {
     await expect.poll(async () => (await bands())[0].split).not.toBeNull();
     await page.locator('#wlStrip .mkt-group').first().locator('.wl-split').click();
