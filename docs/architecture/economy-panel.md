@@ -683,7 +683,11 @@ width); **S56** guards the live 10Y.
     against the old session's close, which would show a multi-day move as today's), and `prevKey` stays the OLD
     session while the baseline is missing, so each later poll asks `info` FRESH (`{ force: true }`, past
     quote-proxy's up-to-15-minute `info` cache outside the NYSE day, which would hand the old close back) until a
-    baseline from the current session lands; with one current, `info` goes back to the ordinary cached call. A page
+    baseline from the current session lands; with one current, `info` goes back to the ordinary cached call. **A
+    request that STRADDLES a turnover** (Codex, second round: the `force` decision is made when it STARTS, so a reply
+    that lands after the turnover can still be the old session's cached close) never stores its baseline under the new
+    session: the stored one is dropped (an em dash for that poll) and `prevKey` is set to the session it STARTED in,
+    so the next poll asks fresh. A page
     first loaded inside the halt-to-open hour can still read a cached pre-turnover close for up to 15 minutes (no
     earlier baseline to compare with; the first poll's calls are unchanged). `econCrudeIntra` skips a time that does not exist (Feb 30,
     minute 70), a non-positive price and a bar from the future; it keeps the newest 24 hours, thinned to ≤ 150 real
@@ -713,4 +717,4 @@ width); **S56** guards the live 10Y.
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
     of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline; 24 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline and a request that straddles a turnover; 28 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).

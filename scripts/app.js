@@ -9188,7 +9188,7 @@ async function econCrudeFetch(force) {
   } catch { results = []; }
   if (gen !== econCrude.gen) return;   /* a newer request owns the state now */
   econCrude.forcing = false;
-  const landed = Date.now();
+  const landed = Date.now(), startSession = econCrudeSession(t0);
   econCrude.landedAt = landed;
   let any = false;
   for (const x of results) {
@@ -9200,9 +9200,10 @@ async function econCrudeFetch(force) {
        turnover it is dropped (the change reads as an em dash) — a price from the new session must never be measured against the old
        session's close, which would show a multi-day move as today's. `prevKey` stays the OLD session while the baseline is missing, so
        the next poll asks fresh again. */
-    const pv = econCrudePrev(x.info);
-    if (pv != null) { m.prevClose = pv; m.prevKey = econCrudeSession(landed); }
-    else if (m.prevKey !== econCrudeSession(landed)) m.prevClose = null;
+    const pv = econCrudePrev(x.info), endSession = econCrudeSession(landed);
+    if (pv != null && startSession === endSession) { m.prevClose = pv; m.prevKey = endSession; }
+    else if (pv != null) { m.prevClose = null; m.prevKey = startSession; }   /* the request straddled a turnover (Codex, PR #308): the `force` decision was made for the session it STARTED in, so the reply may still be the old session's cached close — never stored under the new one; ask again fresh */
+    else if (m.prevKey !== endSession) m.prevClose = null;
     if (x.daily !== undefined) {
       const d = x.daily && x.daily.ok ? econCrudeDaily(x.daily.series) : null;
       if (d) { m.daily = d; m.dailyAt = landed; }

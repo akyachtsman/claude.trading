@@ -8508,6 +8508,7 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
       o.calls.push({ sym, kind, force: !!(opts && opts.force) });
       if (o.mode === 'fail') throw new Error('quote-proxy → HTTP 502');
       if (o.mode === 'refuse') return { ok: false, error: 'no ' + kind + ' data found for ' + sym };
+      if (o.gate && kind === 'info') await o.gate;   // holds the info leg open so a request can straddle a session turnover
       if (o.infoDown && kind === 'info') return { ok: false, error: 'no info data found for ' + sym };   // ONE leg down: the bars still flow
       const px = o.px[sym];
       if (kind === 'info') return { ok: true, symbol: sym, kind, info: { price: px, change: px - o.prev[sym] } };
@@ -8632,6 +8633,26 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(() => econCrudeFetch(false));
   expect(await kinds(), 'with a baseline from the current session, info goes back to the ordinary cached call').toEqual(expect.arrayContaining(['CL=F:info']));
   expect((await kinds()).some((k) => k.endsWith(':info:force')), 'no forced info once the baseline is current').toBe(false);
+
+  // ── 7c. a request that STRADDLES a turnover (Codex, PR #308, second round) ───────────────────────────────────────────────────────
+  // The decision to ask `info` fresh is made when a request STARTS; if it lands after the turnover, a reply served from quote-proxy's cache can
+  // still be the old session's close, and stamping it with the new session would hide that from every later poll. It is discarded instead (an em
+  // dash for one poll) and the next poll asks fresh.
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.prev['CL=F'] = 88.0; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-07T21:50:00Z'));   // Wednesday 17:50 ET: the halt
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).delta, 'a baseline read inside the halt').toBe('▲ 0.40');
+  await page.clock.setSystemTime(new Date('2026-10-07T21:59:50Z'));   // 17:59:50 ET, ten seconds before the session opens
+  await page.evaluate(() => { window.__oil.gate = new Promise((r) => { window.__oil.release = r; }); window.__oilReq = econCrudeFetch(false); });   // NOT awaited: info is held open
+  await page.clock.setSystemTime(new Date('2026-10-07T22:00:10Z'));   // 18:00:10 ET: the session has opened while the request was in flight
+  await page.evaluate(async () => { window.__oil.gate = null; window.__oil.release(); await window.__oilReq; });   // info answers with the OLD close (88.00), as a cache would
+  const straddled = await info('wti');
+  expect([straddled.val, straddled.delta], 'the price lands, but a close from a request that crossed the turnover is not trusted: an em dash').toEqual(['$88.40', '—']);
+  await page.evaluate(() => { window.__oil.prev['CL=F'] = 87.0; window.__oil.calls.length = 0; });   // the new session\'s own previous close
+  await page.clock.setSystemTime(new Date('2026-10-07T22:01:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await kinds(), 'the next poll asks info FRESH').toContain('CL=F:info:force');
+  expect((await info('wti')).delta, 'and reads the new session\'s close (88.40 − 87.00)').toBe('▲ 1.40');
 
   // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
   await page.evaluate(() => { window.__oil.calls.length = 0; });
