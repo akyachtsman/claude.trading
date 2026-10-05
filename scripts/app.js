@@ -9079,6 +9079,14 @@ function econCrudeSession(ms) {
   if (c.minutes >= 18 * 60) return econShiftDays(c.date, 1) + ' trade';
   return c.date + (c.minutes >= 17 * 60 ? ' halt' : ' trade');
 }
+/* Could quote-proxy's `info` cache still hold a close from BEFORE this session's turnover? It keeps `info` up to 15 minutes outside the NYSE
+   day, Yahoo moves the previous close somewhere inside the 17:00–18:00 ET halt, and an entry cached just before the move lives 15 minutes past
+   it: so from 17:00 until 18:15 ET a read that is not forced may be stale. Used where there is no stored baseline to compare with (a cold page
+   load, or every earlier `info` read failed) — Codex, PR #308. */
+function econCrudeNearTurnover(ms) {
+  const m = etClock(new Date(ms)).minutes;
+  return m >= 17 * 60 && m < 18 * 60 + 15;
+}
 /* Is the futures market (CME Globex energy) open: Sunday 18:00 ET to Friday 17:00 ET, shut 17:00–18:00 ET Mon–Thu. NYSE holidays count
    as closed — a coarse stand-in for CME's own calendar, which only matters for the words: a quote that is still arriving reads DELAYED
    whatever this says; it decides only whether a STOPPED quote is NOT LIVE (open) or LAST (shut). */
@@ -9192,9 +9200,11 @@ async function econCrudeFetch(force) {
       const sym = ECON_CRUDE[id].symbol, m = econCrude.m[id];
       const needDaily = forced || !m || !m.daily || t0 - (m.dailyAt || 0) >= ECON_CRUDE_DAILY_MS;
       /* `info` is cached by quote-proxy for up to 15 minutes outside the NYSE day, so across a session turnover it can still hold the old
-         session's previous close: while the stored baseline is from a session that has ended, ask for it fresh (one extra uncached call
-         per contract per poll until a baseline from the current session lands) */
-      const rolled = !!m && m.prevKey != null && m.prevKey !== econCrudeSession(t0);
+         session's previous close: while the stored baseline is from a session that has ended — or there is none yet and the turnover is
+         recent enough to be cached — ask for it fresh (one extra uncached call per contract per poll until a baseline from the current
+         session lands) */
+      /* with a baseline stored: has its session ended? with none (cold load, or no `info` has ever answered): is a cached read still possibly the old session's? */
+      const rolled = !m || m.prevKey == null ? econCrudeNearTurnover(t0) : m.prevKey !== econCrudeSession(t0);
       const call = (kind, o) => deskQuote(sym, kind, false, o).catch(() => null);
       const [intra, info, daily] = await Promise.all([call('intraday', opts), call('info', rolled ? { force: true } : opts), needDaily ? call('daily', opts) : Promise.resolve(undefined)]);
       return { id, intra, info, daily };

@@ -687,9 +687,12 @@ width); **S56** guards the live 10Y.
     request that STRADDLES a turnover** (Codex, second round: the `force` decision is made when it STARTS, so a reply
     that lands after the turnover can still be the old session's cached close) never stores its baseline under the new
     session: the stored one is dropped (an em dash for that poll) and `prevKey` is set to the session it STARTED in,
-    so the next poll asks fresh. A page
-    first loaded inside the halt-to-open hour can still read a cached pre-turnover close for up to 15 minutes (no
-    earlier baseline to compare with; the first poll's calls are unchanged). `econCrudeIntra` skips a time that does not exist (Feb 30,
+    so the next poll asks fresh. **With NO baseline stored** (a cold page load, or no `info` has ever answered —
+    Codex, fifth round; this was a documented residual until then) there is no "the session has ended" to see, yet the
+    cache can still hold the old close: `econCrudeNearTurnover` (17:00 ET until 18:15 ET — Yahoo moves the close
+    somewhere inside the 17:00–18:00 halt, and an entry cached just before the move lives 15 minutes past it) makes a
+    missing baseline read FRESH inside that window and the ordinary cached call at any other time, so an ordinary cold
+    load costs nothing extra. `econCrudeIntra` skips a time that does not exist (Feb 30,
     minute 70), a non-positive price and a bar from the future; it keeps the newest 24 hours, thinned to ≤ 150 real
     bars (`econDownsample`).
   - **Liveness words** (`econCrudeState`): a bar within `ECON_CRUDE_FRESH_MS` (20 min) → **DELAYED** (never LIVE:
@@ -731,4 +734,4 @@ width); **S56** guards the live 10Y.
     feed returns) the whole panel is composed again with `renderEcon(econState.shown)`. With desk-econ rows present the oil
     rows still say NO DATA IN PLACE and the yields' nodes are left alone.
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh and the composed empty state; 38 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state and the cold-load window; 44 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).

@@ -8479,7 +8479,8 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
       within24h: intra.pts[intra.pts.length - 1][0] - intra.pts[0][0] <= 86400000, sorted: intra.pts.every((p, i, a) => !i || a[i - 1][0] <= p[0]),
       dirtyPts: dirty && dirty.pts.map((p) => p[1]), dirtyNull: econCrudeIntra(bars(['2026-10-05 15:00'], [90]), T), none: econCrudeIntra(null, T),
       daily: econCrudeDaily(bars(['2026-10-01', 'oops', '2026-10-02', '2026-10-05'], [90, 91, -1, 92])), dailyNull: econCrudeDaily(bars(['2026-10-01'], [90])),
-      session: ['2026-10-04T22:30:00Z', '2026-10-05T20:59:00Z', '2026-10-05T21:01:00Z', '2026-10-05T21:59:00Z', '2026-10-05T22:01:00Z', '2026-10-06T13:00:00Z'].map((t) => econCrudeSession(Date.parse(t))),
+      nearTurnover: ['2026-10-05T20:59:00Z', '2026-10-05T21:00:00Z', '2026-10-05T21:59:00Z', '2026-10-05T22:14:00Z', '2026-10-05T22:15:00Z', '2026-10-05T16:00:00Z'].map((t) => econCrudeNearTurnover(Date.parse(t))),
+    session: ['2026-10-04T22:30:00Z', '2026-10-05T20:59:00Z', '2026-10-05T21:01:00Z', '2026-10-05T21:59:00Z', '2026-10-05T22:01:00Z', '2026-10-06T13:00:00Z'].map((t) => econCrudeSession(Date.parse(t))),
     prev: [econCrudePrev({ ok: true, info: { price: 90.25, change: -0.86 } }), econCrudePrev({ ok: true, info: { price: 90.25, change: null } }), econCrudePrev({ ok: true, info: { price: null, change: 1 } }),
         econCrudePrev({ ok: false }), econCrudePrev(null), econCrudePrev({ ok: true, info: { price: 1, change: 5 } })].map((v) => v == null ? null : Number(v.toFixed(2))),
       // Sunday 17:59 / 18:00 ET, Friday 16:59 / 17:00 ET, Saturday, the Wednesday halt, Thursday night, an NYSE holiday
@@ -8493,6 +8494,8 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   expect([pure.dirtyNull, pure.none], 'one bar or nothing is not a series').toEqual([null, null]);
   expect(pure.daily, 'the daily series keeps real dated positive closes only').toEqual([['2026-10-01', 90], ['2026-10-05', 92]]);
   expect(pure.dailyNull, 'one daily bar is not a series').toBeNull();
+  expect(pure.nearTurnover, 'a read that is not forced may be stale from 17:00 ET (the halt) until 18:15 ET (15 minutes after the open): 16:59 no, 17:00 yes, 17:59 yes, 18:14 yes, 18:15 no, midday no')
+    .toEqual([false, true, true, true, false, false]);
   expect(pure.session, 'a futures session runs from 18:00 ET to 17:00 ET the next day (Sunday 18:30 and Monday 16:59 are ONE session), the 17:00–18:00 halt is a session of its own, and Monday 18:01 begins Tuesday\'s')
     .toEqual(['2026-10-05 trade', '2026-10-05 trade', '2026-10-05 halt', '2026-10-05 halt', '2026-10-06 trade', '2026-10-06 trade']);
   expect(pure.prev, 'the previous close is price − change; anything missing, a failed reply or a non-positive result is null — never 0').toEqual([91.11, null, null, null, null, null]);
@@ -8716,6 +8719,27 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   expect(await rowIds(), 'the feed returns: the oil rows come back').toEqual(['wti', 'brent']);
   expect(await page.locator('#econList .econ-empty').count(), 'and the empty state goes').toBe(0);
   await page.evaluate(() => { renderEcon(window.__shownBackup); });   // back to the full panel for the sections below
+
+  // ── 7f. a cold load (no baseline stored) just after a turnover asks fresh too (Codex, PR #308, fifth round) ────────────────────────
+  // With nothing stored to compare with there is no "the session has ended" to see, but quote-proxy's `info` cache can still hold the OLD session's
+  // close for 15 minutes past the turnover — so from 17:00 to 18:15 ET a missing baseline is read fresh; at any other time the ordinary call.
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.dailyDown = false; });
+  const coldPoll = async (iso) => {
+    await page.evaluate(() => { econCrude.m = {}; econCrude.landedAt = 0; window.__oil.calls.length = 0; });
+    await page.clock.setSystemTime(new Date(iso));
+    await page.evaluate(() => econCrudeFetch(false));
+    return page.evaluate(() => window.__oil.calls.filter((c) => c.kind === 'info').map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort());
+  };
+  expect(await coldPoll('2026-10-08T22:05:00Z'), 'a cold load at 18:05 ET (five minutes into the session): info is asked FRESH for both contracts').toEqual(['BZ=F:info:force', 'CL=F:info:force']);
+  expect(await coldPoll('2026-10-08T20:00:00Z'), 'a cold load at 16:00 ET: the ordinary (cached) call').toEqual(['BZ=F:info', 'CL=F:info']);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-08T22:06:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));   // the cold-start read at 16:00 ET stored a 'trade' baseline; 22:06Z is the NEXT session, so it is read fresh
+  expect((await page.evaluate(() => window.__oil.calls.filter((c) => c.kind === 'info').map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort())), 'a baseline from the session that has ended is read fresh').toEqual(['BZ=F:info:force', 'CL=F:info:force']);
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-08T22:07:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await page.evaluate(() => window.__oil.calls.filter((c) => c.kind === 'info').map((c) => c.sym + ':' + c.kind + (c.force ? ':force' : '')).sort())), 'and once a current baseline is stored, the ordinary call again').toEqual(['BZ=F:info', 'CL=F:info']);
 
   // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
   await page.evaluate(() => { window.__oil.calls.length = 0; });
