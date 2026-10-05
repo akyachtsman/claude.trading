@@ -8178,3 +8178,93 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   expect(await rosterWrites(page), 'a full roster is not written').toBe(0);
   expect((await rosterOf()).length).toBe(50);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 62 — The watchlist sorts: Price orders each list by price, % Change by
+// day move with the biggest GAINERS first.
+// Owner report 2026-10-05, two rounds: "sort is not working" and then, with a
+// screenshot of a correct price sort, "I mean sorted by percent gain and percent
+// loss". The Price sort had always worked (each list in price order, one list at a
+// time); what was wanted was the green stocks together at one end and the red ones
+// at the other — the % Change key — and its first click used to put the biggest
+// LOSERS first, under an ↑ that read as "up". Now the first click is gainers first,
+// ↑ means up-movers first and ↓ down-movers first. Read off the DRAWN tiles, per
+// list, not off the data.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S62: Price sorts each list by price; % Change puts the biggest gainers first', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '.wl-strip .wl-tile', 10000);
+  await page.evaluate(() => { try { localStorage.removeItem('wl_sort_v1'); } catch { /* private mode */ } });
+  await page.reload();
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+
+  /* Each band's drawn tiles as numbers: the price and the day move. A dash is a
+     missing figure (it must sink, never lead). */
+  const bands = () => page.evaluate(() => {
+    const num = s => { const m = /^([+−-]?)([\d,]+(?:\.\d+)?)%?$/.exec((s || '').trim()); return m ? (m[1] === '−' || m[1] === '-' ? -1 : 1) * parseFloat(m[2].replace(/,/g, '')) : null; };
+    return [...document.querySelectorAll('#wlStrip .mkt-group')].map(g => ({
+      title: g.getAttribute('aria-label'),
+      px: [...g.querySelectorAll('.wl-tile')].map(t => num((t.querySelector('.mkt-last') || {}).textContent)),
+      pct: [...g.querySelectorAll('.wl-tile')].map(t => num((t.querySelector('.wl-pct') || {}).textContent)),
+    }));
+  });
+  const nonDecreasing = (a) => a.filter(v => v != null).every((v, i, all) => i === 0 || all[i - 1] <= v);
+  const nonIncreasing = (a) => a.filter(v => v != null).every((v, i, all) => i === 0 || all[i - 1] >= v);
+  const btn = key => page.locator('#wlSort button[data-key="' + key + '"]');
+  const dirOf = key => btn(key).locator('.wl-dir').textContent();
+
+  // the keys are named for what they do
+  await expect(btn('pct'), 'the move key says it is a percentage').toHaveText(/% Change/);
+  await expect(btn('manual')).toHaveAttribute('aria-pressed', 'true');
+
+  // ── Price: every list in ascending price order, ↑ = cheapest first ──────────
+  await btn('price').click();
+  await expect(btn('price')).toHaveAttribute('aria-pressed', 'true');
+  expect(await dirOf('price'), 'Price ↑ is ascending').toBe('↑');
+  let b = await bands();
+  expect(b.length).toBeGreaterThan(3);
+  for (const band of b) expect(nonDecreasing(band.px), band.title + ': price ascending, left to right').toBe(true);
+  expect(b.some(x => x.px.length > 5 && !nonDecreasing(x.pct)), 'and it is NOT also in % order (the colours do mix under a price sort — that is the point)').toBe(true);
+  await btn('price').click();
+  expect(await dirOf('price')).toBe('↓');
+  b = await bands();
+  for (const band of b) expect(nonIncreasing(band.px), band.title + ': price descending after the second click').toBe(true);
+
+  // ── % Change: the FIRST click is gainers first, greens then reds ────────────
+  await btn('pct').click();
+  await expect(btn('pct')).toHaveAttribute('aria-pressed', 'true');
+  expect(await dirOf('pct'), '↑ means up-movers first').toBe('↑');
+  await expect(btn('pct')).toHaveAttribute('title', /gainers first/);
+  b = await bands();
+  for (const band of b) {
+    expect(nonIncreasing(band.pct), band.title + ': biggest gain first, biggest loss last').toBe(true);
+    const signs = band.pct.filter(v => v != null && v !== 0).map(v => Math.sign(v));
+    expect(signs.join(','), band.title + ': no green after a red').not.toMatch(/-1,1/);
+  }
+  const mixed = b.find(x => x.pct.some(v => v > 0) && x.pct.some(v => v < 0));
+  expect(mixed, 'the demo has a list with both gains and losses to order').toBeTruthy();
+  expect(mixed.pct[0], 'it starts on its best mover').toBe(Math.max(...mixed.pct.filter(v => v != null)));
+  expect(mixed.pct[mixed.pct.length - 1], 'and ends on its worst').toBe(Math.min(...mixed.pct.filter(v => v != null)));
+
+  // the second click reverses it: losers first, ↓
+  await btn('pct').click();
+  expect(await dirOf('pct'), '↓ means down-movers first').toBe('↓');
+  await expect(btn('pct')).toHaveAttribute('title', /losers first/);
+  b = await bands();
+  for (const band of b) expect(nonDecreasing(band.pct), band.title + ': biggest loss first after the second click').toBe(true);
+
+  // a different key and back starts gainers first again (the choice is per key, not remembered)
+  await btn('sym').click();
+  await btn('pct').click();
+  expect(await dirOf('pct')).toBe('↑');
+  b = await bands();
+  for (const band of b) expect(nonIncreasing(band.pct)).toBe(true);
+
+  // and the choice survives a reload, direction included
+  await page.reload();
+  await expect(page.locator('.wl-strip .wl-tile').first()).toBeVisible({ timeout: 15000 });
+  await expect(btn('pct')).toHaveAttribute('aria-pressed', 'true');
+  expect(await dirOf('pct')).toBe('↑');
+  b = await bands();
+  for (const band of b) expect(nonIncreasing(band.pct)).toBe(true);
+});

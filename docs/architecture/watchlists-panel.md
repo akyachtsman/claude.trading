@@ -107,6 +107,17 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     strip's WIDTH changes (a `ResizeObserver`, width only, 60ms debounce) — a band
     that fits one row on a widescreen wraps on a laptop, and the count follows.
     It is offered only where a row holds `WL_SPLIT_MIN_ROW` (12) or more tiles.
+  - **Sort keys** (`#wlSort`: Saved · A–Z · Price · % Change; `wlSort`, persisted in
+    `wl_sort_v1`). A sort orders the tiles WITHIN each list, never across lists.
+    Price and A–Z read numerically — ↑ is ascending, cheapest / A first. **% Change
+    reads in MOVES** (owner 2026-10-05: "sorted by percent gain and percent loss",
+    after a correct Price sort looked "not working" because the green and red pills
+    mixed under it — day change is not price): its FIRST click is the biggest
+    GAINERS first, ↑ means up-movers first and ↓ down-movers first, so internally its
+    `dir` is -1 on the first click (the comparison sign still orders the largest value
+    first) while the arrow is flipped for display. A row with no figure sinks to the
+    bottom in both directions. A drag snaps the sort to Manual (`wlEnsureManual`).
+    S62 reads the DRAWN tiles per list.
   - **Drag: the slot is read in READING ORDER** (`wlDropIndex(zone, x, y)`): a tile
     is "passed" when the pointer is below its row, or level with its row and past its
     horizontal middle, and the slot is the number of LEADING tiles passed — so Y

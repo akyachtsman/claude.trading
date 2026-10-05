@@ -798,7 +798,7 @@ const WL_SORTS = [
   ['manual', 'Saved', 'the order your lists are saved in'],
   ['sym', 'A–Z', 'alphabetical by ticker'],
   ['price', 'Price', 'by last price'],
-  ['pct', 'Change', 'by day change %'],
+  ['pct', '% Change', 'by day change % — biggest gainers first'],
 ];
 let wlSort = { key: 'manual', dir: 1 };
 try {
@@ -834,14 +834,23 @@ function renderWlSort() {
     b.dataset.key = key;
     const on = wlSort.key === key;
     b.setAttribute('aria-pressed', String(on));
+    /* The % Change key reads in MOVES, not in numbers (owner 2026-10-05: "sorted by
+       percent gain and percent loss"; the first cut read ↑ as "ascending", and a
+       trader reads ↑ as "up"): ↑ = the biggest gainers first, ↓ = the biggest losers
+       first, and the FIRST click is gainers first. Price and A–Z keep the numeric
+       reading — ↑ is ascending, cheapest/A first. Internally `dir` is still the sign
+       of the comparison, so % Change's first click is dir -1 (the largest value first). */
+    const up = key === 'pct' ? wlSort.dir === -1 : wlSort.dir === 1;
     /* the active key doubles as the direction toggle — clicking it again flips */
-    b.title = on && key !== 'manual'
-      ? (wlSort.dir === 1 ? 'Ascending — click to reverse' : 'Descending — click to reverse')
-      : 'Sort ' + why;
-    if (on && key !== 'manual') b.appendChild(el('span', 'wl-dir', wlSort.dir === 1 ? '↑' : '↓'));
+    b.title = on && key === 'pct'
+      ? (up ? 'Biggest gainers first — click for biggest losers first' : 'Biggest losers first — click for biggest gainers first')
+      : on && key !== 'manual'
+        ? (wlSort.dir === 1 ? 'Ascending — click to reverse' : 'Descending — click to reverse')
+        : 'Sort ' + why;
+    if (on && key !== 'manual') b.appendChild(el('span', 'wl-dir', up ? '↑' : '↓'));
     b.addEventListener('click', () => {
       if (wlSort.key === key && key !== 'manual') wlSort.dir = -wlSort.dir;
-      else wlSort = { key, dir: 1 };
+      else wlSort = { key, dir: key === 'pct' ? -1 : 1 };
       saveWlSort();
       renderWatchlist();
       /* Re-render REPLACES these buttons, so the one just activated leaves the
