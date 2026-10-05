@@ -8645,6 +8645,7 @@ function econRow(r, chartsMatch) {
     liveState === 'notlive' ? 'NOT LIVE — ' + econNotLiveWhy(r, now) : '',
     crudeState === 'notlive' ? 'NOT LIVE — no new price for ' + Math.round((now - r.crude.ts) / 60000) + ' min while the futures market is open; this is the last price the quote feed sent' : '',
     crudeState === 'last' ? 'LAST — the futures market is shut; this is its last price' : '',
+    r.crude && r.crude.histWhy ? r.crude.histWhy : '',
     missing && r.why ? 'no price: ' + r.why : '',
     missing ? '' : r.crude ? 'as of ' + fmtStampDateTime(new Date(r.crude.ts).toISOString()) + ' (time of the newest price)'
       : r.live ? 'as of ' + fmtStampDateTime(new Date(r.live.ts).toISOString()) + ' (time of the last quote)'
@@ -9115,21 +9116,27 @@ function econCrudeRows(now) {
     if (!m || !Number.isFinite(m.price) || now - m.fetchedAt > keep) {
       return { ...base, status: 'missing', value: null, prev: null, delta: null, asOf: null, prevAsOf: null, points: [], why: (m && m.detail) || 'no answer from the quote feed' };
     }
-    let points = [], note = null;
-    if (Array.isArray(m.daily) && m.daily.length >= 2) {
+    let points = [], note = null, histWhy = '';
+    /* the history leg follows the same rule as the price: a failed refresh keeps the last good series for `keep` with the failure named,
+       then the chart is dropped and only the reason is left — never an ageing chart that looks current */
+    const histAge = now - (m.dailyAt || 0), histDropped = !!m.dailyWhy && histAge > keep;
+    if (Array.isArray(m.daily) && m.daily.length >= 2 && !histDropped) {
       const sl = econSpanSlice(m.daily, econRange, 'daily');
       points = econDownsample(sl.slice, ECON_MAX_POINTS);
       note = sl.note;
       /* the feed holds ~3 years: a 5Y chart must say what it covers, not pass for five */
       if (!note && sl.start < econShiftDays(m.daily[0][0], -10)) note = 'since ' + econEndLabel(m.daily[0][0], 'monthly');
     }
+    if (m.dailyWhy) histWhy = points.length
+      ? 'the last refresh of the 1W–5Y history failed (' + m.dailyWhy + '); the charts show the history read ' + Math.round(histAge / 60000) + ' min ago'
+      : 'no 1W–5Y chart: ' + m.dailyWhy;
     const price = Number(m.price.toFixed(2));
     return {
       ...base, status: 'ok', value: price, prev: m.prevClose == null ? null : Number(m.prevClose.toFixed(2)),
       delta: m.prevClose == null ? null : Number((price - m.prevClose).toFixed(2)),
       asOf: ptDateKey(new Date(m.ts)), prevAsOf: null, points,
       ...(note ? { pointsNote: note } : {}),
-      crude: { symbol, ts: m.ts, why: m.why ? m.detail : '' },
+      crude: { symbol, ts: m.ts, why: m.why ? m.detail : '', histWhy },
     };
   });
 }
@@ -9206,7 +9213,10 @@ async function econCrudeFetch(force) {
     else if (m.prevKey !== endSession) m.prevClose = null;
     if (x.daily !== undefined) {
       const d = x.daily && x.daily.ok ? econCrudeDaily(x.daily.series) : null;
-      if (d) { m.daily = d; m.dailyAt = landed; }
+      /* A failed daily leg keeps the last good history but SAYS so (Codex, PR #308): the 1W–5Y charts would otherwise age in silence while the
+         intraday price keeps the row `ok`. econCrudeRows names it in the tooltip and, past the keep window, stops drawing the chart. */
+      if (d) { m.daily = d; m.dailyAt = landed; m.dailyWhy = ''; }
+      else m.dailyWhy = x.daily && x.daily.ok ? 'the quote feed sent no usable daily prices' : fail(x.daily);
     }
   }
   renderAfterFetch(econCrudeRepaint);

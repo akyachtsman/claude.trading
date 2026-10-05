@@ -8514,6 +8514,7 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
       if (o.mode === 'refuse') return { ok: false, error: 'no ' + kind + ' data found for ' + sym };
       if (o.gate && kind === 'info') await o.gate;   // holds the info leg open so a request can straddle a session turnover
       if (o.infoDown && kind === 'info') return { ok: false, error: 'no info data found for ' + sym };   // ONE leg down: the bars still flow
+      if (o.dailyDown && kind === 'daily') return { ok: false, error: 'no daily data found for ' + sym };
       const px = o.px[sym];
       if (kind === 'info') return { ok: true, symbol: sym, kind, info: { price: px, change: px - o.prev[sym] } };
       if (kind === 'intraday') {
@@ -8657,6 +8658,31 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(() => econCrudeFetch(false));
   expect(await kinds(), 'the next poll asks info FRESH').toContain('CL=F:info:force');
   expect((await info('wti')).delta, 'and reads the new session\'s close (88.40 − 87.00)').toBe('▲ 1.40');
+
+  // ── 7d. a failed refresh of the DAILY history is not silent (Codex, PR #308, third round) ───────────────────────────────────────────
+  // The 1W–5Y charts come from the daily leg, the price from the intraday leg, so the row stays `ok` while the history ages. Same rule as the
+  // price: the last good series is kept for 30 minutes with the failure named in the tooltip, then the chart is dropped and only the reason is left.
+  await page.evaluate(() => { window.__oil.infoDown = false; window.__oil.dailyDown = false; window.__oil.prev['CL=F'] = 87.0; });
+  await page.clock.setSystemTime(new Date('2026-10-07T22:10:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  const histOk = await info('wti');
+  expect([histOk.svg, /history .*failed/.test(histOk.title)], 'a healthy history: the chart is drawn and the tooltip says nothing about it').toEqual([true, false]);
+  await page.evaluate(() => { window.__oil.dailyDown = true; });
+  await page.clock.setSystemTime(new Date('2026-10-07T22:20:00Z'));   // the daily bars are due again (every 5 minutes) and the feed refuses them
+  await page.evaluate(() => econCrudeFetch(false));
+  const histKept = await info('wti');
+  expect([histKept.val, histKept.tag, histKept.svg], 'the price keeps flowing and the last good history is still drawn').toEqual(['$88.40', 'DELAYED', true]);
+  expect(histKept.title, 'but the tooltip says the history refresh failed, why, and how old the charts are').toMatch(/the last refresh of the 1W–5Y history failed \(no daily data found for CL=F\); the charts show the history read 10 min ago/);
+  await page.clock.setSystemTime(new Date('2026-10-07T22:50:00Z'));   // 40 minutes since the last good history
+  await page.evaluate(() => econCrudeFetch(false));
+  const histGone = await info('wti');
+  expect([histGone.val, histGone.tag, histGone.svg, histGone.cap], 'past the keep window the price is still there and the chart is not: no ageing history passing for current').toEqual(['$88.40', 'DELAYED', false, 'no chart']);
+  expect(histGone.title, 'and the reason is in the tooltip').toContain('no 1W–5Y chart: no daily data found for CL=F');
+  await page.evaluate(() => { window.__oil.dailyDown = false; });
+  await page.clock.setSystemTime(new Date('2026-10-07T22:51:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  const histBack = await info('wti');
+  expect([histBack.svg, /history .*failed|no 1W–5Y chart/.test(histBack.title)], 'the feed returns: the chart is back and the tooltip is quiet again').toEqual([true, false]);
 
   // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
   await page.evaluate(() => { window.__oil.calls.length = 0; });

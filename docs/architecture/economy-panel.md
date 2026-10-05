@@ -716,5 +716,12 @@ width); **S56** guards the live 10Y.
     demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
     of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
+  - **The history leg fails loudly too** (Codex, PR #308, third round): the 1W–5Y charts come from the DAILY leg and the
+    price from the intraday leg, so a failed daily refresh used to leave the row `ok` while its history aged in silence.
+    A failed daily leg is recorded (`m.dailyWhy`, cleared by the next success) and follows the price's own rule: the last
+    good series is KEPT for `keep` (30 min, from `dailyAt`) with the failure named in the tooltip (`crude.histWhy`: "the
+    last refresh of the 1W–5Y history failed (…); the charts show the history read N min ago"), then the chart is DROPPED
+    — caption `no chart`, tooltip "no 1W–5Y chart: <reason>" — never an ageing chart that looks current. The daily bars
+    are re-asked on every poll once they are 5 minutes old, so a recovery brings the chart straight back.
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline and a request that straddles a turnover; 28 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh; 34 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
