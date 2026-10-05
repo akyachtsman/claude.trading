@@ -97,7 +97,12 @@ Where the roster lives (`desk_watchlists`), the version-guarded replace-all (`de
     one place a roster write happens) and every entry point that STARTS one refuses while it is above zero:
     the split, the four dialogs' openers and their submits (`wlWriting()`; the note/error reads "Another
     roster change is being saved — try again in a moment"). `wlBusy` stays the dialogs' own "my write is in
-    flight" flag. S61 asserts both orderings (eight mutants).
+    flight" flag. **The ✎ editor's save is the only other roster writer** (`saveWlEditor` calls
+    `deskSetWatchlists` directly, not through `wlMutate`), so it takes the same turn (Codex, third round):
+    refused while any other write is in flight ("Another roster change is being saved" in the editor), and
+    counted in `wlInFlight` itself so a split, a drop or a dialog started meanwhile is refused. (Its long-lived
+    DRAFT going stale is the designed case the version guard answers with the in-place reload.) S61 asserts both
+    orderings and the editor (eleven mutants).
   - `wlSplitting` stops a second press while a write is in flight; the repaint
     inside `wlMutate` draws the new buttons while it is still set, so
     `wlSplitBand` re-syncs once more in its `finally` (otherwise the NEW list's own

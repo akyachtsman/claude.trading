@@ -2711,9 +2711,16 @@ async function saveWlEditor() {
   /* An empty submission wipes every list. That is a legitimate thing to want,
      but never something to do by accident on a replace-all. */
   if (!lists.length && !confirm('Save with no lists at all? This removes every watchlist.')) return;
+  /* The editor's save is a roster write too — it goes to deskSetWatchlists directly, not through wlMutate — so it takes the same turn as every
+     other write (Codex, PR #307, third round): refused while any other write is in flight, and counted in `wlInFlight` itself so that a split,
+     a drop or a dialog started meanwhile is refused. Without this a save and a split could read the same version and desk_014 would refuse
+     whichever finished second. (The editor's long-lived DRAFT going stale is a different, designed case: the version guard answers it with the
+     in-place reload below.) */
+  if (wlWriting()) { wlEditErr(WL_SAVING); return; }
   const btn = document.getElementById('wlSaveBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   wlEditErr('');
+  wlInFlight++;
   try {
     const out = await deskSetWatchlists(pin, lists, wlEditVersion);
     if (out && out.error === 'conflict') {
@@ -2738,6 +2745,7 @@ async function saveWlEditor() {
   } catch {
     wlEditErr('Could not reach the desk to save.');
   } finally {
+    wlInFlight--;
     if (btn) { btn.disabled = !wlEditLoaded; btn.textContent = 'Save & exit'; }
   }
 }

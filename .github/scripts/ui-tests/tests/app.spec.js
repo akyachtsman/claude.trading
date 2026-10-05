@@ -8221,6 +8221,42 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   expect(reverse.dialogs, 'as is every roster dialog').toEqual([false, false, false, false]);
   expect(reverse.after, 'the drop is the ONE write, and nothing is left counted in flight afterwards').toEqual([0, false, false, 1]);
 
+
+  // ── 6d. ...and the full ✎ editor (Codex, PR #307, third round): its save is a roster write that bypasses wlMutate, so it takes the same turn ──
+  await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Macro', symbols: ['GLD'] }]);
+  await expect.poll(async () => (await bands())[0].split).not.toBeNull();
+  await page.evaluate(async () => { await openWlEditor(); });
+  expect(await page.evaluate(() => wlEditLoaded), 'the editor loaded its draft').toBe(true);
+  const editor = await page.evaluate(async () => {
+    const out = {};
+    // (a) a write already in flight: the editor's save is refused, with a message in the editor
+    const m = wlCommitMove({ band: 0, title: 'Radar', idx: 0 }, { band: 0, title: 'Radar', idx: 2 }, 'T001');
+    const before = (window.__rosterWrites || []).length;
+    await saveWlEditor();
+    out.refusedMsg = document.getElementById('wlEditErr').textContent;
+    out.refusedWrites = (window.__rosterWrites || []).length - before;
+    await m;
+    out.afterMove = [wlInFlight, (window.__rosterWrites || []).length];
+    // (b) a save in flight: it is counted, and a split and a dialog are refused meanwhile
+    document.getElementById('wlEditErr').textContent = '';
+    await reloadWlEditorDraft();   // the draft the move just changed, at its current version
+    const sv = saveWlEditor();     // NOT awaited
+    out.counted = wlInFlight;
+    await wlSplitBand(0, 'Radar', document.querySelector('#wlStrip .wl-split:not([hidden])'));
+    out.splitNote = document.getElementById('wlNote').textContent;
+    openWlQuickAdd(0, 'Radar', null); out.quick = !document.getElementById('wlQuickBackdrop').hidden;
+    await sv;
+    out.after = [wlInFlight, wlBusy, wlSplitting];
+    return out;
+  });
+  expect(editor.refusedMsg, 'the editor\'s save is refused while another roster write is in flight').toContain('Another roster change is being saved');
+  expect(editor.refusedWrites, 'and writes nothing').toBe(0);
+  expect(editor.afterMove, 'the move was the one write and nothing is left counted').toEqual([0, 1]);
+  expect(editor.counted, 'an editor save in flight is counted').toBe(1);
+  expect(editor.splitNote, 'so a split pressed meanwhile is refused').toContain('Another roster change is being saved');
+  expect(editor.quick, 'and so is a dialog').toBe(false);
+  expect(editor.after, 'and the guard is released afterwards').toEqual([0, false, false]);
+
   // ── 7. the desk keeps at most 50 lists: refuse, say why, write nothing ──────
   const many = [{ title: 'Radar', symbols: SYMS }].concat(Array.from({ length: 49 }, (_, i) => ({ title: 'L' + i, symbols: ['AAA'] })));
   await seed(many);
