@@ -675,7 +675,17 @@ width); **S56** guards the live 10Y.
   - **The price and its time are the newest 5-minute bar** (one consistent pair; `info` is cached up to 15 min outside
     the NYSE day in `quote-proxy` and would lag the tape). **The change is that price less the previous close,
     `info.price − info.change`** — constant for the whole session whatever the price has done — and an unknown
-    previous close is a null change (an em dash, never 0). `econCrudeIntra` skips a time that does not exist (Feb 30,
+    previous close is a null change (an em dash, never 0). **The previous close belongs to its futures session**
+    (Codex, PR #308): each baseline is stored with `econCrudeSession(ms)` — a session runs from 18:00 ET to 17:00 ET
+    the next day (Sunday 18:30 and Monday 16:59 are one), and the 17:00–18:00 halt is a session of its own, because
+    Yahoo moves the previous close somewhere inside it. A failed `info` leg keeps the stored baseline only inside the
+    session it was read in; across a turnover it is DROPPED (an em dash — a new session's price is never measured
+    against the old session's close, which would show a multi-day move as today's), and `prevKey` stays the OLD
+    session while the baseline is missing, so each later poll asks `info` FRESH (`{ force: true }`, past
+    quote-proxy's up-to-15-minute `info` cache outside the NYSE day, which would hand the old close back) until a
+    baseline from the current session lands; with one current, `info` goes back to the ordinary cached call. A page
+    first loaded inside the halt-to-open hour can still read a cached pre-turnover close for up to 15 minutes (no
+    earlier baseline to compare with; the first poll's calls are unchanged). `econCrudeIntra` skips a time that does not exist (Feb 30,
     minute 70), a non-positive price and a bar from the future; it keeps the newest 24 hours, thinned to ≤ 150 real
     bars (`econDownsample`).
   - **Liveness words** (`econCrudeState`): a bar within `ECON_CRUDE_FRESH_MS` (20 min) → **DELAYED** (never LIVE:
@@ -703,4 +713,4 @@ width); **S56** guards the live 10Y.
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
     of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab; 15 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline; 24 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).

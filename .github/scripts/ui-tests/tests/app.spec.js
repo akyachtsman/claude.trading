@@ -8475,7 +8475,8 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
       within24h: intra.pts[intra.pts.length - 1][0] - intra.pts[0][0] <= 86400000, sorted: intra.pts.every((p, i, a) => !i || a[i - 1][0] <= p[0]),
       dirtyPts: dirty && dirty.pts.map((p) => p[1]), dirtyNull: econCrudeIntra(bars(['2026-10-05 15:00'], [90]), T), none: econCrudeIntra(null, T),
       daily: econCrudeDaily(bars(['2026-10-01', 'oops', '2026-10-02', '2026-10-05'], [90, 91, -1, 92])), dailyNull: econCrudeDaily(bars(['2026-10-01'], [90])),
-      prev: [econCrudePrev({ ok: true, info: { price: 90.25, change: -0.86 } }), econCrudePrev({ ok: true, info: { price: 90.25, change: null } }), econCrudePrev({ ok: true, info: { price: null, change: 1 } }),
+      session: ['2026-10-04T22:30:00Z', '2026-10-05T20:59:00Z', '2026-10-05T21:01:00Z', '2026-10-05T21:59:00Z', '2026-10-05T22:01:00Z', '2026-10-06T13:00:00Z'].map((t) => econCrudeSession(Date.parse(t))),
+    prev: [econCrudePrev({ ok: true, info: { price: 90.25, change: -0.86 } }), econCrudePrev({ ok: true, info: { price: 90.25, change: null } }), econCrudePrev({ ok: true, info: { price: null, change: 1 } }),
         econCrudePrev({ ok: false }), econCrudePrev(null), econCrudePrev({ ok: true, info: { price: 1, change: 5 } })].map((v) => v == null ? null : Number(v.toFixed(2))),
       // Sunday 17:59 / 18:00 ET, Friday 16:59 / 17:00 ET, Saturday, the Wednesday halt, Thursday night, an NYSE holiday
       open: [open('2026-10-04T21:59:00Z'), open('2026-10-04T22:00:00Z'), open('2026-10-09T20:59:00Z'), open('2026-10-09T21:00:00Z'), open('2026-10-10T15:00:00Z'),
@@ -8488,6 +8489,8 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   expect([pure.dirtyNull, pure.none], 'one bar or nothing is not a series').toEqual([null, null]);
   expect(pure.daily, 'the daily series keeps real dated positive closes only').toEqual([['2026-10-01', 90], ['2026-10-05', 92]]);
   expect(pure.dailyNull, 'one daily bar is not a series').toBeNull();
+  expect(pure.session, 'a futures session runs from 18:00 ET to 17:00 ET the next day (Sunday 18:30 and Monday 16:59 are ONE session), the 17:00–18:00 halt is a session of its own, and Monday 18:01 begins Tuesday\'s')
+    .toEqual(['2026-10-05 trade', '2026-10-05 trade', '2026-10-05 halt', '2026-10-05 halt', '2026-10-06 trade', '2026-10-06 trade']);
   expect(pure.prev, 'the previous close is price − change; anything missing, a failed reply or a non-positive result is null — never 0').toEqual([91.11, null, null, null, null, null]);
   expect(pure.open, 'the futures market: shut Sun 17:59 ET, open from 18:00; open Fri 16:59, shut from 17:00; shut Saturday and in the Mon–Thu 17:00–18:00 halt; open Thursday night; shut on an NYSE holiday')
     .toEqual([false, true, true, false, false, false, true, false]);
@@ -8505,6 +8508,7 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
       o.calls.push({ sym, kind, force: !!(opts && opts.force) });
       if (o.mode === 'fail') throw new Error('quote-proxy → HTTP 502');
       if (o.mode === 'refuse') return { ok: false, error: 'no ' + kind + ' data found for ' + sym };
+      if (o.infoDown && kind === 'info') return { ok: false, error: 'no info data found for ' + sym };   // ONE leg down: the bars still flow
       const px = o.px[sym];
       if (kind === 'info') return { ok: true, symbol: sym, kind, info: { price: px, change: px - o.prev[sym] } };
       if (kind === 'intraday') {
@@ -8593,6 +8597,41 @@ test('S63: crude oil — WTI and Brent futures prices, DELAYED not LIVE, NOT LIV
   await page.evaluate(() => { window.__oil.mode = 'ok'; });
   await page.clock.runFor(61_000);
   expect([(await info('wti')).val, (await info('wti')).tag], 'the feed returns and so does the price').toEqual(['$88.40', 'DELAYED']);
+
+  // ── 7b. the previous close belongs to its futures session (Codex, PR #308) ──────────────────────────────────────────────────────────
+  // The change is the price less the previous close, read from `info`. If `info` fails while the bars still flow, the stored baseline may be
+  // kept only inside the session it was read in: across a turnover it would measure a new session's price against the old session's close and
+  // show a multi-day move as today's. Dropped, the change is an em dash; and while the baseline is missing or from a past session the next
+  // `info` call asks FRESH (quote-proxy caches it up to 15 minutes outside the NYSE day, which would hand back the old close).
+  await page.evaluate(() => { window.__oil.mode = 'ok'; window.__oil.infoDown = false; window.__oil.px['CL=F'] = 88.40; window.__oil.prev['CL=F'] = 87.15; });
+  await page.clock.setSystemTime(new Date('2026-10-06T16:00:00Z'));   // Tuesday 12:00 ET
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).delta, 'a baseline is read from info').toBe('▲ 1.25');
+  await page.evaluate(() => { window.__oil.infoDown = true; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T16:30:00Z'));   // 12:30 ET: the same session
+  await page.evaluate(() => econCrudeFetch(false));
+  const sameSession = await info('wti');
+  expect([sameSession.val, sameSession.delta, sameSession.tag], 'info down inside the session: the baseline it read still stands').toEqual(['$88.40', '▲ 1.25', 'DELAYED']);
+  expect(await kinds(), 'and info is asked for the ordinary (cached) way').toContain('CL=F:info');
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:30:00Z'));   // 18:30 ET: the next session has opened
+  await page.evaluate(() => econCrudeFetch(false));
+  const turned = await info('wti');
+  expect([turned.val, turned.delta, turned.tag], 'info down across the turnover: the price is the new one, the change an em dash — never the old close\'s').toEqual(['$88.40', '—', 'DELAYED']);
+  expect(await kinds(), 'and info was asked for FRESH, past quote-proxy\'s cache').toEqual(expect.arrayContaining(['BZ=F:info:force', 'CL=F:info:force']));
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:31:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await kinds(), 'still down a minute on: it keeps asking fresh').toContain('CL=F:info:force');
+  await page.evaluate(() => { window.__oil.infoDown = false; window.__oil.prev['CL=F'] = 88.0; window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:32:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect((await info('wti')).delta, 'info back: the new session\'s own previous close (88.40 − 88.00)').toBe('▲ 0.40');
+  await page.evaluate(() => { window.__oil.calls.length = 0; });
+  await page.clock.setSystemTime(new Date('2026-10-06T22:33:00Z'));
+  await page.evaluate(() => econCrudeFetch(false));
+  expect(await kinds(), 'with a baseline from the current session, info goes back to the ordinary cached call').toEqual(expect.arrayContaining(['CL=F:info']));
+  expect((await kinds()).some((k) => k.endsWith(':info:force')), 'no forced info once the baseline is current').toBe(false);
 
   // ── 8. "Refresh now" asks fresh (force) for everything; a hidden tab asks for nothing and asks at once on return
   await page.evaluate(() => { window.__oil.calls.length = 0; });

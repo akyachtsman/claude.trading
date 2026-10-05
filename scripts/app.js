@@ -9069,6 +9069,15 @@ function econCrudePrev(info) {
   const prev = Number(i.price) - Number(i.change);
   return Number.isFinite(prev) && prev > 0 ? prev : null;
 }
+/* Which futures trading day an instant belongs to, so a cached previous close can be told from one that has since rolled over (Codex,
+   PR #308). Yahoo moves the previous close somewhere inside the 17:00–18:00 ET halt (at the settlement or at the next open), so the
+   halt is a session of its own and a baseline read before or during it is never carried across it: Sunday 18:30 and Monday 16:59 are
+   one session, the halt after it another, and Monday 18:01 the next. */
+function econCrudeSession(ms) {
+  const c = etClock(new Date(ms));
+  if (c.minutes >= 18 * 60) return econShiftDays(c.date, 1) + ' trade';
+  return c.date + (c.minutes >= 17 * 60 ? ' halt' : ' trade');
+}
 /* Is the futures market (CME Globex energy) open: Sunday 18:00 ET to Friday 17:00 ET, shut 17:00–18:00 ET Mon–Thu. NYSE holidays count
    as closed — a coarse stand-in for CME's own calendar, which only matters for the words: a quote that is still arriving reads DELAYED
    whatever this says; it decides only whether a STOPPED quote is NOT LIVE (open) or LAST (shut). */
@@ -9168,8 +9177,12 @@ async function econCrudeFetch(force) {
     results = await Promise.all(ECON_CRUDE_IDS.map(async id => {
       const sym = ECON_CRUDE[id].symbol, m = econCrude.m[id];
       const needDaily = forced || !m || !m.daily || t0 - (m.dailyAt || 0) >= ECON_CRUDE_DAILY_MS;
-      const call = kind => deskQuote(sym, kind, false, opts).catch(() => null);
-      const [intra, info, daily] = await Promise.all([call('intraday'), call('info'), needDaily ? call('daily') : Promise.resolve(undefined)]);
+      /* `info` is cached by quote-proxy for up to 15 minutes outside the NYSE day, so across a session turnover it can still hold the old
+         session's previous close: while the stored baseline is from a session that has ended, ask for it fresh (one extra uncached call
+         per contract per poll until a baseline from the current session lands) */
+      const rolled = !!m && m.prevKey != null && m.prevKey !== econCrudeSession(t0);
+      const call = (kind, o) => deskQuote(sym, kind, false, o).catch(() => null);
+      const [intra, info, daily] = await Promise.all([call('intraday', opts), call('info', rolled ? { force: true } : opts), needDaily ? call('daily', opts) : Promise.resolve(undefined)]);
       return { id, intra, info, daily };
     }));
   } catch { results = []; }
@@ -9183,8 +9196,13 @@ async function econCrudeFetch(force) {
     const it = x.intra && x.intra.ok ? econCrudeIntra(x.intra.series, landed) : null;
     if (it) { Object.assign(m, { price: it.price, ts: it.ts, pts: it.pts, fetchedAt: landed, why: '', detail: '' }); any = true; }
     else { m.why = 'intraday'; m.detail = x.intra && x.intra.ok ? 'the quote feed sent no usable prices' : fail(x.intra); }
+    /* The previous close belongs to the futures session it was read in: a failed `info` leg keeps it only inside that session. Across a
+       turnover it is dropped (the change reads as an em dash) — a price from the new session must never be measured against the old
+       session's close, which would show a multi-day move as today's. `prevKey` stays the OLD session while the baseline is missing, so
+       the next poll asks fresh again. */
     const pv = econCrudePrev(x.info);
-    if (pv != null) m.prevClose = pv;
+    if (pv != null) { m.prevClose = pv; m.prevKey = econCrudeSession(landed); }
+    else if (m.prevKey !== econCrudeSession(landed)) m.prevClose = null;
     if (x.daily !== undefined) {
       const d = x.daily && x.daily.ok ? econCrudeDaily(x.daily.series) : null;
       if (d) { m.daily = d; m.dailyAt = landed; }
