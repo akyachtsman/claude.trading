@@ -2742,8 +2742,9 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
   // (the glyphs this panel uses), then waited for; harmless where the fonts cannot be fetched.
   await page.evaluate(async () => {
     try {
-      await Promise.all(['600 11px "IBM Plex Mono"', '500 11px "IBM Plex Mono"', '500 8px "IBM Plex Sans"', '600 9px "IBM Plex Sans"']
-        .map(f => document.fonts.load(f, '0123456789,.+-%EXTCLOSE')));
+      await Promise.all(['600 11px "IBM Plex Mono"', '500 11px "IBM Plex Mono"', '500 8px "IBM Plex Sans"', '500 10px "IBM Plex Sans"',
+        '500 12px "IBM Plex Sans"', '600 9px "IBM Plex Sans"']
+        .map(f => document.fonts.load(f, '0123456789,.+-%EXTCLOSEABCDEFGHIJKLMNOPQRSTUVWXYZ^')));
       await document.fonts.ready;
     } catch { /* no web fonts reachable: the fallback metrics are all there is */ }
   });
@@ -2756,9 +2757,10 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
     const maxW = Math.max(...real.map(t => Math.round(t.getBoundingClientRect().width)));
     const realCount = real.length;
     /* WORST CASES, appended to the first band so they sit in the real grid: a
-       10-character ticker and a badge, a six-figure price (BRK.A), a seven-figure
-       one, a +100% and a +1,000% move, an index with its CLOSE badge, a crypto pair
-       with EXT. Built by wlTile itself, so the length tiers it sets are what is
+       10-character ticker, a six-figure price (BRK.A), a seven-figure one, a +100%
+       and a +1,000% move, an index with its CLOSE badge, a crypto pair. Rows flagged
+       `ext: true` must draw NO badge (owner 2026-10-06: "remove all the ext in the
+       symbols"). Built by wlTile itself, so the length tiers it sets are what is
        tested — a tier that stopped being applied would clip here. */
     const spark = [1, 2, 1.5, 3, 2.5, 4];
     const worst = [
@@ -2814,8 +2816,20 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
       const right = b.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
       return a.right > right + 0.5 || a.left < left - 0.5;
     }).map(t => t.dataset.sym);
+    /* The TICKER's size and line count, read off the worst-case tiles (owner 2026-10-06: "just make
+       their fonts bigger"): 12px up to 5 characters, 10px for 6-7, 8px from 8. A ticker of at most 7
+       characters with no badge sits on ONE line in the 58px column — `overflow-wrap: anywhere` would
+       otherwise make it wrap, which cannot clip but makes the whole grid row taller. */
+    const bySym = Object.fromEntries([...band.children].map(t => [t.dataset.sym, t]));
+    const nameOf = sym => bySym[sym].querySelector('.mkt-name');
+    const oneLine = n => n.getBoundingClientRect().height <= parseFloat(getComputedStyle(n).lineHeight) * 1.5;
     return {
       count: realCount, withWorst: tiles.length, maxW,
+      extBadges: tiles.filter(t => [...t.querySelectorAll('.wl-mark')].some(b => /EXT/i.test(b.textContent))).map(t => t.dataset.sym),
+      extTitle: bySym['BTC-USD'].title,
+      sizes: { MSTR: getComputedStyle(nameOf('MSTR')).fontSize, 'BRK.A': getComputedStyle(nameOf('BRK.A')).fontSize,
+        'BTC-USD': getComputedStyle(nameOf('BTC-USD')).fontSize, ABCDEFGHIJ: getComputedStyle(nameOf('ABCDEFGHIJ')).fontSize },
+      wrapped: ['MSTR', 'BRK.A', 'BIGPX', 'BTC-USD', 'P8', 'P9', 'P10'].filter(sym => !oneLine(nameOf(sym))),
       orders: [...new Set(tiles.map(orderOf))],
       prices: over('.mkt-last'), names: over('.mkt-name'),
       // The pill has no overflow rule of its own, so a too-wide one GROWS past
@@ -2862,7 +2876,13 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
   // step down a size now.
   expect(m.pills, 'the change pill stays inside its tile').toEqual([]);
   expect(m.pillSlack, 'with at least 2px to spare in the narrowest column, so a font a shade wider cannot push it out').toBeGreaterThanOrEqual(2);
-  expect(m.splitBadges, 'the EXT / CLOSE badge never breaks inside the word').toEqual([]);
+  // The EXT badge is gone (owner 2026-10-06) and the ticker is the biggest thing on the tile.
+  expect(m.extBadges, 'no tile carries an EXT badge, even where the row is an extended-hours print').toEqual([]);
+  expect(m.extTitle, 'the extended-hours print is still SAID, in the tile tooltip').toContain('Extended-hours price');
+  expect(m.sizes, 'ticker size by length: 12px to 5 characters, 10px for 6-7, 8px from 8')
+    .toEqual({ MSTR: '12px', 'BRK.A': '12px', 'BTC-USD': '10px', ABCDEFGHIJ: '8px' });
+  expect(m.wrapped, 'a ticker of up to 7 characters stays on one line in the narrowest column').toEqual([]);
+  expect(m.splitBadges, 'the CLOSE badge never breaks inside the word').toEqual([]);
   expect(m.badgesOut, 'and stays inside its tile').toEqual([]);
   expect(m.sparks, 'the sparkline stays inside its tile').toEqual([]);
 });

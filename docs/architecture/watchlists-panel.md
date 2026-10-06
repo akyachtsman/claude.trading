@@ -59,8 +59,14 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     (an 11- or 13-character price cannot occur: two decimals, a comma every three
     digits); the change pill is 11px (6 chars, `+0.54%`), `is-long` (7, `-24.21%`)
     10px, `is-xlong` (8, `+100.50%`) 9px, `is-xxlong` (9, `+1234.56%`) 8px and
-    `is-xxxlong` (10, `+12345.67%`) 7px; a ticker over 5 characters is `is-long` and
-    wraps (`overflow-wrap: anywhere`) rather than shrinking further. Plex Mono and
+    `is-xxxlong` (10, `+12345.67%`) 7px; **the TICKER is the biggest thing on the tile**
+    (owner 2026-10-06: "remove all the ext in the symbols and just make their fonts
+    bigger" — it was 8px beside an 11px price): 12px up to 5 characters, `is-long` 10px for
+    6-7 (`BTC-USD`), `is-xlong` 8px from 8, set by `wlTile()` from the symbol's length, and
+    below that it wraps (`overflow-wrap: anywhere`) rather than shrinking further (Plex Sans
+    capitals advance ~0.66em: 5 characters at 12px ~41px of the 52px a tile leaves, 7 at
+    10px ~46px, 10 at 8px ~53px, which is the one that wraps; S27 asserts the three sizes
+    and that a ticker of up to 7 characters stays on one line in the narrowest column). Plex Mono and
     the usual fallbacks advance ~0.6em a character (0.62 taken for safety), a tile
     leaves 52px, and every PRICE tier stays under ~49px at 0.62em (48 / 48 / 46 / 49).
     **A pill carries 4px of padding of its own** (`padding: 0 2px`), so its TEXT is
@@ -80,13 +86,13 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     narrowest column the grid draws**, and compares `scrollWidth` to `clientWidth`
     with ZERO tolerance — scroll and client widths are whole pixels, so the old
     "+ 1" hid a price clipped by up to a pixel. A tier that fits by a hair now fails
-    in the sandbox rather than on CI. The EXT/CLOSE badge is an
-    `inline-block; white-space: nowrap` at 6.5px with the ticker's tracking trimmed
-    to .02em: where ticker and badge do not fit on one line the whole badge drops to
-    the next line — it must never split inside the word (`CLOS`/`E`, which
-    `overflow-wrap: anywhere` did at 62px). One wrapped badge makes its WHOLE grid
-    row 8px taller (tiles stretch), which is why the tracking and size were trimmed
-    until `^GSPC CLOSE` and `BTC-USD EXT` fit.
+    in the sandbox rather than on CI. **There is no EXT badge any more** (owner 2026-10-06): a row flagged `ext` draws
+    nothing beside its ticker, and the print is said in words instead — `Extended-hours
+    price` leads the tile's tooltip and accessible name. The CLOSE badge (an index once
+    the bell has rung) stays: an `inline-block; white-space: nowrap` at 6.5px that must never
+    split inside the word (`CLOS`/`E`, which `overflow-wrap: anywhere` did at 62px). With the
+    12px ticker `^GSPC CLOSE` no longer fits on one line, so the badge drops WHOLE under the
+    ticker and that band's row is one badge-line (~8px) taller (tiles stretch).
   - **The empty cells of a part-filled last row are part of the drop zone** (the
     zone is the whole grid box); a pointer there, level with the last row, is
     past every tile in it and drops at the END.
