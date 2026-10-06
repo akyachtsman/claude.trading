@@ -4591,6 +4591,11 @@ const WB_CFG_DEFAULT = () => ({
      also the bar set the ISTOCH 10-3-3 fit was established against, so terminal
      parity and the owner's preference now agree. */
   p3: { type: 'candle', bb: true, vol: true, stoch: true, stochW: true, ext: false, smas: { 1: false, 25: false, 50: false, 100: false, 200: false }, sr: { 1: false, 2: false, 3: false }, srSwing: false, scrollLock: false },
+  /* The one-time ext migration in loadWbCfg() has ALREADY been "applied" to a config born from
+     these defaults, so the marker belongs here: a browser with nothing stored saved its first
+     `p3.ext: true` UNMARKED, and the next load's migration cleared it again — the Extended-hours
+     toggle only worked until the next reload (audit 2026-10-06; S12 reloads with it on). */
+  extDefaultOff2026_08_20: true,
 });
 function loadWbCfg() {
   try {

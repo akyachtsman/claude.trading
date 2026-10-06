@@ -23,7 +23,10 @@ How the desk row (Markets | News | Ask | Economy), the accounts block at the bot
     `.area-charts`, `.heat-panel`, `.wl-area`, `.masthead`): without that, a window
     wider than 1880 centres it inside the cap, inset from the heatmap above it. The
     heatmap's own 0.5in bottom margin is the seam above; the footer's margin the gap
-    below.
+    below. `:not(.modal-backdrop)` is on that list too (2026-10-06): the eight dialog
+    scrims are `position: fixed; inset: 0` children of `<main>`, and a cap with auto
+    margins centred them at 1880px, leaving an undimmed, inert strip either side of a
+    wider window (S48 reads the scrim's COMPUTED `max-width` and box).
   - **Cards.** `.account-grid` is `repeat(auto-fit, minmax(min(340px, 100%), 1fr))`:
     two equal columns from ~792px (2 x 340 + the gutter must fit inside the inset
     section), one column below that with no breakpoint of its own. `min(340px, 100%)`
