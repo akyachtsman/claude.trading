@@ -679,10 +679,11 @@ function renderAccounts(accounts, lamp) {
 /* ── Watchlists (owner request 2026-07-29) ─────────────────────────────────
    Multiple named lists, unbounded symbols each; one tab per list. Rows come
    from desk-watchlist already grouped, so this only lays them out.
-   The Last column shows the extended-hours price where one exists, and marks
-   which session it came from — EXT for a pre/post print, CLOSE for an index,
-   which has no extended session at all (owner ruling 2026-07-29). Change % is
-   always measured from the prior close, so it keeps one meaning all day. */
+   The Last column shows the extended-hours price where one exists. It used to mark
+   which session it came from — EXT for a pre/post print, CLOSE for an index, which
+   has no extended session at all (owner ruling 2026-07-29); the EXT badge was removed
+   2026-10-06 (a tooltip says it instead), CLOSE stays. Change % is always measured
+   from the prior close, so it keeps one meaning all day. */
 /* no `active` index any more — every list renders as its own band, so there is
    no selected tab to track */
 /* `range` records which timeframe the RENDERED payload actually covers. It is
@@ -878,12 +879,20 @@ function wlTile(r, pending) {
      does not fix it (measured: 23,104.88 / 44,912.30 / 64,216.00 still clip at
      76px); the base font size is the constraint, so long values step down one
      size and everything else is untouched. */
+  /* The TICKER is the biggest thing on the tile (owner 2026-10-06: "remove all the ext
+     in the symbols and just make their fonts bigger"): 12px up to 5 characters, `is-long`
+     10px for 6-7 (BTC-USD), `is-xlong` 8px from 8 — a size per length, like the price,
+     because CSS cannot branch on text length. Where even that does not fit, the name wraps
+     (see components.css) rather than clipping. */
   if (r.sym && r.sym.length > 5) name.classList.add('is-long');
+  if (r.sym && r.sym.length > 7) name.classList.add('is-xlong');
   /* CLOSE means "this session has ended", not "this is an index": during
      regular hours ^VIX carries a live, moving price, and stamping that CLOSE
      would misstate an intraday quote as a settled one. Indices have no extended
-     session, so once the bell rings their value genuinely IS the close. */
-  const mark = r.index ? (marketSessionOpen() ? '' : 'CLOSE') : (r.ext ? 'EXT' : '');
+     session, so once the bell rings their value genuinely IS the close.
+     There is NO EXT badge any more (owner 2026-10-06): an extended-hours print is
+     still said, in words, in the tile's tooltip and accessible name (`detail` below). */
+  const mark = r.index && !marketSessionOpen() ? 'CLOSE' : '';
   if (mark) name.appendChild(el('span', 'wl-mark', mark));
   tile.appendChild(name);
 
@@ -929,6 +938,7 @@ function wlTile(r, pending) {
      (Codex review, PR #189 — a title on a non-focusable div is mouse-only). */
   const detail = [
     r.name || null,
+    r.ext && !r.index ? 'Extended-hours price' : null,
     r.bid != null || r.ask != null ? 'Bid ' + wlPx(r.bid) + ', ask ' + wlPx(r.ask) : null,
     r.vol ? 'Volume ' + wlVol(r.vol) : null,
   ].filter(Boolean).join(' — ');

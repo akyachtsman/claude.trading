@@ -374,7 +374,12 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   display: flex; flex-direction: column; align-items: stretch;
 }
 .wl-strip .wl-vals { display: contents; }
-.wl-strip .mkt-name { order: 1; font-size: 8px; letter-spacing: .02em; }
+/* The ticker is the biggest thing on the tile (owner 2026-10-06: "remove all the ext in the
+   symbols and just make their fonts bigger"; it was 8px beside an 11px price). 12px for up to 5
+   characters; wlTile() sets `is-long` (6-7 characters) and `is-xlong` (8+) for the smaller tiers
+   below. Plex Sans capitals advance ~0.66em: 5 characters at 12px ~41px of the 52px a tile
+   leaves, 7 at 10px ~46px, 10 at 8px ~53px, which is the one that wraps. */
+.wl-strip .mkt-name { order: 1; font-size: 12px; line-height: 1.15; letter-spacing: .02em; }
 .wl-strip .mkt-last { order: 2; font-size: 11px; line-height: 1.15; }
 /* The change pill keeps the PRICE's size (owner request 2026-08-21: "bigger") —
    11px beside the price's 11px; the 12px it had was the cost of the 76px tile.
@@ -440,14 +445,14 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
    badge (BTC-USD EXT) — and in a grid every tile in that row is as tall as the
    tallest, so one such tile makes its whole row one line taller; the owner
    accepted extra height for width. */
-.wl-strip .mkt-name.is-long { font-size: 8px; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
-/* The EXT/CLOSE badge shares the ticker line, so it tightens to match. It is an
-   inline-block that does NOT wrap: where ticker + badge do not fit on one line
-   the whole badge drops to the next line, instead of the line breaking inside
-   the word (`CLOS` / `E`) the way `overflow-wrap: anywhere` would split it at
-   60px. The tracking is trimmed to .02em and the badge to 6.5px so ^GSPC +
-   CLOSE and BTC-USD + EXT still share one line (measured: at .05em / 7px each
-   wrapped, and one wrapped badge makes its WHOLE grid row 8px taller). */
+.wl-strip .mkt-name.is-long { font-size: 10px; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
+.wl-strip .mkt-name.is-xlong { font-size: 8px; }
+/* The CLOSE badge (an index after the bell; the EXT badge is gone, owner 2026-10-06) shares
+   the ticker line, so it tightens to match. It is an inline-block that does NOT wrap: where
+   ticker + badge do not fit on one line the whole badge drops to the next line, instead of
+   the line breaking inside the word (`CLOS` / `E`) the way `overflow-wrap: anywhere` would
+   split it at 60px. With the 12px ticker `^GSPC CLOSE` no longer fits one line, so the
+   badge drops under it and that band's row is one badge-line (~8px) taller. */
 .wl-strip .wl-mark { display: inline-block; white-space: nowrap; font-size: 6.5px; padding: 0; margin-left: 1px; letter-spacing: 0; }
 .wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
 
@@ -622,7 +627,7 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
 }
 .wl-quick-panel, .wl-rm-panel { max-width: 420px; }
 
-/* EXT / CLOSE provenance marker — which session the price came from.
+/* CLOSE provenance marker (an index after the bell; the EXT marker was removed 2026-10-06).
    Deliberately not colored: it is a data-provenance note, and gain/loss color
    is reserved for P&L (project standard). */
 .wl-mark {
