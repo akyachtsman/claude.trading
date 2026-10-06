@@ -7976,7 +7976,7 @@ const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1', ECON_PENDING_K
 const ECON_TFS = [['1d', '1D', '1 day'], ['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
   ['6m', '6M', '6 months'], ['1y', '1Y', '1 year'], ['5y', '5Y', '5 years']];
 const ECON_DEFAULT_TF = '3m';
-const ECON_TF_TITLE = 'Chart span. 1D is the intraday chart of the three yields (CNBC) and the last 24 hours of WTI and Brent; the monthly indicators have no 1-day data.';
+const ECON_TF_TITLE = 'Chart span. 1D is the intraday chart of the three yields (CNBC) and the last 24 hours of WTI; the monthly indicators have no 1-day data.';
 const ECON_MIN_S = 30, ECON_MAX_S = 3600;   /* clamp on the server's refreshInSec */
 const ECON_RETRY_S = 60;                    /* fast retry after a failed poll */
 const ECON_STALE_X = 3;                     /* STALE once the last success is older than 3 × refreshInSec */
@@ -8209,13 +8209,15 @@ function econPtMinutes(ms) {
   return m ? (+m[1] % 24) * 60 + +m[2] : -1;
 }
 const ECON_X_MINUTES = [15, 30, 60, 120, 180, 240, 360, 720];
-/* the time axis of a 1D chart: the smallest round clock step (Pacific) that leaves at most three labelled marks, each a clock time —
-   or the DATE at Pacific midnight, where the day changes — plus a small unlabelled mark at every other hour when the labels are further
+/* the time axis of a 1D chart: the smallest round clock step (Pacific) that leaves at most three labelled marks, each a clock time
+   (midnight is "00:00", never a date — owner 2026-10-06) — plus a small unlabelled mark at every other hour when the labels are further
    apart than that. A span too short for a mark is labelled at its two ends. */
 function econXTicksIntraday(pts) {
   const ts = pts.map(p => p[0]), t0 = ts[0], t1 = ts[ts.length - 1], grid = [];
   for (let t = Math.ceil(t0 / 900000) * 900000; t <= t1; t += 900000) { const m = econPtMinutes(t); if (m >= 0) grid.push([t, m]); }
-  const clock = (t, m) => m === 0 ? fmtShortDate(ptDateKey(new Date(t))) : econPad2(Math.floor(m / 60)) + ':' + econPad2(m % 60);
+  /* TIMES ONLY (owner 2026-10-06: "daily should only show the time in the graph not the date"): Pacific midnight is "00:00" like any other
+     round mark, not the date it used to print there. The dates still ride in the chart's data-span, accessible name and tooltip. */
+  const clock = (t, m) => econPad2(Math.floor(m / 60)) + ':' + econPad2(m % 60);
   let step = 0, major = [];
   for (const s of ECON_X_MINUTES) { const hit = grid.filter(g => g[1] % s === 0); if (hit.length <= 3) { step = s; major = hit; break; } }
   if (!major.length) return [{ f: 0, label: fmtClockBare(new Date(t0).toISOString()) }, { f: 1, label: fmtClockBare(new Date(t1).toISOString()) }];
@@ -8356,7 +8358,7 @@ function econChrome() {
       const b = el('button', '', label);
       b.type = 'button';
       b.dataset.tf = key;
-      b.title = key === '1d' ? 'Intraday chart of the three yields (CNBC) and the last 24 hours of WTI and Brent; the monthly indicators have no 1-day data' : 'Charts show the last ' + words;
+      b.title = key === '1d' ? 'Intraday chart of the three yields (CNBC) and the last 24 hours of WTI; the monthly indicators have no 1-day data' : 'Charts show the last ' + words;
       b.addEventListener('click', () => econPickSpan(key));
       tf.appendChild(b);
     }
@@ -9021,9 +9023,9 @@ function econIntradayChart(chart, r, missing) {
   return none('1D ' + econBarsShort(e), '1-day chart unavailable: ' + e.detail);
 }
 
-/* ── crude oil: WTI and Brent futures (owner request 2026-10-05: "add price of crude oil to the economy table"; the owner chose the
+/* ── crude oil: WTI futures (owner request 2026-10-05: "add price of crude oil to the economy table"; the owner chose the
    LIVE futures price over FRED's EIA daily spot, which lagged a week on the day this was built) ──────────────────────────────────
-   Two rows right after the yields. They are neither FRED rows nor CNBC rows: the price is the FRONT-MONTH FUTURES (CL=F, BZ=F) from
+   One row right after the yields (it was two, WTI and Brent, until the owner dropped Brent 2026-10-06). It is neither a FRED row nor a CNBC row: the price is the FRONT-MONTH FUTURES (CL=F) from
    the quote feed the watchlists and charts already use (quote-proxy → Yahoo), fetched by the browser like the live yields, with its
    own clock and its own honesty:
      – Yahoo's futures run about TEN MINUTES behind (measured 2026-10-05: the newest bar was 10 min old at the poll), so a flowing
@@ -9037,7 +9039,7 @@ function econIntradayChart(chart, r, missing) {
        5Y chart says "since Aug '23" rather than pass for five.
      – never NEW (a price ticking by the minute is not a release), never in demo from the network (demo draws seeded rows).
    Failure: a row keeps its last good quote for ECON_CRUDE_KEEP_MS, then says NO DATA with the reason in its tooltip. */
-const ECON_CRUDE = { wti: { symbol: 'CL=F', label: 'WTI crude' }, brent: { symbol: 'BZ=F', label: 'Brent crude' } };
+const ECON_CRUDE = { wti: { symbol: 'CL=F', label: 'WTI crude' } };   /* Brent (BZ=F) was a second row until the owner dropped it 2026-10-06: "I dont need Brent oil" */
 const ECON_CRUDE_IDS = Object.keys(ECON_CRUDE);
 const ECON_CRUDE_FRESH_MS = 20 * 60000;    /* DELAYED while the newest bar is within this: Yahoo's ~10 min plus a 5-minute bar and slack */
 const ECON_CRUDE_KEEP_MS = 30 * 60000;     /* a reading whose last successful fetch is older than this is dropped (or 2 poll intervals when slower) */
@@ -9172,7 +9174,7 @@ function econWithCrude(base, crude) {
   const rest = DESK.mode === 'demo' ? base : base.filter(r => !Object.hasOwn(ECON_CRUDE, r.id));
   if (!crude.length) return rest;
   /* nothing from desk-econ and nothing usable from the quote feed: the panel's own empty state ("unavailable — retrying") says it once,
-     rather than two lonely NO DATA rows under it */
+     rather than a lonely NO DATA row under it */
   if (!rest.length && crude.every(r => r.status === 'missing')) return rest;
   let at = 0;
   rest.forEach((r, i) => { if (Object.hasOwn(ECON_LIVE, r.id)) at = i + 1; });
@@ -9185,8 +9187,8 @@ function econCrudeRepaint() {
   if (!list || DESK.mode === 'demo') return;
   const rows = econCrudeRows(Date.now());
   if (!rows.length) return;
-  /* Does the COMPOSED panel carry the oil rows at all? With nothing from desk-econ and both quotes gone, econWithCrude drops them so the panel's
-     own empty state speaks once (Codex, PR #308): rows already in the page must not turn into two lonely NO DATA rows, so whenever what should be
+  /* Does the COMPOSED panel carry the oil rows at all? With nothing from desk-econ and the quote gone, econWithCrude drops the row so the panel's
+     own empty state speaks once (Codex, PR #308): a row already in the page must not turn into a lonely NO DATA row, so whenever what should be
      drawn differs from what is, the whole panel is composed again */
   const base = econState.shown && Array.isArray(econState.shown.rows) ? econState.shown.rows : [];
   const wanted = econWithCrude(base, rows).some(r => Object.hasOwn(ECON_CRUDE, r.id));
@@ -9200,7 +9202,7 @@ function econCrudeRepaint() {
     li.replaceWith(next);
   }
 }
-/* One request set for both rows: the intraday bars (the price, its time, the 1D chart), `info` (the previous close) and — every
+/* One request set per contract (one contract since Brent was dropped): the intraday bars (the price, its time, the 1D chart), `info` (the previous close) and — every
    ECON_CRUDE_DAILY_MS, or at once when forced — the daily bars (the 1W–5Y charts). NEVER throws. A failed piece keeps the last good
    one and records WHY. `force` bypasses quote-proxy's caches (the masthead's "Refresh now") and claims the slot, as econLiveFetch does. */
 async function econCrudeFetch(force) {

@@ -599,7 +599,7 @@ width); **S56** guards the live 10Y.
   draws `buildDemoBars` (seeded 5-minute bars over the last BOND session day, 00:00–17:00 ET
   like the real feed's overnight session since 2026-10-02 — NYSE trading days minus Columbus and
   Veterans Day, `BOND_ONLY_HOLIDAYS`, Codex PR #301 — `data-span` `21:00 – 14:00` Pacific, the
-  evening before to the afternoon, so a demo chart carries the same `Oct 1 | 06:00 | 12:00`
+  evening before to the afternoon, so a demo chart carries the same `00:00 | 06:00 | 12:00`
   axis the live one does) and never calls the network. **Cadence:** the bars
   are fetched at once on picking 1D, alongside each quote poll (`econLiveFetch`, 60 s while the
   bond session runs, 10 min around it, hourly at weekends/holidays; concurrent with the quote and
@@ -634,8 +634,9 @@ width); **S56** guards the live 10Y.
   placed between the two points around it, and a gap in the bars (or a weekend) compresses the
   marks inside it. 1D (`econXTicksIntraday`): the smallest round Pacific clock step that leaves at
   most three labels, each read off the Pacific clock at that instant (right on the clock-change
-  day), the DATE where Pacific midnight falls ("Oct 1 | 06:00 | 12:00" for the real 21:02 → 14:05
-  chart), an unlabelled mark at every other hour when the labels are further apart. Daily and
+  day) and printed as a TIME ONLY — Pacific midnight is `00:00`, never a date (owner 2026-10-06: "daily
+  should only show the time in the graph not the date"; the dates stay in `data-span`, the accessible name and the
+  tooltip) — so the real 21:02 → 14:05 chart reads `00:00 | 06:00 | 12:00`; an unlabelled mark at every other hour when the labels are further apart. Daily and
   monthly series (`econXTicksDates`): calendar marks — Mondays, month, quarter, half-year, year,
   every second year, every fifth — the smallest kind leaving two or three inside the span, else the
   first, middle and last reading; a month is its name with the year only at January ("Jan '26",
@@ -660,15 +661,15 @@ width); **S56** guards the live 10Y.
   went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields
   were FRED's and every reply carried that ~5 s). If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
-- **Crude oil: WTI and Brent futures (owner request 2026-10-05: "add price of crude oil to the economy table").**
-  Two rows right after the three yields (`econWithCrude`). The owner chose the LIVE futures price over FRED's
+- **Crude oil: WTI futures (owner request 2026-10-05: "add price of crude oil to the economy table"; it began as two rows, WTI and Brent, and the owner dropped Brent 2026-10-06: "I dont need Brent oil").**
+  One row right after the three yields (`econWithCrude`). `ECON_CRUDE` (app.js) and `DEMO_CRUDE_ROWS` (data.js) are tables: another contract is one entry in each, nothing else changes. The owner chose the LIVE futures price over FRED's
   EIA daily spot (`DCOILWTICO`), which on the day this was built had its newest reading on 2026-09-29 while
-  the yields' was 2026-10-01 — a week behind, shown under its own date. So the rows are NOT FRED rows (nothing in
-  `desk-econ` or `config/econ-indicators.json` changed; merging IS shipping) and NOT CNBC rows: the price is the
-  FRONT-MONTH FUTURES `CL=F` / `BZ=F` from the quote feed the watchlists and charts already use (`deskQuote` →
+  the yields' was 2026-10-01 — a week behind, shown under its own date. So the row is NOT a FRED row (nothing in
+  `desk-econ` or `config/econ-indicators.json` changed; merging IS shipping) and NOT a CNBC row: the price is the
+  FRONT-MONTH FUTURES `CL=F` from the quote feed the watchlists and charts already use (`deskQuote` →
   `quote-proxy` → Yahoo), fetched by the browser on its own clock (`econCrudeFetch`: 60 s while the futures market
   is open, 10 min while shut, paused while the tab is hidden, "Refresh now" forces it).
-  - **Measured 2026-10-01..05 from the live site:** `CL=F` and `BZ=F` answer all three kinds (`intraday` 5-minute
+  - **Measured 2026-10-01..05 from the live site:** `CL=F` and `BZ=F` (Brent, while it was a row) answered all three kinds (`intraday` 5-minute
     bars for 5 days, `info`, `daily` 800 bars ≈ 3.2 years) in under a second; the newest intraday bar was **10
     minutes old** at the poll (Yahoo's futures are delayed ~10 min), and `info.change` equalled the price less the
     previous daily close to the cent.
@@ -709,7 +710,7 @@ width); **S56** guards the live 10Y.
     No second source. A row keeps its last good quote for `ECON_CRUDE_KEEP_MS` (30 min, or two poll intervals when
     slower), then says **NO DATA** with the feed's reason in its tooltip. Before the first reply there are no oil rows;
     if desk-econ has delivered nothing AND the quote feed has nothing usable, the panel's own empty state says so once
-    instead of two lonely NO DATA rows.
+    instead of one lonely NO DATA row.
   - **Charts:** 1D is the last **24 hours** of 5-minute bars (futures trade round the clock, so a 1D view is a rolling
     day, not a session; the caption carries BOTH dates — a day ending on the clock time it began would read as one
     instant); 1W–5Y are the daily closes sliced exactly like every other daily row (`econSpanSlice`, shared with the demo),
@@ -724,7 +725,7 @@ width); **S56** guards the live 10Y.
   - **Never NEW** (a price ticking by the minute is not a release: the oil rows skip the seen/pending bookkeeping), **never
     demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
-    of the quote feed, which is why their stubs now let `CL=F` / `BZ=F` through).
+    of the quote feed, which is why their stubs now let `CL=F` through).
   - **The oil charts do not depend on desk-econ's span** (Codex, PR #308, seventh round): `renderEcon` passes the
     "does this payload belong to the span showing" flag (`chartsMatch`, which withholds a chart labelled with the wrong
     window) to the desk-econ rows only. An oil row's charts are sliced from the quote feed's OWN daily history for the
@@ -747,10 +748,10 @@ width); **S56** guards the live 10Y.
     are re-asked on every poll once they are 5 minutes old, so a recovery brings the chart straight back.
   - **The in-place repaint follows the COMPOSED panel** (Codex, PR #308, fourth round): `econCrudeRepaint` redraws the oil
     rows alone (a price ticks every minute; a whole-panel rebuild restarts every NEW watch), but it first asks
-    `econWithCrude` whether the composed panel carries the oil rows at all. With desk-econ empty and both quotes gone the
-    composition drops them so the panel's own empty state speaks ONCE; rows already in the page must not turn into two lonely
-    NO DATA rows, so whenever what should be drawn differs from what is (rows to remove, or missing ones to restore when the
+    `econWithCrude` whether the composed panel carries the oil rows at all. With desk-econ empty and the quote gone the
+    composition drops them so the panel's own empty state speaks ONCE; a row already in the page must not turn into a lonely
+    NO DATA row, so whenever what should be drawn differs from what is (rows to remove, or missing ones to restore when the
     feed returns) the whole panel is composed again with `renderEcon(econState.shown)`. With desk-econ rows present the oil
-    rows still say NO DATA IN PLACE and the yields' nodes are left alone.
+    row still says NO DATA IN PLACE and the yields' nodes are left alone.
   - Covered by S63 (the pure parsers, the session clock, the liveness words, the polling, the spans, outage and recovery,
-    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window, the price and change notes, the span independence and the holiday handling; 60 mutants caught) and S55 (nine rows, both axes on every span, the wider value axis).
+    "Refresh now", a hidden tab, the session baseline, a request that straddles a turnover and a failed history refresh, the composed empty state, the cold-load window, the price and change notes, the span independence and the holiday handling; 60 mutants caught) and S55 (eight rows, both axes on every span, the wider value axis).
