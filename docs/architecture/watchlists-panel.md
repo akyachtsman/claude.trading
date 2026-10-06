@@ -230,13 +230,16 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
   because the code shifted an index that was already post-removal; the marker math,
   `wlCommitMove` and Alt+Arrow now share one computation, which also counts
   unresolved symbols.
-  **Two display rules, both from the 2026-07-29 extended-hours ruling:** each
-  tile marks its price's session — `EXT` for a pre/post print, `CLOSE` for an
-  index whose session has ENDED (indices have no extended session; during
-  regular hours their price is live and carries no marker) — and Change %
+  **Two display rules, both from the 2026-07-29 extended-hours ruling** (the first
+  amended 2026-10-06): a tile marks its price's session — `CLOSE` for an index whose
+  session has ENDED (indices have no extended session; during regular hours their
+  price is live and carries no marker). The `EXT` marker for a pre/post print was
+  REMOVED 2026-10-06 (owner: "remove all the ext in the symbols and just make their fonts
+  bigger"): such a tile draws no badge, and says `Extended-hours price` in its tooltip and
+  accessible name instead (see the tile-shape notes above). And Change %
   always measures from the
   PRIOR CLOSE including extended hours, so one number means the same thing all
-  day and all evening. Neither marker is colour-coded (gain/loss colour is
+  day and all evening. The marker is not colour-coded (gain/loss colour is
   P&L-only). Unresolved tickers render in `#wlMissing` rather than vanishing:
   splitting a pasted table on whitespace turns "BRK B" into BRK + B, both of
   which *look* like tickers, so naming what didn't resolve is the only honest
