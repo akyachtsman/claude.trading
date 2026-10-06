@@ -1945,7 +1945,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   const tile = page.locator('.mkt-group-tiles[data-band] .wl-tile').first();
   // Scroll it into view before taking coordinates. boundingBox() is
   // VIEWPORT-relative, and the Watchlists panel moved from the top of the page
-  // to just above the charts (2026-08-17) — on a phone viewport its tiles now
+  // to just above the charts (2026-08-17; below them since 2026-10-06) — on a phone viewport its tiles now
   // sit thousands of pixels down, so page.mouse.move() to those coordinates
   // lands nowhere and no drag ever starts. toBeVisible() does not catch this:
   // an element below the fold is still "visible" to Playwright.
@@ -4529,7 +4529,7 @@ test('S42: watchlist bands never scroll sideways — the excess wraps below — 
    request ("cap the number of stocks to this widescreen to fit it … if there's any
    excess, just create another watch list below it") replaced its single scrolling
    row with the wrapping grid asserted here. */
-test('S41: each watchlist is one band — head on the left, tiles wrapping below — stacked above the charts', async ({ page, renderWitness }) => {
+test('S41: each watchlist is one band — head on the left, tiles wrapping below — stacked below the charts', async ({ page, renderWitness }) => {
   renderWitness();
   // Sized to a DESK, not a phone: the head-beside-the-tiles arrangement is the
   // wide-screen design (under 640px it stacks head-over-tiles, asserted at the
@@ -4581,7 +4581,7 @@ test('S41: each watchlist is one band — head on the left, tiles wrapping below
     return {
       bands,
       stripW: Math.round(rect(strip).width),
-      wlBottom: Math.round(wl.bottom), chartsTop: Math.round(ch.top),
+      wlTop: Math.round(wl.top), chartsBottom: Math.round(ch.bottom),
       wlLeft: Math.round(wl.left), chartsLeft: Math.round(ch.left),
       sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       innerScroll: strip.scrollHeight > strip.clientHeight + 2 || strip.scrollWidth > strip.clientWidth + 1,
@@ -4612,7 +4612,7 @@ test('S41: each watchlist is one band — head on the left, tiles wrapping below
     'the name and controls sit in a block on the LEFT, level with the tiles').toBe(true);
   expect(Math.max(...shape.bands.map(b => b.headW)), 'a block, not a header across the top').toBeLessThanOrEqual(120);
   expect(shape.tabs, 'the bands ARE the navigation — no tabs').toBe(0);
-  expect(shape.wlBottom, 'watchlists sit above the charts panel').toBeLessThanOrEqual(shape.chartsTop);
+  expect(shape.wlTop, 'watchlists sit BELOW the charts panel (owner 2026-10-06: charts above the watchlists)').toBeGreaterThanOrEqual(shape.chartsBottom);
   expect(shape.wlLeft, 'and share its left edge, both full-bleed').toBe(shape.chartsLeft);
   expect(shape.sideways, 'the page never scrolls sideways').toBe(false);
   expect(shape.innerScroll, 'the panel runs at full length, no inner crop and nothing to scroll sideways').toBe(false);
