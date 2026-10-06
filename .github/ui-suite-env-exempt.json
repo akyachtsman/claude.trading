@@ -1,0 +1,4 @@
+{
+  "GREP_INVERT": "job env in qa.yml (a LOCAL ADDITION on the ui-tests job): it reaches every ui-suite step, so the config-evaluating gates and the run see one value; qa-live.yml leaves it unset on purpose",
+  "RUN_ASSISTANT_TESTS": "opt-in, set by hand for an on-demand S15-S19 run (real Claude quota); never set in CI"
+}

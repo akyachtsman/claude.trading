@@ -136,6 +136,19 @@ jobs:
         # back silently on a future interpreter. Cheap: no imports, no execution.
         run: python3 .github/scripts/check-py-warnings.py
 
+      - name: ui-suite composite env parity
+        # The composite's viewport checks IMPORT the Playwright config, so a
+        # variable added to its run step and not to the check steps makes the
+        # check read a DIFFERENT config from the one the suite runs: green check,
+        # different run. This compares the steps, and checks every process.env
+        # read in the kit is wired from an input. A variable that genuinely
+        # arrives another way (set by a self-hosted runner, say) goes in
+        # .github/ui-suite-env-exempt.json as {"NAME": "how it arrives"}, never
+        # in the script, so the next template refresh keeps it. --kit-dir is the
+        # same UI_TESTS_DIR the ui-suite runs: a moved kit left the guard scanning
+        # the default (Codex, #395).
+        run: python3 .github/scripts/check-ui-suite-env.py --kit-dir "$UI_TESTS_DIR"
+
       # ⚠️ LOCAL ADDITION — CLAUDE.md → Required Commands lists `npx html-validate
       # index.html`, but no CI step ran it. Pinned through the ui-tests lockfile
       # (devDependency) rather than `npx html-validate@x`, so the whole tool tree is

@@ -171,11 +171,18 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
   too; `↑`/`↓` are in none. The aria-labels are "Move X earlier/later", which
   describes a position in the order and stays true however the lists are laid
   out. S41 asserts every control is `↑`/`↓` and none is a back arrow.
-  **The panel sits FULL-WIDTH DIRECTLY ABOVE the Stochastic charts panel**
-  (owner request 2026-08-17) — it was previously a column inside `.top-band`.
-  It full-bleeds like `.area-charts` and joins the shell cap's opt-out list,
-  since a capped, centred panel sitting on a full-bleed one reads as a
-  misalignment rather than a margin. That move also **deleted** the top band's
+  **The panel sits FULL-WIDTH DIRECTLY BELOW the Stochastic charts panel, above the
+  heatmap** (owner request 2026-10-06: "move the stochastic chart up above the
+  watchlists"). It sat directly ABOVE the charts from 2026-08-17 — before that it was
+  a column inside `.top-band`. The markup was MOVED (the `.wl-area` block now follows the
+  `.area-charts` section in `index.html`), not reordered with CSS `order`, so the reading
+  order matches the page, as the accounts section's move did. Nothing in the CSS changed:
+  the 0.5in seams still collapse into one (`.area-charts` ends in a 0.5in margin that meets
+  `.wl-area`'s 0.5in top margin; `.wl-area`'s bottom margin is 0 because `.heat-panel`'s
+  0.5in top margin is the seam below it). It full-bleeds like `.area-charts` and joins the
+  shell cap's opt-out list, since a capped, centred panel sitting beside a full-bleed one
+  reads as a misalignment rather than a margin. S41 asserts the order (the panel's top is at
+  or below the charts panel's bottom) and the shared left edge. That move also **deleted** the top band's
   out-of-flow arrangement (see below) rather than porting it.
   Every list renders at once, so **the bands ARE the navigation** and there are
   no tabs. A tile shows ticker / last / day-% pill; bid, ask, volume and the long

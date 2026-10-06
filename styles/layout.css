@@ -73,13 +73,17 @@
   .desk-row { min-width: 0; }
   .desk-row > .top-band, .desk-row > .top-boxes { min-width: 0; }
   .top-band { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-4); }
-  /* Watchlists LEFT the band (owner request 2026-08-17) and now sits full-width
-     directly above the charts panel — the two panels it pairs with in use are
-     the two it sits between, so choosing what to look at and looking at it are
-     one eye movement. It full-bleeds like `.area-charts` (see the shell cap
-     above): the panel it is stacked on opts out of the 1880 cap, and a
-     watchlist stopping 180px short of the chart below it would read as a
-     misalignment rather than a margin. */
+  /* Watchlists LEFT the band (owner request 2026-08-17) and sat full-width
+     directly ABOVE the charts panel until the owner reversed it 2026-10-06
+     ("move the stochastic chart up above the watchlists"): the charts now lead
+     and the watchlists follow, between the charts and the heatmap. It still
+     full-bleeds like `.area-charts` (see the shell cap above): the panel it is
+     stacked on opts out of the 1880 cap, and a watchlist stopping 180px short
+     of the chart above it would read as a misalignment rather than a margin.
+     The seams are unchanged: `.area-charts` ends in a 0.5in margin that
+     collapses into this wrapper's 0.5in top margin (`main` is a plain block),
+     and this wrapper's bottom margin is 0 because `.heat-panel`'s 0.5in top
+     margin is the seam below it. */
   .wl-area { min-width: 0; margin-block: 0.5in 0; margin-inline: calc(0.5in - var(--space-4)); }
   .wl-area > .area-watchlist { margin-bottom: 0; }
   /* Top row: Markets | Ask-the-desk. Was strip | Markets | Ask until the strip

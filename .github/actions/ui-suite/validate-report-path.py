@@ -98,6 +98,8 @@ LINE_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85  "
 # the viewport gate (Codex, #347 round 28). The leading position IS load-bearing,
 # so it is refused separately below.
 GLOB_CHARS = "*?"
+# ⚠️ LOCAL NOTE — comment-only, not in the upstream template (added by refresh PR #286); keep it
+# on every refresh. Nothing below this line changes behaviour.
 # EXTGLOB WAS CONSIDERED AND IS DELIBERATELY NOT CHECKED (Codex, PR #286,
 # rounds 1-2). Round 1 added a check for `+(`, `@(`, `!(` on the theory that
 # `actions/upload-artifact` expands them as an extended-glob group the way a
