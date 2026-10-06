@@ -681,9 +681,9 @@ function renderAccounts(accounts, lamp) {
    from desk-watchlist already grouped, so this only lays them out.
    The Last column shows the extended-hours price where one exists. It used to mark
    which session it came from — EXT for a pre/post print, CLOSE for an index, which
-   has no extended session at all (owner ruling 2026-07-29); the EXT badge was removed
-   2026-10-06 (a tooltip says it instead), CLOSE stays. Change % is always measured
-   from the prior close, so it keeps one meaning all day. */
+   has no extended session at all (owner ruling 2026-07-29); both badges were removed
+   2026-10-06 (the tile's tooltip and accessible name say it instead). Change % is
+   always measured from the prior close, so it keeps one meaning all day. */
 /* no `active` index any more — every list renders as its own band, so there is
    no selected tab to track */
 /* `range` records which timeframe the RENDERED payload actually covers. It is
@@ -886,14 +886,10 @@ function wlTile(r, pending) {
      (see components.css) rather than clipping. */
   if (r.sym && r.sym.length > 5) name.classList.add('is-long');
   if (r.sym && r.sym.length > 7) name.classList.add('is-xlong');
-  /* CLOSE means "this session has ended", not "this is an index": during
-     regular hours ^VIX carries a live, moving price, and stamping that CLOSE
-     would misstate an intraday quote as a settled one. Indices have no extended
-     session, so once the bell rings their value genuinely IS the close.
-     There is NO EXT badge any more (owner 2026-10-06): an extended-hours print is
+  /* There is NO session badge on the ticker any more — neither EXT nor CLOSE (owner
+     2026-10-06: "remove all the ext in the symbols and just make their fonts bigger",
+     then "remove close just as you have removed ext in the same places"). Both are
      still said, in words, in the tile's tooltip and accessible name (`detail` below). */
-  const mark = r.index && !marketSessionOpen() ? 'CLOSE' : '';
-  if (mark) name.appendChild(el('span', 'wl-mark', mark));
   tile.appendChild(name);
 
   const row = el('div', 'mkt-vals wl-vals');
@@ -939,6 +935,11 @@ function wlTile(r, pending) {
   const detail = [
     r.name || null,
     r.ext && !r.index ? 'Extended-hours price' : null,
+    /* "Closing price" means "this session has ended", not "this is an index": during
+       regular hours ^VIX carries a live, moving price, and calling that a close would
+       misstate an intraday quote as a settled one. Indices have no extended session, so
+       once the bell rings their value genuinely IS the close. */
+    r.index && !marketSessionOpen() ? 'Closing price' : null,
     r.bid != null || r.ask != null ? 'Bid ' + wlPx(r.bid) + ', ask ' + wlPx(r.ask) : null,
     r.vol ? 'Volume ' + wlVol(r.vol) : null,
   ].filter(Boolean).join(' — ');
