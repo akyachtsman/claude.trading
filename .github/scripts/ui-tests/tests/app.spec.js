@@ -8134,6 +8134,12 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
   await gotoDemo(page, '.wl-strip .wl-tile', 10000);
   expect(await page.locator('.wl-split:visible').count(), 'demo has no roster to write, so no split control').toBe(0);
 
+  // This scenario measures the watchlist strip and nothing else, so the panels around it are taken out of the render. They are
+  // not free: on iPhone's WebKit one animation frame of the whole page costs ~1.3 s here, every repaint a refused split causes (the
+  // note appearing) costs ~8 s with them in and ~0.7 s without, and the real-pointer clicks of step 8 then sat at Playwright's 10 s
+  // action limit on `main` and fell over it on CI (PR #311, twice running, with no change to this feature). Nothing asserted here
+  // reads them: the row capacity is the STRIP's width, which they do not touch.
+  await page.addStyleTag({ content: '.desk-row, .area-charts, .heat-panel, .area-accounts { display: none !important; }' });
   await installFakeRoster(page);
   const SYMS = Array.from({ length: 120 }, (_, i) => 'T' + String(i + 1).padStart(3, '0'));
   const seed = async (lists) => {
