@@ -510,8 +510,8 @@ test('S2: auth gate discovered and credential accepted', async ({ page, renderWi
   /* TEST_AUTH_EMAIL IS PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — say so, loudly.
 
      qa.yml / qa-live.yml / qa-response.yml all pass `test-auth-email` into the
-     ui-suite composite, which exports TEST_AUTH_EMAIL into this process
-     (directives#304). Nothing here reads it: detectAuthGate() does not look for
+     ui-suite composite, which exports TEST_AUTH_EMAIL into the test runner's
+     environment (directives#304). Nothing here reads it: detectAuthGate() does not look for
      input[type=email] and detectAndAuth() is handed only the credential.
 
      Upstream's S2 rewrite carries the identifier-first logic. This repo took the
@@ -542,7 +542,7 @@ test('S2: auth gate discovered and credential accepted', async ({ page, renderWi
      are PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — same shape as the
      TEST_AUTH_EMAIL guard above, and for the same reason: qa.yml / qa-live.yml /
      qa-response.yml pass all three into the ui-suite composite (directives#302,
-     #320, #379), which exports them into this process, but nothing here reads
+     #320, #379), which exports them into the test runner's environment, but nothing here reads
      them. mechanism below still comes from the windowed detectAuthGate() /
      detectAndAuth() pair, and success below is still decided from domChanged /
      onscreenError, never from a configured selector. Configuring one of these
