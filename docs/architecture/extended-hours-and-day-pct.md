@@ -13,7 +13,7 @@ Where pre/post bars may and may not go on the charts workbench, and how a positi
   ISTOCH 10-3-3 fit was established against, so parity and preference now
   agree). Flipping the default alone reaches nobody who has ever opened the
   gear, since `wb_cfg_v3` is already saved for them — a **one-time marker**
-  (`extDefaultOff2026_08_20`) clears a stored `p3.ext: true` on next load. It is
+  (`extDefaultOff2026_08_20`) clears a stored `p3.ext: true` on next load — and `WB_CFG_DEFAULT()` carries that marker itself, because a browser with nothing stored saves its first `ext: true` from the defaults: unmarked, it was cleared again by the next load (audit 2026-10-06; S12 reloads with the toggle on). It is
   a marker rather than a `WB_CFG_KEY` bump, which is how this file changed
   defaults before: a bump discards the WHOLE stored config, and per-pane SMAs,
   S/R levels and chart styles are not worth resetting to correct one flag. Extended runs render behind a tinted backdrop rect so a

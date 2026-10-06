@@ -430,7 +430,9 @@ export function parseFred(csv: string): { date: string; value: number }[] {
   for (const line of String(csv).trim().split('\n').slice(1)) {
     const [date, raw] = line.split(',').map((s) => (s || '').trim());
     const value = Number(raw);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || raw === '.' || !Number.isFinite(value)) continue;
+    // FRED writes a holiday/gap as '.' or (in the current CSV) an EMPTY field; Number('') is 0, which would
+    // plot a 0.00 yield. Same rule as desk-econ's parseFredCsv (2026-09-30).
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || raw === '' || raw === '.' || !Number.isFinite(value)) continue;
     rows.push({ date, value });
   }
   return rows;

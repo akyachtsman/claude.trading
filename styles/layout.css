@@ -33,9 +33,13 @@
      elements, so no rule changed sides. `main` (the landmark between masthead and
      footer) is a plain block that must NOT take the cap itself — that would cap
      the full-bleed panels inside it — so the cap goes to its children exactly as
-     it went to .shell's own before. */
+     it went to .shell's own before.
+     `.modal-backdrop` (eight of them, all inside <main>) is also exempt: it is
+     `position: fixed; inset: 0`, and a max-width with auto margins centres such a
+     box at 1880px, so on a wider window the scrim stopped short of both edges and,
+     the page behind being inert, the strips either side did nothing (audit 2026-10-06). */
   .shell > *:not(.area-charts):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(:where(main)),
-  .shell > :where(main) > *:not(.area-charts):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area) { max-width: 1880px; margin-inline: auto; }
+  .shell > :where(main) > *:not(.area-charts):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(.modal-backdrop) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }

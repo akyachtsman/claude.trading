@@ -479,7 +479,7 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | Primary content selector | `.account .hero-number` |
 | Nav cards | n/a — single-page dashboard (panels: Accounts, Markets, Heatmap, Stochastic charts, Ask the desk, News, Economy) |
 | Playwright test directory | `.github/scripts/ui-tests` |
-| Key selectors | lock form: `.lock-form input.input` + button `Unlock` · error: `.panel-lock .lock-error` (**always scope it** — `.lock-error` is the shared error-line class every modal reuses, so a bare selector matches 5+ elements and Playwright strict mode rejects it) · lamps: `#newsLamp #askLamp #mktLamp #econLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
+| Key selectors | lock form: `#accountGrid .panel-lock .lock-form input.input` + button `Unlock` (**scope it** — the open Ask composer is ALSO a `.lock-form`, so the bare class matched two forms and S10/S11 went red on `qa-live` for four runs) · error: `.panel-lock .lock-error` (**always scope it** — `.lock-error` is the shared error-line class every modal reuses, so a bare selector matches 5+ elements and Playwright strict mode rejects it) · lamps: `#newsLamp #askLamp #mktLamp #econLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
 
 ### Sandboxed local runs
 What a local Playwright run in this sandbox **cannot** tell you — record per

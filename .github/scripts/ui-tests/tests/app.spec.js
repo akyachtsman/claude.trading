@@ -1199,7 +1199,10 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   test.skip(!AUTH_CREDENTIAL, NO_CREDENTIAL);
   await page.goto('./');
-  const pinInput = page.locator('.lock-form input.input');
+  // Scoped to the lock panel: since the open Ask (#305) the Ask composer is ALSO a
+  // `.lock-form`, so the bare class matched two forms and strict mode threw (qa-live
+  // was red on main for four runs). S11 and the button selectors follow the same rule.
+  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.input');
   await expect(pinInput).toBeVisible();
   // The LOCKED shell, asserted before any credential is offered: a desk that
   // rendered its accounts (or believed itself authenticated) without a PIN would
@@ -1209,7 +1212,7 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness
   await expect(page.locator('#accountGrid .hero-number'), 'no account data before unlocking').toHaveCount(0);
   expect(await page.evaluate(() => DESK.authed), 'not authenticated before the PIN is entered').toBe(false);
   await pinInput.fill(AUTH_CREDENTIAL);
-  await page.locator('.lock-form button').click();
+  await page.locator('#accountGrid .panel-lock .lock-form button').click();
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
 });
 
@@ -1218,10 +1221,10 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
-  const pinInput = page.locator('.lock-form input.input');
+  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.input');
   await expect(pinInput).toBeVisible();
   await pinInput.fill('000000');
-  await page.locator('.lock-form button').click();
+  await page.locator('#accountGrid .panel-lock .lock-form button').click();
   // Scoped to the lock panel ON PURPOSE. `.lock-error` is the desk's shared
   // error-line class, and every modal that grew a validation message adopted it
   // — the system prompt editor, watchlist quick-add, remove-confirm and edit. A
@@ -1465,6 +1468,14 @@ test('S12: charts workbench renders panes and controls respond', async ({ page, 
   await expect(extBox, 'extended hours is off by default').not.toBeChecked();
   await extBox.check();
   await expect(extBox, 'and the toggle turns it on').toBeChecked();
+  // ...and it SURVIVES a reload. This context has nothing stored, so the config is born from
+  // WB_CFG_DEFAULT(); without the one-time marker (extDefaultOff2026_08_20) there, the first save
+  // stored `ext: true` UNMARKED and the next load's migration cleared it — the toggle held only
+  // until the next reload, on every fresh browser.
+  await page.reload();
+  await expect(page.locator('#wbChart')).toContainText('PRO 3 · DAY TRADING', { timeout: 15000 });
+  await page.locator('#wbGear-p3').click();
+  await expect(extBox, 'extended hours is still ON after a reload').toBeChecked();
   await extBox.uncheck();
   await expect(extBox, 'and off again').not.toBeChecked();
 });
@@ -5538,6 +5549,17 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     const from = await page.evaluateHandle(opener);   // the element focus must come back to
     await open();
     await expect(back, `${name}: opens`).toBeVisible();
+    // The scrim is a fixed, full-viewport box. The 1880px shell cap (max-width + auto margins on <main>'s
+    // children) must not reach it, or on a window wider than 1880px it stops short of both edges and the
+    // strips either side — inert, but undimmed — do nothing (audit 2026-10-06). Read as COMPUTED style, so
+    // it fails at every project's own width, not only on a 2400px window CI does not have.
+    const scrim = await back.evaluate(el => {
+      const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+      return { maxWidth: cs.maxWidth, left: r.left, width: r.width, vw: document.documentElement.clientWidth };
+    });
+    expect(scrim.maxWidth, `${name}: the scrim carries no max-width`).toBe('none');
+    expect(scrim.left, `${name}: the scrim starts at the left edge`).toBe(0);
+    expect(Math.abs(scrim.width - scrim.vw), `${name}: and spans the viewport`).toBeLessThanOrEqual(1);
     await page.waitForTimeout(250);   // the dialog's own async content (roster, prompt) has landed
     const start = await ring(panel);
     expect(start.in, `${name}: opening moves focus INSIDE the dialog`).toBe(true);
@@ -8085,6 +8107,9 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
 test('S61: a wrapped watchlist can split its excess into a real second list', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(90_000);   // the scenario grew past the 30 s default (26.6 s locally on iPhone's WebKit, which timed out on CI's runner)
+  // See S4 — same `viewport-override` marker, same reason: this body sets its own widths
+  // (1440 / 1300 / 1000 / 390), so the project's declared band must not be credited with it.
+  test.info().annotations.push({ type: 'viewport-override', description: '1440' });
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoDemo(page, '.wl-strip .wl-tile', 10000);
   expect(await page.locator('.wl-split:visible').count(), 'demo has no roster to write, so no split control').toBe(0);
