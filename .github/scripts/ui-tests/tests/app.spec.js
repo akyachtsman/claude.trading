@@ -2758,10 +2758,11 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
     const realCount = real.length;
     /* WORST CASES, appended to the first band so they sit in the real grid: a
        10-character ticker, a six-figure price (BRK.A), a seven-figure one, a +100%
-       and a +1,000% move, an index with its CLOSE badge, a crypto pair. Rows flagged
+       and a +1,000% move, an index after the bell, a crypto pair. Rows flagged
        `ext: true` must draw NO badge (owner 2026-10-06: "remove all the ext in the
-       symbols"). Built by wlTile itself, so the length tiers it sets are what is
-       tested — a tier that stopped being applied would clip here. */
+       symbols"), and neither may an index after the bell (same day: "remove close just
+       as you have removed ext in the same places"). Built by wlTile itself, so the length
+       tiers it sets are what is tested — a tier that stopped being applied would clip here. */
     const spark = [1, 2, 1.5, 3, 2.5, 4];
     const worst = [
       { sym: 'ABCDEFGHIJ', last: 1234.5, pct: 123.45, ext: true, spark },
@@ -2789,7 +2790,15 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
     band.id = 'wlWorstCases';
     band.style.cssText = 'grid-template-columns: repeat(10, calc(var(--wl-tile-w) - 2px)); width: max-content; margin-top: 8px';
     strip.appendChild(band);
-    for (const r of worst) band.appendChild(wlTile(r, false));
+    /* The session is forced SHUT while the worst cases are built: an index only used to draw
+       CLOSE after the bell, so a run during market hours would never have exercised the badge
+       and restoring it would have passed. `marketSessionOpen` is a global function declaration
+       (data.js), so assigning it takes effect for wlTile's own call; it is put back in `finally`. */
+    const realOpen = window.marketSessionOpen;
+    const withSession = (open, fn) => { window.marketSessionOpen = () => open; try { return fn(); } finally { window.marketSessionOpen = realOpen; } };
+    withSession(false, () => { for (const r of worst) band.appendChild(wlTile(r, false)); });
+    // The same index DURING the session: nothing says "closing price" then (^VIX moves live).
+    const openIndexTitle = withSession(true, () => wlTile({ sym: '^VIX', name: 'Volatility', last: 17.2, pct: 1.1, index: true, spark }, false).title);
     const tiles = [...document.querySelectorAll('.wl-strip .wl-tile')];
     // Visual top-to-bottom order. `.wl-vals` is `display: contents`, so it has
     // no box of its own and its children lay out as tile children — that is the
@@ -2818,18 +2827,25 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
     }).map(t => t.dataset.sym);
     /* The TICKER's size and line count, read off the worst-case tiles (owner 2026-10-06: "just make
        their fonts bigger"): 12px up to 5 characters, 10px for 6-7, 8px from 8. A ticker of at most 7
-       characters with no badge sits on ONE line in the 58px column — `overflow-wrap: anywhere` would
-       otherwise make it wrap, which cannot clip but makes the whole grid row taller. */
+       characters sits on ONE line in the 58px column — `overflow-wrap: anywhere` would otherwise make
+       it wrap, which cannot clip but makes the whole grid row taller. That includes an index after the
+       bell: `^GSPC CLOSE` used to drop its badge under the ticker and make the row ~8px taller. */
     const bySym = Object.fromEntries([...band.children].map(t => [t.dataset.sym, t]));
     const nameOf = sym => bySym[sym].querySelector('.mkt-name');
     const oneLine = n => n.getBoundingClientRect().height <= parseFloat(getComputedStyle(n).lineHeight) * 1.5;
     return {
       count: realCount, withWorst: tiles.length, maxW,
-      extBadges: tiles.filter(t => [...t.querySelectorAll('.wl-mark')].some(b => /EXT/i.test(b.textContent))).map(t => t.dataset.sym),
+      // No session badge of ANY kind on ANY tile — EXT or CLOSE (the `.wl-mark` class is gone with them),
+      // nor any text on a ticker beyond the ticker itself.
+      marks: tiles.filter(t => t.querySelector('.wl-mark')).map(t => t.dataset.sym),
+      nameTexts: tiles.filter(t => t.querySelector('.mkt-name').textContent.trim() !== t.dataset.sym).map(t => t.dataset.sym),
       extTitle: bySym['BTC-USD'].title,
+      closeTitle: bySym['^GSPC'].title,
+      openIndexTitle,
       sizes: { MSTR: getComputedStyle(nameOf('MSTR')).fontSize, 'BRK.A': getComputedStyle(nameOf('BRK.A')).fontSize,
+        '^GSPC': getComputedStyle(nameOf('^GSPC')).fontSize,
         'BTC-USD': getComputedStyle(nameOf('BTC-USD')).fontSize, ABCDEFGHIJ: getComputedStyle(nameOf('ABCDEFGHIJ')).fontSize },
-      wrapped: ['MSTR', 'BRK.A', 'BIGPX', 'BTC-USD', 'P8', 'P9', 'P10'].filter(sym => !oneLine(nameOf(sym))),
+      wrapped: ['MSTR', 'BRK.A', 'BIGPX', 'BTC-USD', 'P8', 'P9', 'P10', '^GSPC', '^IXIC'].filter(sym => !oneLine(nameOf(sym))),
       orders: [...new Set(tiles.map(orderOf))],
       prices: over('.mkt-last'), names: over('.mkt-name'),
       // The pill has no overflow rule of its own, so a too-wide one GROWS past
@@ -2845,11 +2861,6 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
         return right - p.getBoundingClientRect().right;
       })),
       worstWidth: Math.round(band.querySelector('.wl-tile').getBoundingClientRect().width),
-      // The session badge is an unbreakable inline-block: where it does not fit
-      // beside the ticker it drops WHOLE to the next line. A badge in two
-      // fragments (`CLOS` / `E`) is the line breaking inside the word.
-      splitBadges: tiles.filter(t => { const b = t.querySelector('.wl-mark'); return b && b.getClientRects().length > 1; }).map(t => t.dataset.sym),
-      badgesOut: inside('.wl-mark'),
       // every sparkline inside its tile too
       sparks: inside('.wl-spark'),
     };
@@ -2876,14 +2887,15 @@ test('S27: watchlist tiles are compact, stacked, and never clip a value', async 
   // step down a size now.
   expect(m.pills, 'the change pill stays inside its tile').toEqual([]);
   expect(m.pillSlack, 'with at least 2px to spare in the narrowest column, so a font a shade wider cannot push it out').toBeGreaterThanOrEqual(2);
-  // The EXT badge is gone (owner 2026-10-06) and the ticker is the biggest thing on the tile.
-  expect(m.extBadges, 'no tile carries an EXT badge, even where the row is an extended-hours print').toEqual([]);
+  // The EXT and CLOSE badges are gone (owner 2026-10-06) and the ticker is the biggest thing on the tile.
+  expect(m.marks, 'no tile carries a session badge — not EXT on an extended-hours print, not CLOSE on an index after the bell').toEqual([]);
+  expect(m.nameTexts, 'and the ticker line holds nothing but the ticker').toEqual([]);
   expect(m.extTitle, 'the extended-hours print is still SAID, in the tile tooltip').toContain('Extended-hours price');
+  expect(m.closeTitle, 'an index after the bell says it is a closing price, in the tile tooltip').toContain('Closing price');
+  expect(m.openIndexTitle, 'but not during the session, when its price is live').not.toContain('Closing price');
   expect(m.sizes, 'ticker size by length: 12px to 5 characters, 10px for 6-7, 8px from 8')
-    .toEqual({ MSTR: '12px', 'BRK.A': '12px', 'BTC-USD': '10px', ABCDEFGHIJ: '8px' });
-  expect(m.wrapped, 'a ticker of up to 7 characters stays on one line in the narrowest column').toEqual([]);
-  expect(m.splitBadges, 'the CLOSE badge never breaks inside the word').toEqual([]);
-  expect(m.badgesOut, 'and stays inside its tile').toEqual([]);
+    .toEqual({ MSTR: '12px', 'BRK.A': '12px', '^GSPC': '12px', 'BTC-USD': '10px', ABCDEFGHIJ: '8px' });
+  expect(m.wrapped, 'a ticker of up to 7 characters — an index after the bell included — stays on one line in the narrowest column').toEqual([]);
   expect(m.sparks, 'the sparkline stays inside its tile').toEqual([]);
 });
 

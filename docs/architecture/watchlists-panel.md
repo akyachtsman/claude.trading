@@ -88,11 +88,13 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     "+ 1" hid a price clipped by up to a pixel. A tier that fits by a hair now fails
     in the sandbox rather than on CI. **There is no EXT badge any more** (owner 2026-10-06): a row flagged `ext` draws
     nothing beside its ticker, and the print is said in words instead — `Extended-hours
-    price` leads the tile's tooltip and accessible name. The CLOSE badge (an index once
-    the bell has rung) stays: an `inline-block; white-space: nowrap` at 6.5px that must never
-    split inside the word (`CLOS`/`E`, which `overflow-wrap: anywhere` did at 62px). With the
-    12px ticker `^GSPC CLOSE` no longer fits on one line, so the badge drops WHOLE under the
-    ticker and that band's row is one badge-line (~8px) taller (tiles stretch).
+    price` leads the tile's tooltip and accessible name. **The CLOSE badge is gone too**
+    (owner 2026-10-06: "remove close just as you have removed ext in the same places"): an
+    index once the bell has rung draws nothing beside its ticker and says `Closing price` in
+    the same tooltip and accessible name (never during the session — `^VIX` moves live). The
+    `.wl-mark` class and both of its CSS rules were deleted, so a ticker of up to 7 characters,
+    an index included, stays on one line and the ~8px of extra row height the badge cost
+    (`^GSPC CLOSE` dropped it under the 12px ticker) is gone.
   - **The empty cells of a part-filled last row are part of the drop zone** (the
     zone is the whole grid box); a pointer there, level with the last row, is
     past every tile in it and drops at the END.
@@ -231,15 +233,16 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
   `wlCommitMove` and Alt+Arrow now share one computation, which also counts
   unresolved symbols.
   **Two display rules, both from the 2026-07-29 extended-hours ruling** (the first
-  amended 2026-10-06): a tile marks its price's session — `CLOSE` for an index whose
-  session has ENDED (indices have no extended session; during regular hours their
-  price is live and carries no marker). The `EXT` marker for a pre/post print was
+  amended 2026-10-06): a tile SAYS its price's session, in its tooltip and accessible
+  name and no longer with a badge — `Closing price` for an index whose session has ENDED
+  (indices have no extended session; during regular hours their price is live and the
+  tile says nothing), `Extended-hours price` for a pre/post print. Both badges were
   REMOVED 2026-10-06 (owner: "remove all the ext in the symbols and just make their fonts
-  bigger"): such a tile draws no badge, and says `Extended-hours price` in its tooltip and
-  accessible name instead (see the tile-shape notes above). And Change %
+  bigger", then "remove close just as you have removed ext in the same places"), so
+  nothing sits beside a ticker (see the tile-shape notes above). And Change %
   always measures from the
   PRIOR CLOSE including extended hours, so one number means the same thing all
-  day and all evening. The marker is not colour-coded (gain/loss colour is
+  day and all evening. The wording is plain text (gain/loss colour is
   P&L-only). Unresolved tickers render in `#wlMissing` rather than vanishing:
   splitting a pasted table on whitespace turns "BRK B" into BRK + B, both of
   which *look* like tickers, so naming what didn't resolve is the only honest
