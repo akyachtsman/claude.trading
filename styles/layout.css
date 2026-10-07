@@ -813,7 +813,7 @@
      would otherwise grow to its full 100-row content height and take the rail
      with it. `scrollbar-width: thin` is part of the width budget, not
      decoration. */
-  .wb-slots { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 1px; }
+  .wb-slots { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 1px; }
   /* An EMPTY slot is still a slot — it keeps its height and stays clickable, so
      the column reads as 100 addressable rows rather than a short list with
      blank space under it. The dotted rule is what makes an empty row legible as
@@ -826,6 +826,35 @@
   .wb-slot { min-height: 15px; touch-action: manipulation; }
   .wb-slot--empty { border-bottom: 1px dotted var(--color-border); border-radius: 0; }
   .wb-slot--empty:hover { background: var(--color-surface-2); border-bottom-color: transparent; border-radius: var(--radius-sm); }
+  /* ── drag a stock up or down the column; open a slot to push one in (owner request 2026-10-07,
+     the STOCHASTIC rail) ─────────────────────────────────────────────────────────────────────
+     A filled slot shows a grab cursor — the only hint that it can be picked up, since a click still
+     charts it and a double-click still edits it. The press-and-move itself is wired in
+     wbWireSlotDrag; none of this changes what a click does.
+     ARMED = a finger has rested on the slot and the drag is about to take over, so the browser must
+     stop reading the gesture as a scroll. Applied ONLY while armed, exactly like `.wl-armed`:
+     `touch-action: none` on every slot would make the list unscrollable on a phone, and the base
+     `manipulation` above (which keeps the double-tap edit from becoming a zoom) stays the rule. */
+  .wb-slot:not(.wb-slot--empty) { cursor: grab; }
+  .wb-slot.wb-armed { touch-action: none; outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
+  /* The row being carried stays where it is, dimmed, so the list does not reflow under the pointer. */
+  .wb-rail-row.wb-dragging { opacity: .35; }
+  /* Placed by wbSlotDragPaint with top: ABSOLUTE inside `.wb-slots` (positioned above), so it takes
+     no flex row and can never push a slot down; it scrolls with the list. The ACCENT, never the loss
+     red: red on this desk means P&L. */
+  .wb-drop-marker { position: absolute; left: 0; right: 0; height: 2px; z-index: 2; pointer-events: none; background: var(--color-accent-bright); border-radius: 1px; }
+  /* A child of `.area-charts`, not of the rail (renderWbSidebar empties the rail), so it keeps the
+     dark scope's tokens. Same type as a slot. */
+  .wb-slot-ghost { position: fixed; top: 0; left: 0; z-index: 60; pointer-events: none; padding: 2px 6px; border: 1px solid var(--color-accent-bright); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 700 10px/1.4 var(--font-mono); box-shadow: var(--shadow-raised); opacity: .95; }
+  body.wb-drag-active { cursor: grabbing; -webkit-user-select: none; user-select: none; }
+  body.wb-drag-active .wb-slot { cursor: grabbing; }
+  /* SYMBOL and the + sit on one line. The + is a 14px square so the head is no taller than the
+     text it replaces (9px / 1.6 = 14.4px): the roster column's head beside it must still start its
+     list on the SAME line (S40). */
+  .wb-rail-head--slots { display: flex; align-items: center; justify-content: space-between; gap: 2px; }
+  .wb-rail-add { flex: 0 0 auto; width: 14px; height: 14px; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 700 11px/1 var(--font-mono); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; touch-action: manipulation; }
+  .wb-rail-add:hover { border-color: var(--color-accent-bright); color: var(--color-accent-bright); }
+  .wb-rail-add:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   /* Sized to sit exactly where the button it replaces sat, so opening an editor
      does not shift the rows below it. `min-width: 0` matters: an input's default
      intrinsic width (~20 characters) would otherwise push the column past its

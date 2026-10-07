@@ -177,3 +177,20 @@ What made the 2026-09-30 deploy safe, and should be repeated:
 
 Rollback: redeploy the file from the last known-good commit (`dd7cf5f` for the audit deploy)
 with the same `verify_jwt`. Migrations are separate and are never part of a function deploy.
+
+### `desk-market` v17 — 2026-10-07 (owner-approved; the procedure above, followed)
+
+`parseFred`'s empty-field rule (PR #309: FRED writes a holiday as `.` or, in the current CSV, an EMPTY field,
+and `Number('')` is 0 — a 0.00 yield on the 10Y tile) had been merged to `main` for two days with the function
+NOT deployed. Deployed from `e1307e0`, `verify_jwt` OFF (read from `list_edge_functions` first: version 16, OFF),
+version 16 → 17. Live v16 was read back first: its `parseFred` lacked the empty-field test and the rest matched the repo
+file as of `c748851^` by eye (not byte-compared), so the intended delta was the three-line `parseFred` change.
+
+What was checked, and what was NOT: the deployed source READ BACK from Supabase, minified with the pinned
+`tools/` esbuild beside the repo file, is byte-identical (9,535 bytes each, comments stripped — step 3 above,
+done against what Supabase actually stores rather than against the payload that was sent). A live call (anon,
+site `Origin`) answered 200 in ~1.2s with `ok: true`, `generatedAt` seconds old (a cold v17 instance), 33 tiles,
+the US 10Y tile present and no zero or negative `last`. The logs were not yet showing v17 requests when read
+(the log stream lags a few minutes), so the version served is evidenced by the smoke call's fresh `generatedAt`,
+not by a log row. Rollback = redeploy `supabase/functions/desk-market/index.ts` as of `c748851^` with
+`verify_jwt` OFF.

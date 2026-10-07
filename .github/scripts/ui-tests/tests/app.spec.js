@@ -8876,3 +8876,193 @@ test('S63: crude oil — the WTI futures price, DELAYED not LIVE, NOT LIVE when 
   // oil is never a yield: not once did the CNBC machinery or the yield rows see it
   expect(await page.evaluate(() => Object.keys(econLive.q)), 'no CNBC quote is ever stored for an oil row').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 64 — The STOCHASTIC rail's SYMBOL column: a stock can be dragged up or down, and a slot
+// can be opened to push one in (owner request 2026-10-07: "make the stocks movable up/down by pressing
+// the mouse button and can we have an open slot so I can push in more stocks"; "stocastic NOT watchlist").
+// The column is POSITIONAL and always exactly 100 long, so a move is ONE splice of the whole array (the
+// rows between shift by one, nothing is dropped) and an open slot is made by CONSUMING an empty one.
+// What this guards is the two ways that goes wrong without anyone noticing: a move that overwrites or
+// duplicates a neighbour, and a column that grows past (or shrinks under) 100 and so renumbers every row
+// below it. Also the gesture rules the existing column already lives by: a drag must not chart or edit
+// the slot it started from, and a click that merely wandered a few pixels must still chart.
+// Desktop-sized mouse drags only: a finger's hold-then-drag uses the watchlist tiles' arming rule and
+// cannot be exercised here.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S64: a stock in the symbol column can be dragged to a new place, and a slot can be opened to push one in', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await gotoDemo(page, '.wb-slots', 15000, 1200);
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+  const R = await page.evaluate(() => Object.keys(wbState.data.symbols));
+  const first = async n => (await storedSyms(page)).slice(0, n);
+  const rowBox = i => page.locator(`.wb-slots .wb-rail-row[data-slot="${i}"]`).boundingBox();
+  const upper = async i => (await rowBox(i)).y + 3;                       // the upper half of row i: the gap BEFORE it
+  const lower = async i => { const b = await rowBox(i); return b.y + b.height - 3; };   // the lower half: the gap AFTER it
+  const showRail = () => page.evaluate(() => document.querySelector('.wb-rail-manual').scrollIntoView({ block: 'center' }));
+  const press = async i => { const b = await rowBox(i); await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); };
+  /* Past the slop first (so the drag starts), then to the target height. */
+  const dragOver = async (from, y) => {
+    const b = await rowBox(from);
+    const x = b.x + b.width / 2;
+    await page.mouse.move(x, b.y + b.height / 2 + (y > b.y ? 14 : -14), { steps: 3 });
+    await page.mouse.move(x, y, { steps: 6 });
+  };
+  const release = async () => { await page.mouse.up(); await page.waitForTimeout(300); };   // past the click-suppression window
+  const drag = async (from, y) => { await press(from); await dragOver(from, y); await release(); };
+  const feedback = () => page.evaluate(() => ({
+    ghosts: [...document.querySelectorAll('.wb-slot-ghost')].map(g => g.textContent),
+    markers: document.querySelectorAll('.wb-drop-marker').length,
+    dimmed: [...document.querySelectorAll('.wb-rail-row.wb-dragging')].map(r => r.dataset.slot),
+    body: document.body.classList.contains('wb-drag-active'),
+  }));
+  const seed = (slots) => seedSlots(page, Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i, slots[i] ?? ''])), { tab: true });
+  await page.evaluate(sym => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+
+  // ── 0. what is on the page: the + , a grab cursor on a filled slot only, the slot still a touch-manipulation button
+  await seed([R[1], 'BBB', 'CCC', 'DDD', 'EEE', 'FFF']);
+  await showRail();
+  const shape = await page.evaluate(() => {
+    const b = i => document.querySelector(`.wb-slots [data-slot="${i}"] .wb-slot`);
+    return { add: document.querySelectorAll('.wb-rail-manual .wb-rail-head .wb-rail-add').length,
+             rows: document.querySelectorAll('.wb-slots .wb-rail-row').length,
+             filled: getComputedStyle(b(0)).cursor, empty: getComputedStyle(b(9)).cursor,
+             touch: getComputedStyle(b(0)).touchAction, editors: document.querySelectorAll('.wb-slot-input').length };
+  });
+  expect(shape.add, 'one + in the SYMBOL head').toBe(1);
+  expect(shape.rows, 'still exactly 100 slots').toBe(100);
+  expect([shape.filled, shape.empty], 'a filled slot shows a grab cursor and an empty one does not').toEqual(['grab', 'pointer']);
+  expect(shape.touch, 'the slot keeps touch-action: manipulation at rest (the double-tap edit needs it)').toBe('manipulation');
+  expect(shape.editors, 'and no live input at rest').toBe(0);
+
+  // ── 1. drag the first stock down: while held it shows a ghost, a marker ON the gap, and the dimmed source
+  await press(0);
+  await dragOver(0, await upper(3));
+  const held = await feedback();
+  expect(held.ghosts, 'a ghost carries the stock being dragged').toEqual([R[1]]);
+  expect([held.markers, held.dimmed, held.body], 'one insertion marker, the source row dimmed, the page marked as dragging').toEqual([1, ['0'], true]);
+  const markerTop = await page.evaluate(() => document.querySelector('.wb-drop-marker').getBoundingClientRect().top);
+  expect(Math.abs(markerTop - (await rowBox(3)).y), 'the marker sits on the top edge of row 3 — the gap the pointer is over').toBeLessThanOrEqual(3);
+  await release();
+  expect(await first(6), 'dropped before DDD: it lands one place higher than the gap (it was lifted out first) and the rows between shift up').toEqual(['BBB', 'CCC', R[1], 'DDD', 'EEE', 'FFF']);
+  expect((await storedSyms(page)).length, 'the column is still exactly 100 long').toBe(100);
+  expect(await feedback(), 'every trace of the drag is gone').toEqual({ ghosts: [], markers: 0, dimmed: [], body: false });
+  expect(await page.evaluate(() => wbState.sym), 'a drag does not chart the slot it started on (the release is not a click)').toBe(R[0]);
+  expect(await editorCount(page), 'nor open its editor').toBe(0);
+
+  // ── 2. up to the very top; a drop BELOW its own row; the rows between shift the other way
+  await drag(4, await upper(0));
+  expect(await first(6), 'dropped above the first row').toEqual(['EEE', 'BBB', 'CCC', R[1], 'DDD', 'FFF']);
+  await drag(1, await lower(2));
+  expect(await first(6), 'dropped under row 2: the gap is counted before the stock is lifted, so it lands IN row 2').toEqual(['EEE', 'CCC', 'BBB', R[1], 'DDD', 'FFF']);
+
+  // ── 3. a hole travels with the shift — positional, one splice, nothing compacted
+  await seed(['AAA', 'BBB', 'CCC', '', 'EEE']);
+  await drag(0, await lower(4));
+  expect(await first(6), 'AAA below EEE: the empty slot moved up with the rows, and nothing was squeezed out').toEqual(['BBB', 'CCC', '', 'EEE', 'AAA', '']);
+  expect((await storedSyms(page)).length).toBe(100);
+
+  // ── 4. Escape, and a release away from the list, change nothing — and neither CHARTS the slot it began on
+  // (the release is still delivered as a click on that slot; with no repaint to detach it, only the
+  // suppression stops it, so the slot holds a real, chartable symbol and the chart must stay put)
+  await seed([R[1], 'CCC', '', 'EEE', 'AAA']);
+  await page.evaluate(sym => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+  const before = await first(12);
+  await press(0);
+  await dragOver(0, await lower(4));
+  expect((await feedback()).markers, 'a marker while held').toBe(1);
+  await page.keyboard.press('Escape');
+  expect(await feedback(), 'Escape ends the drag at once').toEqual({ ghosts: [], markers: 0, dimmed: [], body: false });
+  await release();
+  expect(await first(12), 'and writes nothing').toEqual(before);
+  expect(await page.evaluate(() => wbState.sym), 'and the release did not chart the slot the drag began on').toBe(R[0]);
+  await press(0);
+  await dragOver(0, await upper(3));
+  const slotsTop = await page.evaluate(() => document.querySelector('.wb-slots').getBoundingClientRect().top);
+  await page.mouse.move((await rowBox(0)).x + 30, slotsTop - 70, { steps: 6 });
+  expect((await feedback()).markers, 'no marker once the pointer is off the list').toBe(0);
+  await release();
+  expect(await first(12), 'a release off the list is a cancel').toEqual(before);
+  expect(await page.evaluate(() => wbState.sym), 'which charts nothing either').toBe(R[0]);
+
+  // ── 5. a click that wandered a few pixels is still a click: it charts, it does not vanish into a drag
+  await seed([R[1], 'BBB']);
+  await page.evaluate(sym => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+  const b0 = await rowBox(0);
+  await page.mouse.move(b0.x + b0.width / 2, b0.y + 6);
+  await page.mouse.down();
+  await page.mouse.move(b0.x + b0.width / 2, b0.y + 15, { steps: 3 });   // past the slop, still inside the row
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => wbState.sym), { message: 'a release back where it began still charts', timeout: 8000 }).toBe(R[1]);
+  expect(await first(2), 'and moved nothing').toEqual([R[1], 'BBB']);
+
+  // ── 6. the + opens a slot ABOVE the row last worked on, by using up the nearest empty one beneath
+  await seed(['AAA', 'BBB', R[2], 'DDD', 'EEE']);
+  await slotBtn(page, 2).click();
+  await page.waitForTimeout(700);
+  await page.locator('.wb-rail-add').click();
+  expect(await first(7), 'a slot is open at 2; the stocks from there down moved one place, into the first empty slot').toEqual(['AAA', 'BBB', '', R[2], 'DDD', 'EEE', '']);
+  // read BEFORE anything is typed: the first write after this one normalises the array back to 100 and would hide a column that grew
+  expect((await storedSyms(page)).length, 'opening a slot USES UP an empty one — the column is still exactly 100, not 101').toBe(100);
+  expect(await editorSlot(page), 'its editor is open, ready to type').toBe('2');
+  expect(await page.evaluate(() => document.activeElement === document.querySelector('.wb-slot-input')), 'and focused').toBe(true);
+  await page.keyboard.type('zzz');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(500);
+  const pushed = await storedSyms(page);
+  expect(pushed.slice(0, 6), 'the new stock sits where the slot was opened').toEqual(['AAA', 'BBB', 'ZZZ', R[2], 'DDD', 'EEE']);
+  expect([pushed.length, pushed.filter(Boolean).length], 'still 100 slots, one more of them filled').toEqual([100, 6]);
+
+  // ── 7. nothing empty BELOW: the rows above are pulled up instead (Insert on a slot does the same as the +)
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    const syms = Array.from({ length: 100 }, (_, i) => (i === 0 ? '' : 'S' + i));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
+    wbEditSlot = -1; wbSlotTab = 50; renderWbSidebar(wbState.data);
+  });
+  await slotBtn(page, 50).focus();
+  await page.keyboard.press('Insert');
+  await page.waitForTimeout(300);
+  let s = await storedSyms(page);
+  expect(await editorSlot(page), 'the open slot lands just above the row it was asked at').toBe('49');
+  expect([s[0], s[48], s[49], s[50], s.length], 'rows 1..49 moved up one into the empty slot at the top; row 50 stayed').toEqual(['S1', 'S49', '', 'S50', 100]);
+  await page.keyboard.press('Escape');
+
+  // ── 8. every slot filled: the + says so and moves nothing
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => 'S' + i) }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  });
+  const full = JSON.stringify(await storedSyms(page));
+  await page.locator('.wb-rail-add').click();
+  await expect(page.locator('.wb-rail-manual [role="status"]'), 'a visible, announced note').toContainText('Every slot is filled');
+  expect(JSON.stringify(await storedSyms(page)), 'nothing moved').toBe(full);
+  expect(await editorCount(page), 'and no editor opened').toBe(0);
+
+  // ── 9. keyboard parity: Alt+Arrow moves the focused stock one place and focus FOLLOWS it
+  await seed(['AAA', 'BBB', 'CCC']);
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Alt+ArrowDown');
+  expect(await first(3), 'Alt+Down swaps it with the row below').toEqual(['BBB', 'AAA', 'CCC']);
+  expect(await page.evaluate(() => document.activeElement.closest('.wb-rail-row').dataset.slot), 'focus stayed on AAA, now in slot 1').toBe('1');
+  await page.keyboard.press('Alt+ArrowUp');
+  await page.keyboard.press('Alt+ArrowUp');
+  expect(await first(3), 'Alt+Up back, and a second one at the very top does nothing').toEqual(['AAA', 'BBB', 'CCC']);
+
+  // ── 10. an EMPTY slot has nothing to pick up
+  await seed([]);
+  await press(2);
+  await dragOver(2, await lower(5));
+  expect((await feedback()).ghosts, 'no ghost from an empty slot').toEqual([]);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Escape');
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});

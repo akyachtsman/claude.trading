@@ -430,3 +430,82 @@ pushed the slot off screen there (the pointer landed on nothing). Falsified: wit
 `overflow-anchor: none` removed S45 still fails (slot 58 under a pointer aimed at
 60) in both layouts.
 
+## Moving a stock, and opening a slot (owner request 2026-10-07)
+
+Owner: "how do I edit the left column on the stochastic? Can you make the stocks movable up/down by
+pressing the mouse button and can we have an open slot so I can push in more stocks?" — then, mid-turn,
+"stocastic NOT watchlist": this is the SYMBOL column of the Stochastic charts rail, never the watchlist
+tiles (which have their own drag, `wlDrag*`, and were not touched; this borrows its POINTER-event design
+and its constants' meaning, not its code). Everything above still holds: the array is POSITIONAL and
+exactly `WB_SLOTS` long, a click charts, a second pointer click within `WB_SLOT_DBL_MS` edits, F2 is the
+keyboard edit. What was added sits beside those rules and changes none of them.
+
+**A move is ONE splice** (`wbMoveSlot(from, to)`: `splice(from, 1)` then `splice(to, 0, moved)`), so the rows
+between the two shift by one place, the length is unchanged and nothing is overwritten, dropped or
+duplicated — a swap would have silently displaced a stock that was not part of the gesture. The pointer
+reads a GAP, not a row (`wbDropGap(y)`: the number of rows whose vertical middle it has passed, 0..100),
+and the gap is counted BEFORE the stock is lifted out, so a gap below its own row lands one place higher
+(`wbGapToSlot`: `gap > from ? gap - 1 : gap`). A hole travels with the shift, like any other entry.
+
+**An open slot is made by CONSUMING an empty one** (`wbInsertSlot(at)`): the stocks from `at` down move one
+place into the nearest empty slot beneath, and the slot at `at` is empty. When nothing beneath is empty it
+pulls the rows ABOVE up into the nearest empty one instead, so the open slot lands just above `at`. Only a
+column with all 100 filled is refused, with a visible `role="status"` note under ACTIVE (`wbRailNote`,
+module state `wbRailMsg`, cleared by its own timer) — never a silent no-op. **It must never grow the array**:
+`wbSlotArray` truncates to 100 on every read, so a 101-entry write looks fine until the next write drops the
+LAST stock. S64 therefore reads the store directly after the `+`, BEFORE anything is typed (the typed write
+would normalise it and hide the fault). Reached by the `+` in the SYMBOL head (above the row last worked on,
+`wbSlotTab`), by Insert on a focused slot (above that row), and it puts the owner in the new slot's editor
+(`wbInsertAndEdit` → `wbFocusSlotEditor`, shared with the click-to-edit path).
+
+**The drag is ONE delegated `pointerdown` on `#wbSidebar` (`wbSlotPointerDown`), not a listener per button —
+and that was MEASURED, not assumed.** The first cut wired each filled slot; in WebKit a `pointerdown`
+listener cost ~5ms per button, so with eight filled slots a rail repaint went from 8ms to 50ms (`renderWbSidebar`
+runs on every animation frame of a chart drag and every poll). It was caught because S45's slow double-click
+(two clicks 300ms apart, which must land inside `WB_SLOT_DBL_MS` = 500) started failing on the tablet and iPhone
+projects: the repaint after the first click now delayed the second past the window. `#wbSidebar` itself is never
+rebuilt — only its contents — so one listener survives every repaint. Do not move it back onto the buttons.
+
+Gesture rules, each of which S64 holds:
+- **Slop and arming.** A mouse starts a drag after `WB_SLOT_DRAG_SLOP` (6px); a finger must rest
+  `WB_SLOT_TOUCH_ARM_MS` (300ms) first, so an ordinary swipe still scrolls the 100-row list. `.wb-armed` is
+  the ONLY time a slot is `touch-action: none`; the base `touch-action: manipulation` (which keeps the
+  double-tap edit from becoming a zoom, Codex P1 above) stays the rule. The touch path reuses the watchlist
+  tiles' arming device and CANNOT be exercised in this sandbox — it is reasoned about, not tested.
+- **The release is still a click.** It is delivered to the slot the press began on and would CHART it, so
+  `wbSlotDragClickAt` makes the click handler ignore it for `WB_SLOT_DRAG_CLICK_MS` (250). Stamped AFTER the
+  commit's repaint, so a slow repaint cannot eat the window; short, so the owner's NEXT click is never
+  swallowed. A committed move usually detaches the button so no click arrives at all — the case that needs
+  the stamp is a CANCELLED drag (Escape, a release off the list), with no repaint to detach anything, which is
+  why S64 holds a chartable symbol in the slot and checks the chart did not move. **The exception:** a release
+  back where it started (`to === from`) is not stamped — a click that wandered past 6px and came home still
+  charts.
+- **A drag is navigation** and breaks a pending double-click pair (`wbSlotClick`), like a roster click or an
+  editor opening.
+- **Cancel.** Escape, `pointercancel`, and a release more than 40px beside or 24px above/below the list change
+  nothing and draw no marker. An EMPTY slot has nothing to pick up (the handler refuses a slot with no text).
+- **The list scrolls itself** while a drag holds within `WB_SLOT_EDGE_PX` (22) of its top or bottom edge
+  (`wbSlotDragScroll`, one rAF loop re-armed by every move, cancelled when the drag ends), because a finger
+  cannot scroll while armed and a stock moving from slot 3 to slot 60 must be possible in one gesture. The page
+  does not scroll: the rail is capped to the chart's height (side) or 220px (stacked), so the list is the only
+  thing that can need it.
+- **Feedback.** The marker is an ABSOLUTE child of `.wb-slots` (`position: relative` was added to it) so it
+  takes no flex row and scrolls with the list; the ghost is a child of `.area-charts` and NOT of the rail,
+  because `renderWbSidebar` empties the rail and the dark scope's tokens live on `.area-charts`. A repaint the
+  owner did not cause can arrive mid-drag (the 60s poll, a chart landing): the drag state is module state and
+  `renderWbSidebar` ends by calling `wbSlotDragPaint()` when one is live, which puts the marker and the dimmed
+  source row back.
+- **Focus follows the stock** (`wbCommitMove`): a mouse press focuses the button and the keyboard path is all
+  about focus, and `renderWbSidebar`'s own restore would put it back on the old INDEX, which now holds a
+  different stock. The roving tab stop moves with it (`wbSlotTab = to`).
+- **Keyboard parity** (an arrangement only a mouse can make is not one everyone can): Alt+ArrowUp/Down moves
+  the focused stock one place; Insert opens a slot above it. The `+` is the route where there is no Insert key.
+- **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
+  `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
+
+Not measured, stated rather than claimed away: a real finger. The mouse path is S64 on all four projects
+(desktop, tablet, mobile-chrome, iphone); thirteen mutants each fail it (swap instead of splice, gap off by
+one, the release clicking through, Escape not cancelling, an off-list drop committing, an insert that keeps
+the empty slot — in both branches — a marker at the wrong edge, a wandering click swallowed, no pull-up
+fallback, focus not following, an empty slot draggable, no suppression window, a listener leaked past the
+drag).
