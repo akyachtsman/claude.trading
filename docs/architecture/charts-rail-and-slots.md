@@ -517,6 +517,23 @@ Gesture rules, each of which S64 holds:
   hover, or the fake one a browser fires after a layout change) landed mid-hold, read as a far-away move of a
   not-yet-armed finger, and cancelled it before the 300ms rest ended. S64 now dispatches such a stray move
   during the hold and still expects the slot to arm.
+- **Escape cancels at once, the click guard waits for the RELEASE (Codex P2, PR #313).** The guard that swallows
+  the release click was stamped when the drag ended — for Escape that is the key press — and then lived 250ms. An
+  owner who pressed Escape and kept the mouse down longer let go after it had expired, and the click (routed to
+  the source button by pointer capture) charted the stock they had just cancelled. The press now stays alive,
+  marked `dead`, until the physical release: `wbSlotDragEnd` RETURNS the button instead of stamping, and
+  `wbSlotPointerUp` arms the guard (`wbSlotArmClickGuard`) at that moment, after any commit repaint. A dead
+  press ignores moves (it cannot start another drag) and a mouse released outside the window ends it.
+- **Settle the open editor before the column is re-indexed (`wbSettleEditor`, Codex P2, PR #313).** The input's
+  blur save is deferred a tick (`setTimeout(0)`), and a TAP delivers `mousedown`, `mouseup` and `click` back to
+  back, so the `+` handler can run first: the slot the owner just typed in still reads empty in storage, so
+  `wbInsertSlot` calls it "already open" and moves nothing, `wbInsertAndEdit` rebuilds it as a blank editor, and
+  the old input's blur then takes the rebuild for a background repaint (case 2 above) and returns without saving
+  — the typed symbol is gone. A finger drag is the same hazard without any blur at all. The editor that is on
+  screen publishes its own quiet "save and close" as `wbEditorSettle`; `wbInsertAndEdit` and `wbCommitMove` call
+  `wbSettleEditor()` first, which saves the draft to ITS slot (no charting — attention has moved) and marks the
+  editor settled so the deferred blur does nothing. S64 reproduces the tap ordering exactly with `blur()` and
+  `click()` in one `evaluate`.
 - **A drag is navigation** and breaks a pending double-click pair (`wbSlotClick`), like a roster click or an
   editor opening.
 - **Cancel.** Escape, `pointercancel`, and a release more than 40px beside or 24px above/below the list change
@@ -543,8 +560,10 @@ Gesture rules, each of which S64 holds:
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 
 Not measured, stated rather than claimed away: a real finger. The mouse path is S64 on all four projects
-(desktop, tablet, mobile-chrome, iphone); twenty mutants each fail it (swap instead of splice, gap off by
+(desktop, tablet, mobile-chrome, iphone); twenty-four mutants each fail it (swap instead of splice, gap off by
 one, the release clicking through, Escape not cancelling, an off-list drop committing, an insert that keeps
 the empty slot — in both branches — a marker at the wrong edge, a wandering click swallowed, no pull-up
 fallback, focus not following, an empty slot draggable, no suppression window, the lost-pointerup guard removed, a global or never-consumed click guard, a guard consumed by any
-slot, a touch hold that never cancels the pan, a touch drag that needs no rest, a gesture driven by any pointer).
+slot, a touch hold that never cancels the pan, a touch drag that needs no rest, a gesture driven by any pointer, the
++ or a move that does not settle the open editor, a guard armed at the Escape, a held cancelled press that may
+drag again).

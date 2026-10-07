@@ -9013,6 +9013,23 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   expect(await first(3), 'and the drop itself landed').toEqual([R[2], 'CCC', R[1]]);
   await page.waitForTimeout(300);
 
+  // ── 4c. Escape cancels at once, but the owner may keep holding the mouse: the release click is still swallowed
+  // however long they hold (Codex P2 — the guard used to start its 250ms at the Escape, not at the release)
+  await seed([R[1], 'BBB', 'CCC']);
+  await page.evaluate(sym => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+  await press(0);
+  await dragOver(0, await upper(3));
+  await page.keyboard.press('Escape');
+  expect(await feedback(), 'Escape ends the drag at once, with the button still down').toEqual({ ghosts: [], markers: 0, dimmed: [], body: false });
+  await page.waitForTimeout(450);                          // longer than the guard's own lifetime
+  await dragOver(0, await upper(2));                       // moving on with the button down starts nothing
+  expect((await feedback()).ghosts, 'and a held, cancelled press does not start another drag').toEqual([]);
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => wbState.sym), 'releasing long after the Escape still does not chart the slot').toBe(R[0]);
+  expect(await first(3), 'and nothing moved').toEqual([R[1], 'BBB', 'CCC']);
+
   // ── 5. a click that wandered a few pixels is still a click: it charts, it does not vanish into a drag
   await seed([R[1], 'BBB']);
   await page.evaluate(sym => wbPick(sym), R[0]);
@@ -9109,8 +9126,8 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   const touchRun = (holdMs, stray = false) => page.evaluate(async ({ holdMs, stray }) => {
     const row = n => document.querySelector(`.wb-slots [data-slot="${n}"]`);
     const btn = row(0).querySelector('.wb-slot');
-    const b = btn.getBoundingClientRect(), r3 = row(3).getBoundingClientRect();
-    const x = b.left + b.width / 2, y0 = b.top + b.height / 2, y1 = r3.top + 3;
+    const b = btn.getBoundingClientRect();
+    const x = b.left + b.width / 2, y0 = b.top + b.height / 2;
     const pe = (type, y) => new PointerEvent(type, { pointerType: 'touch', pointerId: 41, isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1 });
     const tm = () => { const e = new Event('touchmove', { bubbles: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
     btn.dispatchEvent(pe('pointerdown', y0));
@@ -9119,6 +9136,9 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
     await new Promise(r => setTimeout(r, holdMs));
     const armed = btn.classList.contains('wb-armed');
     const prevented = tm();
+    // the target is measured NOW, after the hold: a slow engine can still be settling the scroll or a repaint
+    // that landed during it, and a height read before the wait is a height that may no longer be there
+    const y1 = row(3).getBoundingClientRect().top + 3;
     window.dispatchEvent(pe('pointermove', y0 + 14));
     window.dispatchEvent(pe('pointermove', y1));
     const ghosts = document.querySelectorAll('.wb-slot-ghost').length;
@@ -9135,6 +9155,32 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   expect(rested, 'a finger that rested 300ms is armed — even with a stray mouse move from ANOTHER pointer landing mid-hold — its pan is cancelled, the drag runs and cancels the pan too, and afterwards the pan is left alone').toEqual({ armed: true, prevented: true, ghosts: 1, preventedWhileDragging: true, after: false });
   await page.waitForTimeout(300);
   expect(await first(4), 'and the drop moved the stock').toEqual(['BBB', 'CCC', R[1], 'DDD']);
+
+  // ── 13. type in a slot and tap the + in the SAME task as the input's blur: nothing typed is lost (Codex P2).
+  // The input's save is deferred a tick; a tap can reach the + handler first. blur() + click() in one evaluate
+  // reproduces that order exactly.
+  await seed(['AAA', 'BBB']);
+  await slotBtn(page, 2).click();                          // an empty slot: its editor opens and slot 2 becomes the tab stop
+  await page.keyboard.type('zzz');
+  await page.evaluate(() => { document.querySelector('.wb-slot-input').blur(); document.querySelector('.wb-rail-add').click(); });
+  await page.waitForTimeout(300);
+  expect(await first(5), 'the typed symbol was saved BEFORE the slot opened above it (pushed one place down), not dropped').toEqual(['AAA', 'BBB', '', 'ZZZ', '']);
+  expect(await editorSlot(page), 'and the open slot has the editor').toBe('2');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+
+  // ── 14. a finger dragging a stock while an editor is open ELSEWHERE: no blur ever fires on a touch drag, so the
+  // draft must be saved before the rows shift — or it lands on whatever stock the shift put in that slot
+  await seed([R[1], 'BBB', 'CCC', 'DDD']);
+  await showRail();
+  await page.waitForTimeout(250);
+  await page.evaluate(() => { wbEditSlot = 3; wbEditDraft = 'EDITED'; renderWbSidebar(wbState.data); });
+  expect(await editorSlot(page), 'an editor is open on slot 3 with an unsaved draft').toBe('3');
+  const withEditor = await touchRun(420, false);
+  expect(withEditor.ghosts, 'the finger drag runs').toBe(1);
+  await page.waitForTimeout(300);
+  expect(await first(4), 'the draft was saved to ITS slot first, then moved with the rows').toEqual(['BBB', 'CCC', R[1], 'EDITED']);
+  expect(await editorCount(page), 'and no editor is left open on a shifted row').toBe(0);
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

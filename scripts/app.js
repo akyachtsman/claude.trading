@@ -4672,6 +4672,11 @@ const WB_RESTORE_LANES = 4;
    frame is work the rail cannot afford, so the other 99 stay cheap buttons. */
 let wbEditSlot = -1;
 let wbEditDraft = '';
+/* The OPEN editor's own "save what is typed and close, quietly" (set by the editor that is on screen,
+   null otherwise). Code that re-indexes or rebuilds the column — opening a slot, moving a stock —
+   calls wbSettleEditor() first: the editor's blur save is DEFERRED a tick, and a tap (or a drag with a
+   finger, which never blurs the input at all) can reach that code before it runs. */
+let wbEditorSettle = null;
 /* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
    deliberately not a plausible watchlist title, since the picker's values are
    otherwise list titles the owner types. */
@@ -5519,6 +5524,17 @@ function wbFocusSlotEditor(i, reveal) {
     if (reveal) live.scrollIntoView({ block: 'nearest' });
   });
 }
+/* Save the draft of an open editor and close it, BEFORE the column is re-indexed (Codex P2, PR #313).
+   Without it: type in a slot, then tap the `+` — the click reaches wbInsertAndEdit before the input's
+   deferred blur has saved anything, the slot that still reads empty "is already open", the editor is
+   rebuilt blank, and the old blur then mistakes the rebuild for a background repaint and returns without
+   saving: the typed symbol is silently lost. A finger dragging a stock while an editor is open on another
+   slot is the same hazard (no blur ever fires), and would shift rows under a draft that belongs to one. */
+function wbSettleEditor() {
+  const f = wbEditorSettle;
+  wbEditorSettle = null;
+  if (f && wbEditSlot >= 0) f();
+}
 /* Move the stock in slot `from` to slot `to` — the index it ends up at. A splice of the whole
    array, so the rows between the two shift by one and the length stays WB_SLOTS. */
 function wbMoveSlot(from, to) {
@@ -5557,6 +5573,7 @@ function wbInsertSlot(at) {
    slot opens. A pending double-click pair is broken (an editor opening is navigation, see
    wbSlotClick), and the tab stop goes to the new slot. */
 function wbInsertAndEdit(at) {
+  wbSettleEditor();
   const open = wbInsertSlot(at);
   if (open < 0) { wbRailNote('Every slot is filled — empty one first'); return; }
   wbSlotClick = { i: -1, at: 0 };
@@ -5570,6 +5587,7 @@ function wbInsertAndEdit(at) {
    focuses the button, and the keyboard path is entirely about focus): renderWbSidebar's own restore
    would otherwise put it back on the old INDEX, which now holds a different stock. */
 function wbCommitMove(from, to) {
+  wbSettleEditor();
   const f = document.activeElement;
   const row = f && f.classList && f.classList.contains('wb-slot') ? f.closest('.wb-rail-row') : null;
   const hadFocus = !!row && Number(row.dataset.slot) === from;
@@ -5670,7 +5688,7 @@ function wbSlotDragEnd(ev, cancelled) {
   const d = wbSlotDrag;
   clearTimeout(d.armed);
   cancelAnimationFrame(d.raf); d.raf = 0;
-  if (!d.on) return;
+  if (!d.on) return null;
   if (!cancelled) { d.x = ev.clientX; d.y = ev.clientY; }
   wbSlotDragPaint();                      /* the gap under the RELEASE point */
   const from = d.from, gap = cancelled ? -1 : d.gap;
@@ -5684,13 +5702,20 @@ function wbSlotDragEnd(ev, cancelled) {
   const to = gap < 0 ? -1 : wbGapToSlot(from, gap);
   if (to >= 0 && to !== from) wbCommitMove(from, to);
   /* A release is still delivered as a `click` on the slot BUTTON the press began on, which would CHART
-     it. Suppress that one click — and only that one: the guard names the source NODE and is consumed by
-     the first click it meets (see the click handler), so a click on any other slot is never eaten. A
-     committed move usually detaches the source button, so no click arrives at all and the guard simply
-     lapses; a CANCELLED drag (Escape, a release off the list) leaves the node in place and relies on it.
-     Not set for a release back where it started — a click that wandered a few pixels still charts.
-     Stamped AFTER the commit's repaint, so a slow repaint does not eat the window. */
-  wbSlotDragClickBtn = to === from ? null : srcBtn;
+     it. Returned to the caller, which ARMS the guard (wbSlotArmClickGuard) at the moment of the RELEASE:
+     Escape cancels the drag at once but the owner may keep holding the mouse for as long as they like,
+     and a guard stamped at Escape had expired by the time they let go (Codex P2). Null for a release back
+     where it started — a click that wandered a few pixels still charts. */
+  return to === from ? null : srcBtn;
+}
+/* Swallow the ONE click the release of a drag delivers to its source button. The guard names the source
+   NODE and is consumed by the first click it meets (see the click handler), so a click on any other slot
+   is never eaten; a committed move usually detaches the source button, so no click arrives and the guard
+   simply lapses after WB_SLOT_DRAG_CLICK_MS. Stamped AFTER the commit's repaint (the caller runs this
+   once wbSlotDragEnd has returned), so a slow repaint does not eat the window. */
+function wbSlotArmClickGuard(btn) {
+  if (!btn) return;
+  wbSlotDragClickBtn = btn;
   wbSlotDragClickAt = Date.now();
 }
 /* Pointer wiring for the filled slots — ONE delegated listener on the rail, not one per button.
@@ -5752,6 +5777,10 @@ function wbSlotPointerDown(ev) {
 function wbSlotPointerMove(e) {
   const p = wbSlotPress;
   if (!p || e.pointerId !== p.pid) return;
+  /* Cancelled by Escape: the press stays alive only to see the physical RELEASE, so its click can still be
+     swallowed however long the owner holds on. It must not start another drag, and a mouse that was
+     released outside the window ends it. */
+  if (p.dead) { if (!p.touch && e.buttons === 0) wbSlotPressEnd(); return; }
   /* A mouse button released OUTSIDE the window never delivers its pointerup, so the press would outlive
      it and a later plain mouse move would start a drag with nothing held. A mouse (or pen) move with no
      button down ends the gesture. */
@@ -5766,8 +5795,9 @@ function wbSlotPointerMove(e) {
 function wbSlotPointerUp(e) {
   const p = wbSlotPress;
   if (!p || e.pointerId !== p.pid) return;
-  wbSlotDragEnd(e, false);
+  const guard = wbSlotDragEnd(e, false) || p.pendingGuard;
   wbSlotPressEnd();
+  wbSlotArmClickGuard(guard);
 }
 function wbSlotPointerCancel(e) {
   const p = wbSlotPress;
@@ -5776,7 +5806,11 @@ function wbSlotPointerCancel(e) {
   wbSlotPressEnd();
 }
 function wbSlotPressKey(e) {
-  if (wbSlotPress && e.key === 'Escape') { wbSlotDragEnd(e, true); wbSlotPressEnd(); }
+  const p = wbSlotPress;
+  if (!p || p.dead || e.key !== 'Escape') return;
+  if (!wbSlotDrag.on) { wbSlotPressEnd(); return; }       /* a press that never became a drag: nothing to keep */
+  p.pendingGuard = wbSlotDragEnd(e, true);                /* the drag ends NOW; its click is swallowed when the button comes up */
+  p.dead = true;
 }
 {
   const rail = document.getElementById('wbSidebar');
@@ -5839,6 +5873,12 @@ function wbSlotRow(i, sym, data) {
        they typed even when it does not resolve, so a bad entry is never
        discarded or rewritten. Blur does NOT chart (see below): the owner who
        clicked away has moved on, and charting behind them fights the click. */
+    wbEditorSettle = () => {
+      if (settled || wbEditSlot !== i) return;
+      settled = true;                       /* the deferred blur below now does nothing */
+      save();                               /* the same save Enter and blur make; no charting — attention has moved */
+      wbEditSlot = -1; wbEditDraft = '';
+    };
     const commit = () => {
       if (settled || wbEditSlot !== i) return;
       settled = true;
