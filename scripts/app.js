@@ -5488,8 +5488,12 @@ const WB_SLOT_DRAG_SLOP = 6;
 const WB_SLOT_TOUCH_ARM_MS = 300;
 const WB_SLOT_EDGE_PX = 22, WB_SLOT_EDGE_MAX_STEP = 14;   /* the list scrolls itself while a drag holds at its top/bottom edge */
 const WB_SLOT_DRAG_CLICK_MS = 250;
-const wbSlotDrag = { on: false, armed: 0, from: -1, sym: '', ghost: null, marker: null, raf: 0, x: 0, y: 0, gap: -1 };
+const wbSlotDrag = { on: false, armed: 0, from: -1, sym: '', btn: null, ghost: null, marker: null, raf: 0, x: 0, y: 0, gap: -1 };
+/* The release that ends a drag is delivered as a `click` to the slot BUTTON the press began on. The
+   guard that swallows it is tied to THAT NODE and is one-shot: a click on any other slot, or on a
+   replacement button after a repaint, is a real click and is never eaten (Codex P2). */
 let wbSlotDragClickAt = 0;
+let wbSlotDragClickBtn = null;
 /* A one-line message under ACTIVE — "every slot is filled" is the only one. Module state, since
    renderWbSidebar rebuilds the rail; cleared by its own timer. */
 let wbRailMsg = '', wbRailMsgT = 0;
@@ -5644,9 +5648,9 @@ function wbSlotDragScroll() {
   wbSlotDragPaint();
   d.raf = requestAnimationFrame(wbSlotDragScroll);
 }
-function wbSlotDragStart(ev, from, sym) {
+function wbSlotDragStart(ev, from, sym, btn) {
   const d = wbSlotDrag;
-  d.on = true; d.from = from; d.sym = sym; d.x = ev.clientX; d.y = ev.clientY; d.gap = -1;
+  d.on = true; d.from = from; d.sym = sym; d.btn = btn; d.x = ev.clientX; d.y = ev.clientY; d.gap = -1;
   wbSlotClick = { i: -1, at: 0 };      /* a drag is navigation: it breaks a pending click pair */
   document.body.classList.add('wb-drag-active');
   const ghost = el('div', 'wb-slot-ghost', sym);
@@ -5675,15 +5679,19 @@ function wbSlotDragEnd(ev, cancelled) {
   const src = document.querySelector('.wb-rail-manual .wb-dragging');
   if (src) src.classList.remove('wb-dragging');
   document.body.classList.remove('wb-drag-active');
-  d.on = false; d.marker = null; d.ghost = null; d.from = -1; d.sym = ''; d.gap = -1;
+  const srcBtn = d.btn;
+  d.on = false; d.marker = null; d.ghost = null; d.from = -1; d.sym = ''; d.btn = null; d.gap = -1;
   const to = gap < 0 ? -1 : wbGapToSlot(from, gap);
   if (to >= 0 && to !== from) wbCommitMove(from, to);
-  /* A release is still delivered as a `click` on the slot the press began on, which would CHART it.
-     Suppress that — except for a release back where it started, which is just a click that wandered
-     a few pixels and should still chart. Stamped AFTER the commit's repaint, so a slow repaint does
-     not eat the window; the click follows the release within milliseconds, so the window is short and
-     the owner's NEXT click is never swallowed. */
-  wbSlotDragClickAt = to === from ? 0 : Date.now();
+  /* A release is still delivered as a `click` on the slot BUTTON the press began on, which would CHART
+     it. Suppress that one click — and only that one: the guard names the source NODE and is consumed by
+     the first click it meets (see the click handler), so a click on any other slot is never eaten. A
+     committed move usually detaches the source button, so no click arrives at all and the guard simply
+     lapses; a CANCELLED drag (Escape, a release off the list) leaves the node in place and relies on it.
+     Not set for a release back where it started — a click that wandered a few pixels still charts.
+     Stamped AFTER the commit's repaint, so a slow repaint does not eat the window. */
+  wbSlotDragClickBtn = to === from ? null : srcBtn;
+  wbSlotDragClickAt = Date.now();
 }
 /* Pointer wiring for the filled slots — ONE delegated listener on the rail, not one per button.
    Kept off the slot's click handler entirely: a drag only begins after WB_SLOT_DRAG_SLOP of movement
@@ -5693,6 +5701,21 @@ function wbSlotDragEnd(ev, cancelled) {
    on every animation frame of a chart drag and on every poll — it also pushed the double-click's
    second click past WB_SLOT_DBL_MS on a slow machine. The rail element itself is never rebuilt, only
    its contents, so a single listener on it survives every repaint. */
+/* The press in progress, or null: { pid, btn, from, sym, startX, startY, touch, holdScroll }. Module state
+   with PERMANENT window listeners (below) instead of four listeners added and removed on every press: in
+   WebKit each listener add cost ~5ms, which put ~20ms on every plain click and tipped S45's slow
+   double-click over its pairing window on a slow machine. Only a TOUCH press adds a listener of its own —
+   the non-passive touchmove, which must not be permanent (a permanent non-passive touchmove on the window
+   makes every scroll on the page wait for JavaScript). */
+let wbSlotPress = null;
+function wbSlotPressEnd() {
+  clearTimeout(wbSlotDrag.armed);
+  const p = wbSlotPress;
+  wbSlotPress = null;
+  if (!p) return;
+  p.btn.classList.remove('wb-armed');
+  if (p.holdScroll) window.removeEventListener('touchmove', p.holdScroll);
+}
 function wbSlotPointerDown(ev) {
   if (ev.button != null && ev.button !== 0) return;
   const btn = ev.target && ev.target.closest ? ev.target.closest('.wb-slot') : null;
@@ -5704,43 +5727,64 @@ function wbSlotPointerDown(ev) {
   /* An EMPTY slot has nothing to pick up. Anything else — even text that is not a ticker — can be
      moved, since the owner may want to put it somewhere before correcting it. */
   if (!(from >= 0) || !sym) return;
-  const startX = ev.clientX, startY = ev.clientY;
+  wbSlotPressEnd();                                  /* a stale press (its pointerup was lost) is replaced, never joined */
   const touch = ev.pointerType === 'touch';
-  clearTimeout(wbSlotDrag.armed);
+  /* The gesture belongs to THIS pointer (`pid`). A hybrid device also fires hover moves from a mouse (and
+     the browser fakes one after a layout change), and one landing mid-hold read as a far-away move that
+     cancelled a resting finger before it armed — found by S64's touch step on iPhone's WebKit. */
+  const press = { pid: ev.pointerId, btn, from, sym, startX: ev.clientX, startY: ev.clientY, touch, holdScroll: null };
+  wbSlotPress = press;
   /* Arming flips the slot to touch-action: none so the browser stops reading the gesture as a
      scroll — only once the finger has rested, so a swipe over the list still scrolls it. */
   if (touch) wbSlotDrag.armed = setTimeout(() => btn.classList.add('wb-armed'), WB_SLOT_TOUCH_ARM_MS);
-  const move = e => {
-    /* A mouse button released OUTSIDE the window never delivers its pointerup here, so these window
-       listeners would outlive the press and a later plain mouse move would start a drag with nothing
-       held. A mouse (or pen) move with no button down ends the gesture. */
-    if (!touch && e.buttons === 0) { wbSlotDragEnd(e, true); cleanup(); return; }
-    if (wbSlotDrag.on) { wbSlotDragMove(e); return; }
-    if (Math.hypot(e.clientX - startX, e.clientY - startY) <= WB_SLOT_DRAG_SLOP) return;
-    if (touch && !btn.classList.contains('wb-armed')) { cleanup(); return; }
-    try { btn.setPointerCapture(ev.pointerId); } catch { /* the drag runs on window listeners; capture is a courtesy */ }
-    wbSlotDragStart(e, from, sym);
-    wbSlotDragMove(e);
-  };
-  const up = e => { wbSlotDragEnd(e, false); cleanup(); };
-  const cancel = e => { wbSlotDragEnd(e, true); cleanup(); };
-  const key = e => { if (e.key === 'Escape') { wbSlotDragEnd(e, true); cleanup(); } };
-  function cleanup() {
-    clearTimeout(wbSlotDrag.armed);
-    btn.classList.remove('wb-armed');
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-    window.removeEventListener('pointercancel', cancel);
-    window.removeEventListener('keydown', key);
+  /* `touch-action` is evaluated when the finger goes DOWN and cannot be changed for the gesture in
+     progress, so adding `.wb-armed` after the hold does not stop the browser panning on the first move
+     — it would start the pan and cancel the pointer stream (Codex P1). What does work, and is how
+     touch sortables are built: a NON-PASSIVE `touchmove` listener, in place before the finger moves,
+     that cancels the move while the slot is armed or a drag is running. The first move after a rest is
+     still cancelable (a pan has not begun), and an unarmed move is left alone, so a swipe over the list
+     still scrolls it. Window-level listeners default to passive in Chromium, hence the explicit option. */
+  if (touch) {
+    press.holdScroll = e => { if (e.cancelable && (btn.classList.contains('wb-armed') || wbSlotDrag.on)) e.preventDefault(); };
+    window.addEventListener('touchmove', press.holdScroll, { passive: false });
   }
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-  window.addEventListener('pointercancel', cancel);
-  window.addEventListener('keydown', key);
+}
+function wbSlotPointerMove(e) {
+  const p = wbSlotPress;
+  if (!p || e.pointerId !== p.pid) return;
+  /* A mouse button released OUTSIDE the window never delivers its pointerup, so the press would outlive
+     it and a later plain mouse move would start a drag with nothing held. A mouse (or pen) move with no
+     button down ends the gesture. */
+  if (!p.touch && e.buttons === 0) { wbSlotDragEnd(e, true); wbSlotPressEnd(); return; }
+  if (wbSlotDrag.on) { wbSlotDragMove(e); return; }
+  if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) <= WB_SLOT_DRAG_SLOP) return;
+  if (p.touch && !p.btn.classList.contains('wb-armed')) { wbSlotPressEnd(); return; }
+  try { p.btn.setPointerCapture(p.pid); } catch { /* the drag runs on window listeners; capture is a courtesy */ }
+  wbSlotDragStart(e, p.from, p.sym, p.btn);
+  wbSlotDragMove(e);
+}
+function wbSlotPointerUp(e) {
+  const p = wbSlotPress;
+  if (!p || e.pointerId !== p.pid) return;
+  wbSlotDragEnd(e, false);
+  wbSlotPressEnd();
+}
+function wbSlotPointerCancel(e) {
+  const p = wbSlotPress;
+  if (!p || e.pointerId !== p.pid) return;
+  wbSlotDragEnd(e, true);
+  wbSlotPressEnd();
+}
+function wbSlotPressKey(e) {
+  if (wbSlotPress && e.key === 'Escape') { wbSlotDragEnd(e, true); wbSlotPressEnd(); }
 }
 {
   const rail = document.getElementById('wbSidebar');
   if (rail) rail.addEventListener('pointerdown', wbSlotPointerDown);
+  window.addEventListener('pointermove', wbSlotPointerMove);
+  window.addEventListener('pointerup', wbSlotPointerUp);
+  window.addEventListener('pointercancel', wbSlotPointerCancel);
+  window.addEventListener('keydown', wbSlotPressKey);
 }
 
 function wbSlotRow(i, sym, data) {
@@ -5933,7 +5977,11 @@ function wbSlotRow(i, sym, data) {
   b.addEventListener('click', ev => {
     /* The release that ends a DRAG is still delivered as a click on the slot the press began on; it is
        not one (see wbDragEnd). A wandering click that came back to its own place is let through. */
-    if (Date.now() - wbSlotDragClickAt < WB_SLOT_DRAG_CLICK_MS) return;
+    if (b === wbSlotDragClickBtn) {
+      const fresh = Date.now() - wbSlotDragClickAt < WB_SLOT_DRAG_CLICK_MS;
+      wbSlotDragClickBtn = null;            /* one-shot: the next click on this slot is a real one */
+      if (fresh) return;
+    }
     const now = Date.now();
     /* POINTER clicks pair; keyboard ones never do. Enter/Space on a focused
        button fires a synthetic click with detail 0, so two activations inside

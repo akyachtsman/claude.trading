@@ -823,7 +823,9 @@
      SWALLOW the edit gesture. On a touch-only phone that is the ONLY way to edit
      a filled slot — F2 needs a keyboard — so without this an owner can fill an
      empty slot once and then never change or clear it (Codex P1). */
-  .wb-slot { min-height: 15px; touch-action: manipulation; }
+  /* The press-and-hold that arms a drag on a phone must not also raise the browser's own long-press
+     callout / text selection over the ticker. */
+  .wb-slot { min-height: 15px; touch-action: manipulation; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .wb-slot--empty { border-bottom: 1px dotted var(--color-border); border-radius: 0; }
   .wb-slot--empty:hover { background: var(--color-surface-2); border-bottom-color: transparent; border-radius: var(--radius-sm); }
   /* ── drag a stock up or down the column; open a slot to push one in (owner request 2026-10-07,

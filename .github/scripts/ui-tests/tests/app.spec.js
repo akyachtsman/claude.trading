@@ -8989,6 +8989,30 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   expect(await first(12), 'a release off the list is a cancel').toEqual(before);
   expect(await page.evaluate(() => wbState.sym), 'which charts nothing either').toBe(R[0]);
 
+  // ── 4b. the guard that swallows the release click is ONE-SHOT and belongs to the slot the drag began on
+  // (Codex P2): a click on ANOTHER slot right after a drop is a real click, and so is the next click on the
+  // source slot once its own release click has been eaten — neither waits out a timer
+  await seed([R[1], R[2], 'CCC']);
+  await page.evaluate(sym => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+  await press(0);
+  await dragOver(0, await upper(3));
+  await page.keyboard.press('Escape');
+  await page.mouse.up();                                   // the release click lands on slot 0's own button: eaten
+  await page.waitForTimeout(150);
+  expect(await page.evaluate(() => wbState.sym), 'the release click of a cancelled drag is swallowed').toBe(R[0]);
+  await slotBtn(page, 0).click();                          // immediately: the guard was consumed, so this one charts
+  await expect.poll(() => page.evaluate(() => wbState.sym), { message: 'the very next click on that slot is a real click', timeout: 8000 }).toBe(R[1]);
+  await page.evaluate(sym => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+  await press(0);
+  await dragOver(0, await upper(3));
+  await page.mouse.up();                                   // dropped before row 3: [R2, CCC, R1]
+  await slotBtn(page, 0).click();                          // at once, on a DIFFERENT stock (a replacement button)
+  await expect.poll(() => page.evaluate(() => wbState.sym), { message: 'a click on another stock right after a drop charts it', timeout: 8000 }).toBe(R[2]);
+  expect(await first(3), 'and the drop itself landed').toEqual([R[2], 'CCC', R[1]]);
+  await page.waitForTimeout(300);
+
   // ── 5. a click that wandered a few pixels is still a click: it charts, it does not vanish into a drag
   await seed([R[1], 'BBB']);
   await page.evaluate(sym => wbPick(sym), R[0]);
@@ -9066,16 +9090,51 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
 
   // ── 11. a button released OUTSIDE the window never delivers its pointerup: the next plain move must not start a drag
   await seed(['AAA', 'BBB', 'CCC']);
+  await page.evaluate(() => addEventListener('pointerdown', e => { window.__pid = e.pointerId; }, { capture: true, once: true }));
   await press(0);
   await page.evaluate(() => {
     const r = document.querySelector('.wb-slots [data-slot="0"]').getBoundingClientRect();
-    window.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'mouse', buttons: 0, clientX: r.left + 10, clientY: r.top + 40, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'mouse', pointerId: window.__pid, buttons: 0, clientX: r.left + 10, clientY: r.top + 40, bubbles: true }));
   });
   await page.mouse.move((await rowBox(0)).x + 10, (await rowBox(0)).y + 60, { steps: 4 });   // the real button is still down, but the gesture is over
   expect((await feedback()).ghosts, 'a move with no button down ends the press instead of starting a drag').toEqual([]);
   await page.mouse.up();
   await page.waitForTimeout(300);
   expect(await first(3), 'and nothing moved').toEqual(['AAA', 'BBB', 'CCC']);
+
+  // ── 12. touch (Codex P1): a finger must REST before the drag arms, and once armed the native pan has to be
+  // cancelled by a NON-passive touchmove (touch-action cannot change mid-gesture). Synthetic pointer and
+  // touchmove events through the real handler — this proves the arming rule and the cancel hook, NOT that a
+  // phone's browser honours them; that stays unverified here.
+  const touchRun = (holdMs, stray = false) => page.evaluate(async ({ holdMs, stray }) => {
+    const row = n => document.querySelector(`.wb-slots [data-slot="${n}"]`);
+    const btn = row(0).querySelector('.wb-slot');
+    const b = btn.getBoundingClientRect(), r3 = row(3).getBoundingClientRect();
+    const x = b.left + b.width / 2, y0 = b.top + b.height / 2, y1 = r3.top + 3;
+    const pe = (type, y) => new PointerEvent(type, { pointerType: 'touch', pointerId: 41, isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1 });
+    const tm = () => { const e = new Event('touchmove', { bubbles: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+    btn.dispatchEvent(pe('pointerdown', y0));
+    // a hybrid device's mouse (or the browser's fake hover move after a layout change) arrives mid-hold, far away
+    if (stray) { await new Promise(r => setTimeout(r, 100)); window.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'mouse', pointerId: 1, buttons: 0, clientX: x + 200, clientY: y0 + 200, bubbles: true })); holdMs -= 100; }
+    await new Promise(r => setTimeout(r, holdMs));
+    const armed = btn.classList.contains('wb-armed');
+    const prevented = tm();
+    window.dispatchEvent(pe('pointermove', y0 + 14));
+    window.dispatchEvent(pe('pointermove', y1));
+    const ghosts = document.querySelectorAll('.wb-slot-ghost').length;
+    const preventedWhileDragging = tm();
+    window.dispatchEvent(pe('pointerup', y1));
+    return { armed, prevented, ghosts, preventedWhileDragging, after: tm() };
+  }, { holdMs, stray });
+  await seed([R[1], 'BBB', 'CCC', 'DDD']);
+  await showRail();
+  const early = await touchRun(60);
+  expect(early, 'moving before the rest is over leaves the gesture to the browser: no arming, no ghost, no cancelled pan').toEqual({ armed: false, prevented: false, ghosts: 0, preventedWhileDragging: false, after: false });
+  expect(await first(4), 'and nothing moved').toEqual([R[1], 'BBB', 'CCC', 'DDD']);
+  const rested = await touchRun(420, true);
+  expect(rested, 'a finger that rested 300ms is armed — even with a stray mouse move from ANOTHER pointer landing mid-hold — its pan is cancelled, the drag runs and cancels the pan too, and afterwards the pan is left alone').toEqual({ armed: true, prevented: true, ghosts: 1, preventedWhileDragging: true, after: false });
+  await page.waitForTimeout(300);
+  expect(await first(4), 'and the drop moved the stock').toEqual(['BBB', 'CCC', R[1], 'DDD']);
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

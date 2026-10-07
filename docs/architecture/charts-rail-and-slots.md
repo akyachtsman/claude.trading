@@ -466,20 +466,57 @@ runs on every animation frame of a chart drag and every poll). It was caught bec
 projects: the repaint after the first click now delayed the second past the window. `#wbSidebar` itself is never
 rebuilt — only its contents — so one listener survives every repaint. Do not move it back onto the buttons.
 
+**The same cost applies to the press's own listeners, and was found the same way.** The second cut added
+`pointermove`/`pointerup`/`pointercancel`/`keydown` to `window` at every `pointerdown` and removed them at the
+end; with the per-button listeners gone S45 was still failing on iPhone/iPad about half the time, because those
+four adds put ~20ms on every plain click and the slow double-click sits ~470ms into a 500ms window. Measured
+(two clicks 300ms apart, the gap between the click EVENTS, WebKit, iPad profile): base ≈ 470ms, that cut ≈ 480ms,
+the permanent-listener version ≈ 345ms. The press is now module state (`wbSlotPress`: pointer id, button, slot,
+symbol, start point, touch, hold-scroll listener) and the four listeners are registered ONCE at load, ignoring
+every event while no press is in progress. A stale press (its pointerup lost) is replaced by the next
+`pointerdown`, never joined. **Only a touch press adds a listener of its own — the non-passive `touchmove` —
+and it must stay per-press:** a permanent non-passive `touchmove` on `window` would make every scroll on the
+page wait for JavaScript. The ~125ms gain over base beyond that is `user-select: none` / `-webkit-touch-callout:
+none` on `.wb-slot` (added for the long-press callout): WebKit skips its selection handling on mouse-down for
+the slot, which also stops a double-click from highlighting a ticker. Not separately proven; measured as a
+whole.
+
 Gesture rules, each of which S64 holds:
 - **Slop and arming.** A mouse starts a drag after `WB_SLOT_DRAG_SLOP` (6px); a finger must rest
-  `WB_SLOT_TOUCH_ARM_MS` (300ms) first, so an ordinary swipe still scrolls the 100-row list. `.wb-armed` is
-  the ONLY time a slot is `touch-action: none`; the base `touch-action: manipulation` (which keeps the
-  double-tap edit from becoming a zoom, Codex P1 above) stays the rule. The touch path reuses the watchlist
-  tiles' arming device and CANNOT be exercised in this sandbox — it is reasoned about, not tested.
-- **The release is still a click.** It is delivered to the slot the press began on and would CHART it, so
-  `wbSlotDragClickAt` makes the click handler ignore it for `WB_SLOT_DRAG_CLICK_MS` (250). Stamped AFTER the
-  commit's repaint, so a slow repaint cannot eat the window; short, so the owner's NEXT click is never
-  swallowed. A committed move usually detaches the button so no click arrives at all — the case that needs
-  the stamp is a CANCELLED drag (Escape, a release off the list), with no repaint to detach anything, which is
-  why S64 holds a chartable symbol in the slot and checks the chart did not move. **The exception:** a release
-  back where it started (`to === from`) is not stamped — a click that wandered past 6px and came home still
-  charts.
+  `WB_SLOT_TOUCH_ARM_MS` (300ms) first, so an ordinary swipe still scrolls the 100-row list. The base
+  `touch-action: manipulation` (which keeps the double-tap edit from becoming a zoom, Codex P1 above) stays
+  the rule.
+- **Touch: the pan is stopped by a NON-PASSIVE `touchmove`, not by a class (Codex P1, PR #313).** The first cut
+  copied the watchlist tiles' device — add `.wb-armed` (`touch-action: none`) after the hold. But
+  `touch-action` is evaluated when the finger goes DOWN and cannot be changed for the gesture in progress, so
+  on a real phone the first move after the rest starts a native pan and the browser sends `pointercancel`:
+  the advertised hold-to-drag cancels instead of moving the stock. What works, and is how touch sortables are
+  built: a `touchmove` listener registered `{ passive: false }` AT `pointerdown` (window-level listeners
+  default to passive in Chromium) that calls `preventDefault()` while the slot is armed or a drag is running
+  (`holdScroll`). The first move after a rest is still cancelable because no pan has begun; an unarmed move is
+  left alone, so a swipe still scrolls the list, and moving past the slop before the rest is over cancels the
+  press. `.wb-armed` stays as the visible cue. `.wb-slot` also carries `-webkit-touch-callout: none` and
+  `user-select: none` so the hold raises no long-press callout. **The watchlist tiles (`wlWireDrag`) still use
+  the class-only device and may have the same defect on a phone; they were not touched (out of scope), and
+  this is recorded here so the next person to touch them knows.** S64 step 12 drives synthetic pointer and
+  `touchmove` events through the real handler: it proves the arming rule and the cancel hook, NOT that a
+  phone's browser honours them — a real finger is still unverified in this sandbox.
+- **The release is still a click — and the guard that swallows it is ONE-SHOT and tied to the source NODE.**
+  It is delivered to the slot BUTTON the press began on and would CHART it, so `wbSlotDragClickBtn` names that
+  node and the click handler ignores the first click it receives on it (and clears the guard), for at most
+  `WB_SLOT_DRAG_CLICK_MS` (250, stamped AFTER the commit's repaint). **The first cut was a global timestamp
+  (Codex P2, PR #313)**, which discarded EVERY slot's clicks for 250ms and was never cleared by the click it
+  existed for: after a drop whose source button had been detached, an immediate click on another stock was
+  silently lost. A committed move usually detaches the source button so no click arrives and the guard
+  lapses; the case that needs it is a CANCELLED drag (Escape, a release off the list), with no repaint to
+  detach anything, which is why S64 holds a chartable symbol in the slot and checks the chart did not move.
+  **The exception:** a release back where it started (`to === from`) sets no guard — a click that wandered
+  past 6px and came home still charts.
+- **The gesture belongs to ONE pointer** (`pid`, the `pointerId` of the press): `move`, `up` and `cancel` ignore any
+  other. Found by S64's touch step on iPhone's WebKit: a real, trusted mouse `pointermove` (a hybrid device's
+  hover, or the fake one a browser fires after a layout change) landed mid-hold, read as a far-away move of a
+  not-yet-armed finger, and cancelled it before the 300ms rest ended. S64 now dispatches such a stray move
+  during the hold and still expects the slot to arm.
 - **A drag is navigation** and breaks a pending double-click pair (`wbSlotClick`), like a roster click or an
   editor opening.
 - **Cancel.** Escape, `pointercancel`, and a release more than 40px beside or 24px above/below the list change
@@ -506,8 +543,8 @@ Gesture rules, each of which S64 holds:
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 
 Not measured, stated rather than claimed away: a real finger. The mouse path is S64 on all four projects
-(desktop, tablet, mobile-chrome, iphone); fourteen mutants each fail it (swap instead of splice, gap off by
+(desktop, tablet, mobile-chrome, iphone); twenty mutants each fail it (swap instead of splice, gap off by
 one, the release clicking through, Escape not cancelling, an off-list drop committing, an insert that keeps
 the empty slot — in both branches — a marker at the wrong edge, a wandering click swallowed, no pull-up
-fallback, focus not following, an empty slot draggable, no suppression window, a listener leaked past the
-drag, the lost-pointerup guard removed).
+fallback, focus not following, an empty slot draggable, no suppression window, the lost-pointerup guard removed, a global or never-consumed click guard, a guard consumed by any
+slot, a touch hold that never cancels the pan, a touch drag that needs no rest, a gesture driven by any pointer).
