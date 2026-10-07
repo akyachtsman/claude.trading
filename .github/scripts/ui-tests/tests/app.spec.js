@@ -9064,5 +9064,18 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await page.waitForTimeout(300);
   await page.keyboard.press('Escape');
 
+  // ── 11. a button released OUTSIDE the window never delivers its pointerup: the next plain move must not start a drag
+  await seed(['AAA', 'BBB', 'CCC']);
+  await press(0);
+  await page.evaluate(() => {
+    const r = document.querySelector('.wb-slots [data-slot="0"]').getBoundingClientRect();
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'mouse', buttons: 0, clientX: r.left + 10, clientY: r.top + 40, bubbles: true }));
+  });
+  await page.mouse.move((await rowBox(0)).x + 10, (await rowBox(0)).y + 60, { steps: 4 });   // the real button is still down, but the gesture is over
+  expect((await feedback()).ghosts, 'a move with no button down ends the press instead of starting a drag').toEqual([]);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  expect(await first(3), 'and nothing moved').toEqual(['AAA', 'BBB', 'CCC']);
+
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

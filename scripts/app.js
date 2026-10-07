@@ -5711,6 +5711,10 @@ function wbSlotPointerDown(ev) {
      scroll — only once the finger has rested, so a swipe over the list still scrolls it. */
   if (touch) wbSlotDrag.armed = setTimeout(() => btn.classList.add('wb-armed'), WB_SLOT_TOUCH_ARM_MS);
   const move = e => {
+    /* A mouse button released OUTSIDE the window never delivers its pointerup here, so these window
+       listeners would outlive the press and a later plain mouse move would start a drag with nothing
+       held. A mouse (or pen) move with no button down ends the gesture. */
+    if (!touch && e.buttons === 0) { wbSlotDragEnd(e, true); cleanup(); return; }
     if (wbSlotDrag.on) { wbSlotDragMove(e); return; }
     if (Math.hypot(e.clientX - startX, e.clientY - startY) <= WB_SLOT_DRAG_SLOP) return;
     if (touch && !btn.classList.contains('wb-armed')) { cleanup(); return; }

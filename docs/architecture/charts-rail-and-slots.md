@@ -483,7 +483,9 @@ Gesture rules, each of which S64 holds:
 - **A drag is navigation** and breaks a pending double-click pair (`wbSlotClick`), like a roster click or an
   editor opening.
 - **Cancel.** Escape, `pointercancel`, and a release more than 40px beside or 24px above/below the list change
-  nothing and draw no marker. An EMPTY slot has nothing to pick up (the handler refuses a slot with no text).
+  nothing and draw no marker. A mouse or pen `pointermove` with `buttons === 0` also ends the press: a button
+  released OUTSIDE the window never delivers its `pointerup`, and the window listeners would otherwise outlive the
+  press and turn the next plain move into a drag with nothing held. An EMPTY slot has nothing to pick up (the handler refuses a slot with no text).
 - **The list scrolls itself** while a drag holds within `WB_SLOT_EDGE_PX` (22) of its top or bottom edge
   (`wbSlotDragScroll`, one rAF loop re-armed by every move, cancelled when the drag ends), because a finger
   cannot scroll while armed and a stock moving from slot 3 to slot 60 must be possible in one gesture. The page
@@ -504,8 +506,8 @@ Gesture rules, each of which S64 holds:
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 
 Not measured, stated rather than claimed away: a real finger. The mouse path is S64 on all four projects
-(desktop, tablet, mobile-chrome, iphone); thirteen mutants each fail it (swap instead of splice, gap off by
+(desktop, tablet, mobile-chrome, iphone); fourteen mutants each fail it (swap instead of splice, gap off by
 one, the release clicking through, Escape not cancelling, an off-list drop committing, an insert that keeps
 the empty slot — in both branches — a marker at the wrong edge, a wandering click swallowed, no pull-up
 fallback, focus not following, an empty slot draggable, no suppression window, a listener leaked past the
-drag).
+drag, the lost-pointerup guard removed).
