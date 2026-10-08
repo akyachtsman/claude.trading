@@ -726,7 +726,7 @@ width); **S56** guards the live 10Y.
   - **Never NEW** (a price ticking by the minute is not a release: the oil rows skip the seen/pending bookkeeping), **never
     demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
-    of the quote feed, which is why their stubs now let `CL=F` through).
+    of the quote feed, which is why their stubs now let `CL=F` and `NG=F` through).
   - **The oil charts do not depend on desk-econ's span** (Codex, PR #308, seventh round): `renderEcon` passes the
     "does this payload belong to the span showing" flag (`chartsMatch`, which withholds a chart labelled with the wrong
     window) to the desk-econ rows only. An oil row's charts are sliced from the quote feed's OWN daily history for the
