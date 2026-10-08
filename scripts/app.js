@@ -5461,6 +5461,9 @@ const WB_SLOT_DBL_MS = 500;       /* OUR pairing window — the only one that go
 let wbSlotClick = { i: -1, at: 0 };
 /* Which slot currently carries the column's single tab stop. See wbSlotRow. */
 let wbSlotTab = 0;
+/* Has the owner worked a slot — clicked one, arrowed to one, moved a stock, added into one — since the page loaded? Until then `wbSlotTab` is just
+   its default 0, not "the row last worked on", and the + must not read it as one (see wbAddTarget). */
+let wbSlotWorked = false;
 /* Move the tab stop, updating the LIVE buttons as well as the module state.
    Assigning wbSlotTab alone is only correct when a repaint follows, and one does
    NOT always follow: wbLoadSymbol never repaints when the lookup fails — a
@@ -5471,6 +5474,7 @@ function setWbSlotTab(n) {
   if (!(n >= 0 && n < WB_SLOTS)) return;
   const prev = document.querySelector('.wb-rail-manual [data-slot="' + wbSlotTab + '"] .wb-slot');
   wbSlotTab = n;
+  wbSlotWorked = true;
   const next = document.querySelector('.wb-rail-manual [data-slot="' + n + '"] .wb-slot');
   if (prev && prev !== next) prev.tabIndex = -1;
   if (next) next.tabIndex = 0;
@@ -5547,11 +5551,21 @@ function wbMoveSlot(from, to) {
 }
 /* Open an EMPTY slot at `at`, pushing the stocks from there down one place into the nearest empty
    slot beneath. When nothing beneath is empty it pulls the rows ABOVE up into the nearest empty one
-   instead, so the open slot lands just above `at`. Returns the index of the open slot, or -1 when
+   instead, so the open slot lands just above `at`. `at` may be WB_SLOTS ("below the last slot"): only the rows above
+   can make room then, and the open slot is the new last one. Returns the index of the open slot, or -1 when
    every one of the 100 is filled. A slot that is already empty is already open: nothing moves. */
 function wbInsertSlot(at) {
-  if (!(at >= 0 && at < WB_SLOTS)) return -1;
+  if (!(at >= 0 && at <= WB_SLOTS)) return -1;
   const syms = readWbSticky().syms.slice();
+  if (at === WB_SLOTS) {        /* just BELOW the last slot (the + after a stock in slot 100): only the rows above can make room, the open slot is the new last one */
+    let e = WB_SLOTS - 1;
+    while (e >= 0 && syms[e]) e--;
+    if (e < 0) return -1;
+    syms.splice(e, 1);
+    syms.push('');
+    writeWbSticky({ syms });
+    return WB_SLOTS - 1;
+  }
   if (!syms[at]) return at;
   let k = at + 1;
   while (k < WB_SLOTS && syms[k]) k++;
@@ -5578,10 +5592,28 @@ function wbInsertAndEdit(at) {
   if (open < 0) { wbRailNote('Every slot is filled — empty one first'); return; }
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = open;
+  wbSlotWorked = true;
   wbEditSlot = open;
   wbEditDraft = '';
   wbRepaintRail();
   wbFocusSlotEditor(open, true);
+}
+/* Where the + opens the NEXT symbol (owner 2026-10-08: "it just overwrites what I input last" — the + used to open ABOVE the row last worked on, and a
+   slot that has just been filled IS the row last worked on, so every new symbol landed in the same place and pushed the previous one down). Now it is the
+   slot directly BELOW the stock last worked on, so adds chain in the order they are made; with nothing worked yet it is the end of the list (just after the
+   last stock, or slot 0 of an empty column); and when the row last worked on is itself empty (an editor abandoned with Escape) that empty slot is the one to
+   fill, not the next. Click a stock first and the + pushes one in right under it. The Insert key is unchanged: it opens a slot above the focused row. */
+function wbAddTarget() {
+  const syms = readWbSticky().syms;
+  let anchor = wbSlotWorked ? wbSlotTab : -1;
+  if (anchor < 0) for (let i = WB_SLOTS - 1; i >= 0; i--) if (syms[i]) { anchor = i; break; }
+  if (anchor < 0) return 0;
+  return syms[anchor] ? anchor + 1 : anchor;
+}
+/* The + button. Settles an open editor FIRST — the target is read from what is STORED, and a typed draft is not stored until it is settled. */
+function wbAddNext() {
+  wbSettleEditor();
+  wbInsertAndEdit(wbAddTarget());
 }
 /* Commit a move and repaint. Focus FOLLOWS the stock when the slot that moved held it (a mouse press
    focuses the button, and the keyboard path is entirely about focus): renderWbSidebar's own restore
@@ -5594,6 +5626,7 @@ function wbCommitMove(from, to) {
   if (!wbMoveSlot(from, to)) return false;
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = to;                      /* Tab comes back to the stock just moved */
+  wbSlotWorked = true;
   wbRepaintRail();
   if (hadFocus) {
     const nb = document.querySelector('.wb-rail-manual [data-slot="' + to + '"] .wb-slot');
@@ -6002,6 +6035,7 @@ function wbSlotRow(i, sym, data) {
        reopens the editor instead of charting (Codex P2). The editor lifecycle is
        navigation too. */
     wbSlotClick = { i: -1, at: 0 };
+    setWbSlotTab(i);                    /* editing a slot IS working it, whatever route got here: F2 on the untouched initial stop never passes the click handler's setWbSlotTab, and the + would not know (Codex P2, PR #316) */
     wbEditSlot = i;
     wbEditDraft = sym || '';
     renderWbSidebar(data);
@@ -6074,7 +6108,7 @@ function wbSlotRow(i, sym, data) {
     if (ev.key === 'F2') { ev.preventDefault(); openEditor(); return; }
     /* Keyboard parity for the drag (an arrangement only a mouse can make is not one everyone can):
        Alt+Up / Alt+Down move this stock one place; Insert opens a slot above this row and puts the
-       caret in it (the header + button does the same where there is no Insert key). */
+       caret in it (the header + button opens one BELOW the row last worked on, or at the end of the list — wbAddTarget). */
     if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
       ev.preventDefault();
       if (sym) wbCommitMove(i, ev.key === 'ArrowUp' ? i - 1 : i + 1);
@@ -6184,13 +6218,13 @@ function renderWbSidebar(data) {
   const manual = column('wb-rail-manual');
   const mHead = el('div', 'wb-rail-head wb-rail-head--slots');
   mHead.appendChild(el('span', 'wb-rail-title', 'SYMBOL'));
-  /* Open a slot to push a stock into (owner request 2026-10-07): above the row last worked on, which
-     is the roving tab stop. The Insert key on a slot does the same. */
+  /* Add the next symbol (owner requests 2026-10-07 and 2026-10-08): opens an empty slot directly BELOW the stock last worked on, or at the
+     end of the list when none has been touched yet — see wbAddTarget. The Insert key on a slot opens one ABOVE it. */
   const add = el('button', 'wb-rail-add', '+');
   add.type = 'button';
-  add.setAttribute('aria-label', 'Open an empty slot above the selected row');
-  add.title = 'Open an empty slot above the row you last clicked, then type a symbol into it';
-  add.addEventListener('click', () => wbInsertAndEdit(wbSlotTab));
+  add.setAttribute('aria-label', 'Add a symbol: open an empty slot below the selected row, or at the end of the list');
+  add.title = 'Add a symbol: opens an empty slot just below the stock you last clicked (or at the end of the list), then type it';
+  add.addEventListener('click', wbAddNext);
   mHead.appendChild(add);
   manual.appendChild(mHead);
 

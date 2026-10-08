@@ -454,9 +454,10 @@ column with all 100 filled is refused, with a visible `role="status"` note under
 module state `wbRailMsg`, cleared by its own timer) — never a silent no-op. **It must never grow the array**:
 `wbSlotArray` truncates to 100 on every read, so a 101-entry write looks fine until the next write drops the
 LAST stock. S64 therefore reads the store directly after the `+`, BEFORE anything is typed (the typed write
-would normalise it and hide the fault). Reached by the `+` in the SYMBOL head (above the row last worked on,
-`wbSlotTab`), by Insert on a focused slot (above that row), and it puts the owner in the new slot's editor
-(`wbInsertAndEdit` → `wbFocusSlotEditor`, shared with the click-to-edit path).
+would normalise it and hide the fault). Reached by the `+` in the SYMBOL head (BELOW the row last worked on —
+see the next paragraph) and by Insert on a focused slot (ABOVE that row), and it puts the owner in the new slot's
+editor (`wbInsertAndEdit` → `wbFocusSlotEditor`, shared with the click-to-edit path). `wbInsertSlot(WB_SLOTS)`
+means "just below the last slot": only the rows above can make room, the open slot is the new last one.
 
 **The drag is ONE delegated `pointerdown` on `#wbSidebar` (`wbSlotPointerDown`), not a listener per button —
 and that was MEASURED, not assumed.** The first cut wired each filled slot; in WebKit a `pointerdown`
@@ -556,6 +557,22 @@ Gesture rules, each of which S64 holds:
   different stock. The roving tab stop moves with it (`wbSlotTab = to`).
 - **Keyboard parity** (an arrangement only a mouse can make is not one everyone can): Alt+ArrowUp/Down moves
   the focused stock one place; Insert opens a slot above it. The `+` is the route where there is no Insert key.
+- **The `+` ADDS the next symbol (owner 2026-10-08).** Owner: "Not good, because it just overwrites what I input
+  last" — the first cut opened the slot ABOVE the row last worked on (`wbSlotTab`), and a slot that has just been
+  filled IS the row last worked on, so every add landed at the same index and pushed the previous one down. Asked
+  what they wanted, the owner chose "New one lands where the last one was": `wbAddTarget()` is the slot directly
+  BELOW the stock last worked on, so adds chain in the order they are made; click a stock first and the `+` pushes
+  one in right under it. Details that are rules: (1) `wbSlotWorked` — `wbSlotTab` is 0 until the owner touches a
+  slot, and 0 is a default, not "the row last worked on"; with nothing worked the target is just after the LAST
+  filled slot (slot 0 of an empty column), NOT the first hole; `setWbSlotTab` (a click, an arrow, and `openEditor` — so F2 on the untouched initial stop counts, Codex P2 on PR #316),
+  `wbInsertAndEdit` and `wbCommitMove` set it. (2) When the anchor row is itself EMPTY (an editor abandoned with Escape, or a click on an
+  empty slot) the `+` reopens THAT slot instead of skipping past it. (3) `wbAddNext()` calls `wbSettleEditor()`
+  FIRST: the target is read from what is STORED, and a typed draft is not stored until it is settled (the same
+  reason as the blur-vs-click race above) — without it the draft is lost or overwritten. (4) Below slot 99 there
+  is no row to push into, so `wbInsertSlot(WB_SLOTS)` pulls the rows above up into the nearest empty one and opens
+  the new LAST slot; a fully filled column still gets the `role="status"` note. The Insert key is unchanged
+  (above the focused row). S64 steps 6, 6b and 13 pin it; the test helpers' `tab: true` also resets
+  `wbSlotWorked`.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 
