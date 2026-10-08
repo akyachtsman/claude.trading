@@ -6233,6 +6233,8 @@ async function readEconAxes(page, tf) {
     const oil = Object.hasOwn(ECON_CRUDE, li.dataset.id);   // the crude-oil rows draw their own 24-hour bars (S63), not CNBC's
     const vals = frame === '1d' ? (oil ? buildDemoCrudeBars(li.dataset.id, Date.now()) : buildDemoBars(li.dataset.id)).map((p) => p[1])
       : frame === '1d-live' ? (oil ? ((econCrude.m[li.dataset.id] || {}).pts || []) : (econBars.m[li.dataset.id] ? econBars.m[li.dataset.id].pts : [])).map((p) => p[1])
+      : frame === '1w-live' ? (oil ? ((econCrude.m[li.dataset.id] || {}).week || []) : (econBarsWk.m[li.dataset.id] ? econBarsWk.m[li.dataset.id].pts : [])).map((p) => p[1])
+      : frame === '1w' && (oil || ['ust2y', 'ust10y', 'ust20y'].includes(li.dataset.id)) ? (oil ? buildDemoCrudeBars(li.dataset.id, Date.now(), true) : buildDemoBars(li.dataset.id, null, 5)).map((p) => p[1])   // the week of the yields and the futures is bars too (S65)
       : (shown && shown.points || []).map((p) => Number(p[1])).filter(Number.isFinite);
     return {
       id: li.dataset.id, cadence: li.dataset.cadence, drawn: true, svg: sr, chart: box(chart), axis: box(ax), span: chart.dataset.span || '',
@@ -6448,7 +6450,10 @@ test('S55: the Economy panel — nine rows, each with its own chart to the right
     const names = await page.evaluate(() => [...document.querySelectorAll('#econList .econ-row')].map((li) => [li.dataset.id, li.dataset.cadence, li.querySelector('.econ-chart svg').getAttribute('aria-label')]));
     for (const [id, cadence, name] of names) {
       if (cadence === 'monthly') { expect(name, `[${id}] @${tf}: a fallback chart names the fallback`).toMatch(/\(monthly - 6 latest\)/); expect(name, `[${id}] @${tf}: and does not claim the short span`).not.toMatch(/ over /); }
-      else expect(name, `[${id}] @${tf}: a daily chart names its span`).toContain(` over ${tf.toUpperCase()}`);
+      else if (tf === '1w' && ['ust2y', 'ust10y', 'ust20y', 'wti', 'ng'].includes(id)) {
+        // the week of the yields and the futures is drawn from intraday BARS (S65), so it names the bars and their span, not "over 1W"
+        expect(name, `[${id}] @1w: a bar chart names its prices and its span`).toMatch(/, \d+ prices [A-Z][a-z]{2} \d{1,2} \d\d:\d\d – [A-Z][a-z]{2} \d{1,2} \d\d:\d\d Pacific$/);
+      } else expect(name, `[${id}] @${tf}: a daily chart names its span`).toContain(` over ${tf.toUpperCase()}`);
     }
     for (const r of rows) expect(r.hasSvg, `[${r.id}] @${tf}: still drawn`).toBe(true);
   }
@@ -8645,10 +8650,10 @@ test('S63: futures — the WTI crude-oil and natural-gas prices, DELAYED not LIV
   expect((await kinds()).filter((k) => k.endsWith(':daily')), 'and the daily bars are re-asked once five minutes have passed').toEqual(['CL=F:daily', 'NG=F:daily']);
   expect(await page.evaluate(() => [econCrude.dueAt - Date.now() <= 60_000, econCrude.dueAt - Date.now() > 0]), 'the next poll is at most a minute away').toEqual([true, true]);
 
-  // ── 5. the spans: 1W..5Y are the daily closes sliced like every other row; 5Y says what it really covers; 1D is the last 24 hours
+  // ── 5. the spans: 1W is the last five sessions' 5-minute bars (S65), 1M..5Y the daily closes sliced like every other row; 5Y says what it really covers; 1D is the last 24 hours
   await page.locator('#econTf button[data-tf="1w"]').click();
-  expect((await info('wti')).span, 'one week of daily closes').toMatch(/^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/);
-  expect((await info('wti')).note, 'and says nothing about a short span: a week holds its six readings').toBeNull();
+  expect((await info('wti')).span, 'one week of 5-minute bars (S65): both dates, each with its Pacific clock').toMatch(/^[A-Z][a-z]{2} \d{1,2} \d\d:\d\d – [A-Z][a-z]{2} \d{1,2} \d\d:\d\d$/);
+  expect((await info('wti')).note, 'and says nothing about a short span').toBeNull();
   await page.locator('#econTf button[data-tf="5y"]').click();
   expect((await info('wti')).note, 'the feed holds ~3 years, so a 5Y chart says since when instead of passing for five').toMatch(/^since [A-Z][a-z]{2} '\d\d$/);
   await page.locator('#econTf button[data-tf="1d"]').click();
@@ -9207,6 +9212,243 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await page.waitForTimeout(300);
   expect(await first(4), 'the draft was saved to ITS slot first, then moved with the rows').toEqual(['BBB', 'CCC', R[1], 'EDITED']);
   expect(await editorCount(page), 'and no editor is left open on a shifted row').toBe(0);
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 65 — 1W is drawn from intraday BARS where a row has them (owner 2026-10-08: "is there a reason why the weekly chart is so smooth? … I thought
+// I wanted to be more granular, if possible"). A week of daily closes was ~6 points over a ~150px plot. Now WTI and natural gas draw the last five
+// sessions' 5-minute bars (the very request that gives their price — no extra call) and the three yields draw CNBC's 5-day bars (`5D.json`, built BLIND:
+// the sandbox cannot reach CNBC), kept in a store of their own and refreshed at most every 5 minutes. When CNBC does not answer, a yield keeps its
+// official DAILY line and says so (a `daily closes` note, the reason in the tooltip). 1M, 3M and longer stay daily; the monthly rows are untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S65: 1W — five sessions of bars for the futures and the yields, a daily line (and a note) when CNBC is not answering, 1M and 3M untouched', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(240_000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await page.clock.install({ time: new Date('2026-10-08T15:50:30Z') });   // Thu 08:50:30 PT: the bond session and the futures market are open
+  await gotoDemo(page, '#econList .econ-row', 15000);
+
+  const FUT = ['wti', 'ng'], YIELDS = ['ust2y', 'ust10y', 'ust20y'], BARS = [...YIELDS, ...FUT], MONTHLY = ['unrate', 'cpi', 'pce', 'corepce'];
+  const pressed = () => page.evaluate(() => [...document.querySelectorAll('#econTf button[aria-pressed="true"]')].map((b) => b.dataset.tf));
+  const pick = async (tf) => { await page.locator(`#econTf button[data-tf="${tf}"]`).click(); await expect.poll(pressed).toEqual([tf]); };
+  const rowsNow = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#econList .econ-row')].map((li) => {
+    const chart = li.querySelector('.econ-chart'), svg = chart.querySelector('svg'), line = svg && svg.querySelector('path.econ-line'), note = chart.querySelector('.econ-note');
+    return [li.dataset.id, { svg: !!svg, verts: line ? (line.getAttribute('d').match(/[ML]/g) || []).length : 0, span: chart.dataset.span || '', note: note ? note.textContent : null,
+      title: li.title, aria: svg ? svg.getAttribute('aria-label') : '', xl: [...chart.querySelectorAll('.econ-xtick')].map((t) => t.textContent), marks: chart.querySelectorAll('.econ-tickmark').length }];
+  })));
+  // a Pacific "Mon D hh:mm" for an instant, computed here with Intl — not through the page's own clock helpers
+  const ptCap = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms)).replace(',', '');
+  const DAYMON = /^[A-Z][a-z]{2} \d{1,2}$/;
+
+  // ── 1. demo: 1W is bars for the yields and the futures (a real wiggle, not six dots), both dates and clocks in the span; 1M / 3M and the monthly rows are untouched
+  await pick('1w');
+  let R = await rowsNow();
+  for (const id of BARS) {
+    expect(R[id].verts, `[${id}] demo 1W is thinned bars, not about six daily dots`).toBeGreaterThan(100);
+    expect(R[id].verts, `[${id}] ...and never more than the 150-point cap`).toBeLessThanOrEqual(150);
+    expect(R[id].span, `[${id}] its span names both dates, each with its Pacific clock`).toMatch(/^[A-Z][a-z]{2} \d{1,2} \d\d:\d\d – [A-Z][a-z]{2} \d{1,2} \d\d:\d\d$/);
+    expect(R[id].note, `[${id}] no note: nothing fell back`).toBeNull();
+    expect(R[id].xl.filter(Boolean).every((l) => DAYMON.test(l)) && R[id].xl.filter(Boolean).length >= 2, `[${id}] the time axis names days (${R[id].xl}), two or three of them`).toBe(true);
+  }
+  expect(MONTHLY.map((id) => [R[id].verts, R[id].note]), 'the monthly rows keep their 6 latest readings and say so').toEqual(MONTHLY.map(() => [6, 'monthly - 6 latest']));
+  for (const tf of ['1m', '3m']) {
+    await pick(tf);
+    R = await rowsNow();
+    expect(BARS.every((id) => R[id].verts >= (tf === '1m' ? 18 : 55) && R[id].verts <= (tf === '1m' ? 30 : 70)), `${tf.toUpperCase()} stays on the daily closes (about ${tf === '1m' ? 22 : 63} points): ${BARS.map((id) => R[id].verts)}`).toBe(true);
+    expect(BARS.map((id) => /^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/.test(R[id].span)), `${tf.toUpperCase()}: dates only, no clocks`).toEqual(BARS.map(() => true));
+  }
+  expect(await page.evaluate(() => econBarsWk.at), 'and demo never touched the 5-day store').toBe(0);
+  await pick('3m');
+
+  // ── 2. the pure functions, through the REAL ones
+  const pure = await page.evaluate(() => {
+    const T = Date.parse('2026-10-08T15:50:30Z'), day = 86400000;
+    const bar = (ms, c) => ({ tradeTimeinMills: ms, close: String(c) });
+    const sess = (d, n, base) => Array.from({ length: n }, (_, i) => bar(Date.parse(d + 'T12:00:00Z') + i * 900000, (base + i / 100).toFixed(3)));
+    const five = { barData: { priceBars: [...sess('2026-10-02', 20, 5.2), ...sess('2026-10-05', 20, 5.2), ...sess('2026-10-06', 20, 5.2), ...sess('2026-10-07', 20, 5.2), ...sess('2026-10-08', 16, 5.2)] } };
+    const old = { barData: { priceBars: [...sess('2026-09-25', 20, 5.2), ...sess('2026-10-07', 20, 5.2), ...sess('2026-10-08', 16, 5.2)] } };
+    const w = econBarsParse(five, T, true), d1 = econBarsParse(five, T, false), wOld = econBarsParse(old, T, true);
+    const one = econBarsParse({ barData: { priceBars: [bar(T - 9 * day, 5.2), bar(T - 60000, 5.2)] } }, T, true);   // two bars, only one of them inside the week
+    // the futures' own series: 1,000 five-minute bars over 83 hours
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+    const fut = econCrudeIntra({ t: Array.from({ length: 1000 }, (_, i) => iso(T - (999 - i) * 300000)), c: Array.from({ length: 1000 }, (_, i) => 88 + Math.sin(i / 50)) }, T);
+    const ts = (pts) => econXTicksWeek(pts);
+    const pts5 = w.pts, tick5 = ts(pts5);
+    const oneDay = ts(sess('2026-10-08', 16, 5.2).map((b) => [b.tradeTimeinMills, 5.2]));
+    return {
+      weekN: w.pts.length, weekFirst: w.pts[0][0], weekLast: w.pts[w.pts.length - 1][0], dayN: d1.pts.length, dayFirst: d1.pts[0][0],
+      oldDropped: wOld.pts.length && wOld.pts[0][0] >= Date.parse('2026-10-01T00:00:00Z'), oldN: wOld.pts.length, oneWhy: [one.why, one.detail.includes('1 usable in the last 7 days')],
+      futSpanH: (fut.week[fut.week.length - 1][0] - fut.week[0][0]) / 3600000, futWeekN: fut.week.length, futDayH: (fut.pts[fut.pts.length - 1][0] - fut.pts[0][0]) / 3600000,
+      futDayN: fut.pts.length, futKeepsEnds: [fut.week[0][0] === T - 999 * 300000 - (T - 999 * 300000) % 60000 || true, fut.week[fut.week.length - 1][0] === fut.ts],
+      ticks: tick5.map((t) => [Number(t.f.toFixed(4)), t.label, !!t.minor]), oneDayTicks: oneDay.map((t) => [t.f, t.label]),
+    };
+  });
+  expect(pure.weekN, '5D parse (multi): every session of the last 7 days is kept — 96 bars, not one day\'s').toBe(96);
+  expect([pure.dayN, pure.dayFirst === Date.parse('2026-10-08T12:00:00Z')], 'the 1D parse is unchanged: the newest session only').toEqual([16, true]);
+  expect([pure.oldN, pure.oldDropped], 'a bar older than 7 days is dropped from the week').toEqual([36, true]);
+  expect(pure.oneWhy, 'one usable bar is not a series, and the reason says it is the week').toEqual(['empty', true]);
+  expect([pure.futSpanH > 80, pure.futWeekN <= 150 && pure.futWeekN > 100, pure.futDayH <= 24, pure.futDayN <= 150], 'futures: the week keeps the whole 83 hours (thinned to ≤ 150 real bars) while the 1D series is still the newest 24').toEqual([true, true, true, true]);
+  expect(pure.futKeepsEnds[1], 'the thinned week still ends on the newest bar (the very price the row shows)').toBe(true);
+  expect(pure.ticks.filter((t) => !t[2]).length, 'week ticks: at most three LABELLED marks').toBeLessThanOrEqual(3);
+  expect(pure.ticks.map((t) => t[0]).every((f, i, a) => !i || a[i - 1] < f), 'in order along the drawn x').toBe(true);
+  expect(pure.ticks.length, 'one mark where each Pacific day after the first begins (Oct 5, 6, 7, 8 for these bars)').toBe(4);
+  expect(pure.ticks.map((t) => t[1]).filter(Boolean), 'labelled first, middle and last of those — by date').toEqual(['Oct 5', 'Oct 6', 'Oct 8']);
+  expect(pure.ticks[0][0], 'the Oct 5 mark sits at the line\'s own x for its first bar (bar 20 of 95)').toBeCloseTo(20 / 95, 3);
+  expect(pure.oneDayTicks.map((t) => t[1]), 'a series inside one Pacific day falls back to its two clock ends').toEqual(['05:00', '08:45']);
+
+  // ── 3. the real econLiveBars: the 5-day URL with ONLY an abort signal; the 1D URL is unchanged
+  const urls = await page.evaluate(async () => {
+    const real = window.fetch, calls = [];
+    window.fetch = (u, o) => { calls.push([String(u), Object.keys(o || {})]); return Promise.resolve(new Response('{"barData":{"priceBars":[]}}', { status: 200 })); };
+    try { await econLiveBars('US10Y', '5D'); await econLiveBars('US10Y', '1D'); await econLiveBars('US10Y'); } finally { window.fetch = real; }
+    return calls;
+  });
+  expect(urls, 'the week asks 5D.json, the day (and a call with no range) 1D.json, each with ONLY the abort signal').toEqual([
+    ['https://ts-api.cnbc.com/harmony/app/charts/5D.json?symbol=US10Y', ['signal']],
+    ['https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=US10Y', ['signal']],
+    ['https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=US10Y', ['signal']]]);
+
+  // ── 4. force live: the quote, desk-econ (recording its range), CNBC's bars (recording symbol:range) and the quote feed (5 days of 5-minute bars)
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    DESK.mode = 'live';
+    localStorage.removeItem('econ_seen_v1'); localStorage.removeItem('econ_pending_v1'); econSeen = {}; econPending = {};
+    window.__ranges = []; window.__breqs = []; window.__futT = {};
+    const quote = (sym, last, ts) => ({ symbol: sym, code: 0, last: last + '%', last_time: new Date(ts - 4 * 3600000).toISOString().slice(0, 19) + '.000-0400', change: '-0.04' });
+    window.econLiveCnbc = () => Promise.resolve({ FormattedQuoteResult: { FormattedQuote: [quote('US2Y', 4.787, Date.now() - 30000), quote('US10Y', 5.253, Date.now() - 30000), quote('US20Y', 5.612, Date.now() - 30000)] } });
+    const bar = (ms, c) => ({ tradeTimeinMills: ms, close: c.toFixed(3) });
+    window.__five = (base) => {
+      const out = [];
+      for (const [d, n] of [['2026-10-02', 20], ['2026-10-05', 20], ['2026-10-06', 20], ['2026-10-07', 20], ['2026-10-08', 16]]) for (let i = 0; i < n; i++) out.push(bar(Date.parse(d + 'T12:00:00Z') + i * 900000, base + Math.sin(out.length / 9) * 0.04));
+      return { ok: true, body: { barData: { priceBars: out } } };
+    };
+    window.__base = { US2Y: 4.79, US10Y: 5.25, US20Y: 5.61 };
+    window.__bfn = (sym) => window.__five(window.__base[sym]);
+    window.econLiveBars = (sym, range) => { window.__breqs.push(sym + ':' + range); return Promise.resolve(window.__bfn(sym, range)); };
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+    window.deskQuote = async (sym, kind) => {
+      const px = sym === 'NG=F' ? 3.252 : 88.40, dp = sym === 'NG=F' ? 3 : 2;
+      if (kind === 'info') return { ok: true, symbol: sym, kind, info: { price: px, change: px * 0.01 } };
+      if (kind === 'intraday') {
+        const end = Date.now() - 600000, n = 1000, t = [], c = [];
+        for (let i = 0; i < n; i++) { t.push(iso(end - (n - 1 - i) * 300000)); c.push(Number((px + Math.sin(i / 40) * px * 0.01 - (n - 1 - i) * 0.00001 * px).toFixed(dp))); }
+        c[n - 1] = px; window.__futT[sym] = t;
+        return { ok: true, symbol: sym, kind, series: { t, c } };
+      }
+      const t = [], c = [];
+      let d = new Date('2026-10-08T00:00:00Z');
+      while (t.length < 800) { if (d.getUTCDay() % 6) { t.unshift(d.toISOString().slice(0, 10)); c.unshift(Number((px + px * 0.03 * Math.sin(t.length / 9)).toFixed(dp))); } d = new Date(d.getTime() - 86400000); }
+      c[c.length - 1] = px;
+      return { ok: true, symbol: sym, kind, series: { t, c } };
+    };
+    window.deskEcon = (range) => {
+      window.__ranges.push(range);
+      const p = buildDemoEcon(range);
+      const rows = p.rows.map((r) => (['ust2y', 'ust10y', 'ust20y'].includes(r.id) ? { ...r, asOf: '2026-10-07', prevAsOf: '2026-10-06', source: 'treasury', value: { ust2y: 4.88, ust10y: 5.29, ust20y: 5.68 }[r.id] } : r));
+      return Promise.resolve({ ...p, rows, range, generatedAt: new Date().toISOString(), refreshInSec: 900, stale: false });
+    };
+    startEcon();
+  });
+  await expect(page.locator('#econList .econ-row[data-live="1"]'), 'the three yields are live').toHaveCount(3);
+  await expect(page.locator('#econList .econ-row[data-id="ng"] .econ-val'), 'and so is the gas price').toHaveText('$3.252');
+  expect(await page.evaluate(() => [window.__ranges, window.__breqs.length]), 'booted on 3M: desk-econ asked for 3m and CNBC for NO bars (neither 1D nor 1W is the view)').toEqual([['3m'], 0]);
+
+  // ── 5. picking 1W: one 5D request per yield AND the ordinary desk-econ request for 1w; the futures use the bars they already have (no extra call)
+  await pick('1w');
+  await expect.poll(() => page.evaluate(() => window.__breqs.length), 'one bars request per yield').toBe(3);
+  expect(await page.evaluate(() => window.__breqs.slice().sort()), 'for US10Y, US20Y and US2Y — the FIVE-DAY range').toEqual(['US10Y:5D', 'US20Y:5D', 'US2Y:5D']);
+  await expect.poll(() => page.evaluate(() => window.__ranges), 'desk-econ is asked for the real span 1w (the monthly rows and the fallback line need it)').toEqual(['3m', '1w']);
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-chart svg')).toHaveCount(1);
+  R = await rowsNow();
+  const yieldCap = 'Oct 2 05:00 – Oct 8 08:45';   // the first bar 12:00Z on the 2nd is 05:00 PT; the last 15:45Z on the 8th is 08:45 PT
+  expect(YIELDS.map((id) => [R[id].span, R[id].verts, R[id].note]), 'each yield: 96 bars from Oct 2 to the newest, no note').toEqual(YIELDS.map(() => [yieldCap, 96, null]));
+  expect(R.ust10y.aria, 'the accessible name says what is drawn').toBe('10Y Treasury, 96 prices ' + yieldCap + ' Pacific');
+  expect(R.ust2y.title, 'the tooltip names the source, the count and the five sessions').toContain('1-week chart: 96 CNBC US2Y prices from the last five sessions, ' + yieldCap);
+  const futSpan = await page.evaluate((fn) => Object.fromEntries(['CL=F', 'NG=F'].map((s) => [s, [window.__futT[s][0], window.__futT[s][window.__futT[s].length - 1]]])), null);
+  for (const [id, sym] of [['wti', 'CL=F'], ['ng', 'NG=F']]) {
+    const [a, b] = futSpan[sym].map((t) => Date.parse(t.replace(' ', 'T') + ':00Z'));
+    expect(R[id].span, `[${id}] its week is the quote feed's own five sessions of 5-minute bars: ${ptCap(a)} – ${ptCap(b)} Pacific`).toBe(ptCap(a) + ' – ' + ptCap(b));
+    expect(R[id].verts, `[${id}] thinned to the 150-point cap from 1,000 bars`).toBeGreaterThan(100);
+    expect(R[id].verts).toBeLessThanOrEqual(150);
+    expect(R[id].title, `[${id}] the tooltip says so`).toContain('1-week chart: ');
+  }
+  expect(MONTHLY.map((id) => [R[id].verts, R[id].note]), 'the monthly rows are untouched').toEqual(MONTHLY.map(() => [6, 'monthly - 6 latest']));
+  // the layout: axes on every bar chart, day names, nothing touching, the marks where the line turns the page
+  const live1w = checkEconAxes(expect, (await readEconAxes(page, '1w-live')).filter((r) => BARS.includes(r.id)), 'live 1W', DAYMON);   // the monthly rows label months, not days
+  expect(live1w.map((r) => r.id), 'the three yields and both futures carry axes').toEqual(BARS);
+  // Oct 6 starts at bar 40 of 95 for the yields: its label (when the fit pass keeps it) is centred on the line's own x for that bar
+  for (const r of live1w.filter((x) => YIELDS.includes(x.id))) {
+    const l6 = r.x.find((l) => l.text === 'Oct 6' && !l.hidden);
+    if (!l6) continue;
+    const want = r.axis.l + (r.axis.r - r.axis.l) * (1 + 98 * 40 / 95) / 100;
+    expect(Math.abs((l6.l + l6.r) / 2 - want), `[${r.id}] the Oct 6 label is centred on the x the line is drawn at for that day's first bar (${want.toFixed(1)}px)`).toBeLessThanOrEqual(1.5);
+  }
+
+  // ── 6. cadence: a week of bars is NOT re-asked every minute — only after 5 minutes; "Refresh now" forces it; the quote poll itself keeps its own pace
+  await page.evaluate(() => { window.__breqs.length = 0; });
+  await page.clock.runFor(61_000);
+  expect(await page.evaluate(() => window.__breqs), 'a minute on, the poll ran but the week of bars (younger than 5 minutes) was not asked for again').toEqual([]);
+  await page.clock.runFor(5 * 60_000);
+  expect(await page.evaluate(() => window.__breqs.slice().sort()), 'past five minutes the next poll asks again: once per yield').toEqual(['US10Y:5D', 'US20Y:5D', 'US2Y:5D']);
+  await page.evaluate(() => { window.__breqs.length = 0; return econLiveFetch(true); });
+  expect(await page.evaluate(() => window.__breqs.slice().sort()), '"Refresh now" asks fresh whatever the age').toEqual(['US10Y:5D', 'US20Y:5D', 'US2Y:5D']);
+
+  // ── 7. 1D and 1W are different series: 1D asks the day, going back inside five minutes does not re-ask the week; 1M and 3M ask CNBC for nothing
+  await page.evaluate(() => { window.__breqs.length = 0; window.__bfn = (sym, range) => window.__five(window.__base[sym]); });
+  await pick('1d');
+  await expect.poll(() => page.evaluate(() => window.__breqs.length)).toBe(3);
+  expect(await page.evaluate(() => window.__breqs.slice().sort()), '1D asks the DAY\'s range').toEqual(['US10Y:1D', 'US20Y:1D', 'US2Y:1D']);
+  await page.evaluate(() => { window.__breqs.length = 0; });
+  await pick('1w');
+  expect(await page.evaluate(() => window.__breqs), 'back on 1W within five minutes: the week already held stands, nothing is asked').toEqual([]);
+  for (const tf of ['1m', '3m']) {
+    await page.evaluate(() => { econBarsWk.at = 0; econBars.at = 0; });   // as if the held bars were old: only the view, not the five-minute throttle, may keep CNBC quiet
+    await pick(tf);
+    await page.clock.runFor(61_000);
+    expect(await page.evaluate(() => window.__breqs), `${tf.toUpperCase()}: CNBC is not asked for bars at all`).toEqual([]);
+    R = await rowsNow();
+    expect(YIELDS.every((id) => R[id].verts < 70 && !/ \d\d:\d\d/.test(R[id].span)), `${tf.toUpperCase()}: the yields draw their daily closes`).toBe(true);
+  }
+
+  // ── 8. CNBC not answering on 1W: the yield keeps its official DAILY line, says `daily closes` and WHY; the futures are unaffected; recovery restores the bars
+  await pick('1w');
+  await page.evaluate(() => { window.__bfn = () => ({ ok: false, why: 'http', detail: 'HTTP 403' }); econBarsWk.m = {}; econBarsWk.at = 0; return econBarsFetch(true); });
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-note'), 'the 10Y says it is showing daily closes').toHaveText('daily closes');
+  R = await rowsNow();
+  expect(YIELDS.map((id) => [R[id].note, R[id].verts > 0 && R[id].verts < 12, /^[A-Z][a-z]{2} \d{1,2} – [A-Z][a-z]{2} \d{1,2}$/.test(R[id].span)]), 'each yield: the note, a short daily line, a dates-only span').toEqual(YIELDS.map(() => ['daily closes', true, true]));
+  expect(R.ust2y.title, 'the tooltip names the reason').toContain('5-day chart unavailable (HTTP 403): showing the daily closes');
+  expect(R.ust2y.aria, 'the chart is named as the daily readings it is').toMatch(/readings over 1W$/);
+  expect(FUT.map((id) => [R[id].note, R[id].verts > 100]), 'the futures keep their bars: their week never depended on CNBC').toEqual(FUT.map(() => [null, true]));
+  expect(MONTHLY.map((id) => R[id].note), 'and the monthly rows keep their own note, not ours').toEqual(MONTHLY.map(() => 'monthly - 6 latest'));
+  // the bars come back
+  await page.evaluate(() => { window.__bfn = (sym) => window.__five(window.__base[sym]); return econBarsFetch(true); });
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-note')).toHaveCount(0);
+  R = await rowsNow();
+  expect(YIELDS.map((id) => [R[id].note, R[id].verts]), 'recovery: the bars are back, the note gone').toEqual(YIELDS.map(() => [null, 96]));
+  // a failed REFRESH after a good reply keeps the last good bars (under 30 minutes) with the failure in the tooltip; after that the daily line and the note
+  await page.evaluate(() => { window.__bfn = () => ({ ok: false, why: 'noanswer', detail: 'no answer' }); return econBarsFetch(true); });
+  R = await rowsNow();
+  expect(YIELDS.map((id) => [R[id].verts, R[id].note]), 'a blip: the last good bars stay').toEqual(YIELDS.map(() => [96, null]));
+  expect(R.ust10y.title, 'with the failure named in the tooltip').toContain('the last refresh failed (no answer), these are the last good prices');
+  await page.clock.runFor(31 * 60_000);
+  await page.evaluate(() => econBarsFetch(true));
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-note'), 'past 30 minutes of failures only the daily line is left').toHaveText('daily closes');
+  // bars whose last price is far from the quote are refused like the 1D bars are (a wrong scale or instrument must not be drawn)
+  await page.evaluate(() => { window.__bfn = (sym) => window.__five(window.__base[sym] + 2.5); return econBarsFetch(true); });
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-note')).toHaveText('daily closes');
+  expect((await rowsNow()).ust10y.title, 'with the mismatch named').toMatch(/5-day chart unavailable \(the last bar \(\d\.\d{3}\) is [\d.]+ points from the quote/);
+  await page.evaluate(() => { window.__bfn = (sym) => window.__five(window.__base[sym]); return econBarsFetch(true); });
+  await expect(page.locator('#econList .econ-row[data-id="ust10y"] .econ-note')).toHaveCount(0);
+
+  // ── 9. a hidden tab asks for nothing and the week of bars is asked for at once on return when it is old
+  await page.evaluate(() => { window.__breqs.length = 0; Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); econVisibility(); });
+  await page.clock.runFor(6 * 60_000);
+  expect(await page.evaluate(() => window.__breqs), 'hidden: no bars requests').toEqual([]);
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); econVisibility(); });
+  await expect.poll(() => page.evaluate(() => window.__breqs.length), 'back in view with a week of bars older than 5 minutes: asked for at once').toBe(3);
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

@@ -1026,7 +1026,7 @@ function etWallToMs(iso, minutes, seconds) {
   }
   return t + (seconds || 0) * 1000;
 }
-function buildDemoBars(id, now) {
+function buildDemoBars(id, now, sessions) {
   const row = DEMO_ECON_ROWS.find(r => r[0] === id);
   if (!row) return [];
   /* the last day the BOND session ran: NYSE's trading days minus Columbus Day and Veterans Day (BOND_ONLY_HOLIDAYS) — the demo must
@@ -1035,25 +1035,35 @@ function buildDemoBars(id, now) {
   while (BOND_ONLY_HOLIDAYS.has(isoDate(d))) d = tradingDayOnOrBefore(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1));
   const day = isoDate(d);
   /* 00:00 → 17:00 ET: CNBC's real chart carries the OVERNIGHT bond session (the owner's screenshot: bars from 00:02 ET = 21:02 PT the evening before, to
-     17:05 ET = 14:05 PT), so the demo does too — the same labels (the date at Pacific midnight, 06:00, 12:00) the live panel shows */
-  const open = etWallToMs(day, 0), n = 17 * 12;
-  const rnd = lcg(row[4] * 31 + 5), end = row[5], step = row[6] / 14;
+     17:05 ET = 14:05 PT), so the demo does too — the same labels (the date at Pacific midnight, 06:00, 12:00) the live panel shows.
+     `sessions` > 1 (the 1W view, 2026-10-08) strings that many bond sessions together, oldest first, each 00:00–17:00 ET, into one walk that ends on the
+     row's own level — thinned like the live 5-day bars to at most 150 real points. */
+  const per = 17 * 12 + 1, count = Math.max(1, sessions | 0);
+  const days = [day];
+  while (days.length < count) {
+    let p = tradingDayOnOrBefore(new Date(+days[0].slice(0, 4), +days[0].slice(5, 7) - 1, +days[0].slice(8, 10) - 1));
+    while (BOND_ONLY_HOLIDAYS.has(isoDate(p))) p = tradingDayOnOrBefore(new Date(p.getFullYear(), p.getMonth(), p.getDate() - 1));
+    days.unshift(isoDate(p));
+  }
+  const rnd = lcg(row[4] * 31 + 5), end = row[5], step = row[6] / 14, n = per * count - 1;
   const vals = [end + (rnd() - 0.5) * step * 6];
-  for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (end - vals[i - 1]) * 0.02);
+  for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (end - vals[i - 1]) * (count > 1 ? 0.004 : 0.02));
   const shift = end - vals[n];
-  return vals.map((v, i) => [open + i * 300000, Number((v + shift).toFixed(3))]);
+  const pts = [];
+  days.forEach((dd, k) => { const open = etWallToMs(dd, 0); for (let j = 0; j < per; j++) pts.push([open + j * 300000, Number((vals[k * per + j] + shift).toFixed(3))]); });
+  return count > 1 ? econDownsample(pts, 150) : pts;
 }
 
 /* The demo's twin of the live crude-oil 1D chart: a seeded 5-minute walk over the LAST 24 HOURS ending at `now` (futures trade
    round the clock, so a 1D view is a rolling day, not a session), ending on the demo row's own level. Demo only — live never
    calls it (real data or nothing). Returns [[ms, price], …] like econBarsParse. */
-function buildDemoCrudeBars(id, now) {
+function buildDemoCrudeBars(id, now, week) {
   const row = DEMO_CRUDE_ROWS.find(r => r[0] === id);
   if (!row) return [];
-  const end = Math.floor((now || Date.now()) / 300000) * 300000, n = 288;
+  const end = Math.floor((now || Date.now()) / 300000) * 300000, n = week ? 288 * 5 : 288;   /* `week`: five days of the same bars (the 1W view) */
   const rnd = lcg(row[3] * 17 + 3), top = row[4], step = top * row[5] / 9;
   const vals = [top + (rnd() - 0.5) * step * 8];
-  for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (top - vals[i - 1]) * 0.02);
+  for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (top - vals[i - 1]) * (week ? 0.004 : 0.02));
   const shift = top - vals[n];
   return econDownsample(vals.map((v, i) => [end - (n - i) * 300000, Number((v + shift).toFixed(row[6]))]), 150);
 }
