@@ -932,10 +932,12 @@ const DEMO_ECON_ROWS = [
   ['pce',     'PCE YoY',      1, 'monthly', 7216, 3.0,  0.16,  0.10],
   ['corepce', 'Core PCE YoY', 1, 'monthly', 7217, 3.2,  0.13,  0.10],
 ];
-/* [id, label, symbol, seed, latest price, daily volatility] — the crude-oil row (owner request 2026-10-05). Levels sit near
-   the live futures on the day they were added so the demo reads like the real desk. */
+/* [id, label, symbol, seed, latest price, daily volatility, decimals] — the futures rows: crude oil (owner request 2026-10-05) and natural
+   gas (2026-10-08; priced to a tenth of a cent, hence 3 decimals). Levels sit near the live futures on the day they were added so the demo
+   reads like the real desk. Keep each row's id, symbol and decimals in step with ECON_CRUDE in app.js. */
 const DEMO_CRUDE_ROWS = [
-  ['wti',   'WTI crude',   'CL=F', 7311, 90.25,  0.018],
+  ['wti',   'WTI crude',   'CL=F', 7311, 90.25,  0.018, 2],
+  ['ng',    'Natural gas', 'NG=F', 7312, 3.252,  0.030, 3],
 ];
 /* rows whose newest print is "new" in the demo (exercises the NEW chip path) */
 const DEMO_ECON_CHANGED = new Set(['ust10y', 'unrate']);
@@ -983,18 +985,18 @@ function buildDemoEcon(range, now) {
     if (note) row.pointsNote = note;
     return row;
   });
-  /* WTI (owner request 2026-10-05; Brent was dropped 2026-10-06) sits right after the three yields. Futures trade through today, so unlike the
-     FRED-shaped rows these end on the last trading day itself; their source is the quote feed, not FRED. */
-  const oil = DEMO_CRUDE_ROWS.map(([id, label, symbol, seed, end, vol]) => {
+  /* The futures rows (WTI from 2026-10-05, natural gas from 2026-10-08; Brent was dropped 2026-10-06) sit right after the three yields. Futures
+     trade through today, so unlike the FRED-shaped rows these end on the last trading day itself; their source is the quote feed, not FRED. */
+  const oil = DEMO_CRUDE_ROWS.map(([id, label, symbol, seed, end, vol, dec]) => {
     const rnd = lcg(seed), n = dailyDates.length, vals = [end * (1 + (rnd() - 0.5) * 0.3)];
     for (let i = 1; i < n; i++) vals.push(vals[i - 1] * (1 + (rnd() - 0.5) * 2 * vol + (end - vals[i - 1]) / end * 0.004));
     const k = end / vals[n - 1];
-    const series = dailyDates.map((d, i) => [d, Number((vals[i] * k).toFixed(2))]);
+    const series = dailyDates.map((d, i) => [d, Number((vals[i] * k).toFixed(dec))]);
     const last = series[n - 1], prev = series[n - 2];
     const { slice, note } = econSpanSlice(series, rk, 'daily');
     const row = {
-      id, label, unit: '', pre: '$', decimals: 2, transform: 'level', cadence: 'daily', symbol,
-      value: last[1], prev: prev[1], delta: Number((last[1] - prev[1]).toFixed(2)),
+      id, label, unit: '', pre: '$', decimals: dec, transform: 'level', cadence: 'daily', symbol,
+      value: last[1], prev: prev[1], delta: Number((last[1] - prev[1]).toFixed(dec)),
       asOf: last[0], prevAsOf: prev[0], source: 'yahoo', status: 'ok', changed: false, staleSec: null,
       points: econDownsample(slice, ECON_MAX_POINTS),
     };
@@ -1053,7 +1055,7 @@ function buildDemoCrudeBars(id, now) {
   const vals = [top + (rnd() - 0.5) * step * 8];
   for (let i = 1; i <= n; i++) vals.push(vals[i - 1] + (rnd() - 0.5) * step * 2 + (top - vals[i - 1]) * 0.02);
   const shift = top - vals[n];
-  return econDownsample(vals.map((v, i) => [end - (n - i) * 300000, Number((v + shift).toFixed(2))]), 150);
+  return econDownsample(vals.map((v, i) => [end - (n - i) * 300000, Number((v + shift).toFixed(row[6]))]), 150);
 }
 
 /* US equities session gate for the feed poller cadence (spec Clarification

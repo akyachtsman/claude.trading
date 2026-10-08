@@ -9436,7 +9436,10 @@ function econIntradayChart(chart, r, missing) {
        5Y chart says "since Aug '23" rather than pass for five.
      – never NEW (a price ticking by the minute is not a release), never in demo from the network (demo draws seeded rows).
    Failure: a row keeps its last good quote for ECON_CRUDE_KEEP_MS, then says NO DATA with the reason in its tooltip. */
-const ECON_CRUDE = { wti: { symbol: 'CL=F', label: 'WTI crude' } };   /* Brent (BZ=F) was a second row until the owner dropped it 2026-10-06: "I dont need Brent oil" */
+/* `dec` is the contract's own price precision: WTI quotes to the cent, Henry Hub natural gas to a TENTH of a cent (3.252) — rounding it to two places would
+   print 3.25 for 3.252 and turn a 0.049 move into 0.05. Natural gas (NG=F) joined 2026-10-08 (owner request: "add natural gas to the economy panel"), as one
+   more entry here and in DEMO_CRUDE_ROWS (data.js); the `econCrude*` names say "futures row", not "oil". Brent (BZ=F) was a row until the owner dropped it 2026-10-06. */
+const ECON_CRUDE = { wti: { symbol: 'CL=F', label: 'WTI crude', dec: 2 }, ng: { symbol: 'NG=F', label: 'Natural gas', dec: 3 } };
 const ECON_CRUDE_IDS = Object.keys(ECON_CRUDE);
 const ECON_CRUDE_FRESH_MS = 20 * 60000;    /* DELAYED while the newest bar is within this: Yahoo's ~10 min plus a 5-minute bar and slack */
 const ECON_CRUDE_KEEP_MS = 30 * 60000;     /* a reading whose last successful fetch is older than this is dropped (or 2 poll intervals when slower) */
@@ -9533,8 +9536,8 @@ function econCrudeRows(now) {
   if (DESK.mode === 'demo' || !econCrude.landedAt) return [];
   const keep = Math.max(ECON_CRUDE_KEEP_MS, 2 * econCrudeDelaySec(econCrude.landedAt) * 1000);
   return ECON_CRUDE_IDS.map(id => {
-    const { symbol, label } = ECON_CRUDE[id], m = econCrude.m[id];
-    const base = { id, label, unit: '', pre: '$', decimals: 2, transform: 'level', cadence: 'daily', symbol, changed: false, staleSec: null, source: 'yahoo' };
+    const { symbol, label, dec } = ECON_CRUDE[id], m = econCrude.m[id];
+    const base = { id, label, unit: '', pre: '$', decimals: dec, transform: 'level', cadence: 'daily', symbol, changed: false, staleSec: null, source: 'yahoo' };
     if (!m || !Number.isFinite(m.price) || now - m.fetchedAt > keep) {
       return { ...base, status: 'missing', value: null, prev: null, delta: null, asOf: null, prevAsOf: null, points: [], why: (m && m.detail) || 'no answer from the quote feed' };
     }
@@ -9555,10 +9558,10 @@ function econCrudeRows(now) {
     if (m.dailyWhy) histWhy = points.length
       ? 'the last refresh of the 1W–5Y history failed (' + m.dailyWhy + '); the charts show the history read ' + Math.round(histAge / 60000) + ' min ago'
       : 'no 1W–5Y chart: ' + m.dailyWhy;
-    const price = Number(m.price.toFixed(2));
+    const price = Number(m.price.toFixed(dec));
     return {
-      ...base, status: 'ok', value: price, prev: m.prevClose == null ? null : Number(m.prevClose.toFixed(2)),
-      delta: m.prevClose == null ? null : Number((price - m.prevClose).toFixed(2)),
+      ...base, status: 'ok', value: price, prev: m.prevClose == null ? null : Number(m.prevClose.toFixed(dec)),
+      delta: m.prevClose == null ? null : Number((price - m.prevClose).toFixed(dec)),
       asOf: ptDateKey(new Date(m.ts)), prevAsOf: null, points,
       ...(note ? { pointsNote: note } : {}),
       crude: { symbol, ts: m.ts, why: m.why ? m.detail : '', histWhy, chgWhy, fetchedAt: m.fetchedAt },
