@@ -9111,6 +9111,19 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   expect(await first(7), 'and nothing moved').toEqual(['AAA', 'BBB', 'ONE', 'TWO', 'THREE', '', '']);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
+  // editing a slot IS working it, on the keyboard path too (Codex P2, PR #316): F2 on the untouched initial tab stop never passes the click handler,
+  // and abandoning that editor must still leave the + anchored on the slot just edited — directly under it, not at the end of the list
+  await seed(['AAA', 'BBB', 'CCC', 'DDD']);
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('F2');
+  expect(await editorSlot(page), 'F2 opens the editor on the focused slot').toBe('0');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  await page.locator('.wb-rail-add').click();
+  expect(await editorSlot(page), 'the + opens right under the slot edited with F2 (slot 1), not after the last stock').toBe('1');
+  expect(await first(5), 'pushing BBB CCC DDD down one place').toEqual(['AAA', '', 'BBB', 'CCC', 'DDD']);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
   // a column with a gap and nothing worked yet: the END of the list is just after the LAST stock, not the first empty slot
   await seed(['AAA', '', 'CCC']);
   await page.locator('.wb-rail-add').click();

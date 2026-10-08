@@ -6035,6 +6035,7 @@ function wbSlotRow(i, sym, data) {
        reopens the editor instead of charting (Codex P2). The editor lifecycle is
        navigation too. */
     wbSlotClick = { i: -1, at: 0 };
+    setWbSlotTab(i);                    /* editing a slot IS working it, whatever route got here: F2 on the untouched initial stop never passes the click handler's setWbSlotTab, and the + would not know (Codex P2, PR #316) */
     wbEditSlot = i;
     wbEditDraft = sym || '';
     renderWbSidebar(data);

@@ -564,8 +564,8 @@ Gesture rules, each of which S64 holds:
   BELOW the stock last worked on, so adds chain in the order they are made; click a stock first and the `+` pushes
   one in right under it. Details that are rules: (1) `wbSlotWorked` — `wbSlotTab` is 0 until the owner touches a
   slot, and 0 is a default, not "the row last worked on"; with nothing worked the target is just after the LAST
-  filled slot (slot 0 of an empty column), NOT the first hole; `setWbSlotTab`, `wbInsertAndEdit` and
-  `wbCommitMove` set it. (2) When the anchor row is itself EMPTY (an editor abandoned with Escape, or a click on an
+  filled slot (slot 0 of an empty column), NOT the first hole; `setWbSlotTab` (a click, an arrow, and `openEditor` — so F2 on the untouched initial stop counts, Codex P2 on PR #316),
+  `wbInsertAndEdit` and `wbCommitMove` set it. (2) When the anchor row is itself EMPTY (an editor abandoned with Escape, or a click on an
   empty slot) the `+` reopens THAT slot instead of skipping past it. (3) `wbAddNext()` calls `wbSettleEditor()`
   FIRST: the target is read from what is STORED, and a typed draft is not stored until it is settled (the same
   reason as the blur-vs-click race above) — without it the draft is lost or overwritten. (4) Below slot 99 there
