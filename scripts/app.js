@@ -8345,7 +8345,7 @@ async function refreshNowClicked() {
   try {
     await Promise.all([feedPollTick(true), refreshEcon(true), econLiveFetch(true), econCrudeFetch(true)]);
     /* 1D picked after the quote had landed but while desk-econ was still out starts its bars on its own: still part of this refresh */
-    if (econBars.p) await econBars.p.catch(() => {});
+    for (const p of [econBars.p, econBarsWk.p]) if (p) await p.catch(() => {});
   } finally {
     refreshNowPending = false;
     renderMasthead();
@@ -8623,6 +8623,18 @@ function econXTicksIntraday(pts) {
   if (step > 60) for (const [t, m] of grid) if (m % 60 === 0 && m % step !== 0) out.push({ f: econIdxFrac(ts, t), label: '', minor: true });
   return out;
 }
+/* the time axis of a 1-WEEK chart drawn from intraday bars (owner 2026-10-08): a mark where each Pacific day BEGINS (the first bar of that date — the
+   line is drawn in index order, so a weekend or an overnight gap is compressed and the mark sits where the line actually turns the page), labelled
+   with the date ("Oct 6") for at most three of them — all of them when there are three or fewer, else the first, the middle and the last — and the rest
+   left as small unlabelled marks. A series that never crosses a Pacific midnight (less than a day) falls back to its two clock ends. */
+function econXTicksWeek(pts) {
+  const ts = pts.map(p => p[0]), n = ts.length, starts = [];
+  let prev = ptDateKey(new Date(ts[0]));
+  for (let i = 1; i < n; i++) { const d = ptDateKey(new Date(ts[i])); if (d !== prev) { starts.push([i, d]); prev = d; } }
+  if (!starts.length) return [{ f: 0, label: fmtClockBare(new Date(ts[0]).toISOString()) }, { f: 1, label: fmtClockBare(new Date(ts[n - 1]).toISOString()) }];
+  const named = new Set(starts.length <= 3 ? [...starts.keys()] : [0, Math.floor((starts.length - 1) / 2), starts.length - 1]);
+  return starts.map(([i, d], k) => ({ f: i / (n - 1), label: named.has(k) ? fmtShortDate(d) : '', minor: !named.has(k) }));
+}
 /* the time axis of a daily or monthly chart: calendar marks (Mondays, month starts, quarter starts, half-years, years, every second year)
    — the smallest kind that leaves two or three of them inside the span — else the first, middle and last READING. Labels name the day
    ("Sep 24"), the month with its year for monthly series or a span of about a year ("Jan '26"), or just the year. */
@@ -8783,11 +8795,13 @@ function econPickSpan(key) {
   syncEconTf();
   if (DESK.mode === 'demo') { renderEcon(buildDemoEcon(econRange)); return; }
   econCrudeRepaint();   /* the oil's daily history is already here: its charts follow the pick without waiting for desk-econ */
+  /* 1D and 1W draw finer bars (the yields' from CNBC: the day's, or the last five sessions'): asked for at once on the pick, whichever way
+     desk-econ's own request goes — the bars do not depend on it, and a reference to check them against is looked for again at every render */
+  if (key === '1d' || key === '1w') econBarsFetch();
   /* 1D — or back from 1D to the span that is still showing — changes the VIEW, not the range: nothing is asked of desk-econ, so
      the poll clock, a forced refresh in flight and the generation counter are all left alone. Only the intraday bars are fetched. */
   if (econRange === before) {
     if (econState.shown) renderEcon(econState.shown);
-    if (key === '1d') econBarsFetch();
     return;
   }
   /* A forced refresh is in flight: a request of our own would take the newer generation and get
@@ -9030,15 +9044,21 @@ function econRow(r, chartsMatch) {
   let chartTip = '';
   if (econTf === '1d') chartTip = econIntradayChart(chart, r, missing);
   else {
+    /* 1W draws bars where the row has them (the futures' own 5-minute bars, the yields' CNBC 5-day bars); a row they cannot be had for falls through to
+       its daily chart below, with the reason in the tooltip and — when CNBC answered badly — a visible `daily closes` note */
+    const wk = econTf === '1w' && !missing ? econWeekChart(chart, r) : null;   /* the bars do not depend on desk-econ's span */
     const pts = (Array.isArray(r.points) ? r.points : []).filter(p => Array.isArray(p) && Number.isFinite(fmtToNum(p[1])));
     const drawn = !missing && chartsMatch && pts.length >= 2;
-    if (drawn) {
+    if (wk && wk.drawn) chartTip = wk.tip;
+    else if (drawn) {
       /* both axes carry the span now; the first and last date stay on the chart column as `data-span` (and in the tooltip) */
       const span = econSpanCaption(pts, r.cadence);
       chartTip = econPlot(chart, pts, (r.label || r.id) + ', ' + pts.length + ' readings ' + (r.pointsNote ? '(' + r.pointsNote + ')' : 'over ' + econRange.toUpperCase()), r, econXTicksDates(pts, r.cadence), span);
       chart.dataset.span = span;
       /* the one caption left: a short span that fell back to the N latest readings says so (the axis alone would let it read as the span asked for) */
       if (r.pointsNote) chart.appendChild(el('span', 'econ-cap econ-note', String(r.pointsNote)));
+      else if (wk && wk.why === 'failed') chart.appendChild(el('span', 'econ-cap econ-note', 'daily closes'));
+      if (wk) chartTip += ' · 5-day chart ' + (wk.why === 'loading' ? 'loading' : 'unavailable (' + wk.detail + ')') + ': showing the daily closes';
     } else {
       chart.appendChild(el('span', 'econ-noline'));
       if (!missing) chart.appendChild(el('span', 'econ-cap', chartsMatch ? 'no chart' : 'span unavailable'));
@@ -9250,10 +9270,10 @@ async function econLiveFetch(force) {
   if (forced) econLive.forcing = true;
   /* the day's bars ride the same cadence while 1D is showing — fetched CONCURRENTLY with the quote and awaited below, so a forced
      "Refresh now" stays pending until they have landed too (Codex, PR #301); econBarsFetch never throws, the catch is belt and braces */
-  const barsP = econTf === '1d' ? econBarsFetch().catch(() => {}) : null;
+  const barsP = econBarsView() ? econBarsFetch(forced).catch(() => {}) : null;
   /* ...and a batch launched WHILE the quote was out (1D picked mid-refresh: econPickSpan starts it) is waited for too — whoever started
      it, `econBars.p` is the one in flight (Codex, PR #301) */
-  const barsWait = () => { const p = barsP || econBars.p; return p ? p.catch(() => {}) : null; };
+  const barsWait = () => { const p = barsP || econBars.p || econBarsWk.p; return p ? p.catch(() => {}) : null; };
   let body = null, cnbc = {};
   try { body = await econLiveCnbc(); } catch { body = null; }
   try { cnbc = econLiveParseCnbc(body, Date.now()); } catch { cnbc = {}; }
@@ -9277,17 +9297,27 @@ async function econLiveFetch(force) {
    substitute source (owner: "no fallbacks"), and the reason (HTTP status, no answer, not JSON, unknown format with the
    reply's keys, no usable bars, a last bar that disagrees with the quote) is in the caption and the row's tooltip. The
    monthly rows have no intraday series and say so. desk-econ is never involved. */
-const ECON_CHART_URL = (sym) => 'https://ts-api.cnbc.com/harmony/app/charts/1D.json?symbol=' + encodeURIComponent(sym);
+const ECON_CHART_URL = (sym, range) => 'https://ts-api.cnbc.com/harmony/app/charts/' + (range || '1D') + '.json?symbol=' + encodeURIComponent(sym);
 const ECON_BARS_MAX = 150;                  /* thinned with the panel's own min/max bucketing: every kept point is a real bar */
 const ECON_BARS_MISMATCH = 1.5;             /* points: a last bar further than this from the quote is another instrument or a scale fault */
 const ECON_BARS_KEEP_MS = 30 * 60000;       /* a failed refresh keeps the last good bars this long, then the row says why there are none */
 const econBars = { m: {}, p: null, at: 0 };  /* m: row id → { pts: [[ms, price]…], fetchedAt, why, detail }; p: the batch in flight */
+/* 1W (owner 2026-10-08: "is there a reason why the weekly chart is so smooth? … more granular, if possible"): the yields' week is drawn from the SAME
+   feed's 5-day bars (`5D.json`, built BLIND exactly like 1D — the URL pattern is from memory, the build sandbox cannot reach CNBC), kept in a store of its
+   own (the 1D bars and the 5D bars are different series) and refreshed at most every ECON_BARS_WK_MS — a week of bars does not move by the minute, and CNBC
+   is an unofficial endpoint. When CNBC does not answer the yield keeps its official daily line and SAYS so (a `daily closes` note, the reason in the tooltip). */
+const econBarsWk = { m: {}, p: null, at: 0 };
+const ECON_BARS_WK_MS = 5 * 60000;
+/* which bars the span showing draws, if any: { store, range, multi } — 1D is one session, 1W is five */
+function econBarsView() {
+  return econTf === '1d' ? { store: econBars, range: '1D', multi: false } : econTf === '1w' ? { store: econBarsWk, range: '5D', multi: true } : null;
+}
 
 /* The request: a plain GET from this browser, 8 s, NEVER throws — { ok, body } or { ok: false, why, detail }. */
-async function econLiveBars(sym) {
+async function econLiveBars(sym, range) {
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ECON_CNBC_TIMEOUT_MS);
   try {
-    const r = await fetch(ECON_CHART_URL(sym), { signal: ctl.signal });
+    const r = await fetch(ECON_CHART_URL(sym, range), { signal: ctl.signal });
     if (!r.ok) return { ok: false, why: 'http', detail: 'HTTP ' + r.status };
     try { return { ok: true, body: await r.json() }; } catch {
       return ctl.signal.aborted ? { ok: false, why: 'noanswer', detail: 'no answer (too slow)' } : { ok: false, why: 'json', detail: 'the reply was not JSON' };
@@ -9310,7 +9340,7 @@ function econBarMs(b) {
 }
 /* A reply → the day's bars, or the reason there are none. The list is looked for in the plausible places; a bar's price is
    `close` (or `last` / `price`); only the NEWEST session's bars (New York date) are kept — it is a 1-day chart. */
-function econBarsParse(body, now) {
+function econBarsParse(body, now, multi) {
   const obj = body && typeof body === 'object';
   const arr = !obj ? null : Array.isArray(body) ? body
     : [body.barData && body.barData.priceBars, body.priceBars, body.bars, body.data && body.data.priceBars, body.chart && body.chart.priceBars, body.result && body.result.priceBars].find(Array.isArray);
@@ -9327,10 +9357,11 @@ function econBarsParse(body, now) {
   out.sort((a, c) => a[0] - c[0]);
   /* the newest session FIRST, then the minimum: a reply holding yesterday plus the first bar of today has ONE usable bar, which must
      read as "no bars yet" (and keep the last good chart), not slip through as a one-point result with no reason (Codex, PR #301) */
+  /* a 1-WEEK chart keeps every session of the last 7 days instead of the newest alone */
   const day = out.length ? etClock(new Date(out[out.length - 1][0])).date : '';
-  const today = out.filter(p => etClock(new Date(p[0])).date === day);
+  const today = multi ? out.filter(p => p[0] >= out[out.length - 1][0] - 7 * 86400000) : out.filter(p => etClock(new Date(p[0])).date === day);
   if (today.length < 2) {
-    return { pts: [], why: 'empty', detail: arr.length + ' bars in the reply, ' + today.length + ' usable' + (out.length > today.length ? ' on the newest session' : '') + (arr[0] && typeof arr[0] === 'object' ? ' (a bar\'s keys: ' + Object.keys(arr[0]).slice(0, 8).join(',') + ')' : '') };
+    return { pts: [], why: 'empty', detail: arr.length + ' bars in the reply, ' + today.length + ' usable' + (out.length > today.length ? (multi ? ' in the last 7 days' : ' on the newest session') : '') + (arr[0] && typeof arr[0] === 'object' ? ' (a bar\'s keys: ' + Object.keys(arr[0]).slice(0, 8).join(',') + ')' : '') };
   }
   return { pts: econDownsample(today, ECON_BARS_MAX), why: '', detail: '' };
 }
@@ -9343,11 +9374,11 @@ function econBarsRef(id) {
 }
 /* One row's store entry from one reply. A bad reply keeps the last GOOD bars for ECON_BARS_KEEP_MS (a one-minute blip must not
    blank the chart) — with the failure still recorded beside them — and after that there are no bars, only the reason. */
-function econBarsEntry(id, res, prev, now) {
+function econBarsEntry(id, res, prev, now, multi) {
   let pts = [], why = '', detail = '';
   if (!res || !res.ok) { why = (res && res.why) || 'noanswer'; detail = (res && res.detail) || 'no answer'; }
   else {
-    const p = econBarsParse(res.body, now);
+    const p = econBarsParse(res.body, now, multi);
     pts = p.pts; why = p.why; detail = p.detail;
     const bad = pts.length ? econBarsMismatch(id, pts) : '';
     if (bad) { pts = []; why = 'mismatch'; detail = bad; }
@@ -9357,29 +9388,33 @@ function econBarsEntry(id, res, prev, now) {
   return { pts: [], fetchedAt: 0, why, detail };
 }
 /* Fetch all three rows' bars (only while 1D is the view; never in demo, which draws seeded bars). Newest request wins. */
-function econBarsFetch() {
-  if (DESK.mode === 'demo' || !DESK_DB.url || econTf !== '1d') return Promise.resolve();
+function econBarsFetch(force) {
+  const view = econBarsView();
+  if (DESK.mode === 'demo' || !DESK_DB.url || !view) return Promise.resolve();
+  const st = view.store;
   /* ONE batch at a time: a second caller (a tab coming back starts the quote poll AND asks for fresh bars) gets the batch already in
      flight, so a visibility return is three requests, not six at an unofficial endpoint (Codex, PR #301) */
-  if (econBars.p) return econBars.p;
-  econBars.p = (async () => {
+  if (st.p) return st.p;
+  /* a week of bars is not worth asking for every minute: younger than ECON_BARS_WK_MS it stands, unless "Refresh now" forces it */
+  if (view.multi && force !== true && st.at && Date.now() - st.at < ECON_BARS_WK_MS) return Promise.resolve();
+  st.p = (async () => {
     try {
       const res = await Promise.all(Object.keys(ECON_LIVE).map(async (id) => {
         let r;
-        try { r = await econLiveBars(ECON_LIVE[id]); } catch { r = { ok: false, why: 'noanswer', detail: 'no answer' }; }
+        try { r = await econLiveBars(ECON_LIVE[id], view.range); } catch { r = { ok: false, why: 'noanswer', detail: 'no answer' }; }
         return [id, r];
       }));
       const now = Date.now();
-      for (const [id, r] of res) econBars.m[id] = econBarsEntry(id, r, econBars.m[id], now);
-      econBars.at = now;
+      for (const [id, r] of res) st.m[id] = econBarsEntry(id, r, st.m[id], now, view.multi);
+      st.at = now;
       renderAfterFetch(econLiveRepaint);
     } catch (e) {   /* reading a reply must not leave an unhandled rejection or a silent blank: name it on every row */
       const now = Date.now();
-      for (const id of Object.keys(ECON_LIVE)) econBars.m[id] = econBarsEntry(id, { ok: false, why: 'format', detail: 'could not read the reply (' + ((e && e.message) || e) + ')' }, econBars.m[id], now);
+      for (const id of Object.keys(ECON_LIVE)) st.m[id] = econBarsEntry(id, { ok: false, why: 'format', detail: 'could not read the reply (' + ((e && e.message) || e) + ')' }, st.m[id], now, view.multi);
       renderAfterFetch(econLiveRepaint);
-    } finally { econBars.p = null; }
+    } finally { st.p = null; }
   })();
-  return econBars.p;
+  return st.p;
 }
 /* What the bars must agree with, checked AGAIN at every render: the fetch-time check in econBarsEntry has no reference when the page
    boots on a saved 1D and a bar reply beats the quote and the desk-econ rows, so a plausible but wrong instrument or scale would be
@@ -9389,9 +9424,10 @@ function econBarsMismatch(id, pts) {
   if (!Number.isFinite(ref) || !Number.isFinite(last) || Math.abs(last - ref) <= ECON_BARS_MISMATCH) return '';
   return 'the last bar (' + last.toFixed(3) + ') is ' + Math.abs(last - ref).toFixed(2) + ' points from the quote (' + ref.toFixed(3) + ')';
 }
-function econBarsFor(id) {
-  if (DESK.mode === 'demo') return { pts: buildDemoBars(id), why: '', detail: '' };
-  const e = econBars.m[id];
+function econBarsFor(id, tf) {
+  const wk = tf === '1w';
+  if (DESK.mode === 'demo') return { pts: buildDemoBars(id, null, wk ? 5 : 1), why: '', detail: '' };
+  const e = (wk ? econBarsWk : econBars).m[id];
   if (!e) return null;
   const bad = e.pts.length ? econBarsMismatch(id, e.pts) : '';
   return bad ? { pts: [], fetchedAt: 0, why: 'mismatch', detail: bad } : e;
@@ -9419,6 +9455,38 @@ function econIntradayChart(chart, r, missing) {
       : '1-day chart: ' + e.pts.length + ' CNBC ' + ECON_LIVE[r.id] + ' prices, ' + cap + (e.why ? ' — the last refresh failed (' + e.detail + '), these are the last good prices' : '')) + ' · ' + desc;
   }
   return none('1D ' + econBarsShort(e), '1-day chart unavailable: ' + e.detail);
+}
+
+/* the caption of a 1-week chart: its first and last bar on the Pacific clock, BOTH dated (a week ends on the clock time it could begin) */
+function econWeekCaption(pts) {
+  const a = new Date(pts[0][0]), b = new Date(pts[pts.length - 1][0]);
+  return fmtShortDate(ptDateKey(a)) + ' ' + fmtClockBare(a.toISOString()) + ' – ' + fmtShortDate(ptDateKey(b)) + ' ' + fmtClockBare(b.toISOString());
+}
+/* The 1W chart column of a yield or a futures row, drawn from intraday bars (the owner's "more granular, if possible"): the futures' are the 5-minute
+   bars of the last five sessions that the price poll already fetches (no extra request), the yields' are CNBC's 5-day bars. Returns null for a row that
+   has none (a monthly indicator keeps its daily chart), { drawn: true, tip } once it has drawn the chart, and { drawn: false, why, detail } when it could
+   not — the caller then draws the row's official DAILY line and says so (a yield is never left without a chart, and never shown one that is not real). */
+function econWeekChart(chart, r) {
+  const fut = Object.hasOwn(ECON_CRUDE, r.id);
+  if (!fut && !Object.hasOwn(ECON_LIVE, r.id)) return null;
+  let pts, src, why = '', detail = '';
+  if (fut) {
+    pts = DESK.mode === 'demo' ? buildDemoCrudeBars(r.id, Date.now(), true) : ((econCrude.m[r.id] || {}).week || []);
+    src = ECON_CRUDE[r.id].symbol;
+    if (pts.length < 2) return { drawn: false, why: 'none', detail: 'the quote feed sent fewer than two intraday prices' };
+  } else {
+    const e = econBarsFor(r.id, '1w');
+    pts = e ? e.pts : [];
+    src = 'CNBC ' + ECON_LIVE[r.id];
+    if (!e) return { drawn: false, why: 'loading', detail: 'the 5-day bars are still loading' };
+    if (e.pts.length < 2) return { drawn: false, why: 'failed', detail: e.detail };
+    if (e.why) { why = 'stale'; detail = e.detail; }
+  }
+  const cap = econWeekCaption(pts);
+  const desc = econPlot(chart, pts, (r.label || r.id) + ', ' + pts.length + ' prices ' + cap + ' Pacific', r, econXTicksWeek(pts), cap + ' Pacific');
+  chart.dataset.span = cap;
+  return { drawn: true, tip: (DESK.mode === 'demo' ? '1-week chart: generated demo prices'
+    : '1-week chart: ' + pts.length + ' ' + src + ' prices from the last five sessions, ' + cap + (why ? ' — the last refresh failed (' + detail + '), these are the last good prices' : '')) + ' · ' + desc };
 }
 
 /* ── crude oil: WTI futures (owner request 2026-10-05: "add price of crude oil to the economy table"; the owner chose the
@@ -9470,7 +9538,9 @@ function econCrudeIntra(series, now) {
   if (out.length < 2) return null;
   const last = out[out.length - 1], day = out.filter(p => p[0] >= last[0] - 86400000);
   if (day.length < 2) return null;
-  return { pts: econDownsample(day, ECON_BARS_MAX), ts: last[0], price: last[1] };
+  /* `week`: the same bars over the last 7 days (the feed holds five sessions) for the 1W chart — the very request that gives the price, so no extra call */
+  const week = out.filter(p => p[0] >= last[0] - 7 * 86400000);
+  return { pts: econDownsample(day, ECON_BARS_MAX), week: econDownsample(week, ECON_BARS_MAX), ts: last[0], price: last[1] };
 }
 /* The daily series → [[YYYY-MM-DD, close]…] oldest first, or null. */
 function econCrudeDaily(series) {
@@ -9644,7 +9714,7 @@ async function econCrudeFetch(force) {
   for (const x of results) {
     const m = econCrude.m[x.id] || (econCrude.m[x.id] = {});
     const it = x.intra && x.intra.ok ? econCrudeIntra(x.intra.series, landed) : null;
-    if (it) { Object.assign(m, { price: it.price, ts: it.ts, pts: it.pts, fetchedAt: landed, why: '', detail: '' }); any = true; }
+    if (it) { Object.assign(m, { price: it.price, ts: it.ts, pts: it.pts, week: it.week, fetchedAt: landed, why: '', detail: '' }); any = true; }
     else { m.why = 'intraday'; m.detail = x.intra && x.intra.ok ? 'the quote feed sent no usable prices' : fail(x.intra); }
     /* The previous close belongs to the futures session it was read in: a failed `info` leg keeps it only inside that session. Across a
        turnover it is dropped (the change reads as an em dash) — a price from the new session must never be measured against the old
@@ -9780,7 +9850,8 @@ function econVisibility() {
     if (left <= 0) econCrudeFetch(false);
     else econCrudeArm(left / 1000);
   }
-  if (econTf === '1d' && DESK.mode !== 'demo' && DESK_DB.url && Date.now() - econBars.at > 60000) econBarsFetch();   /* the bars are old */
+  const bv = econBarsView();
+  if (bv && DESK.mode !== 'demo' && DESK_DB.url && Date.now() - bv.store.at > 60000) econBarsFetch();   /* the bars are old */
   if (DESK.mode !== 'demo' && DESK_DB.url && econState.dueAt) {
     relampEcon();   /* BEFORE the refetch: a tab that sat hidden must not come back claiming LIVE */
     const left = econState.dueAt - Date.now();

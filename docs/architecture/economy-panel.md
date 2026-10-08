@@ -618,6 +618,33 @@ width); **S56** guards the live 10Y.
   on this site, the URL is right and the parser read it — bars 21:02 → 14:05 Pacific, i.e. CNBC's
   chart carries the OVERNIGHT session from 00:02 ET (the demo's seeded bars match it since
   2026-10-02).
+- **The 1W view draws BARS where a row has them (owner 2026-10-08: "is there a reason why the weekly chart is so smooth? … I thought I wanted to be more granular, if possible"; guard S65).**
+  The reason it was smooth: a week was one daily close per trading day — about six points over a plot only ~70–150px wide, so each segment ran
+  ~25px. The owner chose "1W for all rows" (1M and 3M stay daily: 22 and 63 daily points are already 2–7px apart, so hourly data would barely show,
+  and the futures' hourly bars would need a `quote-proxy` deploy). **Futures (WTI, natural gas):** the 5-minute bars the price poll ALREADY fetches
+  (`quote-proxy` asks Yahoo `range=5d&interval=5m`, ~1,000 bars over five sessions) — `econCrudeIntra` now returns `week` beside the 24-hour `pts`: the same
+  bars over the last 7 days, thinned by `econDownsample` to ≤ `ECON_BARS_MAX` (150) REAL bars (the first and the newest always kept), stored as
+  `econCrude.m[id].week`. No extra request. **Yields:** CNBC's 5-day bars — the same chart feed as 1D with the range `5D` (`ECON_CHART_URL(sym, '5D')`,
+  `econLiveBars(sym, range)`), **built BLIND** exactly as 1D was: the URL pattern is from memory and was NOT measured (the sandbox cannot reach CNBC), so the
+  parser is the 1D parser with `multi` set (`econBarsParse(body, now, true)`: every session of the last 7 days instead of the newest alone, then the same
+  two-bar minimum) and the owner confirms it with a screenshot. They live in a store of their own (`econBarsWk`, beside `econBars` for the day — the two
+  are different series; `econBarsView()` says which one the span showing uses), are fetched by the same `econBarsFetch` (picking 1W, each quote poll while
+  1W is the view, a tab coming back, "Refresh now" with `force`), but **at most every `ECON_BARS_WK_MS` (5 minutes)**: a week of bars does not move by the
+  minute and the endpoint is unofficial. `econPickSpan` starts the bars for 1D AND 1W whichever way desk-econ's own request goes (1W is still a real range
+  for desk-econ: the monthly rows and the fallback line need it). **The chart:** `econWeekChart` (called from `econRow` when `econTf === '1w'`) draws the
+  bars with `econPlot`; its `data-span`, accessible name and tooltip are `Oct 2 05:00 – Oct 8 08:45` (BOTH dates, each with its Pacific clock —
+  `econWeekCaption`; the name reads "96 prices … Pacific", not "over 1W"). **The time axis** (`econXTicksWeek`): a mark where each Pacific day AFTER the
+  first begins (the first bar of that date — the line is drawn in index order, so a weekend or an overnight gap is compressed and the mark sits where the
+  line turns the page), labelled with the date ("Oct 6") for at most three of them (all when there are three or fewer, else the first, the middle and the
+  last), the rest unlabelled; a series inside one Pacific day falls back to its two clock ends. **When CNBC does not answer** the owner chose "the yield keeps
+  today's daily line and says why", not an empty chart: `econWeekChart` returns `{ drawn: false, why, detail }` and the caller draws the row's official daily
+  chart (desk-econ's, real data) with a visible `daily closes` note (`.econ-note`) when CNBC answered badly (HTTP, no answer, not JSON, unknown format, no
+  bars, `bars ≠ quote`), nothing but a tooltip line while the bars are still loading, and the reason in the tooltip either way ("5-day chart unavailable
+  (HTTP 403): showing the daily closes"). A failed REFRESH after a good reply keeps the last good bars for `ECON_BARS_KEEP_MS` (30 min) with the failure in the
+  tooltip, then the daily line and the note. The bars-versus-quote check (`ECON_BARS_MISMATCH`) runs for the week too, at fetch time AND at every render (two
+  independent guards: S65's mutant has to break both). The futures need no fallback (their week and their price are one request); the monthly rows keep their 6
+  latest. **Demo** draws the same shape with no network: `buildDemoBars(id, now, 5)` strings five bond sessions together (≤ 150 points) and
+  `buildDemoCrudeBars(id, now, true)` is five days of 5-minute bars. The S1/S3 console allowlist's chart prefix already covers `5D.json`.
 - **The axes (owner 2026-10-01: "numbers across vertical and horizontal lines", asked for on the 1D
   chart and then "every single range option"; guard S55 for every span, S58 for the 1D clock axis
   and the pure builders).** Every drawn chart has a VALUE axis on its right and a TIME axis under
