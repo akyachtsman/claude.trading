@@ -202,7 +202,7 @@ const seedSlots = (page, slots, { repaint = true, tab = false, pick } = {}) =>
     for (const [i, v] of Object.entries(slots)) syms[i] = typeof v === 'number' ? roster()[v] : v;
     localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
     if (!repaint) return;
-    wbEditSlot = -1; if (tab) wbSlotTab = 0; renderWbSidebar(wbState.data);
+    wbEditSlot = -1; if (tab) { wbSlotTab = 0; wbSlotWorked = false; } renderWbSidebar(wbState.data);
     if (pick !== undefined) wbPick(roster()[pick]);
   }, { slots, repaint, tab, pick });
 /** Installs `window.__pane(titleRe)`, shared by S25/S34 (both colour-check the long-term candles): the PRO pane whose title matches — by DOCTRINE name, never the positional number — as `{ inPane, rects }` (its x band from its own title to the next, and its candle rects with the volume bars removed: they share ONE baseline and stay price-coloured), or `{ err }` when no title matches. */
@@ -236,9 +236,9 @@ const installPaneProbe = (page) => page.evaluate(() => {
     return { inPane, rects };
   };
 });
-/** Closes any open slot editor WITHOUT committing, repaints the rail, then settles `wait` ms; `tab` also parks the tab stop on slot 0. */
+/** Closes any open slot editor WITHOUT committing, repaints the rail, then settles `wait` ms; `tab` also parks the tab stop on slot 0 (and forgets that any slot was worked — the + then adds at the END of the list). */
 const closeEditor = async (page, { wait = 200, tab = false } = {}) => {
-  await page.evaluate((t) => { wbEditSlot = -1; if (t) wbSlotTab = 0; renderWbSidebar(wbState.data); }, tab);
+  await page.evaluate((t) => { wbEditSlot = -1; if (t) { wbSlotTab = 0; wbSlotWorked = false; } renderWbSidebar(wbState.data); }, tab);
   await page.waitForTimeout(wait);
 };
 /** Opens slot `n` (a click, or a double-click with `dbl`; `openWait` ms to let it open), types `text` over its content, presses `key`, then waits `wait` ms. */
@@ -9073,22 +9073,69 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await expect.poll(() => page.evaluate(() => wbState.sym), { message: 'a release back where it began still charts', timeout: 8000 }).toBe(R[1]);
   expect(await first(2), 'and moved nothing').toEqual([R[1], 'BBB']);
 
-  // ── 6. the + opens a slot ABOVE the row last worked on, by using up the nearest empty one beneath
+  // ── 6. the + opens a slot directly BELOW the row last worked on (owner 2026-10-08), by using up the nearest empty one beneath
   await seed(['AAA', 'BBB', R[2], 'DDD', 'EEE']);
   await slotBtn(page, 2).click();
   await page.waitForTimeout(700);
   await page.locator('.wb-rail-add').click();
-  expect(await first(7), 'a slot is open at 2; the stocks from there down moved one place, into the first empty slot').toEqual(['AAA', 'BBB', '', R[2], 'DDD', 'EEE', '']);
+  expect(await first(7), 'a slot is open at 3, just under the stock clicked; the stocks from there down moved one place, into the first empty slot').toEqual(['AAA', 'BBB', R[2], '', 'DDD', 'EEE', '']);
   // read BEFORE anything is typed: the first write after this one normalises the array back to 100 and would hide a column that grew
   expect((await storedSyms(page)).length, 'opening a slot USES UP an empty one — the column is still exactly 100, not 101').toBe(100);
-  expect(await editorSlot(page), 'its editor is open, ready to type').toBe('2');
+  expect(await editorSlot(page), 'its editor is open, ready to type').toBe('3');
   expect(await page.evaluate(() => document.activeElement === document.querySelector('.wb-slot-input')), 'and focused').toBe(true);
   await page.keyboard.type('zzz');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
   const pushed = await storedSyms(page);
-  expect(pushed.slice(0, 6), 'the new stock sits where the slot was opened').toEqual(['AAA', 'BBB', 'ZZZ', R[2], 'DDD', 'EEE']);
+  expect(pushed.slice(0, 6), 'the new stock sits where the slot was opened').toEqual(['AAA', 'BBB', R[2], 'ZZZ', 'DDD', 'EEE']);
   expect([pushed.length, pushed.filter(Boolean).length], 'still 100 slots, one more of them filled').toEqual([100, 6]);
+
+  // ── 6b. successive adds chain in the ORDER they are made (owner 2026-10-08: "it just overwrites what I input last") — nothing worked yet, so the
+  // first lands at the END of the list, and each next one right after the one before, never on top of it
+  await seed(['AAA', 'BBB']);
+  for (const [n, sym] of [['2', 'ONE'], ['3', 'TWO'], ['4', 'THREE']]) {
+    await page.locator('.wb-rail-add').click();
+    expect(await editorSlot(page), `the + opens slot ${n} for ${sym}`).toBe(n);
+    await page.keyboard.type(sym);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+  }
+  expect(await first(6), 'AAA BBB then ONE, TWO, THREE in the order entered — none pushed the one before it down').toEqual(['AAA', 'BBB', 'ONE', 'TWO', 'THREE', '']);
+  // an editor abandoned with Escape leaves its slot EMPTY and still the one last worked on: the next + reuses it, it does not skip it or consume another
+  await page.locator('.wb-rail-add').click();
+  expect(await editorSlot(page), 'the next + opens slot 5').toBe('5');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  await page.locator('.wb-rail-add').click();
+  expect(await editorSlot(page), 'after an Escape the SAME empty slot is opened again').toBe('5');
+  expect(await first(7), 'and nothing moved').toEqual(['AAA', 'BBB', 'ONE', 'TWO', 'THREE', '', '']);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  // a column with a gap and nothing worked yet: the END of the list is just after the LAST stock, not the first empty slot
+  await seed(['AAA', '', 'CCC']);
+  await page.locator('.wb-rail-add').click();
+  expect(await editorSlot(page), 'nothing worked yet: the + goes just after the last stock (slot 3), not into the hole at 1').toBe('3');
+  expect(await first(5), 'and moved nothing').toEqual(['AAA', '', 'CCC', '', '']);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  // an empty column: slot 0
+  await seed([]);
+  await page.locator('.wb-rail-add').click();
+  expect(await editorSlot(page), 'an empty column starts at slot 0').toBe('0');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  // the stock last worked on is in the LAST slot, with room only above: the rows above are pulled up and the new last slot opens
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => (i === 0 ? '' : 'S' + i)) }));
+    wbEditSlot = -1; setWbSlotTab(99); renderWbSidebar(wbState.data);
+  });
+  await page.locator('.wb-rail-add').click();
+  let s = await storedSyms(page);
+  expect(await editorSlot(page), 'under the last slot there is no row: the new one is the last slot, and the rows above moved up').toBe('99');
+  expect([s[0], s[98], s[99], s.length], 'S1..S99 moved up one into the empty slot at the top; slot 99 is open').toEqual(['S1', 'S99', '', 100]);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
 
   // ── 7. nothing empty BELOW: the rows above are pulled up instead (Insert on a slot does the same as the +)
   await page.evaluate(() => {
@@ -9100,7 +9147,7 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await slotBtn(page, 50).focus();
   await page.keyboard.press('Insert');
   await page.waitForTimeout(300);
-  let s = await storedSyms(page);
+  s = await storedSyms(page);
   expect(await editorSlot(page), 'the open slot lands just above the row it was asked at').toBe('49');
   expect([s[0], s[48], s[49], s[50], s.length], 'rows 1..49 moved up one into the empty slot at the top; row 50 stayed').toEqual(['S1', 'S49', '', 'S50', 100]);
   await page.keyboard.press('Escape');
@@ -9195,8 +9242,8 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await page.keyboard.type('zzz');
   await page.evaluate(() => { document.querySelector('.wb-slot-input').blur(); document.querySelector('.wb-rail-add').click(); });
   await page.waitForTimeout(300);
-  expect(await first(5), 'the typed symbol was saved BEFORE the slot opened above it (pushed one place down), not dropped').toEqual(['AAA', 'BBB', '', 'ZZZ', '']);
-  expect(await editorSlot(page), 'and the open slot has the editor').toBe('2');
+  expect(await first(5), 'the typed symbol was saved BEFORE the + read the column, and the next slot opened right under it — not dropped, not overwritten').toEqual(['AAA', 'BBB', 'ZZZ', '', '']);
+  expect(await editorSlot(page), 'and the open slot has the editor').toBe('3');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
 
