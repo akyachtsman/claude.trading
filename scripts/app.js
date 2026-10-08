@@ -4772,11 +4772,13 @@ async function wbLoadSymbol(sym) {
   const gen = ++wbLoadGen;
   const note = document.getElementById('wbInfo');
   const say = msg => { if (note) note.textContent = msg; };
-  /* NOTHING PINS ANY MORE (owner ruling 2026-08-26: "I didn't want a field to
+  /* THIS LOADER PINS NOTHING (owner ruling 2026-08-26: "I didn't want a field to
      push into the list"). The SYMBOL column is 100 permanent slots the owner
-     edits in place, so no control writes into it as a side effect of charting —
-     not this loader, not the header Load box, not a roster click. Loading a
-     symbol charts it and nothing else. */
+     edits in place, so charting a symbol — a slot commit, a roster click, the
+     ACTIVE button — writes no slot. The ONE exception is the header Load box
+     (owner 2026-10-08), whose submit handler calls wbAddLoaded ITSELF before it
+     calls this, so the add is a separate, synchronous act and never a side
+     effect of a lookup. Loading a symbol charts it and nothing else. */
   if (wbState.data.symbols[sym]) { say(''); wbPick(sym); return true; }
   if (DESK.mode === 'demo' || !DESK_DB.url) {
     say('Live ticker lookups are off in demo mode');
@@ -5614,6 +5616,32 @@ function wbAddTarget() {
 function wbAddNext() {
   wbSettleEditor();
   wbInsertAndEdit(wbAddTarget());
+}
+/* The header Load box ADDS what it charts (owner 2026-10-08: typing in Load only replaced the ACTIVE symbol and kept nothing — "keeps overwriting in
+   the same spot"; asked, and the owner chose "make Load add to the list"). That reverses the 2026-08-26 "nothing pins" ruling for THIS ONE box: the loader,
+   a roster click and the ACTIVE button still write nothing. The symbol goes into the slot just AFTER the last stock — the end of the list, never a
+   hole — so symbols typed one after another land in the order typed. One already in the column is only charted (no twin). The save happens BEFORE
+   charting and whether or not the lookup succeeds, exactly like a slot commit ("a slot keeps whatever was typed"): a slow or failed quote can neither
+   lose it nor reorder it, and there is no async step to race. It settles an open editor first (the target is read from what is STORED), makes the new
+   slot the row last worked on (so the + opens right under it) and scrolls it into view inside the list. Returns the slot, or -1 when every slot is
+   filled — said out loud, charted anyway. */
+function wbAddLoaded(sym) {
+  wbSettleEditor();
+  const syms = readWbSticky().syms;
+  const have = syms.indexOf(sym);
+  if (have >= 0) return have;
+  let last = -1;
+  for (let i = WB_SLOTS - 1; i >= 0; i--) if (syms[i]) { last = i; break; }
+  const open = wbInsertSlot(last + 1);
+  if (open < 0) { wbRailNote('Every slot is filled — charted, not added'); return -1; }
+  setWbSlot(open, sym);
+  wbSlotClick = { i: -1, at: 0 };
+  wbSlotTab = open;
+  wbSlotWorked = true;
+  wbRepaintRail();
+  const btn = document.querySelector('.wb-rail-manual [data-slot="' + open + '"] .wb-slot');
+  if (btn) keepPageStill(() => btn.scrollIntoView({ block: 'nearest' }));
+  return open;
 }
 /* Commit a move and repaint. Focus FOLLOWS the stock when the slot that moved held it (a mouse press
    focuses the button, and the keyboard path is entirely about focus): renderWbSidebar's own restore
@@ -7773,12 +7801,13 @@ function wireCharts() {
        box validates with it too, and two inputs that disagree about what a
        ticker is would be a bug nobody could see from either one. */
     if (!WL_SYM_RE.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    /* Charts it and writes NOTHING into the SYMBOL column. That column is 100
-       permanent slots edited in place (owner ruling 2026-08-26: "I didn't want a
-       field to push into the list"), so this box is a chart control, not an add
-       control. It breaks a pending slot pair for the same reason a roster click
-       does — see wbRailBtn. */
+    /* Charts it AND adds it to the SYMBOL column (owner 2026-10-08, reversing the
+       2026-08-26 "this box is a chart control, not an add control" for this box
+       only — see wbAddLoaded for where it lands and why it is saved first). It
+       breaks a pending slot pair for the same reason a roster click does — see
+       wbRailBtn. */
     wbSlotClick = { i: -1, at: 0 };
+    wbAddLoaded(sym);
     wbLoadSymbol(sym);
   });
 

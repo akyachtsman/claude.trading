@@ -33,8 +33,10 @@
   anywhere here would renumber every row below a hole and silently move the
   owner's symbols. A pre-2026-08-26 stack migrates by landing in slots 0..n-1 in
   the order it was already displayed. **NOTHING PINS ANY MORE** — not the loader,
-  not the header Load box, not a roster click. Charting a symbol charts it and
-  writes no slot, which is what makes the column mean "what I typed".
+  not a roster click, not the ACTIVE button. Charting a symbol charts it and
+  writes no slot, which is what makes the column mean "what I typed". **The ONE
+  exception, added 2026-10-08, is the header Load box's SUBMIT — see "The Load
+  box adds what it charts" below.**
   What follows is all load-bearing. **A slot is a cheap `<button>` until
   double-clicked, and at most ONE is an `<input>` at a time** (`wbEditSlot` /
   `wbEditDraft` in module state): `renderCharts` rebuilds this rail on every
@@ -271,8 +273,9 @@
   `ACTIVE` states what the rail previously only implied with `aria-current`, and
   answers the case that marking could not: a symbol charted from the roster, or
   restored on reload, that is not in this column at all. The header **Load box
-  stays** (owner ruling, asked and answered), and it now writes NOTHING — it
-  charts, like every other path. Both it and a slot commit validate with the
+  stays** (owner ruling, asked and answered), and until 2026-10-08 it wrote
+  NOTHING — it charted, like every other path (it now ADDS what it charts, see
+  "The Load box adds what it charts"). Both it and a slot commit validate with the
   shared `WL_SYM_RE` (the submit handler had an inline third copy of that regex;
   it is gone).
   **THE FIRST CUT OF THIS WAS WRONG AND IS WORTH RECORDING.** PR #281 shipped an
@@ -573,6 +576,26 @@ Gesture rules, each of which S64 holds:
   the new LAST slot; a fully filled column still gets the `role="status"` note. The Insert key is unchanged
   (above the focused row). S64 steps 6, 6b and 13 pin it; the test helpers' `tab: true` also resets
   `wbSlotWorked`.
+- **The Load box adds what it charts (owner 2026-10-08).** Owner, with a screenshot of the ACTIVE box: "keeps
+  overwriting in the same spot" — typing in the header Load box charts the symbol, so ACTIVE shows the newest one
+  and the previous one is simply gone, while the 100 slots never change. Asked (the options were "the + stacking",
+  "typing in the Load box", "a slot replacing a stock"), the owner first picked the `+` option, then came back with
+  the ACTIVE screenshot and, asked again, chose "make Load add to the list". **This reverses the 2026-08-26 ruling
+  ("I didn't want a field to push into the list") for the header Load box ONLY** — the 2026-08-26 add box was a
+  STACK that was the only way to edit the column; this is a chart control that also keeps the symbol in a column
+  that is still 100 permanent positional slots. The rules: (1) `wbAddLoaded(sym)` is called by the Load form's
+  SUBMIT handler BEFORE `wbLoadSymbol`, never from inside the loader — the loader, a roster click, the ACTIVE
+  button and a slot commit still write nothing (S40 pins the roster, S66 pins `wbLoadSymbol`). (2) The target is
+  `wbInsertSlot(last + 1)` where `last` is the highest FILLED slot: the end of the list, never a hole, so a run of
+  symbols lands in the order typed; a last stock in the final slot pulls the rows above up (`wbInsertSlot(WB_SLOTS)`),
+  a full column is refused with the `role="status"` note and the symbol is charted anyway. (3) SAVED FIRST, whether or
+  not the lookup resolves — the same rule as a slot commit — so a slow or failed quote can neither lose the symbol nor
+  reorder two typed in a row (an add after the lookup was the mutant S66 catches); a typo is therefore kept and
+  fixed or emptied like any slot. (4) Never a twin: a symbol already in the column is only charted. (5)
+  `wbSettleEditor()` first (the target is read from what is STORED), the new slot becomes the row last worked on
+  (`wbSlotTab`, `wbSlotWorked`) so the `+` opens right under it, and the rail is repainted and the slot scrolled
+  into view by `wbAddLoaded` itself — a lookup that fails never repaints the rail. The header input's `change`
+  handler (a roster symbol committed by blur) is unchanged and still only charts.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 
