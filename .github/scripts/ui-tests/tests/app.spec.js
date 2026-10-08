@@ -6433,6 +6433,10 @@ test('S55: the Economy panel — nine rows, each with its own chart to the right
   expect(tfLabels, 'the seven presets: 1D (the yields\' intraday chart) then 1W..5Y').toEqual(['1D', '1W', '1M', '3M', '6M', '1Y', '5Y']);
   expect(await pressed(), 'default 3M, exactly one pressed').toEqual(['3m']);
   await expect(page.locator('#econTf'), 'the control says the monthly indicators have no 1-day data').toHaveAttribute('title', /no 1-day data/i);
+  // ...and names EVERY row 1D draws: the yields' bars and the 24 hours of each futures contract — natural gas included (Codex, PR #314: the help still said WTI only)
+  await expect(page.locator('#econTf'), 'the control names both futures contracts').toHaveAttribute('title', /last 24 hours of WTI crude and natural gas;/);
+  await expect(page.locator('#econTf button[data-tf="1d"]'), 'and so does the 1D button').toHaveAttribute('title', /last 24 hours of WTI crude and natural gas;/);
+  expect(await page.evaluate(() => econFuturesNames()), 'the wording is derived from the configured contracts, not typed twice').toBe('WTI crude and natural gas');
 
   // ── 4. a monthly row on a span shorter than 6 readings shows its 6 latest AND says so; a daily one never does
   for (const tf of ['1w', '1m', '3m']) {

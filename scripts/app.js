@@ -8373,7 +8373,8 @@ const ECON_TF_KEY = 'econ_tf_v1', ECON_SEEN_KEY = 'econ_seen_v1', ECON_PENDING_K
 const ECON_TFS = [['1d', '1D', '1 day'], ['1w', '1W', '1 week'], ['1m', '1M', '1 month'], ['3m', '3M', '3 months'],
   ['6m', '6M', '6 months'], ['1y', '1Y', '1 year'], ['5y', '5Y', '5 years']];
 const ECON_DEFAULT_TF = '3m';
-const ECON_TF_TITLE = 'Chart span. 1D is the intraday chart of the three yields (CNBC) and the last 24 hours of WTI; the monthly indicators have no 1-day data.';
+/* what 1D covers is said from the configured futures contracts (econFuturesNames), so a contract added to ECON_CRUDE is named here too (Codex, PR #314) */
+const econTfTitle = () => 'Chart span. 1D is the intraday chart of the three yields (CNBC) and the last 24 hours of ' + econFuturesNames() + '; the monthly indicators have no 1-day data.';
 const ECON_MIN_S = 30, ECON_MAX_S = 3600;   /* clamp on the server's refreshInSec */
 const ECON_RETRY_S = 60;                    /* fast retry after a failed poll */
 const ECON_STALE_X = 3;                     /* STALE once the last success is older than 3 × refreshInSec */
@@ -8750,12 +8751,12 @@ function econChrome() {
     tf.id = 'econTf';
     tf.setAttribute('role', 'group');
     tf.setAttribute('aria-label', 'Chart span');
-    tf.title = ECON_TF_TITLE;
+    tf.title = econTfTitle();
     for (const [key, label, words] of ECON_TFS) {
       const b = el('button', '', label);
       b.type = 'button';
       b.dataset.tf = key;
-      b.title = key === '1d' ? 'Intraday chart of the three yields (CNBC) and the last 24 hours of WTI; the monthly indicators have no 1-day data' : 'Charts show the last ' + words;
+      b.title = key === '1d' ? 'Intraday chart of the three yields (CNBC) and the last 24 hours of ' + econFuturesNames() + '; the monthly indicators have no 1-day data' : 'Charts show the last ' + words;
       b.addEventListener('click', () => econPickSpan(key));
       tf.appendChild(b);
     }
@@ -9441,6 +9442,11 @@ function econIntradayChart(chart, r, missing) {
    more entry here and in DEMO_CRUDE_ROWS (data.js); the `econCrude*` names say "futures row", not "oil". Brent (BZ=F) was a row until the owner dropped it 2026-10-06. */
 const ECON_CRUDE = { wti: { symbol: 'CL=F', label: 'WTI crude', dec: 2 }, ng: { symbol: 'NG=F', label: 'Natural gas', dec: 3 } };
 const ECON_CRUDE_IDS = Object.keys(ECON_CRUDE);
+/* the contracts' names for a sentence: "WTI crude and natural gas" (a label keeps its own case unless it is an ordinary capitalised word) */
+function econFuturesNames() {
+  const n = Object.values(ECON_CRUDE).map(c => c.label.replace(/^[A-Z][a-z]/, m => m.toLowerCase()));
+  return n.length > 1 ? n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1] : n[0];
+}
 const ECON_CRUDE_FRESH_MS = 20 * 60000;    /* DELAYED while the newest bar is within this: Yahoo's ~10 min plus a 5-minute bar and slack */
 const ECON_CRUDE_KEEP_MS = 30 * 60000;     /* a reading whose last successful fetch is older than this is dropped (or 2 poll intervals when slower) */
 const ECON_CRUDE_DAILY_MS = 5 * 60000;     /* the daily bars are re-asked this often (quote-proxy caches them 5 min) */
