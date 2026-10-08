@@ -661,14 +661,15 @@ width); **S56** guards the live 10Y.
   went live 2026-10-01 (until then v1's inline 5 s Treasury attempt always timed out, the yields
   were FRED's and every reply carried that ~5 s). If the function is ever down, a live page lamps the panel `STALE` and retries
   every 60s (the S1/S3 console allowlist already covers feed-origin errors).
-- **Crude oil: WTI futures (owner request 2026-10-05: "add price of crude oil to the economy table"; it began as two rows, WTI and Brent, and the owner dropped Brent 2026-10-06: "I dont need Brent oil").**
-  One row right after the three yields (`econWithCrude`). `ECON_CRUDE` (app.js) and `DEMO_CRUDE_ROWS` (data.js) are tables: another contract is one entry in each, nothing else changes. The owner chose the LIVE futures price over FRED's
+- **Futures: WTI crude oil and natural gas (owner request 2026-10-05: "add price of crude oil to the economy table"; it began as two rows, WTI and Brent, and the owner dropped Brent 2026-10-06: "I dont need Brent oil"; natural gas joined 2026-10-08: "add natural gas to the economy panel").**
+  Rows right after the three yields, WTI first (`econWithCrude`). `ECON_CRUDE` (app.js) and `DEMO_CRUDE_ROWS` (data.js) are tables: another contract is one entry in each (id, label, symbol and the price precision `dec` — nothing else changes). The `econCrude*` names say "futures row", not "oil"; they were not renamed. The owner chose the LIVE futures price over FRED's
   EIA daily spot (`DCOILWTICO`), which on the day this was built had its newest reading on 2026-09-29 while
   the yields' was 2026-10-01 — a week behind, shown under its own date. So the row is NOT a FRED row (nothing in
   `desk-econ` or `config/econ-indicators.json` changed; merging IS shipping) and NOT a CNBC row: the price is the
   FRONT-MONTH FUTURES `CL=F` from the quote feed the watchlists and charts already use (`deskQuote` →
   `quote-proxy` → Yahoo), fetched by the browser on its own clock (`econCrudeFetch`: 60 s while the futures market
   is open, 10 min while shut, paused while the tab is hidden, "Refresh now" forces it).
+  - **Natural gas (`ng`, `NG=F`, 2026-10-08).** The same machinery with its own PRICE PRECISION: Henry Hub is quoted to a tenth of a cent, so the row prints `$3.252` and a `▲ 0.049` change — rounding it to two places would show `$3.25` and turn a 0.049 move into 0.05. `ECON_CRUDE[id].dec` (WTI 2, natural gas 3) feeds the row's `decimals`, the price/previous-close/change rounding in `econCrudeRows` and the demo twin (`DEMO_CRUDE_ROWS`' seventh field, the seeded daily series and `buildDemoCrudeBars`), and so `econDec` / `econYAxis` follow (the 38px currency axis prints "3.1", "3.2" at its fewest exact decimals). The 1D help text (the span control's tooltip and the 1D button's) names the contracts from the same table (`econFuturesNames()`: "WTI crude and natural gas") — typed once, so a contract added to `ECON_CRUDE` is named there too (Codex, PR #314). Each contract has its own state in `econCrude.m[id]`, so one going away says NO DATA on that row and leaves the other flowing (S63 §7a); each poll asks BOTH contracts (six requests a minute while the futures market is open, the daily bars every 5 minutes). **Measured 2026-10-08 from the live quote feed:** `NG=F` answered `info` (name "Natural Gas Nov 26", price 3.252, change 0.049000025), `intraday` (1,013 five-minute bars from 2026-10-04 22:10 UTC, carrying float noise such as 3.009000062942505 — hence the rounding) and `daily` (800 bars from 2023-08-07, so a 5Y chart says `since Aug '23` as WTI's does). Its previous close (3.252 − 0.049 = 3.203) matched the Investing.com share the owner sent (3.242, +1.22% → 3.203): the same contract. CME energy products share the weekly schedule `econCrudeOpen` encodes, so nothing about the hours changed. **investing.com is NOT a source** (owner question 2026-10-08): it has no public API, and the build sandbox's gateway denies the host so a browser-side call could not even be tried; a real-time alternative would be CNBC (`@NG.1`), built blind like the 1D yield chart, only if the owner wants it.
   - **Measured 2026-10-01..05 from the live site:** `CL=F` and `BZ=F` (Brent, while it was a row) answered all three kinds (`intraday` 5-minute
     bars for 5 days, `info`, `daily` 800 bars ≈ 3.2 years) in under a second; the newest intraday bar was **10
     minutes old** at the poll (Yahoo's futures are delayed ~10 min), and `info.change` equalled the price less the
@@ -717,15 +718,15 @@ width); **S56** guards the live 10Y.
     and because the feed holds ~3 years a 5Y chart says `since Aug '23` (`pointsNote`) rather than pass for five. The daily
     bars are re-asked every 5 minutes (`ECON_CRUDE_DAILY_MS`); the oil charts redraw on a span pick without waiting for
     desk-econ (their history is already here).
-  - **Presentation:** `pre: '$'` — `econValueText` prints a currency sign BEFORE the number; the change is in dollars
-    (`▲ 1.25`, digits green/red by the panel's own direction rule); the date cell is the Pacific CLOCK of the newest bar
-    when it is from today; the source line reads `Source: Yahoo CL=F`. A currency row's chart gets `.is-px`: a 38px value
+  - **Presentation:** `pre: '$'` — `econValueText` prints a currency sign BEFORE the number; the change is in dollars at the contract's own precision
+    (`▲ 1.25`, `▲ 0.049`, digits green/red by the panel's own direction rule); the date cell is the Pacific CLOCK of the newest bar
+    when it is from today; the source line reads `Source: Yahoo CL=F` (`NG=F` for the gas). A currency row's chart gets `.is-px`: a 38px value
     axis (`--econ-yw`, now on `.econ-chart` so the time axis reads it too) and labels at the fewest decimals that show
     every value EXACTLY (`econYAxis(…, px)`: "90", "90.5" — never 100.5 as "101"); a yield keeps its own decimals.
   - **Never NEW** (a price ticking by the minute is not a release: the oil rows skip the seen/pending bookkeeping), **never
     demo from the network** (`?demo=1` draws seeded rows, `buildDemoEcon` / `buildDemoCrudeBars`; live strips any generated
     oil row from a payload), and **never a CNBC quote** (`econLive.q` never holds one; S56/S57 assert that no YIELD is asked
-    of the quote feed, which is why their stubs now let `CL=F` through).
+    of the quote feed, which is why their stubs now let `CL=F` and `NG=F` through).
   - **The oil charts do not depend on desk-econ's span** (Codex, PR #308, seventh round): `renderEcon` passes the
     "does this payload belong to the span showing" flag (`chartsMatch`, which withholds a chart labelled with the wrong
     window) to the desk-econ rows only. An oil row's charts are sliced from the quote feed's OWN daily history for the
