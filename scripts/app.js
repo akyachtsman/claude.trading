@@ -4672,6 +4672,11 @@ const WB_RESTORE_LANES = 4;
    frame is work the rail cannot afford, so the other 99 stay cheap buttons. */
 let wbEditSlot = -1;
 let wbEditDraft = '';
+/* The OPEN editor's own "save what is typed and close, quietly" (set by the editor that is on screen,
+   null otherwise). Code that re-indexes or rebuilds the column — opening a slot, moving a stock —
+   calls wbSettleEditor() first: the editor's blur save is DEFERRED a tick, and a tap (or a drag with a
+   finger, which never blurs the input at all) can reach that code before it runs. */
+let wbEditorSettle = null;
 /* Sentinel for "the 25-name desk-charts roster" in the rail's roster picker —
    deliberately not a plausible watchlist title, since the picker's values are
    otherwise list titles the owner types. */
@@ -5471,6 +5476,351 @@ function setWbSlotTab(n) {
   if (next) next.tabIndex = 0;
 }
 
+/* ── move a stock up or down the SYMBOL column, and open a slot to push one in ──
+   (owner request 2026-10-07, for the STOCHASTIC rail — NOT the watchlist tiles, which
+   have their own drag: "make the stocks movable up/down by pressing the mouse button and
+   can we have an open slot so I can push in more stocks".)
+
+   The column stays POSITIONAL and exactly WB_SLOTS long, so a move is a splice of the whole
+   100-entry array — one remove, one insert, the length unchanged — and an OPEN slot is made
+   by consuming an EMPTY one (the nearest below, else above): rows between the two shift by
+   one place and nothing is ever dropped. Nothing here filters, compacts or grows the array.
+   Built on POINTER events like the watchlist drag (a mouse drags at once past a few pixels,
+   a finger must rest first so an ordinary swipe still scrolls the list); the ghost is a
+   child of `.area-charts` so it keeps the dark scope, and the marker is an ABSOLUTE child of
+   `.wb-slots` so it never takes a flex row. */
+const WB_SLOT_DRAG_SLOP = 6;
+const WB_SLOT_TOUCH_ARM_MS = 300;
+const WB_SLOT_EDGE_PX = 22, WB_SLOT_EDGE_MAX_STEP = 14;   /* the list scrolls itself while a drag holds at its top/bottom edge */
+const WB_SLOT_DRAG_CLICK_MS = 250;
+const wbSlotDrag = { on: false, armed: 0, from: -1, sym: '', btn: null, ghost: null, marker: null, raf: 0, x: 0, y: 0, gap: -1 };
+/* The release that ends a drag is delivered as a `click` to the slot BUTTON the press began on. The
+   guard that swallows it is tied to THAT NODE and is one-shot: a click on any other slot, or on a
+   replacement button after a repaint, is a real click and is never eaten (Codex P2). */
+let wbSlotDragClickAt = 0;
+let wbSlotDragClickBtn = null;
+/* A one-line message under ACTIVE — "every slot is filled" is the only one. Module state, since
+   renderWbSidebar rebuilds the rail; cleared by its own timer. */
+let wbRailMsg = '', wbRailMsgT = 0;
+const wbSlotsEl = () => document.querySelector('.wb-rail-manual .wb-slots');
+function wbRepaintRail() {
+  if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
+}
+function wbRailNote(msg) {
+  wbRailMsg = msg;
+  clearTimeout(wbRailMsgT);
+  wbRailMsgT = setTimeout(() => { wbRailMsg = ''; wbRepaintRail(); }, 4000);
+  wbRepaintRail();
+}
+/* Focus the open editor of slot i without moving the page, caret-selecting its text. `reveal`
+   also brings the row into view INSIDE the list (a slot opened off-screen); the page is put
+   back by keepPageStill either way. */
+function wbFocusSlotEditor(i, reveal) {
+  const live = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot-input');
+  if (!live) return;
+  keepPageStill(() => {
+    live.focus({ preventScroll: true });
+    live.setSelectionRange(0, live.value.length);
+    if (reveal) live.scrollIntoView({ block: 'nearest' });
+  });
+}
+/* Save the draft of an open editor and close it, BEFORE the column is re-indexed (Codex P2, PR #313).
+   Without it: type in a slot, then tap the `+` — the click reaches wbInsertAndEdit before the input's
+   deferred blur has saved anything, the slot that still reads empty "is already open", the editor is
+   rebuilt blank, and the old blur then mistakes the rebuild for a background repaint and returns without
+   saving: the typed symbol is silently lost. A finger dragging a stock while an editor is open on another
+   slot is the same hazard (no blur ever fires), and would shift rows under a draft that belongs to one. */
+function wbSettleEditor() {
+  const f = wbEditorSettle;
+  wbEditorSettle = null;
+  if (f && wbEditSlot >= 0) f();
+}
+/* Move the stock in slot `from` to slot `to` — the index it ends up at. A splice of the whole
+   array, so the rows between the two shift by one and the length stays WB_SLOTS. */
+function wbMoveSlot(from, to) {
+  if (!(from >= 0 && from < WB_SLOTS && to >= 0 && to < WB_SLOTS) || from === to) return false;
+  const syms = readWbSticky().syms.slice();
+  const moved = syms.splice(from, 1)[0];
+  syms.splice(to, 0, moved);
+  writeWbSticky({ syms });
+  return true;
+}
+/* Open an EMPTY slot at `at`, pushing the stocks from there down one place into the nearest empty
+   slot beneath. When nothing beneath is empty it pulls the rows ABOVE up into the nearest empty one
+   instead, so the open slot lands just above `at`. Returns the index of the open slot, or -1 when
+   every one of the 100 is filled. A slot that is already empty is already open: nothing moves. */
+function wbInsertSlot(at) {
+  if (!(at >= 0 && at < WB_SLOTS)) return -1;
+  const syms = readWbSticky().syms.slice();
+  if (!syms[at]) return at;
+  let k = at + 1;
+  while (k < WB_SLOTS && syms[k]) k++;
+  if (k < WB_SLOTS) {
+    syms.splice(k, 1);          /* the empty slot that gets used up */
+    syms.splice(at, 0, '');     /* the open slot appears here */
+    writeWbSticky({ syms });
+    return at;
+  }
+  let j = at - 1;
+  while (j >= 0 && syms[j]) j--;
+  if (j < 0) return -1;
+  syms.splice(j, 1);
+  syms.splice(at - 1, 0, '');
+  writeWbSticky({ syms });
+  return at - 1;
+}
+/* Open a slot at `at` and put the owner in it, ready to type — the same editor a click on an empty
+   slot opens. A pending double-click pair is broken (an editor opening is navigation, see
+   wbSlotClick), and the tab stop goes to the new slot. */
+function wbInsertAndEdit(at) {
+  wbSettleEditor();
+  const open = wbInsertSlot(at);
+  if (open < 0) { wbRailNote('Every slot is filled — empty one first'); return; }
+  wbSlotClick = { i: -1, at: 0 };
+  wbSlotTab = open;
+  wbEditSlot = open;
+  wbEditDraft = '';
+  wbRepaintRail();
+  wbFocusSlotEditor(open, true);
+}
+/* Commit a move and repaint. Focus FOLLOWS the stock when the slot that moved held it (a mouse press
+   focuses the button, and the keyboard path is entirely about focus): renderWbSidebar's own restore
+   would otherwise put it back on the old INDEX, which now holds a different stock. */
+function wbCommitMove(from, to) {
+  wbSettleEditor();
+  const f = document.activeElement;
+  const row = f && f.classList && f.classList.contains('wb-slot') ? f.closest('.wb-rail-row') : null;
+  const hadFocus = !!row && Number(row.dataset.slot) === from;
+  if (!wbMoveSlot(from, to)) return false;
+  wbSlotClick = { i: -1, at: 0 };
+  wbSlotTab = to;                      /* Tab comes back to the stock just moved */
+  wbRepaintRail();
+  if (hadFocus) {
+    const nb = document.querySelector('.wb-rail-manual [data-slot="' + to + '"] .wb-slot');
+    if (nb) keepPageStill(() => { nb.focus({ preventScroll: true }); nb.scrollIntoView({ block: 'nearest' }); });
+  }
+  return true;
+}
+/* The GAP under a pointer: 0..WB_SLOTS, the number of rows whose vertical middle it has passed —
+   a drop there inserts BEFORE the row now at that index. Rows are read live, so the list's own
+   scroll needs no correction. */
+function wbDropGap(y) {
+  const slots = wbSlotsEl();
+  if (!slots) return -1;
+  let gap = 0;
+  for (const r of slots.children) {
+    if (!r.classList.contains('wb-rail-row')) continue;
+    const b = r.getBoundingClientRect();
+    if (y > b.top + b.height / 2) gap++; else break;
+  }
+  return gap;
+}
+/* The slot a drop at `gap` would leave the dragged stock in: the gap is counted BEFORE the stock
+   is lifted out, so a gap below its own row lands one place higher. */
+const wbGapToSlot = (from, gap) => (gap > from ? gap - 1 : gap);
+/* Paint the drop feedback for the pointer's last position: the insertion marker, and the dimmed
+   source row. Recomputes `wbSlotDrag.gap` — -1 when the pointer is outside the list (a drop there
+   is a cancel). Safe to call after any repaint of the rail, which is why renderWbSidebar ends
+   by calling it. */
+function wbSlotDragPaint() {
+  const d = wbSlotDrag;
+  if (d.marker) { d.marker.remove(); d.marker = null; }
+  d.gap = -1;
+  const slots = wbSlotsEl();
+  if (!d.on || !slots) return;
+  const src = slots.querySelector('.wb-rail-row[data-slot="' + d.from + '"]');
+  if (src) src.classList.add('wb-dragging');
+  const s = slots.getBoundingClientRect();
+  if (d.x < s.left - 40 || d.x > s.right + 40 || d.y < s.top - 24 || d.y > s.bottom + 24) return;
+  const gap = wbDropGap(d.y);
+  d.gap = gap;
+  const rows = slots.querySelectorAll('.wb-rail-row');
+  const ref = rows[Math.min(gap, rows.length - 1)];
+  if (!ref) return;
+  const rb = ref.getBoundingClientRect();
+  const marker = el('div', 'wb-drop-marker');
+  marker.style.top = ((gap >= rows.length ? rb.bottom : rb.top) - s.top + slots.scrollTop - 1) + 'px';
+  slots.appendChild(marker);
+  d.marker = marker;
+}
+/* Hold the pointer at the list's top or bottom edge and the LIST scrolls, faster the closer to the
+   edge, until it runs out — a finger cannot scroll it while a drag is armed (`touch-action: none`),
+   and a stock dragged from slot 3 to slot 60 must be possible in ONE gesture. One rAF loop, running
+   only while the pointer sits in an edge zone that can still scroll; every move re-arms it and the
+   end of the drag cancels it. */
+function wbSlotDragScroll() {
+  const d = wbSlotDrag;
+  d.raf = 0;
+  const slots = wbSlotsEl();
+  if (!d.on || !slots) return;
+  const s = slots.getBoundingClientRect();
+  const up = 1 - Math.min(1, Math.max(0, d.y - s.top) / WB_SLOT_EDGE_PX);
+  const down = 1 - Math.min(1, Math.max(0, s.bottom - d.y) / WB_SLOT_EDGE_PX);
+  const push = down - up;
+  if (!push) return;
+  const before = slots.scrollTop;
+  const max = Math.max(0, slots.scrollHeight - slots.clientHeight);
+  const to = Math.min(max, Math.max(0, before + Math.sign(push) * Math.max(1, Math.round(Math.abs(push) * WB_SLOT_EDGE_MAX_STEP))));
+  if (Math.abs(to - before) < 1) return;   /* at the end: stop until the pointer moves again */
+  slots.scrollTop = to;
+  wbSlotDragPaint();
+  d.raf = requestAnimationFrame(wbSlotDragScroll);
+}
+function wbSlotDragStart(ev, from, sym, btn) {
+  const d = wbSlotDrag;
+  d.on = true; d.from = from; d.sym = sym; d.btn = btn; d.x = ev.clientX; d.y = ev.clientY; d.gap = -1;
+  wbSlotClick = { i: -1, at: 0 };      /* a drag is navigation: it breaks a pending click pair */
+  document.body.classList.add('wb-drag-active');
+  const ghost = el('div', 'wb-slot-ghost', sym);
+  ghost.style.transform = 'translate(' + (ev.clientX + 8) + 'px, ' + (ev.clientY + 8) + 'px)';
+  (document.querySelector('.area-charts') || document.body).appendChild(ghost);
+  d.ghost = ghost;
+}
+function wbSlotDragMove(ev) {
+  const d = wbSlotDrag;
+  if (!d.on) return;
+  d.x = ev.clientX; d.y = ev.clientY;
+  d.ghost.style.transform = 'translate(' + (ev.clientX + 8) + 'px, ' + (ev.clientY + 8) + 'px)';
+  wbSlotDragPaint();
+  if (!d.raf) d.raf = requestAnimationFrame(wbSlotDragScroll);
+}
+function wbSlotDragEnd(ev, cancelled) {
+  const d = wbSlotDrag;
+  clearTimeout(d.armed);
+  cancelAnimationFrame(d.raf); d.raf = 0;
+  if (!d.on) return null;
+  if (!cancelled) { d.x = ev.clientX; d.y = ev.clientY; }
+  wbSlotDragPaint();                      /* the gap under the RELEASE point */
+  const from = d.from, gap = cancelled ? -1 : d.gap;
+  if (d.marker) d.marker.remove();
+  if (d.ghost) d.ghost.remove();
+  const src = document.querySelector('.wb-rail-manual .wb-dragging');
+  if (src) src.classList.remove('wb-dragging');
+  document.body.classList.remove('wb-drag-active');
+  const srcBtn = d.btn;
+  d.on = false; d.marker = null; d.ghost = null; d.from = -1; d.sym = ''; d.btn = null; d.gap = -1;
+  const to = gap < 0 ? -1 : wbGapToSlot(from, gap);
+  if (to >= 0 && to !== from) wbCommitMove(from, to);
+  /* A release is still delivered as a `click` on the slot BUTTON the press began on, which would CHART
+     it. Returned to the caller, which ARMS the guard (wbSlotArmClickGuard) at the moment of the RELEASE:
+     Escape cancels the drag at once but the owner may keep holding the mouse for as long as they like,
+     and a guard stamped at Escape had expired by the time they let go (Codex P2). Null for a release back
+     where it started — a click that wandered a few pixels still charts. */
+  return to === from ? null : srcBtn;
+}
+/* Swallow the ONE click the release of a drag delivers to its source button. The guard names the source
+   NODE and is consumed by the first click it meets (see the click handler), so a click on any other slot
+   is never eaten; a committed move usually detaches the source button, so no click arrives and the guard
+   simply lapses after WB_SLOT_DRAG_CLICK_MS. Stamped AFTER the commit's repaint (the caller runs this
+   once wbSlotDragEnd has returned), so a slow repaint does not eat the window. */
+function wbSlotArmClickGuard(btn) {
+  if (!btn) return;
+  wbSlotDragClickBtn = btn;
+  wbSlotDragClickAt = Date.now();
+}
+/* Pointer wiring for the filled slots — ONE delegated listener on the rail, not one per button.
+   Kept off the slot's click handler entirely: a drag only begins after WB_SLOT_DRAG_SLOP of movement
+   (or a rested finger), so click-to-chart and the double-click-to-edit pair are untouched.
+   DELEGATED ON PURPOSE, and measured: a `pointerdown` listener added to each filled button cost
+   ~5ms apiece in WebKit (8 filled slots took a rail repaint from 8ms to 50ms), and this rail repaints
+   on every animation frame of a chart drag and on every poll — it also pushed the double-click's
+   second click past WB_SLOT_DBL_MS on a slow machine. The rail element itself is never rebuilt, only
+   its contents, so a single listener on it survives every repaint. */
+/* The press in progress, or null: { pid, btn, from, sym, startX, startY, touch, holdScroll }. Module state
+   with PERMANENT window listeners (below) instead of four listeners added and removed on every press: in
+   WebKit each listener add cost ~5ms, which put ~20ms on every plain click and tipped S45's slow
+   double-click over its pairing window on a slow machine. Only a TOUCH press adds a listener of its own —
+   the non-passive touchmove, which must not be permanent (a permanent non-passive touchmove on the window
+   makes every scroll on the page wait for JavaScript). */
+let wbSlotPress = null;
+function wbSlotPressEnd() {
+  clearTimeout(wbSlotDrag.armed);
+  const p = wbSlotPress;
+  wbSlotPress = null;
+  if (!p) return;
+  p.btn.classList.remove('wb-armed');
+  if (p.holdScroll) window.removeEventListener('touchmove', p.holdScroll);
+}
+function wbSlotPointerDown(ev) {
+  if (ev.button != null && ev.button !== 0) return;
+  const btn = ev.target && ev.target.closest ? ev.target.closest('.wb-slot') : null;
+  if (!btn || wbSlotDrag.on) return;
+  const row = btn.closest('.wb-rail-row');
+  const symEl = btn.querySelector('.wb-side-sym');
+  const from = row ? Number(row.dataset.slot) : -1;
+  const sym = symEl ? symEl.textContent : '';
+  /* An EMPTY slot has nothing to pick up. Anything else — even text that is not a ticker — can be
+     moved, since the owner may want to put it somewhere before correcting it. */
+  if (!(from >= 0) || !sym) return;
+  wbSlotPressEnd();                                  /* a stale press (its pointerup was lost) is replaced, never joined */
+  const touch = ev.pointerType === 'touch';
+  /* The gesture belongs to THIS pointer (`pid`). A hybrid device also fires hover moves from a mouse (and
+     the browser fakes one after a layout change), and one landing mid-hold read as a far-away move that
+     cancelled a resting finger before it armed — found by S64's touch step on iPhone's WebKit. */
+  const press = { pid: ev.pointerId, btn, from, sym, startX: ev.clientX, startY: ev.clientY, touch, holdScroll: null };
+  wbSlotPress = press;
+  /* Arming flips the slot to touch-action: none so the browser stops reading the gesture as a
+     scroll — only once the finger has rested, so a swipe over the list still scrolls it. */
+  if (touch) wbSlotDrag.armed = setTimeout(() => btn.classList.add('wb-armed'), WB_SLOT_TOUCH_ARM_MS);
+  /* `touch-action` is evaluated when the finger goes DOWN and cannot be changed for the gesture in
+     progress, so adding `.wb-armed` after the hold does not stop the browser panning on the first move
+     — it would start the pan and cancel the pointer stream (Codex P1). What does work, and is how
+     touch sortables are built: a NON-PASSIVE `touchmove` listener, in place before the finger moves,
+     that cancels the move while the slot is armed or a drag is running. The first move after a rest is
+     still cancelable (a pan has not begun), and an unarmed move is left alone, so a swipe over the list
+     still scrolls it. Window-level listeners default to passive in Chromium, hence the explicit option. */
+  if (touch) {
+    press.holdScroll = e => { if (e.cancelable && (btn.classList.contains('wb-armed') || wbSlotDrag.on)) e.preventDefault(); };
+    window.addEventListener('touchmove', press.holdScroll, { passive: false });
+  }
+}
+function wbSlotPointerMove(e) {
+  const p = wbSlotPress;
+  if (!p || e.pointerId !== p.pid) return;
+  /* Cancelled by Escape: the press stays alive only to see the physical RELEASE, so its click can still be
+     swallowed however long the owner holds on. It must not start another drag, and a mouse that was
+     released outside the window ends it. */
+  if (p.dead) { if (!p.touch && e.buttons === 0) wbSlotPressEnd(); return; }
+  /* A mouse button released OUTSIDE the window never delivers its pointerup, so the press would outlive
+     it and a later plain mouse move would start a drag with nothing held. A mouse (or pen) move with no
+     button down ends the gesture. */
+  if (!p.touch && e.buttons === 0) { wbSlotDragEnd(e, true); wbSlotPressEnd(); return; }
+  if (wbSlotDrag.on) { wbSlotDragMove(e); return; }
+  if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) <= WB_SLOT_DRAG_SLOP) return;
+  if (p.touch && !p.btn.classList.contains('wb-armed')) { wbSlotPressEnd(); return; }
+  try { p.btn.setPointerCapture(p.pid); } catch { /* the drag runs on window listeners; capture is a courtesy */ }
+  wbSlotDragStart(e, p.from, p.sym, p.btn);
+  wbSlotDragMove(e);
+}
+function wbSlotPointerUp(e) {
+  const p = wbSlotPress;
+  if (!p || e.pointerId !== p.pid) return;
+  const guard = wbSlotDragEnd(e, false) || p.pendingGuard;
+  wbSlotPressEnd();
+  wbSlotArmClickGuard(guard);
+}
+function wbSlotPointerCancel(e) {
+  const p = wbSlotPress;
+  if (!p || e.pointerId !== p.pid) return;
+  wbSlotDragEnd(e, true);
+  wbSlotPressEnd();
+}
+function wbSlotPressKey(e) {
+  const p = wbSlotPress;
+  if (!p || p.dead || e.key !== 'Escape') return;
+  if (!wbSlotDrag.on) { wbSlotPressEnd(); return; }       /* a press that never became a drag: nothing to keep */
+  p.pendingGuard = wbSlotDragEnd(e, true);                /* the drag ends NOW; its click is swallowed when the button comes up */
+  p.dead = true;
+}
+{
+  const rail = document.getElementById('wbSidebar');
+  if (rail) rail.addEventListener('pointerdown', wbSlotPointerDown);
+  window.addEventListener('pointermove', wbSlotPointerMove);
+  window.addEventListener('pointerup', wbSlotPointerUp);
+  window.addEventListener('pointercancel', wbSlotPointerCancel);
+  window.addEventListener('keydown', wbSlotPressKey);
+}
+
 function wbSlotRow(i, sym, data) {
   const row = el('div', 'wb-rail-row');
   row.dataset.slot = String(i);
@@ -5523,6 +5873,12 @@ function wbSlotRow(i, sym, data) {
        they typed even when it does not resolve, so a bad entry is never
        discarded or rewritten. Blur does NOT chart (see below): the owner who
        clicked away has moved on, and charting behind them fights the click. */
+    wbEditorSettle = () => {
+      if (settled || wbEditSlot !== i) return;
+      settled = true;                       /* the deferred blur below now does nothing */
+      save();                               /* the same save Enter and blur make; no charting — attention has moved */
+      wbEditSlot = -1; wbEditDraft = '';
+    };
     const commit = () => {
       if (settled || wbEditSlot !== i) return;
       settled = true;
@@ -5635,8 +5991,8 @@ function wbSlotRow(i, sym, data) {
      nothing to chart. */
   const chartable = !!sym && WL_SYM_RE.test(sym);
   b.title = !sym ? 'Empty slot — click to fill'
-    : chartable ? sym + ' — double-click or F2 to edit'
-    : sym + ' — not a ticker; click to correct';
+    : chartable ? sym + ' — double-click or F2 to edit; drag or Alt+↑/↓ to move'
+    : sym + ' — not a ticker; click to correct; drag or Alt+↑/↓ to move';
   b.appendChild(el('span', 'wb-side-sym', sym || ''));
 
   const openEditor = () => {
@@ -5649,20 +6005,23 @@ function wbSlotRow(i, sym, data) {
     wbEditSlot = i;
     wbEditDraft = sym || '';
     renderWbSidebar(data);
-    const live = document.querySelector('.wb-rail-manual [data-slot="' + i + '"] .wb-slot-input');
-    if (live) keepPageStill(() => {
-      /* preventScroll: the rail repaints on the 60s poll and a plain focus()
-         would yank an owner who had scrolled elsewhere back to the charts —
-         1684px, measured on falsification. setSelectionRange rather than
-         select() because it selects the same text under a narrower contract;
-         neither takes a preventScroll option, which is what keepPageStill is
-         for. */
-      live.focus({ preventScroll: true });
-      live.setSelectionRange(0, live.value.length);
-    });
+    /* preventScroll: the rail repaints on the 60s poll and a plain focus()
+       would yank an owner who had scrolled elsewhere back to the charts —
+       1684px, measured on falsification. setSelectionRange rather than
+       select() because it selects the same text under a narrower contract;
+       neither takes a preventScroll option, which is what keepPageStill is
+       for. (Shared with the "open a slot" path: wbFocusSlotEditor.) */
+    wbFocusSlotEditor(i);
   };
 
   b.addEventListener('click', ev => {
+    /* The release that ends a DRAG is still delivered as a click on the slot the press began on; it is
+       not one (see wbDragEnd). A wandering click that came back to its own place is let through. */
+    if (b === wbSlotDragClickBtn) {
+      const fresh = Date.now() - wbSlotDragClickAt < WB_SLOT_DRAG_CLICK_MS;
+      wbSlotDragClickBtn = null;            /* one-shot: the next click on this slot is a real one */
+      if (fresh) return;
+    }
     const now = Date.now();
     /* POINTER clicks pair; keyboard ones never do. Enter/Space on a focused
        button fires a synthetic click with detail 0, so two activations inside
@@ -5713,6 +6072,15 @@ function wbSlotRow(i, sym, data) {
      shortcut — its plain click opens the editor already. */
   b.addEventListener('keydown', ev => {
     if (ev.key === 'F2') { ev.preventDefault(); openEditor(); return; }
+    /* Keyboard parity for the drag (an arrangement only a mouse can make is not one everyone can):
+       Alt+Up / Alt+Down move this stock one place; Insert opens a slot above this row and puts the
+       caret in it (the header + button does the same where there is no Insert key). */
+    if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
+      ev.preventDefault();
+      if (sym) wbCommitMove(i, ev.key === 'ArrowUp' ? i - 1 : i + 1);
+      return;
+    }
+    if (ev.key === 'Insert') { ev.preventDefault(); wbInsertAndEdit(i); return; }
     /* Arrow/Home/End move the roving stop. Focus is applied WITHOUT scrolling
        the page, the same rule everything else in this rail follows; the slot is
        brought into view inside its own scroller instead. */
@@ -5814,8 +6182,16 @@ function renderWbSidebar(data) {
      changed; the roster column beside it mirrors the watchlists and is left
      alone. */
   const manual = column('wb-rail-manual');
-  const mHead = el('div', 'wb-rail-head');
+  const mHead = el('div', 'wb-rail-head wb-rail-head--slots');
   mHead.appendChild(el('span', 'wb-rail-title', 'SYMBOL'));
+  /* Open a slot to push a stock into (owner request 2026-10-07): above the row last worked on, which
+     is the roving tab stop. The Insert key on a slot does the same. */
+  const add = el('button', 'wb-rail-add', '+');
+  add.type = 'button';
+  add.setAttribute('aria-label', 'Open an empty slot above the selected row');
+  add.title = 'Open an empty slot above the row you last clicked, then type a symbol into it';
+  add.addEventListener('click', () => wbInsertAndEdit(wbSlotTab));
+  mHead.appendChild(add);
   manual.appendChild(mHead);
 
   /* ACTIVE — the charted symbol, stated rather than implied. The rail already
@@ -5826,6 +6202,11 @@ function renderWbSidebar(data) {
   const activeSym = (wbState && wbState.sym) || '';
   if (activeSym) manual.appendChild(wbRailBtn(activeSym));
   else manual.appendChild(el('p', 'wb-rail-empty', 'None yet.'));
+  if (wbRailMsg) {
+    const note = el('p', 'wb-rail-empty', wbRailMsg);
+    note.setAttribute('role', 'status');
+    manual.appendChild(note);
+  }
 
   /* The 100 slots scroll on their OWN, beneath a fixed SYMBOL/ACTIVE head —
      "the list has 100 slots accessible via scroll just for the list". Putting
@@ -5887,6 +6268,11 @@ function renderWbSidebar(data) {
      the new scrollHeight, which is what we want if the list got shorter. */
   const bornSlots = nav.querySelector('.wb-slots');
   if (bornSlots && slotScroll) bornSlots.scrollTop = slotScroll;
+
+  /* A repaint the owner did not cause (the 60s poll, a chart landing) can arrive MID-DRAG and
+     replaces the rows and the marker; the ghost is outside the rail and the drag state is module
+     state, so only the feedback needs putting back. */
+  if (wbSlotDrag.on) wbSlotDragPaint();
 
   if (dyingBtn !== null) {
     const bornBtn = nav.querySelector('.wb-rail-manual [data-slot="' + dyingBtn + '"] .wb-slot');

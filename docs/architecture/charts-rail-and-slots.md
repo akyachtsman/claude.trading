@@ -430,3 +430,140 @@ pushed the slot off screen there (the pointer landed on nothing). Falsified: wit
 `overflow-anchor: none` removed S45 still fails (slot 58 under a pointer aimed at
 60) in both layouts.
 
+## Moving a stock, and opening a slot (owner request 2026-10-07)
+
+Owner: "how do I edit the left column on the stochastic? Can you make the stocks movable up/down by
+pressing the mouse button and can we have an open slot so I can push in more stocks?" — then, mid-turn,
+"stocastic NOT watchlist": this is the SYMBOL column of the Stochastic charts rail, never the watchlist
+tiles (which have their own drag, `wlDrag*`, and were not touched; this borrows its POINTER-event design
+and its constants' meaning, not its code). Everything above still holds: the array is POSITIONAL and
+exactly `WB_SLOTS` long, a click charts, a second pointer click within `WB_SLOT_DBL_MS` edits, F2 is the
+keyboard edit. What was added sits beside those rules and changes none of them.
+
+**A move is ONE splice** (`wbMoveSlot(from, to)`: `splice(from, 1)` then `splice(to, 0, moved)`), so the rows
+between the two shift by one place, the length is unchanged and nothing is overwritten, dropped or
+duplicated — a swap would have silently displaced a stock that was not part of the gesture. The pointer
+reads a GAP, not a row (`wbDropGap(y)`: the number of rows whose vertical middle it has passed, 0..100),
+and the gap is counted BEFORE the stock is lifted out, so a gap below its own row lands one place higher
+(`wbGapToSlot`: `gap > from ? gap - 1 : gap`). A hole travels with the shift, like any other entry.
+
+**An open slot is made by CONSUMING an empty one** (`wbInsertSlot(at)`): the stocks from `at` down move one
+place into the nearest empty slot beneath, and the slot at `at` is empty. When nothing beneath is empty it
+pulls the rows ABOVE up into the nearest empty one instead, so the open slot lands just above `at`. Only a
+column with all 100 filled is refused, with a visible `role="status"` note under ACTIVE (`wbRailNote`,
+module state `wbRailMsg`, cleared by its own timer) — never a silent no-op. **It must never grow the array**:
+`wbSlotArray` truncates to 100 on every read, so a 101-entry write looks fine until the next write drops the
+LAST stock. S64 therefore reads the store directly after the `+`, BEFORE anything is typed (the typed write
+would normalise it and hide the fault). Reached by the `+` in the SYMBOL head (above the row last worked on,
+`wbSlotTab`), by Insert on a focused slot (above that row), and it puts the owner in the new slot's editor
+(`wbInsertAndEdit` → `wbFocusSlotEditor`, shared with the click-to-edit path).
+
+**The drag is ONE delegated `pointerdown` on `#wbSidebar` (`wbSlotPointerDown`), not a listener per button —
+and that was MEASURED, not assumed.** The first cut wired each filled slot; in WebKit a `pointerdown`
+listener cost ~5ms per button, so with eight filled slots a rail repaint went from 8ms to 50ms (`renderWbSidebar`
+runs on every animation frame of a chart drag and every poll). It was caught because S45's slow double-click
+(two clicks 300ms apart, which must land inside `WB_SLOT_DBL_MS` = 500) started failing on the tablet and iPhone
+projects: the repaint after the first click now delayed the second past the window. `#wbSidebar` itself is never
+rebuilt — only its contents — so one listener survives every repaint. Do not move it back onto the buttons.
+
+**The same cost applies to the press's own listeners, and was found the same way.** The second cut added
+`pointermove`/`pointerup`/`pointercancel`/`keydown` to `window` at every `pointerdown` and removed them at the
+end; with the per-button listeners gone S45 was still failing on iPhone/iPad about half the time, because those
+four adds put ~20ms on every plain click and the slow double-click sits ~470ms into a 500ms window. Measured
+(two clicks 300ms apart, the gap between the click EVENTS, WebKit, iPad profile): base ≈ 470ms, that cut ≈ 480ms,
+the permanent-listener version ≈ 345ms. The press is now module state (`wbSlotPress`: pointer id, button, slot,
+symbol, start point, touch, hold-scroll listener) and the four listeners are registered ONCE at load, ignoring
+every event while no press is in progress. A stale press (its pointerup lost) is replaced by the next
+`pointerdown`, never joined. **Only a touch press adds a listener of its own — the non-passive `touchmove` —
+and it must stay per-press:** a permanent non-passive `touchmove` on `window` would make every scroll on the
+page wait for JavaScript. The ~125ms gain over base beyond that is `user-select: none` / `-webkit-touch-callout:
+none` on `.wb-slot` (added for the long-press callout): WebKit skips its selection handling on mouse-down for
+the slot, which also stops a double-click from highlighting a ticker. Not separately proven; measured as a
+whole.
+
+Gesture rules, each of which S64 holds:
+- **Slop and arming.** A mouse starts a drag after `WB_SLOT_DRAG_SLOP` (6px); a finger must rest
+  `WB_SLOT_TOUCH_ARM_MS` (300ms) first, so an ordinary swipe still scrolls the 100-row list. The base
+  `touch-action: manipulation` (which keeps the double-tap edit from becoming a zoom, Codex P1 above) stays
+  the rule.
+- **Touch: the pan is stopped by a NON-PASSIVE `touchmove`, not by a class (Codex P1, PR #313).** The first cut
+  copied the watchlist tiles' device — add `.wb-armed` (`touch-action: none`) after the hold. But
+  `touch-action` is evaluated when the finger goes DOWN and cannot be changed for the gesture in progress, so
+  on a real phone the first move after the rest starts a native pan and the browser sends `pointercancel`:
+  the advertised hold-to-drag cancels instead of moving the stock. What works, and is how touch sortables are
+  built: a `touchmove` listener registered `{ passive: false }` AT `pointerdown` (window-level listeners
+  default to passive in Chromium) that calls `preventDefault()` while the slot is armed or a drag is running
+  (`holdScroll`). The first move after a rest is still cancelable because no pan has begun; an unarmed move is
+  left alone, so a swipe still scrolls the list, and moving past the slop before the rest is over cancels the
+  press. `.wb-armed` stays as the visible cue. `.wb-slot` also carries `-webkit-touch-callout: none` and
+  `user-select: none` so the hold raises no long-press callout. **The watchlist tiles (`wlWireDrag`) still use
+  the class-only device and may have the same defect on a phone; they were not touched (out of scope), and
+  this is recorded here so the next person to touch them knows.** S64 step 12 drives synthetic pointer and
+  `touchmove` events through the real handler: it proves the arming rule and the cancel hook, NOT that a
+  phone's browser honours them — a real finger is still unverified in this sandbox.
+- **The release is still a click — and the guard that swallows it is ONE-SHOT and tied to the source NODE.**
+  It is delivered to the slot BUTTON the press began on and would CHART it, so `wbSlotDragClickBtn` names that
+  node and the click handler ignores the first click it receives on it (and clears the guard), for at most
+  `WB_SLOT_DRAG_CLICK_MS` (250, stamped AFTER the commit's repaint). **The first cut was a global timestamp
+  (Codex P2, PR #313)**, which discarded EVERY slot's clicks for 250ms and was never cleared by the click it
+  existed for: after a drop whose source button had been detached, an immediate click on another stock was
+  silently lost. A committed move usually detaches the source button so no click arrives and the guard
+  lapses; the case that needs it is a CANCELLED drag (Escape, a release off the list), with no repaint to
+  detach anything, which is why S64 holds a chartable symbol in the slot and checks the chart did not move.
+  **The exception:** a release back where it started (`to === from`) sets no guard — a click that wandered
+  past 6px and came home still charts.
+- **The gesture belongs to ONE pointer** (`pid`, the `pointerId` of the press): `move`, `up` and `cancel` ignore any
+  other. Found by S64's touch step on iPhone's WebKit: a real, trusted mouse `pointermove` (a hybrid device's
+  hover, or the fake one a browser fires after a layout change) landed mid-hold, read as a far-away move of a
+  not-yet-armed finger, and cancelled it before the 300ms rest ended. S64 now dispatches such a stray move
+  during the hold and still expects the slot to arm.
+- **Escape cancels at once, the click guard waits for the RELEASE (Codex P2, PR #313).** The guard that swallows
+  the release click was stamped when the drag ended — for Escape that is the key press — and then lived 250ms. An
+  owner who pressed Escape and kept the mouse down longer let go after it had expired, and the click (routed to
+  the source button by pointer capture) charted the stock they had just cancelled. The press now stays alive,
+  marked `dead`, until the physical release: `wbSlotDragEnd` RETURNS the button instead of stamping, and
+  `wbSlotPointerUp` arms the guard (`wbSlotArmClickGuard`) at that moment, after any commit repaint. A dead
+  press ignores moves (it cannot start another drag) and a mouse released outside the window ends it.
+- **Settle the open editor before the column is re-indexed (`wbSettleEditor`, Codex P2, PR #313).** The input's
+  blur save is deferred a tick (`setTimeout(0)`), and a TAP delivers `mousedown`, `mouseup` and `click` back to
+  back, so the `+` handler can run first: the slot the owner just typed in still reads empty in storage, so
+  `wbInsertSlot` calls it "already open" and moves nothing, `wbInsertAndEdit` rebuilds it as a blank editor, and
+  the old input's blur then takes the rebuild for a background repaint (case 2 above) and returns without saving
+  — the typed symbol is gone. A finger drag is the same hazard without any blur at all. The editor that is on
+  screen publishes its own quiet "save and close" as `wbEditorSettle`; `wbInsertAndEdit` and `wbCommitMove` call
+  `wbSettleEditor()` first, which saves the draft to ITS slot (no charting — attention has moved) and marks the
+  editor settled so the deferred blur does nothing. S64 reproduces the tap ordering exactly with `blur()` and
+  `click()` in one `evaluate`.
+- **A drag is navigation** and breaks a pending double-click pair (`wbSlotClick`), like a roster click or an
+  editor opening.
+- **Cancel.** Escape, `pointercancel`, and a release more than 40px beside or 24px above/below the list change
+  nothing and draw no marker. A mouse or pen `pointermove` with `buttons === 0` also ends the press: a button
+  released OUTSIDE the window never delivers its `pointerup`, and the window listeners would otherwise outlive the
+  press and turn the next plain move into a drag with nothing held. An EMPTY slot has nothing to pick up (the handler refuses a slot with no text).
+- **The list scrolls itself** while a drag holds within `WB_SLOT_EDGE_PX` (22) of its top or bottom edge
+  (`wbSlotDragScroll`, one rAF loop re-armed by every move, cancelled when the drag ends), because a finger
+  cannot scroll while armed and a stock moving from slot 3 to slot 60 must be possible in one gesture. The page
+  does not scroll: the rail is capped to the chart's height (side) or 220px (stacked), so the list is the only
+  thing that can need it.
+- **Feedback.** The marker is an ABSOLUTE child of `.wb-slots` (`position: relative` was added to it) so it
+  takes no flex row and scrolls with the list; the ghost is a child of `.area-charts` and NOT of the rail,
+  because `renderWbSidebar` empties the rail and the dark scope's tokens live on `.area-charts`. A repaint the
+  owner did not cause can arrive mid-drag (the 60s poll, a chart landing): the drag state is module state and
+  `renderWbSidebar` ends by calling `wbSlotDragPaint()` when one is live, which puts the marker and the dimmed
+  source row back.
+- **Focus follows the stock** (`wbCommitMove`): a mouse press focuses the button and the keyboard path is all
+  about focus, and `renderWbSidebar`'s own restore would put it back on the old INDEX, which now holds a
+  different stock. The roving tab stop moves with it (`wbSlotTab = to`).
+- **Keyboard parity** (an arrangement only a mouse can make is not one everyone can): Alt+ArrowUp/Down moves
+  the focused stock one place; Insert opens a slot above it. The `+` is the route where there is no Insert key.
+- **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
+  `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
+
+Not measured, stated rather than claimed away: a real finger. The mouse path is S64 on all four projects
+(desktop, tablet, mobile-chrome, iphone); twenty-four mutants each fail it (swap instead of splice, gap off by
+one, the release clicking through, Escape not cancelling, an off-list drop committing, an insert that keeps
+the empty slot — in both branches — a marker at the wrong edge, a wandering click swallowed, no pull-up
+fallback, focus not following, an empty slot draggable, no suppression window, the lost-pointerup guard removed, a global or never-consumed click guard, a guard consumed by any
+slot, a touch hold that never cancels the pan, a touch drag that needs no rest, a gesture driven by any pointer, the
++ or a move that does not settle the open editor, a guard armed at the Escape, a held cancelled press that may
+drag again).
