@@ -9512,3 +9512,155 @@ test('S65: 1W — five sessions of bars for the futures and the yields, a daily 
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 66 — The header Load box ADDS what it charts to the SYMBOL column (owner 2026-10-08: typing in Load only replaced the ACTIVE symbol and kept
+// nothing — "keeps overwriting in the same spot"; asked, and the owner chose "make Load add to the list"). This reverses the 2026-08-26 "nothing pins"
+// ruling for THIS ONE box: a slot commit, a roster click and the ACTIVE button still write no slot (S40 pins the roster). The symbol lands in the slot
+// just AFTER the last stock, is saved BEFORE the lookup (no async step to race) whether or not the quote resolves, is never duplicated, settles an open
+// editor first, and says so out loud when every slot is filled.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S66: the header Load box adds the symbol to the end of the SYMBOL column — saved before the lookup, no twins, an open editor settled first', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await gotoDemo(page, '.wb-slots', 15000, 1200);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  const R0 = await page.evaluate(() => Object.keys(wbState.data.symbols));
+  const R = Array.from({ length: 16 }, (_, i) => R0[i % R0.length]);   // the demo roster is short: wrap, each step reseeds its own column
+  const first = async (n) => (await storedSyms(page)).slice(0, n);
+  const seed = (slots) => seedSlots(page, Object.fromEntries(Array.from({ length: 100 }, (_, i) => [i, slots[i] ?? ''])), { tab: true });   // the WHOLE column: a stock left in slot 99 by an earlier step would turn "the end" into the last slot
+  const box = page.locator('#wbSymInput');
+  const load = async (sym) => { await box.fill(sym); await box.press('Enter'); };
+  const activeText = () => page.evaluate(() => { const b = document.querySelector('.wb-rail-manual .wb-rail-sub + .wb-side-btn'); return b && b.textContent; });
+  const settle = () => page.waitForTimeout(350);
+  await page.evaluate((sym) => wbPick(sym), R[0]);     // writes `wb_sticky_v1`, which the seeding helper edits
+  await page.waitForTimeout(400);
+
+  // ── 1. in demo, a roster symbol typed in Load is charted AND saved at the end; the next one lands after it; typing the first again adds no twin
+  await seed(['AAA', 'BBB']);
+  await load(R[3]); await settle();
+  expect(await first(4), 'saved in the slot just after the last stock').toEqual(['AAA', 'BBB', R[3], '']);
+  expect([await page.evaluate(() => wbState.sym), await activeText()], 'and charted: it is the ACTIVE symbol').toEqual([R[3], R[3]]);
+  await load(R[4]); await settle();
+  expect(await first(5), 'the next one lands AFTER it — the ACTIVE box is replaced but the list keeps both').toEqual(['AAA', 'BBB', R[3], R[4], '']);
+  await load(R[3]); await settle();
+  expect(await first(5), 'a symbol already in the column is only charted, never added twice').toEqual(['AAA', 'BBB', R[3], R[4], '']);
+  expect(await page.evaluate(() => wbState.sym), 'and it was charted').toBe(R[3]);
+  expect((await storedSyms(page)).length, 'the column is still exactly 100 long').toBe(100);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-slots .wb-rail-row').length), 'and still draws 100 slots').toBe(100);
+  expect(await page.evaluate(([a, b]) => [a, b].map((s) => [...document.querySelectorAll('.wb-slots .wb-side-sym')].some((n) => n.textContent === s)), [R[3], R[4]]), 'the new slots are DRAWN, not just stored').toEqual([true, true]);
+
+  // ── 2. a hole is not "the end": with nothing worked, the symbol goes after the LAST stock
+  await seed(['AAA', '', 'CCC']);
+  await load(R[5]); await settle();
+  expect(await first(5), 'after the last stock (slot 3), not into the hole at slot 1').toEqual(['AAA', '', 'CCC', R[5], '']);
+  // an empty column starts at slot 0
+  await seed([]);
+  await load(R[6]); await settle();
+  expect(await first(2), 'an empty column starts at slot 0').toEqual([R[6], '']);
+
+  // ── 3. the new slot is the row last worked on: the + opens right under it
+  await seed(['AAA', 'BBB']);
+  await load(R[7]); await settle();
+  await page.locator('.wb-rail-add').click();
+  expect(await editorSlot(page), 'the + opens the slot right under the symbol just loaded').toBe('3');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+
+  // ── 4. junk is refused before anything is written
+  await seed(['AAA', 'BBB']);
+  await load('!!'); await settle();
+  expect(await first(3), 'not a ticker: nothing added').toEqual(['AAA', 'BBB', '']);
+  await expect(page.locator('#wbInfo')).toContainText('Ticker not recognized');
+
+  // ── 5. an unresolvable ticker is saved too (a slot keeps whatever was typed), and the note says so — demo has no lookups
+  await seed(['AAA']);
+  await load('ZZQX'); await settle();
+  expect(await first(3), 'saved even though demo cannot look it up').toEqual(['AAA', 'ZZQX', '']);
+  expect(await slotBtn(page, 1).textContent(), 'and DRAWN in its slot even though no chart repaint follows (the lookup failed)').toContain('ZZQX');
+  await expect(page.locator('#wbInfo')).toContainText('Live ticker lookups are off in demo mode');
+
+  // ── 6. the header's own SUBMIT is the only door: a roster click and the loader write nothing
+  await seed(['AAA']);
+  await page.evaluate((sym) => { wbLoadSymbol(sym); }, R[8]);
+  await settle();
+  expect(await first(3), 'wbLoadSymbol itself pins nothing').toEqual(['AAA', '', '']);
+
+  // ── 7. every slot filled: charted, not added, and the owner is told
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => 'S' + i) }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  });
+  const full = JSON.stringify(await storedSyms(page));
+  await load(R[9]); await settle();
+  expect(JSON.stringify(await storedSyms(page)), 'nothing was added or moved').toBe(full);
+  await expect(page.locator('.wb-rail-manual [role="status"]'), 'and it says so').toContainText('Every slot is filled');
+  expect(await page.evaluate(() => wbState.sym), 'the symbol was charted anyway').toBe(R[9]);
+
+  // ── 8. the last stock sits in the final slot with room above: the rows above are pulled up and the new symbol is the new last slot
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => (i === 0 ? '' : 'S' + i)) }));
+    wbEditSlot = -1; wbRailMsg = ''; renderWbSidebar(wbState.data);
+  });
+  await load(R[10]); await settle();
+  const pulled = await storedSyms(page);
+  expect([pulled[0], pulled[98], pulled[99], pulled.length], 'S1..S99 moved up into the empty slot; the new symbol is the last slot').toEqual(['S1', 'S99', R[10], 100]);
+
+  // ── 9. an open editor is settled FIRST: a half-typed draft is saved in its slot, and the loaded symbol lands after it
+  await seed(['AAA']);
+  await slotBtn(page, 1).click();                       // an empty slot: its editor opens
+  await page.keyboard.type('draft');
+  await page.evaluate((sym) => {                        // blur and submit in ONE task, the order a click on the header produces
+    document.querySelector('.wb-slot-input').blur();
+    const inp = document.getElementById('wbSymInput'); inp.value = sym;
+    document.getElementById('wbSymForm').requestSubmit();
+  }, R[11]);
+  await settle();
+  expect(await first(4), 'the draft was saved in ITS slot, then the loaded symbol landed after it').toEqual(['AAA', 'DRAFT', R[11], '']);
+  expect(await editorCount(page), 'and no editor is left open').toBe(0);
+
+  // ── 9b. the same, when the symbol is ALREADY in the column and cannot be charted: settling the editor must still repaint (Codex P2, PR #317) —
+  // the duplicate returns early and a failed lookup repaints nothing, so a stale input would be left on screen with handlers that ignore every key
+  await seed(['AAA', 'ZZQX']);
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('F2');                      // the keyboard edit: a double-click's second click can land on the next row once the first click's note reflows a narrow page
+  expect(await editorSlot(page), 'the editor is open on the slot that cannot be charted').toBe('1');
+  await page.evaluate(() => {
+    document.querySelector('.wb-slot-input').blur();
+    const inp = document.getElementById('wbSymInput'); inp.value = 'ZZQX';
+    document.getElementById('wbSymForm').requestSubmit();
+  });
+  await settle();
+  expect(await editorCount(page), 'no stale input is left on screen').toBe(0);
+  expect(await first(3), 'and nothing was added twice').toEqual(['AAA', 'ZZQX', '']);
+  expect(await slotBtn(page, 1).textContent(), 'the slot is a button again, holding its text').toContain('ZZQX');
+
+  // ── 10. a LIVE lookup is slow: the symbol is in the column the moment Enter is pressed, not when the quote lands, and a failed lookup keeps it
+  await seed(['AAA']);
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid'; DESK.mode = 'live';
+    window.__quoteGate = null;
+    window.deskQuote = (sym, kind) => new Promise((res) => { window.__quoteGate = () => res({ ok: false, error: 'No data found for ' + sym }); });
+  });
+  await load('NOPE'); await page.waitForTimeout(150);
+  expect(await first(3), 'saved at once — the quote has not answered yet').toEqual(['AAA', 'NOPE', '']);
+  await load('ALSO'); await page.waitForTimeout(150);
+  expect(await first(4), 'a second one typed while the first is still loading lands after it, in order').toEqual(['AAA', 'NOPE', 'ALSO', '']);
+  await page.evaluate(() => window.__quoteGate && window.__quoteGate());
+  await settle();
+  expect(await first(4), 'a lookup that fails removes nothing').toEqual(['AAA', 'NOPE', 'ALSO', '']);
+  await expect(page.locator('#wbInfo')).toContainText('No data found for ALSO');
+
+  // ── 11. it survives a reload
+  await page.evaluate(() => { DESK.mode = 'demo'; });
+  await seed(['AAA']);
+  await load(R[12]); await settle();
+  await page.reload();
+  await page.waitForSelector('.wb-slots .wb-slot');
+  expect(await first(3), 'still there after a reload').toEqual(['AAA', R[12], '']);
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
