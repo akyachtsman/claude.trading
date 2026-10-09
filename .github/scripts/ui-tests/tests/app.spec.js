@@ -9622,6 +9622,22 @@ test('S66: the header Load box adds the symbol to the end of the SYMBOL column �
   expect(await first(4), 'the draft was saved in ITS slot, then the loaded symbol landed after it').toEqual(['AAA', 'DRAFT', R[11], '']);
   expect(await editorCount(page), 'and no editor is left open').toBe(0);
 
+  // ── 9b. the same, when the symbol is ALREADY in the column and cannot be charted: settling the editor must still repaint (Codex P2, PR #317) —
+  // the duplicate returns early and a failed lookup repaints nothing, so a stale input would be left on screen with handlers that ignore every key
+  await seed(['AAA', 'ZZQX']);
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('F2');                      // the keyboard edit: a double-click's second click can land on the next row once the first click's note reflows a narrow page
+  expect(await editorSlot(page), 'the editor is open on the slot that cannot be charted').toBe('1');
+  await page.evaluate(() => {
+    document.querySelector('.wb-slot-input').blur();
+    const inp = document.getElementById('wbSymInput'); inp.value = 'ZZQX';
+    document.getElementById('wbSymForm').requestSubmit();
+  });
+  await settle();
+  expect(await editorCount(page), 'no stale input is left on screen').toBe(0);
+  expect(await first(3), 'and nothing was added twice').toEqual(['AAA', 'ZZQX', '']);
+  expect(await slotBtn(page, 1).textContent(), 'the slot is a button again, holding its text').toContain('ZZQX');
+
   // ── 10. a LIVE lookup is slow: the symbol is in the column the moment Enter is pressed, not when the quote lands, and a failed lookup keeps it
   await seed(['AAA']);
   await page.evaluate(() => {

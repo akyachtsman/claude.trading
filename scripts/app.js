@@ -5626,10 +5626,13 @@ function wbAddNext() {
    slot the row last worked on (so the + opens right under it) and scrolls it into view inside the list. Returns the slot, or -1 when every slot is
    filled — said out loud, charted anyway. */
 function wbAddLoaded(sym) {
+  const hadEditor = wbEditSlot >= 0;
   wbSettleEditor();
   const syms = readWbSticky().syms;
   const have = syms.indexOf(sym);
-  if (have >= 0) return have;
+  /* Settling closes the editor LOGICALLY only; its input stays on screen until something repaints, and a lookup that fails repaints nothing — so a
+     duplicate must still repaint when it settled an editor (Codex P2, PR #317). */
+  if (have >= 0) { if (hadEditor) wbRepaintRail(); return have; }
   let last = -1;
   for (let i = WB_SLOTS - 1; i >= 0; i--) if (syms[i]) { last = i; break; }
   const open = wbInsertSlot(last + 1);
