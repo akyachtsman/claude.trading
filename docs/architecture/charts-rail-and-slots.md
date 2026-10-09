@@ -33,7 +33,7 @@
   anywhere here would renumber every row below a hole and silently move the
   owner's symbols. A pre-2026-08-26 stack migrates by landing in slots 0..n-1 in
   the order it was already displayed. **NOTHING PINS ANY MORE** — not the loader,
-  not a roster click, not the ACTIVE button. Charting a symbol charts it and
+  not a roster click. Charting a symbol charts it and
   writes no slot, which is what makes the column mean "what I typed". **The ONE
   exception, added 2026-10-08, is the header Load box's SUBMIT — see "The Load
   box adds what it charts" below.**
@@ -270,9 +270,15 @@
   reference-platform screenshot): title `SYMBOL`, an `ACTIVE` section naming the
   charted symbol, then the 100 slots. Only the LEFT column changed — the roster
   column beside it was explicitly left alone, since it mirrors the watchlists.
-  `ACTIVE` states what the rail previously only implied with `aria-current`, and
-  answers the case that marking could not: a symbol charted from the roster, or
-  restored on reload, that is not in this column at all. The header **Load box
+  `ACTIVE` stated what the rail previously only implied with `aria-current`, and
+  answered the case that marking could not: a symbol charted from the roster, or
+  restored on reload, that is not in this column at all. **The ACTIVE section was
+  REMOVED 2026-10-09** (owner, with a screenshot of HOOD drawn twice under the entry
+  box: "now I'm seeing double entries. We remove one"): every push puts the charted
+  symbol in slot 0, so the row repeated the first slot after every push. The
+  charted symbol is still marked where it stands (`aria-current` and a background on
+  its slot and on its roster name) and the pane header names it; a symbol charted from
+  the roster that is not in the column is marked in the roster column only. The header **Load box
   stays** (owner ruling, asked and answered), and until 2026-10-08 it wrote
   NOTHING — it charted, like every other path (it now ADDS what it charts, see
   "The Load box adds what it charts"). Both it and a slot commit validate with the
@@ -324,7 +330,7 @@
   owner did not cause quietly changing what their typing does.
   Two CSS rules are load-bearing for the column itself. **`.wb-slots` carries its
   own `overflow-y: auto` plus `min-height: 0`** — the slots scroll beneath a
-  fixed `SYMBOL`/`ACTIVE` head ("100 slots accessible via scroll just for the
+  fixed head (the entry box; it was `SYMBOL`/`ACTIVE` until 2026-10-09) ("100 slots accessible via scroll just for the
   list"), and without the `min-height` a flex item defaults to `min-height: auto`
   and would grow to its full 100-row content height, taking the rail with it.
   And **`.wb-slot-input` carries `min-width: 0`**, because an input's default
@@ -461,7 +467,7 @@ and the gap is counted BEFORE the stock is lifted out, so a gap below its own ro
 **An open slot is made by CONSUMING an empty one** (`wbInsertSlot(at)`): the stocks from `at` down move one
 place into the nearest empty slot beneath, and the slot at `at` is empty. When nothing beneath is empty it
 pulls the rows ABOVE up into the nearest empty one instead, so the open slot lands just above `at`. Only a
-column with all 100 filled is refused, with a visible `role="status"` note under ACTIVE (`wbRailNote`,
+column with all 100 filled is refused, with a visible `role="status"` note under the entry box (`wbRailNote`,
 module state `wbRailMsg`, cleared by its own timer) — never a silent no-op. **It must never grow the array**:
 `wbSlotArray` truncates to 100 on every read, so a 101-entry write looks fine until the next write drops the
 LAST stock. S64 therefore reads the store directly after the Insert key, BEFORE anything is typed (the typed write
@@ -580,16 +586,19 @@ Gesture rules, each of which S64 holds:
   place — `wbInsertSlot(0)`, so the column stays exactly 100 long and nothing is dropped; a slot 0 that is already empty is simply filled; a full
   column is refused with the `role="status"` note and the symbol is charted anyway. (2) SAVED FIRST, whether or not the lookup resolves — the
   same rule as a slot commit — so a slow or failed quote can neither lose the symbol nor reorder two typed in a row (an add after the lookup was the
-  mutant S66 catches); a typo is therefore kept and fixed or emptied like any slot. (3) Never a twin: a symbol already in the column is only
-  charted. (4) `wbSettleEditor()` first (the shift reads what is STORED), and the DUPLICATE path repaints when it settled an editor: settling closes
-  the editor LOGICALLY only and a failed lookup repaints nothing, so without it a stale input stays on screen with handlers that ignore every key
-  (Codex P2, PR #317). (5) `.wb-slots` is scrolled back to the top, where the new symbol is (a repaint otherwise keeps the owner's scroll position).
+  mutant S66 catches); a typo is therefore kept and fixed or emptied like any slot. (3) Never a twin, and **a symbol already in the column is LIFTED
+  to the top and its older copy goes** (owner 2026-10-09: "if there are duplicates, I would just remove the existing or the older one from the list"
+  — it was "only charted, in place" until then): ONE splice (the stock out, in at slot 0), so the rows above it move down one place, nothing is
+  dropped, no hole is left and the column stays 100 long; it uses up no empty slot, so it works on a full column too and never says "every slot is
+  filled"; a further copy lower down (a twin an older build could leave) is emptied in place. (4) `wbSettleEditor()` first (the shift reads what is
+  STORED), and EVERY path repaints: settling closes the editor LOGICALLY only and a failed lookup repaints nothing, so without it a stale input stays
+  on screen with handlers that ignore every key (Codex P2, PR #317). (5) `.wb-slots` is scrolled back to the top, where the new symbol is (a repaint otherwise keeps the owner's scroll position).
   (6) The entry box is a blank space that STAYS blank: emptied after a push, focus kept so the next symbol can be typed at once, Escape empties it,
   text that is not a ticker (`WL_SYM_RE`) is refused with a note in the rail and left in the box. It is ONE node for the page's life, re-seated by
   every `renderWbSidebar` (the rail is rebuilt on every chart repaint and 60 s poll — a box rebuilt with it would lose what the owner was typing),
-  which keeps its focus and caret as it does the slot editor's. (7) The loader (`wbLoadSymbol`), a roster click, the ACTIVE button and a slot commit
-  still write nothing; the header input's `change` handler (a roster symbol committed by blur) is unchanged and still only charts. S66 pins all of
-  it (16 mutants), S64 the Insert key, S40 the alignment.
+  which keeps its focus and caret as it does the slot editor's. (7) The loader (`wbLoadSymbol`), a roster click and a slot commit
+  still write nothing (a slot commit may still type a copy of a symbol that is already listed: "a slot keeps whatever was typed"); the header input's `change` handler (a roster symbol committed by blur) is unchanged and still only charts. S66 pins all of
+  it (24 mutants), S64 the Insert key, S40 the alignment.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 

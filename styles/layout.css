@@ -804,15 +804,9 @@
   .wb-entry-input:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   .wb-rail-pick:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   .wb-rail-empty { margin: 4px 2px 0; font: 400 9px/1.4 var(--font-sans); font-style: italic; color: var(--color-text-secondary); }
-  /* Section labels inside the SYMBOL column — ACTIVE (owner request 2026-08-26,
-     matching a reference platform). Dimmer and smaller than the
-     column's own title so the hierarchy reads title > section > rows, and
-     `sticky` is deliberately NOT set: only .wb-rail-head pins, or two labels
-     would stack on top of each other as the column scrolls. */
-  .wb-rail-sub { display: block; margin: 6px 0 1px; font: 600 8px/1.5 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .08em; }
-  .wb-rail-sub:first-of-type { margin-top: 2px; }
-  /* The 100 slots scroll on their OWN, so the SYMBOL title and the ACTIVE row
-     stay put while the list moves under them ("100 slots accessible via scroll
+  /* The ACTIVE label (`.wb-rail-sub`) went with the ACTIVE row (owner 2026-10-09: it repeated slot 0 after every push). */
+  /* The 100 slots scroll on their OWN, so the entry box
+     stays put while the list moves under it ("100 slots accessible via scroll
      just for the list"). `min-height: 0` is what lets it actually shrink and
      scroll inside the flex column — a flex item defaults to min-height auto and
      would otherwise grow to its full 100-row content height and take the rail
