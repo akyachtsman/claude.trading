@@ -3697,7 +3697,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   });
   expect(shape.rows, 'exactly 100 slots, filled or empty').toBe(100);
   expect(shape.scrolls && shape.overflowY === 'auto', 'the LIST scrolls on its own').toBe(true);
-  expect(shape.headOutside, 'and the SYMBOL/ACTIVE head stays put above it').toBe(true);
+  expect(shape.headOutside, 'and the entry-box head stays put above it').toBe(true);
   expect(shape.x, 'no × — a slot is cleared by emptying it').toBe(0);
   expect(shape.editors, 'no live input until a slot is opened — 100 would repaint every frame').toBe(0);
 
@@ -4323,6 +4323,8 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
     return { left0: cols[0].left, left1: cols[1].left, top0: cols[0].top, top1: cols[1].top, w0: cols[0].width, w1: cols[1].width,
              entry: { l: entry.left, t: entry.top, w: entry.width, h: entry.height }, pick: { l: pick.left, t: pick.top, w: pick.width, h: pick.height },
              oldTop: !!document.querySelector('.wb-rail-top'), plus: document.querySelectorAll('.wb-rail-add').length,
+             active: document.querySelectorAll('.wb-rail-sub, .wb-rail-manual > .wb-side-btn').length,
+             slotsT: r('.wb-rail-manual .wb-slots').top,
              pickIn: !!document.querySelector('.wb-rail-roster .wb-rail-pick'), pickOutside: !document.querySelector('.wb-rail-manual .wb-rail-pick') };
   });
   expect(geom.left1, 'the columns sit side by side, not stacked').toBeGreaterThan(geom.left0);
@@ -4333,6 +4335,9 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   expect(Math.abs(geom.pick.l - geom.left1) < 1.5 && geom.pick.w <= geom.w1 + 1.5, 'and lines up with the second column — it does not span or widen the two').toBe(true);
   expect(Math.abs(geom.entry.l - geom.left0) < 1.5 && geom.entry.w <= geom.w0 + 1.5, 'the entry box lines up with the first').toBe(true);
   expect(geom.plus, 'the + is gone: the entry box replaces it').toBe(0);
+  // owner 2026-10-09, with a screenshot of HOOD drawn twice: the ACTIVE row repeated slot 0 after every push, so it is gone — the 100 slots start right under the entry box
+  expect(geom.active, 'no ACTIVE label or button in the SYMBOL column (it repeated the first slot)').toBe(0);
+  expect(geom.slotsT - (geom.entry.t + geom.entry.h) < 12, 'the slot list starts right under the entry box').toBe(true);
 
   /* THE WIDTH BUDGET — the rule the whole rail width is derived from: a ticker
      never abbreviates. Budgeted against the VALIDATOR's ten characters, never
@@ -9455,10 +9460,11 @@ test('S65: 1W — five sessions of bars for the futures and the yields, a daily 
 // typing in Load only replaced the ACTIVE symbol ("keeps overwriting in the same spot"): "make Load add to the list"; owner 2026-10-09, with a screenshot:
 // "put a blank empty space on top of the left column and I will type in a symbol and it will just get pushed into the list" — and the + went. Both doors run
 // `wbPushSymbol`: the new symbol takes slot 0 and everything above the first empty slot moves down one place; it is saved BEFORE the lookup (whether or not
-// the quote resolves), never duplicated, an open editor is settled first, and a full column is said out loud. A slot commit, a roster click, the ACTIVE button
-// and the loader itself still write no slot (S40 pins the roster). The picker/entry alignment is S40.
+// the quote resolves), never duplicated, an open editor is settled first, and a full column is said out loud. A symbol ALREADY in the column is lifted to the
+// top and its older copy goes (owner 2026-10-09: "if there are duplicates, I would just remove the existing or the older one"). A slot commit, a roster click
+// and the loader itself still write no slot (S40 pins the roster). The picker/entry alignment, and the absence of an ACTIVE row, are S40.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S66: a symbol typed in the entry box or the Load box is pushed in at the top of the list — saved before the lookup, no twins, an open editor settled first', async ({ page, renderWitness }) => {
+test('S66: a symbol typed in the entry box or the Load box is pushed in at the top of the list — saved before the lookup, a duplicate lifts the old copy to the top, an open editor settled first', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(150_000);
   await gotoDemo(page, '.wb-slots', 15000, 1200);
@@ -9473,7 +9479,8 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   const loadBox = page.locator('#wbSymInput');
   const type = async (sym) => { await entry.fill(sym); await entry.press('Enter'); };
   const load = async (sym) => { await loadBox.fill(sym); await loadBox.press('Enter'); };
-  const activeText = () => page.evaluate(() => { const b = document.querySelector('.wb-rail-manual .wb-rail-sub + .wb-side-btn'); return b && b.textContent; });
+  // how many times the SYMBOL column DRAWS a symbol: once per slot, never a second time as an ACTIVE row (owner 2026-10-09: HOOD drawn twice)
+  const drawn = (sym) => page.evaluate((s) => [...document.querySelectorAll('.wb-rail-manual .wb-side-sym')].filter((n) => n.textContent === s).length, sym);
   const settle = () => page.waitForTimeout(350);
   await page.evaluate((sym) => wbPick(sym), R[0]);     // writes `wb_sticky_v1`, which the seeding helper edits
   await page.waitForTimeout(400);
@@ -9482,15 +9489,17 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   await seed(['AAA', 'BBB']);
   await type(R[3]); await settle();
   expect(await first(4), 'pushed in at the top; AAA and BBB moved down one place').toEqual([R[3], 'AAA', 'BBB', '']);
-  expect([await page.evaluate(() => wbState.sym), await activeText()], 'and charted: it is the ACTIVE symbol').toEqual([R[3], R[3]]);
+  expect(await page.evaluate(() => wbState.sym), 'and charted: it is the charted symbol').toBe(R[3]);
+  expect(await drawn(R[3]), 'and the SYMBOL column draws it ONCE — no ACTIVE row repeating slot 0 (owner 2026-10-09: HOOD twice)').toBe(1);
   await type(R[4]); await settle();
   expect(await first(5), 'the next one goes on top — nothing is overwritten, the list keeps every symbol').toEqual([R[4], R[3], 'AAA', 'BBB', '']);
   await type(R[3]); await settle();
-  expect(await first(5), 'a symbol already in the column is only charted, never added twice').toEqual([R[4], R[3], 'AAA', 'BBB', '']);
+  expect(await first(5), 'a symbol already in the column is LIFTED to the top, the one it was above moves down — never added twice').toEqual([R[3], R[4], 'AAA', 'BBB', '']);
   expect(await page.evaluate(() => wbState.sym), 'and it was charted').toBe(R[3]);
+  expect(await drawn(R[3]), 'still drawn once').toBe(1);
   expect((await storedSyms(page)).length, 'the column is still exactly 100 long').toBe(100);
   expect(await page.evaluate(() => document.querySelectorAll('.wb-slots .wb-rail-row').length), 'and still draws 100 slots').toBe(100);
-  expect(await page.evaluate(() => [...document.querySelectorAll('.wb-slots .wb-side-sym')].slice(0, 3).map((n) => n.textContent)), 'the new slots are DRAWN, not just stored').toEqual([R[4], R[3], 'AAA']);
+  expect(await page.evaluate(() => [...document.querySelectorAll('.wb-slots .wb-side-sym')].slice(0, 3).map((n) => n.textContent)), 'the new slots are DRAWN, not just stored').toEqual([R[3], R[4], 'AAA']);
 
   // ── 2. the box is a blank space that STAYS blank and ready: emptied after each push, still focused, Escape clears it
   expect(await entry.inputValue(), 'emptied after a push').toBe('');
@@ -9529,9 +9538,33 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   await seed(['AAA', 'BBB']);
   await load(R[9]); await settle();
   expect(await first(4), 'Load also pushes in at the top').toEqual([R[9], 'AAA', 'BBB', '']);
-  expect([await page.evaluate(() => wbState.sym), await activeText()], 'and charts it').toEqual([R[9], R[9]]);
+  expect(await page.evaluate(() => wbState.sym), 'and charts it').toBe(R[9]);
   await load(R[10]); await settle();
   expect(await first(4), 'the next one goes on top of that').toEqual([R[10], R[9], 'AAA', 'BBB']);
+  await load(R[9]); await settle();
+  expect(await first(4), 'Load of a symbol already listed lifts it to the top too').toEqual([R[9], R[10], 'AAA', 'BBB']);
+
+  // ── 4b. a symbol ALREADY in the column is lifted to the top and its older copy goes (owner 2026-10-09: "I would just remove the existing or the older one")
+  await seed(['AAA', 'BBB', 'CCC', 'DDD']);
+  await type('CCC'); await settle();
+  expect(await first(6), 'the older CCC is gone from slot 2; AAA and BBB moved down one place, DDD stayed where it was — no hole, nothing dropped').toEqual(['CCC', 'AAA', 'BBB', 'DDD', '', '']);
+  expect(await drawn('CCC'), 'and the column draws it once').toBe(1);
+  await type('CCC'); await settle();
+  expect(await first(5), 'typing the top symbol again changes nothing').toEqual(['CCC', 'AAA', 'BBB', 'DDD', '']);
+  await seed(['AAA', 'BBB', 'CCC', 'BBB']);
+  await type('BBB'); await settle();
+  expect(await first(6), 'a twin an older build left behind is emptied too: BBB on top, the other copy gone').toEqual(['BBB', 'AAA', 'CCC', '', '', '']);
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => 'S' + i) }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  });
+  await page.evaluate(() => { document.querySelector('.wb-slots').scrollTop = 300; });
+  await type('S50'); await settle();
+  const lifted = await storedSyms(page);
+  expect([lifted[0], lifted[1], lifted[50], lifted[51], lifted[99], lifted.length, lifted.filter((s) => s === 'S50').length], 'on a FULL column a listed symbol is lifted too: S0..S49 moved down one place, S51.. stayed, nothing lost').toEqual(['S50', 'S0', 'S49', 'S51', 'S99', 100, 1]);
+  await expect(page.locator('.wb-rail-manual [role="status"]'), 'and nothing says the column is full — no empty slot was needed').toHaveCount(0);
+  expect(await page.evaluate(() => document.querySelector('.wb-slots').scrollTop), 'and the list is back at the top, where it is').toBe(0);
 
   // ── 5. junk is refused before anything is written: the entry box leaves it there to correct, Load says so in its own note
   await seed(['AAA', 'BBB']);
@@ -9595,8 +9628,8 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   });
   await settle();
   expect(await editorCount(page), 'no stale input is left on screen').toBe(0);
-  expect(await first(3), 'and nothing was added twice').toEqual(['AAA', 'ZZQX', '']);
-  expect(await slotBtn(page, 1).textContent(), 'the slot is a button again, holding its text').toContain('ZZQX');
+  expect(await first(3), 'it was lifted to the top, not added twice').toEqual(['ZZQX', 'AAA', '']);
+  expect(await slotBtn(page, 0).textContent(), 'the slot is a button again, holding its text').toContain('ZZQX');
 
   // ── 10. a LIVE lookup is slow: the symbol is in the column the moment Enter is pressed, not when the quote lands, and a failed lookup keeps it
   await seed(['AAA']);

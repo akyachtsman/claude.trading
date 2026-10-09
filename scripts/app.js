@@ -4774,8 +4774,8 @@ async function wbLoadSymbol(sym) {
   const say = msg => { if (note) note.textContent = msg; };
   /* THIS LOADER PINS NOTHING (owner ruling 2026-08-26: "I didn't want a field to
      push into the list"). The SYMBOL column is 100 permanent slots the owner
-     edits in place, so charting a symbol — a slot commit, a roster click, the
-     ACTIVE button — writes no slot. The exceptions are the two typing boxes
+     edits in place, so charting a symbol — a slot commit, a roster click —
+     writes no slot. The exceptions are the two typing boxes
      (owner 2026-10-08 and 2026-10-09): the header Load box's submit handler and
      the entry box on top of the SYMBOL column call wbPushSymbol THEMSELVES
      before they call this, so the add is a separate, synchronous act and never
@@ -5502,7 +5502,7 @@ const wbSlotDrag = { on: false, armed: 0, from: -1, sym: '', btn: null, ghost: n
    replacement button after a repaint, is a real click and is never eaten (Codex P2). */
 let wbSlotDragClickAt = 0;
 let wbSlotDragClickBtn = null;
-/* A one-line message under ACTIVE — "every slot is filled" is the only one. Module state, since
+/* A one-line message under the entry box — "every slot is filled" is the only one. Module state, since
    renderWbSidebar rebuilds the rail; cleared by its own timer. */
 let wbRailMsg = '', wbRailMsgT = 0;
 const wbSlotsEl = () => document.querySelector('.wb-rail-manual .wb-slots');
@@ -5590,20 +5590,32 @@ function wbInsertAndEdit(at) {
    symbol and it will just get pushed into the list"). Two doors lead here and behave identically — the entry box on top of the SYMBOL column and the
    header Load box — so there is ONE rule to learn: the new symbol takes slot 0 and everything above the first empty slot moves down one place (a slot 0
    that is already empty is simply filled). It is `wbInsertSlot(0)`, so the column stays exactly WB_SLOTS long and nothing is dropped; with all 100 filled it
-   says so out loud and charts anyway. One already in the column is only charted (no twin). The save happens BEFORE charting and whether or not the lookup
+   says so out loud and charts anyway. One ALREADY in the column is LIFTED to the top and its older copy goes (owner 2026-10-09: "if there are duplicates, I
+   would just remove the existing or the older one from the list"): the rows above it shift down one place, so nothing is dropped, nothing is left as a hole
+   and the column is still exactly WB_SLOTS long; it works on a full column too, since it uses up no empty slot. Any further copy of it lower down (a twin
+   an older build could leave) is emptied in place. The save happens BEFORE charting and whether or not the lookup
    succeeds, exactly like a slot commit ("a slot keeps whatever was typed"): a slow or failed quote can neither lose it nor reorder two typed in a row, and
-   there is no async step to race. It settles an open editor first (the shift reads what is STORED), repaints (a duplicate too, when it settled an editor:
-   settling closes the editor LOGICALLY only, and a failed lookup repaints nothing — Codex P2, PR #317) and scrolls the list back to the top, where the new
-   symbol is. The loader (`wbLoadSymbol`), a roster click and the ACTIVE button still write nothing. Returns the slot, or -1 when every slot is filled. */
+   there is no async step to race. It settles an open editor first (the shift reads what is STORED), ALWAYS repaints (settling closes the editor LOGICALLY
+   only, and a failed lookup repaints nothing, so a stale input would stay on screen — Codex P2, PR #317) and scrolls the list back to the top, where the
+   symbol is. The loader (`wbLoadSymbol`) and a roster click still write nothing. Returns the slot (always 0 for a symbol already listed), or -1 when every
+   slot is filled and the symbol is new. */
 function wbPushSymbol(sym) {
-  const hadEditor = wbEditSlot >= 0;
   wbSettleEditor();
   const syms = readWbSticky().syms;
   const have = syms.indexOf(sym);
-  if (have >= 0) { if (hadEditor) wbRepaintRail(); return have; }
-  const open = wbInsertSlot(0);
-  if (open < 0) { wbRailNote('Every slot is filled — charted, not added'); return -1; }
-  setWbSlot(open, sym);
+  let open;
+  if (have >= 0) {
+    const next = syms.slice();
+    next.splice(have, 1);
+    next.splice(0, 0, sym);
+    for (let i = 1; i < next.length; i++) if (next[i] === sym) next[i] = '';
+    if (next.some((s, i) => s !== syms[i])) writeWbSticky({ syms: next });
+    open = 0;
+  } else {
+    open = wbInsertSlot(0);
+    if (open < 0) { wbRailNote('Every slot is filled — charted, not added'); return -1; }
+    setWbSlot(open, sym);
+  }
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = open;
   wbRepaintRail();
@@ -6227,7 +6239,7 @@ function renderWbSidebar(data) {
   nav.appendChild(cols);
 
   /* ── column A — symbol ─────────────────────────────────────────────────── */
-  /* The entry box, an ACTIVE section naming what is charted, then 100
+  /* The entry box, then 100
      PERMANENT SLOTS the owner edits in place (owner ruling 2026-08-26: "I want
      every item in the list to be editable... the 100 entries, filled or empty is
      permanent"). A slot is still filled by typing into it and cleared by
@@ -6240,21 +6252,16 @@ function renderWbSidebar(data) {
   mHead.appendChild(wbEntryInput());
   manual.appendChild(mHead);
 
-  /* ACTIVE — the charted symbol, stated rather than implied. The rail already
-     marked it with aria-current and a background, but that only answers "which
-     of these is it" and says nothing when the charted symbol is not in this
-     column at all (a roster click, or a reload restoring a symbol never typed). */
-  manual.appendChild(el('span', 'wb-rail-sub', 'ACTIVE'));
-  const activeSym = (wbState && wbState.sym) || '';
-  if (activeSym) manual.appendChild(wbRailBtn(activeSym));
-  else manual.appendChild(el('p', 'wb-rail-empty', 'None yet.'));
+  /* NO ACTIVE row any more (owner 2026-10-09, with a screenshot of HOOD drawn twice under the entry box: "now I'm seeing double entries. We remove one"):
+     it stated the charted symbol (owner 2026-08-26), but every push puts that symbol in slot 0, so the row repeated the first slot on every push. The
+     charted symbol is still marked where it stands — `aria-current` and a background on its slot and on its roster name — and the pane header names it. */
   if (wbRailMsg) {
     const note = el('p', 'wb-rail-empty', wbRailMsg);
     note.setAttribute('role', 'status');
     manual.appendChild(note);
   }
 
-  /* The 100 slots scroll on their OWN, beneath a fixed SYMBOL/ACTIVE head —
+  /* The 100 slots scroll on their OWN, beneath a fixed entry-box head —
      "the list has 100 slots accessible via scroll just for the list". Putting
      the scroller on the column instead would carry the header away with it. */
   const slots = el('div', 'wb-slots');
@@ -7720,7 +7727,7 @@ function wireCharts() {
       /* This path reaches wbPick DIRECTLY, without the loader, so it needs its
          own reset — the submit handler's does not cover it (Codex P2). Every
          non-slot way of changing the chart must break a pending slot pair;
-         keep this list complete: the roster/ACTIVE button, the header submit,
+         keep this list complete: the roster button, the header submit,
          and here. */
       wbSlotClick = { i: -1, at: 0 };
       wbPick(sym);
