@@ -598,7 +598,7 @@ Gesture rules, each of which S64 holds:
   every `renderWbSidebar` (the rail is rebuilt on every chart repaint and 60 s poll — a box rebuilt with it would lose what the owner was typing),
   which keeps its focus and caret as it does the slot editor's. (7) The loader (`wbLoadSymbol`), a roster click and a slot commit
   still write nothing (a slot commit may still type a copy of a symbol that is already listed: "a slot keeps whatever was typed"); the header input's `change` handler (a roster symbol committed by blur) is unchanged and still only charts. S66 pins all of
-  it (16 mutants), S64 the Insert key, S40 the alignment.
+  it (24 mutants), S64 the Insert key, S40 the alignment.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 

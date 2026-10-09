@@ -9560,10 +9560,13 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
     wbEditSlot = -1; renderWbSidebar(wbState.data);
   });
   await page.evaluate(() => { document.querySelector('.wb-slots').scrollTop = 300; });
-  await type('S50'); await settle();
+  await type(R[12]); await settle();     // a NEW symbol on a full column is refused, and says so for 4 s
+  await expect(page.locator('.wb-rail-manual [role="status"]'), 'a new symbol on a full column is refused out loud').toContainText('Every slot is filled');
+  await type('S50'); await settle();     // ...and a LISTED one right after it succeeds (Codex P2, PR #319): it must not keep announcing the refusal
   const lifted = await storedSyms(page);
   expect([lifted[0], lifted[1], lifted[50], lifted[51], lifted[99], lifted.length, lifted.filter((s) => s === 'S50').length], 'on a FULL column a listed symbol is lifted too: S0..S49 moved down one place, S51.. stayed, nothing lost').toEqual(['S50', 'S0', 'S49', 'S51', 'S99', 100, 1]);
-  await expect(page.locator('.wb-rail-manual [role="status"]'), 'and nothing says the column is full — no empty slot was needed').toHaveCount(0);
+  // read at once, NOT through a retrying expect: the note clears itself after 4 s, so a polling assertion would wait out the bug and pass
+  expect(await page.evaluate(() => [document.querySelectorAll('.wb-rail-manual [role="status"]').length, wbRailMsg]), 'and the refusal of the symbol before it is not announced over a push that worked — no empty slot was needed').toEqual([0, '']);
   expect(await page.evaluate(() => document.querySelector('.wb-slots').scrollTop), 'and the list is back at the top, where it is').toBe(0);
 
   // ── 5. junk is refused before anything is written: the entry box leaves it there to correct, Load says so in its own note

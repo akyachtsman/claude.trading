@@ -5515,6 +5515,12 @@ function wbRailNote(msg) {
   wbRailMsgT = setTimeout(() => { wbRailMsg = ''; wbRepaintRail(); }, 4000);
   wbRepaintRail();
 }
+/* Drop a pending note WITHOUT repainting — for a path that repaints anyway. A push that works must not go on announcing the refusal of the one before
+   it ("Every slot is filled" stays up for 4 s, and a listed symbol still lifts on a full column — Codex P2, PR #319). */
+function wbRailNoteClear() {
+  wbRailMsg = '';
+  clearTimeout(wbRailMsgT);
+}
 /* Focus the open editor of slot i without moving the page, caret-selecting its text. `reveal`
    also brings the row into view INSIDE the list (a slot opened off-screen); the page is put
    back by keepPageStill either way. */
@@ -5597,7 +5603,8 @@ function wbInsertAndEdit(at) {
    succeeds, exactly like a slot commit ("a slot keeps whatever was typed"): a slow or failed quote can neither lose it nor reorder two typed in a row, and
    there is no async step to race. It settles an open editor first (the shift reads what is STORED), ALWAYS repaints (settling closes the editor LOGICALLY
    only, and a failed lookup repaints nothing, so a stale input would stay on screen — Codex P2, PR #317) and scrolls the list back to the top, where the
-   symbol is. The loader (`wbLoadSymbol`) and a roster click still write nothing. Returns the slot (always 0 for a symbol already listed), or -1 when every
+   symbol is; a push that works also drops a pending note (`wbRailNoteClear`), so the refusal of the symbol before it is not announced over it. The loader
+   (`wbLoadSymbol`) and a roster click still write nothing. Returns the slot (always 0 for a symbol already listed), or -1 when every
    slot is filled and the symbol is new. */
 function wbPushSymbol(sym) {
   wbSettleEditor();
@@ -5616,6 +5623,7 @@ function wbPushSymbol(sym) {
     if (open < 0) { wbRailNote('Every slot is filled — charted, not added'); return -1; }
     setWbSlot(open, sym);
   }
+  wbRailNoteClear();
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = open;
   wbRepaintRail();
