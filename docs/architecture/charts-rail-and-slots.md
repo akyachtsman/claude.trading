@@ -330,7 +330,15 @@
   And **`.wb-slot-input` carries `min-width: 0`**, because an input's default
   intrinsic width (~20 characters) would otherwise push the column past its flex
   basis and undo the 154px rail.
-    **The ROSTER PICKER is a FULL-WIDTH HEADER over both columns**, not the roster
+    **2026-10-09 — THE PICKER IS THE ROSTER COLUMN'S OWN HEAD AGAIN, on the same line as the entry box over the SYMBOL column** (owner, with a
+  screenshot: "align everything nicely so that the radar will line up with the second column and not expand the two columns"). There is no
+  full-width row above the columns, no `.wb-rail-top`, and no SYMBOL / ROSTER title rows: each column has ONE head control of the same 20px height (the
+  entry box, `.wb-entry-input`, and the picker, `.wb-rail-pick`), each exactly as wide as its column. The cost is the one the passage below records: in
+  the narrow roster column a long list name is cut with an ellipsis (`text-overflow` on the select), its whole name staying in the tooltip (`sel.title`)
+  and in the open menu — the owner chose the alignment over the full names. S40 pins the geometry (same line, same height, lined up with its own column
+  and no wider). The rest of this passage is the HISTORY of the full-width header and describes what is gone.
+
+  **The ROSTER PICKER WAS A FULL-WIDTH HEADER over both columns**, not the roster
   column's own head (Codex P2, 2026-08-25). Inside a 68px column it had ~**45px**
   of text room against the ~**82px** its own default "Charts roster" label needs,
   so 6 of demo's 8 list names truncated and the control could no longer answer
@@ -456,11 +464,10 @@ pulls the rows ABOVE up into the nearest empty one instead, so the open slot lan
 column with all 100 filled is refused, with a visible `role="status"` note under ACTIVE (`wbRailNote`,
 module state `wbRailMsg`, cleared by its own timer) — never a silent no-op. **It must never grow the array**:
 `wbSlotArray` truncates to 100 on every read, so a 101-entry write looks fine until the next write drops the
-LAST stock. S64 therefore reads the store directly after the `+`, BEFORE anything is typed (the typed write
-would normalise it and hide the fault). Reached by the `+` in the SYMBOL head (BELOW the row last worked on —
-see the next paragraph) and by Insert on a focused slot (ABOVE that row), and it puts the owner in the new slot's
-editor (`wbInsertAndEdit` → `wbFocusSlotEditor`, shared with the click-to-edit path). `wbInsertSlot(WB_SLOTS)`
-means "just below the last slot": only the rows above can make room, the open slot is the new last one.
+LAST stock. S64 therefore reads the store directly after the Insert key, BEFORE anything is typed (the typed write
+would normalise it and hide the fault). Reached by Insert on a focused slot (ABOVE that row), which puts the owner in the
+new slot's editor (`wbInsertAndEdit` → `wbFocusSlotEditor`, shared with the click-to-edit path), and — at index 0 — by the
+two typing boxes through `wbPushSymbol` (see "Typing boxes PUSH the symbol in at the top"). There is no `+` any more.
 
 **The drag is ONE delegated `pointerdown` on `#wbSidebar` (`wbSlotPointerDown`), not a listener per button —
 and that was MEASURED, not assumed.** The first cut wired each filled slot; in WebKit a `pointerdown`
@@ -530,11 +537,11 @@ Gesture rules, each of which S64 holds:
   press ignores moves (it cannot start another drag) and a mouse released outside the window ends it.
 - **Settle the open editor before the column is re-indexed (`wbSettleEditor`, Codex P2, PR #313).** The input's
   blur save is deferred a tick (`setTimeout(0)`), and a TAP delivers `mousedown`, `mouseup` and `click` back to
-  back, so the `+` handler can run first: the slot the owner just typed in still reads empty in storage, so
+  back, so the Insert key's (or the entry box's) handler can run first: the slot the owner just typed in still reads empty in storage, so
   `wbInsertSlot` calls it "already open" and moves nothing, `wbInsertAndEdit` rebuilds it as a blank editor, and
   the old input's blur then takes the rebuild for a background repaint (case 2 above) and returns without saving
   — the typed symbol is gone. A finger drag is the same hazard without any blur at all. The editor that is on
-  screen publishes its own quiet "save and close" as `wbEditorSettle`; `wbInsertAndEdit` and `wbCommitMove` call
+  screen publishes its own quiet "save and close" as `wbEditorSettle`; `wbInsertAndEdit`, `wbCommitMove` and `wbPushSymbol` call
   `wbSettleEditor()` first, which saves the draft to ITS slot (no charting — attention has moved) and marks the
   editor settled so the deferred blur does nothing. S64 reproduces the tap ordering exactly with `blur()` and
   `click()` in one `evaluate`.
@@ -559,43 +566,30 @@ Gesture rules, each of which S64 holds:
   about focus, and `renderWbSidebar`'s own restore would put it back on the old INDEX, which now holds a
   different stock. The roving tab stop moves with it (`wbSlotTab = to`).
 - **Keyboard parity** (an arrangement only a mouse can make is not one everyone can): Alt+ArrowUp/Down moves
-  the focused stock one place; Insert opens a slot above it. The `+` is the route where there is no Insert key.
-- **The `+` ADDS the next symbol (owner 2026-10-08).** Owner: "Not good, because it just overwrites what I input
-  last" — the first cut opened the slot ABOVE the row last worked on (`wbSlotTab`), and a slot that has just been
-  filled IS the row last worked on, so every add landed at the same index and pushed the previous one down. Asked
-  what they wanted, the owner chose "New one lands where the last one was": `wbAddTarget()` is the slot directly
-  BELOW the stock last worked on, so adds chain in the order they are made; click a stock first and the `+` pushes
-  one in right under it. Details that are rules: (1) `wbSlotWorked` — `wbSlotTab` is 0 until the owner touches a
-  slot, and 0 is a default, not "the row last worked on"; with nothing worked the target is just after the LAST
-  filled slot (slot 0 of an empty column), NOT the first hole; `setWbSlotTab` (a click, an arrow, and `openEditor` — so F2 on the untouched initial stop counts, Codex P2 on PR #316),
-  `wbInsertAndEdit` and `wbCommitMove` set it. (2) When the anchor row is itself EMPTY (an editor abandoned with Escape, or a click on an
-  empty slot) the `+` reopens THAT slot instead of skipping past it. (3) `wbAddNext()` calls `wbSettleEditor()`
-  FIRST: the target is read from what is STORED, and a typed draft is not stored until it is settled (the same
-  reason as the blur-vs-click race above) — without it the draft is lost or overwritten. (4) Below slot 99 there
-  is no row to push into, so `wbInsertSlot(WB_SLOTS)` pulls the rows above up into the nearest empty one and opens
-  the new LAST slot; a fully filled column still gets the `role="status"` note. The Insert key is unchanged
-  (above the focused row). S64 steps 6, 6b and 13 pin it; the test helpers' `tab: true` also resets
-  `wbSlotWorked`.
-- **The Load box adds what it charts (owner 2026-10-08).** Owner, with a screenshot of the ACTIVE box: "keeps
-  overwriting in the same spot" — typing in the header Load box charts the symbol, so ACTIVE shows the newest one
-  and the previous one is simply gone, while the 100 slots never change. Asked (the options were "the + stacking",
-  "typing in the Load box", "a slot replacing a stock"), the owner first picked the `+` option, then came back with
-  the ACTIVE screenshot and, asked again, chose "make Load add to the list". **This reverses the 2026-08-26 ruling
-  ("I didn't want a field to push into the list") for the header Load box ONLY** — the 2026-08-26 add box was a
-  STACK that was the only way to edit the column; this is a chart control that also keeps the symbol in a column
-  that is still 100 permanent positional slots. The rules: (1) `wbAddLoaded(sym)` is called by the Load form's
-  SUBMIT handler BEFORE `wbLoadSymbol`, never from inside the loader — the loader, a roster click, the ACTIVE
-  button and a slot commit still write nothing (S40 pins the roster, S66 pins `wbLoadSymbol`). (2) The target is
-  `wbInsertSlot(last + 1)` where `last` is the highest FILLED slot: the end of the list, never a hole, so a run of
-  symbols lands in the order typed; a last stock in the final slot pulls the rows above up (`wbInsertSlot(WB_SLOTS)`),
-  a full column is refused with the `role="status"` note and the symbol is charted anyway. (3) SAVED FIRST, whether or
-  not the lookup resolves — the same rule as a slot commit — so a slow or failed quote can neither lose the symbol nor
-  reorder two typed in a row (an add after the lookup was the mutant S66 catches); a typo is therefore kept and
-  fixed or emptied like any slot. (4) Never a twin: a symbol already in the column is only charted. (5)
-  `wbSettleEditor()` first (the target is read from what is STORED), the new slot becomes the row last worked on
-  (`wbSlotTab`, `wbSlotWorked`) so the `+` opens right under it, and the rail is repainted and the slot scrolled
-  into view by `wbAddLoaded` itself — a lookup that fails never repaints the rail. The header input's `change`
-  handler (a roster symbol committed by blur) is unchanged and still only charts.
+  the focused stock one place; Insert opens a slot above it (with the drag, the way to put one BETWEEN stocks).
+- **Typing boxes PUSH the symbol in at the top (owner 2026-10-09).** History, because it took four rounds: 2026-10-07 the owner asked for "an
+  open slot so I can push in more stocks" and got a `+` (and the Insert key) that opened an empty slot ABOVE the row last worked on;
+  2026-10-08 "it just overwrites what I input last" — a slot just filled IS the row last worked on, so every `+` landed at the same index; the
+  `+` was changed to open BELOW the row last worked on (`wbAddTarget`, `wbSlotWorked`); then, with a screenshot of the ACTIVE box, "keeps overwriting
+  in the same spot" — the header Load box only replaced the ACTIVE symbol (it charted, the 100 slots never changed), so Load was made to add to the
+  END of the list (`wbAddLoaded`, reversing the 2026-08-26 "I didn't want a field to push into the list" for that box); and finally, with another
+  screenshot and after asking "how does + work?": "This is a little confusing for me … put a blank empty space on top of the left column and I will
+  type in a symbol and it will just get pushed into the list." The `+`, `wbAddTarget`, `wbAddNext`, `wbSlotWorked` and the end-of-column case of
+  `wbInsertSlot` were DELETED, and there is ONE rule with two doors: the ENTRY BOX on top of the SYMBOL column (`wbEntryInput`) and the header Load
+  box's submit both call `wbPushSymbol(sym)`. The rules: (1) the new symbol takes slot 0 and everything above the first EMPTY slot moves down one
+  place — `wbInsertSlot(0)`, so the column stays exactly 100 long and nothing is dropped; a slot 0 that is already empty is simply filled; a full
+  column is refused with the `role="status"` note and the symbol is charted anyway. (2) SAVED FIRST, whether or not the lookup resolves — the
+  same rule as a slot commit — so a slow or failed quote can neither lose the symbol nor reorder two typed in a row (an add after the lookup was the
+  mutant S66 catches); a typo is therefore kept and fixed or emptied like any slot. (3) Never a twin: a symbol already in the column is only
+  charted. (4) `wbSettleEditor()` first (the shift reads what is STORED), and the DUPLICATE path repaints when it settled an editor: settling closes
+  the editor LOGICALLY only and a failed lookup repaints nothing, so without it a stale input stays on screen with handlers that ignore every key
+  (Codex P2, PR #317). (5) `.wb-slots` is scrolled back to the top, where the new symbol is (a repaint otherwise keeps the owner's scroll position).
+  (6) The entry box is a blank space that STAYS blank: emptied after a push, focus kept so the next symbol can be typed at once, Escape empties it,
+  text that is not a ticker (`WL_SYM_RE`) is refused with a note in the rail and left in the box. It is ONE node for the page's life, re-seated by
+  every `renderWbSidebar` (the rail is rebuilt on every chart repaint and 60 s poll — a box rebuilt with it would lose what the owner was typing),
+  which keeps its focus and caret as it does the slot editor's. (7) The loader (`wbLoadSymbol`), a roster click, the ACTIVE button and a slot commit
+  still write nothing; the header input's `change` handler (a roster symbol committed by blur) is unchanged and still only charts. S66 pins all of
+  it (16 mutants), S64 the Insert key, S40 the alignment.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 

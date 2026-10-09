@@ -709,10 +709,11 @@
      pre-measure default. It is a custom property and NOT an inline max-height
      because an inline style beats every stylesheet rule — the stacked-rail cap
      below could never have applied while the script wrote the height inline. */
-  /* A COLUMN now: the roster picker is a full-width header over both symbol
-     columns (see renderWbSidebar). It was a row of two columns until
-     2026-08-25, when the 154px rail left the picker too narrow to name the
-     list it had selected. */
+  /* The rail holds ONE child, the row of two columns (see renderWbSidebar). Its
+     column direction is a leftover of the period (2026-08-25 to 2026-10-09)
+     when the roster picker was a full-width header ABOVE the columns; the
+     picker is the roster column's own head again, aligned with the entry box
+     on top of the SYMBOL column. */
   #wbSidebar { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); max-height: var(--wb-rail-h, 600px); }
   /* `min-height: 0` is load-bearing: a flex ITEM defaults to min-height auto,
      so without it this row refuses to shrink below its content and the rail's
@@ -730,7 +731,6 @@
      synchronous block has already read an unchanged value. Excluding this
      subtree from anchor selection stops it at the source. */
   #wbSidebar, #wbSidebar * { overflow-anchor: none; }
-  .wb-rail-top { flex: 0 0 auto; }
   /* overflow-y on the COLUMNS, not on #wbSidebar — a scroller on the row would
      scroll both columns together and defeat the split. `auto`, never `contain`:
      reaching the end of a column must carry on scrolling the page. */
@@ -793,10 +793,15 @@
     #wbSidebar { max-height: 220px; }
   }
   .wb-rail-head { position: sticky; top: 0; z-index: 1; background: var(--color-bg); padding-bottom: 2px; }
-  .wb-rail-title { display: block; font: 600 9px/1.6 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
   /* The picker inherits the dark charts scope, so it is styled here rather than
      left to the browser's own light-on-white select chrome. */
-  .wb-rail-pick { width: 100%; padding: 2px 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 600 9px/1.6 var(--font-sans); text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
+  /* THE TWO HEAD CONTROLS share one height (20px) so the entry box over the SYMBOL column and this picker over the ROSTER column sit on the SAME line
+     (owner 2026-10-09). `min-width: 0` and the ellipsis are what let the picker live in a ~68px column: a list name that does not fit is cut, its
+     whole name staying in the tooltip and the open menu. */
+  .wb-rail-pick { display: block; width: 100%; min-width: 0; height: 20px; box-sizing: border-box; padding: 0 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 600 9px/1 var(--font-sans); text-transform: uppercase; letter-spacing: .04em; text-overflow: ellipsis; cursor: pointer; }
+  .wb-entry-input { display: block; width: 100%; min-width: 0; height: 20px; box-sizing: border-box; padding: 0 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 500 10px/1 var(--font-mono); text-transform: uppercase; }
+  .wb-entry-input::placeholder { color: var(--color-text-secondary); text-transform: none; font-family: var(--font-sans); font-size: 9px; letter-spacing: .02em; }
+  .wb-entry-input:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   .wb-rail-pick:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   .wb-rail-empty { margin: 4px 2px 0; font: 400 9px/1.4 var(--font-sans); font-style: italic; color: var(--color-text-secondary); }
   /* Section labels inside the SYMBOL column — ACTIVE (owner request 2026-08-26,
@@ -850,13 +855,6 @@
   .wb-slot-ghost { position: fixed; top: 0; left: 0; z-index: 60; pointer-events: none; padding: 2px 6px; border: 1px solid var(--color-accent-bright); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 700 10px/1.4 var(--font-mono); box-shadow: var(--shadow-raised); opacity: .95; }
   body.wb-drag-active { cursor: grabbing; -webkit-user-select: none; user-select: none; }
   body.wb-drag-active .wb-slot { cursor: grabbing; }
-  /* SYMBOL and the + sit on one line. The + is a 14px square so the head is no taller than the
-     text it replaces (9px / 1.6 = 14.4px): the roster column's head beside it must still start its
-     list on the SAME line (S40). */
-  .wb-rail-head--slots { display: flex; align-items: center; justify-content: space-between; gap: 2px; }
-  .wb-rail-add { flex: 0 0 auto; width: 14px; height: 14px; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-primary); font: 700 11px/1 var(--font-mono); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; touch-action: manipulation; }
-  .wb-rail-add:hover { border-color: var(--color-accent-bright); color: var(--color-accent-bright); }
-  .wb-rail-add:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   /* Sized to sit exactly where the button it replaces sat, so opening an editor
      does not shift the rows below it. `min-width: 0` matters: an input's default
      intrinsic width (~20 characters) would otherwise push the column past its

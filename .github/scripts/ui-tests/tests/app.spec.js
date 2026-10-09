@@ -202,7 +202,7 @@ const seedSlots = (page, slots, { repaint = true, tab = false, pick } = {}) =>
     for (const [i, v] of Object.entries(slots)) syms[i] = typeof v === 'number' ? roster()[v] : v;
     localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms }));
     if (!repaint) return;
-    wbEditSlot = -1; if (tab) { wbSlotTab = 0; wbSlotWorked = false; } renderWbSidebar(wbState.data);
+    wbEditSlot = -1; if (tab) wbSlotTab = 0; renderWbSidebar(wbState.data);
     if (pick !== undefined) wbPick(roster()[pick]);
   }, { slots, repaint, tab, pick });
 /** Installs `window.__pane(titleRe)`, shared by S25/S34 (both colour-check the long-term candles): the PRO pane whose title matches — by DOCTRINE name, never the positional number — as `{ inPane, rects }` (its x band from its own title to the next, and its candle rects with the volume bars removed: they share ONE baseline and stay price-coloured), or `{ err }` when no title matches. */
@@ -236,9 +236,9 @@ const installPaneProbe = (page) => page.evaluate(() => {
     return { inPane, rects };
   };
 });
-/** Closes any open slot editor WITHOUT committing, repaints the rail, then settles `wait` ms; `tab` also parks the tab stop on slot 0 (and forgets that any slot was worked — the + then adds at the END of the list). */
+/** Closes any open slot editor WITHOUT committing, repaints the rail, then settles `wait` ms; `tab` also parks the tab stop on slot 0. */
 const closeEditor = async (page, { wait = 200, tab = false } = {}) => {
-  await page.evaluate((t) => { wbEditSlot = -1; if (t) { wbSlotTab = 0; wbSlotWorked = false; } renderWbSidebar(wbState.data); }, tab);
+  await page.evaluate((t) => { wbEditSlot = -1; if (t) wbSlotTab = 0; renderWbSidebar(wbState.data); }, tab);
   await page.waitForTimeout(wait);
 };
 /** Opens slot `n` (a click, or a double-click with `dbl`; `openWait` ms to let it open), types `text` over its content, presses `key`, then waits `wait` ms. */
@@ -4313,18 +4313,26 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
 
-  // two columns, side by side, under a full-width picker
+  // two columns, side by side; the entry box heads the SYMBOL column and the roster picker heads the ROSTER column, on the SAME line
+  // (owner 2026-10-09: "align everything nicely so that the radar will line up with the second column and not expand the two columns")
   expect(await page.locator('#wbSidebar .wb-rail-col').count(), 'two rail columns').toBe(2);
   const geom = await page.evaluate(() => {
+    const r = (sel) => document.querySelector(sel).getBoundingClientRect();
     const cols = [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.getBoundingClientRect());
-    const top = document.querySelector('.wb-rail-top').getBoundingClientRect();
-    return { left0: cols[0].left, left1: cols[1].left, top0: cols[0].top, top1: cols[1].top,
-             pickAbove: top.bottom <= cols[0].top + 1, pickW: top.width, railW: cols[0].width + cols[1].width };
+    const entry = r('.wb-rail-manual .wb-rail-head .wb-entry-input'), pick = r('.wb-rail-roster .wb-rail-head .wb-rail-pick');
+    return { left0: cols[0].left, left1: cols[1].left, top0: cols[0].top, top1: cols[1].top, w0: cols[0].width, w1: cols[1].width,
+             entry: { l: entry.left, t: entry.top, w: entry.width, h: entry.height }, pick: { l: pick.left, t: pick.top, w: pick.width, h: pick.height },
+             oldTop: !!document.querySelector('.wb-rail-top'), plus: document.querySelectorAll('.wb-rail-add').length,
+             pickIn: !!document.querySelector('.wb-rail-roster .wb-rail-pick'), pickOutside: !document.querySelector('.wb-rail-manual .wb-rail-pick') };
   });
   expect(geom.left1, 'the columns sit side by side, not stacked').toBeGreaterThan(geom.left0);
   expect(Math.abs(geom.top0 - geom.top1) < 2, 'and both start on the same line').toBe(true);
-  expect(geom.pickAbove, 'the picker spans the rail ABOVE them — at 68px it could not name its own list').toBe(true);
-  expect(geom.pickW, 'so it is wider than either column').toBeGreaterThan(geom.railW / 2);
+  expect(geom.oldTop, 'there is no full-width row above the columns any more').toBe(false);
+  expect([geom.pickIn, geom.pickOutside], 'the picker is the ROSTER column\'s own head').toEqual([true, true]);
+  expect(Math.abs(geom.pick.t - geom.entry.t) < 1.5 && Math.abs(geom.pick.h - geom.entry.h) < 1.5, 'it sits on the SAME line as the entry box over the SYMBOL column, at the same height').toBe(true);
+  expect(Math.abs(geom.pick.l - geom.left1) < 1.5 && geom.pick.w <= geom.w1 + 1.5, 'and lines up with the second column — it does not span or widen the two').toBe(true);
+  expect(Math.abs(geom.entry.l - geom.left0) < 1.5 && geom.entry.w <= geom.w0 + 1.5, 'the entry box lines up with the first').toBe(true);
+  expect(geom.plus, 'the + is gone: the entry box replaces it').toBe(0);
 
   /* THE WIDTH BUDGET — the rule the whole rail width is derived from: a ticker
      never abbreviates. Budgeted against the VALIDATOR's ten characters, never
@@ -8921,7 +8929,7 @@ test('S63: futures — the WTI crude-oil and natural-gas prices, DELAYED not LIV
 // Desktop-sized mouse drags only: a finger's hold-then-drag uses the watchlist tiles' arming rule and
 // cannot be exercised here.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S64: a stock in the symbol column can be dragged to a new place, and a slot can be opened to push one in', async ({ page, renderWitness }) => {
+test('S64: a stock in the symbol column can be dragged to a new place, and a slot can be opened to push one in (Insert)', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(150_000);
   await gotoDemo(page, '.wb-slots', 15000, 1200);
@@ -8953,17 +8961,17 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await page.evaluate(sym => wbPick(sym), R[0]);
   await page.waitForTimeout(400);
 
-  // ── 0. what is on the page: the + , a grab cursor on a filled slot only, the slot still a touch-manipulation button
+  // ── 0. what is on the page: the entry box (and no +), a grab cursor on a filled slot only, the slot still a touch-manipulation button
   await seed([R[1], 'BBB', 'CCC', 'DDD', 'EEE', 'FFF']);
   await showRail();
   const shape = await page.evaluate(() => {
     const b = i => document.querySelector(`.wb-slots [data-slot="${i}"] .wb-slot`);
-    return { add: document.querySelectorAll('.wb-rail-manual .wb-rail-head .wb-rail-add').length,
+    return { plus: document.querySelectorAll('.wb-rail-add').length, entry: document.querySelectorAll('.wb-rail-manual .wb-rail-head .wb-entry-input').length,
              rows: document.querySelectorAll('.wb-slots .wb-rail-row').length,
              filled: getComputedStyle(b(0)).cursor, empty: getComputedStyle(b(9)).cursor,
              touch: getComputedStyle(b(0)).touchAction, editors: document.querySelectorAll('.wb-slot-input').length };
   });
-  expect(shape.add, 'one + in the SYMBOL head').toBe(1);
+  expect([shape.plus, shape.entry], 'no + any more (owner 2026-10-09); ONE entry box heads the SYMBOL column').toEqual([0, 1]);
   expect(shape.rows, 'still exactly 100 slots').toBe(100);
   expect([shape.filled, shape.empty], 'a filled slot shows a grab cursor and an empty one does not').toEqual(['grab', 'pointer']);
   expect(shape.touch, 'the slot keeps touch-action: manipulation at rest (the double-tap edit needs it)').toBe('manipulation');
@@ -9073,84 +9081,25 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await expect.poll(() => page.evaluate(() => wbState.sym), { message: 'a release back where it began still charts', timeout: 8000 }).toBe(R[1]);
   expect(await first(2), 'and moved nothing').toEqual([R[1], 'BBB']);
 
-  // ── 6. the + opens a slot directly BELOW the row last worked on (owner 2026-10-08), by using up the nearest empty one beneath
+  // ── 6. the Insert key opens a slot ABOVE the focused row, by using up the nearest empty one beneath — the way to push one in BETWEEN stocks
   await seed(['AAA', 'BBB', R[2], 'DDD', 'EEE']);
   await slotBtn(page, 2).click();
   await page.waitForTimeout(700);
-  await page.locator('.wb-rail-add').click();
-  expect(await first(7), 'a slot is open at 3, just under the stock clicked; the stocks from there down moved one place, into the first empty slot').toEqual(['AAA', 'BBB', R[2], '', 'DDD', 'EEE', '']);
+  await slotBtn(page, 2).focus();
+  await page.keyboard.press('Insert');
+  expect(await first(7), 'a slot is open at 2; the stocks from there down moved one place, into the first empty slot').toEqual(['AAA', 'BBB', '', R[2], 'DDD', 'EEE', '']);
   // read BEFORE anything is typed: the first write after this one normalises the array back to 100 and would hide a column that grew
   expect((await storedSyms(page)).length, 'opening a slot USES UP an empty one — the column is still exactly 100, not 101').toBe(100);
-  expect(await editorSlot(page), 'its editor is open, ready to type').toBe('3');
+  expect(await editorSlot(page), 'its editor is open, ready to type').toBe('2');
   expect(await page.evaluate(() => document.activeElement === document.querySelector('.wb-slot-input')), 'and focused').toBe(true);
   await page.keyboard.type('zzz');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(500);
   const pushed = await storedSyms(page);
-  expect(pushed.slice(0, 6), 'the new stock sits where the slot was opened').toEqual(['AAA', 'BBB', R[2], 'ZZZ', 'DDD', 'EEE']);
+  expect(pushed.slice(0, 6), 'the new stock sits where the slot was opened').toEqual(['AAA', 'BBB', 'ZZZ', R[2], 'DDD', 'EEE']);
   expect([pushed.length, pushed.filter(Boolean).length], 'still 100 slots, one more of them filled').toEqual([100, 6]);
 
-  // ── 6b. successive adds chain in the ORDER they are made (owner 2026-10-08: "it just overwrites what I input last") — nothing worked yet, so the
-  // first lands at the END of the list, and each next one right after the one before, never on top of it
-  await seed(['AAA', 'BBB']);
-  for (const [n, sym] of [['2', 'ONE'], ['3', 'TWO'], ['4', 'THREE']]) {
-    await page.locator('.wb-rail-add').click();
-    expect(await editorSlot(page), `the + opens slot ${n} for ${sym}`).toBe(n);
-    await page.keyboard.type(sym);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(400);
-  }
-  expect(await first(6), 'AAA BBB then ONE, TWO, THREE in the order entered — none pushed the one before it down').toEqual(['AAA', 'BBB', 'ONE', 'TWO', 'THREE', '']);
-  // an editor abandoned with Escape leaves its slot EMPTY and still the one last worked on: the next + reuses it, it does not skip it or consume another
-  await page.locator('.wb-rail-add').click();
-  expect(await editorSlot(page), 'the next + opens slot 5').toBe('5');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-  await page.locator('.wb-rail-add').click();
-  expect(await editorSlot(page), 'after an Escape the SAME empty slot is opened again').toBe('5');
-  expect(await first(7), 'and nothing moved').toEqual(['AAA', 'BBB', 'ONE', 'TWO', 'THREE', '', '']);
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-  // editing a slot IS working it, on the keyboard path too (Codex P2, PR #316): F2 on the untouched initial tab stop never passes the click handler,
-  // and abandoning that editor must still leave the + anchored on the slot just edited — directly under it, not at the end of the list
-  await seed(['AAA', 'BBB', 'CCC', 'DDD']);
-  await slotBtn(page, 0).focus();
-  await page.keyboard.press('F2');
-  expect(await editorSlot(page), 'F2 opens the editor on the focused slot').toBe('0');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-  await page.locator('.wb-rail-add').click();
-  expect(await editorSlot(page), 'the + opens right under the slot edited with F2 (slot 1), not after the last stock').toBe('1');
-  expect(await first(5), 'pushing BBB CCC DDD down one place').toEqual(['AAA', '', 'BBB', 'CCC', 'DDD']);
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-  // a column with a gap and nothing worked yet: the END of the list is just after the LAST stock, not the first empty slot
-  await seed(['AAA', '', 'CCC']);
-  await page.locator('.wb-rail-add').click();
-  expect(await editorSlot(page), 'nothing worked yet: the + goes just after the last stock (slot 3), not into the hole at 1').toBe('3');
-  expect(await first(5), 'and moved nothing').toEqual(['AAA', '', 'CCC', '', '']);
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-  // an empty column: slot 0
-  await seed([]);
-  await page.locator('.wb-rail-add').click();
-  expect(await editorSlot(page), 'an empty column starts at slot 0').toBe('0');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-  // the stock last worked on is in the LAST slot, with room only above: the rows above are pulled up and the new last slot opens
-  await page.evaluate(() => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => (i === 0 ? '' : 'S' + i)) }));
-    wbEditSlot = -1; setWbSlotTab(99); renderWbSidebar(wbState.data);
-  });
-  await page.locator('.wb-rail-add').click();
-  let s = await storedSyms(page);
-  expect(await editorSlot(page), 'under the last slot there is no row: the new one is the last slot, and the rows above moved up').toBe('99');
-  expect([s[0], s[98], s[99], s.length], 'S1..S99 moved up one into the empty slot at the top; slot 99 is open').toEqual(['S1', 'S99', '', 100]);
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
-
-  // ── 7. nothing empty BELOW: the rows above are pulled up instead (Insert on a slot does the same as the +)
+  // ── 7. nothing empty BELOW: the rows above are pulled up instead
   await page.evaluate(() => {
     const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
     const syms = Array.from({ length: 100 }, (_, i) => (i === 0 ? '' : 'S' + i));
@@ -9160,19 +9109,20 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await slotBtn(page, 50).focus();
   await page.keyboard.press('Insert');
   await page.waitForTimeout(300);
-  s = await storedSyms(page);
+  const s = await storedSyms(page);
   expect(await editorSlot(page), 'the open slot lands just above the row it was asked at').toBe('49');
   expect([s[0], s[48], s[49], s[50], s.length], 'rows 1..49 moved up one into the empty slot at the top; row 50 stayed').toEqual(['S1', 'S49', '', 'S50', 100]);
   await page.keyboard.press('Escape');
 
-  // ── 8. every slot filled: the + says so and moves nothing
+  // ── 8. every slot filled: Insert says so and moves nothing
   await page.evaluate(() => {
     const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
     localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => 'S' + i) }));
     wbEditSlot = -1; renderWbSidebar(wbState.data);
   });
   const full = JSON.stringify(await storedSyms(page));
-  await page.locator('.wb-rail-add').click();
+  await slotBtn(page, 50).focus();
+  await page.keyboard.press('Insert');
   await expect(page.locator('.wb-rail-manual [role="status"]'), 'a visible, announced note').toContainText('Every slot is filled');
   expect(JSON.stringify(await storedSyms(page)), 'nothing moved').toBe(full);
   expect(await editorCount(page), 'and no editor opened').toBe(0);
@@ -9246,19 +9196,6 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   expect(rested, 'a finger that rested 300ms is armed — even with a stray mouse move from ANOTHER pointer landing mid-hold — its pan is cancelled, the drag runs and cancels the pan too, and afterwards the pan is left alone').toEqual({ armed: true, prevented: true, ghosts: 1, preventedWhileDragging: true, after: false });
   await page.waitForTimeout(300);
   expect(await first(4), 'and the drop moved the stock').toEqual(['BBB', 'CCC', R[1], 'DDD']);
-
-  // ── 13. type in a slot and tap the + in the SAME task as the input's blur: nothing typed is lost (Codex P2).
-  // The input's save is deferred a tick; a tap can reach the + handler first. blur() + click() in one evaluate
-  // reproduces that order exactly.
-  await seed(['AAA', 'BBB']);
-  await slotBtn(page, 2).click();                          // an empty slot: its editor opens and slot 2 becomes the tab stop
-  await page.keyboard.type('zzz');
-  await page.evaluate(() => { document.querySelector('.wb-slot-input').blur(); document.querySelector('.wb-rail-add').click(); });
-  await page.waitForTimeout(300);
-  expect(await first(5), 'the typed symbol was saved BEFORE the + read the column, and the next slot opened right under it — not dropped, not overwritten').toEqual(['AAA', 'BBB', 'ZZZ', '', '']);
-  expect(await editorSlot(page), 'and the open slot has the editor').toBe('3');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
 
   // ── 14. a finger dragging a stock while an editor is open ELSEWHERE: no blur ever fires on a touch drag, so the
   // draft must be saved before the rows shift — or it lands on whatever stock the shift put in that slot
@@ -9514,13 +9451,14 @@ test('S65: 1W — five sessions of bars for the futures and the yields, a daily 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCENARIO 66 — The header Load box ADDS what it charts to the SYMBOL column (owner 2026-10-08: typing in Load only replaced the ACTIVE symbol and kept
-// nothing — "keeps overwriting in the same spot"; asked, and the owner chose "make Load add to the list"). This reverses the 2026-08-26 "nothing pins"
-// ruling for THIS ONE box: a slot commit, a roster click and the ACTIVE button still write no slot (S40 pins the roster). The symbol lands in the slot
-// just AFTER the last stock, is saved BEFORE the lookup (no async step to race) whether or not the quote resolves, is never duplicated, settles an open
-// editor first, and says so out loud when every slot is filled.
+// SCENARIO 66 — A symbol typed into the SYMBOL column's entry box (or the header Load box) is PUSHED INTO THE LIST at the top. Owner 2026-10-08, after
+// typing in Load only replaced the ACTIVE symbol ("keeps overwriting in the same spot"): "make Load add to the list"; owner 2026-10-09, with a screenshot:
+// "put a blank empty space on top of the left column and I will type in a symbol and it will just get pushed into the list" — and the + went. Both doors run
+// `wbPushSymbol`: the new symbol takes slot 0 and everything above the first empty slot moves down one place; it is saved BEFORE the lookup (whether or not
+// the quote resolves), never duplicated, an open editor is settled first, and a full column is said out loud. A slot commit, a roster click, the ACTIVE button
+// and the loader itself still write no slot (S40 pins the roster). The picker/entry alignment is S40.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S66: the header Load box adds the symbol to the end of the SYMBOL column — saved before the lookup, no twins, an open editor settled first', async ({ page, renderWitness }) => {
+test('S66: a symbol typed in the entry box or the Load box is pushed in at the top of the list — saved before the lookup, no twins, an open editor settled first', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(150_000);
   await gotoDemo(page, '.wb-slots', 15000, 1200);
@@ -9529,100 +9467,122 @@ test('S66: the header Load box adds the symbol to the end of the SYMBOL column �
   const R0 = await page.evaluate(() => Object.keys(wbState.data.symbols));
   const R = Array.from({ length: 16 }, (_, i) => R0[i % R0.length]);   // the demo roster is short: wrap, each step reseeds its own column
   const first = async (n) => (await storedSyms(page)).slice(0, n);
-  const seed = (slots) => seedSlots(page, Object.fromEntries(Array.from({ length: 100 }, (_, i) => [i, slots[i] ?? ''])), { tab: true });   // the WHOLE column: a stock left in slot 99 by an earlier step would turn "the end" into the last slot
-  const box = page.locator('#wbSymInput');
-  const load = async (sym) => { await box.fill(sym); await box.press('Enter'); };
+  // the WHOLE column each time: a stock left in a low slot by an earlier step would change where "the first empty slot" is
+  const seed = (slots) => seedSlots(page, Object.fromEntries(Array.from({ length: 100 }, (_, i) => [i, slots[i] ?? ''])), { tab: true });
+  const entry = page.locator('.wb-rail-manual .wb-entry-input');
+  const loadBox = page.locator('#wbSymInput');
+  const type = async (sym) => { await entry.fill(sym); await entry.press('Enter'); };
+  const load = async (sym) => { await loadBox.fill(sym); await loadBox.press('Enter'); };
   const activeText = () => page.evaluate(() => { const b = document.querySelector('.wb-rail-manual .wb-rail-sub + .wb-side-btn'); return b && b.textContent; });
   const settle = () => page.waitForTimeout(350);
   await page.evaluate((sym) => wbPick(sym), R[0]);     // writes `wb_sticky_v1`, which the seeding helper edits
   await page.waitForTimeout(400);
 
-  // ── 1. in demo, a roster symbol typed in Load is charted AND saved at the end; the next one lands after it; typing the first again adds no twin
+  // ── 1. the entry box: a roster symbol is charted AND pushed in at the TOP; the next one pushes it down; typing the first again adds no twin
   await seed(['AAA', 'BBB']);
-  await load(R[3]); await settle();
-  expect(await first(4), 'saved in the slot just after the last stock').toEqual(['AAA', 'BBB', R[3], '']);
+  await type(R[3]); await settle();
+  expect(await first(4), 'pushed in at the top; AAA and BBB moved down one place').toEqual([R[3], 'AAA', 'BBB', '']);
   expect([await page.evaluate(() => wbState.sym), await activeText()], 'and charted: it is the ACTIVE symbol').toEqual([R[3], R[3]]);
-  await load(R[4]); await settle();
-  expect(await first(5), 'the next one lands AFTER it — the ACTIVE box is replaced but the list keeps both').toEqual(['AAA', 'BBB', R[3], R[4], '']);
-  await load(R[3]); await settle();
-  expect(await first(5), 'a symbol already in the column is only charted, never added twice').toEqual(['AAA', 'BBB', R[3], R[4], '']);
+  await type(R[4]); await settle();
+  expect(await first(5), 'the next one goes on top — nothing is overwritten, the list keeps every symbol').toEqual([R[4], R[3], 'AAA', 'BBB', '']);
+  await type(R[3]); await settle();
+  expect(await first(5), 'a symbol already in the column is only charted, never added twice').toEqual([R[4], R[3], 'AAA', 'BBB', '']);
   expect(await page.evaluate(() => wbState.sym), 'and it was charted').toBe(R[3]);
   expect((await storedSyms(page)).length, 'the column is still exactly 100 long').toBe(100);
   expect(await page.evaluate(() => document.querySelectorAll('.wb-slots .wb-rail-row').length), 'and still draws 100 slots').toBe(100);
-  expect(await page.evaluate(([a, b]) => [a, b].map((s) => [...document.querySelectorAll('.wb-slots .wb-side-sym')].some((n) => n.textContent === s)), [R[3], R[4]]), 'the new slots are DRAWN, not just stored').toEqual([true, true]);
+  expect(await page.evaluate(() => [...document.querySelectorAll('.wb-slots .wb-side-sym')].slice(0, 3).map((n) => n.textContent)), 'the new slots are DRAWN, not just stored').toEqual([R[4], R[3], 'AAA']);
 
-  // ── 2. a hole is not "the end": with nothing worked, the symbol goes after the LAST stock
+  // ── 2. the box is a blank space that STAYS blank and ready: emptied after each push, still focused, Escape clears it
+  expect(await entry.inputValue(), 'emptied after a push').toBe('');
+  expect(await page.evaluate(() => document.activeElement === document.querySelector('.wb-entry-input')), 'and still focused, so the next symbol can be typed at once').toBe(true);
+  await entry.fill('half'); await entry.press('Escape');
+  expect(await entry.inputValue(), 'Escape empties it').toBe('');
+  // a repaint (the 60 s poll, a chart landing) must not cost the owner what they were typing, or their place
+  await entry.fill('ab');
+  await page.evaluate(() => renderWbSidebar(wbState.data));
+  expect([await entry.inputValue(), await page.evaluate(() => document.activeElement === document.querySelector('.wb-entry-input')), await page.evaluate(() => document.querySelectorAll('.wb-entry-input').length)], 'a rail repaint keeps its text and its focus, and there is still ONE box').toEqual(['ab', true, 1]);
+  await entry.fill('');
+
+  // ── 3. gaps and edges: a push uses up the first EMPTY slot below the top, so nothing is dropped and the column stays 100 long
   await seed(['AAA', '', 'CCC']);
-  await load(R[5]); await settle();
-  expect(await first(5), 'after the last stock (slot 3), not into the hole at slot 1').toEqual(['AAA', '', 'CCC', R[5], '']);
-  // an empty column starts at slot 0
+  await type(R[5]); await settle();
+  expect(await first(5), 'on top; AAA moved down into the gap, CCC stayed where it was').toEqual([R[5], 'AAA', 'CCC', '', '']);
   await seed([]);
-  await load(R[6]); await settle();
+  await type(R[6]); await settle();
   expect(await first(2), 'an empty column starts at slot 0').toEqual([R[6], '']);
+  await seed(['', 'AAA']);
+  await type(R[7]); await settle();
+  expect(await first(3), 'an empty slot 0 is simply filled, nothing moves').toEqual([R[7], 'AAA', '']);
+  await page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => (i === 50 ? '' : 'S' + i)) }));
+    wbEditSlot = -1; renderWbSidebar(wbState.data);
+  });
+  await page.evaluate(() => { document.querySelector('.wb-slots').scrollTop = 300; });   // the owner has scrolled down the list
+  expect(await page.evaluate(() => document.querySelector('.wb-slots').scrollTop), 'the list is scrolled down before the push').toBeGreaterThan(100);
+  await type(R[8]); await settle();
+  const mid = await storedSyms(page);
+  expect([mid[0], mid[1], mid[50], mid[51], mid.length], 'a gap far down is the one used up: S0..S49 moved down one place, S51 stayed').toEqual([R[8], 'S0', 'S49', 'S51', 100]);
+  expect(await page.evaluate(() => document.querySelector('.wb-slots').scrollTop), 'and the list is scrolled back to the top, where the new symbol is').toBe(0);
 
-  // ── 3. the new slot is the row last worked on: the + opens right under it
+  // ── 4. the header Load box is the SAME door: charts it and pushes it in at the top
   await seed(['AAA', 'BBB']);
-  await load(R[7]); await settle();
-  await page.locator('.wb-rail-add').click();
-  expect(await editorSlot(page), 'the + opens the slot right under the symbol just loaded').toBe('3');
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
+  await load(R[9]); await settle();
+  expect(await first(4), 'Load also pushes in at the top').toEqual([R[9], 'AAA', 'BBB', '']);
+  expect([await page.evaluate(() => wbState.sym), await activeText()], 'and charts it').toEqual([R[9], R[9]]);
+  await load(R[10]); await settle();
+  expect(await first(4), 'the next one goes on top of that').toEqual([R[10], R[9], 'AAA', 'BBB']);
 
-  // ── 4. junk is refused before anything is written
+  // ── 5. junk is refused before anything is written: the entry box leaves it there to correct, Load says so in its own note
   await seed(['AAA', 'BBB']);
-  await load('!!'); await settle();
+  await type('!!'); await settle();
   expect(await first(3), 'not a ticker: nothing added').toEqual(['AAA', 'BBB', '']);
+  await expect(page.locator('.wb-rail-manual [role="status"]'), 'and it says so').toContainText('Not a ticker');
+  expect(await entry.inputValue(), 'the text stays in the box to correct').toBe('!!');
+  await entry.fill('');
+  await load('!!'); await settle();
+  expect(await first(3), 'Load refuses it too').toEqual(['AAA', 'BBB', '']);
   await expect(page.locator('#wbInfo')).toContainText('Ticker not recognized');
 
-  // ── 5. an unresolvable ticker is saved too (a slot keeps whatever was typed), and the note says so — demo has no lookups
+  // ── 6. an unresolvable ticker is saved too (a slot keeps whatever was typed), drawn even though no chart repaint follows — demo has no lookups
   await seed(['AAA']);
-  await load('ZZQX'); await settle();
-  expect(await first(3), 'saved even though demo cannot look it up').toEqual(['AAA', 'ZZQX', '']);
-  expect(await slotBtn(page, 1).textContent(), 'and DRAWN in its slot even though no chart repaint follows (the lookup failed)').toContain('ZZQX');
+  await type('ZZQX'); await settle();
+  expect(await first(3), 'saved even though demo cannot look it up').toEqual(['ZZQX', 'AAA', '']);
+  expect(await slotBtn(page, 0).textContent(), 'and DRAWN in its slot').toContain('ZZQX');
   await expect(page.locator('#wbInfo')).toContainText('Live ticker lookups are off in demo mode');
 
-  // ── 6. the header's own SUBMIT is the only door: a roster click and the loader write nothing
+  // ── 7. only the two typing boxes push: the loader itself writes nothing
   await seed(['AAA']);
-  await page.evaluate((sym) => { wbLoadSymbol(sym); }, R[8]);
+  await page.evaluate((sym) => { wbLoadSymbol(sym); }, R[11]);
   await settle();
   expect(await first(3), 'wbLoadSymbol itself pins nothing').toEqual(['AAA', '', '']);
 
-  // ── 7. every slot filled: charted, not added, and the owner is told
+  // ── 8. every slot filled: charted, not added, and the owner is told
   await page.evaluate(() => {
     const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
     localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => 'S' + i) }));
     wbEditSlot = -1; renderWbSidebar(wbState.data);
   });
   const full = JSON.stringify(await storedSyms(page));
-  await load(R[9]); await settle();
+  await type(R[12]); await settle();
   expect(JSON.stringify(await storedSyms(page)), 'nothing was added or moved').toBe(full);
   await expect(page.locator('.wb-rail-manual [role="status"]'), 'and it says so').toContainText('Every slot is filled');
-  expect(await page.evaluate(() => wbState.sym), 'the symbol was charted anyway').toBe(R[9]);
+  expect(await page.evaluate(() => wbState.sym), 'the symbol was charted anyway').toBe(R[12]);
 
-  // ── 8. the last stock sits in the final slot with room above: the rows above are pulled up and the new symbol is the new last slot
-  await page.evaluate(() => {
-    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
-    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => (i === 0 ? '' : 'S' + i)) }));
-    wbEditSlot = -1; wbRailMsg = ''; renderWbSidebar(wbState.data);
-  });
-  await load(R[10]); await settle();
-  const pulled = await storedSyms(page);
-  expect([pulled[0], pulled[98], pulled[99], pulled.length], 'S1..S99 moved up into the empty slot; the new symbol is the last slot').toEqual(['S1', 'S99', R[10], 100]);
-
-  // ── 9. an open editor is settled FIRST: a half-typed draft is saved in its slot, and the loaded symbol lands after it
+  // ── 9. an open editor is settled FIRST: a half-typed draft is saved in its slot, and the pushed symbol lands on top of it
   await seed(['AAA']);
   await slotBtn(page, 1).click();                       // an empty slot: its editor opens
   await page.keyboard.type('draft');
-  await page.evaluate((sym) => {                        // blur and submit in ONE task, the order a click on the header produces
+  await page.evaluate((sym) => {                        // blur and submit in ONE task, the order a click on the box produces
     document.querySelector('.wb-slot-input').blur();
-    const inp = document.getElementById('wbSymInput'); inp.value = sym;
-    document.getElementById('wbSymForm').requestSubmit();
-  }, R[11]);
+    const inp = document.querySelector('.wb-entry-input'); inp.value = sym;
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  }, R[13]);
   await settle();
-  expect(await first(4), 'the draft was saved in ITS slot, then the loaded symbol landed after it').toEqual(['AAA', 'DRAFT', R[11], '']);
+  expect(await first(4), 'the draft was saved in ITS slot, then the symbol was pushed in on top').toEqual([R[13], 'AAA', 'DRAFT', '']);
   expect(await editorCount(page), 'and no editor is left open').toBe(0);
 
-  // ── 9b. the same, when the symbol is ALREADY in the column and cannot be charted: settling the editor must still repaint (Codex P2, PR #317) —
+  // ── 9b. the same when the symbol is ALREADY in the column and cannot be charted: settling the editor must still repaint (Codex P2, PR #317) —
   // the duplicate returns early and a failed lookup repaints nothing, so a stale input would be left on screen with handlers that ignore every key
   await seed(['AAA', 'ZZQX']);
   await slotBtn(page, 1).focus();
@@ -9630,8 +9590,8 @@ test('S66: the header Load box adds the symbol to the end of the SYMBOL column �
   expect(await editorSlot(page), 'the editor is open on the slot that cannot be charted').toBe('1');
   await page.evaluate(() => {
     document.querySelector('.wb-slot-input').blur();
-    const inp = document.getElementById('wbSymInput'); inp.value = 'ZZQX';
-    document.getElementById('wbSymForm').requestSubmit();
+    const inp = document.querySelector('.wb-entry-input'); inp.value = 'ZZQX';
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   });
   await settle();
   expect(await editorCount(page), 'no stale input is left on screen').toBe(0);
@@ -9645,22 +9605,24 @@ test('S66: the header Load box adds the symbol to the end of the SYMBOL column �
     window.__quoteGate = null;
     window.deskQuote = (sym, kind) => new Promise((res) => { window.__quoteGate = () => res({ ok: false, error: 'No data found for ' + sym }); });
   });
-  await load('NOPE'); await page.waitForTimeout(150);
-  expect(await first(3), 'saved at once — the quote has not answered yet').toEqual(['AAA', 'NOPE', '']);
-  await load('ALSO'); await page.waitForTimeout(150);
-  expect(await first(4), 'a second one typed while the first is still loading lands after it, in order').toEqual(['AAA', 'NOPE', 'ALSO', '']);
+  await type('NOPE'); await page.waitForTimeout(150);
+  expect(await first(3), 'saved at once — the quote has not answered yet').toEqual(['NOPE', 'AAA', '']);
+  await type('ALSO'); await page.waitForTimeout(150);
+  expect(await first(4), 'a second one typed while the first is still loading goes on top of it, in order').toEqual(['ALSO', 'NOPE', 'AAA', '']);
   await page.evaluate(() => window.__quoteGate && window.__quoteGate());
   await settle();
-  expect(await first(4), 'a lookup that fails removes nothing').toEqual(['AAA', 'NOPE', 'ALSO', '']);
+  expect(await first(4), 'a lookup that fails removes nothing').toEqual(['ALSO', 'NOPE', 'AAA', '']);
   await expect(page.locator('#wbInfo')).toContainText('No data found for ALSO');
+  await load('LOAD'); await page.waitForTimeout(150);
+  expect(await first(5), 'Load behaves the same while a lookup is pending').toEqual(['LOAD', 'ALSO', 'NOPE', 'AAA', '']);
 
   // ── 11. it survives a reload
   await page.evaluate(() => { DESK.mode = 'demo'; });
   await seed(['AAA']);
-  await load(R[12]); await settle();
+  await type(R[14]); await settle();
   await page.reload();
   await page.waitForSelector('.wb-slots .wb-slot');
-  expect(await first(3), 'still there after a reload').toEqual(['AAA', R[12], '']);
+  expect(await first(3), 'still there after a reload').toEqual([R[14], 'AAA', '']);
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

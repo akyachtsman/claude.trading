@@ -4775,10 +4775,11 @@ async function wbLoadSymbol(sym) {
   /* THIS LOADER PINS NOTHING (owner ruling 2026-08-26: "I didn't want a field to
      push into the list"). The SYMBOL column is 100 permanent slots the owner
      edits in place, so charting a symbol — a slot commit, a roster click, the
-     ACTIVE button — writes no slot. The ONE exception is the header Load box
-     (owner 2026-10-08), whose submit handler calls wbAddLoaded ITSELF before it
-     calls this, so the add is a separate, synchronous act and never a side
-     effect of a lookup. Loading a symbol charts it and nothing else. */
+     ACTIVE button — writes no slot. The exceptions are the two typing boxes
+     (owner 2026-10-08 and 2026-10-09): the header Load box's submit handler and
+     the entry box on top of the SYMBOL column call wbPushSymbol THEMSELVES
+     before they call this, so the add is a separate, synchronous act and never
+     a side effect of a lookup. Loading a symbol charts it and nothing else. */
   if (wbState.data.symbols[sym]) { say(''); wbPick(sym); return true; }
   if (DESK.mode === 'demo' || !DESK_DB.url) {
     say('Live ticker lookups are off in demo mode');
@@ -5463,9 +5464,6 @@ const WB_SLOT_DBL_MS = 500;       /* OUR pairing window — the only one that go
 let wbSlotClick = { i: -1, at: 0 };
 /* Which slot currently carries the column's single tab stop. See wbSlotRow. */
 let wbSlotTab = 0;
-/* Has the owner worked a slot — clicked one, arrowed to one, moved a stock, added into one — since the page loaded? Until then `wbSlotTab` is just
-   its default 0, not "the row last worked on", and the + must not read it as one (see wbAddTarget). */
-let wbSlotWorked = false;
 /* Move the tab stop, updating the LIVE buttons as well as the module state.
    Assigning wbSlotTab alone is only correct when a repaint follows, and one does
    NOT always follow: wbLoadSymbol never repaints when the lookup fails — a
@@ -5476,7 +5474,6 @@ function setWbSlotTab(n) {
   if (!(n >= 0 && n < WB_SLOTS)) return;
   const prev = document.querySelector('.wb-rail-manual [data-slot="' + wbSlotTab + '"] .wb-slot');
   wbSlotTab = n;
-  wbSlotWorked = true;
   const next = document.querySelector('.wb-rail-manual [data-slot="' + n + '"] .wb-slot');
   if (prev && prev !== next) prev.tabIndex = -1;
   if (next) next.tabIndex = 0;
@@ -5553,21 +5550,11 @@ function wbMoveSlot(from, to) {
 }
 /* Open an EMPTY slot at `at`, pushing the stocks from there down one place into the nearest empty
    slot beneath. When nothing beneath is empty it pulls the rows ABOVE up into the nearest empty one
-   instead, so the open slot lands just above `at`. `at` may be WB_SLOTS ("below the last slot"): only the rows above
-   can make room then, and the open slot is the new last one. Returns the index of the open slot, or -1 when
+   instead, so the open slot lands just above `at`. Returns the index of the open slot, or -1 when
    every one of the 100 is filled. A slot that is already empty is already open: nothing moves. */
 function wbInsertSlot(at) {
-  if (!(at >= 0 && at <= WB_SLOTS)) return -1;
+  if (!(at >= 0 && at < WB_SLOTS)) return -1;
   const syms = readWbSticky().syms.slice();
-  if (at === WB_SLOTS) {        /* just BELOW the last slot (the + after a stock in slot 100): only the rows above can make room, the open slot is the new last one */
-    let e = WB_SLOTS - 1;
-    while (e >= 0 && syms[e]) e--;
-    if (e < 0) return -1;
-    syms.splice(e, 1);
-    syms.push('');
-    writeWbSticky({ syms });
-    return WB_SLOTS - 1;
-  }
   if (!syms[at]) return at;
   let k = at + 1;
   while (k < WB_SLOTS && syms[k]) k++;
@@ -5594,57 +5581,68 @@ function wbInsertAndEdit(at) {
   if (open < 0) { wbRailNote('Every slot is filled — empty one first'); return; }
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = open;
-  wbSlotWorked = true;
   wbEditSlot = open;
   wbEditDraft = '';
   wbRepaintRail();
   wbFocusSlotEditor(open, true);
 }
-/* Where the + opens the NEXT symbol (owner 2026-10-08: "it just overwrites what I input last" — the + used to open ABOVE the row last worked on, and a
-   slot that has just been filled IS the row last worked on, so every new symbol landed in the same place and pushed the previous one down). Now it is the
-   slot directly BELOW the stock last worked on, so adds chain in the order they are made; with nothing worked yet it is the end of the list (just after the
-   last stock, or slot 0 of an empty column); and when the row last worked on is itself empty (an editor abandoned with Escape) that empty slot is the one to
-   fill, not the next. Click a stock first and the + pushes one in right under it. The Insert key is unchanged: it opens a slot above the focused row. */
-function wbAddTarget() {
-  const syms = readWbSticky().syms;
-  let anchor = wbSlotWorked ? wbSlotTab : -1;
-  if (anchor < 0) for (let i = WB_SLOTS - 1; i >= 0; i--) if (syms[i]) { anchor = i; break; }
-  if (anchor < 0) return 0;
-  return syms[anchor] ? anchor + 1 : anchor;
-}
-/* The + button. Settles an open editor FIRST — the target is read from what is STORED, and a typed draft is not stored until it is settled. */
-function wbAddNext() {
-  wbSettleEditor();
-  wbInsertAndEdit(wbAddTarget());
-}
-/* The header Load box ADDS what it charts (owner 2026-10-08: typing in Load only replaced the ACTIVE symbol and kept nothing — "keeps overwriting in
-   the same spot"; asked, and the owner chose "make Load add to the list"). That reverses the 2026-08-26 "nothing pins" ruling for THIS ONE box: the loader,
-   a roster click and the ACTIVE button still write nothing. The symbol goes into the slot just AFTER the last stock — the end of the list, never a
-   hole — so symbols typed one after another land in the order typed. One already in the column is only charted (no twin). The save happens BEFORE
-   charting and whether or not the lookup succeeds, exactly like a slot commit ("a slot keeps whatever was typed"): a slow or failed quote can neither
-   lose it nor reorder it, and there is no async step to race. It settles an open editor first (the target is read from what is STORED), makes the new
-   slot the row last worked on (so the + opens right under it) and scrolls it into view inside the list. Returns the slot, or -1 when every slot is
-   filled — said out loud, charted anyway. */
-function wbAddLoaded(sym) {
+/* PUSH a symbol into the list at the TOP (owner 2026-10-09, with a screenshot: "put a blank empty space on top of the left column and I will type in a
+   symbol and it will just get pushed into the list"). Two doors lead here and behave identically — the entry box on top of the SYMBOL column and the
+   header Load box — so there is ONE rule to learn: the new symbol takes slot 0 and everything above the first empty slot moves down one place (a slot 0
+   that is already empty is simply filled). It is `wbInsertSlot(0)`, so the column stays exactly WB_SLOTS long and nothing is dropped; with all 100 filled it
+   says so out loud and charts anyway. One already in the column is only charted (no twin). The save happens BEFORE charting and whether or not the lookup
+   succeeds, exactly like a slot commit ("a slot keeps whatever was typed"): a slow or failed quote can neither lose it nor reorder two typed in a row, and
+   there is no async step to race. It settles an open editor first (the shift reads what is STORED), repaints (a duplicate too, when it settled an editor:
+   settling closes the editor LOGICALLY only, and a failed lookup repaints nothing — Codex P2, PR #317) and scrolls the list back to the top, where the new
+   symbol is. The loader (`wbLoadSymbol`), a roster click and the ACTIVE button still write nothing. Returns the slot, or -1 when every slot is filled. */
+function wbPushSymbol(sym) {
   const hadEditor = wbEditSlot >= 0;
   wbSettleEditor();
   const syms = readWbSticky().syms;
   const have = syms.indexOf(sym);
-  /* Settling closes the editor LOGICALLY only; its input stays on screen until something repaints, and a lookup that fails repaints nothing — so a
-     duplicate must still repaint when it settled an editor (Codex P2, PR #317). */
   if (have >= 0) { if (hadEditor) wbRepaintRail(); return have; }
-  let last = -1;
-  for (let i = WB_SLOTS - 1; i >= 0; i--) if (syms[i]) { last = i; break; }
-  const open = wbInsertSlot(last + 1);
+  const open = wbInsertSlot(0);
   if (open < 0) { wbRailNote('Every slot is filled — charted, not added'); return -1; }
   setWbSlot(open, sym);
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = open;
-  wbSlotWorked = true;
   wbRepaintRail();
-  const btn = document.querySelector('.wb-rail-manual [data-slot="' + open + '"] .wb-slot');
-  if (btn) keepPageStill(() => btn.scrollIntoView({ block: 'nearest' }));
+  const slots = wbSlotsEl();
+  if (slots) slots.scrollTop = 0;
   return open;
+}
+/* The entry box on top of the SYMBOL column. ONE node for the page's life, re-seated by every renderWbSidebar (the rail is rebuilt from scratch on every
+   chart repaint and 60 s poll, and a box that was rebuilt with it would lose what the owner was typing, and their focus). Enter pushes the symbol in and
+   charts it, then empties the box and KEEPS focus so the next one can be typed at once; Escape empties it; text that is not a ticker is refused out loud
+   and left in the box to correct. The shared WL_SYM_RE decides what a ticker is, here as in every other box. */
+let wbEntryNode = null;
+function wbEntryInput() {
+  if (wbEntryNode) return wbEntryNode;
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'wb-entry-input';
+  inp.maxLength = 24;
+  inp.autocomplete = 'off';
+  inp.spellcheck = false;
+  inp.placeholder = 'Add symbol';
+  inp.setAttribute('aria-label', 'Add a symbol — it is pushed in at the top of the list');
+  inp.title = 'Type a symbol and press Enter: it is added at the top of the list, and the rest move down';
+  inp.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { inp.value = ''; ev.preventDefault(); return; }
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    const sym = inp.value.trim().toUpperCase();
+    if (!sym) return;
+    if (!wbState) return;
+    if (!WL_SYM_RE.test(sym)) { wbRailNote('Not a ticker: ' + sym.slice(0, 12)); return; }
+    inp.value = '';
+    wbPushSymbol(sym);
+    wbLoadSymbol(sym);
+    /* the repaint inside wbPushSymbol re-seated this node and dropped its focus: take it back, without moving the page */
+    keepPageStill(() => inp.focus({ preventScroll: true }));
+  });
+  wbEntryNode = inp;
+  return inp;
 }
 /* Commit a move and repaint. Focus FOLLOWS the stock when the slot that moved held it (a mouse press
    focuses the button, and the keyboard path is entirely about focus): renderWbSidebar's own restore
@@ -5657,7 +5655,6 @@ function wbCommitMove(from, to) {
   if (!wbMoveSlot(from, to)) return false;
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = to;                      /* Tab comes back to the stock just moved */
-  wbSlotWorked = true;
   wbRepaintRail();
   if (hadFocus) {
     const nb = document.querySelector('.wb-rail-manual [data-slot="' + to + '"] .wb-slot');
@@ -6139,7 +6136,7 @@ function wbSlotRow(i, sym, data) {
     if (ev.key === 'F2') { ev.preventDefault(); openEditor(); return; }
     /* Keyboard parity for the drag (an arrangement only a mouse can make is not one everyone can):
        Alt+Up / Alt+Down move this stock one place; Insert opens a slot above this row and puts the
-       caret in it (the header + button opens one BELOW the row last worked on, or at the end of the list — wbAddTarget). */
+       caret in it — the only way to push one in BETWEEN stocks; the entry box on top of the column pushes one in at the TOP, wbPushSymbol). */
     if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
       ev.preventDefault();
       if (sym) wbCommitMove(i, ev.key === 'ArrowUp' ? i - 1 : i + 1);
@@ -6177,6 +6174,9 @@ function renderWbSidebar(data) {
      rebuilds this rail every animation frame, and the feed poll every 60s. */
   const dying = nav.querySelector('.wb-slot-input');
   const hadFocus = !!dying && document.activeElement === dying;
+  /* The ENTRY box is one node that outlives every rebuild (see wbEntryInput), so what is lost on a repaint is its FOCUS and caret, not its text. */
+  const entryHadFocus = !!wbEntryNode && document.activeElement === wbEntryNode;
+  const entrySel = entryHadFocus ? { start: wbEntryNode.selectionStart, end: wbEntryNode.selectionEnd } : null;
   /* The SLOT LIST'S SCROLL POSITION, for the same reason and with the same
      force as the caret above. `.wb-slots` is rebuilt from scratch here, so its
      scrollTop resets to 0 — and this rail repaints on every animation frame of
@@ -6216,47 +6216,28 @@ function renderWbSidebar(data) {
      chart drag, so leaving it would have scanned every row of every list and
      allocated a Map per frame for a feature that no longer renders (Codex P3). */
   const lists = (wlState.payload && wlState.payload.lists) || [];
-  /* The picker is a FULL-WIDTH header over both columns, not the roster
-     column's own head (Codex P2, 2026-08-25). Inside a 68px column its
-     collapsed label had ~45px of text room against the ~82px its own default
-     "Charts roster" needs, so 6 of demo's 8 list names truncated and the
-     control could no longer answer the one question it exists to answer —
-     which roster is loaded. Spanning the rail gives it ~131px, which seats
-     every name including "Industry & metals" (99.6px).
-     This costs ~20px of VERTICAL space and no chart width at all, which is why
-     it beat the alternatives: widening the roster column to fit the label puts
-     the rail back at 191px and cuts the chart's gain from 46px to 9, undoing
-     what the owner asked for. Vertical space is not scarce here — the rail is
-     capped to the chart's height, ~600px+.
-     It spans both columns while governing only the roster one, so the columns
-     below are BOTH labelled (SYMBOL / ROSTER) — the roster column used to have
-     no title of its own, since the picker served as one. */
+  /* Two columns, each with ONE head row of the same height, so the entry box (left) and the roster picker (right) sit on the same line (owner
+     2026-10-09, with a screenshot: "align everything nicely so that the radar will line up with the second column and not expand the two
+     columns"). The picker used to be a FULL-WIDTH header over both columns (Codex P2, 2026-08-25: inside a 68px column its collapsed label had ~45px
+     of text room, so the longer list names truncated); it is the roster column's head again and a name that does not fit is cut with an ellipsis,
+     the whole name staying in its tooltip and in the open menu. No SYMBOL / ROSTER title rows: the entry box says what the left column takes and the
+     picker names the list in the right one. */
   const cols = el('div', 'wb-rail-cols');
   const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); cols.appendChild(c); return c; };
-
-  const top = el('div', 'wb-rail-top');
-  nav.appendChild(top);
   nav.appendChild(cols);
 
   /* ── column A — symbol ─────────────────────────────────────────────────── */
-  /* A SYMBOL header, an ACTIVE section naming what is charted, then 100
+  /* The entry box, an ACTIVE section naming what is charted, then 100
      PERMANENT SLOTS the owner edits in place (owner ruling 2026-08-26: "I want
      every item in the list to be editable... the 100 entries, filled or empty is
-     permanent"). No add box and no × — a slot is filled by typing into it and
-     cleared by emptying it, and nothing ever reflows. Only this LEFT column
-     changed; the roster column beside it mirrors the watchlists and is left
-     alone. */
+     permanent"). A slot is still filled by typing into it and cleared by
+     emptying it, and nothing ever reflows; the entry box on top (owner
+     2026-10-09) is a blank space the owner types a NEW symbol into, which is
+     pushed into the list at the top — see wbPushSymbol. Only this LEFT column
+     changed; the roster column beside it mirrors the watchlists. */
   const manual = column('wb-rail-manual');
-  const mHead = el('div', 'wb-rail-head wb-rail-head--slots');
-  mHead.appendChild(el('span', 'wb-rail-title', 'SYMBOL'));
-  /* Add the next symbol (owner requests 2026-10-07 and 2026-10-08): opens an empty slot directly BELOW the stock last worked on, or at the
-     end of the list when none has been touched yet — see wbAddTarget. The Insert key on a slot opens one ABOVE it. */
-  const add = el('button', 'wb-rail-add', '+');
-  add.type = 'button';
-  add.setAttribute('aria-label', 'Add a symbol: open an empty slot below the selected row, or at the end of the list');
-  add.title = 'Add a symbol: opens an empty slot just below the stock you last clicked (or at the end of the list), then type it';
-  add.addEventListener('click', wbAddNext);
-  mHead.appendChild(add);
+  const mHead = el('div', 'wb-rail-head');
+  mHead.appendChild(wbEntryInput());
   manual.appendChild(mHead);
 
   /* ACTIVE — the charted symbol, stated rather than implied. The rail already
@@ -6284,7 +6265,6 @@ function renderWbSidebar(data) {
   /* ── column B — roster ─────────────────────────────────────────────────── */
   const roster = column('wb-rail-roster');
   const rHead = el('div', 'wb-rail-head');
-  rHead.appendChild(el('span', 'wb-rail-title', 'ROSTER'));
   const sel = document.createElement('select');
   sel.className = 'wb-rail-pick';
   sel.setAttribute('aria-label', 'Symbol list to show');
@@ -6298,9 +6278,9 @@ function renderWbSidebar(data) {
   const savedRoster = readWbSticky().roster;
   const valid = savedRoster === WB_ROSTER_CHARTS || lists.some(l => l.title === savedRoster);
   sel.value = valid ? savedRoster : WB_ROSTER_CHARTS;
-  /* Kept even though the full-width header now seats every roster name: a list
-     the OWNER creates has no length limit, so a long enough title still
-     truncates and the tooltip is how it is read without opening the menu.
+  /* The picker sits in the roster column's own head, so a long list name is cut
+     (see .wb-rail-pick) and this tooltip is how it is read in full without
+     opening the menu; a list the OWNER creates has no length limit either.
      Set from the SELECTED OPTION's text, never from `sel.value`, because the
      charts entry's value is the WB_ROSTER_CHARTS sentinel (a NUL-prefixed
      token) and would show the owner an internal string instead of a list
@@ -6310,7 +6290,7 @@ function renderWbSidebar(data) {
     writeWbSticky({ roster: sel.value });
     renderWbSidebar(data);
   });
-  top.appendChild(sel);
+  rHead.appendChild(sel);
   roster.appendChild(rHead);
 
   let syms;
@@ -6363,6 +6343,13 @@ function renderWbSidebar(data) {
         catch (_e) { /* not every input type allows a selection range */ }
       });
     }
+  }
+
+  if (entryHadFocus && wbEntryNode.isConnected) {
+    keepPageStill(() => {
+      wbEntryNode.focus({ preventScroll: true });
+      try { wbEntryNode.setSelectionRange(entrySel.start, entrySel.end); } catch (_e) { /* ignore */ }
+    });
   }
 }
 
@@ -7804,13 +7791,13 @@ function wireCharts() {
        box validates with it too, and two inputs that disagree about what a
        ticker is would be a bug nobody could see from either one. */
     if (!WL_SYM_RE.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    /* Charts it AND adds it to the SYMBOL column (owner 2026-10-08, reversing the
-       2026-08-26 "this box is a chart control, not an add control" for this box
-       only — see wbAddLoaded for where it lands and why it is saved first). It
-       breaks a pending slot pair for the same reason a roster click does — see
-       wbRailBtn. */
+    /* Charts it AND pushes it into the SYMBOL column at the top (owner 2026-10-08,
+       reversing the 2026-08-26 "this box is a chart control, not an add control"
+       for the two typing boxes — see wbPushSymbol for where it lands and why it
+       is saved first). It breaks a pending slot pair for the same reason a
+       roster click does — see wbRailBtn. */
     wbSlotClick = { i: -1, at: 0 };
-    wbAddLoaded(sym);
+    wbPushSymbol(sym);
     wbLoadSymbol(sym);
   });
 
