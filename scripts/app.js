@@ -5638,11 +5638,15 @@ function wbDeleteSlot(i) {
      successor of the deleted stock — a second stock changed by one keypress (Delete or Backspace pressed while still holding the mouse down; Codex P2,
      PR #320). The key is ignored until the gesture ends. */
   if (wbSlotDrag.on || wbSlotPress) return false;
-  wbSettleEditor();
   if (!(i >= 0 && i < WB_SLOTS)) return false;
+  /* What the slot held BEFORE an open editor saves its draft. The × on an editor's row removes the stock whose editor is open, and settling saves the draft into
+     that very slot — an EMPTIED draft would clear it and leave nothing to delete, so the row stayed as a hole under a stale input (Codex P2, PR #320). The stock to
+     remove is the one that was stored, and the row goes whatever the draft says. */
+  const before = readWbSticky().syms[i];
+  wbSettleEditor();
   const syms = readWbSticky().syms.slice();
-  if (!syms[i]) return false;
-  const gone = syms[i];
+  if (!before && !syms[i]) return false;
+  const gone = before || syms[i];
   syms.splice(i, 1);
   syms.push('');
   writeWbSticky({ syms });

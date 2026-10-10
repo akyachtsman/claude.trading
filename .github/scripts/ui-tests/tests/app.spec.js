@@ -9910,10 +9910,23 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="0"] .wb-slot-del--edit')).pointerEvents), 'and tappable once the window has passed').toBe('auto');
   const eb = await del(0).boundingBox();
   const ex = eb.x + eb.width / 2, ey = eb.y + eb.height / 2;
-  if (noHover) await page.touchscreen.tap(ex, ey); else await page.mouse.click(ex, ey);
+  if (noHover) await page.touchscreen.tap(ex, ey); else { await page.mouse.move(ex, ey); await page.mouse.down(); await page.waitForTimeout(80); await page.mouse.up(); }   // an 80 ms press: a human's, long enough for a blur to close the row before the click
   await settle();
   expect(await first(3), 'it removed the stock and the list closed over the gap — no hole').toEqual([R[1], '', '']);
   expect(await editorCount(page), 'and no editor is left open').toBe(0);
+  // the draft EMPTIED before the × is pressed: the editor's save would clear the slot and leave nothing to delete — the stored stock must still go, and the row with it (Codex P2, PR #320)
+  await seed({ 0: '!!', 1: R[1] });
+  await park();
+  await slotBtn(page, 0).click();
+  await page.waitForTimeout(150);
+  await page.locator('.wb-slot-input').fill('');
+  await page.waitForTimeout(ARMED);
+  const eb2 = await del(0).boundingBox();
+  const ex2 = eb2.x + eb2.width / 2, ey2 = eb2.y + eb2.height / 2;
+  if (noHover) await page.touchscreen.tap(ex2, ey2); else { await page.mouse.move(ex2, ey2); await page.mouse.down(); await page.waitForTimeout(80); await page.mouse.up(); }
+  await settle();
+  expect(await first(3), 'an EMPTIED editor still removes its stock and closes the gap — no hole').toEqual([R[1], '', '']);
+  expect(await editorCount(page), 'and no stale editor is left on screen').toBe(0);
 
   // ── 8a. duplicates (a slot keeps whatever was typed, so twins can exist): only the row actually TAPPED carries the touch ×, through a repaint, and a re-indexing
   //       drops the mark instead of leaving it on whichever row now sits at that index (Codex P2, PR #320)
