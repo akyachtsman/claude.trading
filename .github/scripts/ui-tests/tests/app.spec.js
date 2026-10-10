@@ -9928,6 +9928,24 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   expect(await first(3), 'an EMPTIED editor still removes its stock and closes the gap — no hole').toEqual([R[1], '', '']);
   expect(await editorCount(page), 'and no stale editor is left on screen').toBe(0);
 
+  // ── 8e. editing a tapped row ends its touch state: A -> B -> A must not revive the old ARMED mark, which would show an immediately tappable × on a fresh row (Codex P2, PR #320)
+  if (noHover) {
+    await seed({ 0: 'ZZQX', 1: 'ZZQY' });
+    await park();
+    await slotBtn(page, 0).click();
+    await park(ARMED);
+    expect(await visibleDels(), 'tapped and armed: the × is up on that row').toEqual(['0']);
+    for (const text of ['ZZQW', 'ZZQX']) {
+      await slotBtn(page, 0).focus();
+      await page.keyboard.press('F2');
+      await page.keyboard.type(text);
+      await page.keyboard.press('Enter'); await settle();
+    }
+    await park();
+    expect(await first(2), 'the slot is back to its first symbol').toEqual(['ZZQX', 'ZZQY']);
+    expect(await visibleDels(), 'but the edits ended its touch state: no armed × is waiting on the fresh row').toEqual([]);
+  }
+
   // ── 8a. duplicates (a slot keeps whatever was typed, so twins can exist): only the row actually TAPPED carries the touch ×, through a repaint, and a re-indexing
   //       drops the mark instead of leaving it on whichever row now sits at that index (Codex P2, PR #320)
   await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });

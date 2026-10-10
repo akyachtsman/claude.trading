@@ -4743,6 +4743,9 @@ function setWbSlot(i, sym) {
   const syms = readWbSticky().syms.slice();
   syms[i] = sym || '';
   writeWbSticky({ syms });
+  /* Writing a slot ends "the row last tapped" for it: an edit A → B → A would otherwise bring back the old `{ i, A, armed: true }` and show an immediately tappable
+     delete × on what is now a fresh row, under the second tap of the protected double-tap (Codex P2, PR #320). */
+  if (wbSlotTouched && wbSlotTouched.i === i) wbSlotTouched = null;
 }
 /* Chart a symbol, fetching its bars first if the desk-charts feed doesn't carry
    it. Extracted from the Load box's submit handler (2026-08-17) so the rail's
