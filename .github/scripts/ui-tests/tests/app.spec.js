@@ -9809,6 +9809,46 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   const noHover = await page.evaluate(() => matchMedia('(hover: none)').matches);
   expect(await visibleDels(), noHover ? 'no hover: the charted row shows its × (and no other row does)' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['0'] : []);
 
+  // ── 8b. a delete makes room, so a "every slot is filled" note a refused push left up is false now and goes at once (Codex P2, PR #320) — read at once, not through a
+  //        retrying expect: the note clears itself after 4 s and a polling assertion would wait the bug out
+  await full();
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('NEWTWO');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  await expect(page.locator('.wb-rail-manual [role="status"]'), 'a NEW symbol on a full column is refused out loud').toContainText('Every slot is filled');
+  await slotBtn(page, 5).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await page.evaluate(() => [document.querySelectorAll('.wb-rail-manual [role="status"]').length, wbRailMsg]), 'the delete made room: the note is gone').toEqual([0, '']);
+
+  // ── 8c. deleting a stock cancels a lookup still running FOR IT — and for no other (Codex P2, PR #320). Live, with the quote held open by a stub: a slot clicked a
+  //        moment ago has wbLoadSymbol awaiting deskQuote, and when it landed it used to chart the stock the owner had just removed
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid'; DESK.mode = 'live';
+    window.__gates = {};
+    window.deskQuote = (sym) => new Promise((res) => { window.__gates[sym] = () => res({ ok: true, series: wbState.data.symbols[Object.keys(wbState.data.symbols)[1]] }); });
+  });
+  await seed({ 0: 'ZZNEW', 1: R[2] });
+  await slotBtn(page, 0).click();                          // charts it: not a roster name, so the lookup goes out and is held
+  await page.waitForTimeout(150);
+  await expect(page.locator('#wbInfo'), 'the lookup is pending').toContainText('Loading ZZNEW');
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await first(3), 'ZZNEW is gone from the column').toEqual([R[2], '', '']);
+  await page.evaluate(() => window.__gates.ZZNEW && window.__gates.ZZNEW());   // the quote lands AFTER the delete
+  await page.waitForTimeout(400);
+  expect(await charted(), 'it did NOT chart the stock that was deleted').toBe(R[0]);
+  await expect(page.locator('#wbInfo'), 'and the "Loading ZZNEW…" note went with it').not.toContainText('Loading');
+  // another stock's lookup is the newest request and still wins when a DIFFERENT slot is deleted
+  await seed({ 0: 'ZZONE', 1: R[3] });
+  await slotBtn(page, 0).click();
+  await page.waitForTimeout(150);
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await first(3), 'the other slot is gone, ZZONE stays').toEqual(['ZZONE', '', '']);
+  await page.evaluate(() => window.__gates.ZZONE && window.__gates.ZZONE());
+  await page.waitForTimeout(400);
+  expect(await charted(), 'a lookup for a stock that was NOT deleted still charts it').toBe('ZZONE');
+  await page.evaluate(() => { DESK.mode = 'demo'; });
+
   // ── 9. it survives a reload
   await seed([R[1], R[2], R[3]]);
   await slotBtn(page, 0).focus();

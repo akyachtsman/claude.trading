@@ -606,7 +606,12 @@ Gesture rules, each of which S64 holds:
   open editor is saved in ITS slot, then the rows move); (2) it charts NOTHING and opens no editor — removing a stock is not navigating to it; (3) it writes
   NO note: the rail's note pushes `.wb-slots` down by its own height, so with a note up the next click on the same × would land on the wrong stock, and the
   point of closing the gap is that the same spot now holds the NEXT stock, so two clicks remove two; a screen reader hears the focus land on the next stock
-  instead; (4) the tab stop stays at the index (`wbSlotTab = i`), and a Delete / Backspace from the keyboard keeps focus there too (the render restores a
+  instead; the one note it does touch is a STALE one — a delete makes room, so an "every slot is filled" note a refused push left up is dropped
+  (`wbRailNoteClear`; a retrying assertion cannot see this, the note clears itself after 4 s); (3b) it CANCELS a quote lookup still running for that
+  stock, and only that one: a slot clicked a moment before has `wbLoadSymbol` awaiting `deskQuote`, and when the quote lands its success path calls
+  `wbPick` — charting the stock just removed. `wbLoadPending` holds the symbol whose request is in flight (set when it goes out, cleared when it lands
+  unsuperseded and by `wbPick`), `wbCancelLoad(sym)` bumps `wbLoadGen` only when it matches and takes the `Loading X…` note with it, so another stock clicked
+  just before and still loading is the newest request and still wins (both Codex P2, PR #320); (4) the tab stop stays at the index (`wbSlotTab = i`), and a Delete / Backspace from the keyboard keeps focus there too (the render restores a
   focused slot button by index). Two ways in. **The ×** (`.wb-slot-del`) is built after the slot button on every FILLED row — a SIBLING, never inside
   `.wb-slot`, so `wbSlotPointerDown` (which looks for `.wb-slot`) cannot start a drag from it and a press on it cannot chart or edit; an empty slot gets none;
   `tabindex=-1` keeps the column ONE tab stop; tooltip `Remove <SYM>`, accessible name `Remove <SYM> from the list`; ONE delegated `click` listener on the rail
@@ -617,7 +622,7 @@ Gesture rules, each of which S64 holds:
   `@media (hover: none)` — a phone, where nothing hovers — on the CHARTED row (`.is-active`), the one a tap has just selected; hidden during a drag
   (`body.wb-drag-active`, `.wb-dragging`); never red. **Delete / Backspace** on a focused slot do the same (`preventDefault`, so Backspace never navigates
   back; nothing happens on an empty slot) — the keyboard path, as F2 is for the editor. No Undo was built: a push re-adds a stock in one step. S67 pins it
-  (14 mutants, each caught — one first survived: a × in the flow instead of an overlay passed every position check, so S67 also asserts the slot button is exactly as wide with the × up); S45's old "no ×" assertion still holds for `.wb-rail-x`, the per-slot × of the pre-2026-08-26 stack.
+  (18 mutants, each caught — one first survived: a × in the flow instead of an overlay passed every position check, so S67 also asserts the slot button is exactly as wide with the × up); S45's old "no ×" assertion still holds for `.wb-rail-x`, the per-slot × of the pre-2026-08-26 stack.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 

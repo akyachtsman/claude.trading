@@ -4767,6 +4767,21 @@ let wbLoadGen = 0;
    longer reads it, because the loader's own callers still must be able to tell
    "you replaced this" from "this does not exist" without inspecting a flag. */
 const WB_SUPERSEDED = 'superseded';
+/* The symbol whose quote lookup is IN FLIGHT right now ('' when none), so deleting that stock from the SYMBOL column can cancel exactly that lookup and no other
+   (`wbCancelLoad`). Set when the request goes out; cleared when it lands unsuperseded and by `wbPick` (which invalidates every in-flight load anyway). */
+let wbLoadPending = '';
+/* Deleting a stock must not leave its lookup running: a slot clicked a moment before has `wbLoadSymbol` awaiting `deskQuote`, and when it lands its success path
+   calls `wbPick` — switching the chart to the stock the owner just removed (Codex P2, PR #320). Bumping `wbLoadGen` is what every other cancellation does. ONLY
+   the lookup for THIS symbol is cancelled: another stock clicked just before, and still loading, is the newest request and must still win. The "Loading X…"
+   note it left in `#wbInfo` goes with it. */
+function wbCancelLoad(sym) {
+  if (!sym || wbLoadPending !== sym) return false;
+  wbLoadGen++;
+  wbLoadPending = '';
+  const note = document.getElementById('wbInfo');
+  if (note && note.textContent === 'Loading ' + sym + '…') note.textContent = '';
+  return true;
+}
 async function wbLoadSymbol(sym) {
   if (!wbState) return false;
   const gen = ++wbLoadGen;
@@ -4786,6 +4801,7 @@ async function wbLoadSymbol(sym) {
     return false;
   }
   say('Loading ' + sym + '…');
+  wbLoadPending = sym;
   let out;
   try {
     out = await deskQuote(sym, 'daily');
@@ -4795,6 +4811,7 @@ async function wbLoadSymbol(sym) {
        the network would still have painted its connectivity error over a newer
        request's status (Codex P2, round 3). */
     if (gen !== wbLoadGen) return WB_SUPERSEDED;
+    wbLoadPending = '';
     say('Quote service unreachable — try again');
     return false;
   }
@@ -4804,6 +4821,7 @@ async function wbLoadSymbol(sym) {
      newer one. Silent on purpose: this is not a failure the owner should read
      about, it is a request they replaced. */
   if (gen !== wbLoadGen) return WB_SUPERSEDED;
+  wbLoadPending = '';
   if (!out.ok || !out.series || out.series.c.length < 30) {
     say(out.error || 'No data found for ' + sym);
     return false;
@@ -4826,6 +4844,7 @@ function wbPick(sym) {
      invisible, so a pending lookup could still pin itself and pull the chart
      back off what the owner had just selected (Codex P2, round 3). */
   wbLoadGen++;
+  wbLoadPending = '';
   wbUserPicked = true;
   wbState.sym = sym;
   wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
@@ -5597,16 +5616,21 @@ function wbInsertAndEdit(at) {
    array stays exactly WB_SLOTS long (never a `filter()` and never a hole left where the stock was — that is what emptying a slot's TEXT still does, an
    editing gesture with its own ruling). It settles an open editor first (it re-indexes; the draft is saved in ITS slot before the rows move), writes no
    chart and opens no editor — deleting is not navigation to the stock — and says nothing in the rail's note: a note would push the list down under the
-   pointer and the next click on the same × would land on the wrong stock. Reached by the hover × (`wbSlotDelClick`) and the Delete / Backspace keys on a
+   pointer and the next click on the same × would land on the wrong stock. It CANCELS a quote lookup still running for that stock (`wbCancelLoad`: the slot
+   was clicked a moment ago, and when the quote landed it would chart the stock just removed) and drops a stale "every slot is filled" note (a delete makes
+   room) — both Codex P2, PR #320. Reached by the hover × (`wbSlotDelClick`) and the Delete / Backspace keys on a
    focused slot. The tab stop stays at this index, which now holds the next stock. Returns whether anything was removed. */
 function wbDeleteSlot(i) {
   wbSettleEditor();
   if (!(i >= 0 && i < WB_SLOTS)) return false;
   const syms = readWbSticky().syms.slice();
   if (!syms[i]) return false;
+  const gone = syms[i];
   syms.splice(i, 1);
   syms.push('');
   writeWbSticky({ syms });
+  wbCancelLoad(gone);                  /* a lookup still running for THIS stock must not chart it after it is gone (Codex P2, PR #320) */
+  wbRailNoteClear();                   /* a delete makes room: an "every slot is filled" note still up from a refused push is now false (Codex P2, PR #320) */
   wbSlotClick = { i: -1, at: 0 };
   wbSlotTab = i;
   wbRepaintRail();
