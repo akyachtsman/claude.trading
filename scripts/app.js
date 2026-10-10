@@ -5530,6 +5530,10 @@ let wbRailMsg = '', wbRailMsgT = 0;
    so twins can exist) and the index alone drifts when rows move, so the mark is dropped by everything that re-indexes the column (`wbMoveSlot`, `wbInsertSlot`,
    the lift in `wbPushSymbol`, `wbDeleteSlot`) and a row only carries it while BOTH still match (Codex P2, PR #320). */
 let wbSlotTouched = null;
+/* A tap raises the × under the finger, so for the length of the EDIT double-tap window the × must not be tappable: the second tap of a double-tap that lands in
+   its 18px would delete the stock instead of editing it (Codex P2, PR #320). `armed` is set by a timer once the window (WB_SLOT_DBL_MS) has passed; until then
+   the × is `pointer-events: none` where nothing hovers, so the tap goes through to the slot button underneath. */
+const WB_SLOT_DEL_ARM_MS = 600;
 const wbSlotsEl = () => document.querySelector('.wb-rail-manual .wb-slots');
 function wbRepaintRail() {
   if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
@@ -6204,9 +6208,16 @@ function wbSlotRow(i, sym, data) {
     /* Mark the row as the one last tapped — IN PLACE, because tapping a stock that cannot be charted repaints nothing, so the class has to be moved by hand. The
        state (`wbSlotTouched`) rebuilds it on every later repaint. */
     if (sym) {
-      wbSlotTouched = { i, sym };
-      for (const r of document.querySelectorAll('.wb-rail-manual .wb-rail-row.is-touched')) r.classList.remove('is-touched');
+      const mark = wbSlotTouched = { i, sym, armed: false };
+      for (const r of document.querySelectorAll('.wb-rail-manual .wb-rail-row.is-touched')) r.classList.remove('is-touched', 'is-armed');
       row.classList.add('is-touched');
+      /* Armed only if this is STILL the touched row when the edit window is over: a re-index (push, delete, move) nulls the state, and another tap replaces it. */
+      setTimeout(() => {
+        if (wbSlotTouched !== mark) return;
+        mark.armed = true;
+        const r = document.querySelector('.wb-rail-manual .wb-rail-row.is-touched');
+        if (r) r.classList.add('is-armed');
+      }, WB_SLOT_DEL_ARM_MS);
     }
     /* NOTHING CHARTABLE ⇒ open the editor. An empty slot has nothing to chart,
        and neither does one holding a draft that fails WL_SYM_RE — a slot keeps
@@ -6241,7 +6252,15 @@ function wbSlotRow(i, sym, data) {
     if (ev.key === 'Insert') { ev.preventDefault(); wbInsertAndEdit(i); return; }
     /* Delete / Backspace remove this stock (owner 2026-10-10) — the keyboard path to the hover ×, and the same keys the watchlist tiles use. preventDefault so
        Backspace never navigates back. An EMPTY slot has nothing to remove: the key is simply left alone there. */
-    if (ev.key === 'Delete' || ev.key === 'Backspace') { if (sym) { ev.preventDefault(); wbDeleteSlot(i); } return; }
+    if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      if (!sym) return;
+      ev.preventDefault();
+      /* ONE physical keypress deletes AT MOST ONE stock. A held key auto-repeats `keydown`, the delete repaints the rail and puts focus back on the same index, so
+         every repeat would land on the successor and erase the list stock by stock, with no confirmation and no Undo (Codex P1, PR #320). Same rule the dialogs
+         apply to Escape. */
+      if (!ev.repeat) wbDeleteSlot(i);
+      return;
+    }
     /* Arrow/Home/End move the roving stop. Focus is applied WITHOUT scrolling
        the page, the same rule everything else in this rail follows; the slot is
        brought into view inside its own scroller instead. */
@@ -6271,7 +6290,10 @@ function wbSlotRow(i, sym, data) {
     x.title = 'Remove ' + sym;
     x.setAttribute('aria-label', 'Remove ' + sym + ' from the list');
     row.appendChild(x);
-    if (wbSlotTouched && wbSlotTouched.i === i && wbSlotTouched.sym === sym) row.classList.add('is-touched');
+    if (wbSlotTouched && wbSlotTouched.i === i && wbSlotTouched.sym === sym) {
+      row.classList.add('is-touched');
+      if (wbSlotTouched.armed) row.classList.add('is-armed');
+    }
   }
   return row;
 }

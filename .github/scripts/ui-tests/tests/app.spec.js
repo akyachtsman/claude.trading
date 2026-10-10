@@ -9686,6 +9686,14 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   const del = (n) => page.locator(`.wb-slots [data-slot="${n}"] .wb-slot-del`);
   const visibleDels = () => page.evaluate(() => [...document.querySelectorAll('.wb-slot-del')].filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.closest('.wb-rail-row').dataset.slot));
   const canHover = await page.evaluate(() => matchMedia('(hover: hover)').matches);
+  const park = async (ms = 250) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.mouse.move(2, 2); await page.waitForTimeout(ms); };
+  const ARMED = 900;                                      // past WB_SLOT_DEL_ARM_MS (600): on a phone the × only becomes tappable after the edit double-tap window
+  // brings row n's × up the way THIS device does: a pointer with a hover points at the row; a phone taps it and waits out the edit double-tap window
+  const raise = async (n) => {
+    if (canHover) { await slotBtn(page, n).hover(); return; }
+    await slotBtn(page, n).click();
+    await park(ARMED);
+  };
   await page.evaluate((sym) => wbPick(sym), R[0]);
   await page.waitForTimeout(400);
 
@@ -9725,21 +9733,23 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
 
   // ── 3. clicking it removes THAT stock and the list closes over the gap: the rows below move up one, an empty slot appears at the END, the column stays 100 long
   await seed([R[1], R[2], R[3], R[4]]);
-  await slotBtn(page, 1).hover();
+  await raise(1);
+  const chartedBefore = await charted();                  // (a phone raised the × by TAPPING the row, which charts it — the delete itself must change nothing)
   await del(1).click();
   await settle();
   expect(await first(6), 'R2 is gone, R3 and R4 moved up one place, the empty slot went to the end').toEqual([R[1], R[3], R[4], '', '', '']);
   expect((await storedSyms(page)).length, 'the column is still exactly 100 long').toBe(100);
   expect(await page.evaluate(() => [...document.querySelectorAll('.wb-slots .wb-side-sym')].slice(0, 4).map((n) => n.textContent)), 'and the rows are DRAWN that way').toEqual([R[1], R[3], R[4], '']);
-  expect(await charted(), 'deleting charts nothing — the charted stock did not change').toBe(R[0]);
+  expect(await charted(), 'deleting charts nothing — the charted stock did not change').toBe(chartedBefore);
   expect(await editorCount(page), 'and opens no editor').toBe(0);
   expect(await page.evaluate(() => document.querySelectorAll('.wb-rail-manual [role="status"]').length), 'and writes no note — it would push the list down under the pointer').toBe(0);
   // the gap closed, so the same spot now holds the NEXT stock: a second click there removes it (the point of closing up)
-  await slotBtn(page, 1).hover();
+  await raise(1);                                         // (a phone has to tap the row again: a delete drops the "last tapped" mark; a pointer with a hover is already there)
   await del(1).click();
   await settle();
   expect(await first(4), 'a second click on the same spot removes the next stock').toEqual([R[1], R[4], '', '']);
 
+  await page.evaluate((sym) => wbPick(sym), R[0]);        // (the phone flow above charted rows by tapping them)
   // ── 4. the keyboard: Delete and Backspace on a focused slot; focus and the tab stop stay at that index, which now holds the next stock
   await seed([R[1], R[2], R[3], R[4]]);
   await slotBtn(page, 1).focus();
@@ -9754,6 +9764,17 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   const before = JSON.stringify(await storedSyms(page));
   await page.keyboard.press('Delete'); await settle();
   expect(JSON.stringify(await storedSyms(page)), 'Delete on an EMPTY slot does nothing').toBe(before);
+  // a HELD key auto-repeats keydown, and each delete puts focus back on the same index — so without a guard every repeat would erase the successor, stock by stock,
+  // with no confirmation (Codex P1, PR #320). Playwright marks a second `down` of a key that is still held as a repeat.
+  for (const key of ['Delete', 'Backspace']) {
+    await seed([R[1], R[2], R[3], R[4]]);
+    await slotBtn(page, 1).focus();
+    await page.keyboard.down(key);
+    await page.keyboard.down(key);
+    await page.keyboard.down(key);
+    await page.keyboard.up(key); await settle();
+    expect(await first(5), `holding ${key} (auto-repeat) deleted ONE stock, not the list`).toEqual([R[1], R[3], R[4], '', '']);
+  }
 
   // ── 5. edges: the last slot of a FULL column, the first one, and a push afterwards — which then has room, so it never says the column is full
   const full = () => page.evaluate(() => {
@@ -9793,7 +9814,7 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
 
   // ── 7. a press on the × that wanders off it deletes nothing and starts no drag
   await seed([R[1], R[2], R[3], R[4]]);
-  await slotBtn(page, 1).hover();
+  await raise(1);
   const box = await del(1).boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -9821,21 +9842,21 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
 
   // ── 8. where there is NO hover (a phone) the row LAST TAPPED carries its ×, whether or not that stock charts: a delisted or mistyped ticker never becomes the charted
   //       symbol and is the one most worth removing (Codex P2, PR #320). With a hover the × stays hidden until a row is pointed at or focused.
+  await page.evaluate((sym) => wbPick(sym), R[0]);
   await seed({ 0: 'ZZQX', 1: 'ZZQY' });                  // chartable-looking, not roster names: in demo their lookup is refused, so neither ever becomes the charted symbol
   await page.mouse.move(2, 2);
   await settle();
   const noHover = await page.evaluate(() => matchMedia('(hover: none)').matches);
-  const park = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.mouse.move(2, 2); await settle(); };
   await park();                                          // a slot focused by an earlier step would show its × through :focus-within
   expect(await visibleDels(), 'nothing has been tapped yet: no × shows').toEqual([]);
   await slotBtn(page, 0).click();
-  await park();
+  await park(ARMED);
   expect(await charted(), 'ZZQX could not be charted — the charted symbol did not change').toBe(R[0]);
   expect(await visibleDels(), noHover ? 'no hover: the TAPPED row shows its × though its stock never charted (and no other row does)' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['0'] : []);
   await page.evaluate(() => renderWbSidebar(wbState.data));   // a repaint rebuilds every row from state: the tapped row keeps its ×
   expect(await visibleDels(), 'and it survives a repaint of the rail').toEqual(noHover ? ['0'] : []);
   await slotBtn(page, 1).click();
-  await park();
+  await park(ARMED);
   expect(await visibleDels(), 'tapping another row moves the × to it').toEqual(noHover ? ['1'] : []);
   // a delete forgets the tapped stock: pushing the same symbol back in is a NEW row and does not inherit the ×
   await slotBtn(page, 1).focus();
@@ -9845,11 +9866,37 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   await park();
   expect(await visibleDels(), 'a deleted stock that comes back is not "tapped" any more').toEqual([]);
 
+  // ── 8-touch. a phone: the × the first tap raises must not take the SECOND tap of an edit double-tap (Codex P2, PR #320), and once the window has passed a tap on it deletes
+  if (noHover) {
+    await seed({ 0: 'ZZQX', 1: 'ZZQY', 2: 'ZZQZ' });
+    await park();
+    const rb = await slotBtn(page, 0).boundingBox();
+    const tx = rb.x + rb.width - 6, ty = rb.y + rb.height / 2;      // the rightmost strip of the row, exactly where the × sits once it is up
+    await page.touchscreen.tap(tx, ty);
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="0"] .wb-slot-del')).pointerEvents), 'inside the edit window the × is not tappable').toBe('none');
+    await page.touchscreen.tap(tx, ty);
+    await page.waitForTimeout(250);
+    expect(await first(4), 'a double-tap on the right end of a row does not delete it — the × the first tap raised let the second tap through').toEqual(['ZZQX', 'ZZQY', 'ZZQZ', '']);
+    expect(await editorSlot(page), 'it edits the row instead').toBe('0');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // ... and once the window has passed the × is tappable and deletes
+    await seed({ 0: 'ZZQX', 1: 'ZZQY', 2: 'ZZQZ' });
+    await park();
+    await slotBtn(page, 1).click();
+    await park(ARMED);
+    await page.evaluate(() => renderWbSidebar(wbState.data));      // every repaint rebuilds the rows from the state: the armed × must stay armed
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="1"] .wb-slot-del')).pointerEvents), 'after the window — and after a repaint — the × is tappable').toBe('auto');
+    const xb = await del(1).boundingBox();
+    await page.touchscreen.tap(xb.x + xb.width / 2, xb.y + xb.height / 2);
+    await settle();
+    expect(await first(4), 'a tap on the armed × removes that stock').toEqual(['ZZQX', 'ZZQZ', '', '']);
+  }
+
   // ── 8a. duplicates (a slot keeps whatever was typed, so twins can exist): only the row actually TAPPED carries the touch ×, through a repaint, and a re-indexing
   //       drops the mark instead of leaving it on whichever row now sits at that index (Codex P2, PR #320)
   await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });
   await slotBtn(page, 1).click();
-  await park();
+  await park(ARMED);
   expect(await visibleDels(), noHover ? 'twins: ONLY the tapped copy carries the ×' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['1'] : []);
   await page.evaluate(() => renderWbSidebar(wbState.data));
   expect(await visibleDels(), 'and still only that copy after a repaint').toEqual(noHover ? ['1'] : []);
@@ -9861,7 +9908,7 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   // a delete moves rows too: with the tapped copy shifted up one, the mark must not sit on the row that now holds the OTHER copy at the old index
   await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });
   await slotBtn(page, 1).click();
-  await park();
+  await park(ARMED);
   await slotBtn(page, 0).focus();
   await page.keyboard.press('Delete'); await settle();
   await park();
@@ -9884,6 +9931,7 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
     window.__gates = {};
     window.deskQuote = (sym) => new Promise((res) => { window.__gates[sym] = () => res({ ok: true, series: wbState.data.symbols[Object.keys(wbState.data.symbols)[1]] }); });
   });
+  await page.evaluate((sym) => wbPick(sym), R[0]);
   await seed({ 0: 'ZZNEW', 1: R[2] });
   await slotBtn(page, 0).click();                          // charts it: not a roster name, so the lookup goes out and is held
   await page.waitForTimeout(150);

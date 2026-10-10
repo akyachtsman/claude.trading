@@ -869,7 +869,14 @@
   .wb-slot-del { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: 18px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-secondary); font: 600 13px/1 var(--font-sans); cursor: pointer; touch-action: manipulation; }
   .wb-rail-row:hover .wb-slot-del, .wb-rail-row:focus-within .wb-slot-del { display: block; }
   .wb-slot-del:hover, .wb-slot-del:focus-visible { color: var(--color-text-primary); outline: 1px solid var(--color-accent-bright); outline-offset: -1px; }
-  @media (hover: none) { .wb-rail-row.is-touched .wb-slot-del { display: block; } }
+  /* Where nothing hovers (a phone) the × belongs to the row last tapped, and is NOT TAPPABLE until the edit double-tap window has passed (`.is-armed`, set by a
+     timer): the first tap of a double-tap raises it under the finger, and a second tap landing in its 18px would delete the stock instead of editing it (Codex
+     P2, PR #320). `pointer-events: none` lets that tap through to the slot button beneath, whatever made the × visible (the tap, a focus or sticky :hover). */
+  @media (hover: none) {
+    .wb-slot-del { pointer-events: none; }
+    .wb-rail-row.is-touched .wb-slot-del { display: block; }
+    .wb-rail-row.is-touched.is-armed .wb-slot-del { pointer-events: auto; }
+  }
   /* A stock being carried shows no ×, so a drag's release can never land on one. */
   body.wb-drag-active .wb-slot-del, .wb-rail-row.wb-dragging .wb-slot-del { display: none; }
   /* The SYMBOL must never be abbreviated at the budgeted size — `AV…` names no
