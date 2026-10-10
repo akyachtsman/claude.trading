@@ -3698,7 +3698,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(shape.rows, 'exactly 100 slots, filled or empty').toBe(100);
   expect(shape.scrolls && shape.overflowY === 'auto', 'the LIST scrolls on its own').toBe(true);
   expect(shape.headOutside, 'and the entry-box head stays put above it').toBe(true);
-  expect(shape.x, 'no × — a slot is cleared by emptying it').toBe(0);
+  expect(shape.x, 'no per-slot × at rest (`.wb-rail-x`): emptying the text still clears a slot; the delete × is a hover-only overlay, `.wb-slot-del`, pinned by S67').toBe(0);
   expect(shape.editors, 'no live input until a slot is opened — 100 would repaint every frame').toBe(0);
 
   // double-click opens THAT slot, focused
@@ -9659,6 +9659,363 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   await page.reload();
   await page.waitForSelector('.wb-slots .wb-slot');
   expect(await first(3), 'still there after a reload').toEqual([R[14], 'AAA', '']);
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 67 — A symbol can be DELETED from the SYMBOL column. Owner 2026-10-10: "In addition to pushing, I also want to be able to delete symbols from that
+// list." Two ways to it: a × that appears on the row you point at (an overlay on the row's right edge, hidden at rest — the ticker never abbreviates, so it takes
+// no width — and, where there is no hover, shown on the charted row), and the Delete / Backspace keys on a focused slot. `wbDeleteSlot` is ONE splice with an
+// empty slot added at the END, so the rows below move up and the column stays exactly 100 long; it settles an open editor first, charts nothing, opens
+// nothing and writes no note (a note would push the list down under the pointer and the next click on the same × would hit the wrong stock). Emptying a
+// slot's TEXT still leaves a hole (S45): that is an editing gesture with its own ruling.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/Backspace — the list closes over the gap, an open editor is settled first, nothing is charted', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await gotoDemo(page, '.wb-slots', 15000, 1200);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  const R0 = await page.evaluate(() => Object.keys(wbState.data.symbols));
+  const R = Array.from({ length: 8 }, (_, i) => R0[i % R0.length]);   // roster names: charting one of them would be visible in wbState.sym
+  const first = async (n) => (await storedSyms(page)).slice(0, n);
+  const seed = (slots, opts = {}) => seedSlots(page, Object.fromEntries(Array.from({ length: 100 }, (_, i) => [i, slots[i] ?? ''])), { tab: true, ...opts });
+  const settle = () => page.waitForTimeout(250);
+  const charted = () => page.evaluate(() => wbState.sym);
+  const del = (n) => page.locator(`.wb-slots [data-slot="${n}"] .wb-slot-del`);
+  const visibleDels = () => page.evaluate(() => [...document.querySelectorAll('.wb-slot-del')].filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.closest('.wb-rail-row').dataset.slot));
+  const canHover = await page.evaluate(() => matchMedia('(hover: hover)').matches);
+  const park = async (ms = 250) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.mouse.move(2, 2); await page.waitForTimeout(ms); };
+  const ARMED = 900;                                      // past WB_SLOT_DEL_ARM_MS (600): on a phone the × only becomes tappable after the edit double-tap window
+  // brings row n's × up the way THIS device does: a pointer with a hover points at the row; a phone taps it and waits out the edit double-tap window
+  const raise = async (n) => {
+    if (canHover) { await slotBtn(page, n).hover(); return; }
+    await slotBtn(page, n).click();
+    await park(ARMED);
+  };
+  await page.evaluate((sym) => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+
+  // ── 1. shape: one × per FILLED row, none on an empty slot, each beside its slot button (never inside it), out of the tab order, named for its stock, hidden at rest
+  await seed([R[1], R[2], R[3], R[4]]);
+  await page.mouse.move(2, 2);
+  const shape = await page.evaluate(() => {
+    const xs = [...document.querySelectorAll('.wb-slot-del')];
+    return { n: xs.length, onEmpty: !!document.querySelector('.wb-slot--empty')?.closest('.wb-rail-row').querySelector('.wb-slot-del'),
+             inside: xs.some((b) => !!b.closest('.wb-slot')), afterBtn: xs.every((b) => b.previousElementSibling && b.previousElementSibling.classList.contains('wb-slot')),
+             tabs: xs.map((b) => b.tabIndex), names: xs.map((b) => b.getAttribute('aria-label')), titles: xs.map((b) => b.title) };
+  });
+  expect(shape.n, 'one × per filled row').toBe(4);
+  expect(shape.onEmpty, 'an empty slot has nothing to remove and no ×').toBe(false);
+  expect([shape.inside, shape.afterBtn], 'the × is a sibling AFTER the slot button, never inside it (a press on it must not start a drag or chart the stock)').toEqual([false, true]);
+  expect(shape.tabs, 'and out of the tab order: the column stays ONE tab stop').toEqual([-1, -1, -1, -1]);
+  expect(shape.names[1], 'its accessible name says which stock goes').toBe(`Remove ${R[2]} from the list`);
+  expect(shape.titles[1], 'and so does its tooltip').toBe(`Remove ${R[2]}`);
+  expect(await visibleDels(), 'no × is showing at rest (the charted stock is not in these slots)').toEqual([]);
+  expect(await tabStops(page), 'one tab stop').toHaveLength(1);
+
+  // ── 2. it shows on the row you point at or focus, and on no other
+  const btnW = (n) => slotBtn(page, n).evaluate((b) => b.getBoundingClientRect().width);
+  const w0 = await btnW(1);
+  await slotBtn(page, 1).focus();
+  expect(await visibleDels(), 'a focused row shows its ×').toEqual(['1']);
+  expect(await btnW(1), 'and it takes NO width: the slot button is exactly as wide with the × up (a ticker never abbreviates — a × in the flow would squeeze a ten-character symbol)').toBeCloseTo(w0, 0);
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="1"] .wb-slot-del')).position), 'it is an overlay on the row, not a flex item').toBe('absolute');
+  if (canHover) {
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());   // slot 1 is still focused from the check above, and a focused row shows its × too
+    await page.mouse.move(2, 2);
+    await slotBtn(page, 2).hover();
+    expect(await visibleDels(), 'a hovered row shows its × — and only that row').toEqual(['2']);
+    const g = await page.evaluate(() => { const r = document.querySelector('[data-slot="2"]').getBoundingClientRect(), x = document.querySelector('[data-slot="2"] .wb-slot-del').getBoundingClientRect(); return { right: r.right - x.right, top: x.top - r.top, h: x.height, rh: r.height, w: x.width }; });
+    expect([Math.abs(g.right) < 1.5, Math.abs(g.top) < 1.5, Math.abs(g.h - g.rh) < 1.5, g.w >= 14], 'it is an overlay on the row\'s right edge, as tall as the row, and big enough to hit').toEqual([true, true, true, true]);
+  }
+
+  // ── 3. clicking it removes THAT stock and the list closes over the gap: the rows below move up one, an empty slot appears at the END, the column stays 100 long
+  await seed([R[1], R[2], R[3], R[4]]);
+  await raise(1);
+  const chartedBefore = await charted();                  // (a phone raised the × by TAPPING the row, which charts it — the delete itself must change nothing)
+  await del(1).click();
+  await settle();
+  expect(await first(6), 'R2 is gone, R3 and R4 moved up one place, the empty slot went to the end').toEqual([R[1], R[3], R[4], '', '', '']);
+  expect((await storedSyms(page)).length, 'the column is still exactly 100 long').toBe(100);
+  expect(await page.evaluate(() => [...document.querySelectorAll('.wb-slots .wb-side-sym')].slice(0, 4).map((n) => n.textContent)), 'and the rows are DRAWN that way').toEqual([R[1], R[3], R[4], '']);
+  expect(await charted(), 'deleting charts nothing — the charted stock did not change').toBe(chartedBefore);
+  expect(await editorCount(page), 'and opens no editor').toBe(0);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-rail-manual [role="status"]').length), 'and writes no note — it would push the list down under the pointer').toBe(0);
+  // the gap closed, so the same spot now holds the NEXT stock: a second click there removes it (the point of closing up)
+  await raise(1);                                         // (a phone has to tap the row again: a delete drops the "last tapped" mark; a pointer with a hover is already there)
+  await del(1).click();
+  await settle();
+  expect(await first(4), 'a second click on the same spot removes the next stock').toEqual([R[1], R[4], '', '']);
+
+  await page.evaluate((sym) => wbPick(sym), R[0]);        // (the phone flow above charted rows by tapping them)
+  // ── 4. the keyboard: Delete and Backspace on a focused slot; focus and the tab stop stay at that index, which now holds the next stock
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await first(5), 'Delete removed the focused stock and closed the gap').toEqual([R[1], R[3], R[4], '', '']);
+  expect([await focusedSlot(page), await tabStops(page)], 'focus and the tab stop stay on that slot, now holding the next stock').toEqual(['1', ['1']]);
+  await page.keyboard.press('Backspace'); await settle();
+  expect(await first(4), 'Backspace does the same').toEqual([R[1], R[4], '', '']);
+  expect(await focusedSlot(page), 'and focus is still in the column').toBe('1');
+  expect(await charted(), 'nothing was charted').toBe(R[0]);
+  await slotBtn(page, 5).focus();
+  const before = JSON.stringify(await storedSyms(page));
+  await page.keyboard.press('Delete'); await settle();
+  expect(JSON.stringify(await storedSyms(page)), 'Delete on an EMPTY slot does nothing').toBe(before);
+  // ...and its default is still prevented there: a browser that maps Backspace on a non-editable control to history navigation must not leave the dashboard from an empty slot (Codex P2, PR #320)
+  expect(await page.evaluate(() => {
+    const b = document.querySelector('[data-slot="5"] .wb-slot');
+    return ['Backspace', 'Delete'].map((key) => { const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); b.dispatchEvent(e); return e.defaultPrevented; });
+  }), 'Backspace and Delete on an empty slot are prevented, though they delete nothing').toEqual([true, true]);
+  expect(JSON.stringify(await storedSyms(page)), 'and still delete nothing').toBe(before);
+  // a HELD key auto-repeats keydown, and each delete puts focus back on the same index — so without a guard every repeat would erase the successor, stock by stock,
+  // with no confirmation (Codex P1, PR #320). Playwright marks a second `down` of a key that is still held as a repeat.
+  for (const key of ['Delete', 'Backspace']) {
+    await seed([R[1], R[2], R[3], R[4]]);
+    await slotBtn(page, 1).focus();
+    await page.keyboard.down(key);
+    await page.keyboard.down(key);
+    await page.keyboard.down(key);
+    await page.keyboard.up(key); await settle();
+    expect(await first(5), `holding ${key} (auto-repeat) deleted ONE stock, not the list`).toEqual([R[1], R[3], R[4], '', '']);
+  }
+
+  // ── 5. edges: the last slot of a FULL column, the first one, and a push afterwards — which then has room, so it never says the column is full
+  const full = () => page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => 'S' + i) }));
+    wbEditSlot = -1; wbSlotTab = 0; renderWbSidebar(wbState.data);
+  });
+  await full();
+  await slotBtn(page, 99).focus();
+  await page.keyboard.press('Delete'); await settle();
+  let all = await storedSyms(page);
+  expect([all[98], all[99], all.length], 'the last stock of a full column goes: S99 gone, nothing else moved').toEqual(['S98', '', 100]);
+  await full();
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  all = await storedSyms(page);
+  expect([all[0], all[1], all[98], all[99], all.length], 'the first stock of a full column goes: everything moved up one, the empty slot is last').toEqual(['S1', 'S2', 'S99', '', 100]);
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('NEWONE');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  all = await storedSyms(page);
+  expect([all[0], all[1], all[99], all.length], 'the freed slot takes the next push — the column is not "full" any more').toEqual(['NEWONE', 'S1', 'S99', 100]);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-rail-manual [role="status"]').length), 'and says nothing about being full').toBe(0);
+
+  // ── 6. an open editor is settled FIRST: its half-typed draft is saved in ITS slot, then the rows move
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 3).focus();
+  await page.keyboard.press('F2');
+  expect(await editorSlot(page), 'the editor is open on slot 3').toBe('3');
+  await page.keyboard.type('zz');
+  await page.evaluate(() => {                           // blur and click in ONE task, the order a click on the × produces
+    document.querySelector('.wb-slot-input').blur();
+    document.querySelector('[data-slot="0"] .wb-slot-del').click();
+  });
+  await settle();
+  expect(await first(4), 'the draft was saved in its own slot (3), then slot 0 was removed and everything moved up: ZZ is now in slot 2').toEqual([R[2], R[3], 'ZZ', '']);
+  expect(await editorCount(page), 'and no editor is left open').toBe(0);
+
+  // ── 7. a press on the × that wanders off it deletes nothing and starts no drag
+  await seed([R[1], R[2], R[3], R[4]]);
+  await raise(1);
+  const box = await del(1).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 45, { steps: 6 });
+  expect(await page.evaluate(() => [!!document.querySelector('.wb-slot-ghost'), document.body.classList.contains('wb-drag-active')]), 'a press on the × is not a drag').toEqual([false, false]);
+  await page.mouse.up(); await settle();
+  expect(await first(5), 'and releasing elsewhere removes nothing').toEqual([R[1], R[2], R[3], R[4], '']);
+
+  // ── 7b. a Delete pressed while a drag is in progress is ignored: the drag holds a SOURCE INDEX, so a delete under it would compact the column and the release
+  //        would move the successor of the deleted stock — a second stock changed by one keypress (Codex P2, PR #320)
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 0).focus();
+  const b0 = await slotBtn(page, 0).boundingBox();
+  await page.mouse.move(b0.x + 10, b0.y + b0.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b0.x + 10, b0.y + b0.height * 2.6, { steps: 8 });
+  expect(await page.evaluate(() => !!document.querySelector('.wb-slot-ghost')), 'a drag is under way').toBe(true);
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('Backspace');
+  expect(await first(5), 'Delete and Backspace during the drag deleted nothing').toEqual([R[1], R[2], R[3], R[4], '']);
+  expect(await page.evaluate(() => !!document.querySelector('.wb-slot-ghost')), 'and the drag is still running').toBe(true);
+  await page.mouse.up(); await settle();
+  const dropped = await first(5);
+  expect([[...dropped].sort(), dropped[0] === R[1]], 'the release dropped the stock it was carrying: all four are still there, none deleted and none disturbed, and it moved').toEqual([[R[1], R[2], R[3], R[4], ''].sort(), false]);
+
+  // ── 8. where there is NO hover (a phone) the row LAST TAPPED carries its ×, whether or not that stock charts: a delisted or mistyped ticker never becomes the charted
+  //       symbol and is the one most worth removing (Codex P2, PR #320). With a hover the × stays hidden until a row is pointed at or focused.
+  await page.evaluate((sym) => wbPick(sym), R[0]);
+  await seed({ 0: 'ZZQX', 1: 'ZZQY' });                  // chartable-looking, not roster names: in demo their lookup is refused, so neither ever becomes the charted symbol
+  await page.mouse.move(2, 2);
+  await settle();
+  const noHover = await page.evaluate(() => matchMedia('(hover: none)').matches);
+  await park();                                          // a slot focused by an earlier step would show its × through :focus-within
+  expect(await visibleDels(), 'nothing has been tapped yet: no × shows').toEqual([]);
+  await slotBtn(page, 0).click();
+  await park(ARMED);
+  expect(await charted(), 'ZZQX could not be charted — the charted symbol did not change').toBe(R[0]);
+  expect(await visibleDels(), noHover ? 'no hover: the TAPPED row shows its × though its stock never charted (and no other row does)' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['0'] : []);
+  await page.evaluate(() => renderWbSidebar(wbState.data));   // a repaint rebuilds every row from state: the tapped row keeps its ×
+  expect(await visibleDels(), 'and it survives a repaint of the rail').toEqual(noHover ? ['0'] : []);
+  await slotBtn(page, 1).click();
+  await park(ARMED);
+  expect(await visibleDels(), 'tapping another row moves the × to it').toEqual(noHover ? ['1'] : []);
+  // a delete forgets the tapped stock: pushing the same symbol back in is a NEW row and does not inherit the ×
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('Delete'); await settle();
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('ZZQY');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  await park();
+  expect(await visibleDels(), 'a deleted stock that comes back is not "tapped" any more').toEqual([]);
+
+  // ── 8-touch. a phone: the × the first tap raises must not take the SECOND tap of an edit double-tap (Codex P2, PR #320), and once the window has passed a tap on it deletes
+  if (noHover) {
+    await seed({ 0: 'ZZQX', 1: 'ZZQY', 2: 'ZZQZ' });
+    await park();
+    const rb = await slotBtn(page, 0).boundingBox();
+    const tx = rb.x + rb.width - 6, ty = rb.y + rb.height / 2;      // the rightmost strip of the row, exactly where the × sits once it is up
+    await page.touchscreen.tap(tx, ty);
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="0"] .wb-slot-del')).pointerEvents), 'inside the edit window the × is not tappable').toBe('none');
+    await page.touchscreen.tap(tx, ty);
+    await page.waitForTimeout(250);
+    expect(await first(4), 'a double-tap on the right end of a row does not delete it — the × the first tap raised let the second tap through').toEqual(['ZZQX', 'ZZQY', 'ZZQZ', '']);
+    expect(await editorSlot(page), 'it edits the row instead').toBe('0');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    // ... and once the window has passed the × is tappable and deletes
+    await seed({ 0: 'ZZQX', 1: 'ZZQY', 2: 'ZZQZ' });
+    await park();
+    await slotBtn(page, 1).click();
+    await park(ARMED);
+    await page.evaluate(() => renderWbSidebar(wbState.data));      // every repaint rebuilds the rows from the state: the armed × must stay armed
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="1"] .wb-slot-del')).pointerEvents), 'after the window — and after a repaint — the × is tappable').toBe('auto');
+    const xb = await del(1).boundingBox();
+    await page.touchscreen.tap(xb.x + xb.width / 2, xb.y + xb.height / 2);
+    await settle();
+    expect(await first(4), 'a tap on the armed × removes that stock').toEqual(['ZZQX', 'ZZQZ', '', '']);
+  }
+
+  // ── 8d. a stored value that is NOT a ticker (a typo a slot keeps) opens its editor on the FIRST tap — nothing to chart, S45 — which replaces the row the touched-row × lived
+  //       on; the editor row carries the × too, so a phone can still remove it instead of emptying the text and leaving a hole (Codex P2, PR #320)
+  await seed({ 0: '!!', 1: R[1] });
+  await park();
+  await slotBtn(page, 0).click();
+  await page.waitForTimeout(150);
+  expect(await editorSlot(page), 'a stored value that is not a ticker opens its editor on the first tap').toBe('0');
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="0"] .wb-slot-del--edit')).pointerEvents), 'the editor row carries a ×, not tappable at first (the second tap of a double-tap lands on it)').toBe('none');
+  await page.waitForTimeout(ARMED);
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="0"] .wb-slot-del--edit')).pointerEvents), 'and tappable once the window has passed').toBe('auto');
+  const eb = await del(0).boundingBox();
+  const ex = eb.x + eb.width / 2, ey = eb.y + eb.height / 2;
+  if (noHover) await page.touchscreen.tap(ex, ey); else { await page.mouse.move(ex, ey); await page.mouse.down(); await page.waitForTimeout(80); await page.mouse.up(); }   // an 80 ms press: a human's, long enough for a blur to close the row before the click
+  await settle();
+  expect(await first(3), 'it removed the stock and the list closed over the gap — no hole').toEqual([R[1], '', '']);
+  expect(await editorCount(page), 'and no editor is left open').toBe(0);
+  // the draft EMPTIED before the × is pressed: the editor's save would clear the slot and leave nothing to delete — the stored stock must still go, and the row with it (Codex P2, PR #320)
+  await seed({ 0: '!!', 1: R[1] });
+  await park();
+  await slotBtn(page, 0).click();
+  await page.waitForTimeout(150);
+  await page.locator('.wb-slot-input').fill('');
+  await page.waitForTimeout(ARMED);
+  const eb2 = await del(0).boundingBox();
+  const ex2 = eb2.x + eb2.width / 2, ey2 = eb2.y + eb2.height / 2;
+  if (noHover) await page.touchscreen.tap(ex2, ey2); else { await page.mouse.move(ex2, ey2); await page.mouse.down(); await page.waitForTimeout(80); await page.mouse.up(); }
+  await settle();
+  expect(await first(3), 'an EMPTIED editor still removes its stock and closes the gap — no hole').toEqual([R[1], '', '']);
+  expect(await editorCount(page), 'and no stale editor is left on screen').toBe(0);
+
+  // ── 8e. editing a tapped row ends its touch state: A -> B -> A must not revive the old ARMED mark, which would show an immediately tappable × on a fresh row (Codex P2, PR #320)
+  if (noHover) {
+    await seed({ 0: 'ZZQX', 1: 'ZZQY' });
+    await park();
+    await slotBtn(page, 0).click();
+    await park(ARMED);
+    expect(await visibleDels(), 'tapped and armed: the × is up on that row').toEqual(['0']);
+    for (const text of ['ZZQW', 'ZZQX']) {
+      await slotBtn(page, 0).focus();
+      await page.keyboard.press('F2');
+      await page.keyboard.type(text);
+      await page.keyboard.press('Enter'); await settle();
+    }
+    await park();
+    expect(await first(2), 'the slot is back to its first symbol').toEqual(['ZZQX', 'ZZQY']);
+    expect(await visibleDels(), 'but the edits ended its touch state: no armed × is waiting on the fresh row').toEqual([]);
+  }
+
+  // ── 8a. duplicates (a slot keeps whatever was typed, so twins can exist): only the row actually TAPPED carries the touch ×, through a repaint, and a re-indexing
+  //       drops the mark instead of leaving it on whichever row now sits at that index (Codex P2, PR #320)
+  await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });
+  await slotBtn(page, 1).click();
+  await park(ARMED);
+  expect(await visibleDels(), noHover ? 'twins: ONLY the tapped copy carries the ×' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['1'] : []);
+  await page.evaluate(() => renderWbSidebar(wbState.data));
+  expect(await visibleDels(), 'and still only that copy after a repaint').toEqual(noHover ? ['1'] : []);
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('DUPZ');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  await park();
+  expect(await visibleDels(), 'a push moves every row: the mark is dropped, not left on the row that now sits at the old index').toEqual([]);
+
+  // a delete moves rows too: with the tapped copy shifted up one, the mark must not sit on the row that now holds the OTHER copy at the old index
+  await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });
+  await slotBtn(page, 1).click();
+  await park(ARMED);
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  await park();
+  expect(await visibleDels(), 'deleting an earlier twin moved the tapped copy: the mark is dropped, not left on the copy that took its index').toEqual([]);
+
+  // ── 8b. a delete makes room, so a "every slot is filled" note a refused push left up is false now and goes at once (Codex P2, PR #320) — read at once, not through a
+  //        retrying expect: the note clears itself after 4 s and a polling assertion would wait the bug out
+  await full();
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('NEWTWO');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  await expect(page.locator('.wb-rail-manual [role="status"]'), 'a NEW symbol on a full column is refused out loud').toContainText('Every slot is filled');
+  await slotBtn(page, 5).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await page.evaluate(() => [document.querySelectorAll('.wb-rail-manual [role="status"]').length, wbRailMsg]), 'the delete made room: the note is gone').toEqual([0, '']);
+
+  // ── 8c. deleting a stock cancels a lookup still running FOR IT — and for no other (Codex P2, PR #320). Live, with the quote held open by a stub: a slot clicked a
+  //        moment ago has wbLoadSymbol awaiting deskQuote, and when it landed it used to chart the stock the owner had just removed
+  await page.evaluate(() => {
+    DESK_DB.url = DESK_DB.url || 'https://stub.invalid'; DESK.mode = 'live';
+    window.__gates = {};
+    window.deskQuote = (sym) => new Promise((res) => { window.__gates[sym] = () => res({ ok: true, series: wbState.data.symbols[Object.keys(wbState.data.symbols)[1]] }); });
+  });
+  await page.evaluate((sym) => wbPick(sym), R[0]);
+  await seed({ 0: 'ZZNEW', 1: R[2] });
+  await slotBtn(page, 0).click();                          // charts it: not a roster name, so the lookup goes out and is held
+  await page.waitForTimeout(150);
+  await expect(page.locator('#wbInfo'), 'the lookup is pending').toContainText('Loading ZZNEW');
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await first(3), 'ZZNEW is gone from the column').toEqual([R[2], '', '']);
+  await page.evaluate(() => window.__gates.ZZNEW && window.__gates.ZZNEW());   // the quote lands AFTER the delete
+  await page.waitForTimeout(400);
+  expect(await charted(), 'it did NOT chart the stock that was deleted').toBe(R[0]);
+  await expect(page.locator('#wbInfo'), 'and the "Loading ZZNEW…" note went with it').not.toContainText('Loading');
+  // another stock's lookup is the newest request and still wins when a DIFFERENT slot is deleted
+  await seed({ 0: 'ZZONE', 1: R[3] });
+  await slotBtn(page, 0).click();
+  await page.waitForTimeout(150);
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await first(3), 'the other slot is gone, ZZONE stays').toEqual(['ZZONE', '', '']);
+  await page.evaluate(() => window.__gates.ZZONE && window.__gates.ZZONE());
+  await page.waitForTimeout(400);
+  expect(await charted(), 'a lookup for a stock that was NOT deleted still charts it').toBe('ZZONE');
+  await page.evaluate(() => { DESK.mode = 'demo'; });
+
+  // ── 9. it survives a reload
+  await seed([R[1], R[2], R[3]]);
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  await page.reload();
+  await page.waitForSelector('.wb-slots .wb-slot');
+  expect(await first(4), 'the deletion is still there after a reload').toEqual([R[2], R[3], '', '']);
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

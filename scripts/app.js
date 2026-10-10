@@ -4743,6 +4743,9 @@ function setWbSlot(i, sym) {
   const syms = readWbSticky().syms.slice();
   syms[i] = sym || '';
   writeWbSticky({ syms });
+  /* Writing a slot ends "the row last tapped" for it: an edit A → B → A would otherwise bring back the old `{ i, A, armed: true }` and show an immediately tappable
+     delete × on what is now a fresh row, under the second tap of the protected double-tap (Codex P2, PR #320). */
+  if (wbSlotTouched && wbSlotTouched.i === i) wbSlotTouched = null;
 }
 /* Chart a symbol, fetching its bars first if the desk-charts feed doesn't carry
    it. Extracted from the Load box's submit handler (2026-08-17) so the rail's
@@ -4767,6 +4770,21 @@ let wbLoadGen = 0;
    longer reads it, because the loader's own callers still must be able to tell
    "you replaced this" from "this does not exist" without inspecting a flag. */
 const WB_SUPERSEDED = 'superseded';
+/* The symbol whose quote lookup is IN FLIGHT right now ('' when none), so deleting that stock from the SYMBOL column can cancel exactly that lookup and no other
+   (`wbCancelLoad`). Set when the request goes out; cleared when it lands unsuperseded and by `wbPick` (which invalidates every in-flight load anyway). */
+let wbLoadPending = '';
+/* Deleting a stock must not leave its lookup running: a slot clicked a moment before has `wbLoadSymbol` awaiting `deskQuote`, and when it lands its success path
+   calls `wbPick` — switching the chart to the stock the owner just removed (Codex P2, PR #320). Bumping `wbLoadGen` is what every other cancellation does. ONLY
+   the lookup for THIS symbol is cancelled: another stock clicked just before, and still loading, is the newest request and must still win. The "Loading X…"
+   note it left in `#wbInfo` goes with it. */
+function wbCancelLoad(sym) {
+  if (!sym || wbLoadPending !== sym) return false;
+  wbLoadGen++;
+  wbLoadPending = '';
+  const note = document.getElementById('wbInfo');
+  if (note && note.textContent === 'Loading ' + sym + '…') note.textContent = '';
+  return true;
+}
 async function wbLoadSymbol(sym) {
   if (!wbState) return false;
   const gen = ++wbLoadGen;
@@ -4786,6 +4804,7 @@ async function wbLoadSymbol(sym) {
     return false;
   }
   say('Loading ' + sym + '…');
+  wbLoadPending = sym;
   let out;
   try {
     out = await deskQuote(sym, 'daily');
@@ -4795,6 +4814,7 @@ async function wbLoadSymbol(sym) {
        the network would still have painted its connectivity error over a newer
        request's status (Codex P2, round 3). */
     if (gen !== wbLoadGen) return WB_SUPERSEDED;
+    wbLoadPending = '';
     say('Quote service unreachable — try again');
     return false;
   }
@@ -4804,6 +4824,7 @@ async function wbLoadSymbol(sym) {
      newer one. Silent on purpose: this is not a failure the owner should read
      about, it is a request they replaced. */
   if (gen !== wbLoadGen) return WB_SUPERSEDED;
+  wbLoadPending = '';
   if (!out.ok || !out.series || out.series.c.length < 30) {
     say(out.error || 'No data found for ' + sym);
     return false;
@@ -4826,6 +4847,7 @@ function wbPick(sym) {
      invisible, so a pending lookup could still pin itself and pull the chart
      back off what the owner had just selected (Codex P2, round 3). */
   wbLoadGen++;
+  wbLoadPending = '';
   wbUserPicked = true;
   wbState.sym = sym;
   wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
@@ -5505,6 +5527,16 @@ let wbSlotDragClickBtn = null;
 /* A one-line message under the entry box — "every slot is filled" is the only one. Module state, since
    renderWbSidebar rebuilds the rail; cleared by its own timer. */
 let wbRailMsg = '', wbRailMsgT = 0;
+/* The ROW last TAPPED or clicked, as `{ i, sym }` (null = none). Where nothing hovers (a phone) that row carries the delete × (`.is-touched`), whether or not
+   its stock ever charts — an unresolvable or delisted ticker is exactly the one to remove, and it never becomes the charted symbol, so keying the × to the
+   charted row left it without one (Codex P2, PR #320). Index AND symbol: the symbol alone marks every copy of a duplicate (a slot keeps whatever was typed,
+   so twins can exist) and the index alone drifts when rows move, so the mark is dropped by everything that re-indexes the column (`wbMoveSlot`, `wbInsertSlot`,
+   the lift in `wbPushSymbol`, `wbDeleteSlot`) and a row only carries it while BOTH still match (Codex P2, PR #320). */
+let wbSlotTouched = null;
+/* A tap raises the × under the finger, so for the length of the EDIT double-tap window the × must not be tappable: the second tap of a double-tap that lands in
+   its 18px would delete the stock instead of editing it (Codex P2, PR #320). `armed` is set by a timer once the window (WB_SLOT_DBL_MS) has passed; until then
+   the × is `pointer-events: none` where nothing hovers, so the tap goes through to the slot button underneath. */
+const WB_SLOT_DEL_ARM_MS = 600;
 const wbSlotsEl = () => document.querySelector('.wb-rail-manual .wb-slots');
 function wbRepaintRail() {
   if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
@@ -5552,6 +5584,7 @@ function wbMoveSlot(from, to) {
   const moved = syms.splice(from, 1)[0];
   syms.splice(to, 0, moved);
   writeWbSticky({ syms });
+  wbSlotTouched = null;
   return true;
 }
 /* Open an EMPTY slot at `at`, pushing the stocks from there down one place into the nearest empty
@@ -5568,6 +5601,7 @@ function wbInsertSlot(at) {
     syms.splice(k, 1);          /* the empty slot that gets used up */
     syms.splice(at, 0, '');     /* the open slot appears here */
     writeWbSticky({ syms });
+    wbSlotTouched = null;
     return at;
   }
   let j = at - 1;
@@ -5576,6 +5610,7 @@ function wbInsertSlot(at) {
   syms.splice(j, 1);
   syms.splice(at - 1, 0, '');
   writeWbSticky({ syms });
+  wbSlotTouched = null;
   return at - 1;
 }
 /* Open a slot at `at` and put the owner in it, ready to type — the same editor a click on an empty
@@ -5591,6 +5626,50 @@ function wbInsertAndEdit(at) {
   wbEditDraft = '';
   wbRepaintRail();
   wbFocusSlotEditor(open, true);
+}
+/* DELETE the stock in slot `i` (owner 2026-10-10: "in addition to pushing, I also want to be able to delete symbols from that list"). ONE splice, like every other
+   change to this column: the stock goes out and an EMPTY slot is added at the END, so the rows below move up one place, the list closes over the gap and the
+   array stays exactly WB_SLOTS long (never a `filter()` and never a hole left where the stock was — that is what emptying a slot's TEXT still does, an
+   editing gesture with its own ruling). It settles an open editor first (it re-indexes; the draft is saved in ITS slot before the rows move), writes no
+   chart and opens no editor — deleting is not navigation to the stock — and says nothing in the rail's note: a note would push the list down under the
+   pointer and the next click on the same × would land on the wrong stock. It does NOTHING while a drag or press on a slot is in progress (the gesture holds a source index; Codex P2, PR #320). It CANCELS a quote lookup still running for that stock (`wbCancelLoad`: the slot
+   was clicked a moment ago, and when the quote landed it would chart the stock just removed) and drops a stale "every slot is filled" note (a delete makes
+   room) — both Codex P2, PR #320. Reached by the hover × (`wbSlotDelClick`) and the Delete / Backspace keys on a
+   focused slot. The tab stop stays at this index, which now holds the next stock. Returns whether anything was removed. */
+function wbDeleteSlot(i) {
+  /* Not while a drag or a press on a slot is in progress: it holds a SOURCE INDEX, and a delete under it compacts the array, so the release would move the
+     successor of the deleted stock — a second stock changed by one keypress (Delete or Backspace pressed while still holding the mouse down; Codex P2,
+     PR #320). The key is ignored until the gesture ends. */
+  if (wbSlotDrag.on || wbSlotPress) return false;
+  if (!(i >= 0 && i < WB_SLOTS)) return false;
+  /* What the slot held BEFORE an open editor saves its draft. The × on an editor's row removes the stock whose editor is open, and settling saves the draft into
+     that very slot — an EMPTIED draft would clear it and leave nothing to delete, so the row stayed as a hole under a stale input (Codex P2, PR #320). The stock to
+     remove is the one that was stored, and the row goes whatever the draft says. */
+  const before = readWbSticky().syms[i];
+  wbSettleEditor();
+  const syms = readWbSticky().syms.slice();
+  if (!before && !syms[i]) return false;
+  const gone = before || syms[i];
+  syms.splice(i, 1);
+  syms.push('');
+  writeWbSticky({ syms });
+  wbSlotTouched = null;                /* rows moved: nothing is "the row last tapped" any more */
+  wbCancelLoad(gone);                  /* a lookup still running for THIS stock must not chart it after it is gone (Codex P2, PR #320) */
+  wbRailNoteClear();                   /* a delete makes room: an "every slot is filled" note still up from a refused push is now false (Codex P2, PR #320) */
+  wbSlotClick = { i: -1, at: 0 };
+  wbSlotTab = i;
+  wbRepaintRail();
+  return true;
+}
+/* ONE delegated listener for every row's ×, not one per button — the same reason the drag is a single `pointerdown` on the rail (per-button listeners cost
+   milliseconds apiece in WebKit on a rail that repaints often). The × is a SIBLING of the slot button, never inside it, so a press on it can neither start a
+   drag (`wbSlotPointerDown` looks for `.wb-slot`) nor chart or edit the stock it removes. */
+function wbSlotDelClick(ev) {
+  const x = ev.target && ev.target.closest ? ev.target.closest('.wb-slot-del') : null;
+  if (!x) return;
+  const row = x.closest('.wb-rail-row');
+  const i = row ? Number(row.dataset.slot) : -1;
+  if (i >= 0) wbDeleteSlot(i);
 }
 /* PUSH a symbol into the list at the TOP (owner 2026-10-09, with a screenshot: "put a blank empty space on top of the left column and I will type in a
    symbol and it will just get pushed into the list"). Two doors lead here and behave identically — the entry box on top of the SYMBOL column and the
@@ -5616,7 +5695,7 @@ function wbPushSymbol(sym) {
     next.splice(have, 1);
     next.splice(0, 0, sym);
     for (let i = 1; i < next.length; i++) if (next[i] === sym) next[i] = '';
-    if (next.some((s, i) => s !== syms[i])) writeWbSticky({ syms: next });
+    if (next.some((s, i) => s !== syms[i])) { writeWbSticky({ syms: next }); wbSlotTouched = null; }
     open = 0;
   } else {
     open = wbInsertSlot(0);
@@ -5896,6 +5975,7 @@ function wbSlotPressKey(e) {
 {
   const rail = document.getElementById('wbSidebar');
   if (rail) rail.addEventListener('pointerdown', wbSlotPointerDown);
+  if (rail) rail.addEventListener('click', wbSlotDelClick);
   window.addEventListener('pointermove', wbSlotPointerMove);
   window.addEventListener('pointerup', wbSlotPointerUp);
   window.addEventListener('pointercancel', wbSlotPointerCancel);
@@ -6046,6 +6126,22 @@ function wbSlotRow(i, sym, data) {
       }, 0);
     });
     row.appendChild(inp);
+    /* A stored stock can be removed from its own EDITOR too (Codex P2, PR #320). A stored value that fails WL_SYM_RE (`!!`, a typo a slot keeps) opens its editor on
+       the FIRST tap — there is nothing to chart — and that replaces the row the touched-row × lived on, so on a phone the only way out was to empty the text, which
+       leaves a hole. Same overlay, same delegated click handler (`wbSlotDelClick`), and the same arming: not tappable for WB_SLOT_DEL_ARM_MS, because the second tap
+       of a double-tap lands exactly here. `mousedown` is cancelled so the press cannot blur the input — a blur closes and REPLACES this row before the click lands, and
+       the click would never be delivered. An empty slot has nothing to remove. */
+    if (sym) {
+      const x = el('button', 'wb-slot-del wb-slot-del--edit', '×');
+      x.type = 'button';
+      x.tabIndex = -1;
+      x.title = 'Remove ' + sym;
+      x.setAttribute('aria-label', 'Remove ' + sym + ' from the list');
+      x.addEventListener('mousedown', ev => ev.preventDefault());
+      setTimeout(() => x.classList.add('is-armed'), WB_SLOT_DEL_ARM_MS);
+      row.appendChild(x);
+      inp.classList.add('has-del');
+    }
     return row;
   }
 
@@ -6072,8 +6168,8 @@ function wbSlotRow(i, sym, data) {
      nothing to chart. */
   const chartable = !!sym && WL_SYM_RE.test(sym);
   b.title = !sym ? 'Empty slot — click to fill'
-    : chartable ? sym + ' — double-click or F2 to edit; drag or Alt+↑/↓ to move'
-    : sym + ' — not a ticker; click to correct; drag or Alt+↑/↓ to move';
+    : chartable ? sym + ' — double-click or F2 to edit; drag or Alt+↑/↓ to move; Delete to remove'
+    : sym + ' — not a ticker; click to correct; drag or Alt+↑/↓ to move; Delete to remove';
   b.appendChild(el('span', 'wb-side-sym', sym || ''));
 
   const openEditor = () => {
@@ -6132,6 +6228,20 @@ function wbSlotRow(i, sym, data) {
        navigation like any other, so it also breaks a pair already pending. */
     wbSlotClick = byPointer ? { i, at: now } : { i: -1, at: 0 };
     setWbSlotTab(i);                    /* Tab comes back to the slot last worked on */
+    /* Mark the row as the one last tapped — IN PLACE, because tapping a stock that cannot be charted repaints nothing, so the class has to be moved by hand. The
+       state (`wbSlotTouched`) rebuilds it on every later repaint. */
+    if (sym) {
+      const mark = wbSlotTouched = { i, sym, armed: false };
+      for (const r of document.querySelectorAll('.wb-rail-manual .wb-rail-row.is-touched')) r.classList.remove('is-touched', 'is-armed');
+      row.classList.add('is-touched');
+      /* Armed only if this is STILL the touched row when the edit window is over: a re-index (push, delete, move) nulls the state, and another tap replaces it. */
+      setTimeout(() => {
+        if (wbSlotTouched !== mark) return;
+        mark.armed = true;
+        const r = document.querySelector('.wb-rail-manual .wb-rail-row.is-touched');
+        if (r) r.classList.add('is-armed');
+      }, WB_SLOT_DEL_ARM_MS);
+    }
     /* NOTHING CHARTABLE ⇒ open the editor. An empty slot has nothing to chart,
        and neither does one holding a draft that fails WL_SYM_RE — a slot keeps
        whatever was typed even when it does not resolve (owner ruling), so `!!`
@@ -6163,6 +6273,19 @@ function wbSlotRow(i, sym, data) {
       return;
     }
     if (ev.key === 'Insert') { ev.preventDefault(); wbInsertAndEdit(i); return; }
+    /* Delete / Backspace remove this stock (owner 2026-10-10) — the keyboard path to the hover ×, and the same keys the watchlist tiles use. preventDefault so
+       Backspace never navigates back. An EMPTY slot has nothing to remove: the key is simply left alone there. */
+    if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      /* Prevented BEFORE the empty-slot check: a browser that maps Backspace on a non-editable control to history navigation would otherwise leave the dashboard
+         on an empty slot, where the key is a no-op (Codex P2, PR #320). */
+      ev.preventDefault();
+      if (!sym) return;
+      /* ONE physical keypress deletes AT MOST ONE stock. A held key auto-repeats `keydown`, the delete repaints the rail and puts focus back on the same index, so
+         every repeat would land on the successor and erase the list stock by stock, with no confirmation and no Undo (Codex P1, PR #320). Same rule the dialogs
+         apply to Escape. */
+      if (!ev.repeat) wbDeleteSlot(i);
+      return;
+    }
     /* Arrow/Home/End move the roving stop. Focus is applied WITHOUT scrolling
        the page, the same rule everything else in this rail follows; the slot is
        brought into view inside its own scroller instead. */
@@ -6182,6 +6305,21 @@ function wbSlotRow(i, sym, data) {
     });
   });
   row.appendChild(b);
+  /* The × that removes this stock (owner 2026-10-10). A SIBLING of the slot button, after it, shown only on hover / focus (and, where there is no hover, on
+     the row last tapped — `wbSlotTouched`, see .wb-slot-del), out of the tab order (the column is ONE tab stop; the keyboard path is Delete / Backspace on the slot) and without
+     a listener of its own (`wbSlotDelClick` is delegated on the rail). An EMPTY slot has nothing to remove and gets none. */
+  if (sym) {
+    const x = el('button', 'wb-slot-del', '×');
+    x.type = 'button';
+    x.tabIndex = -1;
+    x.title = 'Remove ' + sym;
+    x.setAttribute('aria-label', 'Remove ' + sym + ' from the list');
+    row.appendChild(x);
+    if (wbSlotTouched && wbSlotTouched.i === i && wbSlotTouched.sym === sym) {
+      row.classList.add('is-touched');
+      if (wbSlotTouched.armed) row.classList.add('is-armed');
+    }
+  }
   return row;
 }
 
