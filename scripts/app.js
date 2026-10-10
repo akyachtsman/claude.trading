@@ -5592,6 +5592,36 @@ function wbInsertAndEdit(at) {
   wbRepaintRail();
   wbFocusSlotEditor(open, true);
 }
+/* DELETE the stock in slot `i` (owner 2026-10-10: "in addition to pushing, I also want to be able to delete symbols from that list"). ONE splice, like every other
+   change to this column: the stock goes out and an EMPTY slot is added at the END, so the rows below move up one place, the list closes over the gap and the
+   array stays exactly WB_SLOTS long (never a `filter()` and never a hole left where the stock was — that is what emptying a slot's TEXT still does, an
+   editing gesture with its own ruling). It settles an open editor first (it re-indexes; the draft is saved in ITS slot before the rows move), writes no
+   chart and opens no editor — deleting is not navigation to the stock — and says nothing in the rail's note: a note would push the list down under the
+   pointer and the next click on the same × would land on the wrong stock. Reached by the hover × (`wbSlotDelClick`) and the Delete / Backspace keys on a
+   focused slot. The tab stop stays at this index, which now holds the next stock. Returns whether anything was removed. */
+function wbDeleteSlot(i) {
+  wbSettleEditor();
+  if (!(i >= 0 && i < WB_SLOTS)) return false;
+  const syms = readWbSticky().syms.slice();
+  if (!syms[i]) return false;
+  syms.splice(i, 1);
+  syms.push('');
+  writeWbSticky({ syms });
+  wbSlotClick = { i: -1, at: 0 };
+  wbSlotTab = i;
+  wbRepaintRail();
+  return true;
+}
+/* ONE delegated listener for every row's ×, not one per button — the same reason the drag is a single `pointerdown` on the rail (per-button listeners cost
+   milliseconds apiece in WebKit on a rail that repaints often). The × is a SIBLING of the slot button, never inside it, so a press on it can neither start a
+   drag (`wbSlotPointerDown` looks for `.wb-slot`) nor chart or edit the stock it removes. */
+function wbSlotDelClick(ev) {
+  const x = ev.target && ev.target.closest ? ev.target.closest('.wb-slot-del') : null;
+  if (!x) return;
+  const row = x.closest('.wb-rail-row');
+  const i = row ? Number(row.dataset.slot) : -1;
+  if (i >= 0) wbDeleteSlot(i);
+}
 /* PUSH a symbol into the list at the TOP (owner 2026-10-09, with a screenshot: "put a blank empty space on top of the left column and I will type in a
    symbol and it will just get pushed into the list"). Two doors lead here and behave identically — the entry box on top of the SYMBOL column and the
    header Load box — so there is ONE rule to learn: the new symbol takes slot 0 and everything above the first empty slot moves down one place (a slot 0
@@ -5896,6 +5926,7 @@ function wbSlotPressKey(e) {
 {
   const rail = document.getElementById('wbSidebar');
   if (rail) rail.addEventListener('pointerdown', wbSlotPointerDown);
+  if (rail) rail.addEventListener('click', wbSlotDelClick);
   window.addEventListener('pointermove', wbSlotPointerMove);
   window.addEventListener('pointerup', wbSlotPointerUp);
   window.addEventListener('pointercancel', wbSlotPointerCancel);
@@ -6072,8 +6103,8 @@ function wbSlotRow(i, sym, data) {
      nothing to chart. */
   const chartable = !!sym && WL_SYM_RE.test(sym);
   b.title = !sym ? 'Empty slot — click to fill'
-    : chartable ? sym + ' — double-click or F2 to edit; drag or Alt+↑/↓ to move'
-    : sym + ' — not a ticker; click to correct; drag or Alt+↑/↓ to move';
+    : chartable ? sym + ' — double-click or F2 to edit; drag or Alt+↑/↓ to move; Delete to remove'
+    : sym + ' — not a ticker; click to correct; drag or Alt+↑/↓ to move; Delete to remove';
   b.appendChild(el('span', 'wb-side-sym', sym || ''));
 
   const openEditor = () => {
@@ -6163,6 +6194,9 @@ function wbSlotRow(i, sym, data) {
       return;
     }
     if (ev.key === 'Insert') { ev.preventDefault(); wbInsertAndEdit(i); return; }
+    /* Delete / Backspace remove this stock (owner 2026-10-10) — the keyboard path to the hover ×, and the same keys the watchlist tiles use. preventDefault so
+       Backspace never navigates back. An EMPTY slot has nothing to remove: the key is simply left alone there. */
+    if (ev.key === 'Delete' || ev.key === 'Backspace') { if (sym) { ev.preventDefault(); wbDeleteSlot(i); } return; }
     /* Arrow/Home/End move the roving stop. Focus is applied WITHOUT scrolling
        the page, the same rule everything else in this rail follows; the slot is
        brought into view inside its own scroller instead. */
@@ -6182,6 +6216,18 @@ function wbSlotRow(i, sym, data) {
     });
   });
   row.appendChild(b);
+  /* The × that removes this stock (owner 2026-10-10). A SIBLING of the slot button, after it, shown only on hover / focus (and, where there is no hover, on
+     the charted row — see .wb-slot-del), out of the tab order (the column is ONE tab stop; the keyboard path is Delete / Backspace on the slot) and without
+     a listener of its own (`wbSlotDelClick` is delegated on the rail). An EMPTY slot has nothing to remove and gets none. */
+  if (sym) {
+    const x = el('button', 'wb-slot-del', '×');
+    x.type = 'button';
+    x.tabIndex = -1;
+    x.title = 'Remove ' + sym;
+    x.setAttribute('aria-label', 'Remove ' + sym + ' from the list');
+    row.appendChild(x);
+    if (sym === wbState.sym) row.classList.add('is-active');
+  }
   return row;
 }
 

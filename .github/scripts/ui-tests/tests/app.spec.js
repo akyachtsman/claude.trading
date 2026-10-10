@@ -3698,7 +3698,7 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(shape.rows, 'exactly 100 slots, filled or empty').toBe(100);
   expect(shape.scrolls && shape.overflowY === 'auto', 'the LIST scrolls on its own').toBe(true);
   expect(shape.headOutside, 'and the entry-box head stays put above it').toBe(true);
-  expect(shape.x, 'no × — a slot is cleared by emptying it').toBe(0);
+  expect(shape.x, 'no per-slot × at rest (`.wb-rail-x`): emptying the text still clears a slot; the delete × is a hover-only overlay, `.wb-slot-del`, pinned by S67').toBe(0);
   expect(shape.editors, 'no live input until a slot is opened — 100 would repaint every frame').toBe(0);
 
   // double-click opens THAT slot, focused
@@ -9659,6 +9659,159 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   await page.reload();
   await page.waitForSelector('.wb-slots .wb-slot');
   expect(await first(3), 'still there after a reload').toEqual([R[14], 'AAA', '']);
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 67 — A symbol can be DELETED from the SYMBOL column. Owner 2026-10-10: "In addition to pushing, I also want to be able to delete symbols from that
+// list." Two ways to it: a × that appears on the row you point at (an overlay on the row's right edge, hidden at rest — the ticker never abbreviates, so it takes
+// no width — and, where there is no hover, shown on the charted row), and the Delete / Backspace keys on a focused slot. `wbDeleteSlot` is ONE splice with an
+// empty slot added at the END, so the rows below move up and the column stays exactly 100 long; it settles an open editor first, charts nothing, opens
+// nothing and writes no note (a note would push the list down under the pointer and the next click on the same × would hit the wrong stock). Emptying a
+// slot's TEXT still leaves a hole (S45): that is an editing gesture with its own ruling.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/Backspace — the list closes over the gap, an open editor is settled first, nothing is charted', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await gotoDemo(page, '.wb-slots', 15000, 1200);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  const R0 = await page.evaluate(() => Object.keys(wbState.data.symbols));
+  const R = Array.from({ length: 8 }, (_, i) => R0[i % R0.length]);   // roster names: charting one of them would be visible in wbState.sym
+  const first = async (n) => (await storedSyms(page)).slice(0, n);
+  const seed = (slots, opts = {}) => seedSlots(page, Object.fromEntries(Array.from({ length: 100 }, (_, i) => [i, slots[i] ?? ''])), { tab: true, ...opts });
+  const settle = () => page.waitForTimeout(250);
+  const charted = () => page.evaluate(() => wbState.sym);
+  const del = (n) => page.locator(`.wb-slots [data-slot="${n}"] .wb-slot-del`);
+  const visibleDels = () => page.evaluate(() => [...document.querySelectorAll('.wb-slot-del')].filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.closest('.wb-rail-row').dataset.slot));
+  const canHover = await page.evaluate(() => matchMedia('(hover: hover)').matches);
+  await page.evaluate((sym) => wbPick(sym), R[0]);
+  await page.waitForTimeout(400);
+
+  // ── 1. shape: one × per FILLED row, none on an empty slot, each beside its slot button (never inside it), out of the tab order, named for its stock, hidden at rest
+  await seed([R[1], R[2], R[3], R[4]]);
+  await page.mouse.move(2, 2);
+  const shape = await page.evaluate(() => {
+    const xs = [...document.querySelectorAll('.wb-slot-del')];
+    return { n: xs.length, onEmpty: !!document.querySelector('.wb-slot--empty')?.closest('.wb-rail-row').querySelector('.wb-slot-del'),
+             inside: xs.some((b) => !!b.closest('.wb-slot')), afterBtn: xs.every((b) => b.previousElementSibling && b.previousElementSibling.classList.contains('wb-slot')),
+             tabs: xs.map((b) => b.tabIndex), names: xs.map((b) => b.getAttribute('aria-label')), titles: xs.map((b) => b.title) };
+  });
+  expect(shape.n, 'one × per filled row').toBe(4);
+  expect(shape.onEmpty, 'an empty slot has nothing to remove and no ×').toBe(false);
+  expect([shape.inside, shape.afterBtn], 'the × is a sibling AFTER the slot button, never inside it (a press on it must not start a drag or chart the stock)').toEqual([false, true]);
+  expect(shape.tabs, 'and out of the tab order: the column stays ONE tab stop').toEqual([-1, -1, -1, -1]);
+  expect(shape.names[1], 'its accessible name says which stock goes').toBe(`Remove ${R[2]} from the list`);
+  expect(shape.titles[1], 'and so does its tooltip').toBe(`Remove ${R[2]}`);
+  expect(await visibleDels(), 'no × is showing at rest (the charted stock is not in these slots)').toEqual([]);
+  expect(await tabStops(page), 'one tab stop').toHaveLength(1);
+
+  // ── 2. it shows on the row you point at or focus, and on no other
+  await slotBtn(page, 1).focus();
+  expect(await visibleDels(), 'a focused row shows its ×').toEqual(['1']);
+  if (canHover) {
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());   // slot 1 is still focused from the check above, and a focused row shows its × too
+    await page.mouse.move(2, 2);
+    await slotBtn(page, 2).hover();
+    expect(await visibleDels(), 'a hovered row shows its × — and only that row').toEqual(['2']);
+    const g = await page.evaluate(() => { const r = document.querySelector('[data-slot="2"]').getBoundingClientRect(), x = document.querySelector('[data-slot="2"] .wb-slot-del').getBoundingClientRect(); return { right: r.right - x.right, top: x.top - r.top, h: x.height, rh: r.height, w: x.width }; });
+    expect([Math.abs(g.right) < 1.5, Math.abs(g.top) < 1.5, Math.abs(g.h - g.rh) < 1.5, g.w >= 14], 'it is an overlay on the row\'s right edge, as tall as the row, and big enough to hit').toEqual([true, true, true, true]);
+  }
+
+  // ── 3. clicking it removes THAT stock and the list closes over the gap: the rows below move up one, an empty slot appears at the END, the column stays 100 long
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 1).hover();
+  await del(1).click();
+  await settle();
+  expect(await first(6), 'R2 is gone, R3 and R4 moved up one place, the empty slot went to the end').toEqual([R[1], R[3], R[4], '', '', '']);
+  expect((await storedSyms(page)).length, 'the column is still exactly 100 long').toBe(100);
+  expect(await page.evaluate(() => [...document.querySelectorAll('.wb-slots .wb-side-sym')].slice(0, 4).map((n) => n.textContent)), 'and the rows are DRAWN that way').toEqual([R[1], R[3], R[4], '']);
+  expect(await charted(), 'deleting charts nothing — the charted stock did not change').toBe(R[0]);
+  expect(await editorCount(page), 'and opens no editor').toBe(0);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-rail-manual [role="status"]').length), 'and writes no note — it would push the list down under the pointer').toBe(0);
+  // the gap closed, so the same spot now holds the NEXT stock: a second click there removes it (the point of closing up)
+  await slotBtn(page, 1).hover();
+  await del(1).click();
+  await settle();
+  expect(await first(4), 'a second click on the same spot removes the next stock').toEqual([R[1], R[4], '', '']);
+
+  // ── 4. the keyboard: Delete and Backspace on a focused slot; focus and the tab stop stay at that index, which now holds the next stock
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('Delete'); await settle();
+  expect(await first(5), 'Delete removed the focused stock and closed the gap').toEqual([R[1], R[3], R[4], '', '']);
+  expect([await focusedSlot(page), await tabStops(page)], 'focus and the tab stop stay on that slot, now holding the next stock').toEqual(['1', ['1']]);
+  await page.keyboard.press('Backspace'); await settle();
+  expect(await first(4), 'Backspace does the same').toEqual([R[1], R[4], '', '']);
+  expect(await focusedSlot(page), 'and focus is still in the column').toBe('1');
+  expect(await charted(), 'nothing was charted').toBe(R[0]);
+  await slotBtn(page, 5).focus();
+  const before = JSON.stringify(await storedSyms(page));
+  await page.keyboard.press('Delete'); await settle();
+  expect(JSON.stringify(await storedSyms(page)), 'Delete on an EMPTY slot does nothing').toBe(before);
+
+  // ── 5. edges: the last slot of a FULL column, the first one, and a push afterwards — which then has room, so it never says the column is full
+  const full = () => page.evaluate(() => {
+    const c = JSON.parse(localStorage.getItem('wb_sticky_v1'));
+    localStorage.setItem('wb_sticky_v1', JSON.stringify({ ...c, syms: Array.from({ length: 100 }, (_, i) => 'S' + i) }));
+    wbEditSlot = -1; wbSlotTab = 0; renderWbSidebar(wbState.data);
+  });
+  await full();
+  await slotBtn(page, 99).focus();
+  await page.keyboard.press('Delete'); await settle();
+  let all = await storedSyms(page);
+  expect([all[98], all[99], all.length], 'the last stock of a full column goes: S99 gone, nothing else moved').toEqual(['S98', '', 100]);
+  await full();
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  all = await storedSyms(page);
+  expect([all[0], all[1], all[98], all[99], all.length], 'the first stock of a full column goes: everything moved up one, the empty slot is last').toEqual(['S1', 'S2', 'S99', '', 100]);
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('NEWONE');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  all = await storedSyms(page);
+  expect([all[0], all[1], all[99], all.length], 'the freed slot takes the next push — the column is not "full" any more').toEqual(['NEWONE', 'S1', 'S99', 100]);
+  expect(await page.evaluate(() => document.querySelectorAll('.wb-rail-manual [role="status"]').length), 'and says nothing about being full').toBe(0);
+
+  // ── 6. an open editor is settled FIRST: its half-typed draft is saved in ITS slot, then the rows move
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 3).focus();
+  await page.keyboard.press('F2');
+  expect(await editorSlot(page), 'the editor is open on slot 3').toBe('3');
+  await page.keyboard.type('zz');
+  await page.evaluate(() => {                           // blur and click in ONE task, the order a click on the × produces
+    document.querySelector('.wb-slot-input').blur();
+    document.querySelector('[data-slot="0"] .wb-slot-del').click();
+  });
+  await settle();
+  expect(await first(4), 'the draft was saved in its own slot (3), then slot 0 was removed and everything moved up: ZZ is now in slot 2').toEqual([R[2], R[3], 'ZZ', '']);
+  expect(await editorCount(page), 'and no editor is left open').toBe(0);
+
+  // ── 7. a press on the × that wanders off it deletes nothing and starts no drag
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 1).hover();
+  const box = await del(1).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 45, { steps: 6 });
+  expect(await page.evaluate(() => [!!document.querySelector('.wb-slot-ghost'), document.body.classList.contains('wb-drag-active')]), 'a press on the × is not a drag').toEqual([false, false]);
+  await page.mouse.up(); await settle();
+  expect(await first(5), 'and releasing elsewhere removes nothing').toEqual([R[1], R[2], R[3], R[4], '']);
+
+  // ── 8. where there is NO hover (a phone) the charted row carries its ×, because a tap has just selected it; with a hover it stays hidden until pointed at
+  await seed({ 0: R[0], 1: R[1], 2: R[2] }, { pick: 0 });
+  await page.mouse.move(2, 2);
+  await settle();
+  const noHover = await page.evaluate(() => matchMedia('(hover: none)').matches);
+  expect(await visibleDels(), noHover ? 'no hover: the charted row shows its × (and no other row does)' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['0'] : []);
+
+  // ── 9. it survives a reload
+  await seed([R[1], R[2], R[3]]);
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  await page.reload();
+  await page.waitForSelector('.wb-slots .wb-slot');
+  expect(await first(4), 'the deletion is still there after a reload').toEqual([R[2], R[3], '', '']);
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

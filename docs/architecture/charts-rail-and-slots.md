@@ -599,6 +599,25 @@ Gesture rules, each of which S64 holds:
   which keeps its focus and caret as it does the slot editor's. (7) The loader (`wbLoadSymbol`), a roster click and a slot commit
   still write nothing (a slot commit may still type a copy of a symbol that is already listed: "a slot keeps whatever was typed"); the header input's `change` handler (a roster symbol committed by blur) is unchanged and still only charts. S66 pins all of
   it (24 mutants), S64 the Insert key, S40 the alignment.
+- **Deleting a stock (owner 2026-10-10: "in addition to pushing, I also want to be able to delete symbols from that list").** Until then the only way out of the
+  column was to open a slot's editor and empty its text, which leaves a HOLE where the stock was (S45: "nothing below it moves up"; that editing ruling stands). A
+  delete is a different act and CLOSES the gap, like the lift in `wbPushSymbol`: `wbDeleteSlot(i)` is one splice — the stock out, an empty slot added at the
+  END — so the rows below move up one place and the array stays exactly 100 long. Rules: (1) `wbSettleEditor()` first, because it re-indexes (a draft in an
+  open editor is saved in ITS slot, then the rows move); (2) it charts NOTHING and opens no editor — removing a stock is not navigating to it; (3) it writes
+  NO note: the rail's note pushes `.wb-slots` down by its own height, so with a note up the next click on the same × would land on the wrong stock, and the
+  point of closing the gap is that the same spot now holds the NEXT stock, so two clicks remove two; a screen reader hears the focus land on the next stock
+  instead; (4) the tab stop stays at the index (`wbSlotTab = i`), and a Delete / Backspace from the keyboard keeps focus there too (the render restores a
+  focused slot button by index). Two ways in. **The ×** (`.wb-slot-del`) is built after the slot button on every FILLED row — a SIBLING, never inside
+  `.wb-slot`, so `wbSlotPointerDown` (which looks for `.wb-slot`) cannot start a drag from it and a press on it cannot chart or edit; an empty slot gets none;
+  `tabindex=-1` keeps the column ONE tab stop; tooltip `Remove <SYM>`, accessible name `Remove <SYM> from the list`; ONE delegated `click` listener on the rail
+  (`wbSlotDelClick`), registered next to the drag's `pointerdown`, never a listener per row. It is an OVERLAY on the row's right edge (`position: absolute`; the
+  row became `position: relative`), NOT a flex item, because the ticker never abbreviates and the 78px column has ~3.9px of headroom at ten characters: a
+  × that took width would clip a symbol at rest, which S40 forbids. The price of an overlay is that while it is up it covers the last ~18px of THAT row's
+  text (only the row being pointed at, whose tooltip names the stock). `display: none` at rest; shown on the row's `:hover` and `:focus-within`; under
+  `@media (hover: none)` — a phone, where nothing hovers — on the CHARTED row (`.is-active`), the one a tap has just selected; hidden during a drag
+  (`body.wb-drag-active`, `.wb-dragging`); never red. **Delete / Backspace** on a focused slot do the same (`preventDefault`, so Backspace never navigates
+  back; nothing happens on an empty slot) — the keyboard path, as F2 is for the editor. No Undo was built: a push re-adds a stock in one step. S67 pins it
+  (mutant count: added once verified); S45's old "no ×" assertion still holds for `.wb-rail-x`, the per-slot × of the pre-2026-08-26 stack.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 
