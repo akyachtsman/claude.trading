@@ -9802,6 +9802,23 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   await page.mouse.up(); await settle();
   expect(await first(5), 'and releasing elsewhere removes nothing').toEqual([R[1], R[2], R[3], R[4], '']);
 
+  // ── 7b. a Delete pressed while a drag is in progress is ignored: the drag holds a SOURCE INDEX, so a delete under it would compact the column and the release
+  //        would move the successor of the deleted stock — a second stock changed by one keypress (Codex P2, PR #320)
+  await seed([R[1], R[2], R[3], R[4]]);
+  await slotBtn(page, 0).focus();
+  const b0 = await slotBtn(page, 0).boundingBox();
+  await page.mouse.move(b0.x + 10, b0.y + b0.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b0.x + 10, b0.y + b0.height * 2.6, { steps: 8 });
+  expect(await page.evaluate(() => !!document.querySelector('.wb-slot-ghost')), 'a drag is under way').toBe(true);
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('Backspace');
+  expect(await first(5), 'Delete and Backspace during the drag deleted nothing').toEqual([R[1], R[2], R[3], R[4], '']);
+  expect(await page.evaluate(() => !!document.querySelector('.wb-slot-ghost')), 'and the drag is still running').toBe(true);
+  await page.mouse.up(); await settle();
+  const dropped = await first(5);
+  expect([[...dropped].sort(), dropped[0] === R[1]], 'the release dropped the stock it was carrying: all four are still there, none deleted and none disturbed, and it moved').toEqual([[R[1], R[2], R[3], R[4], ''].sort(), false]);
+
   // ── 8. where there is NO hover (a phone) the row LAST TAPPED carries its ×, whether or not that stock charts: a delisted or mistyped ticker never becomes the charted
   //       symbol and is the one most worth removing (Codex P2, PR #320). With a hover the × stays hidden until a row is pointed at or focused.
   await seed({ 0: 'ZZQX', 1: 'ZZQY' });                  // chartable-looking, not roster names: in demo their lookup is refused, so neither ever becomes the charted symbol
@@ -9809,6 +9826,7 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   await settle();
   const noHover = await page.evaluate(() => matchMedia('(hover: none)').matches);
   const park = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.mouse.move(2, 2); await settle(); };
+  await park();                                          // a slot focused by an earlier step would show its × through :focus-within
   expect(await visibleDels(), 'nothing has been tapped yet: no × shows').toEqual([]);
   await slotBtn(page, 0).click();
   await park();
@@ -9826,6 +9844,28 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
   await park();
   expect(await visibleDels(), 'a deleted stock that comes back is not "tapped" any more').toEqual([]);
+
+  // ── 8a. duplicates (a slot keeps whatever was typed, so twins can exist): only the row actually TAPPED carries the touch ×, through a repaint, and a re-indexing
+  //       drops the mark instead of leaving it on whichever row now sits at that index (Codex P2, PR #320)
+  await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });
+  await slotBtn(page, 1).click();
+  await park();
+  expect(await visibleDels(), noHover ? 'twins: ONLY the tapped copy carries the ×' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['1'] : []);
+  await page.evaluate(() => renderWbSidebar(wbState.data));
+  expect(await visibleDels(), 'and still only that copy after a repaint').toEqual(noHover ? ['1'] : []);
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('DUPZ');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  await park();
+  expect(await visibleDels(), 'a push moves every row: the mark is dropped, not left on the row that now sits at the old index').toEqual([]);
+
+  // a delete moves rows too: with the tapped copy shifted up one, the mark must not sit on the row that now holds the OTHER copy at the old index
+  await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });
+  await slotBtn(page, 1).click();
+  await park();
+  await slotBtn(page, 0).focus();
+  await page.keyboard.press('Delete'); await settle();
+  await park();
+  expect(await visibleDels(), 'deleting an earlier twin moved the tapped copy: the mark is dropped, not left on the copy that took its index').toEqual([]);
 
   // ── 8b. a delete makes room, so a "every slot is filled" note a refused push left up is false now and goes at once (Codex P2, PR #320) — read at once, not through a
   //        retrying expect: the note clears itself after 4 s and a polling assertion would wait the bug out

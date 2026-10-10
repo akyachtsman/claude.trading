@@ -5524,10 +5524,12 @@ let wbSlotDragClickBtn = null;
 /* A one-line message under the entry box — "every slot is filled" is the only one. Module state, since
    renderWbSidebar rebuilds the rail; cleared by its own timer. */
 let wbRailMsg = '', wbRailMsgT = 0;
-/* The stock whose slot was last TAPPED or clicked, by symbol (not index: a push or a delete moves rows). Where nothing hovers (a phone) its row carries the delete
-   × (`.is-touched`), whether or not the stock ever charts — an unresolvable or delisted ticker is exactly the one to remove, and it never becomes the charted
-   symbol, so keying the × to the charted row left it without one (Codex P2, PR #320). '' = none. Cleared by a delete. */
-let wbSlotTouched = '';
+/* The ROW last TAPPED or clicked, as `{ i, sym }` (null = none). Where nothing hovers (a phone) that row carries the delete × (`.is-touched`), whether or not
+   its stock ever charts — an unresolvable or delisted ticker is exactly the one to remove, and it never becomes the charted symbol, so keying the × to the
+   charted row left it without one (Codex P2, PR #320). Index AND symbol: the symbol alone marks every copy of a duplicate (a slot keeps whatever was typed,
+   so twins can exist) and the index alone drifts when rows move, so the mark is dropped by everything that re-indexes the column (`wbMoveSlot`, `wbInsertSlot`,
+   the lift in `wbPushSymbol`, `wbDeleteSlot`) and a row only carries it while BOTH still match (Codex P2, PR #320). */
+let wbSlotTouched = null;
 const wbSlotsEl = () => document.querySelector('.wb-rail-manual .wb-slots');
 function wbRepaintRail() {
   if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
@@ -5575,6 +5577,7 @@ function wbMoveSlot(from, to) {
   const moved = syms.splice(from, 1)[0];
   syms.splice(to, 0, moved);
   writeWbSticky({ syms });
+  wbSlotTouched = null;
   return true;
 }
 /* Open an EMPTY slot at `at`, pushing the stocks from there down one place into the nearest empty
@@ -5591,6 +5594,7 @@ function wbInsertSlot(at) {
     syms.splice(k, 1);          /* the empty slot that gets used up */
     syms.splice(at, 0, '');     /* the open slot appears here */
     writeWbSticky({ syms });
+    wbSlotTouched = null;
     return at;
   }
   let j = at - 1;
@@ -5599,6 +5603,7 @@ function wbInsertSlot(at) {
   syms.splice(j, 1);
   syms.splice(at - 1, 0, '');
   writeWbSticky({ syms });
+  wbSlotTouched = null;
   return at - 1;
 }
 /* Open a slot at `at` and put the owner in it, ready to type — the same editor a click on an empty
@@ -5620,11 +5625,15 @@ function wbInsertAndEdit(at) {
    array stays exactly WB_SLOTS long (never a `filter()` and never a hole left where the stock was — that is what emptying a slot's TEXT still does, an
    editing gesture with its own ruling). It settles an open editor first (it re-indexes; the draft is saved in ITS slot before the rows move), writes no
    chart and opens no editor — deleting is not navigation to the stock — and says nothing in the rail's note: a note would push the list down under the
-   pointer and the next click on the same × would land on the wrong stock. It CANCELS a quote lookup still running for that stock (`wbCancelLoad`: the slot
+   pointer and the next click on the same × would land on the wrong stock. It does NOTHING while a drag or press on a slot is in progress (the gesture holds a source index; Codex P2, PR #320). It CANCELS a quote lookup still running for that stock (`wbCancelLoad`: the slot
    was clicked a moment ago, and when the quote landed it would chart the stock just removed) and drops a stale "every slot is filled" note (a delete makes
    room) — both Codex P2, PR #320. Reached by the hover × (`wbSlotDelClick`) and the Delete / Backspace keys on a
    focused slot. The tab stop stays at this index, which now holds the next stock. Returns whether anything was removed. */
 function wbDeleteSlot(i) {
+  /* Not while a drag or a press on a slot is in progress: it holds a SOURCE INDEX, and a delete under it compacts the array, so the release would move the
+     successor of the deleted stock — a second stock changed by one keypress (Delete or Backspace pressed while still holding the mouse down; Codex P2,
+     PR #320). The key is ignored until the gesture ends. */
+  if (wbSlotDrag.on || wbSlotPress) return false;
   wbSettleEditor();
   if (!(i >= 0 && i < WB_SLOTS)) return false;
   const syms = readWbSticky().syms.slice();
@@ -5633,7 +5642,7 @@ function wbDeleteSlot(i) {
   syms.splice(i, 1);
   syms.push('');
   writeWbSticky({ syms });
-  if (wbSlotTouched === gone) wbSlotTouched = '';
+  wbSlotTouched = null;                /* rows moved: nothing is "the row last tapped" any more */
   wbCancelLoad(gone);                  /* a lookup still running for THIS stock must not chart it after it is gone (Codex P2, PR #320) */
   wbRailNoteClear();                   /* a delete makes room: an "every slot is filled" note still up from a refused push is now false (Codex P2, PR #320) */
   wbSlotClick = { i: -1, at: 0 };
@@ -5675,7 +5684,7 @@ function wbPushSymbol(sym) {
     next.splice(have, 1);
     next.splice(0, 0, sym);
     for (let i = 1; i < next.length; i++) if (next[i] === sym) next[i] = '';
-    if (next.some((s, i) => s !== syms[i])) writeWbSticky({ syms: next });
+    if (next.some((s, i) => s !== syms[i])) { writeWbSticky({ syms: next }); wbSlotTouched = null; }
     open = 0;
   } else {
     open = wbInsertSlot(0);
@@ -6195,7 +6204,7 @@ function wbSlotRow(i, sym, data) {
     /* Mark the row as the one last tapped — IN PLACE, because tapping a stock that cannot be charted repaints nothing, so the class has to be moved by hand. The
        state (`wbSlotTouched`) rebuilds it on every later repaint. */
     if (sym) {
-      wbSlotTouched = sym;
+      wbSlotTouched = { i, sym };
       for (const r of document.querySelectorAll('.wb-rail-manual .wb-rail-row.is-touched')) r.classList.remove('is-touched');
       row.classList.add('is-touched');
     }
@@ -6262,7 +6271,7 @@ function wbSlotRow(i, sym, data) {
     x.title = 'Remove ' + sym;
     x.setAttribute('aria-label', 'Remove ' + sym + ' from the list');
     row.appendChild(x);
-    if (sym === wbSlotTouched) row.classList.add('is-touched');
+    if (wbSlotTouched && wbSlotTouched.i === i && wbSlotTouched.sym === sym) row.classList.add('is-touched');
   }
   return row;
 }
