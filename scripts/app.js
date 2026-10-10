@@ -5524,6 +5524,10 @@ let wbSlotDragClickBtn = null;
 /* A one-line message under the entry box — "every slot is filled" is the only one. Module state, since
    renderWbSidebar rebuilds the rail; cleared by its own timer. */
 let wbRailMsg = '', wbRailMsgT = 0;
+/* The stock whose slot was last TAPPED or clicked, by symbol (not index: a push or a delete moves rows). Where nothing hovers (a phone) its row carries the delete
+   × (`.is-touched`), whether or not the stock ever charts — an unresolvable or delisted ticker is exactly the one to remove, and it never becomes the charted
+   symbol, so keying the × to the charted row left it without one (Codex P2, PR #320). '' = none. Cleared by a delete. */
+let wbSlotTouched = '';
 const wbSlotsEl = () => document.querySelector('.wb-rail-manual .wb-slots');
 function wbRepaintRail() {
   if (wbState && document.getElementById('wbSidebar')) renderWbSidebar(wbState.data);
@@ -5629,6 +5633,7 @@ function wbDeleteSlot(i) {
   syms.splice(i, 1);
   syms.push('');
   writeWbSticky({ syms });
+  if (wbSlotTouched === gone) wbSlotTouched = '';
   wbCancelLoad(gone);                  /* a lookup still running for THIS stock must not chart it after it is gone (Codex P2, PR #320) */
   wbRailNoteClear();                   /* a delete makes room: an "every slot is filled" note still up from a refused push is now false (Codex P2, PR #320) */
   wbSlotClick = { i: -1, at: 0 };
@@ -6187,6 +6192,13 @@ function wbSlotRow(i, sym, data) {
        navigation like any other, so it also breaks a pair already pending. */
     wbSlotClick = byPointer ? { i, at: now } : { i: -1, at: 0 };
     setWbSlotTab(i);                    /* Tab comes back to the slot last worked on */
+    /* Mark the row as the one last tapped — IN PLACE, because tapping a stock that cannot be charted repaints nothing, so the class has to be moved by hand. The
+       state (`wbSlotTouched`) rebuilds it on every later repaint. */
+    if (sym) {
+      wbSlotTouched = sym;
+      for (const r of document.querySelectorAll('.wb-rail-manual .wb-rail-row.is-touched')) r.classList.remove('is-touched');
+      row.classList.add('is-touched');
+    }
     /* NOTHING CHARTABLE ⇒ open the editor. An empty slot has nothing to chart,
        and neither does one holding a draft that fails WL_SYM_RE — a slot keeps
        whatever was typed even when it does not resolve (owner ruling), so `!!`
@@ -6241,7 +6253,7 @@ function wbSlotRow(i, sym, data) {
   });
   row.appendChild(b);
   /* The × that removes this stock (owner 2026-10-10). A SIBLING of the slot button, after it, shown only on hover / focus (and, where there is no hover, on
-     the charted row — see .wb-slot-del), out of the tab order (the column is ONE tab stop; the keyboard path is Delete / Backspace on the slot) and without
+     the row last tapped — `wbSlotTouched`, see .wb-slot-del), out of the tab order (the column is ONE tab stop; the keyboard path is Delete / Backspace on the slot) and without
      a listener of its own (`wbSlotDelClick` is delegated on the rail). An EMPTY slot has nothing to remove and gets none. */
   if (sym) {
     const x = el('button', 'wb-slot-del', '×');
@@ -6250,7 +6262,7 @@ function wbSlotRow(i, sym, data) {
     x.title = 'Remove ' + sym;
     x.setAttribute('aria-label', 'Remove ' + sym + ' from the list');
     row.appendChild(x);
-    if (sym === wbState.sym) row.classList.add('is-active');
+    if (sym === wbSlotTouched) row.classList.add('is-touched');
   }
   return row;
 }

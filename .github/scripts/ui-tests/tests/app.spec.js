@@ -9802,12 +9802,30 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   await page.mouse.up(); await settle();
   expect(await first(5), 'and releasing elsewhere removes nothing').toEqual([R[1], R[2], R[3], R[4], '']);
 
-  // ── 8. where there is NO hover (a phone) the charted row carries its ×, because a tap has just selected it; with a hover it stays hidden until pointed at
-  await seed({ 0: R[0], 1: R[1], 2: R[2] }, { pick: 0 });
+  // ── 8. where there is NO hover (a phone) the row LAST TAPPED carries its ×, whether or not that stock charts: a delisted or mistyped ticker never becomes the charted
+  //       symbol and is the one most worth removing (Codex P2, PR #320). With a hover the × stays hidden until a row is pointed at or focused.
+  await seed({ 0: 'ZZQX', 1: 'ZZQY' });                  // chartable-looking, not roster names: in demo their lookup is refused, so neither ever becomes the charted symbol
   await page.mouse.move(2, 2);
   await settle();
   const noHover = await page.evaluate(() => matchMedia('(hover: none)').matches);
-  expect(await visibleDels(), noHover ? 'no hover: the charted row shows its × (and no other row does)' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['0'] : []);
+  const park = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.mouse.move(2, 2); await settle(); };
+  expect(await visibleDels(), 'nothing has been tapped yet: no × shows').toEqual([]);
+  await slotBtn(page, 0).click();
+  await park();
+  expect(await charted(), 'ZZQX could not be charted — the charted symbol did not change').toBe(R[0]);
+  expect(await visibleDels(), noHover ? 'no hover: the TAPPED row shows its × though its stock never charted (and no other row does)' : 'a hover device: nothing shows until a row is pointed at').toEqual(noHover ? ['0'] : []);
+  await page.evaluate(() => renderWbSidebar(wbState.data));   // a repaint rebuilds every row from state: the tapped row keeps its ×
+  expect(await visibleDels(), 'and it survives a repaint of the rail').toEqual(noHover ? ['0'] : []);
+  await slotBtn(page, 1).click();
+  await park();
+  expect(await visibleDels(), 'tapping another row moves the × to it').toEqual(noHover ? ['1'] : []);
+  // a delete forgets the tapped stock: pushing the same symbol back in is a NEW row and does not inherit the ×
+  await slotBtn(page, 1).focus();
+  await page.keyboard.press('Delete'); await settle();
+  await page.locator('.wb-rail-manual .wb-entry-input').fill('ZZQY');
+  await page.locator('.wb-rail-manual .wb-entry-input').press('Enter'); await settle();
+  await park();
+  expect(await visibleDels(), 'a deleted stock that comes back is not "tapped" any more').toEqual([]);
 
   // ── 8b. a delete makes room, so a "every slot is filled" note a refused push left up is false now and goes at once (Codex P2, PR #320) — read at once, not through a
   //        retrying expect: the note clears itself after 4 s and a polling assertion would wait the bug out

@@ -619,10 +619,10 @@ Gesture rules, each of which S64 holds:
   row became `position: relative`), NOT a flex item, because the ticker never abbreviates and the 78px column has ~3.9px of headroom at ten characters: a
   × that took width would clip a symbol at rest, which S40 forbids. The price of an overlay is that while it is up it covers the last ~18px of THAT row's
   text (only the row being pointed at, whose tooltip names the stock). `display: none` at rest; shown on the row's `:hover` and `:focus-within`; under
-  `@media (hover: none)` — a phone, where nothing hovers — on the CHARTED row (`.is-active`), the one a tap has just selected; hidden during a drag
+  `@media (hover: none)` — a phone, where nothing hovers — on the row LAST TAPPED (`.is-touched`) — `wbSlotTouched` holds the SYMBOL, not the index (a push or a delete moves rows), and the slot's click handler moves the class IN PLACE because tapping a stock that cannot be charted repaints nothing, while every repaint rebuilds it from the state. It was the CHARTED row (`.is-active`) first, and Codex (P2, PR #320) caught what that misses: a delisted or mistyped ticker never becomes the charted symbol and is exactly the one to remove, so it had no × on a phone; a delete forgets the tapped stock, so one pushed back in is a new row. Hidden during a drag
   (`body.wb-drag-active`, `.wb-dragging`); never red. **Delete / Backspace** on a focused slot do the same (`preventDefault`, so Backspace never navigates
   back; nothing happens on an empty slot) — the keyboard path, as F2 is for the editor. No Undo was built: a push re-adds a stock in one step. S67 pins it
-  (18 mutants, each caught — one first survived: a × in the flow instead of an overlay passed every position check, so S67 also asserts the slot button is exactly as wide with the × up); S45's old "no ×" assertion still holds for `.wb-rail-x`, the per-slot × of the pre-2026-08-26 stack.
+  (21 mutants, each caught — one first survived: a × in the flow instead of an overlay passed every position check, so S67 also asserts the slot button is exactly as wide with the × up); S45's old "no ×" assertion still holds for `.wb-rail-x`, the per-slot × of the pre-2026-08-26 stack.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 

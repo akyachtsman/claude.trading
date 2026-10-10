@@ -863,13 +863,13 @@
   .wb-rail-row .wb-side-btn { flex: 1 1 auto; min-width: 0; }
   /* The × that removes a stock (owner 2026-10-10: "I also want to be able to delete symbols from that list"). An OVERLAY on the row's right edge, NOT a flex
      item: the ticker never abbreviates and the 78px column has ~3.9px of headroom at ten characters, so a × that took width would clip a symbol at rest (S40).
-     It is hidden at rest and appears on hover or keyboard focus of its row; where there is no hover at all (a phone) it is shown on the CHARTED row, which a
-     tap has just selected. While it is up it covers the last ~18px of THAT row's text — only the row being pointed at, and its tooltip and accessible name
+     It is hidden at rest and appears on hover or keyboard focus of its row; where there is no hover at all (a phone) it is shown on the row LAST TAPPED,
+     whether or not that stock charts — a delisted or mistyped ticker never becomes the charted symbol and is the one most worth removing. While it is up it covers the last ~18px of THAT row's text — only the row being pointed at, and its tooltip and accessible name
      say which stock goes. Never red: red on this desk means P&L. */
   .wb-slot-del { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: 18px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text-secondary); font: 600 13px/1 var(--font-sans); cursor: pointer; touch-action: manipulation; }
   .wb-rail-row:hover .wb-slot-del, .wb-rail-row:focus-within .wb-slot-del { display: block; }
   .wb-slot-del:hover, .wb-slot-del:focus-visible { color: var(--color-text-primary); outline: 1px solid var(--color-accent-bright); outline-offset: -1px; }
-  @media (hover: none) { .wb-rail-row.is-active .wb-slot-del { display: block; } }
+  @media (hover: none) { .wb-rail-row.is-touched .wb-slot-del { display: block; } }
   /* A stock being carried shows no ×, so a drag's release can never land on one. */
   body.wb-drag-active .wb-slot-del, .wb-rail-row.wb-dragging .wb-slot-del { display: none; }
   /* The SYMBOL must never be abbreviated at the budgeted size — `AV…` names no
