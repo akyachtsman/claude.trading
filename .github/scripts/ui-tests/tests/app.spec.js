@@ -9764,6 +9764,12 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   const before = JSON.stringify(await storedSyms(page));
   await page.keyboard.press('Delete'); await settle();
   expect(JSON.stringify(await storedSyms(page)), 'Delete on an EMPTY slot does nothing').toBe(before);
+  // ...and its default is still prevented there: a browser that maps Backspace on a non-editable control to history navigation must not leave the dashboard from an empty slot (Codex P2, PR #320)
+  expect(await page.evaluate(() => {
+    const b = document.querySelector('[data-slot="5"] .wb-slot');
+    return ['Backspace', 'Delete'].map((key) => { const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); b.dispatchEvent(e); return e.defaultPrevented; });
+  }), 'Backspace and Delete on an empty slot are prevented, though they delete nothing').toEqual([true, true]);
+  expect(JSON.stringify(await storedSyms(page)), 'and still delete nothing').toBe(before);
   // a HELD key auto-repeats keydown, and each delete puts focus back on the same index — so without a guard every repeat would erase the successor, stock by stock,
   // with no confirmation (Codex P1, PR #320). Playwright marks a second `down` of a key that is still held as a repeat.
   for (const key of ['Delete', 'Backspace']) {

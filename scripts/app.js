@@ -6253,8 +6253,10 @@ function wbSlotRow(i, sym, data) {
     /* Delete / Backspace remove this stock (owner 2026-10-10) — the keyboard path to the hover ×, and the same keys the watchlist tiles use. preventDefault so
        Backspace never navigates back. An EMPTY slot has nothing to remove: the key is simply left alone there. */
     if (ev.key === 'Delete' || ev.key === 'Backspace') {
-      if (!sym) return;
+      /* Prevented BEFORE the empty-slot check: a browser that maps Backspace on a non-editable control to history navigation would otherwise leave the dashboard
+         on an empty slot, where the key is a no-op (Codex P2, PR #320). */
       ev.preventDefault();
+      if (!sym) return;
       /* ONE physical keypress deletes AT MOST ONE stock. A held key auto-repeats `keydown`, the delete repaints the rail and puts focus back on the same index, so
          every repeat would land on the successor and erase the list stock by stock, with no confirmation and no Undo (Codex P1, PR #320). Same rule the dialogs
          apply to Escape. */
