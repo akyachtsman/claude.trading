@@ -877,6 +877,11 @@
     .wb-rail-row.is-touched .wb-slot-del { display: block; }
     .wb-rail-row.is-touched.is-armed .wb-slot-del { pointer-events: auto; }
   }
+  /* The same × on an OPEN EDITOR's row (Codex P2, PR #320): always shown there, and not tappable until `.is-armed` (a timer) because the second tap of a double-tap
+     lands exactly on it; the input leaves room so what is typed never runs under it. Placed after the (hover: none) rules so it wins at equal specificity. */
+  .wb-slot-del--edit { display: block; pointer-events: none; }
+  .wb-slot-del--edit.is-armed { pointer-events: auto; }
+  .wb-slot-input.has-del { padding-right: 20px; }
   /* A stock being carried shows no ×, so a drag's release can never land on one. */
   body.wb-drag-active .wb-slot-del, .wb-rail-row.wb-dragging .wb-slot-del { display: none; }
   /* The SYMBOL must never be abbreviated at the budgeted size — `AV…` names no

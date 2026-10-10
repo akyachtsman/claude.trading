@@ -9898,6 +9898,23 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
     expect(await first(4), 'a tap on the armed × removes that stock').toEqual(['ZZQX', 'ZZQZ', '', '']);
   }
 
+  // ── 8d. a stored value that is NOT a ticker (a typo a slot keeps) opens its editor on the FIRST tap — nothing to chart, S45 — which replaces the row the touched-row × lived
+  //       on; the editor row carries the × too, so a phone can still remove it instead of emptying the text and leaving a hole (Codex P2, PR #320)
+  await seed({ 0: '!!', 1: R[1] });
+  await park();
+  await slotBtn(page, 0).click();
+  await page.waitForTimeout(150);
+  expect(await editorSlot(page), 'a stored value that is not a ticker opens its editor on the first tap').toBe('0');
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="0"] .wb-slot-del--edit')).pointerEvents), 'the editor row carries a ×, not tappable at first (the second tap of a double-tap lands on it)').toBe('none');
+  await page.waitForTimeout(ARMED);
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="0"] .wb-slot-del--edit')).pointerEvents), 'and tappable once the window has passed').toBe('auto');
+  const eb = await del(0).boundingBox();
+  const ex = eb.x + eb.width / 2, ey = eb.y + eb.height / 2;
+  if (noHover) await page.touchscreen.tap(ex, ey); else await page.mouse.click(ex, ey);
+  await settle();
+  expect(await first(3), 'it removed the stock and the list closed over the gap — no hole').toEqual([R[1], '', '']);
+  expect(await editorCount(page), 'and no editor is left open').toBe(0);
+
   // ── 8a. duplicates (a slot keeps whatever was typed, so twins can exist): only the row actually TAPPED carries the touch ×, through a repaint, and a re-indexing
   //       drops the mark instead of leaving it on whichever row now sits at that index (Codex P2, PR #320)
   await seed({ 0: 'DUPX', 1: 'DUPX', 2: 'DUPX' });

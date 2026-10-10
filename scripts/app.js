@@ -6119,6 +6119,22 @@ function wbSlotRow(i, sym, data) {
       }, 0);
     });
     row.appendChild(inp);
+    /* A stored stock can be removed from its own EDITOR too (Codex P2, PR #320). A stored value that fails WL_SYM_RE (`!!`, a typo a slot keeps) opens its editor on
+       the FIRST tap — there is nothing to chart — and that replaces the row the touched-row × lived on, so on a phone the only way out was to empty the text, which
+       leaves a hole. Same overlay, same delegated click handler (`wbSlotDelClick`), and the same arming: not tappable for WB_SLOT_DEL_ARM_MS, because the second tap
+       of a double-tap lands exactly here. `mousedown` is cancelled so the press cannot blur the input — a blur closes and REPLACES this row before the click lands, and
+       the click would never be delivered. An empty slot has nothing to remove. */
+    if (sym) {
+      const x = el('button', 'wb-slot-del wb-slot-del--edit', '×');
+      x.type = 'button';
+      x.tabIndex = -1;
+      x.title = 'Remove ' + sym;
+      x.setAttribute('aria-label', 'Remove ' + sym + ' from the list');
+      x.addEventListener('mousedown', ev => ev.preventDefault());
+      setTimeout(() => x.classList.add('is-armed'), WB_SLOT_DEL_ARM_MS);
+      row.appendChild(x);
+      inp.classList.add('has-del');
+    }
     return row;
   }
 
