@@ -617,7 +617,7 @@ Gesture rules, each of which S64 holds:
   `@media (hover: none)` — a phone, where nothing hovers — on the CHARTED row (`.is-active`), the one a tap has just selected; hidden during a drag
   (`body.wb-drag-active`, `.wb-dragging`); never red. **Delete / Backspace** on a focused slot do the same (`preventDefault`, so Backspace never navigates
   back; nothing happens on an empty slot) — the keyboard path, as F2 is for the editor. No Undo was built: a push re-adds a stock in one step. S67 pins it
-  (mutant count: added once verified); S45's old "no ×" assertion still holds for `.wb-rail-x`, the per-slot × of the pre-2026-08-26 stack.
+  (14 mutants, each caught — one first survived: a × in the flow instead of an overlay passed every position check, so S67 also asserts the slot button is exactly as wide with the × up); S45's old "no ×" assertion still holds for `.wb-rail-x`, the per-slot × of the pre-2026-08-26 stack.
 - **Names.** `wbDrag` already exists (the chart's pan/resize drag, `endWbDrag`); everything here is
   `wbSlotDrag*` / `WB_SLOT_*`. Do not merge them.
 

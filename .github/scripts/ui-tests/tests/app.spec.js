@@ -9708,8 +9708,12 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   expect(await tabStops(page), 'one tab stop').toHaveLength(1);
 
   // ── 2. it shows on the row you point at or focus, and on no other
+  const btnW = (n) => slotBtn(page, n).evaluate((b) => b.getBoundingClientRect().width);
+  const w0 = await btnW(1);
   await slotBtn(page, 1).focus();
   expect(await visibleDels(), 'a focused row shows its ×').toEqual(['1']);
+  expect(await btnW(1), 'and it takes NO width: the slot button is exactly as wide with the × up (a ticker never abbreviates — a × in the flow would squeeze a ten-character symbol)').toBeCloseTo(w0, 0);
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-slot="1"] .wb-slot-del')).position), 'it is an overlay on the row, not a flex item').toBe('absolute');
   if (canHover) {
     await page.evaluate(() => document.activeElement && document.activeElement.blur());   // slot 1 is still focused from the check above, and a focused row shows its × too
     await page.mouse.move(2, 2);
