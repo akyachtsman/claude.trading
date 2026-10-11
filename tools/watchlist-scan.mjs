@@ -37,6 +37,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -338,6 +339,15 @@ export function buildReport(out, built, now) {
   return out;
 }
 
+/* The holdings file the caller hands in: a JSON array of symbols. A missing or unreadable file must not crash the run (the emails for the watchlist
+   still have to go out): it is reported as `holdings.error` instead (Codex, PR #321). */
+export function readHoldingsList(file) {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return { error: ('holdings file unreadable: ' + (e.code || e.message)).slice(0, 80) }; }
+  if (!Array.isArray(raw)) return { error: 'holdings file is not a JSON array' };
+  return { list: [...new Set(raw.map(s => String(s).toUpperCase().replace(/\s+/g, '')).filter(s => HOLDING_RE.test(s)))] };
+}
+
 /* Fetch the holdings' bars, unless there is no report session: every holding is refused then without looking at its bars, so a Yahoo outage (the
    likeliest cause) must not also cost the full holdings budget before the failure emails go out (Codex, PR #321). */
 export async function fetchHoldings(list, newest, fetchOne) {
@@ -383,10 +393,13 @@ async function main() {
 
   const hold = arg('holdings');
   if (hold) {
-    const list = [...new Set(JSON.parse(fs.readFileSync(hold, 'utf8')).map(s => String(s).toUpperCase().replace(/\s+/g, '')).filter(s => HOLDING_RE.test(s)))];
+    const read = readHoldingsList(hold), list = read.list || [];
+    if (read.error) out.holdings = { error: read.error, requested: 0, checked: 0, referenceSession: out.newestBar, redStreak: [], stale: [], unpriced: [] };
+    else {
     const holdDeadline = Date.now() + HOLDINGS_BUDGET_MS;
     const H = await fetchHoldings(list, out.newestBar, sym => bars(sym, now, holdDeadline));
     out.holdings = buildHoldings(H, list.length, out.newestBar, minStreak);
+    }
   }
   console.log(JSON.stringify(out, null, 1));
   process.exit(out.ok ? 0 : 3);
@@ -601,6 +614,18 @@ async function selftest() {
   const hb2 = (dates, closes) => ({ rows: dates.map((date, i) => ({ date, c: closes[i] })) });
   const hold = buildHoldings([['CUR', hb2(D5.slice(1), [9, 8, 7, 6])], ['OLD', hb2(D5.slice(0, 4), [4, 3, 2, 1])], ['ERR', { error: 'unknown to Yahoo' }], ['UP', hb2(D5.slice(1), [1, 2, 3, 4])]], 4, '2026-10-09', 3);
   eq('holdings: a streak, a stale one and an unpriced one each land in their list, and the checked count excludes the last two', [hold.redStreak.map(x => x.symbol), hold.stale.map(x => x.symbol), hold.unpriced.map(x => x.symbol), hold.checked, hold.referenceSession], [['CUR'], ['OLD'], ['ERR'], 2, '2026-10-09']);
+  const tdir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-hold-'));
+  try {
+    const hf = (name, text) => { const f = path.join(tdir, name); fs.writeFileSync(f, text); return f; };
+    eq('a good holdings file is read: upper-cased, padding stripped, junk dropped, repeats once', readHoldingsList(hf('ok.json', JSON.stringify(['qcom  261218C00195000', 'AAPL', 'aapl', '!!', 5]))).list, ['QCOM261218C00195000', 'AAPL', '5']);
+    eq('a missing holdings file is an error, not a crash', typeof readHoldingsList(path.join(tdir, 'nope.json')).error, 'string');
+    eq('...naming why', /ENOENT/.test(readHoldingsList(path.join(tdir, 'nope.json')).error), true);
+    eq('a holdings file that is not JSON is an error', typeof readHoldingsList(hf('bad.json', '{nope')).error, 'string');
+    eq('a holdings file that is JSON but not an array is an error', readHoldingsList(hf('obj.json', '{"a":1}')).error, 'holdings file is not a JSON array');
+    const cliH = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??', '--holdings=' + path.join(tdir, 'nope.json')], { encoding: 'utf8', timeout: 30000 });
+    let cliHOut = {}; try { cliHOut = JSON.parse(cliH.stdout); } catch { /* reported by the check below */ }
+    eq('the real CLI with a missing holdings file still prints its report (here not ok: nothing to scan) with holdings.error, instead of crashing', [cliH.status, cliHOut.ok, typeof (cliHOut.holdings || {}).error], [3, false, 'string']);
+  } finally { fs.rmSync(tdir, { recursive: true, force: true }); }
   let fetchCalls = 0; const countFetch = async sym => { fetchCalls++; return hb2(D5.slice(1), [9, 8, 7, 6]); };
   const skipped = await fetchHoldings(['A', 'B', 'C'], null, countFetch);
   eq('with no report session no holding is fetched at all, and each still gets an entry to be refused', [fetchCalls, skipped.map(x => x[0])], [0, ['A', 'B', 'C']]);

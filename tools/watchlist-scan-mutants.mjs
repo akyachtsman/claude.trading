@@ -171,6 +171,11 @@ const MUTANTS = [
   ["fetchHoldings fetches even with no report session", "if (!newest) return list.map(sym => [sym, { error: 'not fetched: no report session' }]);", ""],
   ["fetchHoldings never fetches", "return pool(list, 8, async sym => [sym, await fetchOne(sym)]);", "return list.map(sym => [sym, { error: 'x' }]);"],
   ["main skips fetchHoldings", "const H = await fetchHoldings(list, out.newestBar, sym", "const H = await fetchHoldings(list, 'x', sym", true],   // changes only how many requests are made, never the report (fetchHoldings's own check pins the skip)
+  ["readHoldingsList throws on a missing file", "catch (e) { return { error: ('holdings file unreadable: '", "catch (e) { throw e; return { error: ('holdings file unreadable: '"],
+  ["readHoldingsList accepts a non-array", "if (!Array.isArray(raw)) return { error:", "if (false) return { error:"],
+  ["readHoldingsList keeps repeats", "[...new Set(raw.map(s => String(s).toUpperCase()", "[...(raw.map(s => String(s).toUpperCase()"],
+  ["readHoldingsList loses its reason", "'holdings file unreadable: ' + (e.code || e.message)", "'holdings file unreadable'"],
+  ["main ignores a holdings error", "if (read.error) out.holdings = {", "if (false) out.holdings = {"],
 ];
 
 let caught = 0, equivalent = 0; const bad = [];

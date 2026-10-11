@@ -34,6 +34,8 @@
 
 **Holdings are read as of the report session.** A holding bar AFTER it (the reference lagged, or the holding's feed is a session ahead) is cut before anything is counted, so a streak never runs through a day the email is not dated for; one with nothing left is unpriced (`no bars as of <date>`). The Routine runs ONE scan with `--holdings` so the reference is the roster's own session, not a stand-in symbol's (Codex, PR #321).
 
+**A missing holdings file never stops the report.** `readHoldingsList` turns a missing, unreadable or non-array file into `holdings.error` (the run still prints the watchlist report, and exits as it otherwise would) instead of throwing, so the watchlist emails still go out (Codex, PR #321).
+
 **No report session, no holdings report.** If nothing on the watchlist could be priced there is no session to date the holdings by, so every holding is listed unpriced (`no report session: the watchlist could not be priced`) and none is evaluated; email 3 says so, and its subject date is then today's date (Codex, PR #321).
 
 **A stale holding is always listed.** A holding whose last bar predates that session (`holdings.referenceSession`) goes under `holdings.stale` (checked BEFORE the minimum-bars test, so a short history is stale too, not unpriced) with its last bar and the red days it had as of then (`redDaysThen`), whether or not they make a streak: it could not be checked through the session, and "none of your positions has 3 red days" must not be said of it. It is never filed as a current streak (`classifyHolding`; `fileHolding` puts each kind in its list and drops nothing but "no streak"). `holdings.checked` is the number actually evaluated (requested less the stale and the unpriced), and "none has a run" is only ever said of that number (Codex, PR #321).
@@ -57,8 +59,8 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 182 checks, no network (two run the real CLI offline)
-    node tools/watchlist-scan-mutants.mjs               # 154 one-line changes to the tool: 152 make the selftest fail, 2 cannot change the report (marked)
+    node tools/watchlist-scan.mjs --selftest            # 188 checks, no network (three run the real CLI offline)
+    node tools/watchlist-scan-mutants.mjs               # 159 one-line changes to the tool: 157 make the selftest fail, 2 cannot change the report (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --holdings=holdings.json              # plus red-day runs for a JSON array of symbols, read against the roster's session
@@ -91,7 +93,9 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
          select distinct p->>'sym' as sym from (select distinct on (account_key) positions from desk_account_snapshots where user_id = (select id from desk_users where not is_test) order by account_key, as_of desc) s, jsonb_array_elements(s.positions) p where (p->>'qty')::numeric > 0 and (p->>'sym') ~ '^[A-Za-z0-9. ^=-]{1,24}$' order by 1;
        Save the symbols as a JSON array of strings in /tmp/holdings.json. Never read, print, store or email quantities, dollar values, balances or account details.
        If the query fails, say so in email 3 and run step 3 without --holdings.
-    3. ONE SCAN. node tools/watchlist-scan.mjs --holdings=/tmp/holdings.json > /tmp/scan.json ; echo "exit $?"
+    3. ONE SCAN. If /tmp/holdings.json exists: node tools/watchlist-scan.mjs --holdings=/tmp/holdings.json > /tmp/scan.json ; echo "exit $?"
+       If it does not (the owner could not be identified, or the query failed): run the same command WITHOUT --holdings, and email 3 says its holdings
+       could not be read. (A missing file would not crash the scan anyway: it is reported as holdings.error, which email 3 also says.)
        The holdings are read against the SAME report session as the watchlist (the roster's own), never a stand-in symbol's.
        Exit 0 = good. Exit 3 or ok:false = NOT trustworthy: emails 1 and 2 say so at the top, quoting "error", instead of listing "none".
        Exit 2 = the roster could not be read or is over the limit (no holdings were run): emails 1 and 2 say so, quoting "error"; then run
