@@ -110,9 +110,7 @@ async function bars(symbol, now) {
       const r = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20000) });
       if (r.status === 404) return { error: 'unknown to Yahoo' };
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const res = (await r.json()).chart.result[0], q = res.indicators.quote[0];
-      let rows = res.timestamp.map((t, i) => ({ date: nyParts(new Date(t * 1000)).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 }))
-        .filter(x => Number.isFinite(x.c));                                    // holdings need only the close; the scan demands all four (fullBars)
+      let rows = chartRows((await r.json()).chart.result[0]);
       rows = dropFormingBar(rows, now);
       return rows.length ? { rows } : { error: 'no bars' };
     } catch (e) { err = String(e.message || e).slice(0, 60); await sleep(1500 * (a + 1)); }
@@ -140,6 +138,13 @@ async function roster(db) {
 /* ── the scan ─────────────────────────────────────────────────────────────── */
 /* A scan needs all four prices of a bar, each finite and above zero: the dashboard's parser (`parseYahooChartOHLC`) drops any other row, and a
    null open would otherwise throw in roundBars and abort the whole run (Codex, PR #321). Holdings need only the close and do not go through this. */
+/* Yahoo's chart result -> dated bars. Holdings need only a good close, so that is all this keeps; a scan demands all four prices on top (fullBars). */
+export function chartRows(res) {
+  const q = res.indicators.quote[0];
+  return res.timestamp.map((t, i) => ({ date: nyParts(new Date(t * 1000)).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 })).filter(hasClose);
+}
+/* A usable close: finite and above zero (a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a 3-day losing streak ending -100%). */
+export const hasClose = x => Number.isFinite(x.c) && x.c > 0;
 export const fullBars = rows => rows.filter(x => [x.o, x.h, x.l, x.c].every(n => Number.isFinite(n) && n > 0));   // desk-charts: `Number.isFinite(n) && n > 0` (a zero is a sentinel, not a price)
 
 /* Bars a symbol needs before a crossing can be judged on each of the last `lookback` sessions. %D first has a value at bar k+kSmooth+d-2
@@ -152,17 +157,37 @@ export function prepareRows(b, cfg, lookback) {
   return !rows || rows.length < need ? { why: b.error || `under ${need} bars` } : { rows };
 }
 
-/* The fetched results -> the scans that stand, and the symbols that could not be scanned with why. Nothing here throws. */
+/* The report's session is the date most symbols' newest bar falls on (ties go to the later date), NOT the newest bar any symbol has: a 24/7
+   asset in the roster (BTC-USD is in the default roster) still has Sunday's bar on a Monday morning while US equities end on Friday, and taking
+   the maximum would make Sunday the session, mark every equity stale and fail the coverage check every Monday (Codex, PR #321). */
+export function dominantSession(dates) {
+  const n = new Map();
+  for (const d of dates) n.set(d, (n.get(d) || 0) + 1);
+  let best = null;
+  for (const [d, c] of n) if (best === null || c > n.get(best) || (c === n.get(best) && d > best)) best = d;
+  return best;
+}
+
+/* The fetched results -> the scans that stand, and the symbols that could not be scanned with why. Nothing here throws.
+   A symbol whose bars run PAST the report session (a 24/7 asset) is read as of that session: its newer bars are cut, so it is scanned on the
+   same completed session as everything else rather than excluded. */
 export function buildScans(results, dash, pane, lookback) {
-  const cfg = pane === 2 ? dash.STOCH : dash.WSTOCH, scans = [], unpriced = [];
+  const cfg = pane === 2 ? dash.STOCH : dash.WSTOCH, scans = [], unpriced = [], ready = [];
+  const need = barsNeeded(cfg, lookback);
   for (const [sym, b] of results) {
     const prep = prepareRows(b, cfg, lookback);
-    if (prep.why) { unpriced.push({ symbol: sym, why: prep.why }); continue; }
-    const one = scanOrReason(dash, sym, prep.rows, pane, lookback);
+    if (prep.why) unpriced.push({ symbol: sym, why: prep.why });
+    else ready.push([sym, prep.rows]);
+  }
+  const session = dominantSession(ready.map(([, rows]) => rows[rows.length - 1].date));
+  for (const [sym, all] of ready) {
+    const rows = all.filter(x => x.date <= session);
+    if (rows.length < need) { unpriced.push({ symbol: sym, why: `under ${need} bars as of ${session}` }); continue; }
+    const one = scanOrReason(dash, sym, rows, pane, lookback);
     if (one.why) { unpriced.push({ symbol: sym, why: one.why }); continue; }
     scans.push({ sym, r: one.r });
   }
-  return { scans, unpriced };
+  return { scans, unpriced, session };
 }
 
 /* One symbol's scan that cannot take the run down with it: whatever it throws becomes a reason, listed beside the unpriced. */
@@ -178,9 +203,8 @@ export const roundBars = rows => rows.map(x => ({ ...x, o: +x.o.toFixed(2), h: +
 
 /* A symbol's newest bar must be the report's session. Yahoo can omit the latest session for a few symbols (a halt, a thin name); their
    final bar is older, and "crossed on the last session" would then be said of an older day (Codex, PR #321). Those are listed, not scanned. */
-export function partitionBySession(scans) {
-  const newest = scans.map(x => x.r.asOf).sort().pop() || null;
-  return { newest, onSession: scans.filter(x => x.r.asOf === newest), stale: scans.filter(x => x.r.asOf !== newest).map(x => ({ symbol: x.sym, lastBar: x.r.asOf })) };
+export function partitionBySession(scans, newest) {
+  return { newest: newest || null, onSession: scans.filter(x => x.r.asOf === newest), stale: scans.filter(x => x.r.asOf !== newest).map(x => ({ symbol: x.sym, lastBar: x.r.asOf })) };
 }
 export const isStaleBar = (last, newest) => !!newest && last < newest;
 
@@ -188,9 +212,10 @@ export const isStaleBar = (last, newest) => !!newest && last < newest;
    that bar, whether or not they make a streak: it could not be checked through the session, and "none has 3 red days" must not be said of it
    (Codex, PR #321). Only a current holding can be a streak. */
 export function classifyHolding(sym, b, newest, minStreak) {
-  if (!b.rows || b.rows.length < minStreak + 1) return { kind: 'unpriced', rec: { symbol: sym, why: b.error || 'too few bars' } };
+  if (!b.rows || !b.rows.length) return { kind: 'unpriced', rec: { symbol: sym, why: b.error || 'no bars' } };
   const r2 = v => Math.round(v * 100) / 100, c = b.rows.map(x => x.c), streak = redStreak(c), last = b.rows[b.rows.length - 1].date;
   if (isStaleBar(last, newest)) return { kind: 'stale', rec: { symbol: sym, contract: describeContract(sym), lastBar: last, redDaysThen: streak } };
+  if (b.rows.length < minStreak + 1) return { kind: 'unpriced', rec: { symbol: sym, why: 'too few bars' } };
   if (streak < minStreak) return { kind: 'none' };
   const span = b.rows.slice(-(streak + 1)), skipped = span.reduce((n, x, ix) => n + (ix ? skippedWeekdays(span[ix - 1].date, x.date) : 0), 0);
   return { kind: 'streak', rec: { symbol: sym, contract: describeContract(sym), redDays: streak, asOf: last, closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
@@ -252,7 +277,7 @@ async function main() {
 
   const built = buildScans(results, dash, pane, lookback), scans = built.scans;
   out.unpriced.push(...built.unpriced);
-  const part = partitionBySession(scans);
+  const part = partitionBySession(scans, built.session);
   out.newestBar = part.newest; out.stale = part.stale; out.scanned = part.onSession.length;
   for (const x of part.onSession) for (const h of x.r.hits) fileHit(out, h);
   for (const k of ['up30', 'down80']) for (const w of ['latest', 'earlier']) out[k][w].sort((a, b) => a.symbol.localeCompare(b.symbol));
@@ -358,11 +383,17 @@ function selftest() {
   eq('roundBars leaves dates and volume alone', roundBars([{ date: 'd', o: 1.234, h: 1.236, l: 1.231, c: 1.235, v: 7 }]), [{ date: 'd', o: 1.23, h: 1.24, l: 1.23, c: 1.24, v: 7 }]);
   // a symbol whose newest bar is older than the report's session is listed, not scanned
   const mk = (sym, asOf) => ({ sym, r: { asOf, hits: [] } });
-  const part = partitionBySession([mk('A', '2026-10-09'), mk('B', '2026-10-09'), mk('C', '2026-10-08')]);
+  const part = partitionBySession([mk('A', '2026-10-09'), mk('B', '2026-10-09'), mk('C', '2026-10-08')], '2026-10-09');
   eq('the report session is the newest bar any symbol has', part.newest, '2026-10-09');
   eq('symbols on it are scanned', part.onSession.map(x => x.sym), ['A', 'B']);
   eq('an older last bar is quarantined with its date', part.stale, [{ symbol: 'C', lastBar: '2026-10-08' }]);
-  eq('nothing priced, nothing newest', partitionBySession([]).newest, null);
+  eq('nothing priced, nothing newest', partitionBySession([], null).newest, null);
+  eq('the session is the one it is told, not the newest scan it sees', partitionBySession([mk('A', '2026-10-10'), mk('B', '2026-10-09')], '2026-10-09').stale, [{ symbol: 'A', lastBar: '2026-10-10' }]);
+  // the report session is where most symbols end, so one 24/7 asset cannot make every equity stale
+  eq('the session is the date most symbols end on', dominantSession(['2026-10-09', '2026-10-09', '2026-10-11']), '2026-10-09');
+  eq('a tie goes to the later date', dominantSession(['2026-10-08', '2026-10-09']), '2026-10-09');
+  eq('...whichever order they arrive in', dominantSession(['2026-10-09', '2026-10-08']), '2026-10-09');
+  eq('no symbols, no session', dominantSession([]), null);
   eq('a holding whose last bar is older is stale', isStaleBar('2026-10-07', '2026-10-09'), true);
   eq('a holding on the latest session is not', isStaleBar('2026-10-09', '2026-10-09'), false);
   eq('no reference session, nothing is stale', isStaleBar('2026-10-07', null), false);
@@ -381,11 +412,19 @@ function selftest() {
   eq('a stale holding with NO streak is still listed, never dropped', [stNo.kind, stNo.rec.lastBar, stNo.rec.redDaysThen], ['stale', '2026-10-08', 0]);
   const stYes = classifyHolding('X', hb(D5.slice(0, 4), [13, 12, 11, 10]), '2026-10-09', 3);
   eq('a stale holding WITH a streak is stale, not a current streak', [stYes.kind, stYes.rec.redDaysThen], ['stale', 3]);
-  eq('too few bars is unpriced, with its reason', classifyHolding('X', hb(D5.slice(0, 2), [1, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'too few bars' } });
+  eq('a short stale holding is still listed as stale, not unpriced', classifyHolding('X', hb(D5.slice(0, 2), [2, 1]), '2026-10-09', 3).kind, 'stale');
+  eq('a holding with a single bar is stale when that bar is old', classifyHolding('X', hb([D5[0]], [5]), '2026-10-09', 3).rec.lastBar, '2026-10-05');
+  eq('no bars at all is unpriced', classifyHolding('X', { rows: [] }, '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'no bars' } });
+  const zr = classifyHolding('X', { rows: [7, 6, 5, 4, 0].map((c, i) => ({ date: '2026-10-0' + (5 + i), c })).filter(hasClose) }, '2026-10-08', 3);
+  eq('a zero close is a sentinel and is dropped: the run ends on the last real close (-20%), not -100%', [zr.kind, zr.rec.redDays, zr.rec.lastDayPct], ['streak', 3, -20]);
+  const yres = { timestamp: [1760000000, 1760086400, 1760172800, 1760227200], indicators: { quote: [{ open: [1, 1, 1, 1], high: [2, 2, 2, 2], low: [1, 1, 1, 1], close: [5, 0, null, 4], volume: [10, null, 7, 8] }] } };
+  eq('Yahoo rows keep a good close only: a zero and a null are dropped, the rest dated on the New York day (midnight UTC is still the evening before there)', chartRows(yres).map(r => [r.date, r.c, r.v]), [['2025-10-09', 5, 10], ['2025-10-11', 4, 8]]);
+  eq('a negative close is dropped too', [{ c: -1 }, { c: 0 }, { c: NaN }, { c: 0.25 }].filter(hasClose).length, 1);
+  eq('too few bars is unpriced, with its reason', classifyHolding('X', hb(D5.slice(3), [1, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'too few bars' } });
   eq('a fetch error is passed through', classifyHolding('X', { error: 'unknown to Yahoo' }, '2026-10-09', 3).rec.why, 'unknown to Yahoo');
   eq('with no reference session nothing is stale', classifyHolding('X', hb(D5.slice(0, 4), [13, 12, 11, 10]), null, 3).kind, 'streak');
   eq('a run across a missing weekday carries a caution', typeof classifyHolding('X', hb(['2026-10-05', '2026-10-06', '2026-10-08', '2026-10-09'], [10, 9, 8, 7]), '2026-10-09', 3).rec.caution, 'string');
-  eq('exactly minStreak bars cannot show a streak of minStreak (it needs one more close): unpriced', classifyHolding('X', hb(D5.slice(0, 3), [3, 2, 1]), '2026-10-09', 3).kind, 'unpriced');
+  eq('exactly minStreak bars cannot show a streak of minStreak (it needs one more close): unpriced', classifyHolding('X', hb(D5.slice(2), [3, 2, 1]), '2026-10-09', 3).kind, 'unpriced');
   eq('minStreak + 1 bars can', classifyHolding('X', hb(D5.slice(1), [4, 3, 2, 1]), '2026-10-09', 3).kind, 'streak');
   const hl = () => ({ redStreak: [], stale: [], unpriced: [] });
   eq('a streak is filed under redStreak only', fileHolding(hl(), { kind: 'streak', rec: 'a' }), { redStreak: ['a'], stale: [], unpriced: [] });
@@ -403,11 +442,20 @@ function selftest() {
   eq('121 complete bars cannot judge three sessions', prepareRows({ rows: full(121) }, cfg, 3).why, 'under 122 bars');
   eq('...but can judge the latest alone', prepareRows({ rows: full(121) }, cfg, 1).rows.length, 121);
   eq('a fetch error is passed through as the reason', prepareRows({ error: 'unknown to Yahoo' }, cfg, 3).why, 'unknown to Yahoo');
-  const rowsBoom = rows10.map((r, i) => (i ? r : { ...r, date: 'xx' })), pickyDash = { ...fake, stochSeries: (S, cfg) => { if (S.t[0] === 'xx') throw new Error('boom'); return fake.stochSeries(S, cfg); } };
+  const rowsBoom = rows10.map((r, i) => (i ? r : { ...r, c: 999 })), pickyDash = { ...fake, stochSeries: (S, cfg) => { if (S.c[0] === 999) throw new Error('boom'); return fake.stochSeries(S, cfg); } };
   const built = buildScans([['AAA', { rows: rows10 }], ['BBB', { error: 'unknown to Yahoo' }], ['CCC', { rows: rows10.slice(0, 2) }], ['DDD', { rows: rowsBoom }], ['EEE', { rows: rows10 }]], pickyDash, 1, 3);
   eq('good symbols are scanned, in order', built.scans.map(x => x.sym), ['AAA', 'EEE']);
   eq('the rest are listed with their reason; one failure does not stop the others', built.unpriced, [{ symbol: 'BBB', why: 'unknown to Yahoo' }, { symbol: 'CCC', why: 'under 4 bars' }, { symbol: 'DDD', why: 'could not be read: boom' }]);
   eq('a scanned entry carries its result', built.scans[0].r.asOf, '2026-10-09');
+  eq('the build reports the session it used', built.session, '2026-10-09');
+  // a 24/7 asset still has Sunday's bar on a Monday: it is read as of the session, and cannot make the equities stale
+  const wk = rows10.concat([{ date: '2026-10-10', o: 10, h: 11, l: 9, c: 20, v: 1 }, { date: '2026-10-11', o: 10, h: 11, l: 9, c: 21, v: 1 }]);
+  const mon = buildScans([['AAA', { rows: rows10 }], ['BBB', { rows: rows10 }], ['CCC', { rows: rows10 }], ['BTC-USD', { rows: wk }]], fake, 1, 3);
+  eq('the session is where most symbols end, not the newest bar anyone has', mon.session, '2026-10-09');
+  eq('...so the equities are all on it, and so is the 24/7 asset', mon.scans.map(x => [x.sym, x.r.asOf]), [['AAA', '2026-10-09'], ['BBB', '2026-10-09'], ['CCC', '2026-10-09'], ['BTC-USD', '2026-10-09']]);
+  eq('...with nobody stale', partitionBySession(mon.scans, mon.session).stale, []);
+  const thin = buildScans([['AAA', { rows: rows10 }], ['BBB', { rows: rows10 }], ['NEW', { rows: [...rows10.slice(7), { date: '2026-10-10', o: 1, h: 2, l: 1, c: 2, v: 1 }] }]], fake, 1, 3);
+  eq('cutting a 24/7 asset back to the session can leave it too short: it is listed with why', thin.unpriced, [{ symbol: 'NEW', why: 'under 4 bars as of 2026-10-09' }]);
   const three = [['AAA', { rows: rows10.slice(0, 3) }]];
   eq('three bars are enough for the swing pane here (it needs 3)', buildScans(three, fake, 2, 3).scans.length, 1);
   eq('...but not for the long-term pane (it needs 4): each pane uses ITS OWN minimum', buildScans(three, fake, 1, 3).unpriced, [{ symbol: 'AAA', why: 'under 4 bars' }]);
