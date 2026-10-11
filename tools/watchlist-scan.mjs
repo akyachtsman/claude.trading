@@ -1,0 +1,295 @@
+#!/usr/bin/env node
+/* The morning scan: which watchlist stocks just crossed a Pro 1 line, and which holdings have a run of red days.
+
+     node tools/watchlist-scan.mjs                       # whole roster, prints JSON
+     node tools/watchlist-scan.mjs --pane=2              # the SWING pane (Pro 2, 14-3-3) instead of Pro 1 (the default)
+     node tools/watchlist-scan.mjs --symbols=AAPL,MSFT   # just these (no roster call)
+     node tools/watchlist-scan.mjs --holdings=file.json  # also: trailing red-day runs for a JSON array of symbols
+     node tools/watchlist-scan.mjs --selftest            # the checks below, no network
+
+   Why this exists (owner 2026-10-11): the Ask-the-desk assistant reads one symbol per tool call and a turn is capped at
+   12 of them, so "all watchlist stocks crossing ..." came back as a partial scan of the first names. This computes every
+   symbol in one go (~240 in ~15 s) and hands a short, exact table to whoever writes the report.
+
+   The math is the DASHBOARD'S OWN: `stochSeries` and `rsiSeries` are loaded out of scripts/data.js, so a reading here is
+   the number Pro 1 / Pro 2 draw — it cannot drift from a second copy. Pro 1 is the LONG-TERM pane, the 92-15-15 slow
+   stochastic on daily bars (WSTOCH); %K is the red line, %D the yellow one, and its strip draws its lines at 30 and 80.
+
+   `--pane=2` runs the same two definitions on Pro 2, the SWING pane (14-3-3, daily). Pro 1 is the default because that is what
+   the owner's scheduled questions say; the Ask-the-desk answers to them have been reading the swing pane instead.
+
+   Definitions (the owner's own scheduled questions):
+     up30    %K was at or under 30 on the previous bar and is over 30 now, with %K above %D     ("crossing up 30 ... red above yellow")
+     down80  %K was at or over 80 on the previous bar and is under 80 now, with %K below %D     ("crossing down 80 ... red below yellow")
+   `latest` = it happened on the last COMPLETED session; `earlier` = on one of the two sessions before it (so a morning that
+   was skipped — a holiday, an outage — does not silently lose a crossing).
+
+   COMPLETED sessions only: a bar dated today is dropped while the NYSE session is open or settling (before 16:15 ET), the
+   same "last completed session" read the dashboard's scheduled asks give. A 7:00 AM Pacific run is 10:00 ET, mid-session.
+
+   Untrusted input: the roster is writable by anyone holding the site's public key (an accepted residual, see CLAUDE.md), so
+   only regex-validated TICKERS leave this script — never a list title or any free text — the same rule desk-ask applies.
+   Holdings are passed in by the caller at run time and are never stored here; nothing about money is read or printed.
+
+   Exit codes: 0 ok, 2 the roster could not be read, 3 too few symbols priced to trust the answer (JSON still printed with
+   ok:false — "no crossings" must never be what a broken data feed looks like). */
+import fs from 'node:fs';
+import vm from 'node:vm';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const TICKER_RE = /^[A-Z0-9.^=-]{1,10}$/;          // app.js WL_SYM_RE / desk-ask TICKER_RE
+const HOLDING_RE = /^[A-Z0-9.^=-]{1,24}$/;         // an OCC option symbol is longer than a ticker
+const MIN_PRICED = 0.9;                            // fraction of the roster that must price, or the run says ok:false
+const SETTLE_MIN = 16 * 60 + 15;                   // ET minutes: before this, a bar dated today is still forming
+const UA = 'Mozilla/5.0';                          // Yahoo wants one; never sent to Supabase (see CLAUDE.md)
+
+/* ── the dashboard's own math ─────────────────────────────────────────────── */
+function loadDashboard() {
+  const stub = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  const ctx = { console, Intl, Date, Math, JSON, window: {}, document: {}, location: { search: '' }, navigator: {}, localStorage: stub, sessionStorage: stub };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'scripts/data.js'), 'utf8') +
+    '\n;globalThis.__dash = { stochSeries, rsiSeries, STOCH, WSTOCH };', ctx);
+  const cfg = vm.createContext({ console });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'scripts/config.js'), 'utf8') + '\n;globalThis.__db = DESK_DB;', cfg);
+  return { ...ctx.__dash, db: cfg.__db };
+}
+
+/* ── pure helpers (the selftest drives these) ─────────────────────────────── */
+export const yahooSymbol = s => String(s).replace(/\s+/g, '').replace(/^([A-Z]+)\.([A-Z])$/, '$1-$2');   // BRK.B -> BRK-B; OCC padding stripped
+
+export function crossings(k, d, lookback = 3) {
+  const n = k.length, hit = { up30: null, down80: null };
+  for (let ago = 0; ago < lookback; ago++) {
+    const i = n - 1 - ago;
+    if (i < 1 || k[i] == null || k[i - 1] == null || d[i] == null) continue;
+    if (!hit.up30 && k[i - 1] <= 30 && k[i] > 30 && k[i] > d[i]) hit.up30 = { ago };
+    if (!hit.down80 && k[i - 1] >= 80 && k[i] < 80 && k[i] < d[i]) hit.down80 = { ago };
+  }
+  return hit;
+}
+
+export function redStreak(closes) {
+  let n = 0;
+  for (let i = closes.length - 1; i >= 1 && closes[i] < closes[i - 1]; i--) n++;
+  return n;
+}
+
+/* Weekdays that fall strictly between two bar dates ('YYYY-MM-DD'). A thinly traded option has no bar on a day it never traded,
+   so "3 red days" across a hole is not 3 consecutive sessions; weekends are not holes (holidays can read as one: a harmless false caution). */
+export function skippedWeekdays(a, b) {
+  let n = 0;
+  for (let t = Date.parse(a + 'T12:00:00Z') + 864e5; t < Date.parse(b + 'T12:00:00Z'); t += 864e5) { const w = new Date(t).getUTCDay(); if (w !== 0 && w !== 6) n++; }
+  return n;
+}
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export function describeContract(sym) {            // OCC: root + YYMMDD + C/P + strike*1000 (8 digits)
+  const m = /^([A-Z.]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/.exec(sym);
+  return m ? `${m[1]} ${MON[+m[3] - 1]} ${+m[4]} 20${m[2]} ${+m[6] / 1000} ${m[5] === 'C' ? 'Call' : 'Put'}` : null;
+}
+
+const NY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+export function nyParts(date) {
+  const p = Object.fromEntries(NY.formatToParts(date).map(x => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, mins: +p.hour * 60 + +p.minute };
+}
+export function dropFormingBar(rows, now = new Date()) {
+  const ny = nyParts(now), last = rows[rows.length - 1];
+  return last && last.date === ny.day && ny.mins < SETTLE_MIN ? rows.slice(0, -1) : rows;
+}
+
+/* ── network ──────────────────────────────────────────────────────────────── */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function bars(symbol, now) {
+  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(yahooSymbol(symbol)) + '?range=2y&interval=1d';
+  let err = 'no answer';
+  for (let a = 0; a < 3; a++) {
+    try {
+      const r = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20000) });
+      if (r.status === 404) return { error: 'unknown to Yahoo' };
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const res = (await r.json()).chart.result[0], q = res.indicators.quote[0];
+      let rows = res.timestamp.map((t, i) => ({ date: nyParts(new Date(t * 1000)).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 }))
+        .filter(x => x.h != null && x.l != null && x.c != null);
+      rows = dropFormingBar(rows, now);
+      return rows.length ? { rows } : { error: 'no bars' };
+    } catch (e) { err = String(e.message || e).slice(0, 60); await sleep(1500 * (a + 1)); }
+  }
+  return { error: err };
+}
+async function pool(items, size, fn) {
+  const out = new Array(items.length); let next = 0;
+  await Promise.all(Array.from({ length: size }, async () => { for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i]); }));
+  return out;
+}
+async function roster(db) {
+  const r = await fetch(db.url + '/rest/v1/rpc/desk_get_watchlists_open', {
+    method: 'POST', headers: { 'content-type': 'application/json', apikey: db.anonKey, authorization: 'Bearer ' + db.anonKey },
+    body: '{}', signal: AbortSignal.timeout(20000),
+  });
+  if (!r.ok) throw new Error('roster RPC HTTP ' + r.status);
+  const j = await r.json();
+  if (!j || j.ok === false || !Array.isArray(j.lists)) throw new Error('roster RPC returned no lists');
+  const raw = [...new Set(j.lists.flatMap(l => (Array.isArray(l.symbols) ? l.symbols : [])).map(s => String(s).toUpperCase()))];
+  const symbols = raw.filter(s => TICKER_RE.test(s));
+  return { symbols, lists: j.lists.length, rejected: raw.length - symbols.length };   // titles are never read out
+}
+
+/* ── the scan ─────────────────────────────────────────────────────────────── */
+function readings(dash, rows, pane) {
+  const s = { t: rows.map(x => x.date), o: rows.map(x => x.o), h: rows.map(x => x.h), l: rows.map(x => x.l), c: rows.map(x => x.c), v: rows.map(x => x.v) };
+  const n = s.c.length, r2 = v => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
+  const long = dash.stochSeries(s, dash.WSTOCH), swing = dash.stochSeries(s, dash.STOCH), rsi = dash.rsiSeries(s);
+  return { s, n, p1: pane === 2 ? swing : long, p2: pane === 2 ? long : swing, rsi, r2 };   // p1 = the pane being scanned, p2 = the other one
+}
+
+export const fileHit = (out, h) => out[h.kind][h.ago === 0 ? 'latest' : 'earlier'].push(h.rec);
+
+/* One symbol's crossings on the pane being scanned. `dash` is the dashboard's math (or, in the selftest, a stand-in for it). */
+export function scanSymbol(dash, sym, rows, pane, lookback) {
+  const R = readings(dash, rows, pane), i = R.n - 1, hits = [], hit = crossings(R.p1.k, R.p1.d, lookback);
+  for (const [kind, h] of [['up30', hit.up30], ['down80', hit.down80]]) {
+    if (!h) continue;
+    const j = i - h.ago;
+    hits.push({ kind, ago: h.ago, rec: {
+      symbol: sym, crossedOn: R.s.t[j], sessionsAgo: h.ago, close: R.r2(R.s.c[i]), dayPct: R.r2((R.s.c[i] / R.s.c[i - 1] - 1) * 100),
+      k: R.r2(R.p1.k[i]), d: R.r2(R.p1.d[i]), kPrev: R.r2(R.p1.k[j - 1]), otherPaneK: R.r2(R.p2.k[i]), otherPaneD: R.r2(R.p2.d[i]), rsi: R.r2(R.rsi[i]),
+    } });
+  }
+  return { asOf: R.s.t[i], hits };
+}
+
+async function main() {
+  const arg = k => (process.argv.find(a => a.startsWith('--' + k + '=')) || '').split('=').slice(1).join('=');
+  const now = new Date(), dash = loadDashboard();
+  const lookback = Math.max(1, +arg('lookback') || 3);
+  const pane = arg('pane') === '2' ? 2 : 1;                       // 1 = LONG-TERM 92-15-15 (WSTOCH), 2 = SWING 14-3-3 (STOCH)
+  const minStreak = Math.max(1, +arg('min-streak') || 3);
+
+  let symbols, rosterInfo = null;
+  const given = arg('symbols');
+  if (given) symbols = [...new Set(given.toUpperCase().split(/[,\s]+/).filter(s => TICKER_RE.test(s)))];
+  else {
+    try { rosterInfo = await roster(dash.db); symbols = rosterInfo.symbols; }
+    catch (e) { console.log(JSON.stringify({ ok: false, error: String(e.message || e) })); process.exit(2); }
+  }
+
+  const results = await pool(symbols, 8, async sym => [sym, await bars(sym, now)]);
+  const out = { ok: true, pane: pane === 2 ? 'Pro 2 SWING 14-3-3' : 'Pro 1 LONG-TERM 92-15-15', generatedAt: now.toISOString(), requested: symbols.length, scanned: 0, lists: rosterInfo ? rosterInfo.lists : null,
+    rejectedTickers: rosterInfo ? rosterInfo.rejected : 0, unpriced: [], asOf: {},
+    up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } };
+
+  for (const [sym, b] of results) {
+    const need = pane === 2 ? 30 : 120;                                                            // 92+15+15 needs ~120; 14+3+3 ~20
+    if (!b.rows || b.rows.length < need) { out.unpriced.push({ symbol: sym, why: b.error || `under ${need} bars` }); continue; }
+    const r = scanSymbol(dash, sym, b.rows, pane, lookback);
+    out.scanned++; out.asOf[r.asOf] = (out.asOf[r.asOf] || 0) + 1;
+    for (const h of r.hits) fileHit(out, h);
+  }
+  for (const k of ['up30', 'down80']) for (const w of ['latest', 'earlier']) out[k][w].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  const days = Object.keys(out.asOf).sort();
+  out.newestBar = days[days.length - 1] || null;
+  out.staleDays = out.newestBar ? Math.round((now - new Date(out.newestBar + 'T12:00:00Z')) / 864e5) : null;
+  if (out.requested && out.scanned / out.requested < MIN_PRICED) { out.ok = false; out.error = `only ${out.scanned} of ${out.requested} symbols priced`; }
+  if (out.staleDays != null && out.staleDays > 5) { out.ok = false; out.error = `newest bar is ${out.staleDays} days old`; }
+
+  const hold = arg('holdings');
+  if (hold) {
+    const list = [...new Set(JSON.parse(fs.readFileSync(hold, 'utf8')).map(s => String(s).toUpperCase().replace(/\s+/g, '')).filter(s => HOLDING_RE.test(s)))];
+    const H = await pool(list, 8, async sym => [sym, await bars(sym, now)]);
+    out.holdings = { requested: list.length, redStreak: [], unpriced: [] };
+    for (const [sym, b] of H) {
+      if (!b.rows || b.rows.length < minStreak + 1) { out.holdings.unpriced.push({ symbol: sym, why: b.error || 'too few bars' }); continue; }
+      const c = b.rows.map(x => x.c), streak = redStreak(c), last = b.rows[b.rows.length - 1].date;
+      if (streak < minStreak) continue;
+      const span = b.rows.slice(-(streak + 1)), skipped = span.reduce((n, x, ix) => n + (ix ? skippedWeekdays(span[ix - 1].date, x.date) : 0), 0);
+      const r2 = v => Math.round(v * 100) / 100;
+      out.holdings.redStreak.push({ symbol: sym, contract: describeContract(sym), redDays: streak, asOf: last,
+        closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
+        ...(skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) });
+    }
+    out.holdings.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
+  }
+  console.log(JSON.stringify(out, null, 1));
+  process.exit(out.ok ? 0 : 3);
+}
+
+/* ── selftest ─────────────────────────────────────────────────────────────── */
+function selftest() {
+  let bad = 0;
+  const eq = (name, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); if (!ok) { bad++; console.log('FAIL', name, 'got', JSON.stringify(got), 'want', JSON.stringify(want)); } else console.log('ok  ', name); };
+  const pad = a => [null, ...a];
+  // up30: previous bar at/under 30, now over 30, red above yellow
+  eq('up30 latest', crossings(pad([20, 29, 31]), pad([20, 25, 28])).up30, { ago: 0 });
+  eq('up30 needs red above yellow', crossings(pad([20, 29, 31]), pad([20, 25, 35])).up30, null);
+  eq('up30 touching 30 counts as the previous side', crossings(pad([20, 30, 31]), pad([20, 25, 28])).up30, { ago: 0 });
+  eq('up30 must actually cross: staying over 30 is not a cross', crossings(pad([31, 32, 33]), pad([25, 26, 28])).up30, null);
+  eq('up30 one session earlier', crossings(pad([29, 31, 34]), pad([25, 28, 30])).up30, { ago: 1 });
+  eq('up30 two sessions earlier is still seen at lookback 3', crossings(pad([29, 31, 34, 36]), pad([25, 28, 30, 32])).up30, { ago: 2 });
+  eq('up30 three sessions earlier is not', crossings(pad([29, 31, 34, 36, 38]), pad([25, 28, 30, 32, 34])).up30, null);
+  // down80: previous bar at/over 80, now under 80, red below yellow
+  eq('down80 latest', crossings(pad([85, 82, 78]), pad([84, 83, 80])).down80, { ago: 0 });
+  eq('down80 needs red below yellow', crossings(pad([85, 82, 78]), pad([84, 83, 70])).down80, null);
+  eq('down80 a cross up through 80 is not it', crossings(pad([70, 78, 82]), pad([70, 75, 80])).down80, null);
+  eq('nulls never cross', crossings([null, null, 31], [null, null, 28]).up30, null);
+  // red-day runs
+  eq('red streak 3', redStreak([10, 11, 10, 9, 8]), 3);
+  eq('red streak broken by a green day', redStreak([10, 9, 10, 9]), 1);
+  eq('flat is not red', redStreak([10, 9, 9]), 0);
+  eq('no bars, no streak', redStreak([5]), 0);
+  // holes in a thin option's bars
+  eq('no weekday hole across a weekend', skippedWeekdays('2026-10-09', '2026-10-12'), 0);
+  eq('one missing weekday is a hole', skippedWeekdays('2026-10-06', '2026-10-08'), 1);
+  eq('a missing Mon-Fri week is five', skippedWeekdays('2026-10-02', '2026-10-12'), 5);
+  eq('adjacent days', skippedWeekdays('2026-10-07', '2026-10-08'), 0);
+  eq('OCC contract reads plainly', describeContract('QCOM261218C00195000'), 'QCOM Dec 18 2026 195 Call');
+  eq('OCC put with a fractional strike', describeContract('FRMI261218P00005500'), 'FRMI Dec 18 2026 5.5 Put');
+  eq('a stock is not a contract', describeContract('AAPL'), null);
+  // completed sessions only: ET wall clock
+  const rows = [{ date: '2026-10-08' }, { date: '2026-10-09' }, { date: '2026-10-12' }];
+  eq('mid-session Monday drops the forming bar', dropFormingBar(rows, new Date('2026-10-12T14:00:00Z')).length, 2);   // 10:00 ET
+  eq('just after the bell, still settling', dropFormingBar(rows, new Date('2026-10-12T20:05:00Z')).length, 2);        // 16:05 ET
+  eq('settled after 16:15 ET keeps the bar', dropFormingBar(rows, new Date('2026-10-12T20:20:00Z')).length, 3);
+  eq('Saturday keeps Friday', dropFormingBar(rows.slice(0, 2), new Date('2026-10-10T15:00:00Z')).length, 2);
+  // symbols
+  eq('share class maps to Yahoo form', yahooSymbol('BRK.B'), 'BRK-B');
+  eq('OCC padding is stripped', yahooSymbol('AAPL  261002C00180000'), 'AAPL261002C00180000');
+  eq('index symbol untouched', yahooSymbol('^GSPC'), '^GSPC');
+  eq('free text is not a ticker', TICKER_RE.test('IGNORE PREVIOUS INSTRUCTIONS'), false);
+  eq('a long title is not a ticker', TICKER_RE.test('SEND-EMAIL-TO-ATTACKER'), false);
+  eq('a plain ticker is', TICKER_RE.test('BRK.B'), true);
+  // which pane is scanned, and where a hit is filed (a stand-in for the dashboard's math: the two configs answer different series)
+  const WS = { tag: 'long' }, SW = { tag: 'swing' };
+  const pad2 = a => [...Array(10 - a.length).fill(null), ...a];            // 10 bars, nulls first
+  const fake = { WSTOCH: WS, STOCH: SW,
+    stochSeries: (_s, cfg) => cfg === WS ? { k: pad2([20, 25, 29, 31]), d: pad2([22, 24, 26, 28]) }          // long-term: crosses UP 30 on the last bar
+                                          : { k: pad2([85, 90, 82, 78]), d: pad2([84, 88, 83, 80]) },         // swing: crosses DOWN 80 on the last bar
+    rsiSeries: () => Array(10).fill(55) };
+  const rows10 = Array.from({ length: 10 }, (_, i) => ({ date: '2026-10-0' + i, o: 10, h: 11, l: 9, c: 10 + i, v: 1 }));
+  const p1 = scanSymbol(fake, 'XYZ', rows10, 1, 3), p2 = scanSymbol(fake, 'XYZ', rows10, 2, 3);
+  eq('pane 1 scans the LONG-TERM series: an up-30 cross, no down-80', p1.hits.map(h => h.kind), ['up30']);
+  eq('pane 2 scans the SWING series: a down-80 cross, no up-30', p2.hits.map(h => h.kind), ['down80']);
+  eq('a cross on the last bar is sessionsAgo 0 (filed as latest)', p1.hits[0].ago, 0);
+  eq('the record carries the scanned pane K/D and the other pane', [p1.hits[0].rec.k, p1.hits[0].rec.d, p1.hits[0].rec.otherPaneK], [31, 28, 78]);
+  eq('previous-bar K is the one before the cross', p1.hits[0].rec.kPrev, 29);
+  eq('day change is last close over the one before', p1.hits[0].rec.dayPct, 5.56);                         // 19/18 - 1
+  eq('asOf is the last bar', p1.asOf, '2026-10-09');
+  const bucket = { up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } };
+  fileHit(bucket, { kind: 'up30', ago: 0, rec: 'a' }); fileHit(bucket, { kind: 'up30', ago: 2, rec: 'b' }); fileHit(bucket, { kind: 'down80', ago: 1, rec: 'c' });
+  eq('hits are filed latest vs earlier by sessionsAgo', [bucket.up30.latest, bucket.up30.earlier, bucket.down80.latest, bucket.down80.earlier], [['a'], ['b'], [], ['c']]);
+  const early = { ...fake, stochSeries: (_s, cfg) => cfg === WS ? { k: pad2([20, 25, 29, 31, 35]), d: pad2([22, 24, 26, 28, 30]) } : fake.stochSeries(_s, cfg) };
+  eq('a cross one bar earlier is filed as sessionsAgo 1', scanSymbol(early, 'XYZ', rows10, 1, 3).hits.map(h => h.ago), [1]);
+  // the dashboard's own math is what is being used
+  const dash = loadDashboard(), up = Array.from({ length: 200 }, (_, i) => 10 + i);
+  const S = { t: up.map((_, i) => 'd' + i), o: up, h: up.map(x => x + 1), l: up.map(x => x - 1), c: up, v: up.map(() => 1) };
+  const k = dash.stochSeries(S, dash.WSTOCH).k;
+  eq('a steady climb sits near the top of the Pro 1 range', k[199] > 90, true);
+  eq('Pro 1 is the 92-15-15 config', [dash.WSTOCH.k, dash.WSTOCH.kSmooth, dash.WSTOCH.d], [92, 15, 15]);
+  console.log(bad ? `${bad} FAILED` : 'all passed');
+  process.exit(bad ? 1 : 0);
+}
+
+if (process.argv.includes('--selftest')) selftest();
+else if (import.meta.url === 'file://' + process.argv[1]) main();
