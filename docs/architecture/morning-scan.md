@@ -24,7 +24,7 @@
 | `down80` | %K was at or over 80 on the previous bar, is under 80 now, and %K is below %D |
 | `latest` | the cross happened on the last COMPLETED session |
 | `earlier` | it happened on one of the two sessions before that (`--lookback`, default 3), so a skipped morning or a holiday cannot silently lose a crossing |
-| red-day run | trailing closes, each under the one before; a flat day is not red (`redStreak`); email 3 reports runs of 3 or more |
+| red-day run | trailing closes, each under the one before; a flat day is not red (`redStreak`); email 3 reports runs of 4 or more (owner 2026-10-11: the saved question says "4 or more consecutive red days"; `MIN_STREAK`, `--min-streak=N` overrides, and the report's `holdings.minStreak` says which was used) |
 
 **Owner ruling 2026-10-11: "Pro 1, as written".** The owner's questions say Pro 1, but the dashboard's scheduled answers had been reading Pro 2 (the first line of one reads "Scan on the Pro 2 daily swing read"): same words, a different study. The Routine scans Pro 1.
 
@@ -38,7 +38,7 @@
 
 **No report session, no holdings report.** If nothing on the watchlist could be priced there is no session to date the holdings by, so every holding is listed unpriced (`no report session: the watchlist could not be priced`) and none is evaluated; email 3 says so, and its subject date is then today's date (Codex, PR #321).
 
-**A stale holding is always listed.** A holding whose last bar predates that session (`holdings.referenceSession`) goes under `holdings.stale` (checked BEFORE the minimum-bars test, so a short history is stale too, not unpriced) with its last bar and the red days it had as of then (`redDaysThen`), whether or not they make a streak: it could not be checked through the session, and "none of your positions has 3 red days" must not be said of it. It is never filed as a current streak (`classifyHolding`; `fileHolding` puts each kind in its list and drops nothing but "no streak"). `holdings.checked` is the number actually evaluated (requested less the stale and the unpriced), and "none has a run" is only ever said of that number (Codex, PR #321).
+**A stale holding is always listed.** A holding whose last bar predates that session (`holdings.referenceSession`) goes under `holdings.stale` (checked BEFORE the minimum-bars test, so a short history is stale too, not unpriced) with its last bar and the red days it had as of then (`redDaysThen`), whether or not they make a streak: it could not be checked through the session, and "none of your positions has 4 red days" must not be said of it. It is never filed as a current streak (`classifyHolding`; `fileHolding` puts each kind in its list and drops nothing but "no streak"). `holdings.checked` is the number actually evaluated (requested less the stale and the unpriced), and "none has a run" is only ever said of that number (Codex, PR #321).
 
 **Only complete bars, and only enough of them.** A bar missing any of open/high/low/close, or carrying a zero or negative price, is dropped before the study (`fullBars`; the dashboard's parser, `parseYahooChartOHLC`, requires every one finite and above zero, and a null open would otherwise throw in `roundBars` and abort the run); every field of Yahoo's reply is optional (no volume array, no quote block: the bars that can be read are kept, as the dashboard parser's `q.volume?.[i]` does), a row with a missing or junk timestamp is skipped on its own, never costing the symbol (as `parseYahooChartOHLC` does), and the rows are sorted by date (Yahoo's order is not trusted: everything downstream reads the last row as the newest); holdings need only a close, but that close must be finite and above zero (`hasClose`, `chartRows`): a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a three-day losing streak ending -100%. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
 
@@ -59,8 +59,8 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 192 checks, no network (three run the real CLI offline)
-    node tools/watchlist-scan-mutants.mjs               # 163 one-line changes to the tool: 161 make the selftest fail, 2 cannot change the report (marked)
+    node tools/watchlist-scan.mjs --selftest            # 201 checks, no network (four run the real CLI offline)
+    node tools/watchlist-scan-mutants.mjs               # 171 one-line changes to the tool: 169 make the selftest fail, 2 cannot change the report (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --holdings=holdings.json              # plus red-day runs for a JSON array of symbols, read against the roster's session
@@ -74,7 +74,7 @@ Known gaps, stated rather than hidden: a symbol with under 122 bars (a recent li
 | Schedule | weekdays, `CRON_TZ=America/Los_Angeles 54 6 * * 1-5` (6:54 AM Pacific, a few minutes before the 7:00 the owner asked for, per the routine scheduler's rule against landing on the hour) |
 | Fires into | a NEW session each time (not this conversation): clean context, nothing depends on one container staying alive |
 | Connectors | Gmail (send), Supabase (read positions for email 3; append each answer to the Ask-the-desk thread, below) |
-| Emails | (1) watchlist crossing up 30 on Pro 1, red above yellow; (2) crossing down 80, red below yellow; (3) long stocks/options with 3+ consecutive red days. Subjects keep the dashboard's `Desk · ` prefix and end with the data date. |
+| Emails | (1) watchlist crossing up 30 on Pro 1, red above yellow; (2) crossing down 80, red below yellow; (3) long stocks/options with 4+ consecutive red days (the owner's saved question; a 4-bar history cannot show 4 red days, it needs a fifth close, so such a holding is listed as unpriced, not as "none"). Subjects keep the dashboard's `Desk · ` prefix and end with the data date. |
 | Replaces | the three dashboard scheduled questions (`desk_ask_schedule`). The owner turns those off (⏱ > untick On > Save) once the Routine's emails arrive, or each email arrives twice and the dashboard's copy keeps spending Anthropic API quota. |
 
 The prompt the Routine carries (the owner's address is a placeholder here because this repo is public):
@@ -111,9 +111,10 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
          "CROSSED UP IN THE 2 SESSIONS BEFORE" then one line per up30.earlier: SYMBOL  crossed <crossedOn> (<sessionsAgo> sessions ago): red <kBefore> to <kAtCross>, yellow <dAtCross>; now red <kNow>, yellow <dNow>, close <close>   or "None."
          "Not scanned: " the unpriced symbols with their reasons, and the stale symbols as "<symbol> (last bar <lastBar>)".
        Email 2, subject "Desk · all watchlist stocks crossing down 80% stochastic line on Pro 1 with red below yellow · <date>": the same with down80 and "DOWN THROUGH 80".
-       Email 3, subject "Desk · All long stocks/options in my accounts w/ 3 or more consecutive red days · <date>":
+       Email 3, subject "Desk · All long stocks/options in my accounts w/ 4 or more consecutive red days · <date>":
+         if holdings.minStreak is present and is not 4, say so at the top (the threshold in the data and in this subject must agree);
          one line per holdings.redStreak: <contract> (or symbol)  <redDays> red days  closes <closes joined by " > ">  last day <lastDayPct>%   plus its caution if any;
-         if none: "None of the <holdings.checked> long positions checked has 3 or more red days in a row." (<holdings.checked> is requested minus the stale and unpriced ones; if it is 0 say none could be checked);
+         if none: "None of the <holdings.checked> long positions checked has 4 or more red days in a row." (<holdings.checked> is requested minus the stale and unpriced ones; if it is 0 say none could be checked);
          then "Could not be checked through <holdings.referenceSession>:" one line per holdings.stale: <contract> (or symbol), last bar <lastBar>, <redDaysThen> red days as of then;
          then any holdings.unpriced with their reasons.
     5. ASK-THE-DESK COPY. After each email is sent, record the SAME text in the dashboard's saved conversation so it shows in the Ask window.

@@ -48,6 +48,7 @@ const RUN_BUDGET_MS = 6 * 60 * 1000;               // the whole roster fetch, ho
 const HOLDINGS_BUDGET_MS = 90 * 1000;
 const MAX_AHEAD = 0.1;                             // more than this share of the roster ending on a NEWER weekday than the report session = a lagging feed
 const MIN_PRICED = 0.9;                            // fraction of the roster that must price, or the run says ok:false
+const MIN_STREAK = 4;                              // owner 2026-10-11: the saved question says "4 or more consecutive red days"
 const SETTLE_MIN = 16 * 60 + 15;                   // ET minutes: before this, a bar dated today is still forming
 const UA = 'Mozilla/5.0';                          // Yahoo wants one; never sent to Supabase (see CLAUDE.md)
 
@@ -84,7 +85,7 @@ export function redStreak(closes) {
 }
 
 /* Weekdays that fall strictly between two bar dates ('YYYY-MM-DD'). A thinly traded option has no bar on a day it never traded,
-   so "3 red days" across a hole is not 3 consecutive sessions; weekends are not holes (holidays can read as one: a harmless false caution). */
+   so "4 red days" across a hole is not 4 consecutive sessions; weekends are not holes (holidays can read as one: a harmless false caution). */
 export function skippedWeekdays(a, b) {
   let n = 0;
   for (let t = Date.parse(a + 'T12:00:00Z') + 864e5; t < Date.parse(b + 'T12:00:00Z'); t += 864e5) { const w = new Date(t).getUTCDay(); if (w !== 0 && w !== 6) n++; }
@@ -272,8 +273,11 @@ export function partitionBySession(scans, newest) {
 }
 export const isStaleBar = (last, newest) => !!newest && last < newest;
 
+/* The red-day threshold: `--min-streak=N`, else the owner's 4. Never below 1; junk (empty, 0, not a number) falls back to the default. */
+export const minStreakFrom = raw => Math.max(1, +raw || MIN_STREAK);
+
 /* What one holding's bars say. A holding whose last bar predates the report session is ALWAYS listed as stale, with the red days it had as of
-   that bar, whether or not they make a streak: it could not be checked through the session, and "none has 3 red days" must not be said of it
+   that bar, whether or not they make a streak: it could not be checked through the session, and "none has 4 red days" must not be said of it
    (Codex, PR #321). Only a current holding can be a streak. */
 export function classifyHolding(sym, b, newest, minStreak) {
   // Read as of the report session: a bar AFTER it (the reference lagged, or this holding's feed is a session ahead) is cut, so the streak never runs
@@ -358,7 +362,7 @@ export async function fetchHoldings(list, newest, fetchOne) {
 /* The fetched holdings -> the holdings block: red-day runs, the ones that could not be checked through the session (stale, unpriced), and how
    many WERE checked, so "none has a run" is only ever said of those. */
 export function buildHoldings(fetched, requested, newest, minStreak) {
-  const h = { requested, referenceSession: newest, redStreak: [], stale: [], unpriced: [] };
+  const h = { requested, minStreak, referenceSession: newest, redStreak: [], stale: [], unpriced: [] };
   for (const [sym, b] of fetched) fileHolding(h, classifyHolding(sym, b, newest, minStreak));
   h.checked = holdingsChecked(h);
   h.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
@@ -370,7 +374,7 @@ async function main() {
   const now = new Date(), dash = loadDashboard();
   const lookback = Math.max(1, +arg('lookback') || 3);
   const pane = arg('pane') === '2' ? 2 : 1;                       // 1 = LONG-TERM 92-15-15 (WSTOCH), 2 = SWING 14-3-3 (STOCH)
-  const minStreak = Math.max(1, +arg('min-streak') || 3);
+  const minStreak = minStreakFrom(arg('min-streak'));
 
   let symbols, rosterInfo = null;
   const given = arg('symbols');
@@ -394,7 +398,7 @@ async function main() {
   const hold = arg('holdings');
   if (hold) {
     const read = readHoldingsList(hold), list = read.list || [];
-    if (read.error) out.holdings = { error: read.error, requested: 0, checked: 0, referenceSession: out.newestBar, redStreak: [], stale: [], unpriced: [] };
+    if (read.error) out.holdings = { error: read.error, requested: 0, checked: 0, minStreak, referenceSession: out.newestBar, redStreak: [], stale: [], unpriced: [] };
     else {
     const holdDeadline = Date.now() + HOLDINGS_BUDGET_MS;
     const H = await fetchHoldings(list, out.newestBar, sym => bars(sym, now, holdDeadline));
@@ -516,6 +520,13 @@ async function selftest() {
   eq('a current holding with 3 red days is a streak', [cur.kind, cur.rec.redDays, cur.rec.closes, cur.rec.contract], ['streak', 3, [10.75, 8.55, 7.65, 7.15], 'QCOM Dec 18 2026 195 Call']);
   eq('a streak reports the last day\'s move and no caution when nothing is missing', [cur.rec.lastDayPct, 'caution' in cur.rec], [-6.54, false]);
   eq('a current holding with only 2 red days is nothing to report', classifyHolding('X', hb(D5.slice(1), [10, 11, 10, 9]), '2026-10-09', 3).kind, 'none');
+  // the owner's rule (2026-10-11): "4 or more consecutive red days"
+  eq('the red-day threshold defaults to the owner\'s 4', minStreakFrom(''), 4);
+  eq('...and --min-streak=3 overrides it', minStreakFrom('3'), 3);
+  eq('...junk or zero falls back to 4, a negative is held at 1', [minStreakFrom('abc'), minStreakFrom('0'), minStreakFrom('-2')], [4, 4, 1]);
+  eq('at the default, 3 red days are not a streak', classifyHolding('X', hb(D5, [10, 12, 11, 10, 9]), '2026-10-09', minStreakFrom('')).kind, 'none');
+  eq('...and 4 bars cannot show 4 red days (it needs a fifth close): unpriced, not "none"', classifyHolding('X', hb(D5.slice(1), [10.75, 8.55, 7.65, 7.15]), '2026-10-09', minStreakFrom('')).kind, 'unpriced');
+  eq('at the default, 4 red days are', classifyHolding('X', hb(D5, [9, 8, 7, 6, 5]), '2026-10-09', minStreakFrom('')).rec.redDays, 4);
   const stNo = classifyHolding('FRMI261218C00005000', hb(D5.slice(0, 4), [10, 11, 12, 13]), '2026-10-09', 3);
   eq('a stale holding with NO streak is still listed, never dropped', [stNo.kind, stNo.rec.lastBar, stNo.rec.redDaysThen], ['stale', '2026-10-08', 0]);
   const stYes = classifyHolding('X', hb(D5.slice(0, 4), [13, 12, 11, 10]), '2026-10-09', 3);
@@ -614,9 +625,10 @@ async function selftest() {
   const hb2 = (dates, closes) => ({ rows: dates.map((date, i) => ({ date, c: closes[i] })) });
   const hold = buildHoldings([['CUR', hb2(D5.slice(1), [9, 8, 7, 6])], ['OLD', hb2(D5.slice(0, 4), [4, 3, 2, 1])], ['ERR', { error: 'unknown to Yahoo' }], ['UP', hb2(D5.slice(1), [1, 2, 3, 4])]], 4, '2026-10-09', 3);
   eq('holdings: a streak, a stale one and an unpriced one each land in their list, and the checked count excludes the last two', [hold.redStreak.map(x => x.symbol), hold.stale.map(x => x.symbol), hold.unpriced.map(x => x.symbol), hold.checked, hold.referenceSession], [['CUR'], ['OLD'], ['ERR'], 2, '2026-10-09']);
+  eq('the holdings block says which red-day threshold it used', hold.minStreak, 3);
   const tdir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-hold-'));
   try {
-    const hf = (name, text) => { const f = path.join(tdir, name); fs.writeFileSync(f, text); return f; };
+    const hf =(name, text) => { const f = path.join(tdir, name); fs.writeFileSync(f, text); return f; };
     eq('a good holdings file is read: upper-cased, padding stripped, junk dropped, repeats once', readHoldingsList(hf('ok.json', JSON.stringify(['qcom  261218C00195000', 'AAPL', 'aapl', '!!', 5]))).list, ['QCOM261218C00195000', 'AAPL', '5']);
     eq('a missing holdings file is an error, not a crash', typeof readHoldingsList(path.join(tdir, 'nope.json')).error, 'string');
     eq('...naming why', /ENOENT/.test(readHoldingsList(path.join(tdir, 'nope.json')).error), true);
@@ -625,6 +637,10 @@ async function selftest() {
     const cliH = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??', '--holdings=' + path.join(tdir, 'nope.json')], { encoding: 'utf8', timeout: 30000 });
     let cliHOut = {}; try { cliHOut = JSON.parse(cliH.stdout); } catch { /* reported by the check below */ }
     eq('the real CLI with a missing holdings file still prints its report (here not ok: nothing to scan) with holdings.error, instead of crashing', [cliH.status, cliHOut.ok, typeof (cliHOut.holdings || {}).error], [3, false, 'string']);
+    eq('...and reports the red-day threshold it ran with: the default 4', (cliHOut.holdings || {}).minStreak, 4);
+    const cliM = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??', '--holdings=' + path.join(tdir, 'nope.json'), '--min-streak=2'], { encoding: 'utf8', timeout: 30000 });
+    let cliMOut = {}; try { cliMOut = JSON.parse(cliM.stdout); } catch { /* reported by the check below */ }
+    eq('...and --min-streak=2 on the command line reaches it', (cliMOut.holdings || {}).minStreak, 2);
   } finally { fs.rmSync(tdir, { recursive: true, force: true }); }
   let fetchCalls = 0; const countFetch = async sym => { fetchCalls++; return hb2(D5.slice(1), [9, 8, 7, 6]); };
   const skipped = await fetchHoldings(['A', 'B', 'C'], null, countFetch);
