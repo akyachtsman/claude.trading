@@ -34,6 +34,8 @@
 
 **Holdings are read as of the report session.** A holding bar AFTER it (the reference lagged, or the holding's feed is a session ahead) is cut before anything is counted, so a streak never runs through a day the email is not dated for; one with nothing left is unpriced (`no bars as of <date>`). The Routine runs ONE scan with `--holdings` so the reference is the roster's own session, not a stand-in symbol's (Codex, PR #321).
 
+**No report session, no holdings report.** If nothing on the watchlist could be priced there is no session to date the holdings by, so every holding is listed unpriced (`no report session: the watchlist could not be priced`) and none is evaluated; email 3 says so, and its subject date is then today's date (Codex, PR #321).
+
 **A stale holding is always listed.** A holding whose last bar predates that session (`holdings.referenceSession`) goes under `holdings.stale` (checked BEFORE the minimum-bars test, so a short history is stale too, not unpriced) with its last bar and the red days it had as of then (`redDaysThen`), whether or not they make a streak: it could not be checked through the session, and "none of your positions has 3 red days" must not be said of it. It is never filed as a current streak (`classifyHolding`; `fileHolding` puts each kind in its list and drops nothing but "no streak"). `holdings.checked` is the number actually evaluated (requested less the stale and the unpriced), and "none has a run" is only ever said of that number (Codex, PR #321).
 
 **Only complete bars, and only enough of them.** A bar missing any of open/high/low/close, or carrying a zero or negative price, is dropped before the study (`fullBars`; the dashboard's parser, `parseYahooChartOHLC`, requires every one finite and above zero, and a null open would otherwise throw in `roundBars` and abort the run); a row with a missing or junk timestamp is skipped on its own, never costing the symbol (as `parseYahooChartOHLC` does), and the rows are sorted by date (Yahoo's order is not trusted: everything downstream reads the last row as the newest); holdings need only a close, but that close must be finite and above zero (`hasClose`, `chartRows`): a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a three-day losing streak ending -100%. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
@@ -55,8 +57,8 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 179 checks, no network (two run the real CLI offline)
-    node tools/watchlist-scan-mutants.mjs               # 150 one-line changes to the tool: 149 make the selftest fail, 1 cannot change behaviour (marked)
+    node tools/watchlist-scan.mjs --selftest            # 180 checks, no network (two run the real CLI offline)
+    node tools/watchlist-scan-mutants.mjs               # 151 one-line changes to the tool: 150 make the selftest fail, 1 cannot change behaviour (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --holdings=holdings.json              # plus red-day runs for a JSON array of symbols, read against the roster's session
@@ -92,7 +94,7 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
        Exit 2 = the roster could not be read or is over the limit (no holdings were run): emails 1 and 2 say so, quoting "error"; then run
          node tools/watchlist-scan.mjs --symbols=SPY --holdings=/tmp/holdings.json > /tmp/scan.json
        for email 3 only (it is then dated by SPY's session, which email 3 states).
-    4. EMAILS (Gmail send_message, body plain text, no Markdown). Date = scan.newestBar. Footer on all three:
+    4. EMAILS (Gmail send_message, body plain text, no Markdown). Date = scan.newestBar (today's date if it is null). Footer on all three:
        "Source: Yahoo daily bars through the dashboard's own Pro 1 math (tools/watchlist-scan.mjs). Completed sessions only."
        Email 1, subject "Desk · all watchlist stocks crossing up 30% stochastic line on Pro 1 with red above yellow · <date>":
          "Pro 1 (long-term 92-15-15), completed session of <date>. Scanned <scanned> of <requested> watchlist symbols."

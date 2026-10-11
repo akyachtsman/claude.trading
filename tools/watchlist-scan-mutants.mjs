@@ -163,10 +163,11 @@ const MUTANTS = [
   ["ahead looks only at the newest bar", "rows.some(x => x.date > session && !isWeekend(x.date))", "(x => x.date > session && !isWeekend(x.date))(rows[rows.length - 1])"],
   ["chartRows keeps Yahoo's order", "return rows.sort((a, b) => a.date.localeCompare(b.date));", "return rows;"],
   ["chartRows sorts newest first", "a.date.localeCompare(b.date));\n}", "b.date.localeCompare(a.date));\n}"],
-  ["classifyHolding keeps bars after the session", "newest ? all.filter(x => x.date <= newest) : all", "all"],
-  ["classifyHolding cuts the session day itself", "x.date <= newest", "x.date < newest"],
-  ["classifyHolding cuts with no session", "newest ? all.filter(x => x.date <= newest) : all", "all.filter(x => x.date <= newest)"],
+  ["classifyHolding keeps bars after the session", "rows = all.filter(x => x.date <= newest);", "rows = all;"],
+  ["classifyHolding cuts the session day itself", "all.filter(x => x.date <= newest)", "all.filter(x => x.date < newest)"],
   ["classifyHolding loses the as-of date in its reason", "`no bars as of ${newest}`", "'no bars'"],
+  ["classifyHolding evaluates with no report session", "if (!newest) return { kind: 'unpriced'", "if (false) return { kind: 'unpriced'"],
+  ["classifyHolding no-session reason lost", "why: 'no report session: the watchlist could not be priced' } };\n  const all", "why: 'no bars' } };\n  const all"],
 ];
 
 let caught = 0, equivalent = 0; const bad = [];

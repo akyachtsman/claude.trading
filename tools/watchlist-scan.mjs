@@ -277,7 +277,10 @@ export const isStaleBar = (last, newest) => !!newest && last < newest;
 export function classifyHolding(sym, b, newest, minStreak) {
   // Read as of the report session: a bar AFTER it (the reference lagged, or this holding's feed is a session ahead) is cut, so the streak never runs
   // through a day the report is not dated for (Codex, PR #321).
-  const all = b.rows || [], rows = newest ? all.filter(x => x.date <= newest) : all;
+  // No report session (nothing on the watchlist could be priced) means there is nothing to date a holdings report by: refuse rather than report streaks
+  // for an unknown day (Codex, PR #321).
+  if (!newest) return { kind: 'unpriced', rec: { symbol: sym, why: 'no report session: the watchlist could not be priced' } };
+  const all = b.rows || [], rows = all.filter(x => x.date <= newest);
   if (!rows.length) return { kind: 'unpriced', rec: { symbol: sym, why: b.error || (all.length ? `no bars as of ${newest}` : 'no bars') } };
   const r2 = v => Math.round(v * 100) / 100, c = rows.map(x => x.c), streak = redStreak(c), last = rows[rows.length - 1].date;
   if (isStaleBar(last, newest)) return { kind: 'stale', rec: { symbol: sym, contract: describeContract(sym), lastBar: last, redDaysThen: streak } };
@@ -504,7 +507,7 @@ async function selftest() {
   eq('a holding with a bar AFTER the reference session is read as of it: the later close is cut, the run is dated by the session', [ahead1.kind, ahead1.rec.asOf, ahead1.rec.closes, ahead1.rec.redDays], ['streak', '2026-10-09', [9, 8, 7, 6], 3]);
   eq('...and the streak never counts the cut day: 9,8,7,6 then a lower Monday is still 3 red days to Friday', ahead1.rec.lastDayPct, -14.29);
   eq('a holding whose only bars are after the session is unpriced, with the date', classifyHolding('X', hb(['2026-10-12', '2026-10-13'], [3, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'no bars as of 2026-10-09' } });
-  eq('with no reference session nothing is cut', classifyHolding('X', hb(D6.slice(1), [9, 8, 7, 6, 5]), null, 3).rec.asOf, '2026-10-12');
+  eq('...whatever bars it has, however recent', classifyHolding('X', hb(D6.slice(1), [9, 8, 7, 6, 5]), null, 3).kind, 'unpriced');
   eq('a bar on the session itself is kept', classifyHolding('X', hb(D5.slice(1), [9, 8, 7, 6]), '2026-10-09', 3).rec.asOf, '2026-10-09');
   eq('no bars at all is unpriced', classifyHolding('X', { rows: [] }, '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'no bars' } });
   const zr = classifyHolding('X', { rows: [7, 6, 5, 4, 0].map((c, i) => ({ date: '2026-10-0' + (5 + i), c })).filter(hasClose) }, '2026-10-08', 3);
@@ -591,6 +594,8 @@ async function selftest() {
   const hb2 = (dates, closes) => ({ rows: dates.map((date, i) => ({ date, c: closes[i] })) });
   const hold = buildHoldings([['CUR', hb2(D5.slice(1), [9, 8, 7, 6])], ['OLD', hb2(D5.slice(0, 4), [4, 3, 2, 1])], ['ERR', { error: 'unknown to Yahoo' }], ['UP', hb2(D5.slice(1), [1, 2, 3, 4])]], 4, '2026-10-09', 3);
   eq('holdings: a streak, a stale one and an unpriced one each land in their list, and the checked count excludes the last two', [hold.redStreak.map(x => x.symbol), hold.stale.map(x => x.symbol), hold.unpriced.map(x => x.symbol), hold.checked, hold.referenceSession], [['CUR'], ['OLD'], ['ERR'], 2, '2026-10-09']);
+  const noSession = buildHoldings([['CUR', hb2(D5.slice(1), [9, 8, 7, 6])], ['ERR', { error: 'unknown to Yahoo' }]], 2, null, 3);
+  eq('with no report session no holding is reported: all are unpriced with that reason, none checked', [noSession.redStreak.length, noSession.stale.length, noSession.unpriced.map(u => u.symbol), noSession.checked, noSession.referenceSession], [0, 0, ['CUR', 'ERR'], 0, null]);
   eq('holdings: streaks sort longest first, then by symbol', buildHoldings([['B', hb2(D5, [9, 8, 7, 6, 5])], ['A', hb2(D5.slice(1), [9, 8, 7, 6])], ['C', hb2(D5, [9, 8, 7, 6, 5])]], 3, '2026-10-09', 3).redStreak.map(x => x.symbol), ['B', 'C', 'A']);
   const hitOf = (symbol, kind, ago) => ({ kind, ago, rec: { symbol } });
   const sortedRep = buildReport(rep(), { scans: [{ sym: 'ZZZ', r: { asOf: '2026-10-09', hits: [hitOf('ZZZ', 'up30', 0)] } }, { sym: 'AAA', r: { asOf: '2026-10-09', hits: [hitOf('AAA', 'up30', 0), hitOf('AAA', 'down80', 1)] } }], unpriced: [], session: '2026-10-09', ahead: 0 }, vNow);
@@ -601,7 +606,7 @@ async function selftest() {
   eq('a negative close is dropped too', [{ c: -1 }, { c: 0 }, { c: NaN }, { c: 0.25 }].filter(hasClose).length, 1);
   eq('too few bars is unpriced, with its reason', classifyHolding('X', hb(D5.slice(3), [1, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'too few bars' } });
   eq('a fetch error is passed through', classifyHolding('X', { error: 'unknown to Yahoo' }, '2026-10-09', 3).rec.why, 'unknown to Yahoo');
-  eq('with no reference session nothing is stale', classifyHolding('X', hb(D5.slice(0, 4), [13, 12, 11, 10]), null, 3).kind, 'streak');
+  eq('with no report session a holding is refused, not evaluated', classifyHolding('X', hb(D5.slice(0, 4), [13, 12, 11, 10]), null, 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'no report session: the watchlist could not be priced' } });
   eq('a run across a missing weekday carries a caution', typeof classifyHolding('X', hb(['2026-10-05', '2026-10-06', '2026-10-08', '2026-10-09'], [10, 9, 8, 7]), '2026-10-09', 3).rec.caution, 'string');
   eq('exactly minStreak bars cannot show a streak of minStreak (it needs one more close): unpriced', classifyHolding('X', hb(D5.slice(2), [3, 2, 1]), '2026-10-09', 3).kind, 'unpriced');
   eq('minStreak + 1 bars can', classifyHolding('X', hb(D5.slice(1), [4, 3, 2, 1]), '2026-10-09', 3).kind, 'streak');
