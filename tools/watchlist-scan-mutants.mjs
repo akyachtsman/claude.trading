@@ -143,8 +143,8 @@ const MUTANTS = [
   ["buildScans never realigns", "hits: realignHits(one.r.hits, calendar, session, lookback)", "hits: one.r.hits"],
   ["isWeekend misses Sunday", "w === 0 || w === 6", "w === 6"],
   ["isWeekend misses Saturday", "w === 0 || w === 6", "w === 0"],
-  ["ahead counts a 24/7 asset's weekend bar", "d > session && !isWeekend(d)", "d > session"],
-  ["ahead counts the session itself", "d > session && !isWeekend(d)", "d >= session && !isWeekend(d)"],
+  ["ahead counts a 24/7 asset's weekend bar", "x.date > session && !isWeekend(x.date)", "x.date > session"],
+  ["ahead counts the session itself", "x.date > session && !isWeekend(x.date)", "x.date >= session && !isWeekend(x.date)"],
   ["ahead is never counted", "const ahead = ready.filter(", "const ahead = 0 * ready.filter("],
   ["ahead limit loosened", "const MAX_AHEAD = 0.1;", "const MAX_AHEAD = 0.5;"],
   ["ahead limit removed", "const MAX_AHEAD = 0.1;", "const MAX_AHEAD = 1;"],
@@ -160,6 +160,7 @@ const MUTANTS = [
   ["buildHoldings forgets the checked count", "h.checked = holdingsChecked(h);", ""],
   ["buildHoldings sorts shortest first", "b.redDays - a.redDays || a.symbol.localeCompare(b.symbol)", "a.redDays - b.redDays || a.symbol.localeCompare(b.symbol)"],
   ["buildHoldings ignores the reference session", "referenceSession: newest", "referenceSession: null"],
+  ["ahead looks only at the newest bar", "rows.some(x => x.date > session && !isWeekend(x.date))", "(x => x.date > session && !isWeekend(x.date))(rows[rows.length - 1])"],
 ];
 
 let caught = 0, equivalent = 0; const bad = [];

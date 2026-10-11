@@ -240,7 +240,7 @@ export function buildScans(results, dash, pane, lookback) {
   // Symbols whose bars run PAST the session on a weekday are not a 24/7 asset's weekend bar: they are a cohort the rest of the feed is lagging
   // behind. Rolling them back to the majority's date would report a stale session as a clean one, so they are counted and `verdict` fails the run
   // when there are too many (Codex, PR #321).
-  const ahead = ready.filter(([, rows]) => { const d = rows[rows.length - 1].date; return d > session && !isWeekend(d); }).length;
+  const ahead = ready.filter(([, rows]) => rows.some(x => x.date > session && !isWeekend(x.date))).length;   // ANY weekday bar past the session, not just the newest bar
   const calendar = sessionCalendar(ready.map(([, rows]) => rows.map(x => x.date)), session);
   for (const [sym, all] of ready) {
     const rows = all.filter(x => x.date <= session);
@@ -561,6 +561,8 @@ async function selftest() {
   const lagRows = mkRows([...dts, '2026-10-12']);
   const lag = buildScans([['A1', { rows: mkRows(dts) }], ['A2', { rows: mkRows(dts) }], ['A3', { rows: mkRows(dts) }], ['N1', { rows: lagRows }], ['N2', { rows: lagRows }]], crossDash, 1, 3);
   eq('a cohort with a newer WEEKDAY bar is counted (the majority is lagging), not silently rolled back', [lag.session, lag.ahead], ['2026-10-09', 2]);
+  const earlyDts = dts.slice(0, -1);   // the equity feed stops on Thursday 10-08; a 24/7 asset still has Friday, Saturday and Sunday
+  eq('a 24/7 asset whose NEWEST bar is a Sunday still counts as ahead when it has a weekday bar past the session', buildScans([['A1', { rows: mkRows(earlyDts) }], ['A2', { rows: mkRows(earlyDts) }], ['A3', { rows: mkRows(earlyDts) }], ['BTC-USD', { rows: mkRows([...earlyDts, '2026-10-09', '2026-10-10', '2026-10-11']) }]], crossDash, 1, 3).ahead, 1);
   eq('a 24/7 asset\'s weekend bar is not that cohort', buildScans([['AAA', { rows: mkRows(dts) }], ['BBB', { rows: mkRows(dts) }], ['BTC-USD', { rows: mkRows([...dts, '2026-10-10', '2026-10-11']) }]], crossDash, 1, 3).ahead, 0);
   const vl = o => verdict({ ok: true, requested: 240, scanned: 240, newestBar: '2026-10-09', ahead: 0, ...o }, vNow);
   eq('a few symbols ahead is fine (a 24/7 asset on a holiday)', vl({ ahead: 24 }).ok, true);
