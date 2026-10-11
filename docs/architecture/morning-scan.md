@@ -85,8 +85,10 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
     1. CODE. In the repo clone: git fetch -q origin main && git checkout -q --detach origin/main && node tools/watchlist-scan.mjs --selftest
        It must end with "all passed". If not, send ONE email, subject "Desk · morning scan FAILED", saying so and quoting the failure, record it
        in the Ask thread exactly as step 5 says (that email is the only one), then stop.
-    2. HOLDINGS LIST. With the Supabase connector run this one query on project kwugzhyfjevzwgplhtsd and nothing else:
-         select distinct p->>'sym' as sym from (select distinct on (account_key) positions from desk_account_snapshots order by account_key, as_of desc) s, jsonb_array_elements(s.positions) p where (p->>'qty')::numeric > 0 and (p->>'sym') ~ '^[A-Za-z0-9. ^=-]{1,24}$' order by 1;
+    2. HOLDINGS LIST. The owner is the ONE desk_users row that is not a test user. With the Supabase connector run these two reads on project
+       kwugzhyfjevzwgplhtsd and nothing else. First: select count(*) from desk_users where not is_test;  It must be 1; if not, email 3 says the owner
+       could not be identified, step 5 inserts nothing, and the rest of this step is skipped. Then:
+         select distinct p->>'sym' as sym from (select distinct on (account_key) positions from desk_account_snapshots where user_id = (select id from desk_users where not is_test) order by account_key, as_of desc) s, jsonb_array_elements(s.positions) p where (p->>'qty')::numeric > 0 and (p->>'sym') ~ '^[A-Za-z0-9. ^=-]{1,24}$' order by 1;
        Save the symbols as a JSON array of strings in /tmp/holdings.json. Never read, print, store or email quantities, dollar values, balances or account details.
        If the query fails, say so in email 3 and run step 3 without --holdings.
     3. ONE SCAN. node tools/watchlist-scan.mjs --holdings=/tmp/holdings.json > /tmp/scan.json ; echo "exit $?"
@@ -115,11 +117,11 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
          select u.id, $tag$<SUBJECT>$tag$, $tag$<BODY>$tag$, 'claude-code-routine', 'scheduled'
          from desk_users u
          where not u.is_test
-           and not exists (select 1 from desk_chat_memory c where c.question = $tag$<SUBJECT>$tag$ and c.created_at > now() - interval '12 hours')
-         order by u.id limit 1;
+           and not exists (select 1 from desk_chat_memory c where c.user_id = u.id and c.question = $tag$<SUBJECT>$tag$ and c.created_at > now() - interval '12 hours')
+         limit 1;
        Dollar-quote with a tag you generate at run time (for example $r8k2m9x$) that does not occur anywhere in the subject or body; never put the text
        in an ordinary quoted string. Never run any other statement against this table (no update, delete, drop or alter) and none against any other table
-       except step 2's read. If an insert fails or affects 0 rows, the email still stands; say so in the final line.
+       except step 2's two reads. If an insert fails or affects 0 rows, the email still stands; say so in the final line.
     6. Finish with one line per email: its subject, the Gmail message id, and whether it was recorded in the Ask thread.
 
 ## The Ask-the-desk copy
@@ -134,7 +136,7 @@ The owner's ask (2026-10-11): "answer the scheduled question in email and in the
 | Repeat runs | A manual re-run within 12 hours does not insert the same question twice (`not exists`). |
 | Email 3 and money | Email 3 names held tickers and run lengths, never quantities or amounts (the same rule as the email). The row lands in the owner's own PIN-gated database, never in the repo. |
 | If it fails | The email still stands; the Routine's last line says which copies were recorded. |
-| Not verified | The insert has not been run against the live project: that needs the Routine to exist, and the owner's approval of a write to `desk_chat_memory` when the Routine is created. The owner row is found as `desk_users` where `is_test` is false; if more than one such row ever exists the insert picks the lowest id. |
+| Not verified | The insert has not been run against the live project: that needs the Routine to exist, and the owner's approval of a write to `desk_chat_memory` when the Routine is created. The owner is the one `desk_users` row where `is_test` is false: step 2 checks there is exactly one (if not, nothing is inserted and email 3 says so), the holdings query is limited to that user's snapshots, and the repeat-run check looks only at that user's rows. |
 
 ## Costs
 
