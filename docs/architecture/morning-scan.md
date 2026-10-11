@@ -32,6 +32,8 @@
 
 **The report has ONE session, and it is where MOST symbols end.** `dominantSession` takes the date most symbols' newest bar falls on (a tie goes to the later date); it is NOT the newest bar any symbol has. A 24/7 asset (`BTC-USD` is in the default roster) still has a weekend bar on a Monday morning while US equities end on Friday, and taking the maximum made that day the session, marked every equity stale and failed the 90% coverage check every Monday (reproduced: 1 of 6 priced; Codex, PR #321). A symbol whose bars run PAST the session is read as of it (its newer bars are cut, `buildScans`), so a 24/7 asset is scanned on the same completed session as the equities; if the cut leaves it too short it is listed unpriced with `under N bars as of <date>`. A symbol with ANY bar past the session on a WEEKDAY (not just its newest: a 24/7 asset's Friday bar counts as lag evidence even though its newest bar is a Sunday) is different: that is a cohort the rest of the feed is lagging behind (a majority one session behind would otherwise be rolled back to its date and reported as a clean stale "None"). Those are counted (`ahead`), and when more than 10% of the roster is ahead (`MAX_AHEAD`) the run is `ok:false` with the count and why (`verdict`). A weekend bar is not counted: that is a 24/7 asset's. Known limit: on the Tuesday after a Monday US market holiday a 24/7 asset's Monday bar is a newer weekday, so a roster with more than 10% such assets fails loud that day rather than reporting silently. A symbol whose newest bar is OLDER (Yahoo omitted the latest session for a halted or thin name) is listed under `stale` with its last bar and not scanned, because "crossed on the last session" must not be said of an older day.
 
+**Holdings are read as of the report session.** A holding bar AFTER it (the reference lagged, or the holding's feed is a session ahead) is cut before anything is counted, so a streak never runs through a day the email is not dated for; one with nothing left is unpriced (`no bars as of <date>`). The Routine runs ONE scan with `--holdings` so the reference is the roster's own session, not a stand-in symbol's (Codex, PR #321).
+
 **A stale holding is always listed.** A holding whose last bar predates that session (`holdings.referenceSession`) goes under `holdings.stale` (checked BEFORE the minimum-bars test, so a short history is stale too, not unpriced) with its last bar and the red days it had as of then (`redDaysThen`), whether or not they make a streak: it could not be checked through the session, and "none of your positions has 3 red days" must not be said of it. It is never filed as a current streak (`classifyHolding`; `fileHolding` puts each kind in its list and drops nothing but "no streak"). `holdings.checked` is the number actually evaluated (requested less the stale and the unpriced), and "none has a run" is only ever said of that number (Codex, PR #321).
 
 **Only complete bars, and only enough of them.** A bar missing any of open/high/low/close, or carrying a zero or negative price, is dropped before the study (`fullBars`; the dashboard's parser, `parseYahooChartOHLC`, requires every one finite and above zero, and a null open would otherwise throw in `roundBars` and abort the run); a row with a missing or junk timestamp is skipped on its own, never costing the symbol (as `parseYahooChartOHLC` does), and the rows are sorted by date (Yahoo's order is not trusted: everything downstream reads the last row as the newest); holdings need only a close, but that close must be finite and above zero (`hasClose`, `chartRows`): a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a three-day losing streak ending -100%. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
@@ -53,11 +55,11 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 174 checks, no network (two run the real CLI offline)
-    node tools/watchlist-scan-mutants.mjs               # 146 one-line changes to the tool: 145 make the selftest fail, 1 cannot change behaviour (marked)
+    node tools/watchlist-scan.mjs --selftest            # 179 checks, no network (two run the real CLI offline)
+    node tools/watchlist-scan-mutants.mjs               # 150 one-line changes to the tool: 149 make the selftest fail, 1 cannot change behaviour (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
-    node tools/watchlist-scan.mjs --symbols=SPY --holdings=holdings.json   # red-day runs for a JSON array of symbols
+    node tools/watchlist-scan.mjs --holdings=holdings.json              # plus red-day runs for a JSON array of symbols, read against the roster's session
 
 Known gaps, stated rather than hidden: a symbol with under 122 bars (a recent listing: 120 for the 92-15-15 study's %D to exist, plus the two earlier sessions the lookback examines) cannot be judged and is listed as not scanned; `NOVO.B` is unknown to Yahoo; a thinly traded option has no bar on a day it never traded, so a run across such a hole is reported with a `caution` rather than as consecutive sessions; NYSE holidays can read as a hole (a harmless false caution).
 
@@ -80,13 +82,16 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
 
     1. CODE. In the repo clone: git fetch -q origin main && git checkout -q --detach origin/main && node tools/watchlist-scan.mjs --selftest
        It must end with "all passed". If not, send ONE email, subject "Desk · morning scan FAILED", saying so and quoting the failure; stop.
-    2. WATCHLIST SCAN. node tools/watchlist-scan.mjs > /tmp/scan.json ; echo "exit $?"
-       Exit 0 = good. Exit 2 or 3, or ok:false = NOT trustworthy: emails 1 and 2 say so at the top, quoting "error", instead of listing "none".
-    3. HOLDINGS. With the Supabase connector run this one query on project kwugzhyfjevzwgplhtsd and nothing else:
+    2. HOLDINGS LIST. With the Supabase connector run this one query on project kwugzhyfjevzwgplhtsd and nothing else:
          select distinct p->>'sym' as sym from (select distinct on (account_key) positions from desk_account_snapshots order by account_key, as_of desc) s, jsonb_array_elements(s.positions) p where (p->>'qty')::numeric > 0 and (p->>'sym') ~ '^[A-Za-z0-9. ^=-]{1,24}$' order by 1;
-       Save the symbols as a JSON array of strings in /tmp/holdings.json, then:
-         node tools/watchlist-scan.mjs --symbols=SPY --holdings=/tmp/holdings.json > /tmp/hold.json
-       Never read, print, store or email quantities, dollar values, balances or account details. If the query or run fails, email 3 says so.
+       Save the symbols as a JSON array of strings in /tmp/holdings.json. Never read, print, store or email quantities, dollar values, balances or account details.
+       If the query fails, say so in email 3 and run step 3 without --holdings.
+    3. ONE SCAN. node tools/watchlist-scan.mjs --holdings=/tmp/holdings.json > /tmp/scan.json ; echo "exit $?"
+       The holdings are read against the SAME report session as the watchlist (the roster's own), never a stand-in symbol's.
+       Exit 0 = good. Exit 3 or ok:false = NOT trustworthy: emails 1 and 2 say so at the top, quoting "error", instead of listing "none".
+       Exit 2 = the roster could not be read or is over the limit (no holdings were run): emails 1 and 2 say so, quoting "error"; then run
+         node tools/watchlist-scan.mjs --symbols=SPY --holdings=/tmp/holdings.json > /tmp/scan.json
+       for email 3 only (it is then dated by SPY's session, which email 3 states).
     4. EMAILS (Gmail send_message, body plain text, no Markdown). Date = scan.newestBar. Footer on all three:
        "Source: Yahoo daily bars through the dashboard's own Pro 1 math (tools/watchlist-scan.mjs). Completed sessions only."
        Email 1, subject "Desk · all watchlist stocks crossing up 30% stochastic line on Pro 1 with red above yellow · <date>":

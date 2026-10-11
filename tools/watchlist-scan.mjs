@@ -275,12 +275,15 @@ export const isStaleBar = (last, newest) => !!newest && last < newest;
    that bar, whether or not they make a streak: it could not be checked through the session, and "none has 3 red days" must not be said of it
    (Codex, PR #321). Only a current holding can be a streak. */
 export function classifyHolding(sym, b, newest, minStreak) {
-  if (!b.rows || !b.rows.length) return { kind: 'unpriced', rec: { symbol: sym, why: b.error || 'no bars' } };
-  const r2 = v => Math.round(v * 100) / 100, c = b.rows.map(x => x.c), streak = redStreak(c), last = b.rows[b.rows.length - 1].date;
+  // Read as of the report session: a bar AFTER it (the reference lagged, or this holding's feed is a session ahead) is cut, so the streak never runs
+  // through a day the report is not dated for (Codex, PR #321).
+  const all = b.rows || [], rows = newest ? all.filter(x => x.date <= newest) : all;
+  if (!rows.length) return { kind: 'unpriced', rec: { symbol: sym, why: b.error || (all.length ? `no bars as of ${newest}` : 'no bars') } };
+  const r2 = v => Math.round(v * 100) / 100, c = rows.map(x => x.c), streak = redStreak(c), last = rows[rows.length - 1].date;
   if (isStaleBar(last, newest)) return { kind: 'stale', rec: { symbol: sym, contract: describeContract(sym), lastBar: last, redDaysThen: streak } };
-  if (b.rows.length < minStreak + 1) return { kind: 'unpriced', rec: { symbol: sym, why: 'too few bars' } };
+  if (rows.length < minStreak + 1) return { kind: 'unpriced', rec: { symbol: sym, why: 'too few bars' } };
   if (streak < minStreak) return { kind: 'none' };
-  const span = b.rows.slice(-(streak + 1)), skipped = span.reduce((n, x, ix) => n + (ix ? skippedWeekdays(span[ix - 1].date, x.date) : 0), 0);
+  const span = rows.slice(-(streak + 1)), skipped = span.reduce((n, x, ix) => n + (ix ? skippedWeekdays(span[ix - 1].date, x.date) : 0), 0);
   return { kind: 'streak', rec: { symbol: sym, contract: describeContract(sym), redDays: streak, asOf: last, closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
     ...(skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) } };
 }
@@ -496,6 +499,13 @@ async function selftest() {
   eq('a stale holding WITH a streak is stale, not a current streak', [stYes.kind, stYes.rec.redDaysThen], ['stale', 3]);
   eq('a short stale holding is still listed as stale, not unpriced', classifyHolding('X', hb(D5.slice(0, 2), [2, 1]), '2026-10-09', 3).kind, 'stale');
   eq('a holding with a single bar is stale when that bar is old', classifyHolding('X', hb([D5[0]], [5]), '2026-10-09', 3).rec.lastBar, '2026-10-05');
+  const D6 = [...D5, '2026-10-12'];
+  const ahead1 = classifyHolding('X', hb(D6.slice(1), [9, 8, 7, 6, 5]), '2026-10-09', 3);
+  eq('a holding with a bar AFTER the reference session is read as of it: the later close is cut, the run is dated by the session', [ahead1.kind, ahead1.rec.asOf, ahead1.rec.closes, ahead1.rec.redDays], ['streak', '2026-10-09', [9, 8, 7, 6], 3]);
+  eq('...and the streak never counts the cut day: 9,8,7,6 then a lower Monday is still 3 red days to Friday', ahead1.rec.lastDayPct, -14.29);
+  eq('a holding whose only bars are after the session is unpriced, with the date', classifyHolding('X', hb(['2026-10-12', '2026-10-13'], [3, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'no bars as of 2026-10-09' } });
+  eq('with no reference session nothing is cut', classifyHolding('X', hb(D6.slice(1), [9, 8, 7, 6, 5]), null, 3).rec.asOf, '2026-10-12');
+  eq('a bar on the session itself is kept', classifyHolding('X', hb(D5.slice(1), [9, 8, 7, 6]), '2026-10-09', 3).rec.asOf, '2026-10-09');
   eq('no bars at all is unpriced', classifyHolding('X', { rows: [] }, '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'no bars' } });
   const zr = classifyHolding('X', { rows: [7, 6, 5, 4, 0].map((c, i) => ({ date: '2026-10-0' + (5 + i), c })).filter(hasClose) }, '2026-10-08', 3);
   eq('a zero close is a sentinel and is dropped: the run ends on the last real close (-20%), not -100%', [zr.kind, zr.rec.redDays, zr.rec.lastDayPct], ['streak', 3, -20]);
