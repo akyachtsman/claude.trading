@@ -15,7 +15,11 @@
     "CNBC, and maxItems 30. The list is newest-first across every feed, so",
     "the share follows how much each source publishes: measured on a Sunday",
     "(the slowest day) CNBC was 20 of the top 30; weekdays run higher. It is",
-    "not guaranteed. desk-news allows at most 8 general feeds.",
+    "not guaranteed: rows for held STOCK tickers (perTicker) rank ahead of",
+    "every general feed and take slots first, so an account holding several",
+    "stocks shows less CNBC (none today: the live panel carries no ticker",
+    "rows). A reserved share needs a per-source cap in desk-news (a deploy).",
+    "desk-news allows at most 8 general feeds.",
     "FRED + St. Louis Fed carry the macro headlines that used to sit in the",
     "embedded FRED widget, retired 2026-08-07 along with the TradingView",
     "economic calendar. Holdings rank first, so these fill the tail."

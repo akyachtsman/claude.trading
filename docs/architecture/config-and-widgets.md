@@ -37,8 +37,13 @@
   `10000664`, Investing `15839069`, Earnings `15839135`, each probed 200 with 30 items, all labelled `CNBC`) and `maxItems` is 30. The panel is
   newest-first across every feed (each feed contributes the first 15 items in ITS OWN order, titles deduped, `dedupeRank`), so CNBC's share is
   whatever it publishes more of. Simulated against a live reply on a Sunday, the slowest day: 20 of the top 30 (66%) were CNBC, MarketWatch the
-  other 10; at 20 items it was only half, which is why the list grew. Weekdays should run higher. It is NOT a guarantee: a hard one needs a
-  per-feed cap in `desk-news` (a function change and deploy, owner approval). `desk-news` keeps at most 8 general feeds (7 are used).
+  other 10; at 20 items it was only half, which is why the list grew. Weekdays should run higher. It is NOT a guarantee, for two reasons.
+  (1) Rows for HELD STOCK tickers (`perTicker`, up to 3 per symbol from Yahoo/Google News) sort AHEAD of every general feed (`heldFirst`) and take
+  slots before `maxItems` applies, so an account holding six to eight stocks would leave only 6-12 of 30 slots to the general feeds (Codex, PR #322).
+  Today there are none: a forced live sweep on 2026-10-11 returned 20 rows with no chip, because the held names are options and the held-ticker
+  pattern (`/^[A-Z.]{1,6}$/`) skips an OCC symbol. (2) The mix follows what each source publishes. A hard share needs a per-source cap or a reserved
+  slot count in `desk-news` (a function change and deploy, owner approval); setting `perTicker.enabled` to `false` would also do it, at the cost
+  of the held-name news. `desk-news` keeps at most 8 general feeds (7 are used).
 - `config/widgets.json` — **EMPTY as of 2026-08-07 (owner ruling): both embeds
   are retired and the desk now runs NO third-party vendor JS at all** — the page
   carries zero iframes. The FRED "Economy at a glance" widget was replaced by
