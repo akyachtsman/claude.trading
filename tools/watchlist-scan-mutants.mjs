@@ -5,7 +5,7 @@
      node tools/watchlist-scan-mutants.mjs
 
    Entries are [name, exact text in the source, its replacement, equivalent?]. A fifth element `true` marks a mutant that cannot change
-   behaviour (its effect is covered by the next guard), listed so the count stays honest rather than hidden. The mutant is written beside
+   the REPORT (its effect is covered by the next guard, or it only changes how many requests are made), listed so the count stays honest rather than hidden. The mutant is written beside
    the tool (it loads ../scripts/data.js relative to itself) and always removed afterwards; the tool itself is never edited. */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -168,6 +168,9 @@ const MUTANTS = [
   ["classifyHolding loses the as-of date in its reason", "`no bars as of ${newest}`", "'no bars'"],
   ["classifyHolding evaluates with no report session", "if (!newest) return { kind: 'unpriced'", "if (false) return { kind: 'unpriced'"],
   ["classifyHolding no-session reason lost", "why: 'no report session: the watchlist could not be priced' } };\n  const all", "why: 'no bars' } };\n  const all"],
+  ["fetchHoldings fetches even with no report session", "if (!newest) return list.map(sym => [sym, { error: 'not fetched: no report session' }]);", ""],
+  ["fetchHoldings never fetches", "return pool(list, 8, async sym => [sym, await fetchOne(sym)]);", "return list.map(sym => [sym, { error: 'x' }]);"],
+  ["main skips fetchHoldings", "const H = await fetchHoldings(list, out.newestBar, sym", "const H = await fetchHoldings(list, 'x', sym", true],   // changes only how many requests are made, never the report (fetchHoldings's own check pins the skip)
 ];
 
 let caught = 0, equivalent = 0; const bad = [];
@@ -183,6 +186,6 @@ try {
     else bad.push(`${name}: SURVIVED - the selftest still passes`);
   }
 } finally { fs.rmSync(tmp, { force: true }); }
-console.log(`${MUTANTS.length} mutants: ${caught} caught, ${equivalent} equivalent (cannot change behaviour)${bad.length ? ', ' + bad.length + ' problem(s)' : ''}`);
+console.log(`${MUTANTS.length} mutants: ${caught} caught, ${equivalent} equivalent (cannot change the report)${bad.length ? ', ' + bad.length + ' problem(s)' : ''}`);
 for (const b of bad) console.log('  ' + b);
 process.exit(bad.length ? 1 : 0);

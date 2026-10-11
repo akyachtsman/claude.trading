@@ -338,6 +338,13 @@ export function buildReport(out, built, now) {
   return out;
 }
 
+/* Fetch the holdings' bars, unless there is no report session: every holding is refused then without looking at its bars, so a Yahoo outage (the
+   likeliest cause) must not also cost the full holdings budget before the failure emails go out (Codex, PR #321). */
+export async function fetchHoldings(list, newest, fetchOne) {
+  if (!newest) return list.map(sym => [sym, { error: 'not fetched: no report session' }]);
+  return pool(list, 8, async sym => [sym, await fetchOne(sym)]);
+}
+
 /* The fetched holdings -> the holdings block: red-day runs, the ones that could not be checked through the session (stale, unpriced), and how
    many WERE checked, so "none has a run" is only ever said of those. */
 export function buildHoldings(fetched, requested, newest, minStreak) {
@@ -378,7 +385,7 @@ async function main() {
   if (hold) {
     const list = [...new Set(JSON.parse(fs.readFileSync(hold, 'utf8')).map(s => String(s).toUpperCase().replace(/\s+/g, '')).filter(s => HOLDING_RE.test(s)))];
     const holdDeadline = Date.now() + HOLDINGS_BUDGET_MS;
-    const H = await pool(list, 8, async sym => [sym, await bars(sym, now, holdDeadline)]);
+    const H = await fetchHoldings(list, out.newestBar, sym => bars(sym, now, holdDeadline));
     out.holdings = buildHoldings(H, list.length, out.newestBar, minStreak);
   }
   console.log(JSON.stringify(out, null, 1));
@@ -594,6 +601,11 @@ async function selftest() {
   const hb2 = (dates, closes) => ({ rows: dates.map((date, i) => ({ date, c: closes[i] })) });
   const hold = buildHoldings([['CUR', hb2(D5.slice(1), [9, 8, 7, 6])], ['OLD', hb2(D5.slice(0, 4), [4, 3, 2, 1])], ['ERR', { error: 'unknown to Yahoo' }], ['UP', hb2(D5.slice(1), [1, 2, 3, 4])]], 4, '2026-10-09', 3);
   eq('holdings: a streak, a stale one and an unpriced one each land in their list, and the checked count excludes the last two', [hold.redStreak.map(x => x.symbol), hold.stale.map(x => x.symbol), hold.unpriced.map(x => x.symbol), hold.checked, hold.referenceSession], [['CUR'], ['OLD'], ['ERR'], 2, '2026-10-09']);
+  let fetchCalls = 0; const countFetch = async sym => { fetchCalls++; return hb2(D5.slice(1), [9, 8, 7, 6]); };
+  const skipped = await fetchHoldings(['A', 'B', 'C'], null, countFetch);
+  eq('with no report session no holding is fetched at all, and each still gets an entry to be refused', [fetchCalls, skipped.map(x => x[0])], [0, ['A', 'B', 'C']]);
+  const fetched = await fetchHoldings(['A', 'B', 'C'], '2026-10-09', countFetch);
+  eq('with a session every holding is fetched, results in the order asked', [fetchCalls, fetched.map(x => x[0])], [3, ['A', 'B', 'C']]);
   const noSession = buildHoldings([['CUR', hb2(D5.slice(1), [9, 8, 7, 6])], ['ERR', { error: 'unknown to Yahoo' }]], 2, null, 3);
   eq('with no report session no holding is reported: all are unpriced with that reason, none checked', [noSession.redStreak.length, noSession.stale.length, noSession.unpriced.map(u => u.symbol), noSession.checked, noSession.referenceSession], [0, 0, ['CUR', 'ERR'], 0, null]);
   eq('holdings: streaks sort longest first, then by symbol', buildHoldings([['B', hb2(D5, [9, 8, 7, 6, 5])], ['A', hb2(D5.slice(1), [9, 8, 7, 6])], ['C', hb2(D5, [9, 8, 7, 6, 5])]], 3, '2026-10-09', 3).redStreak.map(x => x.symbol), ['B', 'C', 'A']);
