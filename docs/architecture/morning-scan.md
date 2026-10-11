@@ -32,6 +32,8 @@
 
 **The report has ONE session.** A symbol's newest bar must equal the newest bar any symbol has (`partitionBySession`); Yahoo can omit the latest session for a halted or thin name, and "crossed on the last session" must not be said of an older day. Those symbols are listed under `stale` with their last bar and are not scanned (Codex, PR #321). A holding whose last bar is older is flagged `stale` the same way.
 
+**Only complete bars, and only enough of them.** A bar missing any of open/high/low/close is dropped before the study (`fullBars`; the dashboard's parser does the same, and a null open would otherwise throw in `roundBars` and abort the run); holdings need only the close. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
+
 **Readings at the crossing and readings now are separate fields.** An `earlier` hit's `kBefore` / `kAtCross` / `dAtCross` are the bar it crossed on; `kNow` / `dNow` / `close` / `dayPct` are the latest session's (Codex, PR #321). On a `latest` hit they coincide.
 
 **Completed sessions only.** A bar dated today is dropped while the NYSE session is open or settling (before 16:15 ET, `dropFormingBar`). A 6:54 AM Pacific run is 9:54 ET, mid-session, so it reads the previous close, the same "last completed session" read the dashboard's scheduled asks give. The email names the date (`newestBar`).
@@ -45,12 +47,12 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 55 checks, no network; 28 single-line mutants are each caught
+    node tools/watchlist-scan.mjs --selftest            # 78 checks, no network; 39 single-line mutants are each caught
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --symbols=SPY --holdings=holdings.json   # red-day runs for a JSON array of symbols
 
-Known gaps, stated rather than hidden: a symbol with under 120 bars (a recent listing) cannot carry a 92-15-15 reading and is listed as not scanned; `NOVO.B` is unknown to Yahoo; a thinly traded option has no bar on a day it never traded, so a run across such a hole is reported with a `caution` rather than as consecutive sessions; NYSE holidays can read as a hole (a harmless false caution).
+Known gaps, stated rather than hidden: a symbol with under 122 bars (a recent listing: 120 for the 92-15-15 study's %D to exist, plus the two earlier sessions the lookback examines) cannot be judged and is listed as not scanned; `NOVO.B` is unknown to Yahoo; a thinly traded option has no bar on a day it never traded, so a run across such a hole is reported with a `caution` rather than as consecutive sessions; NYSE holidays can read as a hole (a harmless false caution).
 
 ## The Routine
 

@@ -112,7 +112,7 @@ async function bars(symbol, now) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const res = (await r.json()).chart.result[0], q = res.indicators.quote[0];
       let rows = res.timestamp.map((t, i) => ({ date: nyParts(new Date(t * 1000)).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 }))
-        .filter(x => x.h != null && x.l != null && x.c != null);
+        .filter(x => Number.isFinite(x.c));                                    // holdings need only the close; the scan demands all four (fullBars)
       rows = dropFormingBar(rows, now);
       return rows.length ? { rows } : { error: 'no bars' };
     } catch (e) { err = String(e.message || e).slice(0, 60); await sleep(1500 * (a + 1)); }
@@ -138,6 +138,39 @@ async function roster(db) {
 }
 
 /* ── the scan ─────────────────────────────────────────────────────────────── */
+/* A scan needs all four prices of a bar: the dashboard's parser drops a row missing any of them, and a null open would otherwise throw in
+   roundBars and abort the whole run (Codex, PR #321). Holdings need only the close and do not go through this. */
+export const fullBars = rows => rows.filter(x => [x.o, x.h, x.l, x.c].every(Number.isFinite));
+
+/* Bars a symbol needs before a crossing can be judged on each of the last `lookback` sessions. %D first has a value at bar k+kSmooth+d-2
+   (92-15-15: the 120th), and the OLDEST session examined needs one too: 120 for the latest session alone, 122 for three (Codex, PR #321). */
+export const barsNeeded = (cfg, lookback) => cfg.k + cfg.kSmooth + cfg.d - 2 + (lookback - 1);
+
+/* Fetched bars -> the bars a scan may use, or the reason it cannot (incomplete rows do not count toward the minimum). */
+export function prepareRows(b, cfg, lookback) {
+  const rows = b.rows ? fullBars(b.rows) : null, need = barsNeeded(cfg, lookback);
+  return !rows || rows.length < need ? { why: b.error || `under ${need} bars` } : { rows };
+}
+
+/* The fetched results -> the scans that stand, and the symbols that could not be scanned with why. Nothing here throws. */
+export function buildScans(results, dash, pane, lookback) {
+  const cfg = pane === 2 ? dash.STOCH : dash.WSTOCH, scans = [], unpriced = [];
+  for (const [sym, b] of results) {
+    const prep = prepareRows(b, cfg, lookback);
+    if (prep.why) { unpriced.push({ symbol: sym, why: prep.why }); continue; }
+    const one = scanOrReason(dash, sym, prep.rows, pane, lookback);
+    if (one.why) { unpriced.push({ symbol: sym, why: one.why }); continue; }
+    scans.push({ sym, r: one.r });
+  }
+  return { scans, unpriced };
+}
+
+/* One symbol's scan that cannot take the run down with it: whatever it throws becomes a reason, listed beside the unpriced. */
+export function scanOrReason(dash, sym, rows, pane, lookback) {
+  try { return { r: scanSymbol(dash, sym, rows, pane, lookback) }; }
+  catch (e) { return { why: 'could not be read: ' + String((e && e.message) || e).slice(0, 50) }; }
+}
+
 /* The dashboard computes on bars rounded to two decimals: desk-charts' packSeries does `+r.o.toFixed(2)` on open/high/low/close
    before the chart or the scheduled ask ever sees them. A crossing within a cent of 30/80, or %K within a cent of %D, can flip on
    raw floats, so the scan rounds the same way (Codex, PR #321). Holdings are NOT rounded: a $0.25 option moves in sub-cent steps. */
@@ -196,12 +229,8 @@ async function main() {
     rejectedTickers: rosterInfo ? rosterInfo.rejected : 0, unpriced: [], stale: [],
     up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } };
 
-  const scans = [];
-  for (const [sym, b] of results) {
-    const need = pane === 2 ? 30 : 120;                                                            // 92+15+15 needs ~120; 14+3+3 ~20
-    if (!b.rows || b.rows.length < need) { out.unpriced.push({ symbol: sym, why: b.error || `under ${need} bars` }); continue; }
-    scans.push({ sym, r: scanSymbol(dash, sym, b.rows, pane, lookback) });
-  }
+  const built = buildScans(results, dash, pane, lookback), scans = built.scans;
+  out.unpriced.push(...built.unpriced);
   const part = partitionBySession(scans);
   out.newestBar = part.newest; out.stale = part.stale; out.scanned = part.onSession.length;
   for (const x of part.onSession) for (const h of x.r.hits) fileHit(out, h);
@@ -276,7 +305,7 @@ function selftest() {
   eq('a long title is not a ticker', TICKER_RE.test('SEND-EMAIL-TO-ATTACKER'), false);
   eq('a plain ticker is', TICKER_RE.test('BRK.B'), true);
   // which pane is scanned, and where a hit is filed (a stand-in for the dashboard's math: the two configs answer different series)
-  const WS = { tag: 'long' }, SW = { tag: 'swing' };
+  const WS = { tag: 'long', k: 2, kSmooth: 1, d: 1 }, SW = { tag: 'swing', k: 1, kSmooth: 1, d: 1 };   // barsNeeded at lookback 3: long 4, swing 3
   const pad2 = a => [...Array(10 - a.length).fill(null), ...a];            // 10 bars, nulls first
   const fake = { WSTOCH: WS, STOCH: SW,
     stochSeries: (_s, cfg) => cfg === WS ? { k: pad2([20, 25, 29, 31]), d: pad2([22, 24, 26, 28]) }          // long-term: crosses UP 30 on the last bar
@@ -316,6 +345,41 @@ function selftest() {
   eq('a holding whose last bar is older is stale', isStaleBar('2026-10-07', '2026-10-09'), true);
   eq('a holding on the latest session is not', isStaleBar('2026-10-09', '2026-10-09'), false);
   eq('no reference session, nothing is stale', isStaleBar('2026-10-07', null), false);
+  // incomplete bars never reach the study, and one bad symbol never takes the run down
+  eq('a row missing its open is dropped (and so cannot throw in roundBars)', fullBars([{ o: null, h: 2, l: 1, c: 1.5 }, { o: 1, h: 2, l: 1, c: 1.5 }]).length, 1);
+  eq('a row missing any of high/low/close is dropped too', fullBars([{ o: 1, h: undefined, l: 1, c: 1 }, { o: 1, h: 2, l: NaN, c: 1 }, { o: 1, h: 2, l: 1, c: null }]).length, 0);
+  eq('a complete row is kept', fullBars([{ o: 1, h: 2, l: 1, c: 1.5 }]).length, 1);
+  const cfg = { k: 92, kSmooth: 15, d: 15 }, full = n => Array.from({ length: n }, () => ({ o: 1, h: 2, l: 1, c: 1.5 })), holey = n => Array.from({ length: n }, () => ({ o: null, h: 2, l: 1, c: 1.5 }));
+  eq('enough complete bars are usable', prepareRows({ rows: full(125) }, cfg, 3).rows.length, 125);
+  eq('incomplete rows are dropped from what is used', prepareRows({ rows: [...full(123), ...holey(3)] }, cfg, 3).rows.length, 123);
+  eq('incomplete rows do not count toward the minimum', prepareRows({ rows: [...full(121), ...holey(5)] }, cfg, 3).why, 'under 122 bars');
+  eq('121 complete bars cannot judge three sessions', prepareRows({ rows: full(121) }, cfg, 3).why, 'under 122 bars');
+  eq('...but can judge the latest alone', prepareRows({ rows: full(121) }, cfg, 1).rows.length, 121);
+  eq('a fetch error is passed through as the reason', prepareRows({ error: 'unknown to Yahoo' }, cfg, 3).why, 'unknown to Yahoo');
+  const rowsBoom = rows10.map((r, i) => (i ? r : { ...r, date: 'xx' })), pickyDash = { ...fake, stochSeries: (S, cfg) => { if (S.t[0] === 'xx') throw new Error('boom'); return fake.stochSeries(S, cfg); } };
+  const built = buildScans([['AAA', { rows: rows10 }], ['BBB', { error: 'unknown to Yahoo' }], ['CCC', { rows: rows10.slice(0, 2) }], ['DDD', { rows: rowsBoom }], ['EEE', { rows: rows10 }]], pickyDash, 1, 3);
+  eq('good symbols are scanned, in order', built.scans.map(x => x.sym), ['AAA', 'EEE']);
+  eq('the rest are listed with their reason; one failure does not stop the others', built.unpriced, [{ symbol: 'BBB', why: 'unknown to Yahoo' }, { symbol: 'CCC', why: 'under 4 bars' }, { symbol: 'DDD', why: 'could not be read: boom' }]);
+  eq('a scanned entry carries its result', built.scans[0].r.asOf, '2026-10-09');
+  const three = [['AAA', { rows: rows10.slice(0, 3) }]];
+  eq('three bars are enough for the swing pane here (it needs 3)', buildScans(three, fake, 2, 3).scans.length, 1);
+  eq('...but not for the long-term pane (it needs 4): each pane uses ITS OWN minimum', buildScans(three, fake, 1, 3).unpriced, [{ symbol: 'AAA', why: 'under 4 bars' }]);
+  const boom = { ...fake, stochSeries: () => { throw new TypeError('x'); } };
+  eq('a symbol that throws is a reason, not a crash', scanOrReason(boom, 'XYZ', rows10, 1, 3).why, 'could not be read: x');
+  eq('a symbol that scans returns its result', scanOrReason(fake, 'XYZ', rows10, 1, 3).r.asOf, '2026-10-09');
+  // the bars a symbol needs, checked against the REAL study's warm-up
+  const dash0 = loadDashboard(), ramp = Array.from({ length: 130 }, (_, i) => 10 + Math.sin(i / 5) * 3 + i * 0.05);
+  const RS = { t: ramp.map((_, i) => 'd' + i), o: ramp, h: ramp.map(x => x + 1), l: ramp.map(x => x - 1), c: ramp, v: ramp.map(() => 1) };
+  const real = dash0.stochSeries(RS, dash0.WSTOCH);
+  eq('Pro 1 %K first has a value at bar 106 (index 105)', real.k.findIndex(v => v != null), 105);
+  eq('Pro 1 %D first has a value at bar 120 (index 119)', real.d.findIndex(v => v != null), 119);
+  eq('Pro 1 needs 120 bars for the latest session alone', barsNeeded(dash0.WSTOCH, 1), 120);
+  eq('Pro 1 needs 122 bars to judge the last three sessions', barsNeeded(dash0.WSTOCH, 3), 122);
+  const upTo = n => ({ t: RS.t.slice(0, n), o: RS.o.slice(0, n), h: RS.h.slice(0, n), l: RS.l.slice(0, n), c: RS.c.slice(0, n), v: RS.v.slice(0, n) });
+  const need3 = barsNeeded(dash0.WSTOCH, 3);
+  eq('with exactly the needed bars, %D exists on the oldest of the last three sessions', dash0.stochSeries(upTo(need3), dash0.WSTOCH).d[need3 - 1 - 2] != null, true);
+  eq('with one bar fewer it does not', dash0.stochSeries(upTo(need3 - 1), dash0.WSTOCH).d[need3 - 1 - 1 - 2] != null, false);
+  eq('Pro 2 swing needs 20 bars for three sessions', barsNeeded(dash0.STOCH, 3), 20);
   // the dashboard's own math is what is being used
   const dash = loadDashboard(), up = Array.from({ length: 200 }, (_, i) => 10 + i);
   const S = { t: up.map((_, i) => 'd' + i), o: up, h: up.map(x => x + 1), l: up.map(x => x - 1), c: up, v: up.map(() => 1) };
