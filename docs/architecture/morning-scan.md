@@ -28,6 +28,12 @@
 
 **Owner ruling 2026-10-11: "Pro 1, as written".** The owner's questions say Pro 1, but the dashboard's scheduled answers had been reading Pro 2 (the first line of one reads "Scan on the Pro 2 daily swing read"): same words, a different study. The Routine scans Pro 1.
 
+**Bars are rounded like the dashboard's.** `desk-charts`' `packSeries` does `+r.o.toFixed(2)` on open/high/low/close before the charts or the scheduled ask see a bar, so the scan does the same (`roundBars`): a crossing within a cent of 30/80, or %K within a cent of %D, can flip on raw floats (Codex, PR #321). It changed nothing on 2026-10-09's data (same lists before and after). Holdings are NOT rounded: a $0.25 option moves in sub-cent steps.
+
+**The report has ONE session.** A symbol's newest bar must equal the newest bar any symbol has (`partitionBySession`); Yahoo can omit the latest session for a halted or thin name, and "crossed on the last session" must not be said of an older day. Those symbols are listed under `stale` with their last bar and are not scanned (Codex, PR #321). A holding whose last bar is older is flagged `stale` the same way.
+
+**Readings at the crossing and readings now are separate fields.** An `earlier` hit's `kBefore` / `kAtCross` / `dAtCross` are the bar it crossed on; `kNow` / `dNow` / `close` / `dayPct` are the latest session's (Codex, PR #321). On a `latest` hit they coincide.
+
 **Completed sessions only.** A bar dated today is dropped while the NYSE session is open or settling (before 16:15 ET, `dropFormingBar`). A 6:54 AM Pacific run is 9:54 ET, mid-session, so it reads the previous close, the same "last completed session" read the dashboard's scheduled asks give. The email names the date (`newestBar`).
 
 ## Safety rules (load-bearing)
@@ -39,7 +45,7 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 43 checks, no network; 18 single-line mutants are each caught
+    node tools/watchlist-scan.mjs --selftest            # 55 checks, no network; 28 single-line mutants are each caught
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --symbols=SPY --holdings=holdings.json   # red-day runs for a JSON array of symbols
@@ -76,12 +82,12 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
        "Source: Yahoo daily bars through the dashboard's own Pro 1 math (tools/watchlist-scan.mjs). Completed sessions only."
        Email 1, subject "Desk · all watchlist stocks crossing up 30% stochastic line on Pro 1 with red above yellow · <date>":
          "Pro 1 (long-term 92-15-15), completed session of <date>. Scanned <scanned> of <requested> watchlist symbols."
-         "CROSSED UP THROUGH 30 ON THE LAST SESSION, RED ABOVE YELLOW" then one line per up30.latest: SYMBOL  close <close> (<dayPct>%)  red <k>  yellow <d>  (was <kPrev>)   or "None."
-         "CROSSED UP IN THE 2 SESSIONS BEFORE" then one line per up30.earlier: SYMBOL  crossed <crossedOn> (<sessionsAgo> sessions ago)  red <k>  yellow <d>  close <close>   or "None."
-         "Not scanned: " the unpriced symbols with their reasons.
+         "CROSSED UP THROUGH 30 ON THE LAST SESSION, RED ABOVE YELLOW" then one line per up30.latest: SYMBOL  close <close> (<dayPct>%)  red <kBefore> to <kNow>  yellow <dNow>   or "None."
+         "CROSSED UP IN THE 2 SESSIONS BEFORE" then one line per up30.earlier: SYMBOL  crossed <crossedOn> (<sessionsAgo> sessions ago): red <kBefore> to <kAtCross>, yellow <dAtCross>; now red <kNow>, yellow <dNow>, close <close>   or "None."
+         "Not scanned: " the unpriced symbols with their reasons, and the stale symbols as "<symbol> (last bar <lastBar>)".
        Email 2, subject "Desk · all watchlist stocks crossing down 80% stochastic line on Pro 1 with red below yellow · <date>": the same with down80 and "DOWN THROUGH 80".
        Email 3, subject "Desk · All long stocks/options in my accounts w/ 3 or more consecutive red days · <date>":
-         one line per holdings.redStreak: <contract> (or symbol)  <redDays> red days  closes <closes joined by " > ">  last day <lastDayPct>%   plus its caution if any;
+         one line per holdings.redStreak: <contract> (or symbol)  <redDays> red days  closes <closes joined by " > ">  last day <lastDayPct>%   plus its caution if any (a stale one says its last bar is older);
          if none: "None of your <requested> long positions has 3 or more red days in a row."; then any holdings.unpriced.
     5. Finish with one line per email: its subject and the Gmail message id.
 

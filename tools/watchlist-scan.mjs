@@ -138,6 +138,19 @@ async function roster(db) {
 }
 
 /* ── the scan ─────────────────────────────────────────────────────────────── */
+/* The dashboard computes on bars rounded to two decimals: desk-charts' packSeries does `+r.o.toFixed(2)` on open/high/low/close
+   before the chart or the scheduled ask ever sees them. A crossing within a cent of 30/80, or %K within a cent of %D, can flip on
+   raw floats, so the scan rounds the same way (Codex, PR #321). Holdings are NOT rounded: a $0.25 option moves in sub-cent steps. */
+export const roundBars = rows => rows.map(x => ({ ...x, o: +x.o.toFixed(2), h: +x.h.toFixed(2), l: +x.l.toFixed(2), c: +x.c.toFixed(2) }));
+
+/* A symbol's newest bar must be the report's session. Yahoo can omit the latest session for a few symbols (a halt, a thin name); their
+   final bar is older, and "crossed on the last session" would then be said of an older day (Codex, PR #321). Those are listed, not scanned. */
+export function partitionBySession(scans) {
+  const newest = scans.map(x => x.r.asOf).sort().pop() || null;
+  return { newest, onSession: scans.filter(x => x.r.asOf === newest), stale: scans.filter(x => x.r.asOf !== newest).map(x => ({ symbol: x.sym, lastBar: x.r.asOf })) };
+}
+export const isStaleBar = (last, newest) => !!newest && last < newest;
+
 function readings(dash, rows, pane) {
   const s = { t: rows.map(x => x.date), o: rows.map(x => x.o), h: rows.map(x => x.h), l: rows.map(x => x.l), c: rows.map(x => x.c), v: rows.map(x => x.v) };
   const n = s.c.length, r2 = v => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
@@ -148,14 +161,16 @@ function readings(dash, rows, pane) {
 export const fileHit = (out, h) => out[h.kind][h.ago === 0 ? 'latest' : 'earlier'].push(h.rec);
 
 /* One symbol's crossings on the pane being scanned. `dash` is the dashboard's math (or, in the selftest, a stand-in for it). */
-export function scanSymbol(dash, sym, rows, pane, lookback) {
-  const R = readings(dash, rows, pane), i = R.n - 1, hits = [], hit = crossings(R.p1.k, R.p1.d, lookback);
+export function scanSymbol(dash, sym, rawRows, pane, lookback) {
+  const R = readings(dash, roundBars(rawRows), pane), i = R.n - 1, hits = [], hit = crossings(R.p1.k, R.p1.d, lookback);
   for (const [kind, h] of [['up30', hit.up30], ['down80', hit.down80]]) {
     if (!h) continue;
-    const j = i - h.ago;
+    const j = i - h.ago;       // the bar the cross happened on; for an `earlier` hit the readings AT it and NOW differ, and both are reported
     hits.push({ kind, ago: h.ago, rec: {
-      symbol: sym, crossedOn: R.s.t[j], sessionsAgo: h.ago, close: R.r2(R.s.c[i]), dayPct: R.r2((R.s.c[i] / R.s.c[i - 1] - 1) * 100),
-      k: R.r2(R.p1.k[i]), d: R.r2(R.p1.d[i]), kPrev: R.r2(R.p1.k[j - 1]), otherPaneK: R.r2(R.p2.k[i]), otherPaneD: R.r2(R.p2.d[i]), rsi: R.r2(R.rsi[i]),
+      symbol: sym, crossedOn: R.s.t[j], sessionsAgo: h.ago,
+      kBefore: R.r2(R.p1.k[j - 1]), kAtCross: R.r2(R.p1.k[j]), dAtCross: R.r2(R.p1.d[j]),
+      kNow: R.r2(R.p1.k[i]), dNow: R.r2(R.p1.d[i]), close: R.r2(R.s.c[i]), dayPct: R.r2((R.s.c[i] / R.s.c[i - 1] - 1) * 100),
+      otherPaneK: R.r2(R.p2.k[i]), otherPaneD: R.r2(R.p2.d[i]), rsi: R.r2(R.rsi[i]),
     } });
   }
   return { asOf: R.s.t[i], hits };
@@ -178,21 +193,21 @@ async function main() {
 
   const results = await pool(symbols, 8, async sym => [sym, await bars(sym, now)]);
   const out = { ok: true, pane: pane === 2 ? 'Pro 2 SWING 14-3-3' : 'Pro 1 LONG-TERM 92-15-15', generatedAt: now.toISOString(), requested: symbols.length, scanned: 0, lists: rosterInfo ? rosterInfo.lists : null,
-    rejectedTickers: rosterInfo ? rosterInfo.rejected : 0, unpriced: [], asOf: {},
+    rejectedTickers: rosterInfo ? rosterInfo.rejected : 0, unpriced: [], stale: [],
     up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } };
 
+  const scans = [];
   for (const [sym, b] of results) {
     const need = pane === 2 ? 30 : 120;                                                            // 92+15+15 needs ~120; 14+3+3 ~20
     if (!b.rows || b.rows.length < need) { out.unpriced.push({ symbol: sym, why: b.error || `under ${need} bars` }); continue; }
-    const r = scanSymbol(dash, sym, b.rows, pane, lookback);
-    out.scanned++; out.asOf[r.asOf] = (out.asOf[r.asOf] || 0) + 1;
-    for (const h of r.hits) fileHit(out, h);
+    scans.push({ sym, r: scanSymbol(dash, sym, b.rows, pane, lookback) });
   }
+  const part = partitionBySession(scans);
+  out.newestBar = part.newest; out.stale = part.stale; out.scanned = part.onSession.length;
+  for (const x of part.onSession) for (const h of x.r.hits) fileHit(out, h);
   for (const k of ['up30', 'down80']) for (const w of ['latest', 'earlier']) out[k][w].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  const days = Object.keys(out.asOf).sort();
-  out.newestBar = days[days.length - 1] || null;
   out.staleDays = out.newestBar ? Math.round((now - new Date(out.newestBar + 'T12:00:00Z')) / 864e5) : null;
-  if (out.requested && out.scanned / out.requested < MIN_PRICED) { out.ok = false; out.error = `only ${out.scanned} of ${out.requested} symbols priced`; }
+  if (out.requested && out.scanned / out.requested < MIN_PRICED) { out.ok = false; out.error = `only ${out.scanned} of ${out.requested} symbols priced on the latest session`; }
   if (out.staleDays != null && out.staleDays > 5) { out.ok = false; out.error = `newest bar is ${out.staleDays} days old`; }
 
   const hold = arg('holdings');
@@ -208,7 +223,7 @@ async function main() {
       const r2 = v => Math.round(v * 100) / 100;
       out.holdings.redStreak.push({ symbol: sym, contract: describeContract(sym), redDays: streak, asOf: last,
         closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
-        ...(skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) });
+        ...(isStaleBar(last, out.newestBar) ? { stale: true, caution: `its last bar is ${last}, older than the latest session ${out.newestBar}` } : skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) });
     }
     out.holdings.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
   }
@@ -272,8 +287,9 @@ function selftest() {
   eq('pane 1 scans the LONG-TERM series: an up-30 cross, no down-80', p1.hits.map(h => h.kind), ['up30']);
   eq('pane 2 scans the SWING series: a down-80 cross, no up-30', p2.hits.map(h => h.kind), ['down80']);
   eq('a cross on the last bar is sessionsAgo 0 (filed as latest)', p1.hits[0].ago, 0);
-  eq('the record carries the scanned pane K/D and the other pane', [p1.hits[0].rec.k, p1.hits[0].rec.d, p1.hits[0].rec.otherPaneK], [31, 28, 78]);
-  eq('previous-bar K is the one before the cross', p1.hits[0].rec.kPrev, 29);
+  eq('the record carries the scanned pane K/D now and the other pane', [p1.hits[0].rec.kNow, p1.hits[0].rec.dNow, p1.hits[0].rec.otherPaneK], [31, 28, 78]);
+  eq('K before the cross is the bar before it', p1.hits[0].rec.kBefore, 29);
+  eq('on the latest session, at-the-cross readings are the current ones', [p1.hits[0].rec.kAtCross, p1.hits[0].rec.dAtCross], [31, 28]);
   eq('day change is last close over the one before', p1.hits[0].rec.dayPct, 5.56);                         // 19/18 - 1
   eq('asOf is the last bar', p1.asOf, '2026-10-09');
   const bucket = { up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } };
@@ -281,6 +297,25 @@ function selftest() {
   eq('hits are filed latest vs earlier by sessionsAgo', [bucket.up30.latest, bucket.up30.earlier, bucket.down80.latest, bucket.down80.earlier], [['a'], ['b'], [], ['c']]);
   const early = { ...fake, stochSeries: (_s, cfg) => cfg === WS ? { k: pad2([20, 25, 29, 31, 35]), d: pad2([22, 24, 26, 28, 30]) } : fake.stochSeries(_s, cfg) };
   eq('a cross one bar earlier is filed as sessionsAgo 1', scanSymbol(early, 'XYZ', rows10, 1, 3).hits.map(h => h.ago), [1]);
+  const e1 = scanSymbol(early, 'XYZ', rows10, 1, 3).hits[0].rec;
+  eq('an earlier hit reports the readings AT the crossing, not today\'s', [e1.kBefore, e1.kAtCross, e1.dAtCross, e1.crossedOn], [29, 31, 28, '2026-10-08']);
+  eq('...and today\'s readings separately', [e1.kNow, e1.dNow], [35, 30]);
+  // bars are rounded to two decimals as desk-charts' packSeries does, before any study sees them
+  let seen = null; const spy = { ...fake, stochSeries: (S, cfg) => { seen = S; return fake.stochSeries(S, cfg); } };
+  const raw = rows10.map(x => ({ ...x, o: 10.004, h: 11.126, l: 8.996, c: 10.126 }));
+  scanSymbol(spy, 'XYZ', raw, 1, 3);
+  eq('the study sees prices rounded like the dashboard\'s', [seen.o[0], seen.h[0], seen.l[0], seen.c[0]], [10, 11.13, 9, 10.13]);
+  eq('roundBars leaves dates and volume alone', roundBars([{ date: 'd', o: 1.234, h: 1.236, l: 1.231, c: 1.235, v: 7 }]), [{ date: 'd', o: 1.23, h: 1.24, l: 1.23, c: 1.24, v: 7 }]);
+  // a symbol whose newest bar is older than the report's session is listed, not scanned
+  const mk = (sym, asOf) => ({ sym, r: { asOf, hits: [] } });
+  const part = partitionBySession([mk('A', '2026-10-09'), mk('B', '2026-10-09'), mk('C', '2026-10-08')]);
+  eq('the report session is the newest bar any symbol has', part.newest, '2026-10-09');
+  eq('symbols on it are scanned', part.onSession.map(x => x.sym), ['A', 'B']);
+  eq('an older last bar is quarantined with its date', part.stale, [{ symbol: 'C', lastBar: '2026-10-08' }]);
+  eq('nothing priced, nothing newest', partitionBySession([]).newest, null);
+  eq('a holding whose last bar is older is stale', isStaleBar('2026-10-07', '2026-10-09'), true);
+  eq('a holding on the latest session is not', isStaleBar('2026-10-09', '2026-10-09'), false);
+  eq('no reference session, nothing is stale', isStaleBar('2026-10-07', null), false);
   // the dashboard's own math is what is being used
   const dash = loadDashboard(), up = Array.from({ length: 200 }, (_, i) => 10 + i);
   const S = { t: up.map((_, i) => 'd' + i), o: up, h: up.map(x => x + 1), l: up.map(x => x - 1), c: up, v: up.map(() => 1) };
