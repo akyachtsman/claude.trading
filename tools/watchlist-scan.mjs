@@ -181,7 +181,8 @@ export function chartRows(res) {
     const row = { date: nyParts(when).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 };
     if (hasClose(row)) rows.push(row);
   });
-  return rows;
+  // The dashboard's parser sorts by date; everything downstream (the forming-bar drop, the session, the streaks, the studies) reads the LAST rows as the newest.
+  return rows.sort((a, b) => a.date.localeCompare(b.date));
 }
 /* A usable close: finite and above zero (a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a 3-day losing streak ending -100%). */
 export const hasClose = x => Number.isFinite(x.c) && x.c > 0;
@@ -584,6 +585,9 @@ async function selftest() {
   const hitOf = (symbol, kind, ago) => ({ kind, ago, rec: { symbol } });
   const sortedRep = buildReport(rep(), { scans: [{ sym: 'ZZZ', r: { asOf: '2026-10-09', hits: [hitOf('ZZZ', 'up30', 0)] } }, { sym: 'AAA', r: { asOf: '2026-10-09', hits: [hitOf('AAA', 'up30', 0), hitOf('AAA', 'down80', 1)] } }], unpriced: [], session: '2026-10-09', ahead: 0 }, vNow);
   eq('hits are filed by kind and recency and listed in symbol order', [sortedRep.up30.latest.map(h => h.symbol), sortedRep.down80.earlier.map(h => h.symbol)], [['AAA', 'ZZZ'], ['AAA']]);
+  const ooo = { timestamp: [1760172800, 1760000000, 1760086400], indicators: { quote: [{ open: [1, 1, 1], high: [2, 2, 2], low: [1, 1, 1], close: [3, 5, 4], volume: [1, 1, 1] }] } };
+  eq('bars Yahoo sends out of order are sorted by date, like the dashboard parser', chartRows(ooo).map(r => [r.date, r.c]), [['2025-10-09', 5], ['2025-10-10', 4], ['2025-10-11', 3]]);
+  eq('...so the forming bar is the LAST one and is dropped even when it arrived first', dropFormingBar(chartRows(ooo), new Date('2025-10-11T14:00:00Z')).map(r => r.c), [5, 4]);
   eq('a negative close is dropped too', [{ c: -1 }, { c: 0 }, { c: NaN }, { c: 0.25 }].filter(hasClose).length, 1);
   eq('too few bars is unpriced, with its reason', classifyHolding('X', hb(D5.slice(3), [1, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'too few bars' } });
   eq('a fetch error is passed through', classifyHolding('X', { error: 'unknown to Yahoo' }, '2026-10-09', 3).rec.why, 'unknown to Yahoo');

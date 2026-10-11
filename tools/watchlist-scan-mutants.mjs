@@ -161,6 +161,8 @@ const MUTANTS = [
   ["buildHoldings sorts shortest first", "b.redDays - a.redDays || a.symbol.localeCompare(b.symbol)", "a.redDays - b.redDays || a.symbol.localeCompare(b.symbol)"],
   ["buildHoldings ignores the reference session", "referenceSession: newest", "referenceSession: null"],
   ["ahead looks only at the newest bar", "rows.some(x => x.date > session && !isWeekend(x.date))", "(x => x.date > session && !isWeekend(x.date))(rows[rows.length - 1])"],
+  ["chartRows keeps Yahoo's order", "return rows.sort((a, b) => a.date.localeCompare(b.date));", "return rows;"],
+  ["chartRows sorts newest first", "a.date.localeCompare(b.date));\n}", "b.date.localeCompare(a.date));\n}"],
 ];
 
 let caught = 0, equivalent = 0; const bad = [];
