@@ -45,6 +45,7 @@ const HOLDING_RE = /^[A-Z0-9.^=-]{1,24}$/;         // an OCC option symbol is lo
 const MAX_SYMBOLS = 1000;                           // = the dashboard feed's cap (WL_FEED_CAP / desk-watchlist MAX_SYMBOLS); the roster is anon-writable
 const RUN_BUDGET_MS = 6 * 60 * 1000;               // the whole roster fetch, however many symbols and however slow Yahoo is
 const HOLDINGS_BUDGET_MS = 90 * 1000;
+const MAX_AHEAD = 0.1;                             // more than this share of the roster ending on a NEWER weekday than the report session = a lagging feed
 const MIN_PRICED = 0.9;                            // fraction of the roster that must price, or the run says ok:false
 const SETTLE_MIN = 16 * 60 + 15;                   // ET minutes: before this, a bar dated today is still forming
 const UA = 'Mozilla/5.0';                          // Yahoo wants one; never sent to Supabase (see CLAUDE.md)
@@ -161,9 +162,11 @@ export function coverageError(requested, scanned) {
    makes it ok:false with the reason, so "no crossings" can never be what a broken feed looks like. */
 export function verdict(out, now) {
   out.staleDays = out.newestBar ? Math.round((now - new Date(out.newestBar + 'T12:00:00Z')) / 864e5) : null;
-  const cov = coverageError(out.requested, out.scanned);
-  if (cov) { out.ok = false; out.error = cov; }
-  if (out.staleDays != null && out.staleDays > 5) { out.ok = false; out.error = `newest bar is ${out.staleDays} days old`; }
+  const errors = [coverageError(out.requested, out.scanned)];
+  if (out.requested && (out.ahead || 0) / out.requested > MAX_AHEAD) errors.push(`${out.ahead} of ${out.requested} symbols have a newer weekday bar than the report session ${out.newestBar}: the feed is lagging for the rest, so this report would be a stale one`);
+  if (out.staleDays != null && out.staleDays > 5) errors.push(`newest bar is ${out.staleDays} days old`);
+  const bad = errors.filter(Boolean);
+  if (bad.length) { out.ok = false; out.error = bad.join('; '); }
   return out;
 }
 
@@ -197,6 +200,7 @@ export function prepareRows(b, cfg, lookback) {
 /* The report's session is the date most symbols' newest bar falls on (ties go to the later date), NOT the newest bar any symbol has: a 24/7
    asset in the roster (BTC-USD is in the default roster) still has Sunday's bar on a Monday morning while US equities end on Friday, and taking
    the maximum would make Sunday the session, mark every equity stale and fail the coverage check every Monday (Codex, PR #321). */
+export const isWeekend = date => { const w = new Date(date + 'T12:00:00Z').getUTCDay(); return w === 0 || w === 6; };
 export function dominantSession(dates) {
   const n = new Map();
   for (const d of dates) n.set(d, (n.get(d) || 0) + 1);
@@ -233,6 +237,10 @@ export function buildScans(results, dash, pane, lookback) {
     else ready.push([sym, prep.rows]);
   }
   const session = dominantSession(ready.map(([, rows]) => rows[rows.length - 1].date));
+  // Symbols whose bars run PAST the session on a weekday are not a 24/7 asset's weekend bar: they are a cohort the rest of the feed is lagging
+  // behind. Rolling them back to the majority's date would report a stale session as a clean one, so they are counted and `verdict` fails the run
+  // when there are too many (Codex, PR #321).
+  const ahead = ready.filter(([, rows]) => { const d = rows[rows.length - 1].date; return d > session && !isWeekend(d); }).length;
   const calendar = sessionCalendar(ready.map(([, rows]) => rows.map(x => x.date)), session);
   for (const [sym, all] of ready) {
     const rows = all.filter(x => x.date <= session);
@@ -241,7 +249,7 @@ export function buildScans(results, dash, pane, lookback) {
     if (one.why) { unpriced.push({ symbol: sym, why: one.why }); continue; }
     scans.push({ sym, r: { ...one.r, hits: realignHits(one.r.hits, calendar, session, lookback) } });
   }
-  return { scans, unpriced, session };
+  return { scans, unpriced, session, ahead };
 }
 
 /* One symbol's scan that cannot take the run down with it: whatever it throws becomes a reason, listed beside the unpriced. */
@@ -276,6 +284,9 @@ export function classifyHolding(sym, b, newest, minStreak) {
     ...(skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) } };
 }
 
+/* How many requested holdings were actually evaluated: "none of them has a red-day run" may only be said of these (Codex, PR #321). */
+export const holdingsChecked = h => h.requested - h.stale.length - h.unpriced.length;
+
 /* File one classified holding in its list. A holding is never dropped: current streaks, stale ones and unpriced ones each have a list; only "none" is nothing. */
 export function fileHolding(holdings, h) {
   if (h.kind === 'streak') holdings.redStreak.push(h.rec);
@@ -309,6 +320,27 @@ export function scanSymbol(dash, sym, rawRows, pane, lookback) {
   return { asOf: R.s.t[i], hits };
 }
 
+/* The scan results -> the report: hits filed by kind and recency, the session, the stale and unpriced lists, and the verdict. */
+export function buildReport(out, built, now) {
+  out.unpriced.push(...built.unpriced);
+  const part = partitionBySession(built.scans, built.session);
+  out.newestBar = part.newest; out.ahead = built.ahead; out.stale = part.stale; out.scanned = part.onSession.length;
+  for (const x of part.onSession) for (const h of x.r.hits) fileHit(out, h);
+  for (const k of ['up30', 'down80']) for (const w of ['latest', 'earlier']) out[k][w].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  verdict(out, now);
+  return out;
+}
+
+/* The fetched holdings -> the holdings block: red-day runs, the ones that could not be checked through the session (stale, unpriced), and how
+   many WERE checked, so "none has a run" is only ever said of those. */
+export function buildHoldings(fetched, requested, newest, minStreak) {
+  const h = { requested, referenceSession: newest, redStreak: [], stale: [], unpriced: [] };
+  for (const [sym, b] of fetched) fileHolding(h, classifyHolding(sym, b, newest, minStreak));
+  h.checked = holdingsChecked(h);
+  h.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
+  return h;
+}
+
 async function main() {
   const arg = k => (process.argv.find(a => a.startsWith('--' + k + '=')) || '').split('=').slice(1).join('=');
   const now = new Date(), dash = loadDashboard();
@@ -333,22 +365,14 @@ async function main() {
     rejectedTickers: rosterInfo ? rosterInfo.rejected : 0, unpriced: [], stale: [],
     up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } };
 
-  const built = buildScans(results, dash, pane, lookback), scans = built.scans;
-  out.unpriced.push(...built.unpriced);
-  const part = partitionBySession(scans, built.session);
-  out.newestBar = part.newest; out.stale = part.stale; out.scanned = part.onSession.length;
-  for (const x of part.onSession) for (const h of x.r.hits) fileHit(out, h);
-  for (const k of ['up30', 'down80']) for (const w of ['latest', 'earlier']) out[k][w].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  verdict(out, now);
+  buildReport(out, buildScans(results, dash, pane, lookback), now);
 
   const hold = arg('holdings');
   if (hold) {
     const list = [...new Set(JSON.parse(fs.readFileSync(hold, 'utf8')).map(s => String(s).toUpperCase().replace(/\s+/g, '')).filter(s => HOLDING_RE.test(s)))];
     const holdDeadline = Date.now() + HOLDINGS_BUDGET_MS;
     const H = await pool(list, 8, async sym => [sym, await bars(sym, now, holdDeadline)]);
-    out.holdings = { requested: list.length, referenceSession: out.newestBar, redStreak: [], stale: [], unpriced: [] };
-    for (const [sym, b] of H) fileHolding(out.holdings, classifyHolding(sym, b, out.newestBar, minStreak));
-    out.holdings.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
+    out.holdings = buildHoldings(H, list.length, out.newestBar, minStreak);
   }
   console.log(JSON.stringify(out, null, 1));
   process.exit(out.ok ? 0 : 3);
@@ -533,6 +557,31 @@ async function selftest() {
   const cli = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??'], { encoding: 'utf8', timeout: 30000 });
   let cliOut = {}; try { cliOut = JSON.parse(cli.stdout); } catch { /* reported by the check below */ }
   eq('the CLI given nothing valid to scan exits 3 with ok:false and says why', [cli.status, cliOut.ok, cliOut.requested, /no symbols to scan/.test(cliOut.error || '')], [3, false, 0, true]);
+  eq('Saturday and Sunday are weekends, a Friday and a Monday are not', ['2026-10-10', '2026-10-11', '2026-10-09', '2026-10-12'].map(isWeekend), [true, true, false, false]);
+  const lagRows = mkRows([...dts, '2026-10-12']);
+  const lag = buildScans([['A1', { rows: mkRows(dts) }], ['A2', { rows: mkRows(dts) }], ['A3', { rows: mkRows(dts) }], ['N1', { rows: lagRows }], ['N2', { rows: lagRows }]], crossDash, 1, 3);
+  eq('a cohort with a newer WEEKDAY bar is counted (the majority is lagging), not silently rolled back', [lag.session, lag.ahead], ['2026-10-09', 2]);
+  eq('a 24/7 asset\'s weekend bar is not that cohort', buildScans([['AAA', { rows: mkRows(dts) }], ['BBB', { rows: mkRows(dts) }], ['BTC-USD', { rows: mkRows([...dts, '2026-10-10', '2026-10-11']) }]], crossDash, 1, 3).ahead, 0);
+  const vl = o => verdict({ ok: true, requested: 240, scanned: 240, newestBar: '2026-10-09', ahead: 0, ...o }, vNow);
+  eq('a few symbols ahead is fine (a 24/7 asset on a holiday)', vl({ ahead: 24 }).ok, true);
+  eq('more than 10% ahead fails the run and says why', [vl({ ahead: 25 }).ok, /25 of 240 symbols have a newer weekday bar/.test(vl({ ahead: 25 }).error)], [false, true]);
+  eq('two problems are both reported', vl({ ahead: 100, newestBar: '2026-10-01' }).error.split('; ').length, 2);
+  eq('the 60/40 split from the review: 40% ahead is not ok', vl({ ahead: 96 }).ok, false);
+  eq('holdings checked excludes the stale and the unpriced', holdingsChecked({ requested: 5, stale: [1], unpriced: [1, 2] }), 2);
+  eq('every holding checked', holdingsChecked({ requested: 2, stale: [], unpriced: [] }), 2);
+  const rep = () => ({ ok: true, requested: 5, scanned: 0, unpriced: [], stale: [], up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } });
+  const repLag = buildReport(rep(), lag, vNow);
+  eq('the report carries the lagging cohort and fails on it', [repLag.ahead, repLag.ok, /newer weekday bar/.test(repLag.error || '')], [2, false, true]);
+  const repOk = buildReport({ ...rep(), requested: 4 }, buildScans([['AAA', { rows: mkRows(dts) }], ['BBB', { rows: mkRows(dts) }], ['CCC', { rows: mkRows(dts) }], ['BAD', { error: 'unknown to Yahoo' }]], crossDash, 1, 3), vNow);
+  eq('a healthy small report: session, counts, hits filed as latest/earlier, the unpriced listed', [repOk.newestBar, repOk.scanned, repOk.up30.earlier.map(h => h.symbol), repOk.up30.latest.length, repOk.unpriced.map(u => u.symbol)], ['2026-10-09', 3, ['AAA', 'BBB', 'CCC'], 0, ['BAD']]);
+  eq('...and 3 of 4 priced is under the bar, so it is not ok', repOk.ok, false);
+  const hb2 = (dates, closes) => ({ rows: dates.map((date, i) => ({ date, c: closes[i] })) });
+  const hold = buildHoldings([['CUR', hb2(D5.slice(1), [9, 8, 7, 6])], ['OLD', hb2(D5.slice(0, 4), [4, 3, 2, 1])], ['ERR', { error: 'unknown to Yahoo' }], ['UP', hb2(D5.slice(1), [1, 2, 3, 4])]], 4, '2026-10-09', 3);
+  eq('holdings: a streak, a stale one and an unpriced one each land in their list, and the checked count excludes the last two', [hold.redStreak.map(x => x.symbol), hold.stale.map(x => x.symbol), hold.unpriced.map(x => x.symbol), hold.checked, hold.referenceSession], [['CUR'], ['OLD'], ['ERR'], 2, '2026-10-09']);
+  eq('holdings: streaks sort longest first, then by symbol', buildHoldings([['B', hb2(D5, [9, 8, 7, 6, 5])], ['A', hb2(D5.slice(1), [9, 8, 7, 6])], ['C', hb2(D5, [9, 8, 7, 6, 5])]], 3, '2026-10-09', 3).redStreak.map(x => x.symbol), ['B', 'C', 'A']);
+  const hitOf = (symbol, kind, ago) => ({ kind, ago, rec: { symbol } });
+  const sortedRep = buildReport(rep(), { scans: [{ sym: 'ZZZ', r: { asOf: '2026-10-09', hits: [hitOf('ZZZ', 'up30', 0)] } }, { sym: 'AAA', r: { asOf: '2026-10-09', hits: [hitOf('AAA', 'up30', 0), hitOf('AAA', 'down80', 1)] } }], unpriced: [], session: '2026-10-09', ahead: 0 }, vNow);
+  eq('hits are filed by kind and recency and listed in symbol order', [sortedRep.up30.latest.map(h => h.symbol), sortedRep.down80.earlier.map(h => h.symbol)], [['AAA', 'ZZZ'], ['AAA']]);
   eq('a negative close is dropped too', [{ c: -1 }, { c: 0 }, { c: NaN }, { c: 0.25 }].filter(hasClose).length, 1);
   eq('too few bars is unpriced, with its reason', classifyHolding('X', hb(D5.slice(3), [1, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'too few bars' } });
   eq('a fetch error is passed through', classifyHolding('X', { error: 'unknown to Yahoo' }, '2026-10-09', 3).rec.why, 'unknown to Yahoo');
