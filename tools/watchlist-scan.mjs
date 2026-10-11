@@ -42,6 +42,9 @@ import { spawnSync } from 'node:child_process';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TICKER_RE = /^[A-Z0-9.^=-]{1,10}$/;          // app.js WL_SYM_RE / desk-ask TICKER_RE
 const HOLDING_RE = /^[A-Z0-9.^=-]{1,24}$/;         // an OCC option symbol is longer than a ticker
+const MAX_SYMBOLS = 1000;                           // = the dashboard feed's cap (WL_FEED_CAP / desk-watchlist MAX_SYMBOLS); the roster is anon-writable
+const RUN_BUDGET_MS = 6 * 60 * 1000;               // the whole roster fetch, however many symbols and however slow Yahoo is
+const HOLDINGS_BUDGET_MS = 90 * 1000;
 const MIN_PRICED = 0.9;                            // fraction of the roster that must price, or the run says ok:false
 const SETTLE_MIN = 16 * 60 + 15;                   // ET minutes: before this, a bar dated today is still forming
 const UA = 'Mozilla/5.0';                          // Yahoo wants one; never sent to Supabase (see CLAUDE.md)
@@ -103,18 +106,25 @@ export function dropFormingBar(rows, now = new Date()) {
 
 /* ── network ──────────────────────────────────────────────────────────────── */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function bars(symbol, now) {
+/* How long the next request may take: Yahoo's 20 s, or what is left of the run's budget if that is less. Zero or below = out of time. */
+export const attemptTimeout = (deadline, now = Date.now()) => Math.min(20000, deadline - now);
+/* An unbounded roster would keep the scan (and the Routine behind it) busy for hours: the roster is writable by anyone holding the site's public
+   key, so it is capped BEFORE any request goes out (Codex, PR #321). */
+export const rosterLimitError = n => (n > MAX_SYMBOLS ? `${n} symbols is over the limit of ${MAX_SYMBOLS}; nothing was scanned` : null);
+export async function bars(symbol, now, deadline, doFetch = fetch) {
   const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(yahooSymbol(symbol)) + '?range=2y&interval=1d';
   let err = 'no answer';
   for (let a = 0; a < 3; a++) {
+    const left = attemptTimeout(deadline);
+    if (left <= 0) return { error: 'run time limit reached' };
     try {
-      const r = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20000) });
+      const r = await doFetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(left) });
       if (r.status === 404) return { error: 'unknown to Yahoo' };
       if (!r.ok) throw new Error('HTTP ' + r.status);
       let rows = chartRows((await r.json()).chart.result[0]);
       rows = dropFormingBar(rows, now);
       return rows.length ? { rows } : { error: 'no bars' };
-    } catch (e) { err = String(e.message || e).slice(0, 60); await sleep(1500 * (a + 1)); }
+    } catch (e) { err = String(e.message || e).slice(0, 60); await sleep(Math.max(0, Math.min(1500 * (a + 1), deadline - Date.now()))); }
   }
   return { error: err };
 }
@@ -198,6 +208,22 @@ export function dominantSession(dates) {
 /* The fetched results -> the scans that stand, and the symbols that could not be scanned with why. Nothing here throws.
    A symbol whose bars run PAST the report session (a 24/7 asset) is read as of that session: its newer bars are cut, so it is scanned on the
    same completed session as everything else rather than excluded. */
+/* The sessions the market actually had up to the report session: the dates at least half the symbols have a bar on (a thin name missing a day
+   does not delete it; a holiday nobody traded is not one). `crossings` counts BARS back, and a symbol that skipped a session would otherwise
+   report a crossing four sessions old as two (Codex, PR #321). */
+export function sessionCalendar(datesPerSymbol, session) {
+  const n = new Map();
+  for (const dates of datesPerSymbol) for (const d of new Set(dates)) if (d <= session) n.set(d, (n.get(d) || 0) + 1);
+  return [...n].filter(([, c]) => c * 2 >= datesPerSymbol.length).map(([d]) => d).sort();
+}
+export const sessionsSince = (calendar, date, session) => calendar.filter(d => d > date && d <= session).length;
+/* A hit's age is the larger of the bars back and the sessions back, so a skipped session can only push it OUT of the window, never in; a hit
+   that is no longer inside the lookback is dropped. */
+export function realignHits(hits, calendar, session, lookback) {
+  return hits.map(h => { const ago = Math.max(h.ago, sessionsSince(calendar, h.rec.crossedOn, session)); return { ...h, ago, rec: { ...h.rec, sessionsAgo: ago } }; })
+    .filter(h => h.ago < lookback);
+}
+
 export function buildScans(results, dash, pane, lookback) {
   const cfg = pane === 2 ? dash.STOCH : dash.WSTOCH, scans = [], unpriced = [], ready = [];
   const need = barsNeeded(cfg, lookback);
@@ -207,12 +233,13 @@ export function buildScans(results, dash, pane, lookback) {
     else ready.push([sym, prep.rows]);
   }
   const session = dominantSession(ready.map(([, rows]) => rows[rows.length - 1].date));
+  const calendar = sessionCalendar(ready.map(([, rows]) => rows.map(x => x.date)), session);
   for (const [sym, all] of ready) {
     const rows = all.filter(x => x.date <= session);
     if (rows.length < need) { unpriced.push({ symbol: sym, why: `under ${need} bars as of ${session}` }); continue; }
     const one = scanOrReason(dash, sym, rows, pane, lookback);
     if (one.why) { unpriced.push({ symbol: sym, why: one.why }); continue; }
-    scans.push({ sym, r: one.r });
+    scans.push({ sym, r: { ...one.r, hits: realignHits(one.r.hits, calendar, session, lookback) } });
   }
   return { scans, unpriced, session };
 }
@@ -297,7 +324,11 @@ async function main() {
     catch (e) { console.log(JSON.stringify({ ok: false, error: String(e.message || e) })); process.exit(2); }
   }
 
-  const results = await pool(symbols, 8, async sym => [sym, await bars(sym, now)]);
+  const tooMany = rosterLimitError(symbols.length);
+  if (tooMany) { console.log(JSON.stringify({ ok: false, error: tooMany, requested: symbols.length })); process.exit(2); }
+
+  const runDeadline = Date.now() + RUN_BUDGET_MS;
+  const results = await pool(symbols, 8, async sym => [sym, await bars(sym, now, runDeadline)]);
   const out = { ok: true, pane: pane === 2 ? 'Pro 2 SWING 14-3-3' : 'Pro 1 LONG-TERM 92-15-15', generatedAt: now.toISOString(), requested: symbols.length, scanned: 0, lists: rosterInfo ? rosterInfo.lists : null,
     rejectedTickers: rosterInfo ? rosterInfo.rejected : 0, unpriced: [], stale: [],
     up30: { latest: [], earlier: [] }, down80: { latest: [], earlier: [] } };
@@ -313,7 +344,8 @@ async function main() {
   const hold = arg('holdings');
   if (hold) {
     const list = [...new Set(JSON.parse(fs.readFileSync(hold, 'utf8')).map(s => String(s).toUpperCase().replace(/\s+/g, '')).filter(s => HOLDING_RE.test(s)))];
-    const H = await pool(list, 8, async sym => [sym, await bars(sym, now)]);
+    const holdDeadline = Date.now() + HOLDINGS_BUDGET_MS;
+    const H = await pool(list, 8, async sym => [sym, await bars(sym, now, holdDeadline)]);
     out.holdings = { requested: list.length, referenceSession: out.newestBar, redStreak: [], stale: [], unpriced: [] };
     for (const [sym, b] of H) fileHolding(out.holdings, classifyHolding(sym, b, out.newestBar, minStreak));
     out.holdings.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
@@ -323,7 +355,7 @@ async function main() {
 }
 
 /* ── selftest ─────────────────────────────────────────────────────────────── */
-function selftest() {
+async function selftest() {
   let bad = 0;
   const eq = (name, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); if (!ok) { bad++; console.log('FAIL', name, 'got', JSON.stringify(got), 'want', JSON.stringify(want)); } else console.log('ok  ', name); };
   const pad = a => [null, ...a];
@@ -458,6 +490,46 @@ function selftest() {
   eq('a newest bar over five days old makes it not ok', [vd({ newestBar: '2026-10-06' }).ok, vd({ newestBar: '2026-10-06' }).error], [false, 'newest bar is 6 days old']);
   eq('five days old is still fine', vd({ newestBar: '2026-10-07' }).ok, true);
   // the real CLI, offline: nothing valid to scan must exit 3 with ok:false, never a clean report (this is what pins main's wiring of the verdict)
+  eq('a roster at the limit is scanned', rosterLimitError(1000), null);
+  eq('a roster over the limit is refused with the count, before any request', rosterLimitError(1001), '1001 symbols is over the limit of 1000; nothing was scanned');
+  eq('a request gets Yahoo\'s 20 s when there is time', attemptTimeout(100000, 0), 20000);
+  eq('...or what is left of the budget when that is less', attemptTimeout(5000, 1000), 4000);
+  eq('...and nothing once the budget is spent', attemptTimeout(1000, 1000) <= 0, true);
+  const NOW = new Date('2026-10-12T14:00:00Z'), okJson = { chart: { result: [{ timestamp: [1760000000, 1760086400], indicators: { quote: [{ open: [1, 1], high: [2, 2], low: [1, 1], close: [5, 4], volume: [1, 1] }] } }] } };
+  let calls = 0;
+  const fakeFetch = (status, body) => async () => { calls++; return { status, ok: status >= 200 && status < 300, json: async () => body }; };
+  eq('out of time: no request is made at all', [await bars('AAA', NOW, Date.now() - 1, fakeFetch(200, okJson)), calls], [{ error: 'run time limit reached' }, 0]);
+  eq('with time, a good reply gives its bars', (await bars('AAA', NOW, Date.now() + 60000, fakeFetch(200, okJson))).rows.length, 2);
+  eq('a 404 is "unknown to Yahoo" at once', [await bars('AAA', NOW, Date.now() + 60000, fakeFetch(404, {})), calls], [{ error: 'unknown to Yahoo' }, 2]);
+  // (AbortSignal.timeout's own timer is unref'd, so this stand-in holds the process open the way a real socket would)
+  const hang = (_u, o) => new Promise((_r, rej) => { const keep = setTimeout(() => {}, 10000); o.signal.addEventListener('abort', () => { clearTimeout(keep); rej(new Error('aborted')); }); });
+  const t0 = Date.now(), hung = await bars('AAA', NOW, Date.now() + 300, hang);
+  eq('a silent server is given up on at the budget, not after 20 s x 3', [hung.error.includes('abort') || hung.error === 'run time limit reached', Date.now() - t0 < 1200], [true, true]);
+  // a session a symbol skipped: crossings counts bars, so the true age comes from the market's own calendar
+  const dts = ['2026-10-01', '2026-10-02', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'];
+  const cal = sessionCalendar([dts, dts, dts, dts.filter(d => d !== '2026-10-08')], '2026-10-09');
+  eq('the calendar is the dates most symbols traded', cal, dts);
+  eq('a date only a minority has is not a session', sessionCalendar([dts, dts, [...dts, '2026-10-10'], dts], '2026-10-09').includes('2026-10-10'), false);
+  eq('a date after the report session is not counted', sessionCalendar([[...dts, '2026-10-10']], '2026-10-09').includes('2026-10-10'), false);
+  eq('a date exactly half the symbols have is a session', sessionCalendar([['2026-10-05'], ['2026-10-06']], '2026-10-09'), ['2026-10-05', '2026-10-06']);
+  eq('a symbol listing a date twice counts once', sessionCalendar([['2026-10-05', '2026-10-05'], ['2026-10-06'], ['2026-10-06']], '2026-10-09'), ['2026-10-06']);
+  eq('sessions since a date stop at the report session', sessionsSince(['2026-10-05', '2026-10-06', '2026-10-10'], '2026-10-05', '2026-10-09'), 1);
+  eq('sessions since a date', [sessionsSince(cal, '2026-10-09', '2026-10-09'), sessionsSince(cal, '2026-10-07', '2026-10-09'), sessionsSince(cal, '2026-10-05', '2026-10-09')], [0, 2, 4]);
+  const hit = (ago, crossedOn) => ({ kind: 'up30', ago, rec: { crossedOn, sessionsAgo: ago } });
+  eq('a hit with no skipped session keeps its age', realignHits([hit(2, '2026-10-07')], cal, '2026-10-09', 3).map(h => h.ago), [2]);
+  eq('a skipped session pushes an old hit OUT of the window: 2 bars back is 4 sessions back', realignHits([hit(2, '2026-10-05')], cal, '2026-10-09', 3), []);
+  eq('...and a hit still inside gets its true age, in the record too', realignHits([hit(1, '2026-10-07')], cal, '2026-10-09', 3).map(h => [h.ago, h.rec.sessionsAgo]), [[2, 2]]);
+  eq('the latest session stays latest', realignHits([hit(0, '2026-10-09')], cal, '2026-10-09', 3).map(h => h.ago), [0]);
+  eq('an empty calendar never makes a hit look newer than its bars', realignHits([hit(2, '2026-10-07')], [], '2026-10-09', 3).map(h => h.ago), [2]);
+  const tailArr = (n, t) => Array(n - t.length).fill(null).concat(t);
+  const crossDash = { ...fake, stochSeries: (S, cfg) => (cfg === WS ? { k: tailArr(S.c.length, [20, 29, 31, 33, 35]), d: tailArr(S.c.length, [22, 25, 28, 30, 32]) } : { k: tailArr(S.c.length, [50]), d: tailArr(S.c.length, [50]) }) };
+  const mkRows = ds => ds.map((date, i) => ({ date, o: 10, h: 11, l: 9, c: 10 + i, v: 1 }));
+  const gapped = buildScans([['AAA', { rows: mkRows(dts) }], ['BBB', { rows: mkRows(dts) }], ['CCC', { rows: mkRows(dts) }],
+    ['GAP', { rows: mkRows(['2026-10-01', '2026-10-02', '2026-10-05', '2026-10-06', '2026-10-09']) }]], crossDash, 1, 3);
+  eq('end to end: a symbol with a calendar gap loses a crossing that is really four sessions old', gapped.scans.map(x => [x.sym, x.r.hits.map(h => h.ago)]), [['AAA', [2]], ['BBB', [2]], ['CCC', [2]], ['GAP', []]]);
+  const cli2 = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=' + Array.from({ length: 1001 }, (_, i) => 'T' + String(i).padStart(4, '0')).join(',')], { encoding: 'utf8', timeout: 30000 });
+  let cli2Out = {}; try { cli2Out = JSON.parse(cli2.stdout); } catch { /* reported by the check below */ }
+  eq('the real CLI refuses an oversized roster before any request: exit 2, ok:false, the count', [cli2.status, cli2Out.ok, cli2Out.requested, /over the limit/.test(cli2Out.error || '')], [2, false, 1001, true]);
   const cli = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??'], { encoding: 'utf8', timeout: 30000 });
   let cliOut = {}; try { cliOut = JSON.parse(cli.stdout); } catch { /* reported by the check below */ }
   eq('the CLI given nothing valid to scan exits 3 with ok:false and says why', [cli.status, cliOut.ok, cliOut.requested, /no symbols to scan/.test(cliOut.error || '')], [3, false, 0, true]);

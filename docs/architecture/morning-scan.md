@@ -36,6 +36,10 @@
 
 **Only complete bars, and only enough of them.** A bar missing any of open/high/low/close, or carrying a zero or negative price, is dropped before the study (`fullBars`; the dashboard's parser, `parseYahooChartOHLC`, requires every one finite and above zero, and a null open would otherwise throw in `roundBars` and abort the run); a row with a missing or junk timestamp is skipped on its own, never costing the symbol (as `parseYahooChartOHLC` does); holdings need only a close, but that close must be finite and above zero (`hasClose`, `chartRows`): a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a three-day losing streak ending -100%. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
 
+**Ages are counted in market sessions, not bars.** `crossings` counts bars back, and a symbol Yahoo skipped a session for would report a crossing four sessions old as two. `sessionCalendar` takes the dates at least half the symbols have a bar on (up to the report session) as the market's own calendar, and `realignHits` gives each hit the LARGER of its bars back and its sessions back (`sessionsAgo` in the record too): a skipped session can only push a hit out of the window, never in, and a hit no longer inside the lookback is dropped (Codex, PR #321).
+
+**The roster is untrusted input, so the run is bounded.** The roster RPC is anon-writable (up to 50 lists of 2,000 symbols), and every symbol is a Yahoo request with three attempts. A roster over `MAX_SYMBOLS` (1,000, the dashboard feed's own cap) is refused before any request goes out (exit 2, `ok:false`, the count). The whole fetch also has a time budget (`RUN_BUDGET_MS`, 6 minutes; holdings get their own 90 s): each request gets Yahoo's 20 s or what is left, no request starts once the budget is spent (`run time limit reached` is listed as the reason), and the coverage verdict then fails the run rather than letting a slow feed hang the Routine for hours (Codex, PR #321).
+
 **Readings at the crossing and readings now are separate fields.** An `earlier` hit's `kBefore` / `kAtCross` / `dAtCross` are the bar it crossed on; `kNow` / `dNow` / `close` / `dayPct` are the latest session's (Codex, PR #321). On a `latest` hit they coincide.
 
 **Completed sessions only.** A bar dated today is dropped while the NYSE session is open or settling (before 16:15 ET, `dropFormingBar`). A 6:54 AM Pacific run is 9:54 ET, mid-session, so it reads the previous close, the same "last completed session" read the dashboard's scheduled asks give. The email names the date (`newestBar`).
@@ -49,8 +53,8 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 133 checks, no network (one runs the real CLI offline)
-    node tools/watchlist-scan-mutants.mjs               # 107 one-line changes to the tool: 106 make the selftest fail, 1 cannot change behaviour (marked)
+    node tools/watchlist-scan.mjs --selftest            # 156 checks, no network (two run the real CLI offline)
+    node tools/watchlist-scan-mutants.mjs               # 125 one-line changes to the tool: 124 make the selftest fail, 1 cannot change behaviour (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --symbols=SPY --holdings=holdings.json   # red-day runs for a JSON array of symbols
