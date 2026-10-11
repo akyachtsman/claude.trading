@@ -176,6 +176,10 @@ const MUTANTS = [
   ["readHoldingsList keeps repeats", "[...new Set(raw.map(s => String(s).toUpperCase()", "[...(raw.map(s => String(s).toUpperCase()"],
   ["readHoldingsList loses its reason", "'holdings file unreadable: ' + (e.code || e.message)", "'holdings file unreadable'"],
   ["main ignores a holdings error", "if (read.error) out.holdings = {", "if (false) out.holdings = {"],
+  ["chartRows needs a volume array", "v: q.volume?.[i] || 0", "v: q.volume[i] || 0"],
+  ["chartRows needs an open array", "o: q.open?.[i]", "o: q.open[i]"],
+  ["chartRows needs a close array", "c: q.close?.[i]", "c: q.close[i]"],
+  ["chartRows needs a quote block", "(res && res.indicators && res.indicators.quote && res.indicators.quote[0]) || {}", "res.indicators.quote[0]"],
 ];
 
 let caught = 0, equivalent = 0; const bad = [];

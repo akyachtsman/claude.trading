@@ -173,13 +173,13 @@ export function verdict(out, now) {
 
 /* Yahoo's chart result -> dated bars. Holdings need only a good close, so that is all this keeps; a scan demands all four prices on top (fullBars). */
 export function chartRows(res) {
-  const q = res.indicators.quote[0], rows = [];
+  const q = (res && res.indicators && res.indicators.quote && res.indicators.quote[0]) || {}, rows = [];   // every field optional, like the dashboard parser's `q.volume?.[i]`
   (res.timestamp || []).forEach((t, i) => {
     // Drop the bar, never the symbol (as desk-charts' parseYahooChartOHLC does): a missing or junk timestamp makes Intl throw a RangeError,
     // which would otherwise cost the whole symbol its coverage (Codex, PR #321).
     const secs = t == null ? NaN : Number(t), when = new Date(secs * 1000);
     if (!Number.isFinite(secs) || !Number.isFinite(when.getTime())) return;
-    const row = { date: nyParts(when).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 };
+    const row = { date: nyParts(when).day, o: q.open?.[i], h: q.high?.[i], l: q.low?.[i], c: q.close?.[i], v: q.volume?.[i] || 0 };
     if (hasClose(row)) rows.push(row);
   });
   // The dashboard's parser sorts by date; everything downstream (the forming-bar drop, the session, the streaks, the studies) reads the LAST rows as the newest.
@@ -637,6 +637,11 @@ async function selftest() {
   const hitOf = (symbol, kind, ago) => ({ kind, ago, rec: { symbol } });
   const sortedRep = buildReport(rep(), { scans: [{ sym: 'ZZZ', r: { asOf: '2026-10-09', hits: [hitOf('ZZZ', 'up30', 0)] } }, { sym: 'AAA', r: { asOf: '2026-10-09', hits: [hitOf('AAA', 'up30', 0), hitOf('AAA', 'down80', 1)] } }], unpriced: [], session: '2026-10-09', ahead: 0 }, vNow);
   eq('hits are filed by kind and recency and listed in symbol order', [sortedRep.up30.latest.map(h => h.symbol), sortedRep.down80.earlier.map(h => h.symbol)], [['AAA', 'ZZZ'], ['AAA']]);
+  const noVol = { timestamp: [1760000000, 1760086400], indicators: { quote: [{ open: [1, 1], high: [2, 2], low: [1, 1], close: [5, 4] }] } };
+  eq('a reply with no volume array keeps its bars (volume is unused by the scan)', chartRows(noVol).map(r => [r.c, r.v]), [[5, 0], [4, 0]]);
+  eq('a reply with no open/high/low arrays keeps the closes (a holding needs only those)', chartRows({ timestamp: [1760000000], indicators: { quote: [{ close: [5] }] } }).map(r => r.c), [5]);
+  eq('...though the scan then drops such a bar (fullBars needs all four prices)', fullBars(chartRows({ timestamp: [1760000000], indicators: { quote: [{ close: [5] }] } })).length, 0);
+  eq('a reply with no quote block at all is no bars, not a crash', [chartRows({ timestamp: [1760000000], indicators: {} }).length, chartRows({ timestamp: [1760000000] }).length], [0, 0]);
   const ooo = { timestamp: [1760172800, 1760000000, 1760086400], indicators: { quote: [{ open: [1, 1, 1], high: [2, 2, 2], low: [1, 1, 1], close: [3, 5, 4], volume: [1, 1, 1] }] } };
   eq('bars Yahoo sends out of order are sorted by date, like the dashboard parser', chartRows(ooo).map(r => [r.date, r.c]), [['2025-10-09', 5], ['2025-10-10', 4], ['2025-10-11', 3]]);
   eq('...so the forming bar is the LAST one and is dropped even when it arrived first', dropFormingBar(chartRows(ooo), new Date('2025-10-11T14:00:00Z')).map(r => r.c), [5, 4]);
