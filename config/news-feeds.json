@@ -7,12 +7,15 @@
     "headlines). Set enabled:false to run general feeds only.",
     "maxItems caps the rendered list. Edit on GitHub; desk-news re-reads",
     "this file on its next sweep once Pages has redeployed.",
+    "CNBC: the www.cnbc.com/id/100003114/device/rss/rss.html address answers",
+    "servers 403 (Access Denied), so CNBC never appeared in the panel; the",
+    "same Top News feed on search.cnbc.com answers (checked 2026-10-11).",
     "FRED + St. Louis Fed carry the macro headlines that used to sit in the",
     "embedded FRED widget, retired 2026-08-07 along with the TradingView",
     "economic calendar. Holdings rank first, so these fill the tail."
   ],
   "general": [
-    { "src": "CNBC", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
+    { "src": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114" },
     { "src": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
     { "src": "FRED", "url": "https://fredblog.stlouisfed.org/feed/" },
     { "src": "St. Louis Fed", "url": "https://www.stlouisfed.org/rss/page%20resources/publications/blog-entries" }

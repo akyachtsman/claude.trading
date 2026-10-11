@@ -23,6 +23,16 @@
   cut was built client-side out of the `desk-charts` payload, so an ETF got a
   tile only if the charts workbench happened to carry its 800-bar series, and
   the two rosters were coupled for no reason other than that.
+- **News: CNBC is read from `search.cnbc.com`, not `www.cnbc.com` (owner 2026-10-11: "if you go to CNBC, today's news, that's what's most important").**
+  The roster's first feed had been `https://www.cnbc.com/id/100003114/device/rss/rss.html`, which answers a server `403 Access Denied`
+  (the same bot protection that refuses the live yields' quote API to servers), so `desk-news` dropped it without a word —
+  a failed feed is skipped, the others still fill the panel — and the News panel ran on MarketWatch's top stories (which include
+  evergreen personal-finance columns) and the St. Louis Fed blog alone. The same "US Top News and Analysis" feed on
+  `https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114` answers 200 with today's headlines (verified
+  2026-10-11 with `desk-news`'s own user-agent). Merging the roster edit IS the change (the function re-reads `config/news-feeds.json`
+  from Pages, cached up to an hour); no deploy. `desk-news`'s built-in `DEFAULT_FEED_CONFIG` still names the old address; it applies only
+  when the roster cannot be read at all, and fixing it needs a `desk-news` deploy (owner approval). If CNBC ever refuses the search host
+  to Supabase too, the panel is back to its two other sources, with no error: check a live `desk-news` reply for `src: "CNBC"` rows.
 - `config/widgets.json` — **EMPTY as of 2026-08-07 (owner ruling): both embeds
   are retired and the desk now runs NO third-party vendor JS at all** — the page
   carries zero iframes. The FRED "Economy at a glance" widget was replaced by
