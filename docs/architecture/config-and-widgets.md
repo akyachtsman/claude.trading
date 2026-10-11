@@ -33,6 +33,12 @@
   from Pages, cached up to an hour); no deploy. `desk-news`'s built-in `DEFAULT_FEED_CONFIG` still names the old address; it applies only
   when the roster cannot be read at all, and fixing it needs a `desk-news` deploy (owner approval). If CNBC ever refuses the search host
   to Supabase too, the panel is back to its two other sources, with no error: check a live `desk-news` reply for `src: "CNBC"` rows.
+  **Majority CNBC (owner 2026-10-11: "Can we do majority CNBC?")**: the roster carries FOUR CNBC sections (Top News `100003114`, Finance
+  `10000664`, Investing `15839069`, Earnings `15839135`, each probed 200 with 30 items, all labelled `CNBC`) and `maxItems` is 30. The panel is
+  newest-first across every feed (each feed contributes the first 15 items in ITS OWN order, titles deduped, `dedupeRank`), so CNBC's share is
+  whatever it publishes more of. Simulated against a live reply on a Sunday, the slowest day: 20 of the top 30 (66%) were CNBC, MarketWatch the
+  other 10; at 20 items it was only half, which is why the list grew. Weekdays should run higher. It is NOT a guarantee: a hard one needs a
+  per-feed cap in `desk-news` (a function change and deploy, owner approval). `desk-news` keeps at most 8 general feeds (7 are used).
 - `config/widgets.json` — **EMPTY as of 2026-08-07 (owner ruling): both embeds
   are retired and the desk now runs NO third-party vendor JS at all** — the page
   carries zero iframes. The FRED "Economy at a glance" widget was replaced by

@@ -10,16 +10,25 @@
     "CNBC: the www.cnbc.com/id/100003114/device/rss/rss.html address answers",
     "servers 403 (Access Denied), so CNBC never appeared in the panel; the",
     "same Top News feed on search.cnbc.com answers (checked 2026-10-11).",
+    "Majority CNBC (owner 2026-10-11): four CNBC sections (Top News 100003114,",
+    "Finance 10000664, Investing 15839069, Earnings 15839135) all labelled",
+    "CNBC, and maxItems 30. The list is newest-first across every feed, so",
+    "the share follows how much each source publishes: measured on a Sunday",
+    "(the slowest day) CNBC was 20 of the top 30; weekdays run higher. It is",
+    "not guaranteed. desk-news allows at most 8 general feeds.",
     "FRED + St. Louis Fed carry the macro headlines that used to sit in the",
     "embedded FRED widget, retired 2026-08-07 along with the TradingView",
     "economic calendar. Holdings rank first, so these fill the tail."
   ],
   "general": [
     { "src": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114" },
+    { "src": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664" },
+    { "src": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069" },
+    { "src": "CNBC", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135" },
     { "src": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
     { "src": "FRED", "url": "https://fredblog.stlouisfed.org/feed/" },
     { "src": "St. Louis Fed", "url": "https://www.stlouisfed.org/rss/page%20resources/publications/blog-entries" }
   ],
   "perTicker": { "enabled": true, "maxPerSymbol": 3 },
-  "maxItems": 20
+  "maxItems": 30
 }
