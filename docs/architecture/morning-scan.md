@@ -34,7 +34,7 @@
 
 **A stale holding is always listed.** A holding whose last bar predates that session (`holdings.referenceSession`) goes under `holdings.stale` (checked BEFORE the minimum-bars test, so a short history is stale too, not unpriced) with its last bar and the red days it had as of then (`redDaysThen`), whether or not they make a streak: it could not be checked through the session, and "none of your positions has 3 red days" must not be said of it. It is never filed as a current streak (`classifyHolding`; `fileHolding` puts each kind in its list and drops nothing but "no streak") (Codex, PR #321).
 
-**Only complete bars, and only enough of them.** A bar missing any of open/high/low/close, or carrying a zero or negative price, is dropped before the study (`fullBars`; the dashboard's parser, `parseYahooChartOHLC`, requires every one finite and above zero, and a null open would otherwise throw in `roundBars` and abort the run); holdings need only a close, but that close must be finite and above zero (`hasClose`, `chartRows`): a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a three-day losing streak ending -100%. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
+**Only complete bars, and only enough of them.** A bar missing any of open/high/low/close, or carrying a zero or negative price, is dropped before the study (`fullBars`; the dashboard's parser, `parseYahooChartOHLC`, requires every one finite and above zero, and a null open would otherwise throw in `roundBars` and abort the run); a row with a missing or junk timestamp is skipped on its own, never costing the symbol (as `parseYahooChartOHLC` does); holdings need only a close, but that close must be finite and above zero (`hasClose`, `chartRows`): a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a three-day losing streak ending -100%. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
 
 **Readings at the crossing and readings now are separate fields.** An `earlier` hit's `kBefore` / `kAtCross` / `dAtCross` are the bar it crossed on; `kNow` / `dNow` / `close` / `dayPct` are the latest session's (Codex, PR #321). On a `latest` hit they coincide.
 
@@ -44,13 +44,13 @@
 
 - **Only regex-validated tickers leave the script** (`TICKER_RE`, the same `/^[A-Z0-9.^=-]{1,10}$/` as `WL_SYM_RE` and `desk-ask`). The roster is writable by anyone holding the site's public key (accepted residual, see CLAUDE.md), so a list title or any free text never reaches the session that can send email.
 - **Nothing about money is read or printed.** Holdings come in as a list of symbols the caller extracted at run time; the script never stores them and the repo never contains them. The query the Routine runs selects `sym` only, for `qty > 0`.
-- **A broken data feed must never look like "no crossings".** Exit 2 = roster unreadable, exit 3 = under 90% of the roster priced or the newest bar over 5 days old; both print `ok:false` and the emails say so at the top.
+- **A broken data feed must never look like "no crossings".** Exit 2 = roster unreadable, exit 3 = under 90% of the roster priced, NOTHING to scan (an empty roster, or one whose every entry failed ticker validation, is 0 of 0 and must not read as a clean "none"), or the newest bar over 5 days old (`verdict`); both print `ok:false` and the emails say so at the top.
 - The Routine sends only to the owner's own address and treats everything it reads as data. Yahoo's UA is sent only to Yahoo; the Supabase roster call carries no browser UA (see CLAUDE.md).
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 121 checks, no network
-    node tools/watchlist-scan-mutants.mjs               # 94 one-line changes to the tool: 93 make the selftest fail, 1 cannot change behaviour (marked)
+    node tools/watchlist-scan.mjs --selftest            # 133 checks, no network (one runs the real CLI offline)
+    node tools/watchlist-scan-mutants.mjs               # 107 one-line changes to the tool: 106 make the selftest fail, 1 cannot change behaviour (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --symbols=SPY --holdings=holdings.json   # red-day runs for a JSON array of symbols

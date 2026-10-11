@@ -37,6 +37,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TICKER_RE = /^[A-Z0-9.^=-]{1,10}$/;          // app.js WL_SYM_RE / desk-ask TICKER_RE
@@ -138,10 +139,36 @@ async function roster(db) {
 /* ── the scan ─────────────────────────────────────────────────────────────── */
 /* A scan needs all four prices of a bar, each finite and above zero: the dashboard's parser (`parseYahooChartOHLC`) drops any other row, and a
    null open would otherwise throw in roundBars and abort the whole run (Codex, PR #321). Holdings need only the close and do not go through this. */
+/* The coverage verdict: a run that checked nothing, or too little of the roster, must say so. An EMPTY roster (or one whose every entry failed
+   ticker validation) priced 0 of 0, which the percentage test alone would let through as a clean "no crossings" (Codex, PR #321). */
+export function coverageError(requested, scanned) {
+  if (!requested) return 'no symbols to scan (the roster was empty or held no valid ticker)';
+  if (scanned / requested < MIN_PRICED) return `only ${scanned} of ${requested} symbols priced on the latest session`;
+  return null;
+}
+
+/* Whether the run can be trusted, written onto the report: too little of the roster priced (or none), or a newest bar more than five days old,
+   makes it ok:false with the reason, so "no crossings" can never be what a broken feed looks like. */
+export function verdict(out, now) {
+  out.staleDays = out.newestBar ? Math.round((now - new Date(out.newestBar + 'T12:00:00Z')) / 864e5) : null;
+  const cov = coverageError(out.requested, out.scanned);
+  if (cov) { out.ok = false; out.error = cov; }
+  if (out.staleDays != null && out.staleDays > 5) { out.ok = false; out.error = `newest bar is ${out.staleDays} days old`; }
+  return out;
+}
+
 /* Yahoo's chart result -> dated bars. Holdings need only a good close, so that is all this keeps; a scan demands all four prices on top (fullBars). */
 export function chartRows(res) {
-  const q = res.indicators.quote[0];
-  return res.timestamp.map((t, i) => ({ date: nyParts(new Date(t * 1000)).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 })).filter(hasClose);
+  const q = res.indicators.quote[0], rows = [];
+  (res.timestamp || []).forEach((t, i) => {
+    // Drop the bar, never the symbol (as desk-charts' parseYahooChartOHLC does): a missing or junk timestamp makes Intl throw a RangeError,
+    // which would otherwise cost the whole symbol its coverage (Codex, PR #321).
+    const secs = t == null ? NaN : Number(t), when = new Date(secs * 1000);
+    if (!Number.isFinite(secs) || !Number.isFinite(when.getTime())) return;
+    const row = { date: nyParts(when).day, o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0 };
+    if (hasClose(row)) rows.push(row);
+  });
+  return rows;
 }
 /* A usable close: finite and above zero (a zero is a sentinel, and `[6, 5, 4, 0]` would otherwise read as a 3-day losing streak ending -100%). */
 export const hasClose = x => Number.isFinite(x.c) && x.c > 0;
@@ -281,9 +308,7 @@ async function main() {
   out.newestBar = part.newest; out.stale = part.stale; out.scanned = part.onSession.length;
   for (const x of part.onSession) for (const h of x.r.hits) fileHit(out, h);
   for (const k of ['up30', 'down80']) for (const w of ['latest', 'earlier']) out[k][w].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  out.staleDays = out.newestBar ? Math.round((now - new Date(out.newestBar + 'T12:00:00Z')) / 864e5) : null;
-  if (out.requested && out.scanned / out.requested < MIN_PRICED) { out.ok = false; out.error = `only ${out.scanned} of ${out.requested} symbols priced on the latest session`; }
-  if (out.staleDays != null && out.staleDays > 5) { out.ok = false; out.error = `newest bar is ${out.staleDays} days old`; }
+  verdict(out, now);
 
   const hold = arg('holdings');
   if (hold) {
@@ -419,6 +444,23 @@ function selftest() {
   eq('a zero close is a sentinel and is dropped: the run ends on the last real close (-20%), not -100%', [zr.kind, zr.rec.redDays, zr.rec.lastDayPct], ['streak', 3, -20]);
   const yres = { timestamp: [1760000000, 1760086400, 1760172800, 1760227200], indicators: { quote: [{ open: [1, 1, 1, 1], high: [2, 2, 2, 2], low: [1, 1, 1, 1], close: [5, 0, null, 4], volume: [10, null, 7, 8] }] } };
   eq('Yahoo rows keep a good close only: a zero and a null are dropped, the rest dated on the New York day (midnight UTC is still the evening before there)', chartRows(yres).map(r => [r.date, r.c, r.v]), [['2025-10-09', 5, 10], ['2025-10-11', 4, 8]]);
+  const jts = { timestamp: [1760000000, undefined, NaN, 'abc', null, 1e20, '1760086400', 1760172800], indicators: { quote: [{ open: Array(8).fill(1), high: Array(8).fill(2), low: Array(8).fill(1), close: [5, 5, 5, 5, 5, 5, 4, 3], volume: Array(8).fill(1) }] } };
+  eq('a junk timestamp drops THAT bar, never the symbol or the run (as the dashboard\'s parser)', chartRows(jts).map(r => r.c), [5, 4, 3]);
+  eq('...and a missing timestamp list is no bars, not a crash', chartRows({ indicators: { quote: [{}] } }), []);
+  eq('an empty roster is not a clean "no crossings"', typeof coverageError(0, 0), 'string');
+  eq('a healthy run has no coverage error', coverageError(240, 237), null);
+  eq('too few priced is an error naming the counts', coverageError(240, 215), 'only 215 of 240 symbols priced on the latest session');
+  eq('exactly 90% priced is enough', coverageError(240, 216), null);
+  const vNow = new Date('2026-10-12T14:00:00Z'), vd = o => verdict({ ok: true, requested: 240, scanned: 237, newestBar: '2026-10-09', ...o }, vNow);
+  eq('a healthy report stays ok', [vd({}).ok, vd({}).staleDays, 'error' in vd({})], [true, 3, false]);
+  eq('an empty roster makes the report not ok, with the reason', [vd({ requested: 0, scanned: 0, newestBar: null }).ok, vd({ requested: 0, scanned: 0, newestBar: null }).error], [false, 'no symbols to scan (the roster was empty or held no valid ticker)']);
+  eq('too few priced makes it not ok', vd({ scanned: 100 }).ok, false);
+  eq('a newest bar over five days old makes it not ok', [vd({ newestBar: '2026-10-06' }).ok, vd({ newestBar: '2026-10-06' }).error], [false, 'newest bar is 6 days old']);
+  eq('five days old is still fine', vd({ newestBar: '2026-10-07' }).ok, true);
+  // the real CLI, offline: nothing valid to scan must exit 3 with ok:false, never a clean report (this is what pins main's wiring of the verdict)
+  const cli = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??'], { encoding: 'utf8', timeout: 30000 });
+  let cliOut = {}; try { cliOut = JSON.parse(cli.stdout); } catch { /* reported by the check below */ }
+  eq('the CLI given nothing valid to scan exits 3 with ok:false and says why', [cli.status, cliOut.ok, cliOut.requested, /no symbols to scan/.test(cliOut.error || '')], [3, false, 0, true]);
   eq('a negative close is dropped too', [{ c: -1 }, { c: 0 }, { c: NaN }, { c: 0.25 }].filter(hasClose).length, 1);
   eq('too few bars is unpriced, with its reason', classifyHolding('X', hb(D5.slice(3), [1, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'too few bars' } });
   eq('a fetch error is passed through', classifyHolding('X', { error: 'unknown to Yahoo' }, '2026-10-09', 3).rec.why, 'unknown to Yahoo');
