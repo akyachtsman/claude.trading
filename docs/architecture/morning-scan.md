@@ -83,7 +83,8 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
     No web search, no commentary, no advice. Every email is also recorded in the Ask-the-desk thread (step 5).
 
     1. CODE. In the repo clone: git fetch -q origin main && git checkout -q --detach origin/main && node tools/watchlist-scan.mjs --selftest
-       It must end with "all passed". If not, send ONE email, subject "Desk · morning scan FAILED", saying so and quoting the failure; stop.
+       It must end with "all passed". If not, send ONE email, subject "Desk · morning scan FAILED", saying so and quoting the failure, record it
+       in the Ask thread exactly as step 5 says (that email is the only one), then stop.
     2. HOLDINGS LIST. With the Supabase connector run this one query on project kwugzhyfjevzwgplhtsd and nothing else:
          select distinct p->>'sym' as sym from (select distinct on (account_key) positions from desk_account_snapshots order by account_key, as_of desc) s, jsonb_array_elements(s.positions) p where (p->>'qty')::numeric > 0 and (p->>'sym') ~ '^[A-Za-z0-9. ^=-]{1,24}$' order by 1;
        Save the symbols as a JSON array of strings in /tmp/holdings.json. Never read, print, store or email quantities, dollar values, balances or account details.
@@ -92,8 +93,9 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
        The holdings are read against the SAME report session as the watchlist (the roster's own), never a stand-in symbol's.
        Exit 0 = good. Exit 3 or ok:false = NOT trustworthy: emails 1 and 2 say so at the top, quoting "error", instead of listing "none".
        Exit 2 = the roster could not be read or is over the limit (no holdings were run): emails 1 and 2 say so, quoting "error"; then run
-         node tools/watchlist-scan.mjs --symbols=SPY --holdings=/tmp/holdings.json > /tmp/scan.json
-       for email 3 only (it is then dated by SPY's session, which email 3 states).
+         node tools/watchlist-scan.mjs --symbols=SPY --holdings=/tmp/holdings.json > /tmp/scan-spy.json
+       for email 3 only (it is then dated by SPY's session, which email 3 states). /tmp/scan.json is KEPT: emails 1 and 2 quote its "error";
+       email 3 (its date and its holdings.* fields) reads /tmp/scan-spy.json, and nothing else does.
     4. EMAILS (Gmail send_message, body plain text, no Markdown). Date = scan.newestBar (today's date if it is null). Footer on all three:
        "Source: Yahoo daily bars through the dashboard's own Pro 1 math (tools/watchlist-scan.mjs). Completed sessions only."
        Email 1, subject "Desk · all watchlist stocks crossing up 30% stochastic line on Pro 1 with red above yellow · <date>":
