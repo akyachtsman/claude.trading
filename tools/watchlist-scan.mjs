@@ -138,9 +138,9 @@ async function roster(db) {
 }
 
 /* ── the scan ─────────────────────────────────────────────────────────────── */
-/* A scan needs all four prices of a bar: the dashboard's parser drops a row missing any of them, and a null open would otherwise throw in
-   roundBars and abort the whole run (Codex, PR #321). Holdings need only the close and do not go through this. */
-export const fullBars = rows => rows.filter(x => [x.o, x.h, x.l, x.c].every(Number.isFinite));
+/* A scan needs all four prices of a bar, each finite and above zero: the dashboard's parser (`parseYahooChartOHLC`) drops any other row, and a
+   null open would otherwise throw in roundBars and abort the whole run (Codex, PR #321). Holdings need only the close and do not go through this. */
+export const fullBars = rows => rows.filter(x => [x.o, x.h, x.l, x.c].every(n => Number.isFinite(n) && n > 0));   // desk-charts: `Number.isFinite(n) && n > 0` (a zero is a sentinel, not a price)
 
 /* Bars a symbol needs before a crossing can be judged on each of the last `lookback` sessions. %D first has a value at bar k+kSmooth+d-2
    (92-15-15: the 120th), and the OLDEST session examined needs one too: 120 for the latest session alone, 122 for three (Codex, PR #321). */
@@ -183,6 +183,27 @@ export function partitionBySession(scans) {
   return { newest, onSession: scans.filter(x => x.r.asOf === newest), stale: scans.filter(x => x.r.asOf !== newest).map(x => ({ symbol: x.sym, lastBar: x.r.asOf })) };
 }
 export const isStaleBar = (last, newest) => !!newest && last < newest;
+
+/* What one holding's bars say. A holding whose last bar predates the report session is ALWAYS listed as stale, with the red days it had as of
+   that bar, whether or not they make a streak: it could not be checked through the session, and "none has 3 red days" must not be said of it
+   (Codex, PR #321). Only a current holding can be a streak. */
+export function classifyHolding(sym, b, newest, minStreak) {
+  if (!b.rows || b.rows.length < minStreak + 1) return { kind: 'unpriced', rec: { symbol: sym, why: b.error || 'too few bars' } };
+  const r2 = v => Math.round(v * 100) / 100, c = b.rows.map(x => x.c), streak = redStreak(c), last = b.rows[b.rows.length - 1].date;
+  if (isStaleBar(last, newest)) return { kind: 'stale', rec: { symbol: sym, contract: describeContract(sym), lastBar: last, redDaysThen: streak } };
+  if (streak < minStreak) return { kind: 'none' };
+  const span = b.rows.slice(-(streak + 1)), skipped = span.reduce((n, x, ix) => n + (ix ? skippedWeekdays(span[ix - 1].date, x.date) : 0), 0);
+  return { kind: 'streak', rec: { symbol: sym, contract: describeContract(sym), redDays: streak, asOf: last, closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
+    ...(skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) } };
+}
+
+/* File one classified holding in its list. A holding is never dropped: current streaks, stale ones and unpriced ones each have a list; only "none" is nothing. */
+export function fileHolding(holdings, h) {
+  if (h.kind === 'streak') holdings.redStreak.push(h.rec);
+  else if (h.kind === 'stale') holdings.stale.push(h.rec);
+  else if (h.kind === 'unpriced') holdings.unpriced.push(h.rec);
+  return holdings;
+}
 
 function readings(dash, rows, pane) {
   const s = { t: rows.map(x => x.date), o: rows.map(x => x.o), h: rows.map(x => x.h), l: rows.map(x => x.l), c: rows.map(x => x.c), v: rows.map(x => x.v) };
@@ -243,17 +264,8 @@ async function main() {
   if (hold) {
     const list = [...new Set(JSON.parse(fs.readFileSync(hold, 'utf8')).map(s => String(s).toUpperCase().replace(/\s+/g, '')).filter(s => HOLDING_RE.test(s)))];
     const H = await pool(list, 8, async sym => [sym, await bars(sym, now)]);
-    out.holdings = { requested: list.length, redStreak: [], unpriced: [] };
-    for (const [sym, b] of H) {
-      if (!b.rows || b.rows.length < minStreak + 1) { out.holdings.unpriced.push({ symbol: sym, why: b.error || 'too few bars' }); continue; }
-      const c = b.rows.map(x => x.c), streak = redStreak(c), last = b.rows[b.rows.length - 1].date;
-      if (streak < minStreak) continue;
-      const span = b.rows.slice(-(streak + 1)), skipped = span.reduce((n, x, ix) => n + (ix ? skippedWeekdays(span[ix - 1].date, x.date) : 0), 0);
-      const r2 = v => Math.round(v * 100) / 100;
-      out.holdings.redStreak.push({ symbol: sym, contract: describeContract(sym), redDays: streak, asOf: last,
-        closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
-        ...(isStaleBar(last, out.newestBar) ? { stale: true, caution: `its last bar is ${last}, older than the latest session ${out.newestBar}` } : skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) });
-    }
+    out.holdings = { requested: list.length, referenceSession: out.newestBar, redStreak: [], stale: [], unpriced: [] };
+    for (const [sym, b] of H) fileHolding(out.holdings, classifyHolding(sym, b, out.newestBar, minStreak));
     out.holdings.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
   }
   console.log(JSON.stringify(out, null, 1));
@@ -278,6 +290,13 @@ function selftest() {
   eq('down80 needs red below yellow', crossings(pad([85, 82, 78]), pad([84, 83, 70])).down80, null);
   eq('down80 a cross up through 80 is not it', crossings(pad([70, 78, 82]), pad([70, 75, 80])).down80, null);
   eq('nulls never cross', crossings([null, null, 31], [null, null, 28]).up30, null);
+  eq('up30 landing exactly on 30 has not crossed', crossings(pad([20, 30]), pad([20, 25])).up30, null);
+  eq('down80 touching 80 on the previous bar counts', crossings(pad([80, 78]), pad([84, 80])).down80, { ago: 0 });
+  eq('down80 landing exactly on 80 has not crossed', crossings(pad([85, 80]), pad([84, 83])).down80, null);
+  eq('a lookback of 1 sees only the latest session', crossings(pad([29, 31, 34]), pad([25, 28, 30]), 1).up30, null);
+  eq('a lookback of 2 sees one session back', crossings(pad([29, 31, 34]), pad([25, 28, 30]), 2).up30, { ago: 1 });
+  eq('a missing %D never counts as a cross', crossings(pad([29, 31]), pad([null, null])).up30, null);
+  eq('two crossings in the window: the NEWEST is reported', crossings(pad([29, 31, 29, 32]), pad([25, 28, 30, 30])).up30, { ago: 0 });
   // red-day runs
   eq('red streak 3', redStreak([10, 11, 10, 9, 8]), 3);
   eq('red streak broken by a green day', redStreak([10, 9, 10, 9]), 1);
@@ -329,6 +348,8 @@ function selftest() {
   const e1 = scanSymbol(early, 'XYZ', rows10, 1, 3).hits[0].rec;
   eq('an earlier hit reports the readings AT the crossing, not today\'s', [e1.kBefore, e1.kAtCross, e1.dAtCross, e1.crossedOn], [29, 31, 28, '2026-10-08']);
   eq('...and today\'s readings separately', [e1.kNow, e1.dNow], [35, 30]);
+  eq('...and the close and day change are the latest session\'s', [e1.close, e1.dayPct, e1.sessionsAgo], [19, 5.56, 1]);
+  eq('a reading the study cannot give is null, never NaN (JSON would print both as null)', Object.is(scanSymbol({ ...fake, rsiSeries: () => Array(10).fill(NaN) }, 'XYZ', rows10, 1, 3).hits[0].rec.rsi, null), true);
   // bars are rounded to two decimals as desk-charts' packSeries does, before any study sees them
   let seen = null; const spy = { ...fake, stochSeries: (S, cfg) => { seen = S; return fake.stochSeries(S, cfg); } };
   const raw = rows10.map(x => ({ ...x, o: 10.004, h: 11.126, l: 8.996, c: 10.126 }));
@@ -345,6 +366,32 @@ function selftest() {
   eq('a holding whose last bar is older is stale', isStaleBar('2026-10-07', '2026-10-09'), true);
   eq('a holding on the latest session is not', isStaleBar('2026-10-09', '2026-10-09'), false);
   eq('no reference session, nothing is stale', isStaleBar('2026-10-07', null), false);
+  // nonpositive prices are dropped like the dashboard's parser does
+  eq('a zero price is a sentinel, not a bar', fullBars([{ o: 0, h: 2, l: 1, c: 1.5 }, { o: 1, h: 2, l: 0, c: 1.5 }, { o: 1, h: 2, l: 1, c: 0 }]).length, 0);
+  eq('a negative price is dropped', fullBars([{ o: 1, h: 2, l: -1, c: 1.5 }]).length, 0);
+  eq('a positive bar is kept', fullBars([{ o: 0.01, h: 0.02, l: 0.01, c: 0.02 }]).length, 1);
+  // holdings: what each one says, and a stale one is never silently dropped
+  const hb = (dates, closes) => ({ rows: dates.map((date, i) => ({ date, c: closes[i] })) });
+  const D5 = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'];
+  const cur = classifyHolding('QCOM261218C00195000', hb(D5.slice(1), [10.75, 8.55, 7.65, 7.15]), '2026-10-09', 3);
+  eq('a current holding with 3 red days is a streak', [cur.kind, cur.rec.redDays, cur.rec.closes, cur.rec.contract], ['streak', 3, [10.75, 8.55, 7.65, 7.15], 'QCOM Dec 18 2026 195 Call']);
+  eq('a streak reports the last day\'s move and no caution when nothing is missing', [cur.rec.lastDayPct, 'caution' in cur.rec], [-6.54, false]);
+  eq('a current holding with only 2 red days is nothing to report', classifyHolding('X', hb(D5.slice(1), [10, 11, 10, 9]), '2026-10-09', 3).kind, 'none');
+  const stNo = classifyHolding('FRMI261218C00005000', hb(D5.slice(0, 4), [10, 11, 12, 13]), '2026-10-09', 3);
+  eq('a stale holding with NO streak is still listed, never dropped', [stNo.kind, stNo.rec.lastBar, stNo.rec.redDaysThen], ['stale', '2026-10-08', 0]);
+  const stYes = classifyHolding('X', hb(D5.slice(0, 4), [13, 12, 11, 10]), '2026-10-09', 3);
+  eq('a stale holding WITH a streak is stale, not a current streak', [stYes.kind, stYes.rec.redDaysThen], ['stale', 3]);
+  eq('too few bars is unpriced, with its reason', classifyHolding('X', hb(D5.slice(0, 2), [1, 2]), '2026-10-09', 3), { kind: 'unpriced', rec: { symbol: 'X', why: 'too few bars' } });
+  eq('a fetch error is passed through', classifyHolding('X', { error: 'unknown to Yahoo' }, '2026-10-09', 3).rec.why, 'unknown to Yahoo');
+  eq('with no reference session nothing is stale', classifyHolding('X', hb(D5.slice(0, 4), [13, 12, 11, 10]), null, 3).kind, 'streak');
+  eq('a run across a missing weekday carries a caution', typeof classifyHolding('X', hb(['2026-10-05', '2026-10-06', '2026-10-08', '2026-10-09'], [10, 9, 8, 7]), '2026-10-09', 3).rec.caution, 'string');
+  eq('exactly minStreak bars cannot show a streak of minStreak (it needs one more close): unpriced', classifyHolding('X', hb(D5.slice(0, 3), [3, 2, 1]), '2026-10-09', 3).kind, 'unpriced');
+  eq('minStreak + 1 bars can', classifyHolding('X', hb(D5.slice(1), [4, 3, 2, 1]), '2026-10-09', 3).kind, 'streak');
+  const hl = () => ({ redStreak: [], stale: [], unpriced: [] });
+  eq('a streak is filed under redStreak only', fileHolding(hl(), { kind: 'streak', rec: 'a' }), { redStreak: ['a'], stale: [], unpriced: [] });
+  eq('a stale holding is filed under stale only', fileHolding(hl(), { kind: 'stale', rec: 'b' }), { redStreak: [], stale: ['b'], unpriced: [] });
+  eq('an unpriced holding is filed under unpriced only', fileHolding(hl(), { kind: 'unpriced', rec: 'c' }), { redStreak: [], stale: [], unpriced: ['c'] });
+  eq('"none" is filed nowhere', fileHolding(hl(), { kind: 'none' }), hl());
   // incomplete bars never reach the study, and one bad symbol never takes the run down
   eq('a row missing its open is dropped (and so cannot throw in roundBars)', fullBars([{ o: null, h: 2, l: 1, c: 1.5 }, { o: 1, h: 2, l: 1, c: 1.5 }]).length, 1);
   eq('a row missing any of high/low/close is dropped too', fullBars([{ o: 1, h: undefined, l: 1, c: 1 }, { o: 1, h: 2, l: NaN, c: 1 }, { o: 1, h: 2, l: 1, c: null }]).length, 0);

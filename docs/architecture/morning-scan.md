@@ -30,9 +30,11 @@
 
 **Bars are rounded like the dashboard's.** `desk-charts`' `packSeries` does `+r.o.toFixed(2)` on open/high/low/close before the charts or the scheduled ask see a bar, so the scan does the same (`roundBars`): a crossing within a cent of 30/80, or %K within a cent of %D, can flip on raw floats (Codex, PR #321). It changed nothing on 2026-10-09's data (same lists before and after). Holdings are NOT rounded: a $0.25 option moves in sub-cent steps.
 
-**The report has ONE session.** A symbol's newest bar must equal the newest bar any symbol has (`partitionBySession`); Yahoo can omit the latest session for a halted or thin name, and "crossed on the last session" must not be said of an older day. Those symbols are listed under `stale` with their last bar and are not scanned (Codex, PR #321). A holding whose last bar is older is flagged `stale` the same way.
+**The report has ONE session.** A symbol's newest bar must equal the newest bar any symbol has (`partitionBySession`); Yahoo can omit the latest session for a halted or thin name, and "crossed on the last session" must not be said of an older day. Those symbols are listed under `stale` with their last bar and are not scanned (Codex, PR #321).
 
-**Only complete bars, and only enough of them.** A bar missing any of open/high/low/close is dropped before the study (`fullBars`; the dashboard's parser does the same, and a null open would otherwise throw in `roundBars` and abort the run); holdings need only the close. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
+**A stale holding is always listed.** A holding whose last bar predates that session (`holdings.referenceSession`) goes under `holdings.stale` with its last bar and the red days it had as of then (`redDaysThen`), whether or not they make a streak: it could not be checked through the session, and "none of your positions has 3 red days" must not be said of it. It is never filed as a current streak (`classifyHolding`; `fileHolding` puts each kind in its list and drops nothing but "no streak") (Codex, PR #321).
+
+**Only complete bars, and only enough of them.** A bar missing any of open/high/low/close, or carrying a zero or negative price, is dropped before the study (`fullBars`; the dashboard's parser, `parseYahooChartOHLC`, requires every one finite and above zero, and a null open would otherwise throw in `roundBars` and abort the run); holdings need only the close. A symbol needs `barsNeeded` bars: %D first has a value at bar `k+kSmooth+d-2` (the 120th for 92-15-15) and the OLDEST session examined needs one too, so 122 at the default lookback of 3 (Codex, PR #321). Whatever one symbol throws becomes a reason listed with the unpriced; it never takes the run down (`buildScans`, `scanOrReason`).
 
 **Readings at the crossing and readings now are separate fields.** An `earlier` hit's `kBefore` / `kAtCross` / `dAtCross` are the bar it crossed on; `kNow` / `dNow` / `close` / `dayPct` are the latest session's (Codex, PR #321). On a `latest` hit they coincide.
 
@@ -47,7 +49,8 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 78 checks, no network; 39 single-line mutants are each caught
+    node tools/watchlist-scan.mjs --selftest            # 105 checks, no network
+    node tools/watchlist-scan-mutants.mjs               # 82 one-line changes to the tool: 81 make the selftest fail, 1 cannot change behaviour (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --symbols=SPY --holdings=holdings.json   # red-day runs for a JSON array of symbols
@@ -89,8 +92,10 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
          "Not scanned: " the unpriced symbols with their reasons, and the stale symbols as "<symbol> (last bar <lastBar>)".
        Email 2, subject "Desk · all watchlist stocks crossing down 80% stochastic line on Pro 1 with red below yellow · <date>": the same with down80 and "DOWN THROUGH 80".
        Email 3, subject "Desk · All long stocks/options in my accounts w/ 3 or more consecutive red days · <date>":
-         one line per holdings.redStreak: <contract> (or symbol)  <redDays> red days  closes <closes joined by " > ">  last day <lastDayPct>%   plus its caution if any (a stale one says its last bar is older);
-         if none: "None of your <requested> long positions has 3 or more red days in a row."; then any holdings.unpriced.
+         one line per holdings.redStreak: <contract> (or symbol)  <redDays> red days  closes <closes joined by " > ">  last day <lastDayPct>%   plus its caution if any;
+         if none: "None of your <requested> long positions has 3 or more red days in a row." - say it only for the positions that WERE checked;
+         then "Could not be checked through <holdings.referenceSession>:" one line per holdings.stale: <contract> (or symbol), last bar <lastBar>, <redDaysThen> red days as of then;
+         then any holdings.unpriced with their reasons.
     5. Finish with one line per email: its subject and the Gmail message id.
 
 ## Costs
