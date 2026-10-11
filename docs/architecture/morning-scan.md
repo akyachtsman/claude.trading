@@ -121,6 +121,7 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
          select u.id, $tag$<SUBJECT>$tag$, $tag$<BODY>$tag$, 'claude-code-routine', 'scheduled'
          from desk_users u
          where not u.is_test
+           and (select count(*) from desk_users where not is_test) = 1
            and not exists (select 1 from desk_chat_memory c where c.user_id = u.id and c.question = $tag$<SUBJECT>$tag$ and c.created_at > now() - interval '12 hours')
          limit 1;
        Dollar-quote with a tag you generate at run time (for example $r8k2m9x$) that does not occur anywhere in the subject or body; never put the text
@@ -140,7 +141,7 @@ The owner's ask (2026-10-11): "answer the scheduled question in email and in the
 | Repeat runs | A manual re-run within 12 hours does not insert the same question twice (`not exists`). |
 | Email 3 and money | Email 3 names held tickers and run lengths, never quantities or amounts (the same rule as the email). The row lands in the owner's own PIN-gated database, never in the repo. |
 | If it fails | The email still stands; the Routine's last line says which copies were recorded. |
-| Not verified | The insert has not been run against the live project: that needs the Routine to exist, and the owner's approval of a write to `desk_chat_memory` when the Routine is created. The owner is the one `desk_users` row where `is_test` is false: step 2 checks there is exactly one (if not, nothing is inserted and email 3 says so), the holdings query is limited to that user's snapshots, and the repeat-run check looks only at that user's rows. |
+| Not verified | The insert has not been run against the live project: that needs the Routine to exist, and the owner's approval of a write to `desk_chat_memory` when the Routine is created. The owner is the one `desk_users` row where `is_test` is false: step 2 checks there is exactly one (if not, email 3 says so and the holdings query is skipped), the insert ITSELF writes only when there is exactly one (so even the failure email, recorded before step 2 has run, cannot land in an arbitrary user's thread), the holdings query is limited to that user's snapshots, and the repeat-run check looks only at that user's rows. |
 
 ## Costs
 
