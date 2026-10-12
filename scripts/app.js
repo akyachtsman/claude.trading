@@ -4788,7 +4788,9 @@ function wbCancelLoad(sym) {
   if (note && note.textContent === 'Loading ' + sym + '…') note.textContent = '';
   return true;
 }
-async function wbLoadSymbol(sym) {
+/* `noStore` (a click in the POSITIONS column only): chart it WITHOUT remembering it. `wbPick` otherwise writes the pick to `wb_sticky_v1.sel`, which a reload
+   restores while only the public feeds have loaded — before any PIN — so a held ticker would sit in the browser and come back on a locked visit (Codex P1, PR #325). */
+async function wbLoadSymbol(sym, noStore) {
   if (!wbState) return false;
   const gen = ++wbLoadGen;
   const note = document.getElementById('wbInfo');
@@ -4801,7 +4803,7 @@ async function wbLoadSymbol(sym) {
      the entry box on top of the SYMBOL column call wbPushSymbol THEMSELVES
      before they call this, so the add is a separate, synchronous act and never
      a side effect of a lookup. Loading a symbol charts it and nothing else. */
-  if (wbState.data.symbols[sym]) { say(''); wbPick(sym); return true; }
+  if (wbState.data.symbols[sym]) { say(''); wbPick(sym, noStore); return true; }
   if (DESK.mode === 'demo' || !DESK_DB.url) {
     say('Live ticker lookups are off in demo mode');
     return false;
@@ -4837,12 +4839,12 @@ async function wbLoadSymbol(sym) {
   /* OUTSIDE the try above: a render fault used to land in its catch, where
      wbPick's own generation bump made it read as "superseded" — swallowed with
      no message and no log, the note stuck on "Loading…". */
-  wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
+  wbPick(sym, noStore);         /* renderCharts → renderWbInfo repaints the strip with stats */
   return true;
 }
 /* single choke point for switching the active symbol: resets pan, remembers
    the selection so it sticks across reloads, and repaints */
-function wbPick(sym) {
+function wbPick(sym, noStore) {
   /* Invalidate every in-flight load HERE, not only in wbLoadSymbol. This is the
      one place the active symbol changes, and some paths reach it WITHOUT the
      loader — the header box's `change` handler charts an already-loaded ticker
@@ -4858,7 +4860,7 @@ function wbPick(sym) {
      (owner ruling 2026-08-26) — its 100 slots hold exactly what the owner typed
      into them. Re-fetch on boot does not depend on this, because
      restoreStickySymbols also re-hydrates `sel` — see the note there. */
-  writeWbSticky({ sel: sym });
+  if (!noStore) writeWbSticky({ sel: sym });
   renderCharts(wbState.data, wbState.lamp);
 }
 /* Typeahead roster (owner request 2026-07-16): a curated set of popular
@@ -5492,7 +5494,7 @@ function wbPosBtn(d) {
   if (!chartable) { b.disabled = true; return b; }
   b.addEventListener('click', () => {
     wbSlotClick = { i: -1, at: 0 };       /* any other navigation breaks a pending slot pair — see wbRailBtn */
-    wbLoadSymbol(d.chart);
+    wbLoadSymbol(d.chart, true);          /* a holding is charted, never remembered — see wbLoadSymbol */
   });
   return b;
 }
@@ -6414,6 +6416,10 @@ function renderWbSidebar(data) {
      preserving editing state must not move what the owner is looking at. */
   const dyingSlots = nav.querySelector('.wb-slots');
   const slotScroll = dyingSlots ? dyingSlots.scrollTop : 0;
+  /* The POSITIONS column scrolls too (a long portfolio, or the 220px stacked rail), and it is rebuilt here like everything else: clicking a holding low in the
+     list repaints through wbPick and would otherwise throw it back to the first row (Codex P2, PR #325). */
+  const dyingPos = nav.querySelector('.wb-rail-pos');
+  const posScroll = dyingPos ? dyingPos.scrollTop : 0;
   /* A focused slot BUTTON is preserved the same way the input is, and for a
      sharper reason: charting from the keyboard (Enter/Space on a filled slot)
      runs synchronously into wbPick, whose render removes the very button that
@@ -6546,6 +6552,8 @@ function renderWbSidebar(data) {
      the new scrollHeight, which is what we want if the list got shorter. */
   const bornSlots = nav.querySelector('.wb-slots');
   if (bornSlots && slotScroll) bornSlots.scrollTop = slotScroll;
+  const bornPos = nav.querySelector('.wb-rail-pos');
+  if (bornPos && posScroll) bornPos.scrollTop = posScroll;
 
   /* A repaint the owner did not cause (the 60s poll, a chart landing) can arrive MID-DRAG and
      replaces the rows and the marker; the ghost is outside the rail and the drag state is module

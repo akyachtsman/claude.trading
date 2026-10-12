@@ -452,8 +452,14 @@ carry the whole name, as before.
 - **Repaint points:** `renderPrivate()` (unlocked branch), `renderLockedPanels()` and the `loadPrivate` failure branch call `wbRepaintRail()`, which is guarded on
   `wbState` — the rail is built from the charts feed, which may land before or after the accounts.
 - **It carries no money and no day-%**, the rail's rule: no size, no price, no gain/loss colour (S68 scans every element's computed colour against the gain and loss
-  tokens). Nothing it shows is stored: not in `wb_sticky_v1`, not in the SYMBOL column (a click is the roster click's path, `wbLoadSymbol`, which pins nothing) —
-  the only residual is the charted symbol the owner picks, which `wbPick` already stores as `sel` for any symbol.
+  tokens). **Nothing it shows is stored.** A click goes through `wbLoadSymbol(sym, true)` → `wbPick(sym, true)`: `noStore` skips the one write `wbPick` makes,
+  `wb_sticky_v1.sel`, which a reload restores while only the public feeds have loaded — before any PIN — so a charted holding would sit in the browser and come back
+  on a locked visit (Codex P1, PR #325). It also writes no SYMBOL slot (the loader pins nothing). **The cost, accepted:** a reload restores the last selection made
+  any OTHER way (a roster click, a slot, the Load box), not a holding picked from this column. Nothing is cleared when the desk locks, because nothing private was
+  stored; the chart on screen at that moment is a public price chart and goes with the page.
+- **Its scroll position survives a repaint** (`posScroll` in `renderWbSidebar`, like `.wb-slots`): a long portfolio, or the 220px stacked rail, scrolls inside the
+  column and clicking a holding low in it repaints through `wbPick` (Codex P2, PR #325). The ROSTER column still resets to its first row on a repaint, as it always
+  has — not touched here.
 - **Options.** IBKR pads a contract to a fixed root (`ABC   261218C00195000`, `ABCD  261218P00005500`); `WB_OCC_RE` reads root, `yymmdd`, `C`/`P` and the strike × 1000.
   The row is the **underlying** with the contract under it (`12/18 195C`, `12/18 5.5P`), the tooltip and accessible name carry it in full (`ABC Dec 18 2026 195 Call
   (option)`), and **a click charts the UNDERLYING**: a contract has too few bars for the stochastic the panes read, and the stock is what the doctrine is traded on.

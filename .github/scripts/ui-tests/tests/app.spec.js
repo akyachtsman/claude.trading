@@ -10083,7 +10083,13 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   expect(dressed.painted, 'and nothing in the column is a gain or loss colour').toEqual([]);
 
   // ── 2. a click charts it; an option charts its UNDERLYING; the SYMBOL column is never written ───────────────────────────────────────────────────────
-  await page.evaluate(() => { window.__loads = []; const real = window.wbLoadSymbol; window.wbLoadSymbol = (s) => { window.__loads.push(s); return real(s); }; });
+  await page.evaluate(() => { window.__loads = []; const real = window.wbLoadSymbol; window.wbLoadSymbol = (...a) => { window.__loads.push(a[0]); return real(...a); }; });
+  const sel = () => page.evaluate(() => JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').sel || '');
+  // control: a ROSTER click does remember what it charts, so the checks below can tell a holding that is not remembered from nothing being remembered at all
+  await page.locator('.wb-rail-roster .wb-side-btn', { hasText: /^DIA$/ }).click();
+  await page.waitForTimeout(300);
+  expect(await sel(), 'control: a roster click stores its pick').toBe('DIA');
+  await page.evaluate(() => { window.__loads = []; });
   await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^TLT$/ }).click();
   await page.waitForTimeout(400);
   expect(await page.evaluate(() => [window.__loads, wbState.sym]), 'a click charts that ticker').toEqual([['TLT'], 'TLT']);
@@ -10092,11 +10098,12 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   await opt.click();
   await page.waitForTimeout(400);
   expect(await page.evaluate(() => window.__loads), 'the option asks for its UNDERLYING (AMD), never the contract').toEqual(['TLT', 'AMD']);
+  expect(await sel(), 'a holding is charted and NOT remembered: a reload restores the stored selection before any PIN, so a held ticker would come back on a locked visit (Codex P1, PR #325)').toBe('DIA');
   expect(await page.evaluate(() => wbState.sym), 'demo cannot look AMD up, and nothing else is charted in its place').toBe('TLT');
   expect(await page.evaluate(() => document.getElementById('wbInfo').textContent), 'and it says so').toContain('Live ticker lookups are off in demo mode');
   expect((await storedSyms(page)).map((s, i) => (s ? i + ':' + s : null)).filter(Boolean).join('|'), 'neither click wrote a slot into the SYMBOL column').toBe(filledBefore);
   const sticky = await page.evaluate(() => localStorage.getItem('wb_sticky_v1') || '');
-  for (const held of ['NVDA', 'MSFT', 'AAPL', 'AMZN', 'BRK.B', 'SCHD', 'VTI']) expect(sticky, `${held} is shown, never stored`).not.toContain(held);
+  for (const held of ['NVDA', 'MSFT', 'AAPL', 'AMZN', 'BRK.B', 'SCHD', 'VTI', 'TLT', 'SPY', 'AMD']) expect(sticky, `${held} is shown, never stored`).not.toContain(held);
 
   // ── 3. how a holding is read (the page's own parser) ───────────────────────────────────────────────────────────────────────────────────────────────
   const parsed = await page.evaluate(() => ['ABC   261218C00195000', 'abc261218c00195000', 'ABCD  261218P00005500', 'BRK.B 261218C01250500', 'ABCDEF261218P00100000',
@@ -10137,6 +10144,24 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: '12/18 5.5P' }).click();
   await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^ZZB$/ }).click();
   expect(await page.evaluate(() => window.__loads), 'a put charts its underlying too; the unchartable row did nothing').toEqual(['ZZC', 'ZZB']);
+
+  // a long portfolio scrolls inside its column, and a repaint (a click on a lower holding, a chart drag, the feed poll) must not throw it back to the first row (Codex P2, PR #325)
+  const longScroll = await page.evaluate(() => {
+    DESK.data.accounts = [{ key: 1, positions: Array.from({ length: 60 }, (_, i) => ({ sym: 'ZY' + String(i).padStart(2, '0'), qty: 1 })) }];
+    wbRepaintRail();
+    const col = document.querySelector('.wb-rail-pos');
+    const room = col.scrollHeight - col.clientHeight;
+    col.scrollTop = 150;
+    const set = col.scrollTop;
+    wbRepaintRail();
+    wbRepaintRail();
+    return { room, set, after: document.querySelector('.wb-rail-pos').scrollTop };
+  });
+  expect(longScroll.room, 'sixty holdings overflow the column').toBeGreaterThan(150);
+  expect([longScroll.set, longScroll.after], 'and a repaint keeps the place the owner scrolled to').toEqual([150, 150]);
+  await page.evaluate(() => { DESK.data.accounts = [
+    { key: 1, label: 'A', positions: [{ sym: 'ZZB', qty: 10 }, { sym: 'ZZA  261218C00100000', qty: 1 }, { sym: 'ZZA', qty: 5 }] },
+    { key: 2, label: 'B', positions: [{ sym: 'ZZD  261218C00100000', qty: 1 }] }]; wbRepaintRail(); });
 
   // ── 5. LOCK: the real button empties the column even though the accounts are still held in memory ───────────────────────────────────────────────────
   expect(await page.evaluate(() => DESK.data.accounts.length), 'the accounts are in memory').toBe(2);
