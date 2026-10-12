@@ -468,7 +468,8 @@ carry the whole name, as before.
   `wbState.data.symbols` key): pinning one through the dropdown is a REMEMBERED choice, so it leaves `wbPosLoaded` like any other remembered pick; and a pane pinned
   EARLIER to a symbol that Lock purges counts as on screen, so the purge repaints the panes (`effSym` falls back to the desk symbol) — the pin itself is left alone,
   it is the owner's. (2) `loadCharts` removes from `wbPosLoaded` every symbol a feed payload carries: a symbol the public feed supplies is public whatever fetched
-  it first (a partial cold response that omitted a configured ticker, then a complete one). (3) The root cause is that a clicked holding shares `data.symbols` with
+  it first (a partial cold response that omitted a configured ticker, then a complete one); and the click's own continuation rechecks `wbFeedRoster` AFTER its
+  lookup lands, because a feed poll can deliver the symbol while the lookup is out (the opposite completion order; `had` was read before the request). (3) The root cause is that a clicked holding shares `data.symbols` with
   everything else; the set-and-purge is the proportionate answer, and a separate store consulted by the charts would be the larger one if a fourth corner turns up.
 - **A keyboard activation keeps its focus (Codex P2, PR #325):** Enter on a holding charts it and `wbPick` rebuilds the rail; `renderWbSidebar` captures the focused
   `.wb-pos-btn` by its `data-pkey` (the holding's own name — rows are re-sorted from the accounts on every paint) and focuses its replacement. The ROSTER column

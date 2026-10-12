@@ -5500,7 +5500,8 @@ function wbPosBtn(d) {
     /* A holding is charted, never remembered — see wbLoadSymbol. And a holding the charts feed did not carry is fetched into `wbState.data.symbols`, which the
        ROSTER column lists and a poll deliberately keeps: it is noted here so Lock can take it back out (Codex P1, PR #325). */
     Promise.resolve(wbLoadSymbol(d.chart, true)).then((ok) => {
-      if (ok !== true || had || !wbState.data.symbols[d.chart]) return;
+      /* `had` was read BEFORE the lookup; a feed poll can have delivered the symbol while it was out, so feed ownership is rechecked NOW (Codex P2, PR #325) */
+      if (ok !== true || had || wbFeedRoster.has(d.chart) || !wbState.data.symbols[d.chart]) return;
       wbPosLoaded.add(d.chart);
       if (DESK.mode !== 'demo' && !DESK.authed) wbPurgePositionLoads();   /* Lock landed while the lookup was in flight */
     });

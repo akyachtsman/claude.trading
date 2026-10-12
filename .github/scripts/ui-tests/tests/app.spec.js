@@ -10234,7 +10234,7 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
 
   // the same three corners, one each: a pane's own pinned ticker, a ticker the public feed then supplies, and a pane already drawn with a holding (Codex P1/P2 round 3)
   const resetHolding = () => page.evaluate(() => {
-    delete wbState.data.symbols.ZZNEW; wbPosLoaded.clear();
+    delete wbState.data.symbols.ZZNEW; wbPosLoaded.clear(); wbFeedRoster.delete('ZZNEW');
     wbState.cfg.p3.sym = null; saveWbCfg();
     wbState.sym = 'DIA'; writeWbSticky({ sel: 'DIA' });
     renderCharts(wbState.data, wbState.lamp);
@@ -10270,6 +10270,21 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   });
   await lockNow();
   expect([await inSyms(), await rosterSyms()], 'once the feed carries it, Lock leaves it in the roster').toEqual([true, expect.arrayContaining(['ZZNEW'])]);
+  //  d) the opposite order: the feed delivers the ticker WHILE the holding's own lookup is still out; the marker must not be added after the fact
+  await resetHolding(); await unlockLive();
+  await page.evaluate(() => { window.__hold = true; });
+  await holding.click();
+  await page.evaluate(async () => {
+    window.__realFeed = window.deskFeed;
+    window.deskFeed = async () => ({ generatedAt: new Date().toISOString(), asOf: wbState.data.asOf, symbols: { SPY: wbState.data.symbols.SPY, ZZNEW: window.__base } });
+    await loadCharts();
+    window.deskFeed = window.__realFeed;
+    window.__hold = false;
+    window.__gate && window.__gate();
+  });
+  await page.waitForTimeout(400);
+  await lockNow();
+  expect([await inSyms(), await rosterSyms()], 'a feed that landed while the lookup was out owns the symbol: Lock leaves it').toEqual([true, expect.arrayContaining(['ZZNEW'])]);
   await resetHolding();
   await page.evaluate(() => { writeWbSticky({ sel: 'DIA' }); DESK_DB.url = window.__realUrl; });
 
