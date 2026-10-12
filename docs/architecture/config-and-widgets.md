@@ -23,6 +23,27 @@
   cut was built client-side out of the `desk-charts` payload, so an ETF got a
   tile only if the charts workbench happened to carry its 800-bar series, and
   the two rosters were coupled for no reason other than that.
+- **News: CNBC is read from `search.cnbc.com`, not `www.cnbc.com` (owner 2026-10-11: "if you go to CNBC, today's news, that's what's most important").**
+  The roster's first feed had been `https://www.cnbc.com/id/100003114/device/rss/rss.html`, which answers a server `403 Access Denied`
+  (the same bot protection that refuses the live yields' quote API to servers), so `desk-news` dropped it without a word —
+  a failed feed is skipped, the others still fill the panel — and the News panel ran on MarketWatch's top stories (which include
+  evergreen personal-finance columns) and the St. Louis Fed blog alone. The same "US Top News and Analysis" feed on
+  `https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114` answers 200 with today's headlines (verified
+  2026-10-11 with `desk-news`'s own user-agent). Merging the roster edit IS the change (the function re-reads `config/news-feeds.json`
+  from Pages, cached up to an hour); no deploy. `desk-news`'s built-in `DEFAULT_FEED_CONFIG` still names the old address; it applies only
+  when the roster cannot be read at all, and fixing it needs a `desk-news` deploy (owner approval). If CNBC ever refuses the search host
+  to Supabase too, the panel is back to its two other sources, with no error: check a live `desk-news` reply for `src: "CNBC"` rows.
+  **Majority CNBC (owner 2026-10-11: "Can we do majority CNBC?")**: the roster carries FOUR CNBC sections (Top News `100003114`, Finance
+  `10000664`, Investing `15839069`, Earnings `15839135`, each probed 200 with 30 items, all labelled `CNBC`) and `maxItems` is 30. The panel is
+  newest-first across every feed (each feed contributes the first 15 items in ITS OWN order, titles deduped, `dedupeRank`), so CNBC's share is
+  whatever it publishes more of. Simulated against a live reply on a Sunday, the slowest day: 20 of the top 30 (66%) were CNBC, MarketWatch the
+  other 10; at 20 items it was only half, which is why the list grew. Weekdays should run higher. It is NOT a guarantee, for two reasons.
+  (1) Rows for HELD STOCK tickers (`perTicker`, up to 3 per symbol from Yahoo/Google News) sort AHEAD of every general feed (`heldFirst`) and take
+  slots before `maxItems` applies, so an account holding six to eight stocks would leave only 6-12 of 30 slots to the general feeds (Codex, PR #322).
+  Today there are none: a forced live sweep on 2026-10-11 returned 20 rows with no chip, because the held names are options and the held-ticker
+  pattern (`/^[A-Z.]{1,6}$/`) skips an OCC symbol. (2) The mix follows what each source publishes. A hard share needs a per-source cap or a reserved
+  slot count in `desk-news` (a function change and deploy, owner approval); setting `perTicker.enabled` to `false` would also do it, at the cost
+  of the held-name news. `desk-news` keeps at most 8 general feeds (7 are used).
 - `config/widgets.json` — **EMPTY as of 2026-08-07 (owner ruling): both embeds
   are retired and the desk now runs NO third-party vendor JS at all** — the page
   carries zero iframes. The FRED "Economy at a glance" widget was replaced by
