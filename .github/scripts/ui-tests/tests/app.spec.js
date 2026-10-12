@@ -4300,12 +4300,11 @@ test('S45: the symbol column is 100 permanent slots, edited in place', async ({ 
   expect(errs, 'no page errors').toEqual([]);
 });
 
-/* S40 — the charts rail's ROSTER half: the full-width picker over two columns
-   that start on the same line, every watchlist offered, a click charting
-   without writing anything into the SYMBOL column, and the chosen roster
-   surviving a reload. The SYMBOL column's own behaviour is S45's — the two were
-   one scenario until 2026-08-26, when that column stopped being a stack the
-   Load box pushed into and became 100 slots edited in place. */
+/* S40 — the charts rail's shape and its ROSTER half: THREE columns (POSITIONS | SYMBOL | ROSTER, owner 2026-10-12) that start on the same line, each headed
+   by one 20px control or label on that line, a ticker that never abbreviates in ANY of them at the validator's ten characters (the type steps down by
+   length: 10px to eight characters, 8px at nine and ten), every watchlist offered, a click charting without writing anything into the SYMBOL column, and
+   the chosen roster surviving a reload. The SYMBOL column's own behaviour is S45's — the two were one scenario until 2026-08-26, when that column
+   stopped being a stack the Load box pushed into and became 100 slots edited in place. The POSITIONS column's own behaviour is S68's. */
 test('S40: charts rail — roster picker and column shape', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(90_000);
@@ -4313,22 +4312,31 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
   const errs = [];
   page.on('pageerror', e => errs.push(e.message));
 
-  // two columns, side by side; the entry box heads the SYMBOL column and the roster picker heads the ROSTER column, on the SAME line
-  // (owner 2026-10-09: "align everything nicely so that the radar will line up with the second column and not expand the two columns")
-  expect(await page.locator('#wbSidebar .wb-rail-col').count(), 'two rail columns').toBe(2);
+  // three columns, side by side, POSITIONS leftmost (owner 2026-10-12); the label heads POSITIONS, the entry box the SYMBOL column and the roster picker the
+  // ROSTER column, on the SAME line (owner 2026-10-09: "align everything nicely so that the radar will line up with the second column and not expand the columns")
+  expect(await page.locator('#wbSidebar .wb-rail-col').count(), 'three rail columns').toBe(3);
+  expect(await page.evaluate(() => [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.className.replace('wb-rail-col ', ''))),
+    'in the order POSITIONS, SYMBOL, ROSTER').toEqual(['wb-rail-pos', 'wb-rail-manual', 'wb-rail-roster']);
   const geom = await page.evaluate(() => {
     const r = (sel) => document.querySelector(sel).getBoundingClientRect();
     const cols = [...document.querySelectorAll('#wbSidebar .wb-rail-col')].map(c => c.getBoundingClientRect());
-    const entry = r('.wb-rail-manual .wb-rail-head .wb-entry-input'), pick = r('.wb-rail-roster .wb-rail-head .wb-rail-pick');
-    return { left0: cols[0].left, left1: cols[1].left, top0: cols[0].top, top1: cols[1].top, w0: cols[0].width, w1: cols[1].width,
+    const entry = r('.wb-rail-manual .wb-rail-head .wb-entry-input'), pick = r('.wb-rail-roster .wb-rail-head .wb-rail-pick'), name = r('.wb-rail-pos .wb-rail-posname');
+    return { lefts: cols.map(c => c.left), tops: cols.map(c => c.top), ws: cols.map(c => c.width), left0: cols[1].left, left1: cols[2].left, top0: cols[1].top, top1: cols[2].top, w0: cols[1].width, w1: cols[2].width,
+             name: { l: name.left, t: name.top, w: name.width, h: name.height }, nameClip: (() => { const n = document.querySelector('.wb-rail-pos .wb-rail-posname'); return n.scrollWidth > n.clientWidth + 0.5; })(),
              entry: { l: entry.left, t: entry.top, w: entry.width, h: entry.height }, pick: { l: pick.left, t: pick.top, w: pick.width, h: pick.height },
              oldTop: !!document.querySelector('.wb-rail-top'), plus: document.querySelectorAll('.wb-rail-add').length,
              active: document.querySelectorAll('.wb-rail-sub, .wb-rail-manual > .wb-side-btn').length,
              slotsT: r('.wb-rail-manual .wb-slots').top,
              pickIn: !!document.querySelector('.wb-rail-roster .wb-rail-pick'), pickOutside: !document.querySelector('.wb-rail-manual .wb-rail-pick') };
   });
-  expect(geom.left1, 'the columns sit side by side, not stacked').toBeGreaterThan(geom.left0);
-  expect(Math.abs(geom.top0 - geom.top1) < 2, 'and both start on the same line').toBe(true);
+  expect(geom.lefts[0] < geom.lefts[1] && geom.lefts[1] < geom.lefts[2], 'the columns sit side by side, not stacked').toBe(true);
+  expect(Math.max(...geom.tops) - Math.min(...geom.tops) < 2, 'and all three start on the same line').toBe(true);
+  expect(Math.abs(geom.name.t - geom.entry.t) < 1.5 && Math.abs(geom.name.h - geom.entry.h) < 1.5, 'the POSITIONS label sits on that line too, at the same height').toBe(true);
+  expect(Math.abs(geom.name.l - geom.lefts[0]) < 1.5 && geom.name.w <= geom.ws[0] + 1.5, 'lined up with its own column').toBe(true);
+  // beside the chart (not stacked) the three columns are the NARROW ones the owner asked for — 54px each — so a column that grew back to 68–78px fails here, not in the owner's screenshot
+  const side = await page.evaluate(() => window.innerWidth > 860);
+  if (side) expect(geom.ws.map(w => Math.round(w)), 'three 54px columns beside the chart (owner 2026-10-12: narrow enough for one more)').toEqual([54, 54, 54]);
+  expect(geom.nameClip, 'and the word fits its column — a label cut to "Positio…" names nothing').toBe(false);
   expect(geom.oldTop, 'there is no full-width row above the columns any more').toBe(false);
   expect([geom.pickIn, geom.pickOutside], 'the picker is the ROSTER column\'s own head').toEqual([true, true]);
   expect(Math.abs(geom.pick.t - geom.entry.t) < 1.5 && Math.abs(geom.pick.h - geom.entry.h) < 1.5, 'it sits on the SAME line as the entry box over the SYMBOL column, at the same height').toBe(true);
@@ -4343,32 +4351,48 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
      never abbreviates. Budgeted against the VALIDATOR's ten characters, never
      against demo's three-letter names: a budget that admits less than
      WL_SYM_RE accepts is not a budget, and DX-Y.NYB (8) is already in the
-     roster. The font is read off the LIVE element rather than hardcoded, so a
-     type-size change re-derives the expectation instead of needing a test
-     edit. */
+     roster. Since 2026-10-12 every column is 54px (50px of text room) and the rule is
+     kept by stepping the TYPE down by length: 10px up to eight characters (48.2px),
+     8px at nine and ten (48.2px at ten). The probes go in through the page's OWN
+     builders in ALL THREE columns — a ten-, a nine- and an eight-character name in the
+     SYMBOL slots (the sticky store, then a repaint), in the POSITIONS column (an
+     account holding them, then a repaint) and in the ROSTER column (`wbRailBtn`) — and
+     the font is read off each LIVE element rather than hardcoded, so a type-size
+     change re-derives the expectation instead of needing a test edit. Narrower than
+     the widest case is a clipped ticker; wider is a column that grew again. */
   const budget = await page.evaluate(() => {
     const cv = document.createElement('canvas').getContext('2d');
-    const room = sel => {
-      const e = document.querySelector(sel);
-      if (!e) return null;
-      const c = getComputedStyle(e);
-      return e.clientWidth - parseFloat(c.paddingLeft) - parseFloat(c.paddingRight);
-    };
-    const probe = document.querySelector('.wb-slots .wb-side-sym');
-    const f = getComputedStyle(probe);
-    cv.font = `${f.fontWeight} ${f.fontSize} ${f.fontFamily}`;
-    const clipped = [...document.querySelectorAll('#wbSidebar .wb-side-sym')]
-      .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent);
-    return { ten: cv.measureText('WWWWWWWWWW').width,
-             symbol: room('.wb-slots .wb-slot'),
-             roster: room('.wb-rail-roster .wb-side-btn'),
-             clipped };
+    const probes = ['WWWWWWWWWW', 'WWWWWWWWW', 'WWWWWWWW', 'DX-Y.NYB'];
+    const syms = Array(100).fill(''); probes.forEach((p, i) => { syms[i] = p; });
+    writeWbSticky({ syms });
+    const saved = DESK.data.accounts;
+    DESK.data.accounts = [{ key: 1, positions: probes.map(sym => ({ sym, qty: 1 })) }];
+    wbRepaintRail();
+    const roster = document.querySelector('.wb-rail-roster');
+    probes.forEach(p => roster.appendChild(wbRailBtn(p)));
+    const out = [];
+    for (const [col, row] of [['pos', '.wb-rail-pos .wb-pos-btn'], ['manual', '.wb-slots .wb-slot'], ['roster', '.wb-rail-roster .wb-side-btn']]) {
+      for (const p of probes) {
+        const btn = [...document.querySelectorAll(row)].find(b => b.querySelector('.wb-side-sym') && b.querySelector('.wb-side-sym').textContent === p);
+        const sym = btn.querySelector('.wb-side-sym'), f = getComputedStyle(sym), c = getComputedStyle(btn);
+        cv.font = `${f.fontWeight} ${f.fontSize} ${f.fontFamily}`;
+        out.push({ col, sym: p, size: f.fontSize, need: cv.measureText(p).width,
+                   room: btn.clientWidth - parseFloat(c.paddingLeft) - parseFloat(c.paddingRight),
+                   clipped: sym.scrollWidth > sym.clientWidth + 0.5 });
+      }
+    }
+    DESK.data.accounts = saved;
+    writeWbSticky({ syms: Array(100).fill('') });
+    wbRepaintRail();
+    return { out, clipped: [...document.querySelectorAll('#wbSidebar .wb-side-sym')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent) };
   });
-  expect(budget.symbol, `a 10-char ticker needs ${budget.ten.toFixed(1)}px in the SYMBOL column`)
-    .toBeGreaterThanOrEqual(budget.ten);
-  expect(budget.roster, `and ${budget.ten.toFixed(1)}px in the ROSTER column`)
-    .toBeGreaterThanOrEqual(budget.ten);
-  expect(budget.clipped, 'and no rendered ticker is clipped — a clipped symbol names no instrument').toEqual([]);
+  expect(budget.out.length, 'three columns × four probes').toBe(12);
+  for (const r of budget.out) {
+    expect(r.need, `${r.col}: ${r.sym} at ${r.size} needs ${r.need.toFixed(1)}px of the ${r.room}px the column leaves`).toBeLessThanOrEqual(r.room - 1);
+    expect(r.clipped, `${r.col}: ${r.sym} is not clipped — a clipped symbol names no instrument`).toBe(false);
+    expect(r.size, `${r.col}: ${r.sym} is on its length tier (10px up to 8 characters, 8px from 9)`).toBe(r.sym.length >= 9 ? '8px' : '10px');
+  }
+  expect(budget.clipped, 'and no rendered ticker anywhere in the rail is clipped').toEqual([]);
 
   /* The picker offers the charts roster AND every watchlist. The watchlist feed
      lands after the charts one, so a picker with a single entry means the rail
@@ -10017,5 +10041,132 @@ test('S67: a symbol is deleted from the SYMBOL column by the hover × or Delete/
   await page.waitForSelector('.wb-slots .wb-slot');
   expect(await first(4), 'the deletion is still there after a reload').toEqual([R[2], R[3], '', '']);
 
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
+
+/* S68 — the POSITIONS column of the Stochastic rail (owner 2026-10-12: "add one more column, the leftmost column … my current positions, whether options or
+   stocks"). A READ-ONLY list of what the accounts hold, charted by ticker in one click. It reads the PIN-gated accounts payload, so it is drawn ONLY while
+   the desk is unlocked (or in demo) and a locked desk shows a note and not one held name; an OPTION is its underlying with the contract under it and charts
+   the UNDERLYING; the same holding in two accounts is one row; nothing in it is money; and nothing it shows is ever written — not to the SYMBOL column, not to
+   the browser's storage. The column's WIDTH and the ticker rule across all three columns are S40's. Held names are private, so every name below is invented. */
+test('S68: the POSITIONS column lists what the accounts hold — an option under its underlying, charted by ticker — only while the desk is unlocked, with no money and nothing stored', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(120_000);
+  await gotoDemo(page, '#wbSidebar .wb-rail-pos', 15000);
+  const errs = [];
+  page.on('pageerror', e => errs.push(e.message));
+  const rows = () => page.evaluate(() => [...document.querySelectorAll('.wb-rail-pos .wb-pos-btn')].map(b => b.innerText.replace(/\s*\n\s*/g, ' | ')));
+  const note = () => page.evaluate(() => { const n = document.querySelector('.wb-rail-pos .wb-rail-empty'); return n ? n.textContent : ''; });
+  const railText = () => page.evaluate(() => document.getElementById('wbSidebar').innerText);
+  const filledBefore = (await storedSyms(page)).map((s, i) => (s ? i + ':' + s : null)).filter(Boolean).join('|');
+
+  // ── 1. demo: both accounts, merged, an option under its underlying ──────────────────────────────────────────────────────────────────────────────────
+  expect(await page.evaluate(() => document.querySelector('.wb-rail-pos .wb-rail-posname').textContent), 'the column is headed Positions').toBe('Positions');
+  expect(await page.evaluate(() => { const c = document.querySelector('.wb-rail-pos'); return [c.getAttribute('role'), c.getAttribute('aria-label')]; }),
+    'and named for a screen reader').toEqual(['group', 'Open positions']);
+  expect(await rows(), 'demo: every holding of both accounts once, by ticker, the option under its underlying').toEqual(
+    ['AAPL', 'AMD | 12/18 195C', 'AMZN', 'BRK.B', 'MSFT', 'NVDA', 'SCHD', 'SPY', 'TLT', 'VTI']);
+  expect(await note(), 'and no note over a list that exists').toBe('');
+  const opt = page.locator('.wb-rail-pos .wb-pos-btn.is-opt');
+  await expect(opt, 'the option row says what contract it is in full').toHaveAttribute('title', /AMD Dec 18 2026 195 Call \(option\) — click to chart AMD/);
+  await expect(opt, 'and names the stock it charts for a screen reader').toHaveAttribute('aria-label', /AMD Dec 18 2026 195 Call \(option\) — chart AMD/);
+
+  // nothing in it is money: no $ and no %, and no element in the column is painted the gain or the loss colour (red is P&L on this desk)
+  const dressed = await page.evaluate(() => {
+    const col = document.querySelector('.wb-rail-pos');
+    const colour = (v) => { const p = document.createElement('i'); p.style.color = 'var(' + v + ')'; col.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; };
+    const gain = colour('--color-gain'), loss = colour('--color-loss'), lossText = colour('--color-loss-text');
+    const painted = [...col.querySelectorAll('*')].filter(e => [gain, loss, lossText].includes(getComputedStyle(e).color)).map(e => e.className);
+    return { money: /[$%]/.test(col.innerText), painted };
+  });
+  expect(dressed.money, 'no price, no day-% and no size on a position row — the rail carries none').toBe(false);
+  expect(dressed.painted, 'and nothing in the column is a gain or loss colour').toEqual([]);
+
+  // ── 2. a click charts it; an option charts its UNDERLYING; the SYMBOL column is never written ───────────────────────────────────────────────────────
+  await page.evaluate(() => { window.__loads = []; const real = window.wbLoadSymbol; window.wbLoadSymbol = (s) => { window.__loads.push(s); return real(s); }; });
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^TLT$/ }).click();
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => [window.__loads, wbState.sym]), 'a click charts that ticker').toEqual([['TLT'], 'TLT']);
+  expect(await page.evaluate(() => [...document.querySelectorAll('.wb-rail-pos .wb-pos-btn')].filter(b => b.getAttribute('aria-current') === 'true').map(b => b.querySelector('.wb-side-sym').textContent)),
+    'the charted ticker is marked, and only it').toEqual(['TLT']);
+  await opt.click();
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => window.__loads), 'the option asks for its UNDERLYING (AMD), never the contract').toEqual(['TLT', 'AMD']);
+  expect(await page.evaluate(() => wbState.sym), 'demo cannot look AMD up, and nothing else is charted in its place').toBe('TLT');
+  expect(await page.evaluate(() => document.getElementById('wbInfo').textContent), 'and it says so').toContain('Live ticker lookups are off in demo mode');
+  expect((await storedSyms(page)).map((s, i) => (s ? i + ':' + s : null)).filter(Boolean).join('|'), 'neither click wrote a slot into the SYMBOL column').toBe(filledBefore);
+  const sticky = await page.evaluate(() => localStorage.getItem('wb_sticky_v1') || '');
+  for (const held of ['NVDA', 'MSFT', 'AAPL', 'AMZN', 'BRK.B', 'SCHD', 'VTI']) expect(sticky, `${held} is shown, never stored`).not.toContain(held);
+
+  // ── 3. how a holding is read (the page's own parser) ───────────────────────────────────────────────────────────────────────────────────────────────
+  const parsed = await page.evaluate(() => ['ABC   261218C00195000', 'abc261218c00195000', 'ABCD  261218P00005500', 'BRK.B 261218C01250500', 'ABCDEF261218P00100000',
+    'ABC   261318C00195000', 'ABC   261232C00195000', 'ABC 26121C00195000', 'PLAIN', ' plain ', '', null, '912810TN8']
+    .map(s => { const d = wbParsePosition(s); return [d.key, d.chart, d.opt, d.sub]; }));
+  expect(parsed, 'padded, unpadded, lower-case, fractional strike, four-digit strike, six-letter root; a month 13, a day 32 and a short date are NOT options').toEqual([
+    ['ABC261218C00195000', 'ABC', true, '12/18 195C'],
+    ['ABC261218C00195000', 'ABC', true, '12/18 195C'],
+    ['ABCD261218P00005500', 'ABCD', true, '12/18 5.5P'],
+    ['BRK.B261218C01250500', 'BRK.B', true, '12/18 1250.5C'],
+    ['ABCDEF261218P00100000', 'ABCDEF', true, '12/18 100P'],
+    ['ABC   261318C00195000', 'ABC   261318C00195000', false, ''],
+    ['ABC   261232C00195000', 'ABC   261232C00195000', false, ''],
+    ['ABC 26121C00195000', 'ABC 26121C00195000', false, ''],
+    ['PLAIN', 'PLAIN', false, ''],
+    ['PLAIN', 'PLAIN', false, ''],
+    ['', '', false, ''],
+    ['', '', false, ''],
+    ['912810TN8', '912810TN8', false, ''],
+  ]);
+
+  // ── 4. live and UNLOCKED: merged across accounts, a closed position skipped, sorted, an unchartable name disabled ────────────────────────────────────
+  await page.evaluate(() => {
+    DESK.mode = 'live'; DESK.authed = true;
+    window.deskChatHistory = () => Promise.resolve([]);
+    window.__loads = []; window.wbLoadSymbol = (s) => { window.__loads.push(s); return Promise.resolve(true); };
+    DESK.data.accounts = [
+      { key: 1, label: 'A', positions: [{ sym: 'ZZB', qty: 10 }, { sym: 'ZZA  261218C00100000', qty: 1 }, { sym: 'ZZA', qty: 5 }, { sym: 'ZZZ', qty: 0 }, { sym: 'ZZC  261218P00005500', qty: 2 }] },
+      { key: 2, label: 'B', positions: [{ sym: 'ZZA   261218C00100000', qty: 3 }, { sym: 'zzb', qty: 1 }, { sym: 'ZZA  270115C00100000', qty: 1 }, { sym: 'BAD NAME!', qty: 1 }, { sym: 'WWWWWWWWWW', qty: 1 }, { sym: 'ZZD  261218C00100000', qty: 1 }] },
+    ];
+    renderMasthead(); renderPrivate();
+  });
+  expect(await rows(), 'one row per holding (ZZB in both accounts, the same option padded two ways), a stock before its options, none for a closed position').toEqual(
+    ['BAD NAME!', 'WWWWWWWWWW', 'ZZA', 'ZZA | 12/18 100C', 'ZZA | 1/15 100C', 'ZZB', 'ZZC | 12/18 5.5P', 'ZZD | 12/18 100C']);
+  expect(await note(), 'no note over a list').toBe('');
+  expect(await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: 'BAD NAME!' }).isDisabled(), 'a name that is not a ticker is listed but cannot be charted').toBe(true);
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^BAD NAME!$/ }).click({ force: true });
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: '12/18 5.5P' }).click();
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^ZZB$/ }).click();
+  expect(await page.evaluate(() => window.__loads), 'a put charts its underlying too; the unchartable row did nothing').toEqual(['ZZC', 'ZZB']);
+
+  // ── 5. LOCK: the real button empties the column even though the accounts are still held in memory ───────────────────────────────────────────────────
+  expect(await page.evaluate(() => DESK.data.accounts.length), 'the accounts are in memory').toBe(2);
+  await page.locator('#mastheadState button', { hasText: /^Lock$/ }).click();
+  await page.waitForTimeout(200);
+  expect(await rows(), 'after Lock the column draws no holding').toEqual([]);
+  expect(await note(), 'and says why').toBe('Unlock the desk to list your positions.');
+  expect(await page.evaluate(() => DESK.data.accounts.length > 0), 'although the accounts never left memory — the gate is the lock, not the data').toBe(true);
+  expect(await railText(), 'no held name is on the rail at all').not.toMatch(/ZZA|ZZB|ZZC|ZZD|WWWWWWWWWW|BAD NAME/);
+
+  // ── 6. the moment a remembered PIN is being validated: an EMPTY column, not a note telling the owner to unlock a desk that is unlocking itself ───────
+  await page.evaluate(() => { wbPosLocked = false; DESK.authed = false; wbRepaintRail(); });
+  expect([await rows(), await note()], 'validating: nothing drawn and nothing said').toEqual([[], '']);
+  await page.evaluate(() => renderLockedPanels());
+  expect(await note(), 'the lock gate on screen: the note').toBe('Unlock the desk to list your positions.');
+
+  // ── 7. unlocked but the accounts did not arrive, or hold nothing: each says so, and none keeps the last list ────────────────────────────────────────
+  await page.evaluate(async () => {
+    sessionStorage.setItem('desk_pin', '0000'); DESK.authed = true;
+    DESK.data.accounts = [{ key: 1, positions: [{ sym: 'ZZA', qty: 1 }] }]; wbRepaintRail();
+    window.deskGetDashboard = async () => null;
+    await loadPrivate('0000');
+  });
+  expect([await rows(), await note()], 'a failed load: the last list is not kept').toEqual([[], 'Positions not loaded.']);
+  await page.evaluate(() => { DESK.data.accounts = [{ key: 1, positions: [{ sym: 'ZZA', qty: 0 }] }]; wbRepaintRail(); });
+  expect([await rows(), await note()], 'accounts with nothing open').toEqual([[], 'No open positions.']);
+
+  // ── 8. and none of it was written ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  const stickyEnd = await page.evaluate(() => localStorage.getItem('wb_sticky_v1') || '');
+  expect(stickyEnd, 'no live holding reached the browser storage').not.toMatch(/ZZ[A-D]|WWWWWWWWWW/);
+  await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); });
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

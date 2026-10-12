@@ -91,6 +91,9 @@ const DEMO_POSITIONS = {
     ['AAPL', 260, 60491.60, -0.34, 6410.40],
     ['AMZN', 180, 44289.00, 1.12, 5230.80],
     ['SPY',  220, 138688.00, 0.54, 12904.00],
+    /* One OPTION, in IBKR's padded OCC form (root padded to six, then yymmdd, C/P, strike x 1000) — the POSITIONS column of the charts rail lists
+       options too and charts their underlying. A generic name, never a held one. */
+    ['AMD   261218C00195000', 2, 1840.00, -3.20, -410.00],
   ],
   2: [
     ['VTI',  480, 150024.00, 0.48, 28110.00],
