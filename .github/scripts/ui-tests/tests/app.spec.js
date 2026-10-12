@@ -4351,7 +4351,7 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
      never abbreviates. Budgeted against the VALIDATOR's ten characters, never
      against demo's three-letter names: a budget that admits less than
      WL_SYM_RE accepts is not a budget, and DX-Y.NYB (8) is already in the
-     roster. Since 2026-10-12 every column is 54px (50px of text room) and the rule is
+     roster. Since 2026-10-12 every column is 54px (52px of text room) and the rule is
      kept by stepping the TYPE down by length: 10px up to eight characters (48.2px),
      8px at nine and ten (48.2px at ten). The probes go in through the page's OWN
      builders in ALL THREE columns — a ten-, a nine- and an eight-character name in the

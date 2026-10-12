@@ -5407,7 +5407,7 @@ function renderWbInfo() {
 
 /* THE TICKER TIER (owner 2026-10-12, when the rail grew a third column and every column went from 68–78px to 54): the ticker still NEVER abbreviates, and the
    way it is kept is the watchlist tiles' device — the TYPE steps down by length instead of the box growing. Up to eight characters keep the 10px row font
-   (8 × 6.02 = 48.2px of the 50px a 54px column leaves); nine and ten, which only an index or a crypto pair reaches, drop to 8px (10 × 4.82 = 48.2px, the same
+   (8 × 6.02 = 48.2px of the 52px a 54px column leaves); nine and ten, which only an index or a crypto pair reaches, drop to 8px (10 × 4.82 = 48.2px, the same
    width). S40 budgets against the validator's ten characters off the font the live element computes. */
 const WB_SYM_LONG = 9;
 const wbSymTier = (sym) => (String(sym || '').length >= WB_SYM_LONG ? ' is-long' : '');
