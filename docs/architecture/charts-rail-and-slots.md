@@ -457,6 +457,16 @@ carry the whole name, as before.
   on a locked visit (Codex P1, PR #325). It also writes no SYMBOL slot (the loader pins nothing). **The cost, accepted:** a reload restores the last selection made
   any OTHER way (a roster click, a slot, the Load box), not a holding picked from this column. Nothing is cleared when the desk locks, because nothing private was
   stored; the chart on screen at that moment is a public price chart and goes with the page.
+- **Lock takes back a holding the charts feed never carried (Codex P1, PR #325).** Clicking a holding the `desk-charts` feed does not carry fetches it into
+  `wbState.data.symbols`, which the ROSTER column lists in full and a poll deliberately keeps — so `noStore` alone leaves it in the roster and the panes after Lock.
+  `wbPosLoaded` records exactly those symbols (set by the click's `.then`, only for a symbol that was NOT already there); `renderLockedPanels` calls
+  `wbPurgePositionLoads()`, which deletes the series, `wbRealSyms` and `wbInfoCache` entries and, if one is on screen, restores the STORED selection (else the first
+  roster symbol), resets the pan and bumps `wbLoadGen` so a lookup still running cannot chart it later. A lookup that LANDS after Lock is purged on landing. A symbol
+  the owner picks by any remembered route (`wbPick` without `noStore`) leaves the set, because that is a public choice; a symbol the feed already carried is never
+  in it. S68 runs this through the REAL loader against a stubbed quote feed (the stubbed-loader checks above could not see it).
+- **A keyboard activation keeps its focus (Codex P2, PR #325):** Enter on a holding charts it and `wbPick` rebuilds the rail; `renderWbSidebar` captures the focused
+  `.wb-pos-btn` by its `data-pkey` (the holding's own name — rows are re-sorted from the accounts on every paint) and focuses its replacement. The ROSTER column
+  still loses focus the same way, as it always has — not touched here.
 - **Its scroll position survives a repaint** (`posScroll` in `renderWbSidebar`, like `.wb-slots`): a long portfolio, or the 220px stacked rail, scrolls inside the
   column and clicking a holding low in it repaints through `wbPick` (Codex P2, PR #325). The ROSTER column still resets to its first row on a repaint, as it always
   has — not touched here.

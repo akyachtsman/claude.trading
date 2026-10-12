@@ -3730,6 +3730,7 @@ function renderLockedPanels(why) {
   while (grid.firstChild) grid.removeChild(grid.firstChild);
   /* The rail's POSITIONS column lists held names, so it follows the lock: this is the one place every road to a locked desk passes (boot with no PIN, Lock). */
   wbPosLocked = true;
+  wbPurgePositionLoads();   /* repaints the rail itself (renderCharts, or wbRepaintRail when nothing on screen changed) */
   wbRepaintRail();
   const lockPanel = el('section', 'panel panel-lock');
   const head = el('div', 'panel-header');
@@ -4860,7 +4861,7 @@ function wbPick(sym, noStore) {
      (owner ruling 2026-08-26) — its 100 slots hold exactly what the owner typed
      into them. Re-fetch on boot does not depend on this, because
      restoreStickySymbols also re-hydrates `sel` — see the note there. */
-  if (!noStore) writeWbSticky({ sel: sym });
+  if (!noStore) { writeWbSticky({ sel: sym }); wbPosLoaded.delete(sym); }   /* a pick that is remembered is a public one: Lock no longer owes it a purge */
   renderCharts(wbState.data, wbState.lamp);
 }
 /* Typeahead roster (owner request 2026-07-16): a curated set of popular
@@ -5492,11 +5493,45 @@ function wbPosBtn(d) {
   b.title = chartable ? d.tip + ' — click to chart ' + d.chart : d.tip + ' — no chart for this instrument';
   b.setAttribute('aria-label', d.opt ? d.tip + ' — chart ' + d.chart : d.label);
   if (!chartable) { b.disabled = true; return b; }
+  b.dataset.pkey = d.key;                 /* a stable name for the focus restore in renderWbSidebar */
   b.addEventListener('click', () => {
     wbSlotClick = { i: -1, at: 0 };       /* any other navigation breaks a pending slot pair — see wbRailBtn */
-    wbLoadSymbol(d.chart, true);          /* a holding is charted, never remembered — see wbLoadSymbol */
+    const had = !!wbState.data.symbols[d.chart];
+    /* A holding is charted, never remembered — see wbLoadSymbol. And a holding the charts feed did not carry is fetched into `wbState.data.symbols`, which the
+       ROSTER column lists and a poll deliberately keeps: it is noted here so Lock can take it back out (Codex P1, PR #325). */
+    Promise.resolve(wbLoadSymbol(d.chart, true)).then((ok) => {
+      if (ok !== true || had || !wbState.data.symbols[d.chart]) return;
+      wbPosLoaded.add(d.chart);
+      if (DESK.mode !== 'demo' && !DESK.authed) wbPurgePositionLoads();   /* Lock landed while the lookup was in flight */
+    });
   });
   return b;
+}
+/* Symbols that exist in `wbState.data.symbols` ONLY because a click in the POSITIONS column fetched them (the charts feed does not carry them). Lock takes them
+   back out — series, quote cache, the roster column that lists every key — and, if one is the symbol on screen, restores a public selection, so no held ticker
+   outlives the unlock on the rail or in the panes. A symbol the owner later picks by any remembered route leaves the set (`wbPick`). */
+const wbPosLoaded = new Set();
+function wbPurgePositionLoads() {
+  if (!wbPosLoaded.size) return;
+  const gone = [...wbPosLoaded];
+  wbPosLoaded.clear();
+  if (!wbState) return;
+  let onScreen = false;
+  for (const sym of gone) {
+    delete wbState.data.symbols[sym];
+    wbRealSyms.delete(sym);
+    delete wbInfoCache[sym];
+    if (wbState.sym === sym) onScreen = true;
+  }
+  if (onScreen) {
+    const saved = readWbSticky().sel;
+    wbLoadGen++; wbLoadPending = '';     /* a lookup still running for a holding must not chart it later */
+    wbState.sym = (saved && wbState.data.symbols[saved]) ? saved : Object.keys(wbState.data.symbols)[0];
+    wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
+    renderCharts(wbState.data, wbState.lamp);
+  } else {
+    wbRepaintRail();
+  }
 }
 
 /* ONE SLOT of the SYMBOL column (owner ruling 2026-08-26). The column is 100
@@ -6420,6 +6455,11 @@ function renderWbSidebar(data) {
      list repaints through wbPick and would otherwise throw it back to the first row (Codex P2, PR #325). */
   const dyingPos = nav.querySelector('.wb-rail-pos');
   const posScroll = dyingPos ? dyingPos.scrollTop : 0;
+  /* A focused holding is preserved like a focused slot: Enter or Space on it charts it, wbPick rebuilds the rail, and the button that held focus is gone (Codex P2,
+     PR #325). Keyed by the holding's own name, not its index — rows are re-sorted from the accounts on every paint. */
+  const dyingPosKey = document.activeElement && document.activeElement.classList
+    && document.activeElement.classList.contains('wb-pos-btn') && nav.contains(document.activeElement)
+    ? document.activeElement.dataset.pkey : null;
   /* A focused slot BUTTON is preserved the same way the input is, and for a
      sharper reason: charting from the keyboard (Enter/Space on a filled slot)
      runs synchronously into wbPick, whose render removes the very button that
@@ -6563,6 +6603,10 @@ function renderWbSidebar(data) {
   if (dyingBtn !== null) {
     const bornBtn = nav.querySelector('.wb-rail-manual [data-slot="' + dyingBtn + '"] .wb-slot');
     if (bornBtn) keepPageStill(() => bornBtn.focus({ preventScroll: true }));
+  }
+  if (dyingPosKey !== null) {
+    const bornPosBtn = [...nav.querySelectorAll('.wb-pos-btn')].find(b => b.dataset.pkey === dyingPosKey);
+    if (bornPosBtn) keepPageStill(() => bornPosBtn.focus({ preventScroll: true }));
   }
 
   if (hadFocus) {

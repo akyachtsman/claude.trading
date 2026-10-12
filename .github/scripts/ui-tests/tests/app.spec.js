@@ -10083,7 +10083,7 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   expect(dressed.painted, 'and nothing in the column is a gain or loss colour').toEqual([]);
 
   // ── 2. a click charts it; an option charts its UNDERLYING; the SYMBOL column is never written ───────────────────────────────────────────────────────
-  await page.evaluate(() => { window.__loads = []; const real = window.wbLoadSymbol; window.wbLoadSymbol = (...a) => { window.__loads.push(a[0]); return real(...a); }; });
+  await page.evaluate(() => { window.__realLoad = window.wbLoadSymbol; window.__loads = []; const real = window.wbLoadSymbol; window.wbLoadSymbol = (...a) => { window.__loads.push(a[0]); return real(...a); }; });
   const sel = () => page.evaluate(() => JSON.parse(localStorage.getItem('wb_sticky_v1') || '{}').sel || '');
   // control: a ROSTER click does remember what it charts, so the checks below can tell a holding that is not remembered from nothing being remembered at all
   await page.locator('.wb-rail-roster .wb-side-btn', { hasText: /^DIA$/ }).click();
@@ -10171,6 +10171,67 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   expect(await note(), 'and says why').toBe('Unlock the desk to list your positions.');
   expect(await page.evaluate(() => DESK.data.accounts.length > 0), 'although the accounts never left memory — the gate is the lock, not the data').toBe(true);
   expect(await railText(), 'no held name is on the rail at all').not.toMatch(/ZZA|ZZB|ZZC|ZZD|WWWWWWWWWW|BAD NAME/);
+
+  // ── 5b. LOCK also takes back a holding the charts feed never carried, and a keyboard click keeps its focus (Codex P1 and P2, PR #325) ────────────────
+  // Run through the REAL loader this time (the stub above would miss it): the quote feed answers with a copy of SPY's bars for the invented name, so the holding
+  // lands in `wbState.data.symbols`, which the ROSTER column lists and a poll keeps.
+  const rosterSyms = () => page.evaluate(() => [...document.querySelectorAll('.wb-rail-roster .wb-side-sym')].map(e => e.textContent));
+  const unlockLive = () => page.evaluate(() => {
+    DESK.mode = 'live'; DESK.authed = true;
+    DESK.data.accounts = [{ key: 1, positions: [{ sym: 'ZZNEW', qty: 1 }, { sym: 'SPY', qty: 1 }] }];
+    renderMasthead(); renderPrivate();
+  });
+  await page.evaluate(() => {
+    window.wbLoadSymbol = window.__realLoad;
+    window.__realUrl = DESK_DB.url; DESK_DB.url = DESK_DB.url || 'https://stub.invalid';
+    window.__base = JSON.parse(JSON.stringify(wbState.data.symbols.SPY));
+    window.__hold = false; window.__gate = null;
+    window.deskQuote = (sym, kind) => kind !== 'daily' ? Promise.resolve({ ok: false })
+      : (window.__hold ? new Promise((res) => { window.__gate = () => res({ ok: true, series: window.__base }); }) : Promise.resolve({ ok: true, series: window.__base }));
+  });
+  await unlockLive();
+  const holding = page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^ZZNEW$/ });
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^SPY$/ }).click();   // a holding the feed DOES carry, clicked first: Lock must leave it alone
+  await expect.poll(() => page.evaluate(() => wbState.sym)).toBe('SPY');
+  await holding.click();
+  await expect.poll(() => page.evaluate(() => wbState.sym), 'a holding the feed never carried is fetched and charted').toBe('ZZNEW');
+  expect(await rosterSyms(), 'and it is listed in the ROSTER column, which shows every symbol the charts hold').toContain('ZZNEW');
+  expect(await sel(), 'though not remembered').toBe('DIA');
+  await page.locator('#mastheadState button', { hasText: /^Lock$/ }).click();
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => ['ZZNEW' in wbState.data.symbols, wbState.sym]), 'Lock takes the holding out of the charts and puts the stored selection back on screen').toEqual([false, 'DIA']);
+  expect(await rosterSyms(), 'it is gone from the ROSTER column').not.toContain('ZZNEW');
+  expect(await page.evaluate(() => document.getElementById('wbChart').textContent + ' ' + document.getElementById('wbPaneBars').textContent), 'and from the panes').not.toContain('ZZNEW');
+  expect(await page.evaluate(() => 'SPY' in wbState.data.symbols), 'a symbol the feed DID carry stays').toBe(true);
+
+  // a lookup still in flight when Lock lands must not chart the holding afterwards
+  await unlockLive();
+  await page.evaluate(() => { window.__hold = true; });
+  await holding.click();
+  await page.locator('#mastheadState button', { hasText: /^Lock$/ }).click();
+  await page.evaluate(() => window.__gate && window.__gate());
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => ['ZZNEW' in wbState.data.symbols, wbState.sym]), 'a lookup that lands after Lock is taken straight back out').toEqual([false, 'DIA']);
+  expect(await rosterSyms(), 'and is not in the ROSTER column').not.toContain('ZZNEW');
+
+  // a keyboard activation keeps its place: Enter on a holding charts it, the rail is rebuilt, focus must land on the same holding
+  await page.evaluate(() => { window.__hold = false; });
+  await unlockLive();
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^SPY$/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => { const a = document.activeElement; return [wbState.sym, a && a.classList.contains('wb-pos-btn') ? a.dataset.pkey : (a && a.tagName)]; }),
+    'Enter on a holding charts it and focus stays on that holding after the rebuild').toEqual(['SPY', 'SPY']);
+
+  // a holding the owner then picks by a REMEMBERED route (the roster, a slot, the Load box) is a public choice from then on: Lock leaves it where it is
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^ZZNEW$/ }).click();
+  await expect.poll(() => page.evaluate(() => wbState.sym)).toBe('ZZNEW');
+  await page.locator('.wb-rail-roster .wb-side-btn', { hasText: /^ZZNEW$/ }).click();
+  expect(await sel(), 'picked from the roster, it IS remembered').toBe('ZZNEW');
+  await page.locator('#mastheadState button', { hasText: /^Lock$/ }).click();
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => ['ZZNEW' in wbState.data.symbols, wbState.sym]), 'and Lock does not take back what the owner chose').toEqual([true, 'ZZNEW']);
+  await page.evaluate(() => { writeWbSticky({ sel: 'DIA' }); DESK_DB.url = window.__realUrl; });
 
   // ── 6. the moment a remembered PIN is being validated: an EMPTY column, not a note telling the owner to unlock a desk that is unlocking itself ───────
   await page.evaluate(() => { wbPosLocked = false; DESK.authed = false; wbRepaintRail(); });
