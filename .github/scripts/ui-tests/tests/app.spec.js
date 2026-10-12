@@ -10231,6 +10231,46 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   await page.locator('#mastheadState button', { hasText: /^Lock$/ }).click();
   await page.waitForTimeout(300);
   expect(await page.evaluate(() => ['ZZNEW' in wbState.data.symbols, wbState.sym]), 'and Lock does not take back what the owner chose').toEqual([true, 'ZZNEW']);
+
+  // the same three corners, one each: a pane's own pinned ticker, a ticker the public feed then supplies, and a pane already drawn with a holding (Codex P1/P2 round 3)
+  const resetHolding = () => page.evaluate(() => {
+    delete wbState.data.symbols.ZZNEW; wbPosLoaded.clear();
+    wbState.cfg.p3.sym = null; saveWbCfg();
+    wbState.sym = 'DIA'; writeWbSticky({ sel: 'DIA' });
+    renderCharts(wbState.data, wbState.lamp);
+  });
+  const lockNow = async () => { await page.locator('#mastheadState button', { hasText: /^Lock$/ }).click(); await page.waitForTimeout(300); };
+  const inSyms = () => page.evaluate(() => 'ZZNEW' in wbState.data.symbols);
+  //  a) pinning it to a pane through the gear is a remembered choice (it is saved in wb_cfg_v3), so Lock leaves the series alone
+  await resetHolding(); await unlockLive();
+  await holding.click();
+  await expect.poll(() => page.evaluate(() => wbState.sym)).toBe('ZZNEW');
+  await page.locator('#wbGear-p3').click();
+  await page.locator('#wbSettings-p3 select.wb-set-sym').selectOption('ZZNEW');
+  await lockNow();
+  expect([await inSyms(), await page.evaluate(() => wbState.cfg.p3.sym)], 'a holding the owner pins to a pane is theirs: Lock keeps its series and the pin').toEqual([true, 'ZZNEW']);
+  //  b) a pane already drawn with a holding it was pinned to earlier is repainted when Lock takes the holding out, even though the desk symbol is elsewhere
+  await resetHolding(); await unlockLive();
+  await holding.click();
+  await expect.poll(() => page.evaluate(() => wbState.sym)).toBe('ZZNEW');
+  await page.locator('.wb-rail-pos .wb-pos-btn', { hasText: /^SPY$/ }).click();
+  await page.evaluate(() => { wbState.cfg.p3.sym = 'ZZNEW'; renderCharts(wbState.data, wbState.lamp); });
+  expect(await page.evaluate(() => document.getElementById('wbChart').textContent), 'precondition: the pinned pane is drawn with the holding').toContain('ZZNEW');
+  await lockNow();
+  expect([await inSyms(), await page.evaluate(() => document.getElementById('wbChart').textContent.includes('ZZNEW'))], 'Lock takes it out and the pinned pane no longer shows it').toEqual([false, false]);
+  //  c) a ticker the public feed then carries is public: a partial first response that omitted it, a later complete one that has it
+  await resetHolding(); await unlockLive();
+  await holding.click();
+  await expect.poll(() => page.evaluate(() => wbState.sym)).toBe('ZZNEW');
+  await page.evaluate(async () => {
+    window.__realFeed = window.deskFeed;
+    window.deskFeed = async () => ({ generatedAt: new Date().toISOString(), asOf: wbState.data.asOf, symbols: { SPY: wbState.data.symbols.SPY, ZZNEW: window.__base } });
+    await loadCharts();
+    window.deskFeed = window.__realFeed;
+  });
+  await lockNow();
+  expect([await inSyms(), await rosterSyms()], 'once the feed carries it, Lock leaves it in the roster').toEqual([true, expect.arrayContaining(['ZZNEW'])]);
+  await resetHolding();
   await page.evaluate(() => { writeWbSticky({ sel: 'DIA' }); DESK_DB.url = window.__realUrl; });
 
   // ── 6. the moment a remembered PIN is being validated: an EMPTY column, not a note telling the owner to unlock a desk that is unlocking itself ───────

@@ -464,6 +464,12 @@ carry the whole name, as before.
   roster symbol), resets the pan and bumps `wbLoadGen` so a lookup still running cannot chart it later. A lookup that LANDS after Lock is purged on landing. A symbol
   the owner picks by any remembered route (`wbPick` without `noStore`) leaves the set, because that is a public choice; a symbol the feed already carried is never
   in it. S68 runs this through the REAL loader against a stubbed quote feed (the stubbed-loader checks above could not see it).
+  **Three corners of the same rule (Codex round 3, PR #325).** (1) A pane may pin its own ticker (`cfg.sym`, saved in `wb_cfg_v3`; the gear's Ticker dropdown lists every
+  `wbState.data.symbols` key): pinning one through the dropdown is a REMEMBERED choice, so it leaves `wbPosLoaded` like any other remembered pick; and a pane pinned
+  EARLIER to a symbol that Lock purges counts as on screen, so the purge repaints the panes (`effSym` falls back to the desk symbol) — the pin itself is left alone,
+  it is the owner's. (2) `loadCharts` removes from `wbPosLoaded` every symbol a feed payload carries: a symbol the public feed supplies is public whatever fetched
+  it first (a partial cold response that omitted a configured ticker, then a complete one). (3) The root cause is that a clicked holding shares `data.symbols` with
+  everything else; the set-and-purge is the proportionate answer, and a separate store consulted by the charts would be the larger one if a fourth corner turns up.
 - **A keyboard activation keeps its focus (Codex P2, PR #325):** Enter on a holding charts it and `wbPick` rebuilds the rail; `renderWbSidebar` captures the focused
   `.wb-pos-btn` by its `data-pkey` (the holding's own name — rows are re-sorted from the accounts on every paint) and focuses its replacement. The ROSTER column
   still loses focus the same way, as it always has — not touched here.

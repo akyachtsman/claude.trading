@@ -5523,15 +5523,17 @@ function wbPurgePositionLoads() {
     delete wbInfoCache[sym];
     if (wbState.sym === sym) onScreen = true;
   }
+  /* A pane may pin its own ticker (`cfg.sym`, saved in wb_cfg_v3): one pinned to a purged symbol is already drawn with it, so it counts as on screen too and the
+     repaint puts it back on the desk symbol (`effSym`). The pin itself is the owner's earlier choice and is left alone (Codex P1, PR #325). */
+  const pinned = ['p1', 'p2', 'p3'].some(k => wbState.cfg && wbState.cfg[k] && gone.includes(wbState.cfg[k].sym));
   if (onScreen) {
     const saved = readWbSticky().sel;
     wbLoadGen++; wbLoadPending = '';     /* a lookup still running for a holding must not chart it later */
     wbState.sym = (saved && wbState.data.symbols[saved]) ? saved : Object.keys(wbState.data.symbols)[0];
     wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
-    renderCharts(wbState.data, wbState.lamp);
-  } else {
-    wbRepaintRail();
   }
+  if (onScreen || pinned) renderCharts(wbState.data, wbState.lamp);
+  else wbRepaintRail();
 }
 
 /* ONE SLOT of the SYMBOL column (owner ruling 2026-08-26). The column is 100
@@ -7849,6 +7851,7 @@ function buildWbSettings() {
     tsel.value = cfg.sym && wbState.data.symbols[cfg.sym] ? cfg.sym : '';
     tsel.addEventListener('change', () => {
       cfg.sym = tsel.value || null; saveWbCfg();
+      if (cfg.sym) wbPosLoaded.delete(cfg.sym);   /* a pinned ticker is saved in wb_cfg_v3: a remembered, public choice, so Lock no longer owes it a purge */
       renderCharts(wbState.data, wbState.lamp);
     });
     col.appendChild(tsel);
@@ -8138,7 +8141,9 @@ async function loadCharts(force) {
     try {
       const data = await deskFeed('desk-charts', force ? { force: true } : undefined);
       clearTimeout(chartsRetry.timer); chartsRetry.wait = 0;
-      for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); }
+      /* A symbol the feed now carries is PUBLIC, whatever fetched it first: a holding clicked while a partial cold response omitted it must not be purged on Lock
+         (its series is the feed's now). Codex P2, PR #325. */
+      for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); wbPosLoaded.delete(k); }
       chartsStamp = { generatedAt: data.generatedAt, asOf: data.asOf };
       feedLanded.charts = Date.now();
       renderAfterFetch(() => {
