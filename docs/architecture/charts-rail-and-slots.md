@@ -407,6 +407,88 @@
   `overscroll-behavior` trap below — a Chromium harness cannot reproduce it, so
   it must be reasoned about rather than tested here.
 
+## Three columns: POSITIONS | SYMBOL | ROSTER, 54px each (owner request 2026-10-12)
+
+Owner, with a screenshot of the rail: "make the width of these columns narrow enough to add one more column, the leftmost column … my current positions, whether
+options or stocks. I see a lot of wasted space. And if you need a little more room, take it from Pro 3." Everything above that says "two columns" describes the
+rail as it was until that day; the rules it records (the ticker never abbreviates, one tab stop per column, the 100 positional slots, `overflow-anchor: none`,
+`touch-action: manipulation`, the stacked 220px cap) all still hold.
+
+**The widths.** `.wb-grid`'s first column is **170px** (it was 154): `.wb-rail-pos` and `.wb-rail-manual` are `flex: 0 0 54px`, `.wb-rail-roster` takes the
+rest (54px), and `.wb-rail-cols` has a **4px** gap (it was 8). The chart gives up 16px, about 5px a pane, so **Pro 3 was NOT asked for more** — the three
+panes stay equal (`pw = (W - GAP*(n-1))/n`, and the pane header bars are `flex: 1`), and taking width from Pro 3 alone would have meant unequal panes in the
+SVG and in the bars, for 5px. Stacked (≤860px) the three share the row evenly (`.wb-rail-pos, .wb-rail-manual { flex: 1 1 0 }`, in the SECOND 860px block,
+after the base rule — the same source-order trap as before).
+
+**The ticker rule is kept by the TYPE, not the box** — the device the watchlist tiles already use. A 54px column leaves **52px** of text room (**1px** of padding a
+side on `.wb-side-btn`: it was 2px until CI measured ten characters at 8px as exactly **50.0px** — a browser that rounds glyph advances to whole pixels draws 5px a character, not 4.82 — which left NO headroom; the sandbox's Chromium does not round, so it could not show it), so `wbSymTier(sym)` adds `.is-long` to a ticker of **nine or more characters** (`WB_SYM_LONG`), which drops it from 10px to **8px**: eight characters at
+10px cost 48.2px (48 rounded), ten at 8px cost 48.2px (50 rounded), both inside the 52. `line-height` is fixed at 14px so a tiered row keeps a 10px row's height and the list does not jitter.
+All three builders apply it (`wbRailBtn`, `wbSlotRow`, `wbPosBtn`). **S40 now probes ALL THREE columns** at ten, nine and eight characters plus `DX-Y.NYB`,
+through the page's own builders (a stored slot, an account holding the name, `wbRailBtn`), reading the font off each live element, and asserts the type tier by
+length and, beside the chart, that each column is exactly 54px.
+
+**The accepted residual is WIDER than it was, and that is the price of the request.** Before, only the ROSTER column accepted the case of a classic scrollbar
+that reserves layout width (~11–12px): the SYMBOL column's extra 10px (78 vs 68) was its scrollbar allowance, because its 100 slots always overflow. At 54px none
+of the three has that allowance: where a thin scrollbar takes layout width, text room falls to ~38px, so a ticker of **seven or more characters at 10px** (or nine
+or ten at 8px) would clip with an ellipsis in a column that scrolls. Four- and five-character names, which is nearly everything on this desk, are untouched. The
+owner's machine (macOS, overlay scrollbars) reserves nothing, as do this sandbox's Chromium and every Playwright headless project, so it cannot be reproduced
+here — it is reasoned, like the roster residual it extends. **Trigger to revisit:** the desk used where scrollbars take width, or a clipped ticker reported; covering
+it costs ~12px per scrolling column (about 36px of the chart). The SYMBOL column's old "clears the scrollbar case" rule above is therefore SUPERSEDED.
+
+**The head controls shrank with the columns.** The POSITIONS head is a plain label, `Positions` (`.wb-rail-posname`, 9px, sentence case — the uppercase form
+needs ~56px and does not fit 54), on the same 20px line as the entry box and the picker; S40 asserts it is not cut. Its sticky head takes the panel's own
+surface colour (`--color-surface`), because the entry box and the picker cover `--color-bg` with their own fill and a bare label does not. The entry box's
+placeholder is **`Symbol`** (it was `Add symbol`, cut at 54px; the tooltip and accessible name still say what Enter does). The roster picker drops the native
+arrow for a 12px CSS chevron (`appearance: none`; the arrow cost ~16px and left the name three letters): it now reads `CHAR…`, and the tooltip and the open menu
+carry the whole name, as before.
+
+**The POSITIONS column itself** (`wbPositionsState`, `wbParsePosition`, `wbPosBtn`; `.wb-rail-pos`, `role="group"` named "Open positions"):
+- **It is READ-ONLY and PRIVATE.** It lists `DESK.data.accounts[].positions[].sym` — the PIN-gated payload — and ONLY while `DESK.mode === 'demo' || DESK.authed`.
+  A locked desk draws the note `Unlock the desk to list your positions.` and not one held name, even though the accounts are still in memory after Lock (the gate is
+  the lock, not the data; S68 checks both). `wbPosLocked` is set by `renderLockedPanels` (the one place every road to a locked desk passes: boot with no PIN, and
+  Lock) and tells "the lock gate is on screen" from "a remembered PIN is being validated at boot" — the second draws an empty column and NO note, so the owner's own
+  device does not flash an instruction to unlock a desk that is unlocking itself. Unlocked with no accounts it says `Positions not loaded.` (a failed load, never the
+  last list kept), with nothing open `No open positions.`
+- **Repaint points:** `renderPrivate()` (unlocked branch), `renderLockedPanels()` and the `loadPrivate` failure branch call `wbRepaintRail()`, which is guarded on
+  `wbState` — the rail is built from the charts feed, which may land before or after the accounts.
+- **It carries no money and no day-%**, the rail's rule: no size, no price, no gain/loss colour (S68 scans every element's computed colour against the gain and loss
+  tokens). **Nothing it shows is stored.** A click goes through `wbLoadSymbol(sym, true)` → `wbPick(sym, true)`: `noStore` skips the one write `wbPick` makes,
+  `wb_sticky_v1.sel`, which a reload restores while only the public feeds have loaded — before any PIN — so a charted holding would sit in the browser and come back
+  on a locked visit (Codex P1, PR #325). It also writes no SYMBOL slot (the loader pins nothing). **The cost, accepted:** a reload restores the last selection made
+  any OTHER way (a roster click, a slot, the Load box), not a holding picked from this column. Nothing is cleared when the desk locks, because nothing private was
+  stored; the chart on screen at that moment is a public price chart and goes with the page.
+- **Lock takes back a holding the charts feed never carried (Codex P1, PR #325).** Clicking a holding the `desk-charts` feed does not carry fetches it into
+  `wbState.data.symbols`, which the ROSTER column lists in full and a poll deliberately keeps — so `noStore` alone leaves it in the roster and the panes after Lock.
+  `wbPosLoaded` records exactly those symbols (set by the click's `.then`, only for a symbol that was NOT already there); `renderLockedPanels` calls
+  `wbPurgePositionLoads()`, which deletes the series, `wbRealSyms` and `wbInfoCache` entries and, if one is on screen, restores the STORED selection (else the first
+  roster symbol), resets the pan and bumps `wbLoadGen` so a lookup still running cannot chart it later. A lookup that LANDS after Lock is purged on landing. A symbol
+  the owner picks by any remembered route (`wbPick` without `noStore`) leaves the set, because that is a public choice; a symbol the feed already carried is never
+  in it. S68 runs this through the REAL loader against a stubbed quote feed (the stubbed-loader checks above could not see it).
+  **Three corners of the same rule (Codex round 3, PR #325).** (1) A pane may pin its own ticker (`cfg.sym`, saved in `wb_cfg_v3`; the gear's Ticker dropdown lists every
+  `wbState.data.symbols` key): pinning one through the dropdown is a REMEMBERED choice, so it leaves `wbPosLoaded` like any other remembered pick; and a pane pinned
+  EARLIER to a symbol that Lock purges counts as on screen, so the purge repaints the panes (`effSym` falls back to the desk symbol) — the pin itself is left alone,
+  it is the owner's. (2) `loadCharts` removes from `wbPosLoaded` every symbol a feed payload carries: a symbol the public feed supplies is public whatever fetched
+  it first (a partial cold response that omitted a configured ticker, then a complete one); and the click's own continuation rechecks `wbFeedRoster` AFTER its
+  lookup lands, because a feed poll can deliver the symbol while the lookup is out (the opposite completion order; `had` was read before the request). (3) The root cause is that a clicked holding shares `data.symbols` with
+  everything else; the set-and-purge is the proportionate answer, and a separate store consulted by the charts would be the larger one if a fourth corner turns up.
+- **A keyboard activation keeps its focus (Codex P2, PR #325):** Enter on a holding charts it and `wbPick` rebuilds the rail; `renderWbSidebar` captures the focused
+  `.wb-pos-btn` by its `data-pkey` (the holding's own name — rows are re-sorted from the accounts on every paint) and focuses its replacement. The ROSTER column
+  still loses focus the same way, as it always has — not touched here.
+- **Its scroll position survives a repaint** (`posScroll` in `renderWbSidebar`, like `.wb-slots`): a long portfolio, or the 220px stacked rail, scrolls inside the
+  column and clicking a holding low in it repaints through `wbPick` (Codex P2, PR #325). The ROSTER column still resets to its first row on a repaint, as it always
+  has — not touched here.
+- **Options.** IBKR pads a contract to a fixed root (`ABC   261218C00195000`, `ABCD  261218P00005500`); `WB_OCC_RE` reads root, `yymmdd`, `C`/`P` and the strike × 1000.
+  The row is the **underlying** with the contract under it (`12/18 195C`, `12/18 5.5P`), the tooltip and accessible name carry it in full (`ABC Dec 18 2026 195 Call
+  (option)`), and **a click charts the UNDERLYING**: a contract has too few bars for the stochastic the panes read, and the stock is what the doctrine is traded on.
+  A month outside 1–12 or a day outside 1–31 is NOT read as an option — it stays a plain, unchartable name (never repaired into a guess). A contract line of eleven
+  characters or more steps to 7px, and past twelve the contract line alone is cut with an ellipsis (the underlying is never cut).
+- **Order and merging.** One row per holding: the same name in two accounts, or the same contract padded two ways, is one row (`key` = the upper-cased name with its
+  padding removed); a closed position (`qty` 0) is skipped; rows sort by underlying A–Z, a stock before its options, options by expiry then type then strike. The
+  order uses no money. A name that is not a ticker (`WL_SYM_RE`) is listed but its button is `disabled` — a holding is never silently dropped from "my current
+  positions".
+- **Demo** carries one generic option (`AMD   261218C00195000`, account 1 in `DEMO_POSITIONS`), never a held name.
+- S68 (the column) and S40 (the widths and the tier) are the guards; the mutant counts are in CLAUDE.md's S68 row.
+
 ## Rail height: two layouts, two caps (fixed 2026-09-30)
 
 `#wbSidebar` is capped differently depending on where it stands, and the two caps
@@ -616,7 +698,7 @@ Gesture rules, each of which S64 holds:
   `.wb-slot`, so `wbSlotPointerDown` (which looks for `.wb-slot`) cannot start a drag from it and a press on it cannot chart or edit; an empty slot gets none;
   `tabindex=-1` keeps the column ONE tab stop; tooltip `Remove <SYM>`, accessible name `Remove <SYM> from the list`; ONE delegated `click` listener on the rail
   (`wbSlotDelClick`), registered next to the drag's `pointerdown`, never a listener per row. It is an OVERLAY on the row's right edge (`position: absolute`; the
-  row became `position: relative`), NOT a flex item, because the ticker never abbreviates and the 78px column has ~3.9px of headroom at ten characters: a
+  row became `position: relative`), NOT a flex item, because the ticker never abbreviates and the column (78px then, 54px since 2026-10-12, where a ten-character name at the 8px tier has ~3.8px of headroom, 2px where advances are rounded) leaves almost no spare width at ten characters: a
   × that took width would clip a symbol at rest, which S40 forbids. The price of an overlay is that while it is up it covers the last ~18px of THAT row's
   text (only the row being pointed at, whose tooltip names the stock). `display: none` at rest; shown on the row's `:hover` and `:focus-within`; under
   `@media (hover: none)` — a phone, where nothing hovers — on the row LAST TAPPED (`.is-touched`) — `wbSlotTouched` is `{ i, sym }` — the INDEX and the symbol: the symbol alone marks every copy of a duplicate (a slot keeps whatever was typed, so twins exist), the index alone drifts when rows move, so every re-indexer (`wbMoveSlot`, `wbInsertSlot`, the lift in `wbPushSymbol`, `wbDeleteSlot`) drops it, and so does ANY write to that slot (`setWbSlot`: an edit A → B → A would otherwise revive the armed mark `{ i, A, armed: true }` on what is now a fresh row, an immediately tappable × under the second tap of the protected double-tap — Codex P2, PR #320) — and the slot's click handler moves the class IN PLACE because tapping a stock that cannot be charted repaints nothing, while every repaint rebuilds it from the state. It was the CHARTED row (`.is-active`) first, and Codex (P2, PR #320) caught what that misses: a delisted or mistyped ticker never becomes the charted symbol and is exactly the one to remove, so it had no × on a phone; a delete drops the mark, so a stock pushed back in is a new row (both Codex P2, PR #320). An OPEN EDITOR's row carries the same × (`.wb-slot-del--edit`, only when the slot holds a stock — Codex P2, PR #320): a stored value that fails `WL_SYM_RE` opens its editor on the FIRST tap (nothing to chart; S45), which replaces the row the touched-row × lived on, so on a phone the only way out was to empty the text and leave a hole. It is armed by the same timer, the input has `padding-right` so typing never runs under it, and its `mousedown` is cancelled so the press cannot blur the input (a blur closes and replaces the row before the click lands and the click is never delivered; S67 presses for 80 ms like a hand, because Playwright's instant click hides it). `wbDeleteSlot` reads what the slot held BEFORE the open editor saves its draft: a draft EMPTIED before the × is pressed would otherwise be saved first, leave nothing to delete and strand a hole under a stale input (Codex P2, PR #320). A phone's × is NOT TAPPABLE until the edit double-tap window has passed (Codex P2, PR #320): the first tap of a double-tap raises the × under the finger, and a second tap landing in its 18px would delete the stock instead of editing it. `@media (hover: none)` gives it `pointer-events: none` until `.is-armed`, which a `WB_SLOT_DEL_ARM_MS` (600 ms, just past `WB_SLOT_DBL_MS`) timer adds in place and records in `wbSlotTouched.armed` so a repaint rebuilds it; the tap goes through to the slot button underneath, whatever made the × visible (the tap, a focus, or iOS's sticky `:hover`). A hybrid device whose primary input hovers keeps an immediately tappable ×. A delete is also IGNORED while a drag or a press on a slot is in progress (`wbSlotDrag.on || wbSlotPress`): the gesture holds a source index, so a Delete or Backspace pressed while still holding the mouse down would compact the array and the release would then move the successor of the deleted stock. Hidden during a drag

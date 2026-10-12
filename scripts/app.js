@@ -3728,6 +3728,10 @@ function renderAccountsUnavailable() {
 function renderLockedPanels(why) {
   const grid = document.getElementById('accountGrid');
   while (grid.firstChild) grid.removeChild(grid.firstChild);
+  /* The rail's POSITIONS column lists held names, so it follows the lock: this is the one place every road to a locked desk passes (boot with no PIN, Lock). */
+  wbPosLocked = true;
+  wbPurgePositionLoads();   /* repaints the rail itself (renderCharts, or wbRepaintRail when nothing on screen changed) */
+  wbRepaintRail();
   const lockPanel = el('section', 'panel panel-lock');
   const head = el('div', 'panel-header');
   head.appendChild(el('h3', 'panel-title', 'Accounts'));
@@ -4785,7 +4789,9 @@ function wbCancelLoad(sym) {
   if (note && note.textContent === 'Loading ' + sym + '…') note.textContent = '';
   return true;
 }
-async function wbLoadSymbol(sym) {
+/* `noStore` (a click in the POSITIONS column only): chart it WITHOUT remembering it. `wbPick` otherwise writes the pick to `wb_sticky_v1.sel`, which a reload
+   restores while only the public feeds have loaded — before any PIN — so a held ticker would sit in the browser and come back on a locked visit (Codex P1, PR #325). */
+async function wbLoadSymbol(sym, noStore) {
   if (!wbState) return false;
   const gen = ++wbLoadGen;
   const note = document.getElementById('wbInfo');
@@ -4798,7 +4804,7 @@ async function wbLoadSymbol(sym) {
      the entry box on top of the SYMBOL column call wbPushSymbol THEMSELVES
      before they call this, so the add is a separate, synchronous act and never
      a side effect of a lookup. Loading a symbol charts it and nothing else. */
-  if (wbState.data.symbols[sym]) { say(''); wbPick(sym); return true; }
+  if (wbState.data.symbols[sym]) { say(''); wbPick(sym, noStore); return true; }
   if (DESK.mode === 'demo' || !DESK_DB.url) {
     say('Live ticker lookups are off in demo mode');
     return false;
@@ -4834,12 +4840,12 @@ async function wbLoadSymbol(sym) {
   /* OUTSIDE the try above: a render fault used to land in its catch, where
      wbPick's own generation bump made it read as "superseded" — swallowed with
      no message and no log, the note stuck on "Loading…". */
-  wbPick(sym);                  /* renderCharts → renderWbInfo repaints the strip with stats */
+  wbPick(sym, noStore);         /* renderCharts → renderWbInfo repaints the strip with stats */
   return true;
 }
 /* single choke point for switching the active symbol: resets pan, remembers
    the selection so it sticks across reloads, and repaints */
-function wbPick(sym) {
+function wbPick(sym, noStore) {
   /* Invalidate every in-flight load HERE, not only in wbLoadSymbol. This is the
      one place the active symbol changes, and some paths reach it WITHOUT the
      loader — the header box's `change` handler charts an already-loaded ticker
@@ -4855,7 +4861,7 @@ function wbPick(sym) {
      (owner ruling 2026-08-26) — its 100 slots hold exactly what the owner typed
      into them. Re-fetch on boot does not depend on this, because
      restoreStickySymbols also re-hydrates `sel` — see the note there. */
-  writeWbSticky({ sel: sym });
+  if (!noStore) { writeWbSticky({ sel: sym }); wbPosLoaded.delete(sym); }   /* a pick that is remembered is a public one: Lock no longer owes it a purge */
   renderCharts(wbState.data, wbState.lamp);
 }
 /* Typeahead roster (owner request 2026-07-16): a curated set of popular
@@ -5399,6 +5405,13 @@ function renderWbInfo() {
    and previously required reading a ticker off the Watchlists panel and
    retyping it. */
 
+/* THE TICKER TIER (owner 2026-10-12, when the rail grew a third column and every column went from 68–78px to 54): the ticker still NEVER abbreviates, and the
+   way it is kept is the watchlist tiles' device — the TYPE steps down by length instead of the box growing. Up to eight characters keep the 10px row font
+   (8 × 6.02 = 48.2px of the 52px a 54px column leaves); nine and ten, which only an index or a crypto pair reaches, drop to 8px (10 × 4.82 = 48.2px, the same
+   width). S40 budgets against the validator's ten characters off the font the live element computes. */
+const WB_SYM_LONG = 9;
+const wbSymTier = (sym) => (String(sym || '').length >= WB_SYM_LONG ? ' is-long' : '');
+
 /* NO day-% on a rail row (owner request 2026-08-25). The rail is a navigation
    list — its job is "which ticker am I looking at", and the width it was
    spending on a percentage now goes to the Pro panes instead.
@@ -5414,7 +5427,7 @@ function wbRailBtn(sym) {
   const b = document.createElement('button');
   b.type = 'button'; b.className = 'wb-side-btn';
   b.setAttribute('aria-current', String(sym === wbState.sym));
-  b.appendChild(el('span', 'wb-side-sym', sym));
+  b.appendChild(el('span', 'wb-side-sym' + wbSymTier(sym), sym));
   /* A roster name the charts sweep never fetched loads on demand through the
      same path the Load box uses. It writes nothing into the SYMBOL column —
      that column is edited by hand and only by hand. */
@@ -5428,6 +5441,100 @@ function wbRailBtn(sym) {
     wbLoadSymbol(sym);
   });
   return b;
+}
+
+/* ── the POSITIONS column (owner 2026-10-12: "add one more column, the leftmost column … my current positions, whether options or stocks") ────────────────
+   A READ-ONLY list of what the accounts hold, to chart in one click. It is built from `DESK.data.accounts` — the PIN-gated payload — and ONLY while the desk
+   is unlocked (or in demo): a locked desk draws a note, never a ticker, because held names are private (the same rule that keeps balances out of the assistant's
+   context). It is never written anywhere — not to `wb_sticky_v1`, not to the SYMBOL column — and it carries NO money and no day-%, the rail's rule.
+   An OPTION is listed as its underlying with the contract under it (`12/18 195C`) and charts the UNDERLYING: a contract has too few bars for the stochastic the
+   panes read, and the stock is what the owner trades the doctrine on. A stock and its option are two rows; the same holding in two accounts is one. */
+const WB_OCC_RE = /^([A-Z][A-Z.-]{0,5})\s*(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/;
+function wbParsePosition(raw) {
+  const s = String(raw == null ? '' : raw).trim().toUpperCase();
+  const m = WB_OCC_RE.exec(s);
+  const mo = m ? +m[3] : 0, dy = m ? +m[4] : 0;
+  /* a contract whose date cannot exist is not read as one: it stays a plain (unchartable) name rather than a repaired guess */
+  if (m && mo >= 1 && mo <= 12 && dy >= 1 && dy <= 31) {
+    const strike = String(+(Number(m[6]) / 1000).toFixed(3));   /* 195, 5.5, 12.25 */
+    return {
+      key: m[1] + m[2] + m[3] + m[4] + m[5] + m[6],
+      chart: m[1], label: m[1], opt: true,
+      sub: mo + '/' + dy + ' ' + strike + m[5],
+      tip: m[1] + ' ' + MONTHS[mo - 1] + ' ' + dy + ' 20' + m[2] + ' ' + strike + (m[5] === 'C' ? ' Call' : ' Put') + ' (option)',
+    };
+  }
+  return { key: s, chart: s, label: s, opt: false, sub: '', tip: s };
+}
+/* Set by renderLockedPanels: the lock gate is on screen. Distinct from "not authed yet" — a remembered PIN is being validated at boot and that is a moment
+   for an empty column, not a note telling the owner to unlock a desk that is about to unlock itself. */
+let wbPosLocked = false;
+function wbPositionsState() {
+  if (DESK.mode !== 'demo' && !DESK.authed) return { list: [], note: wbPosLocked ? 'Unlock the desk to list your positions.' : '' };
+  const accts = (DESK.data && DESK.data.accounts) || [];
+  if (!accts.length) return { list: [], note: 'Positions not loaded.' };
+  const seen = new Map();
+  for (const a of accts) for (const p of (a.positions || [])) {
+    if (Number(p.qty) === 0) continue;                       /* closed out */
+    const d = wbParsePosition(p.sym);
+    if (d.key && !seen.has(d.key)) seen.set(d.key, d);
+  }
+  const list = [...seen.values()].sort((a, b) =>
+    (a.chart < b.chart ? -1 : a.chart > b.chart ? 1 : 0) || (a.opt - b.opt) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return { list, note: list.length ? '' : 'No open positions.' };
+}
+function wbPosBtn(d) {
+  const chartable = WL_SYM_RE.test(d.chart);
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'wb-side-btn wb-pos-btn' + (d.opt ? ' is-opt' : '');
+  b.setAttribute('aria-current', String(chartable && d.chart === wbState.sym));
+  b.appendChild(el('span', 'wb-side-sym' + wbSymTier(d.label), d.label));
+  if (d.sub) b.appendChild(el('span', 'wb-pos-sub' + (d.sub.length > 10 ? ' is-long' : ''), d.sub));
+  b.title = chartable ? d.tip + ' — click to chart ' + d.chart : d.tip + ' — no chart for this instrument';
+  b.setAttribute('aria-label', d.opt ? d.tip + ' — chart ' + d.chart : d.label);
+  if (!chartable) { b.disabled = true; return b; }
+  b.dataset.pkey = d.key;                 /* a stable name for the focus restore in renderWbSidebar */
+  b.addEventListener('click', () => {
+    wbSlotClick = { i: -1, at: 0 };       /* any other navigation breaks a pending slot pair — see wbRailBtn */
+    const had = !!wbState.data.symbols[d.chart];
+    /* A holding is charted, never remembered — see wbLoadSymbol. And a holding the charts feed did not carry is fetched into `wbState.data.symbols`, which the
+       ROSTER column lists and a poll deliberately keeps: it is noted here so Lock can take it back out (Codex P1, PR #325). */
+    Promise.resolve(wbLoadSymbol(d.chart, true)).then((ok) => {
+      /* `had` was read BEFORE the lookup; a feed poll can have delivered the symbol while it was out, so feed ownership is rechecked NOW (Codex P2, PR #325) */
+      if (ok !== true || had || wbFeedRoster.has(d.chart) || !wbState.data.symbols[d.chart]) return;
+      wbPosLoaded.add(d.chart);
+      if (DESK.mode !== 'demo' && !DESK.authed) wbPurgePositionLoads();   /* Lock landed while the lookup was in flight */
+    });
+  });
+  return b;
+}
+/* Symbols that exist in `wbState.data.symbols` ONLY because a click in the POSITIONS column fetched them (the charts feed does not carry them). Lock takes them
+   back out — series, quote cache, the roster column that lists every key — and, if one is the symbol on screen, restores a public selection, so no held ticker
+   outlives the unlock on the rail or in the panes. A symbol the owner later picks by any remembered route leaves the set (`wbPick`). */
+const wbPosLoaded = new Set();
+function wbPurgePositionLoads() {
+  if (!wbPosLoaded.size) return;
+  const gone = [...wbPosLoaded];
+  wbPosLoaded.clear();
+  if (!wbState) return;
+  let onScreen = false;
+  for (const sym of gone) {
+    delete wbState.data.symbols[sym];
+    wbRealSyms.delete(sym);
+    delete wbInfoCache[sym];
+    if (wbState.sym === sym) onScreen = true;
+  }
+  /* A pane may pin its own ticker (`cfg.sym`, saved in wb_cfg_v3): one pinned to a purged symbol is already drawn with it, so it counts as on screen too and the
+     repaint puts it back on the desk symbol (`effSym`). The pin itself is the owner's earlier choice and is left alone (Codex P1, PR #325). */
+  const pinned = ['p1', 'p2', 'p3'].some(k => wbState.cfg && wbState.cfg[k] && gone.includes(wbState.cfg[k].sym));
+  if (onScreen) {
+    const saved = readWbSticky().sel;
+    wbLoadGen++; wbLoadPending = '';     /* a lookup still running for a holding must not chart it later */
+    wbState.sym = (saved && wbState.data.symbols[saved]) ? saved : Object.keys(wbState.data.symbols)[0];
+    wbState.off = wbState.woff = wbState.off3 = wbState.off3d = 0;
+  }
+  if (onScreen || pinned) renderCharts(wbState.data, wbState.lamp);
+  else wbRepaintRail();
 }
 
 /* ONE SLOT of the SYMBOL column (owner ruling 2026-08-26). The column is 100
@@ -5723,7 +5830,7 @@ function wbEntryInput() {
   inp.maxLength = 24;
   inp.autocomplete = 'off';
   inp.spellcheck = false;
-  inp.placeholder = 'Add symbol';
+  inp.placeholder = 'Symbol';   /* 'Add symbol' was cut at the 54px column of 2026-10-12; the tooltip and the accessible name say what Enter does */
   inp.setAttribute('aria-label', 'Add a symbol — it is pushed in at the top of the list');
   inp.title = 'Type a symbol and press Enter: it is added at the top of the list, and the rest move down';
   inp.addEventListener('keydown', ev => {
@@ -6170,7 +6277,7 @@ function wbSlotRow(i, sym, data) {
   b.title = !sym ? 'Empty slot — click to fill'
     : chartable ? sym + ' — double-click or F2 to edit; drag or Alt+↑/↓ to move; Delete to remove'
     : sym + ' — not a ticker; click to correct; drag or Alt+↑/↓ to move; Delete to remove';
-  b.appendChild(el('span', 'wb-side-sym', sym || ''));
+  b.appendChild(el('span', 'wb-side-sym' + wbSymTier(sym), sym || ''));
 
   const openEditor = () => {
     /* An edit ENDS any pending pair. Otherwise: click an empty slot (which
@@ -6347,6 +6454,15 @@ function renderWbSidebar(data) {
      preserving editing state must not move what the owner is looking at. */
   const dyingSlots = nav.querySelector('.wb-slots');
   const slotScroll = dyingSlots ? dyingSlots.scrollTop : 0;
+  /* The POSITIONS column scrolls too (a long portfolio, or the 220px stacked rail), and it is rebuilt here like everything else: clicking a holding low in the
+     list repaints through wbPick and would otherwise throw it back to the first row (Codex P2, PR #325). */
+  const dyingPos = nav.querySelector('.wb-rail-pos');
+  const posScroll = dyingPos ? dyingPos.scrollTop : 0;
+  /* A focused holding is preserved like a focused slot: Enter or Space on it charts it, wbPick rebuilds the rail, and the button that held focus is gone (Codex P2,
+     PR #325). Keyed by the holding's own name, not its index — rows are re-sorted from the accounts on every paint. */
+  const dyingPosKey = document.activeElement && document.activeElement.classList
+    && document.activeElement.classList.contains('wb-pos-btn') && nav.contains(document.activeElement)
+    ? document.activeElement.dataset.pkey : null;
   /* A focused slot BUTTON is preserved the same way the input is, and for a
      sharper reason: charting from the keyboard (Enter/Space on a filled slot)
      runs synchronously into wbPick, whose render removes the very button that
@@ -6374,7 +6490,7 @@ function renderWbSidebar(data) {
      chart drag, so leaving it would have scanned every row of every list and
      allocated a Map per frame for a feature that no longer renders (Codex P3). */
   const lists = (wlState.payload && wlState.payload.lists) || [];
-  /* Two columns, each with ONE head row of the same height, so the entry box (left) and the roster picker (right) sit on the same line (owner
+  /* THREE columns since 2026-10-12 (POSITIONS | SYMBOL | ROSTER), each with ONE head row of the same height, so the positions label, the entry box and the roster picker sit on the same line. Two columns until then: the entry box (left) and the roster picker (right) sit on the same line (owner
      2026-10-09, with a screenshot: "align everything nicely so that the radar will line up with the second column and not expand the two
      columns"). The picker used to be a FULL-WIDTH header over both columns (Codex P2, 2026-08-25: inside a 68px column its collapsed label had ~45px
      of text room, so the longer list names truncated); it is the roster column's head again and a name that does not fit is cut with an ellipsis,
@@ -6383,6 +6499,19 @@ function renderWbSidebar(data) {
   const cols = el('div', 'wb-rail-cols');
   const column = (cls) => { const c = el('div', 'wb-rail-col ' + cls); cols.appendChild(c); return c; };
   nav.appendChild(cols);
+
+  /* ── column 0 — positions (read-only; see wbPositionsState) ────────────── */
+  const posState = wbPositionsState();
+  const pos = column('wb-rail-pos');
+  pos.setAttribute('role', 'group');
+  pos.setAttribute('aria-label', 'Open positions');
+  const pHead = el('div', 'wb-rail-head');
+  const pName = el('div', 'wb-rail-posname', 'Positions');
+  pName.title = 'Open positions — click one to chart it; an option charts its underlying';
+  pHead.appendChild(pName);
+  pos.appendChild(pHead);
+  if (posState.note) pos.appendChild(el('p', 'wb-rail-empty', posState.note));
+  for (const d of posState.list) pos.appendChild(wbPosBtn(d));
 
   /* ── column A — symbol ─────────────────────────────────────────────────── */
   /* The entry box, then 100
@@ -6466,6 +6595,8 @@ function renderWbSidebar(data) {
      the new scrollHeight, which is what we want if the list got shorter. */
   const bornSlots = nav.querySelector('.wb-slots');
   if (bornSlots && slotScroll) bornSlots.scrollTop = slotScroll;
+  const bornPos = nav.querySelector('.wb-rail-pos');
+  if (bornPos && posScroll) bornPos.scrollTop = posScroll;
 
   /* A repaint the owner did not cause (the 60s poll, a chart landing) can arrive MID-DRAG and
      replaces the rows and the marker; the ghost is outside the rail and the drag state is module
@@ -6475,6 +6606,10 @@ function renderWbSidebar(data) {
   if (dyingBtn !== null) {
     const bornBtn = nav.querySelector('.wb-rail-manual [data-slot="' + dyingBtn + '"] .wb-slot');
     if (bornBtn) keepPageStill(() => bornBtn.focus({ preventScroll: true }));
+  }
+  if (dyingPosKey !== null) {
+    const bornPosBtn = [...nav.querySelectorAll('.wb-pos-btn')].find(b => b.dataset.pkey === dyingPosKey);
+    if (bornPosBtn) keepPageStill(() => bornPosBtn.focus({ preventScroll: true }));
   }
 
   if (hadFocus) {
@@ -7717,6 +7852,7 @@ function buildWbSettings() {
     tsel.value = cfg.sym && wbState.data.symbols[cfg.sym] ? cfg.sym : '';
     tsel.addEventListener('change', () => {
       cfg.sym = tsel.value || null; saveWbCfg();
+      if (cfg.sym) wbPosLoaded.delete(cfg.sym);   /* a pinned ticker is saved in wb_cfg_v3: a remembered, public choice, so Lock no longer owes it a purge */
       renderCharts(wbState.data, wbState.lamp);
     });
     col.appendChild(tsel);
@@ -8006,7 +8142,9 @@ async function loadCharts(force) {
     try {
       const data = await deskFeed('desk-charts', force ? { force: true } : undefined);
       clearTimeout(chartsRetry.timer); chartsRetry.wait = 0;
-      for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); }
+      /* A symbol the feed now carries is PUBLIC, whatever fetched it first: a holding clicked while a partial cold response omitted it must not be purged on Lock
+         (its series is the feed's now). Codex P2, PR #325. */
+      for (const k of Object.keys(data.symbols)) { wbFeedRoster.add(k); wbRealSyms.add(k); wbPosLoaded.delete(k); }
       chartsStamp = { generatedAt: data.generatedAt, asOf: data.asOf };
       feedLanded.charts = Date.now();
       renderAfterFetch(() => {
@@ -8141,6 +8279,7 @@ function renderPrivate() {
     if (acctStamp) acctStamp.textContent = lamp.stamp || (DESK.mode === 'demo' ? fmtUpdated(null, lastLabel()).replace('Last updated', 'Accounts synced') : '');
     renderAccounts(DESK.data.accounts, lamp);
     renderAsk();
+    wbRepaintRail();   /* the charts rail's POSITIONS column reads the same accounts */
     if (DESK.mode === 'demo') closeSysPromptModal(); /* demo has no live assistant to configure */
   } else {
     renderLockedPanels(); /* renders the OPEN ask panel too — only the accounts are locked */
@@ -8170,6 +8309,7 @@ async function loadPrivate(pin) {
     DESK.data = { ...DESK.data, accounts: [] };   /* never hold stale/foreign balances */
     renderAccountsUnavailable();
     renderAsk();
+    wbRepaintRail();   /* and the POSITIONS column says so rather than keeping the last list */
     return;
   }
   const mapped = mapDashboardPayload(payload);
