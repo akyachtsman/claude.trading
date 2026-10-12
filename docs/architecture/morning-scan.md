@@ -64,6 +64,7 @@
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --holdings=holdings.json              # plus red-day runs for a JSON array of symbols, read against the roster's session
+    NODE_USE_ENV_PROXY=1 node tools/watchlist-scan.mjs                  # in a cloud sandbox (HTTPS_PROXY set): Node's fetch ignores the proxy otherwise and every request fails with "fetch failed" (measured 2026-10-12)
 
 Known gaps, stated rather than hidden: a symbol with under 122 bars (a recent listing: 120 for the 92-15-15 study's %D to exist, plus the two earlier sessions the lookback examines) cannot be judged and is listed as not scanned; `NOVO.B` is unknown to Yahoo; a thinly traded option has no bar on a day it never traded, so a run across such a hole is reported with a `caution` rather than as consecutive sessions; NYSE holidays can read as a hole (a harmless false caution).
 
@@ -96,13 +97,14 @@ The prompt the Routine carries (the owner's address is a placeholder here becaus
          select distinct p->>'sym' as sym from (select distinct on (account_key) positions from desk_account_snapshots where user_id = (select id from desk_users where not is_test) order by account_key, as_of desc) s, jsonb_array_elements(s.positions) p where (p->>'qty')::numeric > 0 and (p->>'sym') ~ '^[A-Za-z0-9. ^=-]{1,24}$' order by 1;
        Save the symbols as a JSON array of strings in /tmp/holdings.json. Never read, print, store or email quantities, dollar values, balances or account details.
        If the query fails, say so in email 3 and run step 3 without --holdings.
-    3. ONE SCAN. If /tmp/holdings.json exists: node tools/watchlist-scan.mjs --holdings=/tmp/holdings.json > /tmp/scan.json ; echo "exit $?"
+    3. ONE SCAN. Always put NODE_USE_ENV_PROXY=1 in front of the scan command: Node's fetch only uses this sandbox's proxy with it, and without it every request fails with "fetch failed".
+       If /tmp/holdings.json exists: NODE_USE_ENV_PROXY=1 node tools/watchlist-scan.mjs --holdings=/tmp/holdings.json > /tmp/scan.json ; echo "exit $?"
        If it does not (the owner could not be identified, or the query failed): run the same command WITHOUT --holdings, and email 3 says its holdings
        could not be read. (A missing file would not crash the scan anyway: it is reported as holdings.error, which email 3 also says.)
        The holdings are read against the SAME report session as the watchlist (the roster's own), never a stand-in symbol's.
        Exit 0 = good. Exit 3 or ok:false = NOT trustworthy: emails 1 and 2 say so at the top, quoting "error", instead of listing "none".
        Exit 2 = the roster could not be read or is over the limit (no holdings were run): emails 1 and 2 say so, quoting "error"; then run
-         node tools/watchlist-scan.mjs --symbols=SPY --holdings=/tmp/holdings.json > /tmp/scan-spy.json
+         NODE_USE_ENV_PROXY=1 node tools/watchlist-scan.mjs --symbols=SPY --holdings=/tmp/holdings.json > /tmp/scan-spy.json
        for email 3 only (it is then dated by SPY's session, which email 3 states). /tmp/scan.json is KEPT: emails 1 and 2 quote its "error";
        email 3 (its date and its holdings.* fields) reads /tmp/scan-spy.json, and nothing else does.
     4. EMAILS (Gmail send_message, body plain text, no Markdown). Date = scan.newestBar (today's date if it is null). Footer on all three:
