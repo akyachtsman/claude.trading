@@ -62,8 +62,8 @@
 
 ## Running it
 
-    node tools/watchlist-scan.mjs --selftest            # 201 checks, no network (four run the real CLI offline)
-    node tools/watchlist-scan-mutants.mjs               # 171 one-line changes to the tool: 169 make the selftest fail, 2 cannot change the report (marked)
+    node tools/watchlist-scan.mjs --selftest            # 238 checks, no network (eight run the real CLI offline)
+    node tools/watchlist-scan-mutants.mjs               # 208 one-line changes to the tool: 205 make the selftest fail, 3 cannot change the report (marked)
     node tools/watchlist-scan.mjs                       # the whole roster, Pro 1, JSON on stdout
     node tools/watchlist-scan.mjs --pane=2              # Pro 2 swing instead
     node tools/watchlist-scan.mjs --holdings=holdings.json              # plus red-day runs for a JSON array of LONG positions' symbols, read against the roster's session
