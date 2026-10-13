@@ -53,7 +53,7 @@ fi
 if [ -r "$LOCAL" ] && grep -q 'install the claude.directives toolkit' "$LOCAL"; then
   timeout "$RUN_CAP" bash "$LOCAL" || echo "session-start: toolkit install failed (local) — continuing with the cached toolkit." >&2
 else
-  # shellcheck disable=SC2086 -- CURL_BOUNDS is a deliberate word-split flag list
+  # shellcheck disable=SC2086 # CURL_BOUNDS is a deliberate word-split flag list
   curl -fsSL $CURL_BOUNDS "$RAW_URL" | timeout "$RUN_CAP" bash || echo "session-start: toolkit install failed (fetch) — continuing with the cached toolkit." >&2
 fi
 

@@ -12,11 +12,15 @@ name: Pages Monitor
 # ACTION: add a workflow_run trigger naming your own deploy workflow:
 #
 #   workflow_run:
-#     workflows: ['<your deploy workflow name>']
+#     workflows: ['Pages Deploy']
 #     types: [completed]
 #
-# The job below already handles that event — it normalises the two status
-# vocabularies. Do not pre-fill a guessed name.
+# "Pages Deploy" is the name templates/workflows/pages-deploy.yml ships; use
+# your own deploy's exact `name:` otherwise. Keep `page_build:` beside it. The
+# job below already handles that event — it normalises the two status
+# vocabularies. Not pre-filled: on a branch-source project the name matches
+# nothing and workflow-ref-guard fails the build. List it for this file in
+# .github/workflow-ref-required.json too (cicd-setup.md -> 9c-bis).
 # Why: docs/standards/automations.md -> Watcher Rules (W2, W3 — a monitor may watch either source; a retry may not).
 #
 # ⚠️ EXPOSURE (optional) — a rogue unfiltered republish (the visibility-flip
@@ -27,9 +31,16 @@ name: Pages Monitor
 # whoever published it; a late legacy build fires its own run. A path must be
 # 404 on two probes 30s apart (one 404 can be the PREVIOUS deploy mid-CDN
 # propagation), with redirects NOT followed — a 3xx to a page that 404s is the
-# declared URL answering something other than 404, so it is reported. At most
-# 15 paths — more is reported, not silently truncated, since the job bound
-# cannot fit them. Absent file, or one listing no paths =
+# declared URL answering something other than 404, so it is reported. Paths are
+# taken literally (percent-encoded, no curl globbing). A DIRECTORY entry is
+# expanded to every file under it as PUBLISHED, and each is probed: a directory
+# URL can 404 while a file under it is served. The published list is the deploy
+# run's Pages artifact for an Actions deploy (on a manual run, that of the newest successful run),
+# and the commit's source folder (Jekyll's .md -> .html included) for a branch
+# build; an artifact that cannot be read is reported, never guessed from the
+# repository tree. At most 40 URLs after
+# expansion, the same cap as pages-deploy.yml — more is reported, not silently
+# truncated, since the job bound cannot fit them. Absent file, or one listing no paths =
 # nothing declared = no-op, and the job summary says exposure was NOT checked.
 # LIMIT: this checks the paths you REMEMBERED to list. A new internal directory
 # nobody adds is invisible — the deploy's deny-list problem, one layer out.
@@ -49,21 +60,33 @@ on:
 # trigger — two `page_build` events could always collide; adding the second
 # source made it likelier, not possible.
 # (Confirmed downstream on apfp.claude, 2026-08-19.)
+# A watched run on another branch, or from a fork (whose branch may also be
+# called main), publishes nothing (the job skips it below), so it gets a group
+# of its own: in the shared one it would cancel the monitor of a real deploy
+# still probing, then report nothing itself.
+# A CANCELLED watched run (one superseded by a newer push, say) published
+# nothing either; it waits its turn rather than cancelling a monitor still
+# probing a real deploy. A MANUAL run gets a group of its own: it is not a
+# deploy, never closes the issue and never reports "build errored", and in the
+# shared group it would replace a deploy's monitor still PENDING there (a new
+# run evicts the pending one, whatever cancel-in-progress says), dropping that
+# deploy's alarm (Codex, #424).
 concurrency:
-  group: pages-monitor
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'workflow_dispatch' && format('pages-monitor-manual-{0}', github.run_id) || github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch != github.event.repository.default_branch || github.event.workflow_run.head_repository.full_name != github.repository) && format('pages-monitor-offbranch-{0}', github.run_id) || 'pages-monitor' }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'cancelled') }}
 
 permissions:
   contents: read
   issues: write
   pages: read   # lets the Pages API return the real html_url
+  actions: read # the watched workflow's runs (a superseded cancel vs a failed deploy) and its Pages artifact
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    # 10, not 5: liveness can take ~165s, and each forbidden path that fails
-    # takes up to ~30s more before it is reported.
-    timeout-minutes: 10
+    # Liveness up to ~165s, a 30s pause, and two 8s probes for each of up to 40
+    # forbidden URLs, plus up to 2 min fetching the deploy artifact (~13 min).
+    timeout-minutes: 20
     steps:
       - name: Verify Pages deploy and report
         env:
@@ -77,12 +100,40 @@ jobs:
           # on workflow_dispatch, which the "manual" default below covers.
           RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           RUN_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           ISSUE_LABEL: 'pages-deploy-failure'
+          # The name your deploy uploads its Pages artifact under, as a prefix:
+          # upload-pages-artifact's default is `github-pages`, and pages-deploy.yml
+          # uploads `github-pages-<attempt>`. A deploy that sets its own `name:` /
+          # `artifact_name:` must put that name here, or every deploy is reported
+          # with its denied directories unchecked.
+          PAGES_ARTIFACT_PREFIX: 'github-pages'
         run: |
           set -euo pipefail
           # Real Pages URL from the API (covers <owner>.github.io user-site
           # repos and custom domains); generic derivation as the fallback.
-          url=$(gh api "repos/$REPO/pages" --jq '.html_url // empty' 2>/dev/null || true)
+          # The same response says which folder a branch build publishes.
+          pages=$(gh api "repos/$REPO/pages" 2>/dev/null || true)
+          url=$(jq -r '.html_url // empty' <<< "${pages:-null}" 2>/dev/null || true)
+          # No default: an unreadable source folder is reported where it is
+          # needed, never assumed to be the repository root.
+          src_root=$(jq -r '.source.path // empty' <<< "${pages:-null}" 2>/dev/null || true)
+          build_type=$(jq -r '.build_type // empty' <<< "${pages:-null}" 2>/dev/null || true)
+          # The branch a branch build publishes: a manual run lists ITS tree,
+          # not the default branch's (they can differ).
+          src_branch=$(jq -r '.source.branch // empty' <<< "${pages:-null}" 2>/dev/null || true)
+          src_known=0
+          if [ -n "$src_root" ]; then
+            src_known=1
+            src_root="${src_root#/}"; src_root="${src_root%/}"
+          fi
           if [ -z "$url" ]; then
             repo_name="${REPO#*/}"
             url="https://${OWNER}.github.io/${repo_name}/"
@@ -103,6 +154,60 @@ jobs:
             commit="${RUN_COMMIT:-}"
           fi
           status="${status:-manual}"
+          # NOT A DEPLOY OF THE SITE. A watched deploy run on another branch (a
+          # manual dispatch with --ref, which pages-deploy.yml refuses), or from
+          # a fork's branch of the same name, published nothing, so its
+          # conclusion says nothing about the live site.
+          if [ -n "${RUN_CONCLUSION:-}" ] && [ -n "${RUN_BRANCH:-}" ] && [ -n "${DEFAULT_BRANCH:-}" ] \
+             && { [ "$RUN_BRANCH" != "$DEFAULT_BRANCH" ] || { [ -n "${RUN_HEAD_REPO:-}" ] && [ "$RUN_HEAD_REPO" != "$REPO" ]; }; }; then
+            {
+              echo "## ⏭️ Not a deploy of ${DEFAULT_BRANCH}"
+              echo ""
+              echo "- The watched run was on ${RUN_HEAD_REPO:-an unknown repository}:${RUN_BRANCH}; only ${REPO}:${DEFAULT_BRANCH} publishes the site."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # SUPERSEDED is not a failure. A deploy whose concurrency group holds
+          # one pending run (pages-deploy.yml) cancels that run when a newer
+          # push arrives, so a cancelled run with a NEWER run of the same
+          # workflow behind it was replaced, not broken: the newer run gets its
+          # own monitor run. The replacement must be on the SAME branch and must
+          # have started before the cancelled run ended, i.e. it could have
+          # caused the cancel; a later unrelated run (a rejected off-main
+          # dispatch, say) does not excuse a manually cancelled deploy.
+          # Anything else cancelled, or a lookup that fails, stays errored.
+          if [ "${RUN_CONCLUSION:-}" = "cancelled" ] && [ -n "${RUN_WORKFLOW_ID:-}" ] \
+             && [ -n "${RUN_NUMBER:-}" ] && [ -n "${RUN_BRANCH:-}" ] && [ -n "${RUN_UPDATED:-}" ]; then
+            newest=$(gh api -X GET "repos/$REPO/actions/workflows/$RUN_WORKFLOW_ID/runs" \
+              -f branch="$RUN_BRANCH" -F per_page=10 \
+              --jq "[.workflow_runs[] | select(.head_repository.id == .repository.id) | select(.run_number > $RUN_NUMBER) | select(.created_at <= \"$RUN_UPDATED\") | .run_number] | max // 0" \
+              2>/dev/null) || newest=0
+            if [ "${newest:-0}" -gt "$RUN_NUMBER" ] 2>/dev/null; then
+              {
+                echo "## ⏭️ Pages deploy superseded"
+                echo ""
+                echo "- Run #${RUN_NUMBER} was cancelled for newer run #${newest}; that run is monitored on its own."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+          # NOTHING PUBLISHED. A successful run whose "Publish" job was skipped
+          # (pages-deploy.yml before the project's first page exists) changed
+          # nothing, and the site may not exist yet. Only a lookup that answers
+          # "every Publish job skipped" counts; any other answer is monitored.
+          if [ "${RUN_CONCLUSION:-}" = "success" ] && [ -n "${RUN_ID:-}" ]; then
+            pub=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.name == "Publish")] | if length > 0 and all(.conclusion == "skipped") then "skipped" else "" end' \
+              2>/dev/null) || pub=""
+            if [ "$pub" = "skipped" ]; then
+              {
+                echo "## ⏭️ Nothing published"
+                echo ""
+                echo "- The watched run skipped its Publish job (no site yet), so the live site was not changed."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
           short="${commit:0:7}"
           echo "Pages deploy status: $status (commit ${short:-n/a}) — target $url"
 
@@ -115,9 +220,11 @@ jobs:
 
           # 2) Liveness: the live URL must return 200 (cache-busted, with retries
           #    so we wait out CDN propagation rather than false-alarming).
+          # A failed curl still prints 000 through -w, so the fallback REPLACES
+          # the captured code; appending one (`|| echo 000`) reported "000000".
           code="000"
           for attempt in 1 2 3 4 5; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "${url}?cb=${GITHUB_RUN_ID}-${attempt}" || echo "000")
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "${url}?cb=${GITHUB_RUN_ID}-${attempt}") || code="000"
             [ "$code" = "200" ] && break
             sleep $((attempt * 6))
           done
@@ -140,34 +247,187 @@ jobs:
             # root check cannot see that (the old deploy already served 200).
             # The list is capped so the worst case (every probe hitting its
             # --max-time) stays inside timeout-minutes:
-            # 165s liveness + 30s delay + 15 paths x 2 passes x 8s = ~435s < 600s.
-            paths=()
+            # 165s liveness + 120s artifact + 30s delay + 40 URLs x 2 passes x 8s = ~955s < 1200s.
+            entries=()
             while IFS= read -r p || [ -n "$p" ]; do
+              p="${p#$'\xef\xbb\xbf'}"   # a UTF-8 byte-order mark is not whitespace
               p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
               case "$p" in ''|'#'*) continue ;; esac
-              paths+=("${p#/}")
+              # The same normalisation as pages-deploy.yml: `private/` names the
+              # path `private`, file or directory, and is probed as both the
+              # path and (if a directory) everything under it.
+              p="${p#/}"; p="${p%/}"
+              case "/$p/" in
+                *'/../'*|*'/./'*|'//')
+                  problems="${problems}- .github/pages-deny.txt entry does not name a path inside the site, NOT checked: [${p}]\n"
+                  continue ;;
+              esac
+              entries+=("$p")
             done <<< "$deny"
+            # Expand a directory entry to every file under it ON THE LIVE SITE.
+            # Live paths are not repository paths: an Actions deploy publishes
+            # its build output (SITE_DIR=dist, say), a branch build publishes
+            # its source folder (/docs, say), and Jekyll renders private/a.md
+            # as private/a.html. So the file list comes from what was
+            # published:
+            #  - an Actions deploy (workflow_run): the run's own Pages artifact;
+            #  - a manual run on an Actions site: the Pages artifact of the
+            #    newest SUCCESSFUL default-branch run;
+            #  - a branch build (page_build, or a manual run on a branch-source
+            #    site): the tree at the commit, under the source folder, plus
+            #    Jekyll's .md -> .html names unless that folder holds a .nojekyll.
+            # An artifact that cannot be read FAILS the check rather than falling
+            # back to the repository tree: a build's output paths (dist/x is
+            # served as x) do not match the tree, so the fallback would miss the
+            # very files it exists to find.
+            # LIMIT: a Jekyll permalink moves a page where no listing shows it.
+            paths=()
+            live=""; live_from=""; jekyll=0; deny_unexpanded=""
+            if [ "${#entries[@]}" -gt 0 ]; then
+              art=""; art_from=""; no_expand=0
+              if [ -n "${RUN_ID:-}" ]; then
+                art_from="the deploy run's Pages artifact"
+                art=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+                  --jq "[.artifacts[] | select(.name | startswith(\"${PAGES_ARTIFACT_PREFIX}\")) | select(.expired | not)] | sort_by(.id) | last | .archive_download_url // empty" 2>/dev/null || true)
+              elif [ "${EVENT_NAME:-}" != "page_build" ] && [ -z "$build_type" ]; then
+                # Neither source is known (the Pages API did not answer): guessing
+                # either one could expand from the wrong listing.
+                problems="${problems}- Could not read the Pages build type from the Pages API, so files under denied directories are NOT checked\n"
+                no_expand=1
+              elif [ "${EVENT_NAME:-}" != "page_build" ] && [ "$build_type" != "legacy" ]; then
+                # Only this repository's own default-branch runs: a fork's PR
+                # run can upload a github-pages artifact from a branch it also
+                # calls main, and its list would decide what gets probed. And
+                # only a run that SUCCEEDED: a newer run that uploaded and then
+                # failed to publish left the previous artifact live.
+                art_from="the newest successfully deployed Pages artifact on ${DEFAULT_BRANCH:-the default branch}"
+                cands=$(gh api "repos/$REPO/actions/artifacts?per_page=100" \
+                  --jq "[.artifacts[] | select(.name | startswith(\"${PAGES_ARTIFACT_PREFIX}\")) | select(.expired | not) | select(.workflow_run.head_branch == \"${DEFAULT_BRANCH:-}\") | select(.workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.id) | reverse | .[:10][] | \"\\(.workflow_run.id) \\(.archive_download_url)\"" 2>/dev/null || true)
+                while read -r cand_run cand_url; do
+                  [ -n "${cand_run:-}" ] || continue
+                  concl=$(gh api "repos/$REPO/actions/runs/$cand_run" --jq '.conclusion // empty' 2>/dev/null || true)
+                  if [ "$concl" = "success" ]; then
+                    art="$cand_url"
+                    break
+                  fi
+                done <<< "$cands"
+              fi
+              if [ -n "$art_from" ]; then
+                ad=$(mktemp -d)
+                # upload-pages-artifact stores one artifact.tar of `./`-relative
+                # entries; directories end in `/`.
+                if [ -n "$art" ] \
+                   && curl -sSfL --max-time 120 -H "Authorization: Bearer $GH_TOKEN" -o "$ad/a.zip" "$art" \
+                   && unzip -q "$ad/a.zip" -d "$ad/x" && [ -f "$ad/x/artifact.tar" ] \
+                   && tar -tf "$ad/x/artifact.tar" > "$ad/list"; then
+                  live=$(sed 's#^\./##' "$ad/list" | grep -v -e '/$' -e '^$' || true)
+                  live_from="$art_from"
+                elif [ "$status" = "manual" ]; then
+                  # A manual run cannot close an incident, so an artifact that
+                  # simply expired (retention ends) is not a deploy failure: it
+                  # is stated, and the explicit entries are still probed.
+                  deny_unexpanded="${art_from} is not available (expired, or named other than ${PAGES_ARTIFACT_PREFIX}*), so files under denied directories were NOT checked"
+                else
+                  problems="${problems}- Could not read ${art_from} (an artifact named ${PAGES_ARTIFACT_PREFIX}*; PAGES_ARTIFACT_PREFIX sets the name), so files under denied directories are NOT checked (the repository tree does not give the published paths)\n"
+                fi
+              elif [ "$no_expand" = 1 ]; then
+                :
+              elif [ "$src_known" != 1 ]; then
+                problems="${problems}- Could not read the Pages source folder from the Pages API, so files under denied directories are NOT checked (a /docs site publishes docs/x as x)\n"
+              else
+                tree_err=$(mktemp)
+                # A manual run has no built commit: resolve the source branch to
+                # a SHA through git/ref, which takes a branch name with `/` as
+                # path segments (git/trees would read them as extra segments).
+                tree_ref="${commit:-}"
+                if [ -z "$tree_ref" ] && [ -n "${src_branch:-}" ]; then
+                  # Each segment percent-encoded: a `#` or `?` in a branch name
+                  # would otherwise end the endpoint path.
+                  ref_path=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$src_branch")
+                  tree_ref=$(gh api "repos/$REPO/git/ref/heads/$ref_path" --jq '.object.sha // empty' 2>"$tree_err") || tree_ref=""
+                  [ -n "$tree_ref" ] || tree_ref="unresolved-source-branch"
+                fi
+                if tree=$(gh api "repos/$REPO/git/trees/${tree_ref:-HEAD}?recursive=1" \
+                      --jq 'if .truncated then "::TRUNCATED::" else (.tree[] | select(.type == "blob") | .path) end' 2>"$tree_err") \
+                   && [ "$tree" != "::TRUNCATED::" ]; then
+                  if [ -n "$src_root" ]; then
+                    live=$(while IFS= read -r f; do
+                      case "$f" in "$src_root"/*) printf '%s\n' "${f#"$src_root"/}" ;; esac
+                    done <<< "$tree")
+                  else
+                    live="$tree"
+                  fi
+                  if ! grep -qx '\.nojekyll' <<< "$live"; then
+                    jekyll=1
+                    # Jekyll publishes no path with a component starting with
+                    # `.`, `_` or `#`, or ending in `~` (its default excludes,
+                    # `.htaccess` kept), so those are not counted against the cap.
+                    # A `_config.yml` with an `include:` key can publish any of
+                    # them again, so then nothing is dropped. Its `exclude:` list
+                    # is not read: a path it drops is still probed, and passes as
+                    # the 404 it is.
+                    cfg="${src_root:+$src_root/}_config.yml"
+                    jinc=0
+                    if grep -qxF -- "_config.yml" <<< "$live"; then
+                      cfg_txt=$(gh api -H "Accept: application/vnd.github.raw+json" \
+                        "repos/$REPO/contents/$cfg?ref=${tree_ref:-HEAD}" 2>/dev/null) || cfg_txt="include: unreadable"
+                      # Parsed as YAML (flow style and quoted keys too); a file
+                      # that does not parse counts as having include:.
+                      jinc=$(python3 -c 'import sys, yaml
+          d = yaml.safe_load(sys.stdin.read()) or {}
+          print(1 if not isinstance(d, dict) or "include" in d else 0)' <<< "$cfg_txt" 2>/dev/null) || jinc=1
+                      [ "$jinc" = 0 ] || jinc=1
+                    fi
+                    if [ "$jinc" = 0 ]; then
+                      live=$(awk -F/ '{ for (i = 1; i <= NF; i++) if (($i ~ /^[._#]/ && $i != ".htaccess") || $i ~ /~$/) next; print }' <<< "$live")
+                    fi
+                    live=$(printf '%s\n' "$live"; sed -n -E 's/\.(md|markdown)$/.html/p' <<< "$live")
+                  fi
+                  live_from="the commit, under the Pages source folder"
+                else
+                  [ "${tree:-}" = "::TRUNCATED::" ] && echo "the tree listing was truncated" > "$tree_err"
+                  problems="${problems}- Could not list the repository tree to expand denied directories, so files under them are NOT checked: $(head -c 200 "$tree_err" | tr '\n' ' ')\n"
+                fi
+              fi
+              for e in "${entries[@]}"; do
+                paths+=("$e")
+                if [ "$jekyll" = 1 ]; then
+                  case "$e" in *.md|*.markdown) paths+=("${e%.*}.html") ;; esac
+                fi
+                d="${e%/}"
+                while IFS= read -r f; do
+                  case "$f" in "$d"/*) paths+=("$f") ;; esac
+                done <<< "$live"
+              done
+            fi
+            # One URL per path: overlapping entries (`private/` and
+            # `private/a.json`) must not count twice against the cap, as in
+            # pages-deploy.yml, which dedupes the same way.
+            if [ "${#paths[@]}" -gt 0 ]; then
+              mapfile -t paths < <(printf '%s\n' "${paths[@]}" | sort -u)
+            fi
             n=${#paths[@]}
-            max_paths=15
+            max_paths=40
+            # Percent-encode each segment: a literal `#` or `?` in a name would
+            # otherwise start a fragment or query and probe another URL.
+            enc() { python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$1"; }
             if [ "$n" -eq 0 ]; then
               deny_note=".github/pages-deny.txt lists no paths — exposure NOT checked"
             elif [ "$n" -gt "$max_paths" ]; then
-              problems="${problems}- .github/pages-deny.txt lists ${n} paths; the monitor checks at most ${max_paths} within its time bound — exposure NOT checked\n"
+              problems="${problems}- .github/pages-deny.txt expands to ${n} URLs; the monitor checks at most ${max_paths} within its time bound — exposure NOT checked\n"
             else
               first=()
               for i in "${!paths[@]}"; do
-                p="${paths[$i]}"
-                first[$i]=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 "${url}${p}?cb=${GITHUB_RUN_ID}-d1" || echo "000")
+                first[i]=$(curl -sg -o /dev/null -w "%{http_code}" --max-time 8 "${url}$(enc "${paths[i]}")?cb=${GITHUB_RUN_ID}-d1") || first[i]="000"
               done
               sleep 30
               for i in "${!paths[@]}"; do
-                p="${paths[$i]}"
-                dcode=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 "${url}${p}?cb=${GITHUB_RUN_ID}-d2" || echo "000")
-                if [ "${first[$i]}" != "404" ] || [ "$dcode" != "404" ]; then
-                  problems="${problems}- Forbidden path served HTTP ${first[$i]} then ${dcode}, expected 404 on both: ${url}${p}\n"
+                dcode=$(curl -sg -o /dev/null -w "%{http_code}" --max-time 8 "${url}$(enc "${paths[i]}")?cb=${GITHUB_RUN_ID}-d2") || dcode="000"
+                if [ "${first[i]}" != "404" ] || [ "$dcode" != "404" ]; then
+                  problems="${problems}- Forbidden path served HTTP ${first[i]} then ${dcode}, expected 404 on both: ${url}${paths[i]}\n"
                 fi
               done
-              deny_note="${n} declared in .github/pages-deny.txt, all 404 on two probes 30s apart"
+              deny_note="${#entries[@]} declared in .github/pages-deny.txt (${n} URLs after expanding directories from ${live_from:-nothing}), all 404 on two probes 30s apart${deny_unexpanded:+; ${deny_unexpanded}}"
             fi
           elif grep -q 'HTTP 404' "$deny_err"; then
             :
@@ -192,7 +452,7 @@ jobs:
               gh issue create --repo "$REPO" \
                 --title "Pages deploy failing" \
                 --label "$ISSUE_LABEL" \
-                --body "$(printf '%s\n\n---\nAuto-managed by \`.github/workflows/pages-monitor.yml\`. It closes automatically on the next healthy deploy.' "$body")"
+                --body "$(printf '%s\n\n---\nAuto-managed by `.github/workflows/pages-monitor.yml`. It closes automatically on the next healthy deploy.' "$body")"
             fi
             {
               echo "## ❌ Pages deploy problem"
@@ -204,9 +464,17 @@ jobs:
           fi
 
           # Healthy: close any open tracking issue, report green in the summary.
+          # Not on a MANUAL run: it cannot tell which build is live (the newest
+          # successful artifact, or HEAD's tree, need not be what is served, a
+          # rogue managed build after a visibility flip least of all), so its
+          # green is not proof enough to clear an incident. It can still OPEN
+          # one above; only a deploy's own run, which knows what it published,
+          # closes it, or a person who has checked.
           open_num=$(gh issue list --repo "$REPO" --state open --label "$ISSUE_LABEL" \
             --json number --jq 'sort_by(.number) | last | .number // empty' || true)
-          if [ -n "${open_num:-}" ]; then
+          if [ -n "${open_num:-}" ] && [ "$status" = "manual" ]; then
+            echo "- Tracking issue #${open_num} left open: a manual run does not close it" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "${open_num:-}" ]; then
             gh issue comment "$open_num" --repo "$REPO" \
               --body "Pages deploy healthy again at $stamp (commit ${short:-n/a}). Closing." || true
             gh issue close "$open_num" --repo "$REPO" || true

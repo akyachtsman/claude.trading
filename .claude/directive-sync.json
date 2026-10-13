@@ -1,6 +1,45 @@
 {
   "upstream": {
-    "sha": "8336b815d8094db2253703a4bbe00c4fcec4e57a",
-    "synced": "2026-10-06"
+    "sha": "100d6b450030ed0fd91a2cbfc2be09311175b97f",
+    "synced": "2026-10-13"
+  },
+  "refresh_kept": {
+    ".github/actions/ui-suite/action.yml": {
+      "blob": "e8b1fb82fa00aa5ecf9866164d1b5b426aad545f",
+      "reason": "Template plus one comment-only LOCAL NOTE under the test-auth-email input: this kit has no identifier-first auth path (single-step 6-digit PIN gate) and S2 throws if TEST_AUTH_EMAIL is ever set. Recorded in CLAUDE.md under Local deviations; keep on every refresh."
+    },
+    ".github/actions/ui-suite/validate-report-path.py": {
+      "blob": "e92bcea0ba5d72f2f2aa934628795dca1e782d2b",
+      "reason": "Template plus a comment-only EXTGLOB LOCAL NOTE (refresh PR #286) recording why extended-glob syntax is deliberately not checked; no behaviour differs. Recorded in CLAUDE.md under Local deviations."
+    },
+    ".github/workflows/qa.yml": {
+      "blob": "fda7e7c028a70dbbc34d94c95834cd68ed5066e1",
+      "reason": "Template plus six local items, all listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan step, the html-validate steps, the tailored UI_PATHS, the ui-tests job-level GREP_INVERT env and the notify job. Checked by diffing against the template: the only differences are those items."
+    },
+    ".github/scripts/ui-tests/playwright.config.js": {
+      "blob": "c55256cb71b416a79e0ab09a30a5a6afcbc87e83",
+      "reason": "Takes the template's GITHUB_WORKSPACE-derived screenshot directory. Keeps the local grepInvert (qa.yml's GREP_INVERT job env), the production APP_URL default, the bounded-timeout comments and the project-specific viewport notes; the template's comment rewording and REPLACE_* placeholder are not wanted."
+    },
+    ".github/scripts/ui-tests/package.json": {
+      "blob": "30f21e71d425bef49c192a79cd880c25280ac291",
+      "reason": "Template plus the html-validate devDependency, which qa.yml's Validate HTML step installs from this lockfile (a local addition recorded in CLAUDE.md)."
+    },
+    ".github/scripts/ui-tests/tests/app.spec.js": {
+      "blob": "823167be7a14d7057e433aafa59d2fc70b654888",
+      "reason": "Project-specific suite (scenarios S5-S68, about 10,000 lines) that defines its helpers inline; the 1,300-line template spec is a starter. KD-1 (S2 passes with no auth gate) was run on this refresh and reads CLEAR. The template's move of helpers into tests/lib/ is not taken (see tests/lib/auth.js)."
+    },
+    ".github/scripts/ui-tests/tests/lib/auth.js": {
+      "blob": "ef358668fa8033bc0f002c33075e8677a9f3f7e6",
+      "reason": "Not taken. Its identifier-first and prefilled-credential logic is deliberately absent here (the desk has a single-step PIN gate; see the ui-suite LOCAL NOTE and CLAUDE.md), and extracting the 9 inline helpers out of a 10,000-line spec is a refactor with no defect behind it (KD-1 CLEAR). Revisit when the gate gains an identifier step or a kit-defects entry reads AFFECTED."
+    },
+    ".github/scripts/ui-tests/tests/lib/fixtures.js": {
+      "blob": "9f4ccbdf60c4967c247277a72eef40ec8d7002f5",
+      "reason": "Not taken, with tests/lib/auth.js: the spec defines its fixtures inline and the extraction has no defect behind it."
+    }
+  },
+  "refresh_declined": {
+    "permissions.allow (local extra)": {
+      "Artifact": "Owner-approved local addition recorded in CLAUDE.md under Local deviations (the Artifact tool is allow-listed in this project's settings)."
+    }
   }
 }

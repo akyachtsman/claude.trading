@@ -2,7 +2,20 @@
 // Copy to .github/scripts/ui-tests/playwright.config.js and customize.
 // Replace all REPLACE_* placeholders before use.
 
+import { join } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+
+// Failure screenshots land where the ui-suite composite's upload step looks for
+// them: `.agent-reports/screenshots/` at the WORKSPACE root. Derived from
+// GITHUB_WORKSPACE when it is set (every CI job), never from this file's depth:
+// a hard-coded `../../../` is right only when the kit sits exactly at
+// .github/scripts/ui-tests/, and a moved UI_TESTS_DIR (cicd-setup.md Step 2
+// allows it) wrote the screenshots outside the workspace, where upload-artifact
+// only warns and the artifact silently omits them (audit 2026-10-11, M-10). The
+// relative form remains the local fallback, for a hand run from the shipped path.
+const SCREENSHOT_DIR = process.env.GITHUB_WORKSPACE
+  ? join(process.env.GITHUB_WORKSPACE, '.agent-reports', 'screenshots')
+  : '../../../.agent-reports/screenshots';
 
 export default defineConfig({
   testDir: './tests',
@@ -32,7 +45,7 @@ export default defineConfig({
     video: 'off',
     trace: 'on-first-retry',
   },
-  outputDir: '../../../.agent-reports/screenshots',
+  outputDir: SCREENSHOT_DIR,
   projects: [
     // Desktop first. global.md requires laptop + tablet + phone coverage, and a
     // device-emulated project has a FIXED viewport, so neither 1440x900 nor any

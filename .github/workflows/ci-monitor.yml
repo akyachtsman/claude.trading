@@ -40,8 +40,12 @@ permissions:
   # (repos/.../contents/...) to test for cancel-in-progress. An explicit
   # permissions block zeroes every unlisted scope, so without this the probe
   # 403s, falls to can_supersede=no, and every HEALTHY supersede alarms — the
-  # pairing with qa.yml's concurrency block breaks in the noisy direction.
+  # pairing with qa-live.yml's concurrency block breaks in the noisy direction.
   contents: read
+  # Annotations are check-run data: the supersede record the cancelled
+  # discriminator requires is read from them. Without this scope the read
+  # fails, no record is found, and every supersede is reported (loud).
+  checks: read
 jobs:
   monitor:
     runs-on: ubuntu-latest
@@ -67,6 +71,27 @@ jobs:
           ISSUE_LABEL: 'ci-failure'
         run: |
           set -euo pipefail
+          # THE RECORD OF WHY. A concurrency supersede leaves an annotation on the
+          # cancelled job: "Canceling since a higher priority waiting request for
+          # <group> exists". A timeout or a person leaves none, and a run in a
+          # different group cannot have caused one. The two tests below (a declared
+          # cancel-in-progress, a newer run in time) only say a supersede was
+          # POSSIBLE; a newer run that sits in its own group (qa-live gives manual,
+          # skipped and off-branch runs one) passes both and proves nothing (Codex,
+          # #424). So suppression also needs this record; a run with no job yet, or
+          # an unreadable answer, has none and is reported, the loud direction.
+          # Every page of both lists is read: one page (100 jobs, 30 annotations by
+          # default) is not the whole record (Codex, #424).
+          # Captured before grep: under pipefail, grep -q closing the pipe early
+          # would fail a pipeline whose match succeeded.
+          cancelled_by_group() {
+            local msgs='' j
+            for j in $(gh api --paginate "repos/$REPO/actions/runs/$1/jobs?per_page=100" --jq '.jobs[].id' 2>/dev/null || true); do
+              msgs="$msgs
+          $(gh api --paginate "repos/$REPO/check-runs/$j/annotations?per_page=100" --jq '.[].message' 2>/dev/null || true)"
+            done
+            grep -q 'Canceling since a higher priority waiting request' <<<"$msgs"
+          }
           if [ "$EVENT" = "workflow_run" ]; then
             echo "workflow_run: $WR_NAME concluded $WR_CONCLUSION"
             # `cancelled` needs a question asked before it is judged. GitHub reports
@@ -81,13 +106,16 @@ jobs:
             # ⚠️ "A newer run exists" is COINCIDENCE, not causation, and using it alone
             # re-creates the silent timeout this exists to fix. A workflow with no
             # concurrency block has overlapping runs on a branch as a matter of
-            # course — qa.yml is exactly that, and it carries 30-minute job timeouts —
+            # course — qa.yml is exactly that, and its jobs carry their own timeouts —
             # so an older run CAN time out while a newer one merely happens to exist.
             # (Caught downstream, apfp.claude 2026-08-19, against this same first
             # attempt.) Suppression therefore requires BOTH:
             #   1. the workflow actually declares cancel-in-progress — without it
             #      nothing could have superseded anything, so a cancel is a timeout
-            #      or a human;
+            #      or a human. Only the literal `true` counts: an expression may
+            #      have evaluated false for the newer run, which then could not have
+            #      caused the cancel (Codex, #424). A workflow that must not cancel
+            #      for some runs keeps them out of the shared GROUP instead;
             #   2. the newer run was created BEFORE this run ended — one created
             #      afterwards cannot have caused the cancellation.
             # And NO probe may fail toward silence: an unreadable answer alarms.
@@ -114,7 +142,7 @@ jobs:
                   echo "cancelled on a run from fork ${WR_HEAD_REPO} — not classifiable from the base repo; reporting."
                 elif gh api "repos/$REPO/contents/${wf_path}?ref=${WR_SHA}" \
                      -H "Accept: application/vnd.github.raw" 2>/dev/null \
-                     | grep -qE '^[[:space:]]*cancel-in-progress:[[:space:]]*true[[:space:]]*$'; then
+                     | grep -qE '^[[:space:]]*cancel-in-progress:[[:space:]]*true[[:space:]]*(#.*)?$'; then
                   # Same-repo: read at the run's head SHA rather than its branch name,
                   # so the definition is the one AS OF that run, not whatever the
                   # branch holds now.
@@ -141,9 +169,11 @@ jobs:
                   --jq "[.workflow_runs[] | select(.id > ${WR_ID}) | select(.created_at <= \"${WR_UPDATED_AT}\")] | length" 2>/dev/null || true)
                 if [ -z "$newer" ]; then
                   echo "cancelled, and the supersede probe failed — reporting rather than guessing."
-                elif [ "$newer" -gt 0 ]; then
-                  echo "cancelled and genuinely superseded: $newer newer run(s) started before it ended. Expected, not reported."
+                elif [ "$newer" -gt 0 ] && cancelled_by_group "$WR_ID"; then
+                  echo "cancelled and genuinely superseded: $newer newer run(s) started before it ended, and the job records a concurrency supersede. Expected, not reported."
                   exit 0
+                elif [ "$newer" -gt 0 ]; then
+                  echo "cancelled with a newer run, but no job records a concurrency supersede: a timeout, a person, or a run in another group. Reporting."
                 else
                   echo "cancelled with no newer run started before it ended — a timeout or a manual cancel."
                 fi
@@ -164,17 +194,18 @@ jobs:
             since=$(date -u -d "-${LOOKBACK} minutes" +%Y-%m-%dT%H:%M:%SZ)
             echo "Scanning $REPO for failed runs since $since"
             # Same discriminator as the event branch, or the scan re-reports what
-            # that branch correctly suppressed: with qa.yml carrying
+            # that branch correctly suppressed: with qa-live.yml carrying
             # cancel-in-progress, every healthy supersede in the window is a
             # `cancelled` run — flagging them all makes a manual scan cry wolf
-            # after any burst of pushes. A cancelled run is kept only when NO
-            # newer run of the same workflow+branch was created by the time it ended
-            # (a higher-id run created no later than this one's updated_at = it CAN
-            # have superseded it; nothing newer = a timeout or a human, report it).
-            # The per-run cancel-in-progress file probe is skipped here — the
-            # window scan is a coarse backstop, and the newer-run test alone
-            # only risks under-reporting a cancel that the event branch already
-            # classified in real time.
+            # after any burst of pushes. A cancelled run is suppressed only when
+            # BOTH tests hold, exactly as in the event branch: a newer run of the
+            # same workflow+branch was created by the time it ended, AND the
+            # workflow declares cancel-in-progress at that run's SHA. The newer-run
+            # test alone suppressed a TIMEOUT on a workflow with no concurrency
+            # block (the template qa.yml is one), which overlaps runs as a matter of
+            # course: the false silence
+            # the event branch documents (audit, 2026-10-06). A fork run, or a
+            # probe that cannot be read, is reported.
             # TWO fetches, deliberately, and NOT one broadened query.
             #
             # The supersede test below asks whether a NEWER run of the same
@@ -189,7 +220,7 @@ jobs:
             # never fetched (no --paginate here) and silently dropped. Splitting the
             # fetch keeps the completed page's budget exactly as it was, and adds the
             # in-flight runs the discriminator needs without competing for slots.
-            project='{name, id, sha: .head_sha[0:7], branch: .head_branch, url: .html_url,
+            project='{name, id, sha: .head_sha[0:7], full_sha: .head_sha, branch: .head_branch, url: .html_url,
                       conclusion, workflow_id, head_branch, created_at, updated_at,
                       repo: (.head_repository.full_name // "")}'
             fetch() {
@@ -210,26 +241,47 @@ jobs:
               '$c + $p + $q')
             runs=$(echo "$runs" | jq '[
               # Grouped by REPO too. Without it, two forks using the same branch
-              # name share a group, and fork B's run can suppress fork A's cancelled
-              # one — silently dropping a real failure. The fork guard on the
+              # name share a group, and a run from fork B can suppress a cancelled
+              # one from fork A — silently dropping a real failure. The fork guard on the
               # workflow_run path above does not reach this scan.
               ( group_by([.workflow_id, .head_branch, .repo]) | .[] ) as $g
               | $g[] | . as $r
-              | select(
-                  (.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="startup_failure")
-                  or (.conclusion=="cancelled" and
-                      # Ordered by run id with an inclusive end bound — the same tie
-                      # rule as the event branch above, and for the same reason.
-                      # Ordering by `.created_at >` instead cannot be fixed by
-                      # loosening it to `>=`: $g contains $r, so `>=` makes every
-                      # cancelled run match ITSELF and become its own superseder, and
-                      # nothing is ever reported again. That is a false SILENCE,
-                      # strictly worse than the false alarm being fixed. `.id > $r.id`
-                      # excludes $r for free and is the better ordering anyway.
-                      ([$g[] | select(.id > $r.id and .created_at <= $r.updated_at)] | length) == 0)
-                )
-              | {name, id, sha, branch, url}
+              | select(.conclusion=="failure" or .conclusion=="timed_out"
+                       or .conclusion=="startup_failure" or .conclusion=="cancelled")
+              # Ordered by run id with an inclusive end bound — the same tie rule as
+              # the event branch above, and for the same reason. Ordering by
+              # `.created_at >` instead cannot be fixed by loosening it to `>=`: $g
+              # contains $r, so `>=` makes every cancelled run match ITSELF and
+              # become its own superseder, and nothing is ever reported again. That
+              # is a false SILENCE, strictly worse than the false alarm being fixed.
+              # `.id > $r.id` excludes $r for free and is the better ordering anyway.
+              | . + {newer: (.conclusion=="cancelled"
+                      and ([$g[] | select(.id > $r.id and .created_at <= $r.updated_at)] | length) > 0)}
+              | {name, id, sha, full_sha, branch, url, workflow_id, repo, newer}
             ]')
+            # The second test, per candidate: only a cancelled run that has a newer
+            # one is probed, so the API cost is bounded by the supersedes in the
+            # window. Same probe as the event branch; fork or unreadable = report.
+            kept='[]'
+            while IFS= read -r r; do
+              [ -n "$r" ] || continue
+              if [ "$(echo "$r" | jq -r .newer)" = true ]; then
+                rrepo=$(echo "$r" | jq -r .repo)
+                rsha=$(echo "$r" | jq -r .full_sha)
+                rwf=$(echo "$r" | jq -r .workflow_id)
+                rpath=$(gh api "repos/$REPO/actions/workflows/$rwf" --jq .path 2>/dev/null || true)
+                if [ "$rrepo" = "$REPO" ] && [ -n "$rpath" ] \
+                   && gh api "repos/$REPO/contents/${rpath}?ref=${rsha}" \
+                        -H "Accept: application/vnd.github.raw" 2>/dev/null \
+                      | grep -qE '^[[:space:]]*cancel-in-progress:[[:space:]]*true[[:space:]]*(#.*)?$' \
+                   && cancelled_by_group "$(echo "$r" | jq -r .id)"; then
+                  echo "suppressed: run $(echo "$r" | jq -r .id) was superseded under cancel-in-progress"
+                  continue
+                fi
+              fi
+              kept=$(jq -n --argjson k "$kept" --argjson r "$r" '$k + [$r | {name, id, sha, branch, url}]')
+            done < <(echo "$runs" | jq -c '.[]')
+            runs=$kept
             count=$(echo "$runs" | jq 'length')
             echo "Found $count failed run(s) in window"
             [ "$count" -eq 0 ] && { echo "Nothing to report."; exit 0; }
@@ -259,5 +311,5 @@ jobs:
               --repo "$REPO" \
               --title "CI failures detected" \
               --label "$ISSUE_LABEL" \
-              --body "$(printf 'CI Monitor detected failing workflow run(s) at %s:\n%s\n\n---\nThis issue is auto-managed by \`.github/workflows/ci-monitor.yml\`.\nClose it once the failures are resolved; new failures will reopen tracking.' "$stamp" "$body")"
+              --body "$(printf 'CI Monitor detected failing workflow run(s) at %s:\n%s\n\n---\nThis issue is auto-managed by `.github/workflows/ci-monitor.yml`.\nClose it once the failures are resolved; new failures will reopen tracking.' "$stamp" "$body")"
           fi

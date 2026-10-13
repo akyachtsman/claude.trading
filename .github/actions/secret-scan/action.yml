@@ -28,12 +28,18 @@ runs:
         # that outlives the commit and is readable by anyone with repo access.
         # global.md → Security says "never echo secrets in workflow logs" one line
         # above the command that used to do exactly that.
+        # `git grep --untracked` reads exactly what could enter a PR: tracked files
+        # plus untracked ones that are NOT ignored. `grep -r` read the working tree,
+        # so a project's own gitignored `.env.local` — where /new-repo tells it to
+        # keep real keys — failed every local run (Codex, #410). A fresh CI checkout
+        # holds no ignored files, so CI scans the same set either way. Pathspecs
+        # are single-quoted so the SHELL never expands them; git's `*` crosses `/`.
         rc=0
-        hits=$(grep -rlE \
-          'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb[-]' \
-          --include="*.js" --include="*.ts" --include="*.tsx" --include="*.mjs" --include="*.html" --include="*.css" --include="*.json" --include="*.md" --include="*.sh" --include="*.yml" --include="*.yaml" \
-          --exclude-dir=node_modules --exclude-dir=.git .) || rc=$?
-        # 0 = a match (a secret), 1 = clean, >=2 = grep itself failed. Folding
+        hits=$(git grep --untracked -lE \
+          'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb[-]|sb_secret_[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*(c2VydmljZV9yb2xl|NlcnZpY2Vfcm9sZ|zZXJ2aWNlX3JvbG)|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}' \
+          -- '*.js' '*.ts' '*.tsx' '*.mjs' '*.html' '*.css' '*.json' '*.md' '*.sh' '*.py' '*.toml' '*.env' '.env.*' '*/.env.*' '*.yml' '*.yaml' ':!*node_modules/*') || rc=$?
+        # 0 = a match (a secret), 1 = clean, >=2 = git grep itself failed (128:
+        # not a git repository, a bad pathspec). Folding
         # the error case into "clean" is how a scan reports green after failing
         # to run at all.
         if [ "$rc" -eq 0 ]; then
@@ -42,6 +48,6 @@ runs:
           echo "The matching line is deliberately not printed — see the -l note above."
           exit 1
         elif [ "$rc" -ge 2 ]; then
-          echo "ERROR: secret scan did not run (grep exit $rc)"
+          echo "ERROR: secret scan did not run (git grep exit $rc)"
           exit 1
         fi

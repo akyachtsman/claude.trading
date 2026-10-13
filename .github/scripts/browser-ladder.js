@@ -159,22 +159,7 @@ async function ladder({ browser, install, launch, log = () => {} }) {
       // interruption costs is only the ability to read a FAILURE: after one, a
       // launch that fails cannot be told apart from a browser this ladder never
       // finished fetching, so that direction is CANNOT CHECK and never a ceiling.
-      if (installed.interrupted) {
-        const result = await launch();
-        attempts.push({ rung: rung.name, install: installed, launch: result });
-        if (result.ok) {
-          log(`    LAUNCHED (despite an interrupted install -- a launch is a launch)`);
-          return { ok: true, rung: rung.name, attempts };
-        }
-        // A harness failure is the more specific diagnosis and has its own
-        // report, so it is not folded into the interrupted one.
-        if (result.harness) {
-          log(`    cannot check: ${firstLine(result.error)}`);
-          return { ok: false, harness: true, rung: null, attempts };
-        }
-        log(`    launch failed after an install this ladder cut short -- not a ceiling`);
-        return { ok: false, harness: true, interrupted: true, rung: null, attempts };
-      }
+      // That is the one branch below that reads `installed.interrupted`.
     } else {
       log(`  rung "${rung.name}": no install, launching what is already here`);
     }
@@ -182,19 +167,27 @@ async function ladder({ browser, install, launch, log = () => {} }) {
     // `await` on a non-promise is the identity, so an injected synchronous
     // launch works unchanged while the real one -- which returns a promise --
     // is resolved before the next rung starts an install.
+    const interrupted = !!(installed && installed.interrupted);
     const result = await launch();
     attempts.push({ rung: rung.name, install: installed, launch: result });
     if (result.ok) {
-      log(`    LAUNCHED`);
+      log(interrupted
+        ? `    LAUNCHED (despite an interrupted install -- a launch is a launch)`
+        : `    LAUNCHED`);
       return { ok: true, rung: rung.name, attempts };
     }
     // A HARNESS FAILURE ENDS THE LADDER WITHOUT A VERDICT. Climbing further
     // installs browsers for a Playwright that cannot be loaded, and the rungs
     // then all fail identically -- which reads exactly like a ceiling and is not
-    // one (Codex, #355).
+    // one (Codex, #355). It is the more specific diagnosis and has its own
+    // report, so it is checked before, and not folded into, the interrupted one.
     if (result.harness) {
       log(`    cannot check: ${firstLine(result.error)}`);
       return { ok: false, harness: true, rung: null, attempts };
+    }
+    if (interrupted) {
+      log(`    launch failed after an install this ladder cut short -- not a ceiling`);
+      return { ok: false, harness: true, interrupted: true, rung: null, attempts };
     }
     log(`    launch failed: ${firstLine(result.error)}`);
   }
@@ -289,7 +282,6 @@ function report(browser, outcome, print = console.log) {
   // the truth is "this ladder could not load Playwright" records a limit about
   // the wrong thing, and `test.md` asks projects to write these limits down.
   if (outcome.interrupted) {
-    const last = outcome.attempts[outcome.attempts.length - 1];
     emit('browser-ladder: CANNOT CHECK — this ladder could not run the installer to completion');
     emit('');
     // FIRST, and outside the truncation: this is the only line that says WHICH
