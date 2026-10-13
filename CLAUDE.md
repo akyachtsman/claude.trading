@@ -505,6 +505,17 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 What a local Playwright run in this sandbox **cannot** tell you — record per
 `test.md` → *Sandboxed local runs*, so a green local run is never read as
 broader than it is:
+- **Re-measured 2026-10-13: the ladder did NOT launch a browser in that sandbox.**
+  Every rung ended `Failed to download Chrome for Testing 153.0.8010.12 (playwright
+  chromium v1243) … Download failure, code=1` from `cdn.playwright.dev`, with the
+  committed and the refreshed `browser-ladder.js` alike (so the cause is the
+  environment, not the 2026-10-13 refresh), and only the preinstalled build 1194
+  exists under `/opt/pw-browsers`. A local run there needs a scratch wrapper config
+  that imports the kit's `playwright.config.js` and sets
+  `launchOptions.executablePath` to `/opt/pw-browsers/chromium` (S5, S20 and S55
+  passed that way on `desktop`); delete the wrapper afterwards. This is wrong again
+  once `cdn.playwright.dev` is reachable or the sandbox image carries build 1243.
+  The bullet below describes 2026-09-29:
 - **All four projects run locally now** (verified 2026-09-29):
   `.github/scripts/browser-ladder.js` installs the kit's Chromium build (1243) and
   WebKit into `/opt/pw-browsers`, so `desktop`, `mobile-chrome`, `tablet` and
