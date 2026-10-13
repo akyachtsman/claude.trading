@@ -3,8 +3,9 @@
 # actions from templates/actions/ into .github/actions/ (secret-scan, ui-suite).
 #
 # Jobs:
-#   static-checks — secret scan (composite) + contrast guardrail; the blocking
-#                   gate, runs on every trigger.
+#   static-checks — secret scan (composite), contrast guardrail, and the
+#                   workflow-ref, job-bounds, Python-compile, ui-suite env and
+#                   YAML-anchor guards; the blocking gate, runs on every trigger.
 #   ui-changes    — diffs the PR against its base and decides whether the
 #                   browser job is needed. Non-PR events (push to main)
 #                   always run UI tests.
@@ -15,13 +16,22 @@
 #                   opt-out — and flip it back once the blocking issue is fixed.
 #
 # Required setup:
-#   - Add TEST_AUTH_CREDENTIAL as a repository secret — skip if the project has
-#     (email+password AND identifier-first/split-step gates need TEST_AUTH_EMAIL
-#      as well — directives#304, #310; without it a split-step gate is not even
-#      DETECTED and the authenticated scenarios run against the identifier screen)
-#     no auth; the empty secret makes auth tests self-skip
+#   - TEST_AUTH_CREDENTIAL / TEST_AUTH_EMAIL repository secrets: set them only
+#     for a login that needs a credential from outside. Which gates need which,
+#     and when to leave both unset: docs/standards/cicd-setup.md -> Step 5.
 #   - Set UI_TESTS_DIR below to the path of your Playwright test directory
 #   - Adjust the UI_PATHS regex in the ui-changes job to your project layout
+#   - A project with the CI-build opt-in (global.md -> Hosting & Deployment)
+#     sets BUILD_CMD and SITE_DIR below to the SAME values as its
+#     pages-deploy.yml, and BUILD_PATHS to its build inputs (required with a
+#     build: the change detection refuses to run without it). The browser job
+#     then runs the build and serves SITE_DIR, so it tests what is deployed,
+#     and a change to a build input alone still runs it. Without the opt-in
+#     leave all three as shipped: no build, the repo root is served. It serves
+#     the tree UNFILTERED (dotfiles and deny-listed paths included), so it
+#     tests the site's behaviour, not what pages-deploy.yml leaves out; it does
+#     refuse what that deploy refuses (a SITE_DIR outside the repository, or a
+#     symlink in the site), so a green PR cannot merge into a red deploy.
 
 name: QA — Static + UI Tests
 
@@ -41,7 +51,6 @@ on:
   # the merge gate. See docs/standards/ci-triage.md → "CI never registered".
   workflow_dispatch:
 
-# Least privilege: these jobs only read the repo and run tests.
 # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
 # Supersede in-flight runs for the same PR (or ref): a push while CI is running
 # otherwise leaves two suites racing, and the older one's result is noise that
@@ -50,12 +59,21 @@ concurrency:
   group: qa-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Least privilege: these jobs only read the repo and run tests.
 permissions:
   contents: read
 
 env:
   # Path to the directory containing playwright.config.js and package.json
   UI_TESTS_DIR: .github/scripts/ui-tests
+  # CI-build opt-in only (header). BUILD_CMD runs from the repo root and writes
+  # SITE_DIR; empty BUILD_CMD means no build and SITE_DIR stays '.'.
+  BUILD_CMD: ''
+  SITE_DIR: '.'
+  # Extended regex of the build INPUTS, matched against the PR file list beside
+  # UI_PATHS, e.g. '^src/|^package(-lock)?\.json$|^tsconfig\.json$|^tailwind\.config\.'.
+  # Empty: nothing beyond UI_PATHS.
+  BUILD_PATHS: ''
 
 jobs:
   static-checks:
@@ -65,7 +83,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ── Secret scan (composite — single source of truth for the pattern) ────
       - uses: ./.github/actions/secret-scan
@@ -101,15 +119,26 @@ jobs:
             exit 1
           fi
 
+
       # ── Contrast guardrail ───────────────────────────────────────────────────
       # WCAG AA check against this project's design tokens — styles/tokens.css or
       # css/tokens.css by default; elsewhere, append `--tokens <file>` (repeat it
-      # per theme file). Exits with a notice (no failure) until /design-intake
-      # creates tokens.css.
+      # per theme file). With no stylesheet at all it exits with a notice (no
+      # failure) until /design-intake creates tokens.css; once the project has
+      # any CSS, a missing tokens file FAILS the check.
+      # CommonJS, like every .js under .github/scripts/: it runs only because
+      # .github/scripts/package.json declares "type": "commonjs". Without that
+      # manifest Node takes the module type from the ROOT package.json, and a
+      # Vite/Astro/SvelteKit root ("type": "module") kills this step with
+      # "require is not defined in ES module scope".
       - name: Contrast guardrail (WCAG AA)
         run: node .github/scripts/check-contrast.js
 
 
+      # The four Python guards below that read YAML (workflow-ref-guard,
+      # check-job-bounds, check-ui-suite-env, check-yaml-anchors) import
+      # .github/scripts/gh_yaml.py, which reads it as GitHub does (YAML 1.2),
+      # so install it beside them.
       - name: Workflow cross-reference guard
         # Every `workflow_run.workflows:` entry must name a real workflow. GitHub
         # raises no error when one does not — the watcher simply never fires.
@@ -141,13 +170,23 @@ jobs:
         # variable added to its run step and not to the check steps makes the
         # check read a DIFFERENT config from the one the suite runs: green check,
         # different run. This compares the steps, and checks every process.env
-        # read in the kit is wired from an input. A variable that genuinely
-        # arrives another way (set by a self-hosted runner, say) goes in
-        # .github/ui-suite-env-exempt.json as {"NAME": "how it arrives"}, never
+        # read in the kit is wired from an input. A variable that needs no input
+        # (set outside the composite, by a self-hosted runner say, or never set
+        # in CI because its reader handles unset) goes in
+        # .github/ui-suite-env-exempt.json as {"NAME": "why it needs none"}, never
         # in the script, so the next template refresh keeps it. --kit-dir is the
         # same UI_TESTS_DIR the ui-suite runs: a moved kit left the guard scanning
         # the default (Codex, #395).
         run: python3 .github/scripts/check-ui-suite-env.py --kit-dir "$UI_TESTS_DIR"
+
+      - name: Workflow and action YAML parses as GitHub parses it
+        # PyYAML accepts what GitHub refuses: an anchor or alias in an action's
+        # action.yml (the runner: "Anchors are not currently supported";
+        # workflows may use them) and a merge key (`<<`) anywhere. A composite
+        # is read only by a job that uses it, and fails there; this reads every
+        # workflow and every .github/actions/**/action.yml on every trigger and
+        # names the file and line instead.
+        run: python3 .github/scripts/check-yaml-anchors.py
 
       # ⚠️ LOCAL ADDITION — CLAUDE.md → Required Commands lists `npx html-validate
       # index.html`, but no CI step ran it. Pinned through the ui-tests lockfile
@@ -156,7 +195,7 @@ jobs:
       # Node 22 is required by html-validate 11 (engines ^22.22.0) and last in the job
       # so it cannot change the runtime of the guards above.
       - name: Setup Node (html-validate)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Validate HTML
@@ -173,9 +212,44 @@ jobs:
 
     steps:
       - name: Checkout (full history for base diff)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # Deploy parity that must not depend on the diff: the browser job is
+      # skipped on a PR touching no UI path, but a symlink added anywhere in
+      # an unbuilt site (notes.md, a .png) still fails pages-deploy.yml. So
+      # without a build the symlink check runs here, on every PR; with one,
+      # the browser job checks the built output (it always runs then).
+      - name: Symlinks in the unbuilt site
+        if: env.BUILD_CMD == ''
+        run: |
+          src="${SITE_DIR%/}"; [ -n "$src" ] || src="."
+          [ -d "$src" ] || exit 0
+          deploy=0; [ -f .github/workflows/pages-deploy.yml ] && deploy=1
+          # Resolve the root BEFORE entering it: a SITE_DIR that links outside
+          # the repository is what pages-deploy.yml refuses, and following it
+          # would scan runner files instead. An in-repository link is fine.
+          ws=$(realpath -e .)
+          real=$(realpath -e -- "$src")
+          case "$real/" in
+            "$ws"/*) ;;
+            *) if [ "$deploy" = 1 ]; then
+                 echo "::error::SITE_DIR=$SITE_DIR resolves to $real, outside the repository; pages-deploy.yml refuses it."
+                 exit 1
+               fi
+               echo "::warning::SITE_DIR=$SITE_DIR resolves to $real, outside the repository; not scanned."
+               exit 0 ;;
+          esac
+          # Scanned from inside, so the excluded names apply only BELOW the root.
+          links=$(cd "$real" && find . \( -name .git -o -name .github -o -name node_modules \) -prune -o -type l -printf '%P -> %l\n')
+          if [ -n "$links" ] && [ "$deploy" = 1 ]; then
+            echo "::error::symlinks in the site, which pages-deploy.yml refuses; replace them with real files:"
+            printf '%s\n' "$links"
+            exit 1
+          elif [ -n "$links" ]; then
+            echo "::warning::symlinks in the site; pages-deploy.yml (Actions-source) refuses them: $(printf '%s; ' "$links")"
+          fi
 
       - name: Diff against PR base
         id: diff
@@ -203,11 +277,21 @@ jobs:
           # so editing the composite triggers UI; editing the script it calls did not.
           UI_PATHS: '(\.html$|^scripts/|^styles/|^config/|^\.github/actions/|^\.github/scripts/ui-tests/|^\.github/scripts/check-ui-viewports\.js$|^\.github/workflows/qa\.yml$)'
         run: |
-          # This job gates the LOCAL suite, which serves the repo root as static
+          # A build whose inputs are not listed would let a source-only PR skip
+          # the browser job: refuse the configuration rather than guess.
+          # Normalised as pages-deploy.yml does: '' and '/' mean the repo root.
+          src="${SITE_DIR%/}"; [ -n "$src" ] || src="."
+          if [ -n "$BUILD_CMD" ] && [ -z "${BUILD_PATHS//[[:space:]]/}" ]; then
+            echo "::error::BUILD_CMD is set but BUILD_PATHS is empty: list the build inputs (workflow env) so a change to them runs the UI suite."
+            exit 1
+          fi
+          # This job gates the LOCAL suite, which serves SITE_DIR as static
           # files, so it needs a static entry point. Enabling it for a repo with
           # no index.html would hand Playwright a directory listing to assert
-          # against — a green run that never loaded an application.
-          if [ ! -f index.html ]; then
+          # against — a green run that never loaded an application. With a
+          # build, SITE_DIR does not exist yet: the browser job checks its
+          # index.html after building, and refuses there instead.
+          if [ -z "$BUILD_CMD" ] && [ ! -f "$src/index.html" ]; then
             echo "ui=false" >> "$GITHUB_OUTPUT"
             echo "No index.html yet — skipping browser job."
             exit 0
@@ -228,162 +312,30 @@ jobs:
             echo "::error::could not diff $BASE_SHA...HEAD — refusing to guess whether UI tests are needed."
             exit 1
           fi
-          if printf '%s\n' "$files" | grep -qE "$UI_PATHS"; then
-            echo "ui=true" >> "$GITHUB_OUTPUT"
-            echo "UI-relevant changes detected."
-          else
-            echo "ui=false" >> "$GITHUB_OUTPUT"
-            echo "No UI-relevant changes — skipping browser job."
-          fi
+          pattern="$UI_PATHS"
+          [ -n "${BUILD_PATHS//[[:space:]]/}" ] && pattern="${pattern}|${BUILD_PATHS}"
+          # grep exits 2 on a malformed pattern; inside an `if` that read as
+          # "no match" and skipped the suite. Only 0 and 1 are answers.
+          rc=0
+          printf '%s\n' "$files" | grep -qE -- "$pattern" || rc=$?
+          case "$rc" in
+            0) echo "ui=true" >> "$GITHUB_OUTPUT"
+               echo "UI-relevant changes detected." ;;
+            1) echo "ui=false" >> "$GITHUB_OUTPUT"
+               echo "No UI-relevant changes — skipping browser job." ;;
+            *) echo "::error::UI_PATHS/BUILD_PATHS is not a valid extended regex (grep exit $rc): fix the pattern."
+               exit 1 ;;
+          esac
 
   ui-tests:
     name: UI Tests (local server)
     needs: [static-checks, ui-changes]
     if: needs.ui-changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
-    # 120, NOT 90 or 60 (and never 40). This job runs the ui-suite composite: dependency install + playwright
-    # install + EVERY project in playwright.config.js + retries + artifact
-    # upload, in one sum the composite cannot subdivide.
-    #
-    # Sized from MEASURED numbers — and the warm figure is a RANGE, not one
-    # anchor. An earlier version of this block cited apfp.claude's 16.6min as
-    # though it were typical. THREE repos have measured the warm whole-job path
-    # (a fourth number, the 21m25s cold install below, comes from
-    # claude.directives and measures a different thing — do not count it here):
-    #
-    #     WARM, whole job, 4-project suites
-    #       claude.prop         8m00s    208 tests   cache hit, zero downloads
-    #       apfp.claude        16.2-17.0min ~204 specs   three qa-live runs
-    #       claude.trading     30m35s    128 tests   run 97234645851
-    #
-    # That is a 3.8x spread whole-job to whole-job, on nominally similar suites,
-    # and test COUNT does not predict it — the slowest repo runs the fewest
-    # tests. (#296 quotes 3.7x; that compares claude.trading's 29m34s TEST PHASE
-    # against claude.prop's WHOLE JOB. Like for like it is 3.8x.)
-    #
-    #     cold-cache browser install   21m25s   (claude.directives
-    #                                            check-job-bounds.py, rule 3)
-    #
-    # NOTE the composite installs with `npm install`, not `npm ci` — an earlier
-    # version of this block said ci. They differ in resolution and speed, so
-    # treat these as measuring THIS path, not a stricter one.
-    #     -------------------------------------
-    # SIZE FROM THE SLOW END, which is the whole point of carrying a range:
-    #     fast end   21m25s + 8m00s   = ~29min  → 60 leaves ~52% headroom
-    #     slow end   21m25s + 30m35s  = ~52min  → 60 leaves ~13% headroom
-    #
-    # claude.trading's cold path is UNMEASURED — they were explicit about not
-    # presenting that ~52 as an observation, and it is arithmetic here too. 60
-    # still holds, but on the slow end it holds by ~8 minutes, not by the ~58%
-    # an average would suggest. A repo at that end should treat adding a project
-    # as a bound change, not a config change.
-    #
-    # ⚠️ 120, NOT 60 — and the raise is not cosmetic. When app.spec.js took S3's
-    # per-test budget from 240s to 900s this arithmetic STOPPED FITTING. Projects
-    # run SERIALLY (playwright.config.js sets no `workers`; a 2-core runner gives
-    # one), so a per-test ceiling is paid once per project — and `retries: 1`
-    # means a FAILING scenario pays it twice:
-    #
-    #     cold install                       21m25s   measured
-    #   + test phase, slow end, post-raise    ~38min   claude.trading measured
-    #                                                  10.7 + 9.3 + 9.1 for three
-    #                                                  profiles; iphone is
-    #                                                  unmeasured, inferred ~9.1
-    #                                                  from its peer phone profile
-    #     -------------------------------------
-    #     healthy cold, slow end              ~59.6min  → against 60: no headroom
-    #
-    # A FAILING S3 does not merely ADD a retry — it REPLACES a healthy run. That
-    # ~38min test phase already contains a SUCCESSFUL S3 (~7.8min on the profiles
-    # claude.trading measured), so when S3 times out that share is first replaced
-    # by the full 900s ceiling and THEN retried at the ceiling:
-    #
-    #     replace healthy S3 with the ceiling   +7.2min
-    #   + retry at the ceiling                  +15min
-    #     -------------------------------------
-    #     ONE profile failing S3                ~82min
-    #     TWO profiles failing S3               ~104min
-    #
-    # 120 covers both with ~16min spare. THREE or more profiles failing S3 is NOT
-    # covered, deliberately: that is not a bound problem, it is S3's budget being
-    # wrong for that app — re-size the budget, do not grow the job.
-    #
-    # WHAT THE ~16min OF SPARE IS FOR, checked rather than assumed. Two rounds
-    # raised per-test ceilings: the scenarios that load and authenticate had each
-    # been sized for two of their five terms (S2 60s -> 180s -> 240s, S4 and CTRL 30s ->
-    # 240s, S1 60s -> 90s, ENTRY 60s -> 90s per page, capped at 5min total), and
-    # then the shared preamble's settles became real observation windows, which
-    # cost every budget containing them (+40s: NAV 300s -> 360s, DISMISS 900s ->
-    # 1200s). A HEALTHY run is unchanged throughout — a ceiling costs nothing
-    # until a test hits it.
-    #
-    # THIRD ROUND, same shape (directives#310): the identifier-first auth step
-    # added a bounded SECOND attempt cycle to that shared preamble — +55s, but
-    # only on a split-step gate with TEST_AUTH_EMAIL set, so a healthy run on
-    # every other app is unchanged again. It cost every budget containing the
-    # preamble: S2/S4/CTRL 240s -> 300s, NAV 360s -> 420s. DISMISS absorbed it
-    # WITHOUT growing, by spending one fewer navigation reset (NAV_RESET_CAP
-    # 3 -> 2) — a navigating trigger is not an overlay trigger, so those resets
-    # were already the cheap side of that trade.
-    #
-    # A FAILING run is where the spare goes, and the scenarios split in two:
-    #
-    #   SHORT ceilings   S1 90s, S2 300s, S4 300s, CTRL 300s, ENTRY <=300s
-    #                    a failure costs <=10min (replace + retry). ONE of these
-    #                    fits alongside two profiles failing S3 — and that claim
-    #                    is UNCHANGED by the raise above: ENTRY's 300s cap
-    #                    already set this class's maximum, so S2/S4/CTRL joined
-    #                    the ceiling rather than raising it. 104min + 10min =
-    #                    ~114min against 120. What DID change is how often the
-    #                    worst case is realized: most projects declare 0-2 entry
-    #                    points, so the TYPICAL class maximum was 240s and is
-    #                    now 300s.
-    #   LONG ceilings    NAV 420s, S3 900s, DISMISS 1200s
-    #                    a failure costs 14-40min. NOT covered alongside a
-    #                    failing S3 — deliberately, on the same reasoning as
-    #                    three failing S3 profiles: two long scenarios failing at
-    #                    once means the app or those budgets are wrong, not this
-    #                    bound. Re-size there, do not grow the job.
-    #
-    # ⚠️ CORRECTING THE PREVIOUS VERSION OF THIS PARAGRAPH, which said the spare
-    # "absorbs ONE such failure alongside a failing S3" without distinguishing
-    # short from long ceilings — and so implied a failing DISMISS was covered. It
-    # was not covered then either, at 900s. The omission was in the sentence
-    # written to prove the check had been done.
-    #
-    # Raising a per-test budget without re-checking its enclosing job is exactly
-    # the defect this comment block was written for; it applies to the block's
-    # own author, twice now.
-    #
-    # The failure mode all of this exists to prevent, arriving from the other
-    # side: GitHub CANCELS the job at the bound, so Playwright never reports the
-    # definitive failure and the run reads as inconclusive rather than red.
-    # **Raising a per-test budget without raising its enclosing job converts a
-    # test failure into a job cancellation.**
-    #
-    # Capping S3's sweep instead was considered and rejected: it is uncapped BY
-    # DESIGN (test.md → "Coverage = controls clicked, not screens visited"), so a
-    # cap would cut mandated coverage to fit a bound — the wrong direction, and
-    # the same move as loosening a test to get green.
-    #
-    # COST OF THE FLOOR, stated because it is real: this is a fleet-wide MINIMUM
-    # sized for the slow end, so a fast repo (claude.prop, 8min warm) must also
-    # allow 120 and will burn that long on a genuine wedge. A repo may set HIGHER,
-    # never lower. The trade is deliberate — a bound too tight kills healthy runs
-    # and yields an inconclusive signal, which this file treats as the worse
-    # failure.
-    #
-    # The 57-minute figure in claude.directives' check-job-bounds.py header is NOT a sizing input,
-    # however tempting the arithmetic. Read it in context: that run "sat 57
-    # minutes on a browser install", cited under "an unbounded job that WEDGES".
-    # It is the pathology bounds exist to kill. Size to survive it and you have
-    # built a bound that cannot trip on its own purpose.
-    #
-    # 40 was wrong in the other direction, and the failure mode is why this
-    # comment is long: a cancelled run is NOT a red one. It reads as
-    # inconclusive, so nobody chases it — the same shape as a viewport never
-    # instantiated and a live gate nobody watched. Raise this BEFORE adding
-    # projects, never after.
+    # 120 is the fleet FLOOR for a ui-suite caller — UI_SUITE_FLOOR in check-job-bounds.py,
+    # which enforces it. Set HIGHER if your suite needs it, never lower, and raise it BEFORE
+    # adding projects. Why 120 (measurements, arithmetic, what it does NOT cover): the
+    # CALLER BOUND section of .github/actions/ui-suite/action.yml's header.
     timeout-minutes: 120
     # ⚠️ LOCAL ADDITION — replaces a local `grep-invert` input on the ui-suite
     # composite, which is now a verbatim upstream drop-in (that input made it fail
@@ -401,15 +353,67 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      # CI-build opt-in only: build exactly as pages-deploy.yml does and serve
+      # its output, so the suite tests what is deployed rather than the
+      # unbuilt tree. With BUILD_CMD empty these two steps are skipped.
+      - name: Setup Node (build)
+        if: env.BUILD_CMD != ''
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          # setup-node v5+ turns npm caching ON by itself when the root
+          # package.json names npm in `packageManager` (or devEngines), and then
+          # needs a lockfile. This step never cached under v4; keep it that way.
+          package-manager-cache: false
+
+      - name: Build
+        if: env.BUILD_CMD != ''
+        run: bash -eo pipefail -c "$BUILD_CMD"
+
+      # Refuse what pages-deploy.yml refuses, so a green PR cannot merge into a
+      # red deploy: a site directory resolving outside the repository, or a
+      # symlink in the site (the deploy publishes link TARGETS). A symlink fails
+      # where that deploy is installed (.github/workflows/pages-deploy.yml) or a
+      # build implies it (the opt-in is Actions-source); otherwise the repo is
+      # branch-source, where the managed build publishes links differently, so
+      # it only warns. Also exports the normalised directory ('' and '/'
+      # mean the repo root) to serve, as a step output.
+      - name: Check the site directory
+        id: site
+        run: |
+          src="${SITE_DIR%/}"; [ -n "$src" ] || src="."
+          if [ ! -f "$src/index.html" ]; then
+            echo "::error::$src/index.html is missing: nothing for the suite to load."
+            exit 1
+          fi
+          ws=$(realpath -e .)
+          real=$(realpath -e -- "$src")
+          case "$real/" in
+            "$ws"/*) ;;
+            *) echo "::error::SITE_DIR=$SITE_DIR resolves to $real, outside the repository; pages-deploy.yml refuses it."; exit 1 ;;
+          esac
+          # Scanned from inside, so the excluded names apply only BELOW the root
+          # (a site directory that is itself called node_modules is still scanned).
+          links=$(cd "$real" && find . \( -name .git -o -name .github -o -name node_modules \) -prune -o -type l -printf '%P -> %l\n')
+          if [ -n "$links" ] && { [ -n "$BUILD_CMD" ] || [ -f .github/workflows/pages-deploy.yml ]; }; then
+            echo "::error::symlinks in the site, which pages-deploy.yml refuses; replace them with real files:"
+            printf '%s\n' "$links"
+            exit 1
+          elif [ -n "$links" ]; then
+            echo "::warning::symlinks in the site; pages-deploy.yml (Actions-source) refuses them: $(printf '%s; ' "$links")"
+          fi
+          echo "root=$src" >> "$GITHUB_OUTPUT"
 
       # advisory-run ships 'false': blocking is the default posture for the
       # static/no-backend tier, where the suite runs fully against the bundled
       # local server. A template that shipped 'true' handed every new project a
       # UI suite whose failures show green. Set it 'true' ONLY in a project with
       # a known open UI failure mid-fix, and flip it back as soon as that lands.
-      # Auth/backend-gated scenarios self-skip on an empty TEST_AUTH_CREDENTIAL,
-      # and qa-live.yml stays the live gate.
+      # Auth/backend-gated scenarios self-skip when no credential is available
+      # (TEST_AUTH_CREDENTIAL empty and the login form ships none), and
+      # qa-live.yml stays the live gate.
       - uses: ./.github/actions/ui-suite
         with:
           tests-dir: ${{ env.UI_TESTS_DIR }}
@@ -425,6 +429,7 @@ jobs:
           artifact-name: playwright-results-local
           app-pages: ${{ vars.APP_PAGES }}
           start-local-server: 'true'
+          server-root: ${{ steps.site.outputs.root }}
           advisory-run: 'false'
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.

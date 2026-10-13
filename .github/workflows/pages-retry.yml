@@ -26,6 +26,8 @@ on:
     # deployment' is GitHub-managed, so the name still RESOLVES after the
     # switch and W1, workflow-ref-guard and every other static check stay green.
     #   (a) DELETE this file  -> DROP its REQUIRED entry in the same edit.
+    #       The retry then lives in your deploy (pages-deploy.yml's deploy job
+    #       already has one; a deploy of your own must build its own, W3).
     #   (b) REPOINT it at your own deploy, under W3's idempotent exception
     #       -> UPDATE the REQUIRED entry to that deploy's name; do NOT drop it.
     #       Dropping it removes the static guarantee for the customized name,

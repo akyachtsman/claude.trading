@@ -80,6 +80,19 @@ except ModuleNotFoundError:
     )
     raise SystemExit(1)
 
+# The shared YAML 1.2 reader, this file's sibling. Inserted explicitly because
+# watcher-liveness.yml loads this file by path, which puts no directory on
+# sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import gh_yaml
+except ModuleNotFoundError:
+    sys.stderr.write(
+        "❌ workflow-ref-guard: gh_yaml.py is missing beside this script.\n"
+        "   Install templates/scripts/gh_yaml.py from claude.directives next to it.\n"
+    )
+    raise SystemExit(1)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 
@@ -111,13 +124,15 @@ ALLOWED_EXTERNAL = {
 # Per-project intent — a template cannot know these names, only the RULE. Populate with
 # the deploy workflow's own name for each file that must keep watching it.
 # Loaded from `.github/workflow-ref-required.json`, NOT hard-coded here — the script
-# is byte-identical across every repo that installs it (CI diffs the shipped copy
-# against the live one), so a repo could never populate this while it lived in the
+# is the same file in every repo that installs it (claude.directives runs the
+# shipped copy itself), so a repo could never populate this while it lived in the
 # file. That left rule 2 permanently inert in the only place it runs, which is a
 # rule that exists on paper and nowhere else.
 #
 # Format: { "qa-live.yml": ["My Deploy Workflow"], ... }
-# Absent file = no required watchers, which is the correct default for a fresh repo.
+# Absent file = no required watchers. A fresh repo is not exempt: a branch-source
+# project carries `"pages-retry.yml": ["pages-build-deployment"]` from bootstrap
+# on (docs/standards/automations.md, Watcher Rules W3).
 def _load_required():
     cfg = REPO_ROOT / ".github" / "workflow-ref-required.json"
     if not cfg.exists():
@@ -150,6 +165,11 @@ def mapping_get(node, key):
     return found
 
 
+# YAML 1.1's true spellings, as PyYAML's resolver matches them (exact case
+# forms only: `yEs` is a string there too).
+YAML_1_1_TRUE = {"yes", "Yes", "YES", "true", "True", "TRUE", "on", "On", "ON"}
+
+
 def on_node(root):
     """The value of the root `on:` key.
 
@@ -157,6 +177,11 @@ def on_node(root):
     boolean true, so a document that has been round-tripped through such a tool can
     come back with the key spelled `true` or `yes`. GitHub still reads it as the
     trigger block, so this must too.
+
+    The file is composed by YAML 1.2 (gh_yaml), where only `true` is a boolean, so
+    the test is on the key as WRITTEN: a plain (unquoted) scalar spelled as one of
+    YAML 1.1's true values -- the set PyYAML's resolver used to tag, so the keys
+    accepted are the ones accepted before the move to gh_yaml.
     """
     if not isinstance(root, yaml.MappingNode):
         return None
@@ -165,14 +190,13 @@ def on_node(root):
         if not isinstance(key_node, yaml.ScalarNode):
             continue
         if key_node.value == "on" or (
-            key_node.tag == "tag:yaml.org,2002:bool"
-            # `ON:` and `On:` are bool-tagged but keep their original casing, so a
-            # lowercase-only comparison misses them and the guard reports zero
-            # references on a file that has a live trigger. `on` belongs in this list
-            # for the same reason `yes` does. The tag check is what keeps a QUOTED
-            # `"ON":` out — that is str-tagged and genuinely is not the trigger key,
-            # so it must keep being ignored.
-            and key_node.value.lower() in ("true", "yes", "y", "on")
+            # `ON:` and `On:` keep their original casing, so a lowercase-only
+            # comparison misses them and the guard reports zero references on a
+            # file that has a live trigger. The plain-style test is what keeps a
+            # QUOTED `"ON":` out — that genuinely is not the trigger key, so it
+            # must keep being ignored.
+            key_node.style is None
+            and key_node.value in YAML_1_1_TRUE
         ):
             found = value_node
     return found
@@ -254,7 +278,7 @@ def compose(path):
     as the sequence they denote.
     """
     with path.open(encoding="utf-8") as handle:
-        return yaml.compose(handle, Loader=yaml.SafeLoader)
+        return gh_yaml.compose(handle)
 
 
 files = sorted(

@@ -1,0 +1,9 @@
+{
+  "name": "scripts",
+  "private": true,
+  "description": "Manifest for .github/scripts/ (copy it there with the scripts). \"type\": \"commonjs\" is what lets the CommonJS scripts run under a root package.json declaring \"type\": \"module\". The dependency is for the scheduled-task notifier: run `npm install` here only with that kit.",
+  "type": "commonjs",
+  "dependencies": {
+    "nodemailer": "^6.9.0"
+  }
+}

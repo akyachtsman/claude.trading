@@ -23,8 +23,9 @@ THREE RULES, because presence alone proves nothing:
          REPLACES its healthy run with the ceiling and THEN retries at the
          ceiling, so one failing profile costs ~+22min, two cost ~+44min. A
          bound reached is a job CANCELLED, i.e. a definite test failure
-         downgraded to an inconclusive run — see the callers' comment for the
-         full arithmetic and for what 120 deliberately does NOT cover.
+         downgraded to an inconclusive run — see the CALLER BOUND section of
+         the ui-suite composite's header (action.yml) for the full arithmetic
+         and for what 120 deliberately does NOT cover.
          a structured field with one correct answer.
        - a job running `playwright install` DIRECTLY pays the install: >= 30.
          ADVISORY ONLY — it prints, it never fails the build.
@@ -47,8 +48,8 @@ THREE RULES, because presence alone proves nothing:
      broken template job DECLARED a bound; the value was the fault.
 
 ────────────────────────────────────────────────────────────────────────────
-THIS FILE IS EXPORTED (templates/scripts/check-job-bounds.py, byte-paired with
-it) and runs in downstream repos that this repo has never seen. That inverts the
+THIS FILE IS EXPORTED (templates/scripts/check-job-bounds.py, which this repo's
+qa.yml runs directly) and runs in downstream repos that this repo has never seen. That inverts the
 usual risk, and the inversion is the single most important thing to understand
 before editing:
 
@@ -93,6 +94,19 @@ except ModuleNotFoundError:
     sys.stderr.write(
         "❌ check-job-bounds: PyYAML is not installed. It ships with GitHub's "
         "runner images; on a bare host: pip install PyYAML.\n"
+    )
+    raise SystemExit(1)
+
+# The shared YAML 1.2 reader, a sibling of this file (templates/scripts/ here,
+# .github/scripts/ downstream). Inserted explicitly so an importer that loads
+# this file by path still finds it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import gh_yaml
+except ModuleNotFoundError:
+    sys.stderr.write(
+        "❌ check-job-bounds: gh_yaml.py is missing beside this script. Install "
+        "templates/scripts/gh_yaml.py from claude.directives next to it.\n"
     )
     raise SystemExit(1)
 
@@ -357,30 +371,12 @@ def _runs_playwright_install(script):
     )
 
 
-class GitHubIntLoader(yaml.SafeLoader):
-    """SafeLoader that resolves integers the way GitHub does.
-
-    PyYAML applies YAML 1.1 tag-resolution rules; GitHub applies YAML 1.2. The
-    disagreement runs in TWO directions, and the first fix here caught only one:
-
-        070   1.1 -> octal 56          1.2 -> decimal 70    tagged int, wrong VALUE
-        080   1.1 -> not an int at all 1.2 -> decimal 80    tagged STRING
-
-    Replacing the int constructor fixed row one and could never fix row two: a
-    constructor cannot run for a scalar the RESOLVER never tagged as an integer,
-    so `timeout-minutes: 080` reached the check as the string '080' and a valid
-    GitHub bound was rejected as "not an integer minute count" — the same red
-    build on a healthy repo, one value-class over. (The `./` -> `..` path bug was
-    this exact shape: a fix aimed at the instance instead of the class.)
-
-    So the pattern below is registered BOTH as an implicit resolver and as the
-    constructor's parser. One definition of "integer", used by both halves.
-    """
-
-
-# YAML 1.2's core-schema integer forms — decimal (leading zeros and all), 0o
-# octal, 0x hex. Anchored because PyYAML calls .match() on implicit resolvers.
-_GITHUB_INT = re.compile(r"[-+]?(?:0o[0-7]+|0x[0-9a-fA-F]+|[0-9]+)$")
+# Workflows are read by gh_yaml's YAML 1.2 core schema, as GitHub reads them:
+# `070` is 70, not 1.1's octal 56, and `080` is 80, not the string '080' that
+# once rejected a valid bound (the history is in gh_yaml.py). lenient_ints keeps
+# PyYAML's reading of the 1.1-only integer spellings (`1_000`, `0b101`): this
+# guard has no evidence GitHub rejects them, and inventing a rejection would
+# red-build a repo over a spelling nobody has observed (owner, 2026-10-11).
 
 
 def _ungroup(text):
@@ -415,91 +411,45 @@ def _expr_literal(text):
     """
     text = _ungroup(text.strip())
     # An expression is NOT YAML. YAML 1.2 spells its radix prefixes in lower case
-    # and _github_int is strict about that on purpose; GitHub's expression
+    # and gh_yaml.github_int is strict about that on purpose; GitHub's expression
     # language is JS-shaped and takes `0X0` as readily as `0x0`. Normalising here
-    # rather than loosening _github_int keeps each grammar honest — and a rule
+    # rather than loosening gh_yaml.github_int keeps each grammar honest — and a rule
     # that turned on letter case would be worse than either answer.
     text = re.sub(r"^([-+]?0)([XOB])", lambda m: m.group(1) + m.group(2).lower(), text)
-    # Binary, which YAML 1.2 has no notion of and _github_int therefore rejects.
+    # Binary, which YAML 1.2 has no notion of and gh_yaml.github_int therefore rejects.
     # Handled here so the answer does not depend on WHICH radix an author picked:
     # hex disabled, binary counted would be an arbitrary rule, and arbitrary is
     # the property that gets a guard deleted.
     binary = re.fullmatch(r"([-+]?)0b([01]+)", text)
     if binary:
         return float(int(binary.group(2), 2) * (-1 if binary.group(1) == "-" else 1))
-    value = _github_int(text)
+    # YAML 1.2 has no signed radix forms; an expression does (`-0x0`).
+    sign, body = (text[0], text[1:]) if text[:1] in ("-", "+") else ("", text)
+    value = gh_yaml.github_int(body) if body[:1] not in ("-", "+") else None
     if value is not None:
-        return float(value)
+        return float(-value if sign == "-" else value)
     try:
         return float(text)          # 0.0, 1e3 — forms int() will not take
     except ValueError:
         return None
 
 
-def _github_int(text):
-    """Parse a scalar as GitHub's YAML 1.2 parser would, or None if it is not an int."""
-    text = text.strip()
-    if not _GITHUB_INT.fullmatch(text):
-        return None
-    sign = -1 if text.startswith("-") else 1
-    body = text.lstrip("+-")
-    base = 8 if body.startswith("0o") else 16 if body.startswith("0x") else 10
-    return sign * int(body[2:] if base != 10 else body, base)
-
-
-def _int_yaml_1_2(loader, node):
-    value = _github_int(loader.construct_scalar(node))
-    if value is not None:
-        return value
-    # A form only YAML 1.1 calls an integer: underscore separators, `0b`,
-    # sexagesimal `1:30`. GitHub may well reject these, but this guard has no
-    # evidence either way, and inventing a rejection would red-build a repo over
-    # a spelling nobody has observed. Keep PyYAML's reading; the two forms above
-    # are the ones with measured disagreement.
-    return yaml.SafeLoader.construct_yaml_int(loader, node)
-
-
-GitHubIntLoader.add_constructor("tag:yaml.org,2002:int", _int_yaml_1_2)
-# The resolver half. Without it the constructor above is unreachable for every
-# form YAML 1.1 does not already call an integer.
-GitHubIntLoader.add_implicit_resolver(
-    "tag:yaml.org,2002:int", _GITHUB_INT, list("-+0123456789")
-)
-
-
 def load_jobs(path):
-    """Return {job_id: job_mapping}, preserving YAML 1.1-collapsed key spellings.
+    """Return {job_id: job_mapping}, read as GitHub reads it.
 
-    PyYAML speaks YAML 1.1, where the bare keys `on`, `yes`, `no`, `y` and `n`
-    resolve to booleans. Two jobs named `yes` and `on` therefore collapse to a
-    single `True` key and the later silently OVERWRITES the earlier — so an
-    unbounded job disappears from this scan while GitHub still runs it. That is a
-    green guard over a real defect, the one failure mode this file exists to
-    prevent. workflow-ref-guard.py hit the same edge and solved it the same way:
-    compose to NODES, where the original spelling survives.
+    Under PyYAML's YAML 1.1 the bare job keys `on`, `yes`, `no` resolved to
+    booleans, so two jobs named `yes` and `on` collapsed into one `True` key and
+    an unbounded job vanished from this scan while GitHub still ran it. The
+    core schema keeps them strings. Duplicate keys resolve to the LAST
+    occurrence, as on GitHub, so a bounded decoy cannot shadow the real job.
 
     Raises yaml.YAMLError so the caller can fail closed on an unreadable file.
     """
-    root = yaml.compose(path.read_text(encoding="utf-8"))
-    if not isinstance(root, yaml.MappingNode):
+    doc = gh_yaml.load(path.read_text(encoding="utf-8"), lenient_ints=True)
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
         return None
-    # LAST wins, not first. Duplicate top-level `jobs:` keys resolve to the last
-    # occurrence in both GitHub and PyYAML — workflow-ref-guard.py:138-140 already
-    # records this. Taking the first left a bounded decoy mapping shadowing the
-    # real unbounded one, green here and running there.
-    found = None
-    for key_node, value_node in root.value:
-        if isinstance(key_node, yaml.ScalarNode) and key_node.value == "jobs":
-            found = value_node
-    if found is None or not isinstance(found, yaml.MappingNode):
-        return None
-    jobs = {}
-    for jk, jv in found.value:
-        if isinstance(jk, yaml.ScalarNode):
-            jobs[jk.value] = yaml.serialize(jv)
-    # Re-parse each job body individually: the collision only affects the jobs
-    # mapping's own keys, and per-job bodies are ordinary data.
-    return {k: yaml.load(v, Loader=GitHubIntLoader) for k, v in jobs.items()}
+    return {str(k): v for k, v in jobs.items()}
 
 
 def _statically_disabled(step):
@@ -582,7 +532,7 @@ def _uses_ui_suite(node, seen):
                 path = REPO_ROOT / ref[2:] / name
                 if path.is_file():
                     try:
-                        sub = yaml.safe_load(path.read_text(encoding="utf-8"))
+                        sub = gh_yaml.load(path.read_text(encoding="utf-8"), lenient_ints=True)
                     except yaml.YAMLError:
                         break
                     runs = (sub or {}).get("runs")

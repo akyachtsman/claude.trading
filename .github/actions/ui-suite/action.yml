@@ -12,9 +12,10 @@
 #   its healthy S3 with the ceiling and then retries at it — ~+22min for one
 #   profile, ~+44min for two — so the slow end runs ~82min with one failing
 #   profile and ~104min with two. That is what took this from 60 to 120; at 60 a
-#   healthy slow-end cold run had NO headroom at all. The callers carry the full
-#   table, the arithmetic, and what 120 deliberately does not cover. These
-#   measure THIS composite's `npm install` path below, not a stricter `npm ci`.
+#   healthy slow-end cold run had NO headroom at all. The full table, the
+#   arithmetic, and what 120 deliberately does not cover are in CALLER BOUND
+#   at the end of this header. These measure THIS composite's `npm install`
+#   path below, not a stricter `npm ci`.
 #   That 120 is ENFORCED, not merely documented: check-job-bounds.py rejects any
 #   ui-suite caller below it, and templates/workflows/qa.yml invokes the guard in
 #   its static-checks job. If you copied this composite, copy
@@ -34,15 +35,172 @@
 #   setup/install/server/upload always stay blocking, so a broken install can
 #   never pass green.
 # - The viewport gate below runs on THIS composite's Node, which `setup-node` pins
-#   to 20. That Node cannot import a TypeScript module ANYWHERE IN THE CONFIG'S
-#   GRAPH — a `playwright.config.js` that imports a `.ts` helper fails exactly as
-#   a `playwright.config.ts` does, so "keep a .js config" is not the escape hatch
-#   this note used to claim (Codex, #333 round 11). A project in that position must
-#   either raise the pin to 22 (type stripping is on by default from 22.18) or keep
-#   the config's ENTIRE import graph in JavaScript. The gate names the condition
-#   when it hits ERR_UNKNOWN_FILE_EXTENSION rather than passing quiet — and it is a
-#   refusal on a config Playwright's own runner would have loaded, so it counts
-#   against the muting risk, not for it.
+#   to 22 — the same major the CI build (qa.yml, pages-deploy.yml) uses, so the
+#   gate imports the config on the Node that built the app. It was 20 until audit
+#   2026-10-11 (I-20): Node 20 reached end-of-life on 2026-04-30. `'22'` resolves
+#   to the newest 22.x, where type stripping is on by default (from 22.18), so a
+#   `.ts` module ANYWHERE IN THE CONFIG'S GRAPH loads. A local run on an older
+#   Node still cannot import one — a `playwright.config.js` that imports a `.ts`
+#   helper fails exactly as a `playwright.config.ts` does (Codex, #333 round 11).
+#   The gate names the condition when it hits ERR_UNKNOWN_FILE_EXTENSION rather
+#   than passing quiet — and it is a refusal on a config Playwright's own runner
+#   would have loaded, so it counts against the muting risk, not for it.
+#
+# ═══ CALLER BOUND — the sizing record for the callers' `timeout-minutes: 120` ═══
+# The ONLY copy. Until 2026-10-07 this block was repeated above `timeout-minutes`
+# in all three callers (qa.yml, qa-live.yml, qa-response.yml), byte-identical
+# by convention only, and qa-live.yml had already drifted (the closing
+# cache-COMPOUNDS paragraph, merged below). The callers now carry a pointer here.
+# The number itself lives in check-job-bounds.py as UI_SUITE_FLOOR, which
+# enforces it; what follows is the reasoning behind it.
+#
+# 120, NOT 90 or 60 (and never 40). The calling job runs this composite: dependency install + playwright
+# install + EVERY project in playwright.config.js + retries + artifact
+# upload, in one sum the composite cannot subdivide.
+#
+# Sized from MEASURED numbers — and the warm figure is a RANGE, not one
+# anchor. An earlier version of this block cited apfp.claude's 16.6min as
+# though it were typical. THREE repos have measured the warm whole-job path
+# (a fourth number, the 21m25s cold install below, comes from
+# claude.directives and measures a different thing — do not count it here):
+#
+#     WARM, whole job, 4-project suites
+#       claude.prop         8m00s    208 tests   cache hit, zero downloads
+#       apfp.claude        16.2-17.0min ~204 specs   three qa-live runs
+#       claude.trading     30m35s    128 tests   run 97234645851
+#
+# That is a 3.8x spread whole-job to whole-job, on nominally similar suites,
+# and test COUNT does not predict it — the slowest repo runs the fewest
+# tests. (#296 quotes 3.7x; that compares claude.trading's 29m34s TEST PHASE
+# against claude.prop's WHOLE JOB. Like for like it is 3.8x.)
+#
+#     cold-cache browser install   21m25s   (claude.directives
+#                                            check-job-bounds.py, rule 3)
+#
+# NOTE the composite installs with `npm install`, not `npm ci` — an earlier
+# version of this block said ci. They differ in resolution and speed, so
+# treat these as measuring THIS path, not a stricter one.
+#     -------------------------------------
+# SIZE FROM THE SLOW END, which is the whole point of carrying a range:
+#     fast end   21m25s + 8m00s   = ~29min  → 60 leaves ~52% headroom
+#     slow end   21m25s + 30m35s  = ~52min  → 60 leaves ~13% headroom
+#
+# claude.trading's cold path is UNMEASURED — they were explicit about not
+# presenting that ~52 as an observation, and it is arithmetic here too. 60
+# still holds, but on the slow end it holds by ~8 minutes, not by the ~58%
+# an average would suggest. A repo at that end should treat adding a project
+# as a bound change, not a config change.
+#
+# ⚠️ 120, NOT 60 — and the raise is not cosmetic. When app.spec.js took S3's
+# per-test budget from 240s to 900s this arithmetic STOPPED FITTING. Projects
+# run SERIALLY (playwright.config.js sets no `workers`; a 2-core runner gives
+# one), so a per-test ceiling is paid once per project — and `retries: 1`
+# means a FAILING scenario pays it twice:
+#
+#     cold install                       21m25s   measured
+#   + test phase, slow end, post-raise    ~38min   claude.trading measured
+#                                                  10.7 + 9.3 + 9.1 for three
+#                                                  profiles; iphone is
+#                                                  unmeasured, inferred ~9.1
+#                                                  from its peer phone profile
+#     -------------------------------------
+#     healthy cold, slow end              ~59.6min  → against 60: no headroom
+#
+# A FAILING S3 does not merely ADD a retry — it REPLACES a healthy run. That
+# ~38min test phase already contains a SUCCESSFUL S3 (~7.8min on the profiles
+# claude.trading measured), so when S3 times out that share is first replaced
+# by the full 900s ceiling and THEN retried at the ceiling:
+#
+#     replace healthy S3 with the ceiling   +7.2min
+#   + retry at the ceiling                  +15min
+#     -------------------------------------
+#     ONE profile failing S3                ~82min
+#     TWO profiles failing S3               ~104min
+#
+# 120 covers both with ~16min spare. THREE or more profiles failing S3 is NOT
+# covered, deliberately: that is not a bound problem, it is S3's budget being
+# wrong for that app — re-size the budget, do not grow the job.
+#
+# WHAT THE ~16min OF SPARE IS FOR, checked rather than assumed. Two rounds
+# raised per-test ceilings: the scenarios that load and authenticate had each
+# been sized for two of their five terms (S2 60s -> 180s -> 240s, S4 and CTRL 30s ->
+# 240s, S1 60s -> 90s, ENTRY 60s -> 90s per page, capped at 5min total), and
+# then the shared preamble's settles became real observation windows, which
+# cost every budget containing them (+40s: NAV 300s -> 360s, DISMISS 900s ->
+# 1200s). A HEALTHY run is unchanged throughout — a ceiling costs nothing
+# until a test hits it.
+#
+# THIRD ROUND, same shape (directives#310): the identifier-first auth step
+# added a bounded SECOND attempt cycle to that shared preamble — +55s, but
+# only on a split-step gate with TEST_AUTH_EMAIL set, so a healthy run on
+# every other app is unchanged again. It cost every budget containing the
+# preamble: S2/S4/CTRL 240s -> 300s, NAV 360s -> 420s. DISMISS absorbed it
+# WITHOUT growing, by spending one fewer navigation reset (NAV_RESET_CAP
+# 3 -> 2) — a navigating trigger is not an overlay trigger, so those resets
+# were already the cheap side of that trade.
+#
+# A FAILING run is where the spare goes, and the scenarios split in two:
+#
+#   SHORT ceilings   S1 90s, S2 300s, S4 300s, CTRL 300s, ENTRY <=300s
+#                    a failure costs <=10min (replace + retry). ONE of these
+#                    fits alongside two profiles failing S3 — and that claim
+#                    is UNCHANGED by the raise above: ENTRY's 300s cap
+#                    already set this class's maximum, so S2/S4/CTRL joined
+#                    the ceiling rather than raising it. 104min + 10min =
+#                    ~114min against 120. What DID change is how often the
+#                    worst case is realized: most projects declare 0-2 entry
+#                    points, so the TYPICAL class maximum was 240s and is
+#                    now 300s.
+#   LONG ceilings    NAV 420s, S3 900s, DISMISS 1200s
+#                    a failure costs 14-40min. NOT covered alongside a
+#                    failing S3 — deliberately, on the same reasoning as
+#                    three failing S3 profiles: two long scenarios failing at
+#                    once means the app or those budgets are wrong, not this
+#                    bound. Re-size there, do not grow the job.
+#
+# ⚠️ CORRECTING THE PREVIOUS VERSION OF THIS PARAGRAPH, which said the spare
+# "absorbs ONE such failure alongside a failing S3" without distinguishing
+# short from long ceilings — and so implied a failing DISMISS was covered. It
+# was not covered then either, at 900s. The omission was in the sentence
+# written to prove the check had been done.
+#
+# Raising a per-test budget without re-checking its enclosing job is exactly
+# the defect this comment block was written for; it applies to the block's
+# own author, twice now.
+#
+# The failure mode all of this exists to prevent, arriving from the other
+# side: GitHub CANCELS the job at the bound, so Playwright never reports the
+# definitive failure and the run reads as inconclusive rather than red.
+# **Raising a per-test budget without raising its enclosing job converts a
+# test failure into a job cancellation.**
+#
+# Capping S3's sweep instead was considered and rejected: it is uncapped BY
+# DESIGN (test.md → "Coverage = controls clicked, not screens visited"), so a
+# cap would cut mandated coverage to fit a bound — the wrong direction, and
+# the same move as loosening a test to get green.
+#
+# COST OF THE FLOOR, stated because it is real: this is a fleet-wide MINIMUM
+# sized for the slow end, so a fast repo (claude.prop, 8min warm) must also
+# allow 120 and will burn that long on a genuine wedge. A repo may set HIGHER,
+# never lower. The trade is deliberate — a bound too tight kills healthy runs
+# and yields an inconclusive signal, which this file treats as the worse
+# failure.
+#
+# The 57-minute figure in claude.directives' check-job-bounds.py header is NOT a sizing input,
+# however tempting the arithmetic. Read it in context: that run "sat 57
+# minutes on a browser install", cited under "an unbounded job that WEDGES".
+# It is the pathology bounds exist to kill. Size to survive it and you have
+# built a bound that cannot trip on its own purpose.
+#
+# 40 was wrong in the other direction, and the failure mode is why this
+# comment is long: a cancelled run is NOT a red one. It reads as
+# inconclusive, so nobody chases it — the same shape as a viewport never
+# instantiated and a live gate nobody watched. Raise the callers' bound BEFORE
+# adding projects, never after.
+#
+# And a kill at the bound COMPOUNDS: `actions/cache` saves at job END, so a run
+# cancelled during the install also skips the save, leaving the next run
+# equally cold. Too tight does not cost one run, it costs a streak.
 name: 'UI test suite'
 description: >
   Install deps + Playwright, optionally start a bundled local server, run the
@@ -72,7 +230,7 @@ inputs:
     description: 'URL the suite targets (local server or live deploy)'
     required: true
   test-auth-credential:
-    description: 'Seeded test credential; empty makes auth tests self-skip'
+    description: 'Seeded test credential; when empty, auth tests use a credential the login form ships in a password field, or self-skip if it ships none'
     required: false
     default: ''
   test-auth-email:
@@ -126,9 +284,9 @@ runs:
   using: composite
   steps:
     - name: Setup Node
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
-        node-version: '20'
+        node-version: '22'
         cache: 'npm'
         # Requires a committed package-lock.json at this path — generate it
         # once (`npm install` in tests-dir) and COMMIT it.
@@ -227,7 +385,7 @@ runs:
     # without re-measuring.
     - name: Cache Playwright browsers
       id: pw-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/.cache/ms-playwright
         key: pw-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.tests-dir)) }}
@@ -279,8 +437,44 @@ runs:
         TESTS_DIR: ${{ inputs.tests-dir }}
         SERVER_ROOT: ${{ inputs.server-root }}
       run: |
-        "./$TESTS_DIR/node_modules/.bin/http-server" "$SERVER_ROOT" -p 8080 --silent &
-        sleep 2
+        # Wait for the server to ANSWER rather than for a fixed delay: a slow start
+        # or a bind failure otherwise surfaces as every scenario failing with
+        # connection refused, not as a server error (audit, 2026-10-06).
+        case "$TESTS_DIR" in
+          /*) bin="$TESTS_DIR/node_modules/.bin/http-server" ;;
+          *) bin="./$TESTS_DIR/node_modules/.bin/http-server" ;;
+        esac
+        # Something ALREADY answering on :8080 would pass the readiness poll below
+        # while this server dies on EADDRINUSE, and the suite would test whatever
+        # that is. Refuse a busy port up front. Every probe carries --max-time: a
+        # port that accepts but never answers would otherwise hang the step until
+        # the job timeout, not the 30s this loop advertises (Codex, #405).
+        if curl -s --max-time 2 -o /dev/null http://localhost:8080/; then
+          echo "::error::port 8080 is already in use, so this run cannot start its own server there."
+          exit 1
+        fi
+        # A server-root that starts with `-` (a SITE_DIR such as `-site`) would
+        # be read as an http-server option, not the directory to serve: a `./`
+        # prefix keeps it a path.
+        case "$SERVER_ROOT" in -*) SERVER_ROOT="./$SERVER_ROOT" ;; esac
+        "$bin" "$SERVER_ROOT" -p 8080 --silent &
+        pid=$!
+        # An ELAPSED deadline, not a count of polls: each probe may spend its own
+        # --max-time, so 30 polls could take far longer than 30s (Codex, #405).
+        start=$SECONDS
+        while [ $((SECONDS - start)) -lt 30 ]; do
+          if curl -sf --max-time 2 -o /dev/null http://localhost:8080/; then
+            echo "Local server answered on :8080 after $((SECONDS - start))s."
+            exit 0
+          fi
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "::error::http-server exited before it answered: is $bin installed (tests-dir), and can it bind :8080?"
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "::error::the local server did not answer on http://localhost:8080/ within 30s."
+        exit 1
 
     # IMMEDIATELY BEFORE THE RUN, and after the local server is up. This step
     # evaluates the config, and the run below evaluates it again; anything that
@@ -336,6 +530,10 @@ runs:
       # An `rm` does not import the config, so most of this block is inert here —
       # deliberately, and REPORT_PATH is not: it decides which file is cleared,
       # and it must be the one the other three read and write.
+      # The four blocks stay written out: GitHub's runner refuses YAML anchors in
+      # an action.yml ("Anchors are not currently supported"), workflows only
+      # (audit R8, declined 2026-10-12; TIME-SENSITIVE.md → GitHub), and
+      # check-yaml-anchors.py refuses one here before GitHub does.
       env:
         APP_URL: ${{ inputs.app-url }}
         TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
@@ -395,6 +593,8 @@ runs:
         # requires identical env, and two of these steps import the config. See
         # the run step for why this variable is pinned at all (#347 round 18).
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
+      # CommonJS: it loads only because .github/scripts/package.json declares
+      # "type": "commonjs" — without it a root "type": "module" manifest wins.
       run: node "$GITHUB_WORKSPACE/.github/scripts/check-ui-viewports.js" --tests-dir . --declared "$RUNNER_TEMP/ui-viewports-declared.json"
 
     - name: Run Playwright tests
@@ -413,19 +613,14 @@ runs:
         TEST_AUTH_READY_REQUEST: ${{ inputs.test-auth-ready-request }}
         TEST_AUTH_SUCCESS_SELECTOR: ${{ inputs.test-auth-success-selector }}
         APP_PAGES: ${{ inputs.app-pages }}
-        # REPORT_PATH is on ALL THREE steps, not just the one that uses it.
-        # check-ui-suite-env.py enforces exact env parity across the sequence,
-        # and that rule is not bureaucratic: two of these steps IMPORT the
-        # config, so a variable present at one evaluation and absent at another
-        # is a config that can differ between them (#333 round 10).
-        # FROM THE VALIDATED OUTPUT, never the action input — every consumer in
-        # this composite now reads a value the validator accepted (#347 r10).
+        # REPORT_PATH: see its comment on "Check three viewport classes are declared".
         REPORT_PATH: ${{ steps.report-path.outputs.relative }}
         # NEUTRALISE PLAYWRIGHT'S OWN REDIRECT. `PLAYWRIGHT_JSON_OUTPUT_FILE`
         # takes precedence over the json reporter's configured `outputFile`, so a
         # caller whose job or workflow already exports it sends the report
         # somewhere else and the configured file is never written at all.
-        # Measured on the shipped 1.62.1: with the variable set the config's
+        # Measured on the shipped 1.62.1, and again on 1.64.0 (2026-10-08): with
+        # the variable set the config's
         # `outputFile` produced NO file, and the post-run gate — reading the
         # validated path — exited 15 on a run that had passed (Codex, #347
         # round 18). Setting it to the same validated path is the fix rather
@@ -491,13 +686,7 @@ runs:
         TEST_AUTH_READY_REQUEST: ${{ inputs.test-auth-ready-request }}
         TEST_AUTH_SUCCESS_SELECTOR: ${{ inputs.test-auth-success-selector }}
         APP_PAGES: ${{ inputs.app-pages }}
-        # REPORT_PATH is on ALL THREE steps, not just the one that uses it.
-        # check-ui-suite-env.py enforces exact env parity across the sequence,
-        # and that rule is not bureaucratic: two of these steps IMPORT the
-        # config, so a variable present at one evaluation and absent at another
-        # is a config that can differ between them (#333 round 10).
-        # FROM THE VALIDATED OUTPUT, never the action input — every consumer in
-        # this composite now reads a value the validator accepted (#347 r10).
+        # REPORT_PATH: see its comment on "Check three viewport classes are declared".
         REPORT_PATH: ${{ steps.report-path.outputs.relative }}
         # Same value on every step of the sequence: check-ui-suite-env.py
         # requires identical env, and two of these steps import the config. See
@@ -518,7 +707,7 @@ runs:
       # anyway. Both halves are needed: run whatever else failed, but not on a
       # path that was refused.
       if: ${{ always() && steps.report-path.outcome == 'success' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.artifact-name }}
         # FROM THE VALIDATED OUTPUT, never the raw input. `report-path` lets a

@@ -33,12 +33,12 @@ EXPORTED (PROP6, claude.prop 2026-10-05): a project carrying the ui-suite
 composite carries the same coupling, and a project edits its copy -- a variable
 added to its run step and not its check steps is exactly the #333 divergence,
 one repo over. Ships as templates/scripts/check-ui-suite-env.py; claude.directives
-runs a byte-identical copy from .github/scripts/ against its templates.
+runs that file itself against its templates.
 
 Run (a project, from its root -- the defaults are a project's paths):
     python3 .github/scripts/check-ui-suite-env.py
 Run (claude.directives, against the shipped templates):
-    python3 .github/scripts/check-ui-suite-env.py templates/actions/ui-suite/action.yml \\
+    python3 templates/scripts/check-ui-suite-env.py templates/actions/ui-suite/action.yml \\
         --kit-dir templates/ui-tests
 
 Options:
@@ -46,43 +46,23 @@ Options:
     SPEC...             explicit spec/config files instead of discovering the kit
     --kit-dir DIR       the Playwright kit to discover (default .github/scripts/ui-tests)
     --exempt-file FILE  the project's exemptions (default .github/ui-suite-env-exempt.json,
-                        read only if present): {"NAME": "how it arrives without an input"}
+                        read only if present): {"NAME": "why it needs no input"}
 """
 
-# ── HISTORY MOVED FROM CLAUDE.md (2026-09-23) ────────────────────
-# CLAUDE.md now keeps a one-line purpose per gate command; the history and
-# evidence it carried about this script moved here, verbatim.
-#
-# From CLAUDE.md → Local gate, the comment on `python3 .github/scripts/check-ui-suite-env.py`:
-#   the ui-suite composite gives BOTH viewport checks — pre-run and post-run
-#   (#335) — the SAME env and cwd as the Playwright run, consecutively: the gate
-#   IMPORTS the config, so a thinner env reads a DIFFERENT config (#333 round
-#   8). Since #347 round 18 it also pins two variables by NAME (REPORT_PATH,
-#   PLAYWRIGHT_JSON_OUTPUT_FILE) — parity is relative, and three steps that all
-#   dropped a variable agree perfectly. Round 19: requiring them EQUAL was the
-#   same relative mistake one level up (three steps agreeing on `other.json`
-#   pass while the stale-report clear and the upload still read the validated
-#   output), so both are pinned to the LITERAL `${{
-#   steps.report-path.outputs.relative }}`. Round 20: the same mistake a third
-#   time, on `working-directory` — three steps moved together satisfied every
-#   relative rule while the validator and the stale-report clear still resolved
-#   from the input — so each guarded step's cwd is pinned to the literal `${{
-#   inputs.tests-dir }}` too. Round 21: the stale-report CLEAR step joined the
-#   sequence — it was outside it, so skipping it, making it advisory or changing
-#   its `rm` all left the guard green while an uncleared report satisfied the
-#   post-run gate. Round 36: the artifact UPLOAD was pinned by four attributes
-#   and no execution control, so `continue-on-error: true` on it passed every
-#   one of them while an upload failure vanished behind a green job — the
-#   round-11 defect, one step outside the sequence round 11 fixed. Pinned by
-#   PROPERTY there (absent or `false`), not by absence, since an explicit
-#   `false` blocks identically and refusing it would be another
-#   form-for-construct false refusal
+# Design history (#333-#347 rounds): claude.directives, docs/internal/gate-history.md → *check-ui-suite-env.py*.
 import json
 import os
 import re
 import sys
 
-import yaml
+# The shared YAML 1.2 reader, this file's sibling: the action is read as GitHub
+# reads it, so `include-hidden-files: yes` is the string GitHub sees, not
+# PyYAML's 1.1 boolean (audit 2026-10-11, I-24).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import gh_yaml
+except ModuleNotFoundError as e:
+    sys.exit(f"CANNOT CHECK: {e} -- it needs PyYAML and templates/scripts/gh_yaml.py beside this script")
 
 
 def _take_option(argv, flag, default):
@@ -144,11 +124,19 @@ if not SPEC_FILES:
     # fail-open shape this rule exists to close. Refuse instead.
     sys.exit(f"CANNOT CHECK: no JS/TS files found under {KIT_DIR} (run from the repo root)")
 # Variables a spec may read WITHOUT the composite wiring them, as {name: reason}.
-# Empty on purpose: every variable the shipped kit reads today is a per-project
-# value that only an input can carry. Add one only for something the RUNNER
-# itself sets (e.g. `CI`, `GITHUB_*`), and give the reason -- an entry is a claim
-# that the value arrives without this file, and nothing here can check it.
-ENV_EXEMPT = {}
+# One entry, and only one on purpose: every other variable the shipped kit reads
+# is a per-project value that only an input can carry. An entry is one of two
+# kinds, and its reason says which (claude.prop, 2026-10-06):
+# - a name something OUTSIDE the composite sets: the runner (`CI`, `GITHUB_*`)
+#   or a self-hosted runner image;
+# - a name deliberately NEVER set in CI, because its reader handles it unset (a
+#   local-sandbox hatch such as a browser-executable override).
+# Either way the entry is a claim nothing here can check.
+ENV_EXEMPT = {
+    "GITHUB_WORKSPACE": "set by the runner on every job; playwright.config.js roots the "
+                        "screenshot folder at it, where the composite's upload step looks "
+                        "(audit 2026-10-11, M-10)",
+}
 # A PROJECT extends it in its own file, never by editing this one: an edited copy
 # is drift /refresh-repo has to stop on, and the reason would be lost the next
 # time the template is taken. Each entry needs a REASON -- the same claim as
@@ -168,8 +156,9 @@ if EXEMPT_FILE is not None or os.path.exists(_EXEMPT_PATH):
         if not re.fullmatch(r"[A-Za-z_]\w*", _name):
             sys.exit(f"CANNOT CHECK: {_EXEMPT_PATH}: {_name!r} is not an environment variable name")
         if not isinstance(_reason, str) or not _reason.strip():
-            sys.exit(f"CANNOT CHECK: {_EXEMPT_PATH}: {_name} has no reason -- say how it"
-                     " arrives without an input, or wire it through one")
+            sys.exit(f"CANNOT CHECK: {_EXEMPT_PATH}: {_name} has no reason -- say why it"
+                     " needs no input (set outside the composite, or never set in CI"
+                     " because its reader handles unset), or wire it through one")
     ENV_EXEMPT = {**ENV_EXEMPT, **_project_exempt}
 # `process.<prop>` forms accepted besides `process.env.*`: a CLOSED list of
 # properties that cannot hand back the process object (so cannot alias `env`).
@@ -265,7 +254,7 @@ DECLARED = '--declared "$RUNNER_TEMP/ui-viewports-declared.json"'
 # refuse, so the variables whose PRESENCE is load-bearing are named here.
 #
 # PLAYWRIGHT_JSON_OUTPUT_FILE takes precedence over the json reporter's
-# configured `outputFile` (measured, 1.62.1: with it set the configured file is
+# configured `outputFile` (measured on 1.62.1 and 1.64.0: with it set the configured file is
 # not written at all). Unset, a caller job that exports it redirects the report
 # away from the validated path and the post-run gate exits 15 on a run that
 # passed (Codex, #347 round 18). Its value must be the SAME expression as
@@ -381,7 +370,7 @@ PARITY_STEPS = tuple(e[0] for e in SEQUENCE if e[5] is PARITY)
 # path list, and `include-hidden-files`, which round 16 added because a report
 # under a dot directory is silently omitted without it.
 UPLOAD_STEP = "Upload test results"
-UPLOAD_USES = "actions/upload-artifact@v4"
+UPLOAD_USES = "actions/upload-artifact@v7"
 UPLOAD_IF = IF_POST
 UPLOAD_PATH = (".agent-reports/screenshots/",
                "${{ steps.report-path.outputs.path }}")
@@ -528,7 +517,8 @@ def check_spec_env(doc, run_env, problems):
                 f'{name} is read by {where} but "{RUN_STEP}" does not set it'
                 + "\n    In CI it is then always unset, so whatever the spec does with it is"
                 + "\n    unreachable. Add an input and pass it into the run step's env, or"
-                + "\n    list it in ENV_EXEMPT with the reason it arrives another way (#320)."
+                + "\n    list it in ENV_EXEMPT with the reason it needs none: set outside the"
+                + "\n    composite, or never set in CI because its reader handles unset (#320)."
             )
             continue
         m = re.fullmatch(r"\$\{\{\s*inputs\.([\w-]+)\s*\}\}", str(value))
@@ -544,7 +534,7 @@ def check_spec_env(doc, run_env, problems):
 
 def main():
     with open(ACTION, encoding="utf-8") as handle:
-        doc = yaml.safe_load(handle)
+        doc = gh_yaml.load(handle)
     steps = (doc.get("runs") or {}).get("steps") or []
 
     envs = {label: env_of(steps, label) for label, *_ in SEQUENCE}
@@ -808,15 +798,33 @@ def main():
     # catch, one level up. Launcher parity is not attainable from YAML and is
     # recorded on #335.
     shared = sorted(run_env)
+    # An EXEMPTED name is precisely one that is NOT wired from an input, so it is
+    # never credited on the "wired" line -- report it on its own (claude.prop,
+    # PROP7 #3: PW_EXECUTABLE was listed as wired by a composite that never names it).
+    # Classified by the ACTUAL wiring, not by exemption alone: a stale exemption
+    # for a name the composite now takes from an input is wired (Codex, #397).
+    declared = set((doc.get("inputs") or {}).keys())
+
+    def is_wired(name):
+        m = re.fullmatch(r"\$\{\{\s*inputs\.([\w-]+)\s*\}\}", str(run_env.get(name, "")))
+        return bool(m and m.group(1) in declared)
+
+    wired = [name for name in spec_reads if name not in ENV_EXEMPT or is_wired(name)]
+    exempted = [name for name in spec_reads if name in ENV_EXEMPT and not is_wired(name)]
     print(
         f"check-ui-suite-env: OK -- {len(SEQUENCE)} consecutive steps, same step-level "
         f"env and working directory ({', '.join(shared) if shared else 'empty'})"
     )
     print(
         f'  spec env wired from inputs into "{RUN_STEP}": '
-        + (", ".join(spec_reads) if spec_reads else "none read")
+        + (", ".join(wired) if wired else "none read")
         + f" (read from {', '.join(SPEC_FILES)})"
     )
+    if exempted:
+        print(
+            "  spec env exempted, NOT wired (per its recorded reason): "
+            + ", ".join(exempted)
+        )
     print(
         "  (declared env only: the launchers differ -- `node` vs `npx` -- and the"
         " npm_* / INIT_CWD they add are outside what this file can see; see #335)"
