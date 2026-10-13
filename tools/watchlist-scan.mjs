@@ -4,7 +4,8 @@
      node tools/watchlist-scan.mjs                       # whole roster, prints JSON
      node tools/watchlist-scan.mjs --pane=2              # the SWING pane (Pro 2, 14-3-3) instead of Pro 1 (the default)
      node tools/watchlist-scan.mjs --symbols=AAPL,MSFT   # just these (no roster call)
-     node tools/watchlist-scan.mjs --holdings=file.json  # also: trailing red-day runs for a JSON array of symbols
+     node tools/watchlist-scan.mjs --holdings=file.json  # also: trailing down-day (red) runs for a JSON array of LONG positions' symbols
+     node tools/watchlist-scan.mjs --shorts=file.json    # also: trailing up-day runs for a JSON array of SHORT positions' symbols; `alert` says whether to email
      node tools/watchlist-scan.mjs --selftest            # the checks below, no network
 
    Why this exists (owner 2026-10-11): the Ask-the-desk assistant reads one symbol per tool call and a turn is capped at
@@ -83,6 +84,20 @@ export function redStreak(closes) {
   for (let i = closes.length - 1; i >= 1 && closes[i] < closes[i - 1]; i--) n++;
   return n;
 }
+
+/* The mirror: trailing closes each ABOVE the one before. A short position is hurt by these, a long one by the red days above. */
+export function greenStreak(closes) {
+  let n = 0;
+  for (let i = closes.length - 1; i >= 1 && closes[i] > closes[i - 1]; i--) n++;
+  return n;
+}
+
+/* The two sides of a holding. A LONG is hurt by down days (`redStreak`); a SHORT by up days (`greenStreak`, owner 2026-10-13: "four consecutive up on
+   the short position"). Each side has its own field names, so an up-day run can never be read as a red-day one. */
+const SIDES = {
+  long: { streak: redStreak, days: 'redDays', then: 'redDaysThen', list: 'redStreak' },
+  short: { streak: greenStreak, days: 'upDays', then: 'upDaysThen', list: 'upStreak' },
+};
 
 /* Weekdays that fall strictly between two bar dates ('YYYY-MM-DD'). A thinly traded option has no bar on a day it never traded,
    so "4 red days" across a hole is not 4 consecutive sessions; weekends are not holes (holidays can read as one: a harmless false caution). */
@@ -279,7 +294,8 @@ export const minStreakFrom = raw => Math.max(1, +raw || MIN_STREAK);
 /* What one holding's bars say. A holding whose last bar predates the report session is ALWAYS listed as stale, with the red days it had as of
    that bar, whether or not they make a streak: it could not be checked through the session, and "none has 4 red days" must not be said of it
    (Codex, PR #321). Only a current holding can be a streak. */
-export function classifyHolding(sym, b, newest, minStreak) {
+export function classifyHolding(sym, b, newest, minStreak, side = 'long') {
+  const S = SIDES[side];
   // Read as of the report session: a bar AFTER it (the reference lagged, or this holding's feed is a session ahead) is cut, so the streak never runs
   // through a day the report is not dated for (Codex, PR #321).
   // No report session (nothing on the watchlist could be priced) means there is nothing to date a holdings report by: refuse rather than report streaks
@@ -287,12 +303,12 @@ export function classifyHolding(sym, b, newest, minStreak) {
   if (!newest) return { kind: 'unpriced', rec: { symbol: sym, why: 'no report session: the watchlist could not be priced' } };
   const all = b.rows || [], rows = all.filter(x => x.date <= newest);
   if (!rows.length) return { kind: 'unpriced', rec: { symbol: sym, why: b.error || (all.length ? `no bars as of ${newest}` : 'no bars') } };
-  const r2 = v => Math.round(v * 100) / 100, c = rows.map(x => x.c), streak = redStreak(c), last = rows[rows.length - 1].date;
-  if (isStaleBar(last, newest)) return { kind: 'stale', rec: { symbol: sym, contract: describeContract(sym), lastBar: last, redDaysThen: streak } };
+  const r2 = v => Math.round(v * 100) / 100, c = rows.map(x => x.c), streak = S.streak(c), last = rows[rows.length - 1].date;
+  if (isStaleBar(last, newest)) return { kind: 'stale', rec: { symbol: sym, contract: describeContract(sym), lastBar: last, [S.then]: streak } };
   if (rows.length < minStreak + 1) return { kind: 'unpriced', rec: { symbol: sym, why: 'too few bars' } };
   if (streak < minStreak) return { kind: 'none' };
   const span = rows.slice(-(streak + 1)), skipped = span.reduce((n, x, ix) => n + (ix ? skippedWeekdays(span[ix - 1].date, x.date) : 0), 0);
-  return { kind: 'streak', rec: { symbol: sym, contract: describeContract(sym), redDays: streak, asOf: last, closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
+  return { kind: 'streak', rec: { symbol: sym, contract: describeContract(sym), [S.days]: streak, asOf: last, closes: span.map(x => r2(x.c)), lastDayPct: r2((c[c.length - 1] / c[c.length - 2] - 1) * 100),
     ...(skipped ? { caution: `${skipped} weekday(s) in this run have no bar (no trades), so these are not consecutive sessions` } : {}) } };
 }
 
@@ -300,8 +316,8 @@ export function classifyHolding(sym, b, newest, minStreak) {
 export const holdingsChecked = h => h.requested - h.stale.length - h.unpriced.length;
 
 /* File one classified holding in its list. A holding is never dropped: current streaks, stale ones and unpriced ones each have a list; only "none" is nothing. */
-export function fileHolding(holdings, h) {
-  if (h.kind === 'streak') holdings.redStreak.push(h.rec);
+export function fileHolding(holdings, h, side = 'long') {
+  if (h.kind === 'streak') holdings[SIDES[side].list].push(h.rec);
   else if (h.kind === 'stale') holdings.stale.push(h.rec);
   else if (h.kind === 'unpriced') holdings.unpriced.push(h.rec);
   return holdings;
@@ -361,12 +377,34 @@ export async function fetchHoldings(list, newest, fetchOne) {
 
 /* The fetched holdings -> the holdings block: red-day runs, the ones that could not be checked through the session (stale, unpriced), and how
    many WERE checked, so "none has a run" is only ever said of those. */
-export function buildHoldings(fetched, requested, newest, minStreak) {
-  const h = { requested, minStreak, referenceSession: newest, redStreak: [], stale: [], unpriced: [] };
-  for (const [sym, b] of fetched) fileHolding(h, classifyHolding(sym, b, newest, minStreak));
+export function buildHoldings(fetched, requested, newest, minStreak, side = 'long') {
+  const S = SIDES[side];
+  const h = { requested, minStreak, referenceSession: newest, [S.list]: [], stale: [], unpriced: [] };
+  for (const [sym, b] of fetched) fileHolding(h, classifyHolding(sym, b, newest, minStreak, side), side);
   h.checked = holdingsChecked(h);
-  h.redStreak.sort((a, b) => b.redDays - a.redDays || a.symbol.localeCompare(b.symbol));
+  h[S.list].sort((a, b) => b[S.days] - a[S.days] || a.symbol.localeCompare(b.symbol));
   return h;
+}
+
+/* What a holdings (or shorts) file that could not be read reports: nothing was checked, and why. */
+export const listFailure = (error, minStreak, newest, side = 'long') =>
+  ({ error, requested: 0, checked: 0, minStreak, referenceSession: newest, [SIDES[side].list]: [], stale: [], unpriced: [] });
+
+/* Does the positions email go out? (owner 2026-10-13, on the first automatic run's email: "Just email if there is 4 consecutive down days on the long
+   position or four consecutive up on the short position. Otherwise, no email.") Only when a position has such a run, or when the check itself could not
+   be trusted: silence has to mean "checked, and nothing", never "could not check" (the rule every report here keeps for a broken feed). A list that
+   could not be read, one that priced none of what it asked for, and no positions block at all are reasons to send. One stale or unpriced holding among
+   others that WERE checked is not: it is in the report, and a daily email about an option that did not trade is the noise this change removes. */
+export function positionsAlert(out) {
+  const hits = [], problems = [];
+  if (!out.holdings && !out.shorts) problems.push('no positions were checked');
+  for (const [name, b, list] of [['long', out.holdings, SIDES.long.list], ['short', out.shorts, SIDES.short.list]]) {
+    if (!b) continue;
+    if (b.error) problems.push(`${name} positions: ${b.error}`);
+    else if (b.requested > 0 && b.checked === 0) problems.push(`${name} positions: none of the ${b.requested} could be checked`);
+    hits.push(...(b[list] || []));
+  }
+  return { send: hits.length > 0 || problems.length > 0, hits: hits.length, problems };
 }
 
 async function main() {
@@ -398,13 +436,24 @@ async function main() {
   const hold = arg('holdings');
   if (hold) {
     const read = readHoldingsList(hold), list = read.list || [];
-    if (read.error) out.holdings = { error: read.error, requested: 0, checked: 0, minStreak, referenceSession: out.newestBar, redStreak: [], stale: [], unpriced: [] };
+    if (read.error) out.holdings = listFailure(read.error, minStreak, out.newestBar);
     else {
     const holdDeadline = Date.now() + HOLDINGS_BUDGET_MS;
     const H = await fetchHoldings(list, out.newestBar, sym => bars(sym, now, holdDeadline));
     out.holdings = buildHoldings(H, list.length, out.newestBar, minStreak);
     }
   }
+  const shortsFile = arg('shorts');                                // the short positions: same file shape, read against the same report session
+  if (shortsFile) {
+    const read = readHoldingsList(shortsFile), list = read.list || [];
+    if (read.error) out.shorts = listFailure(read.error, minStreak, out.newestBar, 'short');
+    else {
+    const shortDeadline = Date.now() + HOLDINGS_BUDGET_MS;
+    const H = await fetchHoldings(list, out.newestBar, sym => bars(sym, now, shortDeadline));
+    out.shorts = buildHoldings(H, list.length, out.newestBar, minStreak, 'short');
+    }
+  }
+  out.alert = positionsAlert(out);
   console.log(JSON.stringify(out, null, 1));
   process.exit(out.ok ? 0 : 3);
 }
@@ -641,6 +690,15 @@ async function selftest() {
     const cliM = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??', '--holdings=' + path.join(tdir, 'nope.json'), '--min-streak=2'], { encoding: 'utf8', timeout: 30000 });
     let cliMOut = {}; try { cliMOut = JSON.parse(cliM.stdout); } catch { /* reported by the check below */ }
     eq('...and --min-streak=2 on the command line reaches it', (cliMOut.holdings || {}).minStreak, 2);
+    const runCli = args => { const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??', ...args], { encoding: 'utf8', timeout: 30000 }); try { return JSON.parse(r.stdout); } catch { return {}; } };
+    const cliS = runCli(['--holdings=' + hf('none.json', '[]'), '--shorts=' + path.join(tdir, 'nope.json')]);
+    eq('the real CLI with an unreadable shorts file reports shorts.error and says to send the email', [typeof (cliS.shorts || {}).error, (cliS.alert || {}).send, ((cliS.alert || {}).problems || []).length], ['string', true, 1]);
+    eq('...and that failed block is the short side\'s (an upStreak list, no red-day list)', [Array.isArray((cliS.shorts || {}).upStreak), 'redStreak' in (cliS.shorts || {})], [true, false]);
+    const cliE = runCli(['--holdings=' + hf('e1.json', '[]'), '--shorts=' + hf('e2.json', '[]')]);
+    eq('...and empty lists on both sides mean no email', [(cliE.shorts || {}).requested, (cliE.shorts || {}).minStreak, (cliE.alert || {}).send], [0, 4, false]);
+    eq('...and a shorts block that was read is the short side\'s too, the holdings block the long\'s', [Array.isArray((cliE.shorts || {}).upStreak), 'redStreak' in (cliE.shorts || {}), Array.isArray((cliE.holdings || {}).redStreak), 'upStreak' in (cliE.holdings || {})], [true, false, true, false]);
+    eq('...and with no positions flags at all the CLI says to send, not to stay quiet', runCli([]).alert, { send: true, hits: 0, problems: ['no positions were checked'] });
+    eq('the shorts file takes the same --min-streak', (runCli(['--shorts=' + hf('e3.json', '[]'), '--min-streak=2']).shorts || {}).minStreak, 2);
   } finally { fs.rmSync(tdir, { recursive: true, force: true }); }
   let fetchCalls = 0; const countFetch = async sym => { fetchCalls++; return hb2(D5.slice(1), [9, 8, 7, 6]); };
   const skipped = await fetchHoldings(['A', 'B', 'C'], null, countFetch);
@@ -673,6 +731,46 @@ async function selftest() {
   eq('a stale holding is filed under stale only', fileHolding(hl(), { kind: 'stale', rec: 'b' }), { redStreak: [], stale: ['b'], unpriced: [] });
   eq('an unpriced holding is filed under unpriced only', fileHolding(hl(), { kind: 'unpriced', rec: 'c' }), { redStreak: [], stale: [], unpriced: ['c'] });
   eq('"none" is filed nowhere', fileHolding(hl(), { kind: 'none' }), hl());
+  // the short side (owner 2026-10-13: "four consecutive up on the short position"): the mirror of the red-day run, in fields of its own
+  eq('green streak 3', greenStreak([10, 9, 10, 11, 12]), 3);
+  eq('green streak broken by a red day', greenStreak([10, 11, 10, 11]), 1);
+  eq('flat is not green', greenStreak([10, 11, 11]), 0);
+  eq('no bars, no green streak', greenStreak([5]), 0);
+  eq('a falling run is no green streak', greenStreak([9, 8, 7]), 0);
+  const upRun = [6, 7, 8, 9, 10];
+  const shortUp = classifyHolding('QCOM261218P00195000', hb(D5, upRun), '2026-10-09', 4, 'short');
+  eq('a short with 4 up days in a row is a streak, in its own fields and with no red-day field', [shortUp.kind, shortUp.rec.upDays, 'redDays' in shortUp.rec, shortUp.rec.closes, shortUp.rec.contract, shortUp.rec.lastDayPct], ['streak', 4, false, [6, 7, 8, 9, 10], 'QCOM Dec 18 2026 195 Put', 11.11]);
+  eq('...and the same prices on a LONG are nothing', classifyHolding('X', hb(D5, upRun), '2026-10-09', 4).kind, 'none');
+  eq('a falling run is nothing for a short', classifyHolding('X', hb(D5, [10, 9, 8, 7, 6]), '2026-10-09', 4, 'short').kind, 'none');
+  eq('...and is a streak for a long', classifyHolding('X', hb(D5, [10, 9, 8, 7, 6]), '2026-10-09', 4).rec.redDays, 4);
+  eq('3 up days are not a short streak at the default 4', classifyHolding('X', hb(D5, [10, 9, 10, 11, 12]), '2026-10-09', minStreakFrom(''), 'short').kind, 'none');
+  const shStale = classifyHolding('X', hb(D5.slice(0, 4), [1, 2, 3, 4]), '2026-10-09', 3, 'short');
+  eq('a stale short is listed as stale with the UP days it had then, never as a red-day count', [shStale.kind, shStale.rec.lastBar, shStale.rec.upDaysThen, 'redDaysThen' in shStale.rec], ['stale', '2026-10-08', 3, false]);
+  eq('a short with too few bars is unpriced, as a long is', classifyHolding('X', hb(D5.slice(2), [1, 2, 3]), '2026-10-09', 3, 'short').kind, 'unpriced');
+  eq('with no report session a short is refused too', classifyHolding('X', hb(D5, upRun), null, 3, 'short').kind, 'unpriced');
+  eq('a short streak is filed under upStreak only', fileHolding({ upStreak: [], stale: [], unpriced: [] }, { kind: 'streak', rec: 'a' }, 'short'), { upStreak: ['a'], stale: [], unpriced: [] });
+  const shBlock = buildHoldings([['B', hb2(D5, [6, 7, 8, 9, 10])], ['A', hb2(D5.slice(1), [7, 8, 9, 10])], ['C', hb2(D5, [6, 7, 8, 9, 10])], ['DN', hb2(D5, [10, 9, 8, 7, 6])], ['OLD', hb2(D5.slice(0, 4), [1, 2, 3, 4])], ['ERR', { error: 'unknown to Yahoo' }]], 6, '2026-10-09', 3, 'short');
+  eq('the shorts block has its own list, longest run first then by symbol, no red-day list, and counts what was checked', [shBlock.upStreak.map(x => x.symbol), 'redStreak' in shBlock, shBlock.stale.map(x => x.symbol), shBlock.unpriced.map(x => x.symbol), shBlock.checked, shBlock.minStreak], [['B', 'C', 'A'], false, ['OLD'], ['ERR'], 4, 3]);
+  eq('a list that could not be read reports nothing checked and why, on its own side', [listFailure('x', 4, '2026-10-09'), listFailure('y', 4, null, 'short')],
+    [{ error: 'x', requested: 0, checked: 0, minStreak: 4, referenceSession: '2026-10-09', redStreak: [], stale: [], unpriced: [] }, { error: 'y', requested: 0, checked: 0, minStreak: 4, referenceSession: null, upStreak: [], stale: [], unpriced: [] }]);
+  // does the positions email go out? (owner 2026-10-13: only on a run against a position, otherwise none; an outage must not look like "nothing")
+  const blkL = (o = {}) => ({ requested: 3, checked: 3, minStreak: 4, referenceSession: '2026-10-09', redStreak: [], stale: [], unpriced: [], ...o });
+  const blkS = (o = {}) => ({ requested: 2, checked: 2, minStreak: 4, referenceSession: '2026-10-09', upStreak: [], stale: [], unpriced: [], ...o });
+  eq('nothing to act on and nothing wrong: no email', positionsAlert({ holdings: blkL(), shorts: blkS() }), { send: false, hits: 0, problems: [] });
+  eq('a long on a run of down days: email', positionsAlert({ holdings: blkL({ redStreak: [{ symbol: 'A' }] }), shorts: blkS() }), { send: true, hits: 1, problems: [] });
+  eq('a short on a run of up days: email', positionsAlert({ holdings: blkL(), shorts: blkS({ upStreak: [{ symbol: 'B' }] }) }), { send: true, hits: 1, problems: [] });
+  eq('hits on both sides are counted together', positionsAlert({ holdings: blkL({ redStreak: [{ symbol: 'A' }] }), shorts: blkS({ upStreak: [{ symbol: 'B' }, { symbol: 'C' }] }) }).hits, 3);
+  eq('a shorts block alone can alert', positionsAlert({ shorts: blkS({ upStreak: [{ symbol: 'B' }] }) }).send, true);
+  eq('a longs block alone, with nothing in it, stays quiet', positionsAlert({ holdings: blkL() }).send, false);
+  eq('no positions block at all is a reason to send, not silence', positionsAlert({}), { send: true, hits: 0, problems: ['no positions were checked'] });
+  eq('a long list that could not be read is a reason to send, and says so', positionsAlert({ holdings: listFailure('holdings file unreadable: ENOENT', 4, null), shorts: blkS() }), { send: true, hits: 0, problems: ['long positions: holdings file unreadable: ENOENT'] });
+  eq('...and a short list too', positionsAlert({ holdings: blkL(), shorts: listFailure('holdings file is not a JSON array', 4, null, 'short') }).problems, ['short positions: holdings file is not a JSON array']);
+  eq('a long list that priced none of what it asked for is a reason to send', positionsAlert({ holdings: blkL({ checked: 0, unpriced: [1, 2, 3] }), shorts: blkS() }).problems, ['long positions: none of the 3 could be checked']);
+  eq('...and a short list too', positionsAlert({ holdings: blkL(), shorts: blkS({ checked: 0, stale: [1, 2] }) }).problems, ['short positions: none of the 2 could be checked']);
+  eq('a side with no positions at all (an empty list) is not a problem', positionsAlert({ holdings: blkL({ requested: 0, checked: 0 }), shorts: blkS({ requested: 0, checked: 0 }) }), { send: false, hits: 0, problems: [] });
+  eq('one stale holding among checked ones is not a reason to email', positionsAlert({ holdings: blkL({ checked: 2, stale: [{ symbol: 'OLD' }] }), shorts: blkS() }).send, false);
+  eq('one unpriced holding among checked ones is not a reason either', positionsAlert({ holdings: blkL(), shorts: blkS({ checked: 1, unpriced: [{ symbol: 'ERR' }] }) }).send, false);
+  eq('a hit and a problem are both reported', positionsAlert({ holdings: blkL({ redStreak: [{ symbol: 'A' }] }), shorts: listFailure('x', 4, null, 'short') }), { send: true, hits: 1, problems: ['short positions: x'] });
   // incomplete bars never reach the study, and one bad symbol never takes the run down
   eq('a row missing its open is dropped (and so cannot throw in roundBars)', fullBars([{ o: null, h: 2, l: 1, c: 1.5 }, { o: 1, h: 2, l: 1, c: 1.5 }]).length, 1);
   eq('a row missing any of high/low/close is dropped too', fullBars([{ o: 1, h: undefined, l: 1, c: 1 }, { o: 1, h: 2, l: NaN, c: 1 }, { o: 1, h: 2, l: 1, c: null }]).length, 0);
