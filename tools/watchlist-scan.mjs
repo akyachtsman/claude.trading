@@ -693,8 +693,10 @@ async function selftest() {
     const runCli = args => { const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--symbols=!!,??', ...args], { encoding: 'utf8', timeout: 30000 }); try { return JSON.parse(r.stdout); } catch { return {}; } };
     const cliS = runCli(['--holdings=' + hf('none.json', '[]'), '--shorts=' + path.join(tdir, 'nope.json')]);
     eq('the real CLI with an unreadable shorts file reports shorts.error and says to send the email', [typeof (cliS.shorts || {}).error, (cliS.alert || {}).send, ((cliS.alert || {}).problems || []).length], ['string', true, 1]);
+    eq('...and that failed block is the short side\'s (an upStreak list, no red-day list)', [Array.isArray((cliS.shorts || {}).upStreak), 'redStreak' in (cliS.shorts || {})], [true, false]);
     const cliE = runCli(['--holdings=' + hf('e1.json', '[]'), '--shorts=' + hf('e2.json', '[]')]);
     eq('...and empty lists on both sides mean no email', [(cliE.shorts || {}).requested, (cliE.shorts || {}).minStreak, (cliE.alert || {}).send], [0, 4, false]);
+    eq('...and a shorts block that was read is the short side\'s too, the holdings block the long\'s', [Array.isArray((cliE.shorts || {}).upStreak), 'redStreak' in (cliE.shorts || {}), Array.isArray((cliE.holdings || {}).redStreak), 'upStreak' in (cliE.holdings || {})], [true, false, true, false]);
     eq('...and with no positions flags at all the CLI says to send, not to stay quiet', runCli([]).alert, { send: true, hits: 0, problems: ['no positions were checked'] });
     eq('the shorts file takes the same --min-streak', (runCli(['--shorts=' + hf('e3.json', '[]'), '--min-streak=2']).shorts || {}).minStreak, 2);
   } finally { fs.rmSync(tdir, { recursive: true, force: true }); }
