@@ -3057,6 +3057,15 @@ let askBusy = false;      /* a scheduled run must never collide with a typed one
    because Stop lives in renderAsk's form while runAsk owns the request. */
 let askAbort = null;
 let askRun = null;        /* set by renderAsk() — the shared send path */
+/* The model switch (desk_021; owner request 2026-10-14). Module-level on purpose: renderAsk() rebuilds the
+   whole panel on every unlock and refresh, and a save still in flight must land THROUGH this state and the
+   paint function, never through a node captured by a render that no longer exists.
+   phase: unread (asked, no answer yet) | failed (refused or unreachable — also a PIN that is not the owner's)
+          | empty (the read worked and nothing is stored) | stored | saving.
+   Only `stored` and `saving` carry a model; every other phase selects NOTHING. */
+let askTier = { phase: 'unread', stored: null, note: '' };
+let askTierGen = 0;       /* bumped by every read and write: a reply that is no longer the latest lands nowhere */
+let askTierPaint = null;  /* set by an authed renderAsk(): repaints the control FROM askTier — the one place the DOM is derived */
 
 
 /* A row as the RPC returns it, clamped to what the table will accept. Clamping
@@ -3390,10 +3399,83 @@ function openAskSched(pin, opener) {
   load();
 }
 
+/* THE GUARD for the model switch. The control being drawn `disabled` is the picture of this rule and not the
+   rule: paint() derives `disabled` from it, and askTierWrite() asks it again before sending anything — so
+   an unread, failed, empty or saving switch is inert even if a button's attribute is removed, and the
+   unread state is held BY this function, not by a stray `disabled` in the markup.
+   The page is a convenience; the database is the gate (desk_021): a request made without this page is
+   refused there unless it carries the owner's PIN. */
+const askTierCanChoose = t => t.phase === 'stored';
+/* The PIN of the session that is on screen now — the same source renderAsk() reads — or null when the desk is locked
+   (or storage is blocked). A save that settles late must never speak with a PIN remembered from an earlier render. */
+function askTierSessionPin() {
+  try { return DESK.authed ? sessionStorage.getItem('desk_pin') : null; } catch { return null; }
+}
+function askTierSet(patch) {
+  askTier = { ...askTier, ...patch };
+  if (askTierPaint) askTierPaint();
+}
+function askTierReset() {
+  askTierGen++;
+  askTierPaint = null;
+  askTier = { phase: 'unread', stored: null, note: '' };
+}
+/* The read has THREE outcomes and they are different facts: refused/unreachable (nobody here knows what
+   the setting says), readable-and-empty (it says nothing), and a stored value. The built-in default is
+   NEVER drawn as though it were stored. `refused` = this read follows a write that did not go through, so
+   the screen reverts to whatever the row says NOW (the truth after a failed write is unknown). */
+async function askTierRead(pin, refused) {
+  const gen = ++askTierGen;
+  askTierSet({ phase: 'unread', stored: null, note: refused ? 'Not saved — checking what is stored…' : '' });
+  const out = await deskGetAskModel(pin);
+  if (gen !== askTierGen) return;
+  const lead = refused ? 'Not saved. ' : '';
+  if (!out || out.ok !== true) {
+    askTierSet({ phase: 'failed', stored: null, note: lead + 'Could not read the model setting — or this PIN is not the owner’s.' });
+  } else if (out.model === null || out.model === undefined) {
+    askTierSet({ phase: 'empty', stored: null, note: lead + 'No model setting exists in the database, so the desk is on its built-in default — it cannot be changed from here until the setting is restored.' });
+  } else if (ASK_MODELS.some(m => m.id === out.model)) {
+    askTierSet({ phase: 'stored', stored: out.model, note: refused ? 'Not saved — the stored model is still ' + askModelLabel(out.model) + '.' : '' });
+  } else {
+    askTierSet({ phase: 'failed', stored: null, note: lead + 'The stored model (' + String(out.model).slice(0, 40) + ') is not one this page offers.' });
+  }
+}
+/* A write claims ONLY that the row moved: "Saved — applies from your next question". Not "in use" — the
+   proof that the server honours it is the model named under the next answer. The selection stays on the
+   stored model until the server answers, then follows the model the SERVER stored (not the one clicked). */
+async function askTierWrite(pin, id) {
+  if (!askTierCanChoose(askTier)) return;
+  if (!ASK_MODELS.some(m => m.id === id) || id === askTier.stored) return;
+  const gen = ++askTierGen;
+  askTierSet({ phase: 'saving', note: 'Saving…' });
+  const out = await deskSetAskModel(pin, id);
+  if (gen !== askTierGen) {
+    /* SUPERSEDED: the panel was rebuilt (an unlock, the Accounts "Retry") or locked while this save was out. Its reply is
+       not drawn — the rebuild owns the screen — but the rebuild's own read can have been answered BEFORE this write
+       committed, and would then be the last word on a row that has since moved: the switch would enable on the old model
+       while the database holds the new one (Codex P2, PR #328). So once the write has settled, an UNLOCKED panel asks
+       the row again, and the answer is whatever it says now. A locked or demo panel has no repaint hook and asks
+       nothing: there is no panel to be wrong, and no PIN to ask with.
+       It asks with the PIN of the session that is on screen NOW, and only when that is the SAME credential that made
+       the write (Codex P2, round 2): the `pin` this function closed over belongs to the render that started the save, and
+       if the desk was locked and a DIFFERENT credential (the CI test user) unlocked it before the save settled, reading with
+       the old PIN would paint the production tier into a panel whose own, denied, read was the truth. */
+    const cur = askTierSessionPin();
+    if (askTierPaint && cur && cur === pin) askTierRead(cur);
+    return;
+  }
+  if (out && out.ok === true && ASK_MODELS.some(m => m.id === out.model)) {
+    askTierSet({ phase: 'stored', stored: out.model, note: 'Saved — applies from your next question.' });
+  } else {
+    await askTierRead(pin, true);
+  }
+}
+
 function renderAsk() {
   const body = document.getElementById('askBody');
   const lampEl = document.getElementById('askLamp');
   while (body.firstChild) body.removeChild(body.firstChild);
+  askTierReset();   /* an unlocked render re-reads below; a demo, open or locked one leaves nothing behind */
 
   if (DESK.mode === 'demo') {
     lampEl.className = 'lamp lamp--demo'; lampEl.textContent = 'Demo';
@@ -3465,12 +3547,66 @@ function renderAsk() {
   const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin, sysBtn));
+  /* The model switch (desk_021) — the owner's, so only for an unlocked desk. Its OWN row, deliberately NOT
+     inside .ask-toolbar: that toolbar is display:none while Clear is hidden, which is every desk with no
+     saved history, and a switch nobody can see is the failure to avoid. Toggle buttons in a group
+     (aria-pressed), not radios: choosing writes to the database, so arrow keys must not write on the way past. */
+  const tierBox = el('div', 'ask-tier');
+  tierBox.appendChild(el('span', 'ask-tier-label', 'Model'));
+  const tierGroup = el('div', 'ask-tier-group');
+  tierGroup.setAttribute('role', 'group'); tierGroup.setAttribute('aria-label', 'Ask-the-desk model');
+  let tierRefocus = null;   /* the option the owner used: every option is disabled while a save runs, which drops keyboard focus to <body> */
+  const tierBtns = ASK_MODELS.map(m => {
+    const b = el('button', 'ask-tier-opt', m.label); b.type = 'button'; b.dataset.model = m.id;
+    b.addEventListener('click', () => { if (askTierCanChoose(askTier) && m.id !== askTier.stored) tierRefocus = m.id; askTierWrite(pin, m.id); });   /* only a click that WILL write arms the focus return */
+    tierGroup.appendChild(b);
+    return b;
+  });
+  const tierRetry = el('button', 'btn btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
+  tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pin); });   /* '*' = whichever option ends up selected */
+  const tierNote = el('p', 'ask-tier-note', ''); tierNote.setAttribute('role', 'status');
+  tierBox.appendChild(tierGroup); tierBox.appendChild(tierRetry);
+  tierBox.appendChild(el('span', 'ask-tier-cap', 'Applies to every question, visitors included.'));
+  tierBox.appendChild(tierNote);
+  /* Everything below comes FROM askTier. `disabled` is decided here and nowhere else, from the guard. */
+  const paintTier = () => {
+    /* A note appearing or going changes this row's height, and on a stacked layout the thread gives that room back —
+       so a thread scrolled to its newest line would slide that line (the proof line) out of view. Keep it at the end. */
+    const atEnd = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 4;
+    const can = askTierCanChoose(askTier);
+    const shown = askTier.phase === 'stored' || askTier.phase === 'saving' ? askTier.stored : null;
+    tierBtns.forEach(b => {
+      b.disabled = !can;
+      b.setAttribute('aria-pressed', b.dataset.model === shown ? 'true' : 'false');
+    });
+    tierRetry.hidden = !(askTier.phase === 'failed' || askTier.phase === 'empty');   /* before the focus block below, which may land on it */
+    /* give focus back to what the owner was using, once it can take it — but only if focus was LOST (WCAG 2.4.3); a move
+       the owner made meanwhile is theirs. A disabled or hidden control drops focus to <body> in some engines and stays
+       "active" in others, so a hidden Try again counts as lost too. */
+    const a = document.activeElement;
+    /* Engines differ on WHEN a focused control that has just been disabled or hidden stops being the active element: older
+       Chromium drops it to <body> at once, current Chromium, WebKit and Firefox keep naming the dead control until the next
+       rendering update (CI saw exactly this). So "lost" is "nowhere" OR "on a control of THIS switch that can no longer take it". */
+    const lost = !a || a === document.body || (tierBox.contains(a) && (a.disabled || a.hidden));
+    if (can && tierRefocus) {
+      const f = tierBtns.find(x => tierRefocus === '*' ? x.getAttribute('aria-pressed') === 'true' : x.dataset.model === tierRefocus);
+      tierRefocus = null;
+      if (f && lost) f.focus({ preventScroll: true });
+    } else if (askTier.phase === 'failed' || askTier.phase === 'empty') {
+      const wanted = tierRefocus;
+      tierRefocus = null;   /* a stale target must not pull focus back later */
+      if (wanted && lost) tierRetry.focus({ preventScroll: true });   /* the save or the retry failed: Try again is the one control left to use */
+    }
+    tierNote.textContent = askTier.note;
+    if (atEnd) thread.scrollTop = thread.scrollHeight;
+  };
   const err = el('p', 'lock-error', ''); err.hidden = true;
   form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn);
   /* Verify costs extra and the server ignores it for an open question; ⏱ and ⚙ are PIN RPCs */
   if (authed) { form.appendChild(verifyBtn); form.appendChild(schedBtn); form.appendChild(sysBtn); }
   if (authed) body.appendChild(toolbar);   /* Clear wipes the saved conversation — a PIN RPC; an open visitor has none */
-  body.appendChild(thread); body.appendChild(form); body.appendChild(err);
+  body.appendChild(thread); if (authed) body.appendChild(tierBox); body.appendChild(form); body.appendChild(err);
+  if (authed) { askTierPaint = paintTier; paintTier(); askTierRead(pin); }
   body.appendChild(el('p', 'ai-disclaimer', authed
     ? 'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'
     : 'The desk assistant researches the web and pulls live quotes, and gives directional views. AI-generated; can make mistakes. Not financial advice.'));
@@ -3497,6 +3633,24 @@ function renderAsk() {
     });
     if (foot.childElementCount) thread.appendChild(foot);
   };
+
+  /* PROOF that the switch is honoured (desk_021): under an answer, the model the PROVIDER says produced it
+     and where the choice came from. Only the owner's unlocked desk ever draws it — the server tells nobody
+     else, and a reply that carries a model to a visitor anyway renders nothing. Asking the model which model
+     it is proves nothing; this is the server saying it. `fallback` is claimed only when the server NAMED a
+     source and it was not the stored setting: an older server that sends none must not be made to look wrong. */
+  const TIER_SOURCES = { row: 'the stored setting', override: 'the ASK_MODEL secret', default: 'the built-in default' };
+  const appendModelProof = res => {
+    if (!authed || !res || typeof res.model !== 'string' || !res.model) return;
+    const named = typeof res.tierSource === 'string' && res.tierSource;
+    const fallback = !!named && named !== 'row';
+    const line = el('p', 'ask-model', 'Answered by ' + askModelLabel(res.model) + (fallback ? ' · fallback — the stored model was not used' : ''));
+    line.title = 'Reported by the model provider: ' + res.model + (named ? '. Chosen by ' + (TIER_SOURCES[named] || named) + '.' : '.');
+    thread.appendChild(line);
+  };
+  /* On a failed question the owner is told which model was asked for, so a provider refusing one model is
+     diagnosable from the screen (the server sends it to the owner only). */
+  const askedModelTag = res => (authed && res && typeof res.model === 'string' && res.model) ? ' (model: ' + askModelLabel(res.model) + ')' : '';
 
   /* replay the stored conversation on load (FR-MEM5). Hold input until the
      replay settles: a question submitted mid-hydration would append above the
@@ -3583,6 +3737,7 @@ function renderAsk() {
     askBusy = false;
     if (res && res.ok) {
       thread.appendChild(el('p', 'ask-a', res.answer));
+      appendModelProof(res);
       appendSources(res.sources);
       clearBtn.hidden = false;
       /* Disarm on a delivered answer — see the note where the button is built. */
@@ -3601,7 +3756,7 @@ function renderAsk() {
       thread.appendChild(note);
       clearBtn.hidden = false;
     } else {
-      err.textContent = (res && res.error) || 'Something went wrong — try again.';
+      err.textContent = ((res && res.error) || 'Something went wrong — try again.') + askedModelTag(res);
       err.hidden = false;
     }
     thread.scrollTop = thread.scrollHeight;

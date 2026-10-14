@@ -18,6 +18,8 @@
 // from the same feed the charts use). The owner opted into directional views
 // on their own positions. All server-side secrets (ANTHROPIC_API_KEY, service
 // role, anon) live ONLY in function secrets.
+// WHICH MODEL answers is a database setting the owner switches from the Ask panel
+// (desk_021, owner request 2026-10-14) — see "THE MODEL TIER" below, not an env var.
 
 const SITE_ORIGIN = 'https://akyachtsman.github.io';   // for the quote-proxy origin gate AND the open-question gate
 
@@ -130,12 +132,15 @@ const MAX_TOOL_CALLS = 12;     // client tool executions (get_quote + get_techni
                                 // (quote + technicals per symbol) burned through 6 fast; this is a
                                 // per-turn CALL-COUNT safety cap against a runaway loop, unrelated
                                 // to the Anthropic account's dollar balance.
-// Opus 5 spends this budget on thinking AND the visible answer — it is ONE
-// ceiling over both, not two. The old 2048 was sized for Opus 4.8, where
-// omitting the `thinking` parameter meant no thinking at all; on Opus 5,
-// omitting it runs adaptive thinking, so the same number would have left the
-// reply whatever thinking didn't consume. Raised with the model swap, never
-// separately (owner ruling 2026-08-05).
+// max_tokens is ONE ceiling over thinking AND the visible answer, not two: a model
+// that thinks adaptively spends this budget on both, and the old 2048 (sized for
+// Opus 4.8, which did not think unless asked) would have left the reply whatever
+// thinking didn't consume (owner ruling 2026-08-05). Since desk_021 the model is
+// chosen from three — Haiku 5.5, Sonnet 5.5, Opus 5.5, all adaptive thinkers — and
+// this number, the `thinking` setting and effort 'high' below are the SAME for all
+// three ON PURPOSE: the tier changes WHICH model answers and nothing else (spec FR12).
+// Haiku's own default effort is 'medium'; the desk sets 'high' explicitly, so a
+// default change on any model cannot quietly re-tune the desk.
 const MAX_ANSWER_TOKENS = 8192;
 // Owner ruling 2026-08-05: the grounding check is BUILT BUT NOT ARMED. It
 // spends tokens on every question whether or not anything is wrong, and the
@@ -214,6 +219,82 @@ const WL_MAX_TOTAL_SYMS = 300;
 const WL_MAX_UNRESOLVED = 25;   // names kept per list; the rest ride as `unresolvedTotal`
 // deno-lint-ignore no-explicit-any
 type Any = any;
+
+/* ── THE MODEL TIER (desk_021; owner request 2026-10-14) ─────────────────────────────────────────
+   Which Claude model answers is one setting for the whole desk, held in the database row
+   desk_ask_model and switched from the Ask panel by the owner. Read by EVERY question — typed,
+   scheduled and open visitor alike — once, at the top, so one question (its grounding check and
+   every turn of its tool loop) is answered by ONE model.
+
+   TIER_IDS is the allow-list, cheapest first. It is the SAME list, in the SAME order, as the CHECK
+   in supabase/migrations/desk_021_ask_model_tier.sql and ASK_MODELS in scripts/data.js —
+   tools/ask-model-parity.mjs fails if any of the three drifts. The function keeps its own copy
+   although the column has a CHECK: a function must not assume a constraint it does not own.
+   TIER_FALLBACK is where every failure path ends (owner ruling 2026-10-14: Haiku 5.5). It is its
+   own named value, not "whichever model is first": reordering the list must not silently change
+   what a failure falls back to; the parity tool also holds it equal to the SQL column default.
+
+   Precedence — the stored row, then the ASK_MODEL secret, then TIER_FALLBACK:
+   * The row WINS. If the secret overrode it the owner could move the switch, watch it save and read
+     back, and change nothing about the answers. A secret that disagrees with a readable row is
+     logged, never obeyed.
+   * The secret is BREAK-GLASS, used only when the row cannot be used (unreadable, absent, or holding
+     something outside the list). It may name any well-formed model id (^claude-[a-z0-9-]+$), not just
+     the three — it exists for the day the provider retires or denies an id on the list, which the row
+     cannot express — and is logged when it is outside the three.
+   * NOTHING IS CACHED. Not in module memory (a warm isolate would serve a tier the owner has already
+     changed), not anywhere else: one indexed single-row select per question. A cached tier would take
+     effect whenever the cache happened to recycle — "appears to work" one layer down.
+   * A failed read is NOT fatal. It is logged and the question is answered on the fallback path; a
+     missing tier has a correct answer without it. An unusable value falls back and is logged, never
+     refused.
+   The service key reads the row over REST with NO user-agent (a browser-shaped one is refused by the
+   gateway for this project's secret key — see CLAUDE.md). */
+const TIER_IDS = [
+  'claude-haiku-5-5',
+  'claude-sonnet-5-5',
+  'claude-opus-5-5',
+] as const;
+const TIER_FALLBACK = 'claude-haiku-5-5';
+const OVERRIDE_SHAPE = /^claude-[a-z0-9-]+$/;
+type TierSource = 'row' | 'override' | 'default';
+type TierRead = { ok: true; model: string | null } | { ok: false; why: string };
+
+async function readTierRow(supaUrl: string, svc: Record<string, string>): Promise<TierRead> {
+  try {
+    const res = await fetch(`${supaUrl}/rest/v1/desk_ask_model?select=model&id=eq.true`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
+    if (!res.ok) return { ok: false, why: `HTTP ${res.status}` };
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return { ok: false, why: 'unexpected reply' };
+    const m = rows[0]?.model;
+    return { ok: true, model: typeof m === 'string' ? m : null };
+  } catch (e) {
+    return { ok: false, why: (e as Any)?.name ?? 'error' };
+  }
+}
+
+function resolveTier(row: TierRead, override: string | null | undefined): { model: string; source: TierSource; notes: string[] } {
+  const notes: string[] = [];
+  const inList = (m: string) => (TIER_IDS as readonly string[]).includes(m);
+  const clip = (m: string) => m.slice(0, 60);
+  let stored: string | null = null;
+  if (!row.ok) notes.push(`stored tier unreadable (${row.why})`);
+  else if (row.model === null) notes.push('stored tier absent');
+  else if (!inList(row.model)) notes.push(`stored tier "${clip(row.model)}" is not an allowed model — not used`);
+  else stored = row.model;
+  const ov = (override ?? '').trim();
+  let usable: string | null = null;
+  if (ov) {
+    if (!OVERRIDE_SHAPE.test(ov)) notes.push('ASK_MODEL is not a model id — ignored');
+    else { usable = ov; if (!inList(ov)) notes.push(`ASK_MODEL "${clip(ov)}" is outside the offered models`); }
+  }
+  if (stored) {
+    if (ov && ov !== stored) notes.push(`ASK_MODEL "${clip(ov)}" ignored: the stored tier "${stored}" wins`);
+    return { model: stored, source: 'row', notes };
+  }
+  if (usable) return { model: usable, source: 'override', notes };
+  return { model: TIER_FALLBACK, source: 'default', notes };
+}
 function cleanSym(v: Any): string | null {
   const s = String(v ?? '').trim().toUpperCase();
   return TICKER_RE.test(s) ? s : null;
@@ -333,6 +414,11 @@ async function handle(req: Request): Promise<Response> {
   }
 
   let userId: string | null = null;
+  /* Admin = the caller may be told which model answered (and why). The cron secret is the owner's own
+     door; a PIN is admin only when it matches a row that is NOT a test user (owner ruling C1: the CI
+     test credential is a valid PIN but must never move or read the production tier). `=== false`, not
+     `!u.is_test`: a select that omitted the column must read as "not admin", never as admin. */
+  let isAdmin = false;
   if (viaCron) {
     // The desk has exactly one owner row; a scheduled run answers as them.
     const ownerRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=id&is_test=eq.false&limit=1`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
@@ -340,16 +426,17 @@ async function handle(req: Request): Promise<Response> {
     const owners: { id: string }[] = await ownerRes.json();
     userId = owners[0]?.id ?? null;
     if (!userId) return reply(500, { ok: false, error: 'no owner row in desk_users' });
+    isAdmin = true;
   } else if (!anonymous) {
     // PIN check — same salted-hash scheme as desk_login; capture the matched user id.
-    const usersRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=id,salt,pin_hash`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
+    const usersRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=id,salt,pin_hash,is_test`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
     if (!usersRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
-    const users: { id: string; salt: string; pin_hash: string }[] = await usersRes.json();
+    const users: { id: string; salt: string; pin_hash: string; is_test?: boolean }[] = await usersRes.json();
     const enc = new TextEncoder();
     for (const u of users) {
       const digest = await crypto.subtle.digest('SHA-256', enc.encode(u.salt + pin));
       const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-      if (hex === u.pin_hash) userId = u.id; // check every row — no early exit
+      if (hex === u.pin_hash) { userId = u.id; isAdmin = u.is_test === false; } // check every row — no early exit
     }
     if (!userId) return reply(401, { ok: false, error: 'PIN not recognized.' });
   }
@@ -358,11 +445,18 @@ async function handle(req: Request): Promise<Response> {
   if (!apiKey) {
     return reply(503, { ok: false, error: 'Ask service not configured yet — the owner needs to add the ANTHROPIC_API_KEY function secret.' });
   }
-  // Owner ruling 2026-08-05. Opus 5 THINKS BY DEFAULT (Opus 4.8 did not), and
-  // max_tokens is ONE ceiling over thinking + the visible answer — so the old
-  // 2048 would have starved the reply the moment the model began reasoning.
-  // Model and budget therefore ship together; either alone is a regression.
-  const model = Deno.env.get('ASK_MODEL') || 'claude-opus-5';
+  // THE MODEL for this question (see THE MODEL TIER above): the stored row, else the ASK_MODEL
+  // break-glass secret, else the fallback — resolved ONCE here and never again, so the grounding
+  // check, every loop turn and the stored/returned name all agree. Read fresh on every question.
+  const tierRow = await readTierRow(supaUrl, svc);
+  const tier = resolveTier(tierRow, Deno.env.get('ASK_MODEL'));
+  if (tier.notes.length) console.warn('desk-ask tier:', tier.notes.join('; '));
+  const model = tier.model;
+  /* PROOF that the switch is honoured: the admin's reply names the model the PROVIDER says answered
+     and where the choice came from, so a tier this deployed server never read cannot look the same
+     as one it obeys. Never sent to a visitor or the test credential. (A model cannot vouch for its
+     own tier — asking it "which model are you" proves nothing.) */
+  const adminProof = (answered?: string | null) => isAdmin ? { model: answered ?? model, tierSource: tier.source } : {};
 
   // desk_009: the owner's live-edited system prompt — non-fatal read, falls
   // back to DEFAULT_SYSTEM on any failure (table unreachable, empty, etc).
@@ -770,16 +864,20 @@ async function handle(req: Request): Promise<Response> {
          as "model call failed (HTTP 400)" and left nothing to diagnose from,
          in the logs or on screen. Owner hit exactly that on 2026-08-14.
          Logged in full for the dashboard, and the message is passed to the
-         browser too: this panel is PIN-gated and single-user, so there is no
-         third party to leak a provider error to, and a desk that says "prompt
-         is too long" can be acted on while one that says 400 cannot. */
+         browser too — to the OWNER only (`isAdmin`): a desk that says "prompt
+         is too long" can be acted on while one that says 400 cannot. It used to
+         go to everyone, which was right while this panel was PIN-gated; the desk
+         has been open to visitors since 2026-10-04, and a provider's words can
+         name the model that answered, or the account's billing state, which a
+         visitor must not read. A visitor gets the status alone. */
       const detail = await apiRes.text().catch(() => '');
       let msg = '';
       try { msg = JSON.parse(detail)?.error?.message || ''; } catch { /* not JSON */ }
       console.error('desk-ask model call failed', apiRes.status, detail.slice(0, 800));
       return reply(502, {
         ok: false,
-        error: `model call failed (HTTP ${apiRes.status})${msg ? ' — ' + msg.slice(0, 300) : ''}`,
+        error: `model call failed (HTTP ${apiRes.status})${isAdmin && msg ? ' — ' + msg.slice(0, 300) : ''}`,
+        ...adminProof(),   // which tier was asked for, so a provider refusal of one model is diagnosable
       });
     }
     const msg = await apiRes.json();
@@ -790,7 +888,7 @@ async function handle(req: Request): Promise<Response> {
     // container is per-turn state, and dropping it mid-loop is exactly the
     // 400 above.
     if (msg.container?.id) containerId = msg.container.id;
-    if (msg.stop_reason === 'refusal') return reply(200, { ok: false, error: 'The model declined this question.' });
+    if (msg.stop_reason === 'refusal') return reply(200, { ok: false, error: 'The model declined this question.', ...adminProof(msg.model) });
 
     // collect web sources from any search-result blocks
     for (const b of msg.content ?? []) {
@@ -965,7 +1063,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   return reply(200, {
-    ok: true, answer, sources, model: finalMsg?.model ?? model, usage, checked,
+    ok: true, answer, sources, ...adminProof(finalMsg?.model), usage, checked,
     memoryStored, ...(memoryError ? { memoryError } : {}),
     // an open answer is not saved anywhere; say so rather than let `memoryStored: false` read as a failed write
     ...(anonymous ? { open: true } : {}),
