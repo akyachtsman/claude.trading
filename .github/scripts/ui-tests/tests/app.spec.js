@@ -10448,6 +10448,9 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await page.evaluate(() => window.askTierWrite('0000', 'gpt-4'));
   await page.evaluate(() => window.askTierWrite('0000', ''));
   expect(await sets(), 'the already-selected model, an unknown id and an empty one are never written').toEqual([]);
+  // ...and the click on the already-selected one armed nothing: a later repaint with focus on <body> must not pull focus onto it
+  await page.evaluate(() => { document.activeElement.blur(); askTierSet({ note: 'x' }); askTierSet({ note: '' }); });
+  await expect(opts.nth(1), 'a click that wrote nothing does not arm the focus return').not.toBeFocused();
 
   // ── 2. SAVE: claims only that the row moved; the selection follows what the SERVER stored ──
   await opts.nth(2).click();
@@ -10503,6 +10506,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await expect.poll(() => gets()).toBe(getsBefore + 3);
   await answerGet({ ok: false }, getsBefore + 2);
   await expect(tier.locator('.ask-tier-note')).toContainText(/Not saved\. Could not read/i);
+  await expect(tier.locator('.ask-tier-retry'), 'refused and unreadable: focus lands on Try again — the one control left — not on <body>').toBeFocused();
   expect((await snap()).pressed, 'refused and unreadable: nothing selected').toEqual(NONE);
 
   // ── 4. a save in flight, then the panel is rebuilt (an unlock or refresh): the old reply lands nowhere ──
@@ -10548,14 +10552,16 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await ask({ ok: true, answer: 'a6', sources: [] }, 'six (no model in the reply)');
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('a6');
   await expect(page.locator('#askBody .ask-model'), 'no model in the reply, no proof line: still the five from before').toHaveCount(5);
+  // the owner's switch row lives INSIDE the stacked panel's fixed height budget: it must leave the answers room to be read.
+  // Measured BEFORE the failed question below, whose red error line comes out of the same budget (at tablet width it takes a
+  // further ~47px, and a 74px thread there is better than main's, which is 2px): the regressions this guards were 0px at 810
+  // and 61px at 390; the fixed layout gives ~121 and ~191 with a healthy panel.
+  const r = await room();
+  expect(r.thread, 'with the switch drawn and answers in the thread, the thread keeps at least 90px (the stacked 420px cap once squeezed it to 0 at 810 and 61 at 390)').toBeGreaterThanOrEqual(90);
+  expect(r.discClipped, 'and the footer is inside the panel').toBeLessThanOrEqual(0);
   await ask({ ok: false, error: 'model call failed (HTTP 400) — tools not supported', model: 'claude-haiku-5-5', tierSource: 'row' }, 'seven');
   await expect(page.locator('#askBody .lock-error'), 'a failed question tells the owner which tier it asked for').toContainText(/HTTP 400.*\(model: Haiku 5\.5\)/);
-
-  // the owner's switch row lives INSIDE the stacked panel's fixed height budget: it must leave the answers room to be read
-  // (at 810px it once left 0px — answers rendered into a box with no height)
-  const r = await room();
-  expect(r.thread, 'with the switch drawn and answers in the thread, the thread keeps at least 100px (the stacked cap once squeezed it to 0)').toBeGreaterThanOrEqual(100);
-  expect(r.discClipped, 'and the footer is inside the panel').toBeLessThanOrEqual(0);
+  expect((await room()).discClipped, 'and with the error line showing the footer is still inside the panel').toBeLessThanOrEqual(0);
 
   // ── 6. the same panel for everyone else: nothing, even when a reply carries a model ──
   const gcount = await gets();

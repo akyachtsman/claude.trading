@@ -7,6 +7,8 @@ to FAIL. A guard whose removal leaves S69 green is a guard nothing checks.
     python3 tools/ask-model-tier-client-mutants.py --list     # names only
     python3 tools/ask-model-tier-client-mutants.py focus      # only mutants whose name contains "focus"
 
+Projects: desktop, mobile-chrome and tablet-chromium (the kit's tablet project's iPad descriptor run as CHROMIUM — the
+sandbox cannot launch WebKit; it stands in for the tightest stacked width, 810px). MUT_PROJECTS overrides the list.
 Needs: the kit's node_modules (`npm ci --prefix .github/scripts/ui-tests`) and a Chromium. The UI suite's own
 Playwright download may not run in a sandbox; set PW_CHROMIUM to a browser binary (default
 /opt/pw-browsers/chromium). The runner starts its own static server on MUT_PORT (default 8791) and writes a
@@ -19,6 +21,7 @@ KIT = os.path.join(ROOT, '.github/scripts/ui-tests')
 F = {'app': 'scripts/app.js', 'data': 'scripts/data.js', 'css': 'styles/components.css', 'layout': 'styles/layout.css'}
 PORT = os.environ.get('MUT_PORT', '8791')
 CHROMIUM = os.environ.get('PW_CHROMIUM', '/opt/pw-browsers/chromium')
+PROJECTS = os.environ.get('MUT_PROJECTS', 'desktop,mobile-chrome,tablet-chromium').split(',')
 
 M = [
  ('handler guard removed (askTierWrite no longer asks the guard)', 'app', [("  if (!askTierCanChoose(askTier)) return;\n  if (!ASK_MODELS.some(m => m.id === id) || id === askTier.stored) return;", "  if (!ASK_MODELS.some(m => m.id === id) || id === askTier.stored) return;")]),
@@ -55,6 +58,8 @@ M = [
  ('choosing the already-chosen model writes', 'app', [("  if (!ASK_MODELS.some(m => m.id === id) || id === askTier.stored) return;", "  if (!ASK_MODELS.some(m => m.id === id)) return;")]),
  ('an unknown model id can be written', 'app', [("  if (!ASK_MODELS.some(m => m.id === id) || id === askTier.stored) return;", "  if (id === askTier.stored) return;")]),
  ('keyboard focus is not given back after a save', 'app', [("f.focus({ preventScroll: true });", "void 0;")]),
+ ('a failed save or retry leaves focus on <body> (Try again is not given focus)', 'app', [("tierRetry.focus({ preventScroll: true });", "void 0;")]),
+ ('a click that writes nothing arms the focus return', 'app', [("if (askTierCanChoose(askTier) && m.id !== askTier.stored) tierRefocus = m.id;", "tierRefocus = m.id;")]),
  ('Try again does not hand focus on', 'app', [("tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pin); });", "tierRetry.addEventListener('click', () => { askTierRead(pin); });")]),
  ('wrong function name on the read', 'data', [("deskRpcOk('desk_get_ask_model', pin)", "deskRpcOk('desk_get_askmodel', pin)")]),
  ('wrong function name on the write', 'data', [("deskRpcOk('desk_set_ask_model', pin,", "deskRpcOk('desk_set_askmodel', pin,")]),
@@ -71,7 +76,7 @@ M = [
 ]
 
 def run_s69(env):
-    return subprocess.run(['node_modules/.bin/playwright', 'test', '-c', '.pw-mutants.config.mjs', '-g', 'S69', '--project=desktop', '--project=mobile-chrome', '--output', OUT],
+    return subprocess.run(['node_modules/.bin/playwright', 'test', '-c', '.pw-mutants.config.mjs', '-g', 'S69', *[f'--project={x}' for x in PROJECTS], '--output', OUT],
                           cwd=KIT, env=env, capture_output=True, text=True, timeout=170)
 
 if '--list' in sys.argv:
@@ -80,9 +85,10 @@ only = [a for a in sys.argv[1:] if not a.startswith('--')]
 OUT = tempfile.mkdtemp(prefix='ask-tier-mut-')
 cfg = os.path.join(KIT, '.pw-mutants.config.mjs')
 open(cfg, 'w').write(f"""import base from './playwright.config.js';
+const by = (n) => base.projects.find((p) => p.name === n);
+const chromium = (p, name) => ({{ ...p, name, use: {{ ...p.use, browserName: 'chromium', defaultBrowserType: 'chromium', launchOptions: {{ executablePath: {CHROMIUM!r}, args: ['--no-sandbox'] }} }} }});
 export default {{ ...base, retries: 0, reporter: [['list']],
-  projects: base.projects.filter((p) => ['desktop', 'mobile-chrome'].includes(p.name))
-    .map((p) => ({{ ...p, use: {{ ...p.use, launchOptions: {{ executablePath: {CHROMIUM!r}, args: ['--no-sandbox'] }} }} }})) }};
+  projects: [chromium(by('desktop'), 'desktop'), chromium(by('mobile-chrome'), 'mobile-chrome'), chromium(by('tablet'), 'tablet-chromium'), chromium(by('iphone'), 'iphone-chromium')] }};
 """)
 server = subprocess.Popen([os.path.join(KIT, 'node_modules/.bin/http-server'), '-p', PORT, '-c-1', '-s', ROOT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 env = dict(os.environ, APP_URL=f'http://127.0.0.1:{PORT}/')
@@ -92,7 +98,7 @@ try:
     base = run_s69(env)
     if base.returncode != 0:
         print('BASELINE FAILS — S69 is not green on the unmutated tree; fix that first.\n' + (base.stdout + base.stderr)[-1500:]); sys.exit(2)
-    print('baseline: S69 green on desktop and mobile-chrome\n')
+    print('baseline: S69 green on ' + ', '.join(PROJECTS) + '\n')
     for name, key, edits in M:
         if only and not any(o in name for o in only): continue
         path = os.path.join(ROOT, F[key]); orig = open(path).read(); mut = orig; ok = True

@@ -12,7 +12,7 @@ environment (PGHOST / PGPORT / PGUSER; trust auth is fine) and the `psql` client
 One way to get one without installing anything, as a non-root OS user:
     initdb -D /tmp/pgscratch -A trust -U postgres && pg_ctl -D /tmp/pgscratch -o "-p 54399 -k /tmp -c listen_addresses=" -w start
     PGHOST=/tmp PGPORT=54399 PGUSER=postgres python3 tools/ask-model-tier-sql-mutants.py
-Each mutant gets its own database (created and dropped); the baseline must pass all 59-ish steps first.
+Each mutant gets its own database (created and dropped); the baseline must pass every probe step first — on a fresh row AND after the owner has used the switch.
 Not run by CI. The counts quoted in docs/architecture/desk-ask-and-cron.md come from this file."""
 import json, os, re, subprocess, sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -50,13 +50,15 @@ M = {
  'stamp_search_path_public': (" security invoker\n set search_path to ''", " security invoker\n set search_path to 'public'"),
  'stamp_fn_executable_by_anon': ("revoke all on function public.desk_ask_model_stamp() from public, anon, authenticated, service_role;", "revoke all on function public.desk_ask_model_stamp() from public, authenticated, service_role;"),
  'no_primary_key': ("  id          boolean     primary key default true,", "  id          boolean     default true,"),
+ # two edits: with a plain seed the migration still applies, so the probe's OWN primary-key step is what must notice
+ 'no_primary_key_and_a_plain_seed': [("  id          boolean     primary key default true,", "  id          boolean     default true,"), ("values (true, 'claude-opus-5-5')\non conflict (id) do nothing;", "values (true, 'claude-opus-5-5');")],
 }
 
 def psql(db, *args, **kw):
     return subprocess.run(['psql', '-q', '-X', '-d', db, *args], capture_output=True, text=True, **kw)
 
-def scratch_run(sql_text):
-    """build a fresh database, apply the stub and `sql_text`, run the probe; returns (verdict dict | None, why)"""
+def scratch_run(sql_text, after_apply=None):
+    """build a fresh database, apply the stub and `sql_text` (then `after_apply`, if given), run the probe; returns (verdict dict | None, why)"""
     db = 'ask_tier_mut'
     psql('postgres', '-c', f'drop database if exists {db}'); r = psql('postgres', '-c', f'create database {db}')
     if r.returncode: return None, 'cannot create a scratch database: ' + r.stderr.strip()[:200]
@@ -65,6 +67,7 @@ def scratch_run(sql_text):
         if r.returncode: return None, 'the stub failed: ' + r.stderr.strip()[:300]
         r = psql(db, '-c', 'select 1') if False else subprocess.run(['psql', '-q', '-X', '-d', db], input=sql_text, capture_output=True, text=True)
         applied = r.returncode == 0 and 'ERROR' not in r.stderr
+        if after_apply: psql(db, '-c', after_apply)
         v = psql(db, '-At', '-f', VERIFY)
         m = re.search(r'ASK_MODEL_TIER_PROBE (\{.*\})', v.stdout + v.stderr, re.S)
         if not m: return None, ('the migration did not apply: ' + r.stderr.strip()[:160]) if not applied else 'the probe gave no verdict: ' + (v.stderr or v.stdout)[:200]
@@ -77,13 +80,21 @@ only = [a for a in sys.argv[1:] if not a.startswith('--')]
 base, why = scratch_run(MIG)
 if not base or not base['all_pass']:
     print('BASELINE FAILS — the unmutated migration does not pass the probe.', why or json.dumps(base['failed'])); sys.exit(2)
-print(f"baseline: all {base['steps_run']} probe steps pass on the unmutated migration\n")
+# the probe is also run on a database whose row the OWNER HAS ALREADY USED (the stub's owner PIN is 1111): a re-run on the live
+# project after the switch has been used must not read as a regression
+used, why2 = scratch_run(MIG, "select public.desk_set_ask_model('1111', 'claude-sonnet-5-5')")
+if not used or not used['all_pass']:
+    print('BASELINE AFTER USE FAILS — the probe is tied to a never-used row.', why2 or json.dumps(used['failed'])); sys.exit(2)
+print(f"baseline: all {base['steps_run']} probe steps pass on the unmutated migration, also after the owner has used the switch\n")
 n = caught = 0; bad = []
-for name, (a, b) in M.items():
+for name, spec in M.items():
     if only and not any(o in name for o in only): continue
-    if MIG.count(a) != 1: print(f'INVALID   {name}  (anchor x{MIG.count(a)})'); bad.append(name); continue
+    edits = spec if isinstance(spec, list) else [spec]
+    if any(MIG.count(a) != 1 for a, _ in edits): print(f'INVALID   {name}  (an anchor is not found exactly once)'); bad.append(name); continue
     n += 1
-    j, why = scratch_run(MIG.replace(a, b))
+    mutated = MIG
+    for a, b in edits: mutated = mutated.replace(a, b)
+    j, why = scratch_run(mutated)
     if j is None: caught += 1; print(f'caught    {name}  <- {why[:110]}')
     elif j['all_pass']: print(f'SURVIVED  {name}'); bad.append(name)
     else:

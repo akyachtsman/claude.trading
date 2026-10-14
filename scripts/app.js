@@ -3539,7 +3539,7 @@ function renderAsk() {
   let tierRefocus = null;   /* the option the owner used: every option is disabled while a save runs, which drops keyboard focus to <body> */
   const tierBtns = ASK_MODELS.map(m => {
     const b = el('button', 'ask-tier-opt', m.label); b.type = 'button'; b.dataset.model = m.id;
-    b.addEventListener('click', () => { tierRefocus = m.id; askTierWrite(pin, m.id); });
+    b.addEventListener('click', () => { if (askTierCanChoose(askTier) && m.id !== askTier.stored) tierRefocus = m.id; askTierWrite(pin, m.id); });   /* only a click that WILL write arms the focus return */
     tierGroup.appendChild(b);
     return b;
   });
@@ -3557,16 +3557,21 @@ function renderAsk() {
       b.disabled = !can;
       b.setAttribute('aria-pressed', b.dataset.model === shown ? 'true' : 'false');
     });
-    /* give focus back to the option that was used, once they are enabled again — but only if focus was LOST (WCAG 2.4.3);
-       a move the owner made meanwhile is theirs */
+    tierRetry.hidden = !(askTier.phase === 'failed' || askTier.phase === 'empty');   /* before the focus block below, which may land on it */
+    /* give focus back to what the owner was using, once it can take it — but only if focus was LOST (WCAG 2.4.3); a move
+       the owner made meanwhile is theirs. A disabled or hidden control drops focus to <body> in some engines and stays
+       "active" in others, so a hidden Try again counts as lost too. */
+    const a = document.activeElement;
+    const lost = !a || a === document.body || (a === tierRetry && tierRetry.hidden);
     if (can && tierRefocus) {
       const f = tierBtns.find(x => tierRefocus === '*' ? x.getAttribute('aria-pressed') === 'true' : x.dataset.model === tierRefocus);
       tierRefocus = null;
-      if (f && (!document.activeElement || document.activeElement === document.body)) f.focus({ preventScroll: true });
+      if (f && lost) f.focus({ preventScroll: true });
     } else if (askTier.phase === 'failed' || askTier.phase === 'empty') {
+      const wanted = tierRefocus;
       tierRefocus = null;   /* a stale target must not pull focus back later */
+      if (wanted && lost) tierRetry.focus({ preventScroll: true });   /* the save or the retry failed: Try again is the one control left to use */
     }
-    tierRetry.hidden = !(askTier.phase === 'failed' || askTier.phase === 'empty');
     tierNote.textContent = askTier.note;
   };
   const err = el('p', 'lock-error', ''); err.hidden = true;

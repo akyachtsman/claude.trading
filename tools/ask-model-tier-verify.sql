@@ -39,8 +39,9 @@ declare
   got        text;
   n          int := 0;
   v_start    text;
+  v_start_by uuid;
 begin
-  select model into v_start from public.desk_ask_model;   -- what the row says before anything is probed
+  select model, updated_by into v_start, v_start_by from public.desk_ask_model;   -- what the row says BEFORE anything is probed (it may have been used: the switch has an owner)
   insert into public.desk_users (id, label, salt, pin_hash, is_test) values
     (v_admin, 'probe-admin', salt, encode(extensions.digest(salt || 'probe-admin-pin', 'sha256'), 'hex'), false),
     (v_test,  'probe-test',  salt, encode(extensions.digest(salt || 'probe-test-pin',  'sha256'), 'hex'), true);
@@ -88,7 +89,7 @@ begin
       ('getter: NULL PIN is refused',     'anon', $q$select (public.desk_get_ask_model(null)->>'ok')$q$, 'false'),
       ('setter: wrong PIN is refused',    'anon', $q$select (public.desk_set_ask_model('wrong', 'claude-haiku-5-5')->>'ok')$q$, 'false'),
       ('setter: the TEST user''s PIN is refused', 'anon', $q$select (public.desk_set_ask_model('probe-test-pin', 'claude-haiku-5-5')->>'ok')$q$, 'false'),
-      ('the refused setters changed nothing', 'postgres', format($q$select (model = %L and updated_by is null)::text from public.desk_ask_model$q$, v_start), 'true'),
+      ('the refused setters changed nothing', 'postgres', format($q$select (model = %L and updated_by is not distinct from %L::uuid)::text from public.desk_ask_model$q$, v_start, v_start_by), 'true'),
       ('getter: the admin reads',         'anon', $q$select (public.desk_get_ask_model('probe-admin-pin')->>'ok')$q$, 'true'),
       ('getter: and gets a model in the list', 'anon', $q$select (public.desk_get_ask_model('probe-admin-pin')->>'model') in ('claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5')$q$, 'true'),
       ('setter: the admin writes sonnet', 'anon', $q$select (public.desk_set_ask_model('probe-admin-pin', 'claude-sonnet-5-5')->>'model')$q$, 'claude-sonnet-5-5'),
@@ -114,6 +115,8 @@ begin
       ('a NULL model is refused (not null)',     'postgres', $q$update public.desk_ask_model set model = null where id$q$, '23502'),
       ('a second row with id = true is refused', 'postgres', $q$insert into public.desk_ask_model (id, model) values (true, 'claude-haiku-5-5')$q$, '23505'),
       ('the table holds exactly one row',        'postgres', 'select count(*)::text from public.desk_ask_model', '1'),
+      ('id is the primary key (the singleton cannot be duplicated even if the CHECK were lost)', 'postgres',
+         $q$select count(*)::text from pg_index where indrelid = 'public.desk_ask_model'::regclass and indisprimary$q$, '1'),
       -- ── with no row (the row is removed inside this aborted transaction) ──────
       ('setup: remove the row',           'postgres', $q$with d as (delete from public.desk_ask_model where id returning 1) select count(*)::text from d$q$, '1'),
       ('getter with no row: ok, model null', 'anon', $q$select (public.desk_get_ask_model('probe-admin-pin')->>'ok') || ':' || coalesce(public.desk_get_ask_model('probe-admin-pin')->>'model', 'null')$q$, 'true:null'),
