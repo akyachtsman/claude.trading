@@ -6,6 +6,7 @@ to FAIL. A guard whose removal leaves S69 green is a guard nothing checks.
     python3 tools/ask-model-tier-client-mutants.py            # every mutant
     python3 tools/ask-model-tier-client-mutants.py --list     # names only
     python3 tools/ask-model-tier-client-mutants.py focus      # only mutants whose name contains "focus"
+    python3 tools/ask-model-tier-client-mutants.py --sources  # the OTHER suite: the collapsed sources footer, against S70
 
 Projects: desktop, mobile-chrome and tablet-chromium (the kit's tablet project's iPad descriptor run as CHROMIUM — the
 sandbox cannot launch WebKit; it stands in for the tightest stacked width, 810px). MUT_PROJECTS overrides the list.
@@ -14,7 +15,8 @@ Playwright download may not run in a sandbox; set PW_CHROMIUM to a browser binar
 /opt/pw-browsers/chromium). The runner starts its own static server on MUT_PORT (default 8791) and writes a
 throwaway config next to the kit's playwright.config.js (removed afterwards). Each file is restored after every
 mutant, also on an error. WebKit is not used: this checks the guards, not the cross-browser look.
-Not run by CI. The counts quoted in docs/architecture/desk-ask-and-cron.md come from this file."""
+Not run by CI. The counts quoted in docs/architecture/desk-ask-and-cron.md come from this file.
+`--sources` swaps in M_SOURCES (below) and the scenario S70: the same runner, a different guard list."""
 import os, re, subprocess, sys, tempfile, time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 KIT = os.path.join(ROOT, '.github/scripts/ui-tests')
@@ -90,9 +92,29 @@ M = [
  ('the sweeps\' shared guard no longer intercepts a write of the model tier', 'spec', [("  await page.route('**/rest/v1/rpc/desk_set_ask_model*', (route) => {\n    blocked.tierWrites++;\n    return route.fulfill({ status: 200, contentType: 'application/json',\n      body: JSON.stringify({ ok: false }) });\n  });\n", "")]),
 ]
 
+# ── the collapsed sources footer (owner 2026-10-14: "Collapse them"), proved by S70 ──
+M_SOURCES = [
+ ('the footer is drawn OPEN', 'app', [("    const foot = el('details', 'ask-sources');\n", "    const foot = el('details', 'ask-sources'); foot.open = true;\n")]),
+ ('the footer is a plain row again (not a <details>)', 'app', [("    const foot = el('details', 'ask-sources');\n", "    const foot = el('div', 'ask-sources');\n")]),
+ ('the count is what was SENT, not what is drawn', 'app', [("el('summary', '', 'Sources (' + n + ')')", "el('summary', '', 'Sources (' + sources.length + ')')")]),
+ ('the count has no number', 'app', [("el('summary', '', 'Sources (' + n + ')')", "el('summary', '', 'Sources')")]),
+ ('a footer with no drawable link is drawn anyway ("Sources (0)")', 'app', [("    const n = list.childElementCount;\n    if (!n) return;\n", "    const n = list.childElementCount;\n")]),
+ ('a javascript:/data: link is drawn', 'app', [("if (u.protocol === 'https:' || u.protocol === 'http:') href = u.href; } catch { /* not a URL */ }\n      if (!href) return;\n      const link = document.createElement('a');\n      link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';\n      link.textContent = s.title || s.url;", "href = u.href; } catch { /* not a URL */ }\n      if (!href) return;\n      const link = document.createElement('a');\n      link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';\n      link.textContent = s.title || s.url;")]),
+ ('more than six sources are looked at', 'app', [("sources.slice(0, 6).forEach(s => {\n      if (!s || !s.url) return;", "sources.slice(0, 9).forEach(s => {\n      if (!s || !s.url) return;")]),
+ ('opening does not keep the links on screen inside the thread', 'app', [("      if (over > 0) thread.scrollTop += Math.min(over, Math.max(0, f.top - t.top));\n", "")]),
+ ('opening pushes the "Sources" line itself out of a short thread', 'app', [("thread.scrollTop += Math.min(over, Math.max(0, f.top - t.top));", "thread.scrollTop += over;")]),
+ ('opening scrolls the PAGE to the footer', 'app', [("      if (over > 0) thread.scrollTop += Math.min(over, Math.max(0, f.top - t.top));\n", "      foot.scrollIntoView({ block: 'end' });\n")]),
+ ('a replayed answer\'s footer is drawn open', 'app', [("        appendSources(r.sources);\n      });", "        appendSources(r.sources);\n        { const d = thread.lastElementChild; if (d && d.tagName === 'DETAILS') d.open = true; }\n      });")]),
+ ('CSS: the "Sources" line wears the accent colour of the links', 'css', [("font: 600 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }\n.ask-sources > summary::-webkit-details-marker", "font: 600 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-accent); }\n.ask-sources > summary::-webkit-details-marker")]),
+ ('CSS: the "Sources" line gives no pointer cursor', 'css', [("display: inline-flex; align-items: center; gap: 4px; cursor: pointer; padding: 4px 0;", "display: inline-flex; align-items: center; gap: 4px; padding: 4px 0;")]),
+]
+
+SCEN = 'S70' if '--sources' in sys.argv else 'S69'
+if '--sources' in sys.argv: M = M_SOURCES
+
 def run_s69(env):
     try:
-        return subprocess.run(['node_modules/.bin/playwright', 'test', '-c', '.pw-mutants.config.mjs', '-g', 'S69', *[f'--project={x}' for x in PROJECTS], '--output', OUT],
+        return subprocess.run(['node_modules/.bin/playwright', 'test', '-c', '.pw-mutants.config.mjs', '-g', SCEN, *[f'--project={x}' for x in PROJECTS], '--output', OUT],
                               cwd=KIT, env=env, capture_output=True, text=True, timeout=170)
     except subprocess.TimeoutExpired as e:
         return subprocess.CompletedProcess(e.cmd, 124, (e.stdout or b'').decode() if isinstance(e.stdout, bytes) else (e.stdout or ''), 'HARNESS TIMEOUT')
@@ -121,8 +143,8 @@ try:
     time.sleep(1.5)
     base = run_s69(env)
     if base.returncode != 0:
-        print('BASELINE FAILS — S69 is not green on the unmutated tree; fix that first.\n' + (base.stdout + base.stderr)[-1500:]); sys.exit(2)
-    print('baseline: S69 green on ' + ', '.join(PROJECTS) + '\n')
+        print(f'BASELINE FAILS — {SCEN} is not green on the unmutated tree; fix that first.\n' + (base.stdout + base.stderr)[-1500:]); sys.exit(2)
+    print(f'baseline: {SCEN} green on ' + ', '.join(PROJECTS) + '\n')
     for name, key, edits in M:
         if only and not any(o in name for o in only): continue
         path = os.path.join(ROOT, F[key]); orig = open(path).read(); mut = orig; ok = True

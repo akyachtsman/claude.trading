@@ -3615,10 +3615,13 @@ function renderAsk() {
       'Open to visitors — a limited number of questions a day, nothing is saved, and it knows nothing about the accounts. Unlock the desk for saved history, your positions and scheduled questions.'));
   }
 
-  /* sources footer (FR-TR2): web citations rendered as safe links (textContent) */
+  /* sources footer (FR-TR2): web citations rendered as safe links (textContent).
+     COLLAPSED behind one "Sources (N)" line (owner 2026-10-14: "Collapse them" — six headline links under every
+     answer crowded the thread). A native <details>, so Enter/Space and a tap open it with no script, and it is drawn
+     CLOSED every time — a new answer and a replayed one alike. N counts the links actually drawn. */
   const appendSources = sources => {
     if (!sources || !sources.length) return;
-    const foot = el('div', 'ask-sources');
+    const list = el('div', 'ask-sources-list');
     sources.slice(0, 6).forEach(s => {
       if (!s || !s.url) return;
       /* only http(s) — never let a javascript:/data: URL from a web result
@@ -3629,9 +3632,22 @@ function renderAsk() {
       const link = document.createElement('a');
       link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';
       link.textContent = s.title || s.url;
-      foot.appendChild(link);
+      list.appendChild(link);
     });
-    if (foot.childElementCount) thread.appendChild(foot);
+    const n = list.childElementCount;
+    if (!n) return;
+    const foot = el('details', 'ask-sources');
+    foot.appendChild(el('summary', '', 'Sources (' + n + ')'));
+    foot.appendChild(list);
+    /* Opening grows the thread under the pointer; keep the links on screen INSIDE the thread (never the page),
+       and never push the "Sources" line itself out of view when the list is taller than the thread. */
+    foot.addEventListener('toggle', () => {
+      if (!foot.open) return;
+      const t = thread.getBoundingClientRect(), f = foot.getBoundingClientRect();
+      const over = f.bottom - t.bottom;
+      if (over > 0) thread.scrollTop += Math.min(over, Math.max(0, f.top - t.top));
+    });
+    thread.appendChild(foot);
   };
 
   /* PROOF that the switch is honoured (desk_021): under an answer, the model the PROVIDER says produced it

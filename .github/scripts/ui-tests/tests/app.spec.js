@@ -10806,3 +10806,147 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskGetAskModel = window.__realGet; window.deskSetAskModel = window.__realSet; window.deskAsk = window.__realAsk; });
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S70 — the sources under an answer are COLLAPSED (owner 2026-10-14, looking at six CPI headline links under
+// one answer: "How do I get rid of all these?" — then "Collapse them"). Each answer that cites the web gets ONE
+// muted "Sources (N)" line, a native <details> drawn CLOSED, in the same way for an answer that has just arrived and
+// for one replayed from the saved conversation. N counts the links actually drawn; a link that is not http(s) is
+// still never drawn. Opening it must not push the links out of the thread or scroll the page.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S70: the sources under an answer sit behind one "Sources (N)" line, closed until it is opened — a new answer and a replayed one alike', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '#askBody', 15000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(String(e)));
+
+  // Seven sources; of the FIRST SIX (the page draws no more) two are not http(s), so four links are drawn and N is 4.
+  const SRC = [
+    { title: 'September CPI Report: What the Inflation Data Is Expected to Show', url: 'https://example.com/a' },
+    { title: 'Consumer inflation rose faster than expected', url: 'https://example.com/b' },
+    { title: 'a script link', url: 'javascript:alert(1)' },
+    { url: 'http://example.com/untitled' },
+    { title: 'Bureau of Labor Statistics', url: 'https://example.com/e' },
+    { title: 'a data link', url: 'data:text/html,x' },
+    { title: 'beyond the sixth', url: 'https://example.com/g' },
+  ];
+  await page.evaluate((src) => {
+    window.__real = { ask: deskAsk, hist: deskChatHistory, get: deskGetAskModel, set: deskSetAskModel };
+    window.__src = src; window.__n = 0;
+    window.deskChatHistory = () => Promise.resolve([]);
+    window.deskGetAskModel = () => Promise.resolve({ ok: true, model: 'claude-haiku-5-5' });
+    window.deskSetAskModel = () => Promise.resolve({ ok: false });
+    window.deskAsk = () => Promise.resolve({ ok: true, answer: 'answer ' + (++window.__n) + ' — ' + 'a long line of reasoning that fills the thread. '.repeat(3), sources: window.__src });
+    DESK.mode = 'live'; DESK.authed = false; sessionStorage.removeItem('desk_pin');
+    renderAsk();
+  }, SRC);
+
+  const thread = page.locator('#askBody .ask-thread');
+  const foot = page.locator('#askBody .ask-thread details.ask-sources');
+  const form = page.locator('#askBody form');
+  const ask = async (q) => {
+    await form.locator('input.input').fill(q);
+    await form.locator('button[type=submit]').click();
+  };
+  const state = () => page.evaluate(() => [...document.querySelectorAll('#askBody .ask-thread details.ask-sources')].map((d) => ({
+    open: d.open, summary: d.querySelector(':scope > summary').textContent, links: [...d.querySelectorAll('a')].map((a) => ({ text: a.textContent, href: a.getAttribute('href'), target: a.target, rel: a.rel })),
+    height: Math.round(d.getBoundingClientRect().height),
+  })));
+
+  // ── 1. a NEW answer (an open visitor's, so no saved history is involved): one closed line, four links behind it ──
+  await ask('inflation today?');
+  await expect(page.locator('#askBody .ask-a').last()).toContainText('answer 1');
+  await expect(foot, 'ONE sources footer, a <details> (not a row of links)').toHaveCount(1);
+  let [s] = await state();
+  expect(s.open, 'drawn CLOSED').toBe(false);
+  expect(s.summary, 'the line says how many links are drawn (4), not how many were sent (7) or looked at (6)').toBe('Sources (4)');
+  expect(s.links.map((l) => l.href), 'every http(s) link is there; the javascript:/data: ones and the seventh are not').toEqual(['https://example.com/a', 'https://example.com/b', 'http://example.com/untitled', 'https://example.com/e']);
+  expect(s.links.map((l) => l.text)[2], 'a source with no title reads as its URL').toBe('http://example.com/untitled');
+  expect(s.links.every((l) => l.target === '_blank' && /noopener/.test(l.rel) && /noreferrer/.test(l.rel)), 'and each opens in a new tab without the opener').toBe(true);
+  for (const a of await foot.locator('a').all()) await expect(a, 'no link is on screen while it is closed').toBeHidden();
+  expect(s.height, 'the closed footer is one short line').toBeLessThan(44);
+  const quiet = await page.evaluate(() => {
+    const sum = document.querySelector('#askBody details.ask-sources > summary');
+    const probe = (v) => { const p = document.createElement('span'); p.style.color = `var(${v})`; document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; };
+    const c = getComputedStyle(sum).color;
+    return { muted: c === probe('--color-text-secondary'), accent: c === probe('--color-accent'), gain: c === probe('--color-gain'), loss: c === probe('--color-loss'), cursor: getComputedStyle(sum).cursor };
+  });
+  expect(quiet, 'the line is muted text — not the accent the links wear, and never the P&L green/red — and invites a click').toEqual({ muted: true, accent: false, gain: false, loss: false, cursor: 'pointer' });
+
+  // ── 2. a click opens it, a second closes it; the keyboard does the same (Enter and Space) ──
+  const summary = foot.first().locator('> summary');
+  await summary.click();
+  [s] = await state();
+  expect(s.open, 'a click opens it').toBe(true);
+  for (const a of await foot.locator('a').all()) await expect(a, 'and now the links are on screen').toBeVisible();
+  expect(s.height, 'open it is taller than the closed line').toBeGreaterThan(44);
+  await summary.click();
+  expect((await state())[0].open, 'a second click closes it again').toBe(false);
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  expect((await state())[0].open, 'Enter opens it').toBe(true);
+  await page.keyboard.press('Space');
+  expect((await state())[0].open, 'Space closes it').toBe(false);
+
+  // ── 3. every NEW answer is drawn closed, whatever the owner did with the one above ──
+  await summary.click();   // leave the first one OPEN
+  await ask('and core CPI?');
+  await expect(page.locator('#askBody .ask-a').last()).toContainText('answer 2');
+  expect((await state()).map((x) => x.open), 'the older one stays as the owner left it; the new one is closed').toEqual([true, false]);
+
+  // ── 4. opening the newest one at the foot of a full thread keeps the "Sources" line on screen INSIDE the thread (and its links too,
+  //      when the thread is tall enough for them), and does not scroll the page. Run as the OWNER: the stacked Ask panel gives a
+  //      visitor's thread almost no height at 810px, a layout limit older than this change and not what this step checks. ──
+  await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); renderAsk(); });
+  await expect(form.locator('input.input')).toBeEnabled();
+  for (let i = 3; i <= 7; i++) { await ask('question ' + i); await expect(page.locator('#askBody .ask-a').last()).toContainText('answer ' + i); }
+  const last = foot.last();
+  const scrollable = await thread.evaluate((t) => t.scrollHeight > t.clientHeight + 4);
+  expect(scrollable, 'five answers fill the thread, so it is a scroller').toBe(true);
+  const measure = () => page.evaluate(() => {
+    const th = document.querySelector('#askBody .ask-thread'), t = th.getBoundingClientRect();
+    const d = [...document.querySelectorAll('#askBody details.ask-sources')].pop();
+    const sum = d.querySelector(':scope > summary').getBoundingClientRect(), a = [...d.querySelectorAll('a')].pop().getBoundingClientRect();
+    return { tall: d.getBoundingClientRect().height > th.clientHeight, linkBelow: Math.round(a.bottom - t.bottom), summaryAbove: Math.round(t.top - sum.top), summaryBelow: Math.round(sum.bottom - t.bottom) };
+  });
+  const y0 = await page.evaluate(() => Math.round(window.scrollY));
+  await last.locator('> summary').click();
+  await expect(last.locator('a').last()).toBeAttached();
+  const fit = await measure();
+  expect(fit.summaryAbove, 'the "Sources" line is not pushed above the thread\'s top').toBeLessThanOrEqual(1);
+  expect(fit.summaryBelow, 'nor left below its bottom').toBeLessThanOrEqual(1);
+  if (!fit.tall) expect(fit.linkBelow, 'and, with room for them, the last link is inside the thread too').toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => Math.round(window.scrollY)), 'the PAGE did not move').toBe(y0);
+
+  // ...and again with a thread TOO SHORT for the whole list (forced, so every width takes this path): the line stays in view, the links scroll
+  await last.locator('> summary').click();
+  await thread.evaluate((t) => { t.style.flex = 'none'; t.style.height = '60px'; t.style.maxHeight = '60px'; t.scrollTop = t.scrollHeight; });
+  await last.locator('> summary').click();
+  await expect(last.locator('a').last()).toBeAttached();
+  const tall = await measure();
+  expect(tall.tall, 'the open list is now taller than its thread').toBe(true);
+  expect(tall.summaryAbove, 'the "Sources" line is still not above the top of the thread').toBeLessThanOrEqual(1);
+  expect(tall.summaryBelow, 'nor below its bottom').toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => Math.round(window.scrollY)), 'the PAGE still did not move').toBe(y0);
+  await thread.evaluate((t) => { t.style.flex = ''; t.style.height = ''; t.style.maxHeight = ''; });
+
+  // ── 5. a REPLAYED answer (the owner's saved conversation) is closed too; no links, or none that are safe, draws no line at all ──
+  await page.evaluate(() => {
+    window.deskChatHistory = () => Promise.resolve([
+      { id: 1, question: 'q1', answer: 'saved answer one', sources: window.__src, origin: 'typed', created_at: '2026-10-14T17:34:14Z' },
+      { id: 2, question: 'q2', answer: 'saved answer two', sources: [], origin: 'typed', created_at: '2026-10-14T17:35:14Z' },
+      { id: 3, question: 'q3', answer: 'saved answer three', sources: [{ title: 'unsafe', url: 'javascript:alert(1)' }], origin: 'scheduled', created_at: '2026-10-14T17:36:14Z' },
+    ]);
+    renderAsk();
+  });
+  await expect(page.locator('#askBody .ask-a'), 'all three saved answers are replayed').toHaveCount(3);
+  const replay = await state();
+  expect(replay.length, 'only the answer with a drawable link gets a footer').toBe(1);
+  expect([replay[0].open, replay[0].summary], 'drawn closed, counting what is drawn').toEqual([false, 'Sources (4)']);
+  await foot.first().locator('> summary').click();
+  expect((await state())[0].open, 'and it opens like the others').toBe(true);
+
+  // tidy: put the real functions back
+  await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskAsk = window.__real.ask; window.deskChatHistory = window.__real.hist; window.deskGetAskModel = window.__real.get; window.deskSetAskModel = window.__real.set; });
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});

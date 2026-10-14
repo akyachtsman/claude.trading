@@ -226,7 +226,20 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-toolbar:has(.ask-clear[hidden]) { display: none; }
 .ask-clear { appearance: none; border: 0; background: none; font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; padding: 4px 6px; border-radius: var(--radius-sm); }
 .ask-clear:hover, .ask-clear:focus-visible { color: var(--color-danger); }
-.ask-sources { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 var(--space-2); padding-left: var(--space-3); }
+/* The sources under an answer are COLLAPSED behind one "Sources (N)" line (owner 2026-10-14: "Collapse them"): a
+   native <details>, closed when drawn. The line is muted text (the Clear button's token, already contrast-checked);
+   the links keep their accent colour inside. The disclosure arrow is decoration (the alt text is empty, and a browser
+   that does not read `content: x / y` keeps the plain glyph); open/closed is the details element's own state. */
+.ask-sources { margin: 2px 0 var(--space-2); padding-left: var(--space-3); }
+.ask-sources > summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; padding: 4px 0; border-radius: var(--radius-sm); font: 600 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
+.ask-sources > summary::-webkit-details-marker { display: none; }
+.ask-sources > summary::before { content: '▸'; content: '▸' / ''; font-size: 1.1em; }
+.ask-sources[open] > summary::before { content: '▾'; content: '▾' / ''; }
+.ask-sources > summary:hover { color: var(--color-text-primary); }
+.ask-sources > summary:focus-visible { color: var(--color-text-primary); outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.ask-sources-list { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0 0; }
+/* A finger needs a taller line than a pointer. */
+@media (hover: none) { .ask-sources > summary { min-height: 32px; } }
 .ask-sources a { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-accent); text-decoration: none; }
 .ask-sources a:hover, .ask-sources a:focus-visible { text-decoration: underline; }
 
