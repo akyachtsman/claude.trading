@@ -1,6 +1,6 @@
 # Plan — Ask-the-desk model tier (admin-controlled)
 
-> **STATUS (2026-10-14): DRAFT v2 — `plan` phase, revised after an independent review, awaiting owner approval (one decision, D1, below). Nothing is applied, deployed or merged by this document.**
+> **STATUS (2026-10-14): D1 APPROVED by the owner ("D1 as recommended"). T1–T12 are built on `claude/funny-lamport-fj1s49` (PR #328); T13–T14 (local gates, /qa-pipeline) are next. Nothing is applied, deployed or merged: T15, T16 and T17 each need the owner's explicit approval.**
 
 HOW. Reads `spec.md` (FR1–FR13, SC1–SC8, C1–C3) and `brief.md` (the owner's design brief and traps). Constitution: the five imported directives; stack = static HTML + vanilla JS on Pages, Supabase edge function + SQL, **no build**. Owner approval is required for each of: the migration, the `desk-ask` deploy, the merge (CLAUDE.md Safety Rules; `git.md`).
 
@@ -110,18 +110,18 @@ Owner picks a tier → `desk_set_ask_model(pin, id)` (PIN re-checked; CHECK vali
 ## Tasks
 Convention: `depends:` lists task IDs; `[P]` = parallel-safe. Each is roughly failing test → change → verify → commit.
 
-- [ ] **T1** [P] Spec amendment: `spec.md` FR5 → four states; FR8 → override accepts a well-formed id; FR1 → named fallback; SC8 widened; A4 notes the docs conflict; status line. Files: `specs/ask-model-tier/spec.md`, `brief.md` (the Haiku row). depends: none
-- [ ] **T2** [P] Write `tools/ask-model-parity.mjs` (exports `checkParity(files)`, CLI over the repo). Run it first: it must FAIL (no declarations yet). depends: none
-- [ ] **T3** [P] Write `supabase/migrations/desk_021_ask_model_tier.sql`: table, constraints, RLS on, revoke/grant lines, seed (Opus 5.5), stamp trigger + function (with `nullif`), the two RPCs and their grants, a header naming the DB as the gate, a `-- revert:` line. depends: none
-- [ ] **T4** [P] `scripts/data.js`: `ASK_MODELS`, `askModelLabel`, `deskGetAskModel`, `deskSetAskModel` beside `deskGetSystemPrompt`. depends: none
-- [ ] **T5** `desk-ask/index.ts`: `TIER_IDS`/`TIER_FALLBACK`, `readTierRow`, `resolveTier`, `is_test` select + `isAdmin` (`=== false`), the resolved model replacing the literal, `model`+`tierSource` gated on success and failure replies, comments rewritten. depends: T3
-- [ ] **T6** `tools/ask-gate-check.mjs`: the `desk_ask_model` fake table + modes and a test user (own PIN, `is_test:true`) in the fake `desk_users`. depends: T5
-- [ ] **T7** `tools/ask-gate-check.mjs`: the tier checks (list under Verification); run until green; the existing checks stay green (FR12). depends: T6
-- [ ] **T8** `tools/ask-gate-check.mjs --mutants`: the guard mutants; each caught; record the count. depends: T7
-- [ ] **T9** `scripts/app.js` + `styles/components.css`: state, `askTierCanChoose`, read/write/re-read with generation counters, the `.ask-tier` element, the `.ask-model` proof line; `index.html` `?v=` bump. depends: T4
-- [ ] **T10** `.github/scripts/ui-tests/tests/app.spec.js` **S69** (cases under Verification, parity via `tools/ask-model-parity.mjs`); red first, then green. depends: T2, T3, T4, T5, T9
-- [ ] **T11** Mutation-test S69 and the parity tool: delete each named guard in a scratch copy, run S69 and the parity mutants, require a failure; record caught/equivalent counts honestly. depends: T10
-- [ ] **T12** Docs: `docs/architecture/desk-ask-and-cron.md` ("Model tier" + `desk-brief` exempt), `CLAUDE.md` (map lines, one load-bearing rule, the S69 row, the credential-reach answer + a session-start check line, migrations/tools lists), `specs/README.md` row. depends: T3, T5, T8, T10, T11
+- [x] **T1** [P] Spec amendment: `spec.md` FR5 → four states; FR8 → override accepts a well-formed id; FR1 → named fallback; SC8 widened; A4 notes the docs conflict; status line. Files: `specs/ask-model-tier/spec.md`, `brief.md` (the Haiku row). depends: none
+- [x] **T2** [P] Write `tools/ask-model-parity.mjs` (exports `checkParity(files)`, CLI over the repo). Run it first: it must FAIL (no declarations yet). depends: none
+- [x] **T3** [P] Write `supabase/migrations/desk_021_ask_model_tier.sql`: table, constraints, RLS on, revoke/grant lines, seed (Opus 5.5), stamp trigger + function (with `nullif`), the two RPCs and their grants, a header naming the DB as the gate, a `-- revert:` line. depends: none
+- [x] **T4** [P] `scripts/data.js`: `ASK_MODELS`, `askModelLabel`, `deskGetAskModel`, `deskSetAskModel` beside `deskGetSystemPrompt`. depends: none
+- [x] **T5** `desk-ask/index.ts`: `TIER_IDS`/`TIER_FALLBACK`, `readTierRow`, `resolveTier`, `is_test` select + `isAdmin` (`=== false`), the resolved model replacing the literal, `model`+`tierSource` gated on success and failure replies, comments rewritten. depends: T3
+- [x] **T6** `tools/ask-gate-check.mjs`: the `desk_ask_model` fake table + modes and a test user (own PIN, `is_test:true`) in the fake `desk_users`. depends: T5
+- [x] **T7** `tools/ask-gate-check.mjs`: the tier checks (list under Verification); run until green; the existing checks stay green (FR12). depends: T6
+- [x] **T8** `tools/ask-gate-check.mjs --mutants`: the guard mutants; each caught; record the count. depends: T7
+- [x] **T9** `scripts/app.js` + `styles/components.css`: state, `askTierCanChoose`, read/write/re-read with generation counters, the `.ask-tier` element, the `.ask-model` proof line; `index.html` `?v=` bump. depends: T4
+- [x] **T10** `.github/scripts/ui-tests/tests/app.spec.js` **S69** (cases under Verification, parity via `tools/ask-model-parity.mjs`); red first, then green. depends: T2, T3, T4, T5, T9
+- [x] **T11** Mutation-test S69 and the parity tool: delete each named guard in a scratch copy, run S69 and the parity mutants, require a failure; record caught/equivalent counts honestly. depends: T10
+- [x] **T12** Docs: `docs/architecture/desk-ask-and-cron.md` ("Model tier" + `desk-brief` exempt), `CLAUDE.md` (map lines, one load-bearing rule, the S69 row, the credential-reach answer + a session-start check line, migrations/tools lists), `specs/README.md` row. depends: T3, T5, T8, T10, T11
 - [ ] **T13** Local gates: html-validate, contrast gate, ask-gate-check (+ `--mutants`), parity, S69 on desktop and mobile via the local-Chromium wrapper config. depends: T8, T10, T11, T12
 - [ ] **T14** `/qa-pipeline` over the batch from this session; fix findings; mark the PR ready; keep it subscribed. depends: T13
 - [ ] **T15** **Owner approval** → apply `desk_021`; SQL verification; anon-key probe; `get_advisors`; paste results. depends: T14
@@ -129,6 +129,13 @@ Convention: `depends:` lists task IDs; `[P]` = parallel-safe. Each is roughly fa
 - [ ] **T17** Merge on green CI + clean Codex + owner go-ahead; watch Pages; re-diff deployed `desk-ask` against `main`. depends: T16
 - [ ] **T18** **SC8 gate** through the panel (owner clicks Haiku and asks the four questions; I read `desk_chat_memory` + logs). depends: T17
 - [ ] **T19** SC1/SC2 cycle; scheduled-question read if any; record evidence (CLAUDE.md deploy facts, a `learnings.jsonl` entry for each trap met). depends: T18
+
+## Implementation notes (what changed on the way, and what the evidence is)
+- **Toggle buttons, not radios.** The switch is a `role="group"` of `aria-pressed` buttons. Choosing writes to the database, so the radio idiom (an arrow key selects) would write on its way past; Enter/Space chooses. (Plan v2 said radiogroup.)
+- **The parity tool has `--selftest`, not a `--mutants` CLI** (the reviewer's simplification): 18 synthetic cases, a mutation that does not change the fixture is itself a failed case, and 14 of 15 checker mutants are caught — the survivor (ignoring the SQL `''` escape) is equivalent, a doubled quote only re-pairs the same string boundaries.
+- **The SQL was run before it was ever shown to production.** This sandbox has a Postgres 16 server; the migration and `tools/ask-model-tier-verify.sql` ran against a scratch cluster that mirrors the live roles, the `extensions` schema, `desk_users` and the project's default privileges (so the `service_role` default is reproduced, not assumed). The first draft failed one step — `PERFORM` sets `FOUND`, so the `if not found` after the actor reset was dead — fixed by testing the returned timestamp. 59 probe steps; 28 single-edit mutants of the migration, each failed by the probe (the 28th, removing the primary key, by the migration failing to apply). The same probe file runs on the live project at T15.
+- **Evidence counts, 2026-10-14:** `ask-gate-check` 23 checks, 44 mutants (23 new), all caught; S69 on desktop and phone width, 43 client mutants all caught (two survivors on the first run — a test gap around a reply landing after Lock, and a dead CSS rule — were fixed, the rule removed); S5, S29, S32, S33, S48, S59 still pass; the verify probe 59 steps. WebKit (tablet, iphone) cannot launch in this sandbox, so those two projects are CI's to run.
+- **Local-only helpers, not committed:** `.github/scripts/ui-tests/pw.local.config.mjs` (the kit's config on the sandbox Chromium; excluded through `.git/info/exclude`) and the scratch cluster under the postgres user's home, removed when the work is done.
 
 ## Consistency
 | Requirement | Task(s) |
