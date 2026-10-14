@@ -35,7 +35,7 @@
 
 > A screenshot of the CPI answer, no words: "...cited by Reuters in ⏎coverage on coinpaper⏎." broken over three lines.
 
-**STATE: built (PR after #329); NOT deployed — `desk-ask` live is still v29 until the owner approves a deploy.** `supabase/functions/desk-ask/index.ts` only; no migration, no client change.
+**STATE: built (PR #330); NOT deployed — `desk-ask` live is still v29 until the owner approves a deploy.** `supabase/functions/desk-ask/index.ts` only; no migration, no client change.
 
 The API returns a reply as a LIST of content blocks, and an answer that cites the web arrives cut into one text block per cited phrase. Measured on the stored answer (`desk_chat_memory` id 161, 980 characters, 10 newlines): `…cited by Reuters in ` | `coverage on coinpaper` | `.` | `\n\nThe snapshot…`, and `…Statistics.` | ` Economists had expected…` — each fragment keeps its OWN leading and trailing space. `textOf` joined every text block with `'\n'` (since the answer was first extracted), so a sentence broke at every citation; the client draws the answer `white-space: pre-wrap`, which made every one of those newlines visible. It was never Haiku's doing: any model that cites would have shown it.
 
