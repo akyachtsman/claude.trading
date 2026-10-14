@@ -35,7 +35,7 @@
 
 > A screenshot of the CPI answer, no words: "...cited by Reuters in ⏎coverage on coinpaper⏎." broken over three lines.
 
-**STATE: built (PR #330); NOT deployed — `desk-ask` live is still v29 until the owner approves a deploy.** `supabase/functions/desk-ask/index.ts` only; no migration, no client change.
+**STATE: MERGED 2026-10-14 (PR #330, squash `18bc001`) and DEPLOYED the same day as `desk-ask` v30** (owner: "merge it and deploy desk-ask"; `verify_jwt` OFF). Read back after the deploy, the live source is byte-identical to `supabase/functions/desk-ask/index.ts` on `main` (70,643 bytes, md5 `4dfcfb6c7b9130b20d81abc7ef33085e`; `list_edge_functions`: version 30, `ezbr_sha256` `5529b385…600a`), and four live calls that cost no model quota answered as before (wrong Origin 403, wrong PIN 401, empty question 400, CORS preflight 200). `supabase/functions/desk-ask/index.ts` only; no migration, no client change. **Not yet seen on a real cited answer:** the owner has still to ask a cited question as a PIN question (answers saved before the deploy keep their newlines).
 
 The API returns a reply as a LIST of content blocks, and an answer that cites the web arrives cut into one text block per cited phrase. Measured on the stored answer (`desk_chat_memory` id 161, 980 characters, 10 newlines): `…cited by Reuters in ` | `coverage on coinpaper` | `.` | `\n\nThe snapshot…`, and `…Statistics.` | ` Economists had expected…` — each fragment keeps its OWN leading and trailing space. `textOf` joined every text block with `'\n'` (since the answer was first extracted), so a sentence broke at every citation; the client draws the answer `white-space: pre-wrap`, which made every one of those newlines visible. It was never Haiku's doing: any model that cites would have shown it.
 
@@ -43,7 +43,7 @@ The API returns a reply as a LIST of content blocks, and an answer that cites th
 - **Where it applies:** the returned answer, the row stored in `desk_chat_memory` (what a reload replays, so no stored data is rewritten — answers saved before the fix keep their newlines), the draft the grounding check reads, and the checker's own reply. Nothing else in the repo joined text blocks (`grep "type === 'text'"` finds this one site).
 - **Not changed:** the model's own newlines inside a block (paragraph breaks) are kept as written; the client's `pre-wrap` is untouched.
 - **Guarded by** two checks in `tools/ask-gate-check.mjs` (a cited, fragmented reply with a thinking block and a trailing blank passage reads as one passage and is returned, stored and shown to a visitor the same; a plain one-block answer is unchanged and a blank reply is still the 502) and 7 mutants (newline join restored, no break at a tool block, a thinking block splitting a passage, the wrong passage separator, no trimming, blank passages kept, the trailing run dropped). The suite is now 29 checks and 60 mutants, all caught.
-- **Deploy (owner approval, as every time):** `deploy_edge_function`, `verify_jwt` OFF, read back byte-identical to the file. Rollback = redeploy `supabase/functions/desk-ask/index.ts` as of the v29 source (`8239854^`'s file, md5 `b164c712a384f04e67eadfef36b75962`).
+- **Deploy (owner approval, as every time):** `deploy_edge_function`, `verify_jwt` OFF, read back byte-identical to the file — done for v30. Rollback = redeploy `supabase/functions/desk-ask/index.ts` as of `f897a37` (the v29 source, md5 `b164c712a384f04e67eadfef36b75962`; the file is the same on `18bc001^`) with `verify_jwt` OFF.
 
 ## The sources footer is collapsed — owner, 2026-10-14
 
