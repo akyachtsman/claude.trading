@@ -767,10 +767,25 @@ async function handle(req: Request): Promise<Response> {
     usage.calls++;
   };
 
+  /* The words of a reply. The API returns a reply as a LIST of content blocks, and an answer that cites the web
+     arrives cut into one text block per cited phrase — measured on the owner's CPI answer (2026-10-14): "…cited by
+     Reuters in " | "coverage on coinpaper" | "." | "\n\nThe snapshot…". Those blocks are fragments of ONE passage and
+     carry their own spaces, so contiguous text blocks are joined with NOTHING; joining them with a newline (the
+     first cut) broke a sentence at every citation. Text on either side of a tool block (the narration before a
+     search, the answer after it) is a separate passage: a blank line between them. Thinking blocks are neither
+     text nor a break. Each passage is trimmed, so the join never leaves a stray space at a seam. */
   // deno-lint-ignore no-explicit-any
-  const textOf = (m: any) => (m?.content ?? [])
-    .filter((b: { type: string }) => b.type === 'text')
-    .map((b: { text: string }) => b.text).join('\n').trim();
+  const textOf = (m: any) => {
+    const passages: string[] = [];
+    let open: string | null = null;
+    // deno-lint-ignore no-explicit-any
+    for (const b of (m?.content ?? []) as any[]) {
+      if (b?.type === 'text') open = (open ?? '') + (typeof b.text === 'string' ? b.text : '');
+      else if (b?.type !== 'thinking' && b?.type !== 'redacted_thinking' && open !== null) { passages.push(open); open = null; }
+    }
+    if (open !== null) passages.push(open);
+    return passages.map((p) => p.trim()).filter(Boolean).join('\n\n');
+  };
 
   // Grounding check. Deliberately a MATCHING task, not an opinion task: it is
   // never asked whether the answer is good, only which claims fail to appear in

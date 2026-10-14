@@ -530,6 +530,51 @@ const TESTS = [
       assert(!/haiku|credit|balance|support/i.test(JSON.stringify(rx.json)), `${who} learns nothing about the model or the account: ${JSON.stringify(rx.json)}`);
     }
   }],
+
+  // ── the words of a reply (owner 2026-10-14: a CPI answer broke mid-sentence around "Reuters in / coverage on coinpaper / .") ──
+  ['an answer that cites the web arrives in fragments and reads as ONE passage: contiguous text blocks are joined with nothing (each keeps its own spaces), a tool block between two texts is a blank line, a thinking block is neither — stored and returned the same', async (code) => {
+    const text = (t) => ({ type: 'text', text: t });
+    const cited = (t) => ({ type: 'text', text: t, citations: [{ type: 'web_search_result_location', url: 'https://example.test/a', title: 'A' }] });
+    const fragments = () => new Response(JSON.stringify({
+      stop_reason: 'end_turn', model: 'test-model', usage: { input_tokens: 10, output_tokens: 5 },
+      content: [
+        text('Let me check the report. '),
+        { type: 'server_tool_use', id: 'srv_1', name: 'web_search', input: { query: 'CPI' } },
+        { type: 'web_search_tool_result', tool_use_id: 'srv_1', content: [{ type: 'web_search_result', url: 'https://example.test/a', title: 'A' }] },
+        text('The September CPI report is out today, and it came in hotter than expected. '),
+        cited('The consumer price index showed annual inflation of 3.7% in September, according to the Bureau of Labor Statistics.'),
+        text(' Economists had expected 3.6%.'),
+        { type: 'thinking', thinking: 'a thought between two fragments', signature: 'sig' },
+        cited(' Core CPI rose 0.3% on the month.\n\nAfter the release, Fed rate hike odds rose to about 45%, according to futures data cited by Reuters in '),
+        cited('coverage on coinpaper'),
+        text('.'),
+        { type: 'server_tool_use', id: 'srv_2', name: 'web_search', input: { query: 'again' } },
+        text('   '),   // a passage of nothing but spaces after a tool call: it is no paragraph
+      ],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const WANT = 'Let me check the report.\n\n' +
+      'The September CPI report is out today, and it came in hotter than expected. The consumer price index showed annual inflation of 3.7% in September, according to the Bureau of Labor Statistics. Economists had expected 3.6%. Core CPI rose 0.3% on the month.\n\n' +
+      'After the release, Fed rate hike odds rose to about 45%, according to futures data cited by Reuters in coverage on coinpaper.';
+    const e = boot(code, { model: fragments });
+    const r = await e.pin();
+    eq([r.status, r.json.ok], [200, true], 'the question is answered');
+    eq(r.json.answer, WANT, 'the returned answer reads as the model wrote it: no newline inside a sentence, a blank line only where a tool call sat between two texts');
+    eq(e.db.memPosts.map((m) => m.answer), [WANT], 'and the saved conversation holds the same words (what a reload replays)');
+    const v = boot(code, { model: fragments }); const rv = await v.open();
+    eq(rv.json.answer, WANT, 'a visitor\'s answer is built the same way');
+  }],
+
+  ['a plain one-block answer is returned as written (an inner blank line kept, the ends trimmed) and a reply with no text at all is still the "empty model response" error', async (code) => {
+    const one = (t) => () => new Response(JSON.stringify({
+      stop_reason: 'end_turn', model: 'test-model', usage: { input_tokens: 10, output_tokens: 5 },
+      content: [{ type: 'web_search_tool_result', content: [{ type: 'web_search_result', url: 'https://example.test/a', title: 'A' }] }, { type: 'text', text: t }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const e = boot(code, { model: one('\n  First paragraph.\n\nSecond paragraph.  \n') });
+    eq((await e.pin()).json.answer, 'First paragraph.\n\nSecond paragraph.', 'one block: trimmed at the ends, untouched inside');
+    const blank = boot(code, { model: one('   \n ') });
+    const rb = await blank.pin();
+    eq([rb.status, rb.json.ok, rb.json.error], [502, false, 'empty model response'], 'whitespace alone is no answer');
+  }],
 ];
 
 async function runSuite(code, { verbose = false } = {}) {
@@ -604,6 +649,13 @@ const MUTANTS = [
   ['a padded ASK_MODEL secret is not trimmed', "const ov = (override ?? '').trim();", "const ov = (override ?? '');"],
   ['a refusal carries no proof to the admin', "error: 'The model declined this question.', ...adminProof(msg.model) }", "error: 'The model declined this question.' }"],
   ['a visitor is shown the provider\'s own words (the model, the account\'s billing state)', "${isAdmin && msg ? ' — ' + msg.slice(0, 300) : ''}", "${msg ? ' — ' + msg.slice(0, 300) : ''}"],
+  ['contiguous text blocks are joined with a newline again (a sentence breaks at every citation)', "if (b?.type === 'text') open = (open ?? '') + (typeof b.text === 'string' ? b.text : '');", "if (b?.type === 'text') open = (open === null ? '' : open + '\\n') + (typeof b.text === 'string' ? b.text : '');"],
+  ['a tool block between two texts no longer separates them (the narration runs into the answer)', "else if (b?.type !== 'thinking' && b?.type !== 'redacted_thinking' && open !== null) { passages.push(open); open = null; }", "else if (false) { passages.push(open); open = null; }"],
+  ['a thinking block splits a passage in two', "else if (b?.type !== 'thinking' && b?.type !== 'redacted_thinking' && open !== null) { passages.push(open); open = null; }", "else if (open !== null) { passages.push(open); open = null; }"],
+  ['the passages are joined with a single newline, not a blank line', "return passages.map((p) => p.trim()).filter(Boolean).join('\\n\\n');", "return passages.map((p) => p.trim()).filter(Boolean).join('\\n');"],
+  ['the passages are not trimmed (a stray space at every seam)', "return passages.map((p) => p.trim()).filter(Boolean).join('\\n\\n');", "return passages.filter(Boolean).join('\\n\\n');"],
+  ['a whitespace-only passage is kept (a blank line left in the answer)', "return passages.map((p) => p.trim()).filter(Boolean).join('\\n\\n');", "return passages.map((p) => p.trim()).join('\\n\\n');"],
+  ['a trailing text run is dropped (the last fragment of the answer is lost)', "if (open !== null) passages.push(open);\n", "void 0;\n"],
 ];
 
 // The esbuild pinned (exact version + integrity hash) in tools/package.json and its lockfile.
