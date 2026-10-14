@@ -10557,11 +10557,33 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
   await opts.nth(0).click();
   await expect.poll(() => pend('__setQ')).toBe(1);
+  const getsBefore4 = await gets();
   await page.evaluate(() => window.renderAsk());                       // the panel is rebuilt: a new read begins
   expect((await snap()).pressed, 'the rebuilt panel starts unread').toEqual(NONE);
+  expect(await gets(), 'the rebuilt panel asked the row (read #1)').toBe(getsBefore4 + 1);
   await answerSet({ ok: true, model: 'claude-haiku-5-5' });          // the OLD save replies now
   expect((await snap()).pressed, 'the superseded save claims nothing').toEqual(NONE);
-  await answerGet({ ok: true, model: 'claude-opus-5-5' }, 1);          // the new read: the truth
+  // Codex P2, PR #328: the rebuild's read can be answered BEFORE the write committed. It must not be the last word on a row
+  // that has since moved — once the superseded write has settled, the panel asks the row again.
+  await expect.poll(() => gets(), 'a superseded save that settled makes the panel read the row again (read #2)').toBe(getsBefore4 + 2);
+  await answerGet({ ok: true, model: 'claude-sonnet-5-5' }, getsBefore4);      // read #1 lands LATE with the OLD value (it overtook the write)
+  await page.waitForTimeout(150);
+  expect((await snap()).pressed, 'the stale read is superseded by the re-read: it changes nothing, the switch is still not offered on the old model').toEqual(NONE);
+  expect((await snap()).disabled, 'and stays disabled until the row has answered').toEqual([true, true, true]);
+  await answerGet({ ok: true, model: 'claude-haiku-5-5' }, getsBefore4 + 1);   // read #2: the truth after the write
+  await expect(opts.nth(0)).toHaveAttribute('aria-pressed', 'true');
+  expect((await snap()).pressed, 'the screen says what the database says: the model that was saved').toEqual(['true', 'false', 'false']);
+  // ...but a LOCK that supersedes a save leaves nothing to ask with and no panel to be wrong: its late reply reads nothing
+  await opts.nth(2).click();
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  const getsLock = await gets();
+  await page.evaluate(() => { DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.renderAsk(); });
+  await answerSet({ ok: true, model: 'claude-opus-5-5' });
+  await page.waitForTimeout(150);
+  expect(await gets(), 'a save superseded by a Lock asks the database nothing').toBe(getsLock);
+  expect(await page.evaluate(() => [askTier, askTierPaint]), 'and leaves no admin state or repaint hook behind').toEqual([{ phase: 'unread', stored: null, note: '' }, null]);
+  await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); window.__getQ = []; window.__calls.get = []; window.renderAsk(); });
+  await answerGet({ ok: true, model: 'claude-opus-5-5' }, 0);
   await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
   // two reads in flight: the OLDER one landing last must not win
   await page.evaluate(() => { window.__getQ = []; window.__calls.get = []; window.renderAsk(); window.renderAsk(); });

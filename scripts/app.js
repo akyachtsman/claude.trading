@@ -3444,7 +3444,16 @@ async function askTierWrite(pin, id) {
   const gen = ++askTierGen;
   askTierSet({ phase: 'saving', note: 'Saving…' });
   const out = await deskSetAskModel(pin, id);
-  if (gen !== askTierGen) return;
+  if (gen !== askTierGen) {
+    /* SUPERSEDED: the panel was rebuilt (an unlock, the Accounts "Retry") or locked while this save was out. Its reply is
+       not drawn — the rebuild owns the screen — but the rebuild's own read can have been answered BEFORE this write
+       committed, and would then be the last word on a row that has since moved: the switch would enable on the old model
+       while the database holds the new one (Codex P2, PR #328). So once the write has settled, an UNLOCKED panel asks
+       the row again, and the answer is whatever it says now. A locked or demo panel has no repaint hook and asks
+       nothing: there is no panel to be wrong, and no PIN to ask with. */
+    if (askTierPaint) askTierRead(pin);
+    return;
+  }
   if (out && out.ok === true && ASK_MODELS.some(m => m.id === out.model)) {
     askTierSet({ phase: 'stored', stored: out.model, note: 'Saved — applies from your next question.' });
   } else {
