@@ -10950,3 +10950,68 @@ test('S70: the sources under an answer sit behind one "Sources (N)" line, closed
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskAsk = window.__real.ask; window.deskChatHistory = window.__real.hist; window.deskGetAskModel = window.__real.get; window.deskSetAskModel = window.__real.set; });
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────�
+// S71 — every moving average draws in a colour of its own (owner 2026-10-14, from a chart screenshot: "Why is
+// uh, fifty? And 100 day moving ave Yeah., same color."). The 100-day borrowed --color-series-2, which the dark
+// Stochastic charts paint #f5c518 — the same yellow as the 50-day (--color-accent-bright) and the stochastic %D —
+// so three lines read as one. The 100 now has a token of its own (--color-sma-100), defined for the daylight
+// theme too because the watchlist detail window draws the same SMAs OUTSIDE the dark scope: a token declared in
+// the dark scope alone would leave those swatches and lines with an undefined colour.
+// ─────────────────────────────────────────────────────────────────�
+test('S71: the SMA lines draw in distinct colours — the 100-day is no longer the 50-day / %D yellow — in the dark charts and in the detail window', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(60_000);
+  await gotoDemo(page, '#wbChart', 20000, 800);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(String(e)));
+
+  const rgb = (s) => (s.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const MIN = 60;   // RGB distance below which two lines read as one colour (yellow vs the old 100 was 0)
+
+  // ── 1. the SWING pane with every average on, switched on through its own gear (not by poking the config) ──
+  await page.locator('#wbGear-p1').click();
+  await expect(page.locator('#wbSettings-p1')).toBeVisible();
+  for (const n of [1, 100, 200]) {
+    const box = page.locator('#wbSettings-p1 label', { hasText: `SMA (${n})` }).locator('input[type=checkbox]');
+    await box.check();
+  }
+  await expect.poll(() => page.locator('#wbChart path[data-sma]').count(), { timeout: 8000, message: 'all five averages are drawn (25 and 50 are on by default)' }).toBe(5);
+
+  const lines = await page.evaluate(() => {
+    const out = {};
+    for (const p of document.querySelectorAll('#wbChart path[data-sma]')) out[p.getAttribute('data-sma')] = getComputedStyle(p).stroke;
+    const d = document.querySelector('#wbChart path[data-volma]');   // the %D yellow, drawn by the volume average
+    out.pctD = d ? getComputedStyle(d).stroke : '';
+    return out;
+  });
+  expect(Object.keys(lines).sort(), 'one line per average, plus the %D reference').toEqual(['1', '100', '200', '25', '50', 'pctD']);
+  const cols = Object.fromEntries(Object.entries(lines).map(([k, v]) => [k, rgb(v)]));
+  for (const [k, c] of Object.entries(cols)) expect(c.length, `${k} resolved to a real colour (a missing token resolves to nothing)`).toBe(3);
+  /* The five averages share ONE plotting area, so every pair must read apart. The %D yellow is NOT in this matrix: it is drawn in the
+     stochastic strip below, and the 50-day has always shared its yellow (the reference terminal's palette) — only the 100 is compared to it. */
+  const names = ['1', '25', '50', '100', '200'];
+  for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+    const a = names[i], b = names[j];
+    expect(dist(cols[a], cols[b]), `SMA ${a} vs SMA ${b} are told apart (${lines[a]} vs ${lines[b]})`).toBeGreaterThan(MIN);
+  }
+  expect(dist(cols['100'], cols['50']), 'the owner\'s case: the 100-day is not the 50-day colour').toBeGreaterThan(MIN);
+  expect(dist(cols['100'], cols.pctD), 'nor the stochastic %D yellow').toBeGreaterThan(MIN);
+  await page.keyboard.press('Escape');
+
+  // ── 2. the watchlist detail window draws the same averages in the DAYLIGHT theme: its swatches must resolve too ──
+  await page.locator('.wl-strip .wl-tile').first().click();
+  await expect(page.locator('#wlDetailBackdrop')).toBeVisible();
+  const dots = await page.evaluate(() => [...document.querySelectorAll('#wlDetailSmas label')].map((l) => ({
+    label: l.textContent.trim(), bg: getComputedStyle(l.querySelector('.wl-sma-dot')).backgroundColor,
+  })));
+  expect(dots.map((d) => d.label), 'the detail window offers its four averages (WL_SMA_SET — no 1-day line there)').toEqual(['SMA 25', 'SMA 50', 'SMA 100', 'SMA 200']);
+  for (const d of dots) expect(rgb(d.bg).length === 3 && !/rgba\([^)]*,\s*0\)/.test(d.bg), `${d.label} swatch has a colour (${d.bg})`).toBe(true);
+  const dc = dots.map((d) => rgb(d.bg));
+  for (let i = 0; i < dc.length; i++) for (let j = i + 1; j < dc.length; j++) {
+    expect(dist(dc[i], dc[j]), `${dots[i].label} vs ${dots[j].label} swatches are told apart in the daylight theme`).toBeGreaterThan(MIN / 2);
+  }
+  await page.keyboard.press('Escape');
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});

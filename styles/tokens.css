@@ -42,6 +42,11 @@
   --color-series-1:       #2A78D6;
   --color-series-2:       #C98500;
   --color-series-3:       #4A3AA7;
+  /* The 100-day SMA's own colour — NOT part of the CVD-validated series 1..3 above
+     (their order is untouched). Teal, text-safe on white (5.36:1). Before this the
+     100 borrowed series-2, which the dark Stochastic charts paint the same yellow as
+     the 50 and %D (owner 2026-10-14: "100 day moving ave … same color"). */
+  --color-sma-100:        #0E7490;
 
   /* type — IBM Plex: instrument-panel heritage; mono carries all numerics */
   --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

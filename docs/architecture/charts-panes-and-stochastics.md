@@ -93,6 +93,20 @@ The three Pro panes in `scripts/app.js` (`renderCharts` / `drawPane`): volume av
   The **SMA price display** (a right-edge price tag at each enabled SMA) was
   removed from Pro 1/2/3 the same day, owner request — the config, the popover
   group and the drawing code all went; the SMA lines themselves are untouched.
+  **The five SMA colours each differ (owner 2026-10-14, from a chart screenshot: "Why is uh, fifty? And 100 day
+  moving ave Yeah., same color").** `SMA_COLORS` (app.js) draws 1 white (`--color-text-primary`), 25 purple
+  (`--color-series-3`), 50 yellow (`--color-accent-bright`), 100 CYAN (`--color-sma-100`), 200 grey-blue
+  (`--color-text-secondary`). The 100 used to borrow `--color-series-2`, which the dark `.area-charts` scope paints
+  `#f5c518` — the same yellow as the 50 AND the stochastic %D — so three lines read as one. The 100 now has a token
+  of its own, **defined in BOTH themes**: `#22d3ee` in the dark scope (`layout.css`) and `#0E7490` in `tokens.css`
+  (5.36:1 on white), because the watchlist detail window draws the same averages OUTSIDE the dark scope and a token
+  declared in the dark scope alone resolves to nothing there (a transparent swatch, an unpainted line). It is not one
+  of the CVD-validated `--color-series-1..3`, whose order is untouched. No orange (owner 2026-07-16). The 50 keeping
+  its yellow beside the %D yellow is deliberate and unchanged: they sit in different strips (price vs stochastic),
+  while the five averages share one plotting area and must all read apart. Each SMA path carries `data-sma="<len>"`
+  (like `data-volma`) so a test can read its resolved stroke. Guarded by S71; by hand, six regressions (the 100 back
+  on series-2, on the 50's token, the dark token turned yellow, the token missing from the daylight theme, the
+  daylight token equal to the 50, the `data-sma` attribute dropped) each fail it on desktop.
   **A LAST-PRICE TAB is a different thing and IS on all three panes** (owner
   request 2026-08-12, from a reference terminal's white flag): a pentagon
   notched at the price axis, `--color-text-primary` on `--color-bg` — which
