@@ -201,7 +201,7 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .lock-explain { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0 0 var(--space-3); }
 .lock-form { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .lock-form .input { flex: 1 1 160px; max-width: 240px; }
-.lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-danger); margin: var(--space-2) 0 0; }
+.lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-danger); margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
 
 /* ask-the-desk (PIN-gated Claude Q&A) */
 /* height is capped by the panel (col-rail stretches to the Markets tile); the
@@ -242,6 +242,10 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-tier-opt[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
 .ask-tier-opt:disabled { color: var(--color-text-secondary); cursor: not-allowed; }
 .ask-tier-opt:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.ask-tier-opt:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--color-surface-2); }
+/* Windows High Contrast drops author colours, which leaves the chosen model looking like the other two — and this
+   control says which model answers every question. An underline survives forced colours. */
+@media (forced-colors: active) { .ask-tier-opt[aria-pressed="true"] { text-decoration: underline; text-underline-offset: 3px; } }
 /* A mis-tap rewrites the model for every question the desk answers, so on a touch screen the target is as tall as the
    buttons beside it. */
 @media (hover: none) { .ask-tier-opt { min-height: 40px; } }

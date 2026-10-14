@@ -13,6 +13,11 @@
 --                           approved applying desk_021 (it inserts two throwaway users, inside the
 --                           transaction that is then aborted, and temporarily removes the row for
 --                           the "no row" steps — also rolled back).
+--   The MCP may HOLD that call: docs/architecture/desk-ask-and-cron.md records it holding any statement
+--   that contains a destructive keyword (delete, drop, truncate), even inside a string, and this probe
+--   necessarily contains them — they ARE the denials it probes. If execute_sql holds it, run the same text
+--   in the dashboard SQL editor, or have the owner confirm the hold. Do not reword the keywords away:
+--   a probe that no longer attempts the delete or the truncate no longer proves they are refused.
 --
 -- What each group proves (the traps from the owner's brief, 2026-10-14, are named):
 --   privileges   RLS is on and there is NO policy; the ONLY privilege any caller role holds on the
@@ -71,6 +76,9 @@ begin
       ('authenticated cannot insert',     'authenticated', $q$insert into public.desk_ask_model (id, model) values (false, 'claude-haiku-5-5')$q$, '42501'),
       ('authenticated cannot remove the row', 'authenticated', 'delete from public.desk_ask_model where id', '42501'),
       ('authenticated cannot empty the table', 'authenticated', 'truncate public.desk_ask_model', '42501'),
+      -- a positive control for the role the denials above assume: if a role cannot be assumed, SET ROLE itself raises 42501 and
+      -- every denial for that role would "pass" for the wrong reason (anon and service_role have one below; this is authenticated's)
+      ('authenticated can be assumed (its denials above are the table''s, not a failed SET ROLE)', 'authenticated', 'select current_user::text', 'authenticated'),
       ('service_role CAN read (desk-ask does)', 'service_role', 'select count(*)::text from public.desk_ask_model', '1'),
       ('service_role cannot insert',      'service_role',  $q$insert into public.desk_ask_model (id, model) values (false, 'claude-haiku-5-5')$q$, '42501'),
       ('service_role cannot update',      'service_role',  $q$update public.desk_ask_model set model = 'claude-haiku-5-5' where id$q$, '42501'),

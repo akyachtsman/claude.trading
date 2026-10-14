@@ -142,13 +142,27 @@ const benignPageError = (text) => benignCors(text);
    can reach a replace-all against the actual table in CI. Register BEFORE the
    page loads. Only the WRITE is answered here (`desk_set_watchlists*`); reads
    stay real, because S3 exercises them. Returns a live counter of the writes
-   that were intercepted, so a scenario that can assert on it may. */
+   that were intercepted, so a scenario that can assert on it may.
+
+   The same holds for the Ask panel's MODEL SWITCH (desk_021): `desk_set_ask_model`
+   moves the model that answers EVERY question the production desk gets, visitors
+   included. A sweep with a real credential reaches it only if that credential is
+   the owner's — today the CI test credential is `is_test` and the database refuses
+   it (the switch sits in its "failed" state, all three options disabled) — but that
+   is ONE predicate in two SQL functions, and nothing else in CI would notice it
+   going. So the write is answered here with a refusal and counted apart
+   (`tierWrites`), whatever the credential. Reads stay real. */
 async function blockRosterWrites(page) {
-  const blocked = { count: 0 };
+  const blocked = { count: 0, tierWrites: 0 };
   await page.route('**/rest/v1/rpc/desk_set_watchlists*', (route) => {
     blocked.count++;
     return route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ ok: true, version: null }) });
+  });
+  await page.route('**/rest/v1/rpc/desk_set_ask_model*', (route) => {
+    blocked.tierWrites++;
+    return route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ok: false }) });
   });
   return blocked;
 }
@@ -10552,6 +10566,22 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await ask({ ok: true, answer: 'a6', sources: [] }, 'six (no model in the reply)');
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('a6');
   await expect(page.locator('#askBody .ask-model'), 'no model in the reply, no proof line: still the five from before').toHaveCount(5);
+  // The switch row's NOTE appearing or going changes its height, and on a stacked layout the thread gives that room back: a
+  // thread scrolled to its newest line (the proof line!) must stay there, and one the owner scrolled UP to read must not move.
+  const gap = () => page.evaluate(() => { const t = document.querySelector('#askBody .ask-thread'); return t.scrollHeight - t.scrollTop - t.clientHeight; });
+  await page.evaluate(() => {
+    const t = document.querySelector('#askBody .ask-thread');
+    for (let i = 0; i < 60; i++) { const f = document.createElement('p'); f.className = 'filler69'; f.textContent = 'filler ' + i; t.appendChild(f); }
+    t.scrollTop = t.scrollHeight;
+  });
+  expect(await gap(), 'precondition: the thread overflows and is scrolled to its newest line').toBeLessThan(4);
+  await page.evaluate(() => askTierSet({ note: 'Saved — applies from your next question.' }));
+  expect(await gap(), 'a note appearing under the switch keeps a thread that was at its end AT its end').toBeLessThan(4);
+  await page.evaluate(() => askTierSet({ note: '' }));
+  expect(await gap(), '...and so does the note going away').toBeLessThan(4);
+  await page.evaluate(() => { document.querySelector('#askBody .ask-thread').scrollTop = 0; askTierSet({ note: 'x' }); });
+  expect(await page.evaluate(() => document.querySelector('#askBody .ask-thread').scrollTop), 'a thread the owner scrolled up is left where it was').toBe(0);
+  await page.evaluate(() => { askTierSet({ note: '' }); document.querySelectorAll('#askBody .filler69').forEach((f) => f.remove()); });
   // the owner's switch row lives INSIDE the stacked panel's fixed height budget: it must leave the answers room to be read.
   // Measured BEFORE the failed question below, whose red error line comes out of the same budget (at tablet width it takes a
   // further ~47px, and a 74px thread there is better than main's, which is 2px): the regressions this guards were 0px at 810
@@ -10562,6 +10592,11 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await ask({ ok: false, error: 'model call failed (HTTP 400) — tools not supported', model: 'claude-haiku-5-5', tierSource: 'row' }, 'seven');
   await expect(page.locator('#askBody .lock-error'), 'a failed question tells the owner which tier it asked for').toContainText(/HTTP 400.*\(model: Haiku 5\.5\)/);
   expect((await room()).discClipped, 'and with the error line showing the footer is still inside the panel').toBeLessThanOrEqual(0);
+  // the owner's error line now carries the PROVIDER's words, which can be one long unbroken path: it wraps inside the panel (ui-tester round 3, N3)
+  await ask({ ok: false, error: 'model call failed (HTTP 400) — messages.3.content.0.web_search_tool_result.content.0.encrypted_content: Invalid signature', model: 'claude-haiku-5-5', tierSource: 'row' }, 'eight (an unbroken provider path)');
+  await expect(page.locator('#askBody .lock-error')).toContainText('encrypted_content');
+  expect(await page.evaluate(() => { const e = document.querySelector('#askBody .lock-error'); return { clipped: e.scrollWidth > e.clientWidth + 1, pageScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 }; }),
+    'a long unbroken provider path wraps: no clipped text, no sideways page scroll').toEqual({ clipped: false, pageScroll: false });
 
   // ── 6. the same panel for everyone else: nothing, even when a reply carries a model ──
   const gcount = await gets();
@@ -10573,6 +10608,9 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('open answer');
   await expect(page.locator('#askBody .ask-model'), 'a reply that carries a model to a visitor renders no proof line').toHaveCount(0);
+  await ask({ ok: false, error: 'model call failed (HTTP 400)', model: 'claude-haiku-5-5', tierSource: 'row' }, 'a failed open question');
+  await expect(page.locator('#askBody .lock-error'), 'a failed question shows a visitor the error').toContainText('model call failed (HTTP 400)');
+  await expect(page.locator('#askBody .lock-error'), 'and never the model it asked for (that tag is the owner\'s)').not.toContainText('(model:');
   // Lock while a read is still in flight: the late reply lands nowhere, and the panel holds no admin state
   await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); window.__getQ = []; window.__calls.get = []; window.renderAsk(); });
   expect(await pend('__getQ'), 'an unlocked render has a read in flight').toBe(1);
@@ -10626,6 +10664,24 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
     });
     expect(got, `the read answers ${JSON.stringify(want)} when the database says ${m} (empty is NOT a refusal)`).toEqual(want);
   }
+  // the seam between the server and the proof line: the REAL deskAsk hands the owner's `model` and `tierSource` through whole,
+  // for an answer and for a provider failure alike (a rewrite that rebuilt the result would drop them with everything else green)
+  let askReply = null;
+  await page.route('https://stub.invalid/functions/v1/desk-ask', async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    return route.fulfill({ status: askReply.status, headers: cors, contentType: 'application/json', body: JSON.stringify(askReply.json) });
+  });
+  for (const [status, json] of [
+    [200, { ok: true, answer: 'a', sources: [], model: 'claude-opus-5-5-20261001', tierSource: 'row' }],
+    [502, { ok: false, error: 'model call failed (HTTP 400)', model: 'claude-haiku-5-5', tierSource: 'default' }],
+  ]) {
+    askReply = { status, json };
+    const got = await page.evaluate(async () => {
+      const real = DESK_DB.url; DESK_DB.url = 'https://stub.invalid';
+      try { return await window.__realAsk('0000', 'q', {}, undefined, false); } finally { DESK_DB.url = real; }
+    });
+    expect(got, `the real deskAsk returns the ${status} body whole: \`model\` and \`tierSource\` survive`).toEqual(json);
+  }
 
   // ── 8. it fits: nothing runs past the panel, no label is cut (phone width included) ──
   await ownerPanel();
@@ -10649,6 +10705,30 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
     expect(Math.min(...fit.tall), 'on a touch screen (a mis-tap rewrites the model for every question) it is as tall as the buttons beside it').toBeGreaterThanOrEqual(40);
   }
   expect(fit.pageScroll, 'the page does not scroll sideways because of it').toBe(false);
+  // an enabled, unchosen option answers a pointer like the span controls beside it do (where there is a pointer to answer)
+  if (await page.evaluate(() => matchMedia('(hover: hover)').matches)) {
+    const bg = (i) => opts.nth(i).evaluate((b) => getComputedStyle(b).backgroundColor);
+    const [rest0, rest1] = [await bg(0), await bg(1)];
+    await opts.nth(0).hover();
+    expect(await bg(0), 'an enabled option that is not the chosen one is tinted under the pointer').not.toBe(rest0);
+    await opts.nth(1).hover();
+    expect(await bg(1), 'the chosen option keeps its own colour under the pointer').toBe(rest1);
+    await page.mouse.move(0, 0);
+  }
+  // Windows High Contrast drops author colours: the chosen model must still differ from the others (it says which model answers every question)
+  await page.emulateMedia({ forcedColors: 'active' });
+  if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+    expect(await page.evaluate(() => [...document.querySelectorAll('#askBody .ask-tier-opt')].map((b) => getComputedStyle(b).textDecorationLine)),
+      'in forced colours the chosen model is underlined and the others are not').toEqual(['none', 'underline', 'none']);
+  }
+  await page.emulateMedia({ forcedColors: 'none' });
+
+  // ── 9. the live sweeps (S3, NAV, CTRL) click every control on an authenticated desk: none may be able to move the PRODUCTION tier ──
+  // The shared helper answers a write of the model with a refusal and counts it apart from the roster writes (it is what stands
+  // between a sweep and the model every visitor is answered by if the credential it runs with were ever an admin's).
+  const guard = await blockRosterWrites(page);
+  const refused = await page.evaluate(() => fetch('/rest/v1/rpc/desk_set_ask_model', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: 'x', new_model: 'claude-haiku-5-5' }) }).then((r) => r.json()));
+  expect([guard.tierWrites, guard.count, refused], 'a write of the model tier is intercepted and refused, and not counted as a roster write').toEqual([1, 0, { ok: false }]);
 
   // tidy: put the real functions back
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskGetAskModel = window.__realGet; window.deskSetAskModel = window.__realSet; window.deskAsk = window.__realAsk; });

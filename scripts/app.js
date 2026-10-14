@@ -3551,6 +3551,9 @@ function renderAsk() {
   tierBox.appendChild(tierNote);
   /* Everything below comes FROM askTier. `disabled` is decided here and nowhere else, from the guard. */
   const paintTier = () => {
+    /* A note appearing or going changes this row's height, and on a stacked layout the thread gives that room back —
+       so a thread scrolled to its newest line would slide that line (the proof line) out of view. Keep it at the end. */
+    const atEnd = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 4;
     const can = askTierCanChoose(askTier);
     const shown = askTier.phase === 'stored' || askTier.phase === 'saving' ? askTier.stored : null;
     tierBtns.forEach(b => {
@@ -3573,6 +3576,7 @@ function renderAsk() {
       if (wanted && lost) tierRetry.focus({ preventScroll: true });   /* the save or the retry failed: Try again is the one control left to use */
     }
     tierNote.textContent = askTier.note;
+    if (atEnd) thread.scrollTop = thread.scrollHeight;
   };
   const err = el('p', 'lock-error', ''); err.hidden = true;
   form.appendChild(input); form.appendChild(btn); form.appendChild(stopBtn);

@@ -18,7 +18,8 @@ Not run by CI. The counts quoted in docs/architecture/desk-ask-and-cron.md come 
 import os, re, subprocess, sys, tempfile, time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 KIT = os.path.join(ROOT, '.github/scripts/ui-tests')
-F = {'app': 'scripts/app.js', 'data': 'scripts/data.js', 'css': 'styles/components.css', 'layout': 'styles/layout.css'}
+F = {'app': 'scripts/app.js', 'data': 'scripts/data.js', 'css': 'styles/components.css', 'layout': 'styles/layout.css',
+     'spec': '.github/scripts/ui-tests/tests/app.spec.js'}   # the shared sweep helper blockRosterWrites lives in the spec file
 PORT = os.environ.get('MUT_PORT', '8791')
 CHROMIUM = os.environ.get('PW_CHROMIUM', '/opt/pw-browsers/chromium')
 PROJECTS = os.environ.get('MUT_PROJECTS', 'desktop,mobile-chrome,tablet-chromium').split(',')
@@ -73,11 +74,29 @@ M = [
  ('CSS: the options lose their tap-target height', 'css', [(" min-height: 30px; cursor: pointer; }\n.ask-tier-opt + .ask-tier-opt", " cursor: pointer; }\n.ask-tier-opt + .ask-tier-opt")]),
  ('CSS: the touch target is no taller than the desktop one', 'css', [("@media (hover: none) { .ask-tier-opt { min-height: 40px; } }\n", "")]),
  ('layout: the stacked cap is not raised for the owner\'s switch row (answers squeezed to 0px at 810)', 'layout', [("  @media (max-width: 1119px) { .top-boxes > .col-rail > .panel:has(.ask-tier) { max-height: 560px; } }\n", "")]),
+ # ── ui-tester round 3 and the coverage review ──
+ ('the thread is not kept at its end when the switch row\'s note changes (the newest proof line slides out of view)', 'app', [("    tierNote.textContent = askTier.note;\n    if (atEnd) thread.scrollTop = thread.scrollHeight;\n", "    tierNote.textContent = askTier.note;\n")]),
+ ('a thread the owner scrolled UP is dragged to its end by every note', 'app', [("const atEnd = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 4;", "const atEnd = true;")]),
+ ('CSS: a long unbroken provider path in the error line is not wrapped (sideways page scroll at phone width)', 'css', [("margin: var(--space-2) 0 0; overflow-wrap: anywhere; }", "margin: var(--space-2) 0 0; }")]),
+ ('CSS: the options give no hover feedback', 'css', [(".ask-tier-opt:hover:not(:disabled):not([aria-pressed=\"true\"]) { background: var(--color-surface-2); }\n", "")]),
+ ('CSS: the chosen model is not marked in forced-colours mode', 'css', [("@media (forced-colors: active) { .ask-tier-opt[aria-pressed=\"true\"] { text-decoration: underline; text-underline-offset: 3px; } }\n", "")]),
+ ('a visitor is told which model a failed question asked for', 'app', [("const askedModelTag = res => (authed && res && typeof res.model === 'string' && res.model)", "const askedModelTag = res => (res && typeof res.model === 'string' && res.model)")]),
+ ('deskAsk rebuilds its result and drops the owner\'s proof fields', 'data', [("which this function must never rebuild away. */\n  return out;", "which this function must never rebuild away. */\n  return { ok: out.ok, answer: out.answer, sources: out.sources, error: out.error };")]),
+ ('the sweeps\' shared guard no longer intercepts a write of the model tier', 'spec', [("  await page.route('**/rest/v1/rpc/desk_set_ask_model*', (route) => {\n    blocked.tierWrites++;\n    return route.fulfill({ status: 200, contentType: 'application/json',\n      body: JSON.stringify({ ok: false }) });\n  });\n", "")]),
 ]
 
 def run_s69(env):
-    return subprocess.run(['node_modules/.bin/playwright', 'test', '-c', '.pw-mutants.config.mjs', '-g', 'S69', *[f'--project={x}' for x in PROJECTS], '--output', OUT],
-                          cwd=KIT, env=env, capture_output=True, text=True, timeout=170)
+    try:
+        return subprocess.run(['node_modules/.bin/playwright', 'test', '-c', '.pw-mutants.config.mjs', '-g', 'S69', *[f'--project={x}' for x in PROJECTS], '--output', OUT],
+                              cwd=KIT, env=env, capture_output=True, text=True, timeout=170)
+    except subprocess.TimeoutExpired as e:
+        return subprocess.CompletedProcess(e.cmd, 124, (e.stdout or b'').decode() if isinstance(e.stdout, bytes) else (e.stdout or ''), 'HARNESS TIMEOUT')
+
+# A non-zero exit only counts as a catch when Playwright reports a FAILED TEST: a browser that would not launch, a server that was
+# not listening or a timeout of the whole run says nothing about the guard.
+INFRA = re.compile(r"browserType\.launch|Executable doesn't exist|ERR_CONNECTION_REFUSED|ECONNREFUSED|No tests found|HARNESS TIMEOUT|Cannot find module")
+def is_catch(out):
+    return bool(re.search(r'\b\d+ failed\b', out)) and not INFRA.search(out)
 
 if '--list' in sys.argv:
     print('\n'.join(n for n, *_ in M)); sys.exit(0)
@@ -113,6 +132,7 @@ try:
             open(path, 'w').write(orig)
         out = r.stdout + r.stderr
         if r.returncode == 0: print(f'SURVIVED  {name}'); bad.append(name)
+        elif not is_catch(out): print(f'ERROR     {name}  (the run failed without a failing test — not counted as a catch)'); bad.append(name)
         else:
             caught += 1; m = re.search(r'Error: ([^\n]{0,100})', out)
             print(f'caught    {name}  <- {m.group(1) if m else "failed"}')

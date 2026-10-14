@@ -17,9 +17,9 @@
 
    What it proves and what it cannot: it proves what the FUNCTION does with each request — which
    door admitted it, what was read and written, what the model was shown, how many model calls
-   it cost. It cannot prove the SQL in supabase/migrations/desk_020 (that is checked against the
-   live database when the migration is applied, with a scratch day key) — here the RPC is a
-   stand-in that returns what the SQL would. */
+   it cost. It cannot prove the SQL in supabase/migrations/desk_020 or desk_021 (those are checked
+   against a database: desk_020 live with a scratch day key, desk_021 by tools/ask-model-tier-verify.sql)
+   — here the RPC and the desk_ask_model table are stand-ins that return what the SQL would. */
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { webcrypto, createHash } from 'node:crypto';
@@ -434,6 +434,28 @@ const TESTS = [
     eq([rd.status, reads(d)], [403, 0], 'an open question refused for its Origin reads nothing');
     const f = boot(code); const rf = await f.call({ pin: '0000', question: 'q' });
     eq([rf.status, reads(f)], [401, 0], 'a wrong PIN reads nothing');
+    // every other way an open question is turned away after the Origin gate: the cap spent (429), the counter failing (503), the open path off (400)
+    const g = boot(code, { env: { OPEN_ASK_DAILY_CAP: '1' } }); await g.open(); const rg = await g.open();
+    eq([rg.status, reads(g)], [429, 1], 'the question the cap turns away reads nothing (only the first one read)');
+    const h = boot(code); h.db.take = () => new Response('boom', { status: 500 }); const rh = await h.open();
+    eq([rh.status, reads(h)], [503, 0], 'a failing counter reads nothing');
+    const i = boot(code, { env: { OPEN_ASK_DAILY_CAP: '0' } }); const ri = await i.open();
+    eq([ri.status, reads(i)], [400, 0], 'the open path switched off reads nothing');
+  }],
+
+  ['one QUESTION keeps one MODEL across its turns: a switch moved while it runs changes the NEXT question, never this one (the answer, its forced-search retry and the reply all agree)', async (code) => {
+    // the first provider reply has no web search behind it, so the loop sends a second turn; the owner flips the switch in between
+    const noSearch = () => new Response(JSON.stringify({ stop_reason: 'end_turn', model: 'claude-opus-5-5-20261001', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'text', text: 'a draft with no source' }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    let env = null;
+    env = boot(code, { model: (n) => { if (n === 1) env.db.tier = { mode: 'ok', model: 'claude-haiku-5-5' }; return n === 1 ? noSearch() : modelAs('claude-opus-5-5-20261001')(); } });
+    env.db.tier = { mode: 'ok', model: 'claude-opus-5-5' };
+    const r = await env.pin();
+    eq([r.status, r.json.ok, env.models.length], [200, true, 2], 'the forced-search retry made a second provider call');
+    eq(env.models.map((m) => m.model), ['claude-opus-5-5', 'claude-opus-5-5'], 'both turns of the question ran on the model read at its start');
+    eq([r.json.tierSource, env.db.touched('desk_ask_model').length], ['row', 1], 'the row was read once for the whole question');
+    await env.pin();   // the NEXT question follows the switch that was moved meanwhile
+    eq(env.models.slice(2).map((m) => m.model), ['claude-haiku-5-5'], 'the next question runs on the new model');
   }],
 
   ['visitors follow the switch (owner ruling C2) but are told nothing about it: no `model`, no `tierSource`', async (code) => {
@@ -562,6 +584,10 @@ const MUTANTS = [
   ['the answer call ignores the tier', '        model,\n        max_tokens: MAX_ANSWER_TOKENS,', '        model: TIER_FALLBACK,\n        max_tokens: MAX_ANSWER_TOKENS,'],
   ['two tier reads per question', 'const tierRow = await readTierRow(supaUrl, svc);', 'await readTierRow(supaUrl, svc);\n  const tierRow = await readTierRow(supaUrl, svc);'],
   ['the tier is read BEFORE the door (a refused question still reads it)', "if (!question) return reply(400, { ok: false, error: 'question is required' });", "if (!question) return reply(400, { ok: false, error: 'question is required' });\n  await readTierRow(supaUrl, svc);"],
+  ['the tier is read BEFORE the cap (a question the cap turns away still reads it)', '    const takeRes = await fetch(`${supaUrl}/rest/v1/rpc/desk_open_ask_take`, {', '    await readTierRow(supaUrl, svc);\n    const takeRes = await fetch(`${supaUrl}/rest/v1/rpc/desk_open_ask_take`, {'],
+  ['the model is re-read on EVERY turn of the loop (a switch moved mid-question splits one question across two models)',
+    ['const tierRow = await readTierRow(supaUrl, svc);', '        model,\n        max_tokens: MAX_ANSWER_TOKENS,'],
+    ["const tierRow: TierRead = { ok: false, why: 'mutant' };", '        model: resolveTier(await readTierRow(supaUrl, svc), Deno.env.get(\'ASK_MODEL\')).model,\n        max_tokens: MAX_ANSWER_TOKENS,']],
   ['the tier read sends a browser-shaped user-agent (the gateway refuses the secret key)', 'desk_ask_model?select=model&id=eq.true`, { headers: svc,', "desk_ask_model?select=model&id=eq.true`, { headers: { ...svc, 'user-agent': 'Mozilla/5.0' },"],
   ['EVERY PIN is admin (the test credential is told the model)', 'isAdmin = u.is_test === false;', 'isAdmin = true;'],
   ['admin is read as `!is_test` (a missing field makes the caller an admin)', 'isAdmin = u.is_test === false;', 'isAdmin = !u.is_test;'],

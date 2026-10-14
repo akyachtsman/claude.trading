@@ -49,6 +49,7 @@ M = {
  'stamp_is_definer': (" language plpgsql\n security invoker\n set search_path to ''\nas $function$\nbegin\n  new.updated_at", " language plpgsql\n security definer\n set search_path to ''\nas $function$\nbegin\n  new.updated_at"),
  'stamp_search_path_public': (" security invoker\n set search_path to ''", " security invoker\n set search_path to 'public'"),
  'stamp_fn_executable_by_anon': ("revoke all on function public.desk_ask_model_stamp() from public, anon, authenticated, service_role;", "revoke all on function public.desk_ask_model_stamp() from public, authenticated, service_role;"),
+ 'seed_is_haiku': ("values (true, 'claude-opus-5-5')", "values (true, 'claude-haiku-5-5')"),   # the harness's own seed assertion (plan D1), not a probe step
  'no_primary_key': ("  id          boolean     primary key default true,", "  id          boolean     default true,"),
  # two edits: with a plain seed the migration still applies, so the probe's OWN primary-key step is what must notice
  'no_primary_key_and_a_plain_seed': [("  id          boolean     primary key default true,", "  id          boolean     default true,"), ("values (true, 'claude-opus-5-5')\non conflict (id) do nothing;", "values (true, 'claude-opus-5-5');")],
@@ -57,20 +58,33 @@ M = {
 def psql(db, *args, **kw):
     return subprocess.run(['psql', '-q', '-X', '-d', db, *args], capture_output=True, text=True, **kw)
 
+SEED = 'claude-opus-5-5'   # what a fresh database must hold after the migration: plan decision D1 (Haiku 5.5 is unproven on the
+                           # desk's tool set, so production does NOT start on it). The probe cannot assert this — after the owner
+                           # has used the switch the row is whatever they chose — so it is asserted here, on a fresh database.
+LAST = {'seed': None, 'kind': None}   # the seed row read right after the migration, and how the last run ended
+
 def scratch_run(sql_text, after_apply=None):
-    """build a fresh database, apply the stub and `sql_text` (then `after_apply`, if given), run the probe; returns (verdict dict | None, why)"""
+    """build a fresh database, apply the stub and `sql_text` (then `after_apply`, if given), run the probe; returns (verdict dict | None, why).
+    LAST['kind'] says how a None came about: 'apply' = the migration itself failed (a legitimate way for a mutant to be caught),
+    'infra' = the harness could not run (a scratch database, the stub, no probe verdict) — that is NEVER counted as a catch."""
     db = 'ask_tier_mut'
+    LAST['seed'] = None; LAST['kind'] = 'infra'
     psql('postgres', '-c', f'drop database if exists {db}'); r = psql('postgres', '-c', f'create database {db}')
     if r.returncode: return None, 'cannot create a scratch database: ' + r.stderr.strip()[:200]
     try:
         r = psql(db, '-v', 'ON_ERROR_STOP=1', '-f', STUB)
         if r.returncode: return None, 'the stub failed: ' + r.stderr.strip()[:300]
-        r = psql(db, '-c', 'select 1') if False else subprocess.run(['psql', '-q', '-X', '-d', db], input=sql_text, capture_output=True, text=True)
+        r = subprocess.run(['psql', '-q', '-X', '-d', db], input=sql_text, capture_output=True, text=True)
         applied = r.returncode == 0 and 'ERROR' not in r.stderr
+        s = psql(db, '-At', '-c', 'select model from public.desk_ask_model')
+        LAST['seed'] = s.stdout.strip() if s.returncode == 0 else None
         if after_apply: psql(db, '-c', after_apply)
         v = psql(db, '-At', '-f', VERIFY)
         m = re.search(r'ASK_MODEL_TIER_PROBE (\{.*\})', v.stdout + v.stderr, re.S)
-        if not m: return None, ('the migration did not apply: ' + r.stderr.strip()[:160]) if not applied else 'the probe gave no verdict: ' + (v.stderr or v.stdout)[:200]
+        if not m:
+            if not applied: LAST['kind'] = 'apply'; return None, 'the migration did not apply: ' + r.stderr.strip()[:160]
+            return None, 'the probe gave no verdict: ' + (v.stderr or v.stdout)[:200]
+        LAST['kind'] = 'ok'
         return json.loads(m.group(1)), ''
     finally:
         psql('postgres', '-c', f'drop database if exists {db}')
@@ -80,6 +94,8 @@ only = [a for a in sys.argv[1:] if not a.startswith('--')]
 base, why = scratch_run(MIG)
 if not base or not base['all_pass']:
     print('BASELINE FAILS — the unmutated migration does not pass the probe.', why or json.dumps(base['failed'])); sys.exit(2)
+if LAST['seed'] != SEED:
+    print(f"BASELINE FAILS — a fresh database holds {LAST['seed']!r} after the migration, not the decided seed {SEED!r} (plan D1)."); sys.exit(2)
 # the probe is also run on a database whose row the OWNER HAS ALREADY USED (the stub's owner PIN is 1111): a re-run on the live
 # project after the switch has been used must not read as a regression
 used, why2 = scratch_run(MIG, "select public.desk_set_ask_model('1111', 'claude-sonnet-5-5')")
@@ -95,7 +111,9 @@ for name, spec in M.items():
     mutated = MIG
     for a, b in edits: mutated = mutated.replace(a, b)
     j, why = scratch_run(mutated)
-    if j is None: caught += 1; print(f'caught    {name}  <- {why[:110]}')
+    if j is None and LAST['kind'] == 'infra': print(f'ERROR     {name}  <- the harness could not run: {why[:110]}'); bad.append(name)   # not a catch
+    elif j is None: caught += 1; print(f'caught    {name}  <- {why[:110]}')
+    elif j['all_pass'] and LAST['seed'] != SEED: caught += 1; print(f"caught    {name}  <- the seed is {LAST['seed']!r}, not {SEED!r} (asserted by this harness, not by the probe)")
     elif j['all_pass']: print(f'SURVIVED  {name}'); bad.append(name)
     else:
         caught += 1; f = j['failed']

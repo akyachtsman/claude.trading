@@ -620,7 +620,9 @@ async function deskAsk(pin, question, context, signal, verify) {
   const res = await deskPost('/functions/v1/desk-ask', { ...(pin ? { pin } : {}), question, context, verify: verify === true }, { signal });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-ask → HTTP ' + res.status);
-  return out; /* {ok:true, answer, sources} | {ok:false, error} */
+  /* {ok:true, answer, sources, …} | {ok:false, error, …}. The body is returned WHOLE: for the owner it also carries
+     `model` and `tierSource` (desk_021 — the proof under an answer), which this function must never rebuild away. */
+  return out;
 }
 
 /* Quote-proxy: OHLC for ANY ticker, fetched server-side through the pipeline's
