@@ -11,6 +11,8 @@
 // replace with vh.
 
 import { test as base, expect } from '@playwright/test';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDER WITNESS — evidence that a test BODY started at its project's width (#348)
@@ -10309,5 +10311,320 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   const stickyEnd = await page.evaluate(() => localStorage.getItem('wb_sticky_v1') || '');
   expect(stickyEnd, 'no live holding reached the browser storage').not.toMatch(/ZZ[A-D]|WWWWWWWWWW/);
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); });
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────�
+// S69 — the Ask panel's MODEL SWITCH (desk_021; owner request 2026-10-14). The owner chooses which
+// of three models answers the desk (Haiku 5.5 / Sonnet 5.5 / Opus 5.5) from the Ask panel; the
+// choice is a database row the server reads on every question. What this scenario holds the PAGE to:
+//   * the switch is VISIBLE on a desk with no saved history (it once would have lived inside
+//     .ask-toolbar, which is display:none while Clear is hidden — which is exactly that desk);
+//   * the read has three outcomes and the control never shows a guess as a fact: unread, failed,
+//     empty — nothing selected, every option disabled — and only a stored value selects anything;
+//   * a refused save REVERTS the selection (it re-reads what the row says now), and a save claims
+//     only that the setting moved — "Saved — applies from your next question", never "in use";
+//   * the unread state is held BY THE GUARD, not by a stray `disabled` attribute: with the
+//     attributes stripped the handler still sends nothing;
+//   * the answer carries PROOF (the model the provider reported, and a fallback marker only when the
+//     server named a source that was not the stored setting), and a visitor / locked desk sees none
+//     of it even if a reply carries a model;
+//   * the three declarations of the model list (the migration's CHECK, desk-ask's TIER_IDS, this
+//     page's ASK_MODELS) are one list, in one order.
+// The SERVER's side (which model is asked, precedence, admin-only proof, no caching) is
+// tools/ask-gate-check.mjs, and the database's side (grants, denials, stamps) is
+// tools/ask-model-tier-verify.sql — a PR runner can reach neither Supabase nor Anthropic.
+// ─────────────────────────────────────────────────────────────────�
+test('S69: the owner switches which model answers Ask the desk — four honest states, a refused save reverts, "Saved" never says "in use", the answer names the model, a visitor sees none of it', async ({ page, renderWitness }) => {
+  renderWitness();
+
+  // ── 0. one list in three files (read from the checkout, not from whatever a server serves) ──
+  const root = fileURLToPath(new URL('../../../../', import.meta.url));
+  const { checkParity, readRepo } = await import(pathToFileURL(join(root, 'tools/ask-model-parity.mjs')).href);
+  const parity = checkParity(readRepo(root));
+  expect(parity.problems, 'the model list is the same list, in the same order, in the migration, desk-ask and scripts/data.js').toEqual([]);
+  expect(parity.lists.server, 'and it is the three the owner asked for, cheapest first').toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']);
+
+  await gotoDemo(page, '#askBody', 15000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(String(e)));
+
+  const LABELS = ['Haiku 5.5', 'Sonnet 5.5', 'Opus 5.5'];
+  const NONE = ['false', 'false', 'false'];
+  const snap = () => page.evaluate(() => {
+    const o = [...document.querySelectorAll('#askBody .ask-tier-opt')];
+    const retry = document.querySelector('#askBody .ask-tier-retry');
+    return {
+      labels: o.map((b) => b.textContent), pressed: o.map((b) => b.getAttribute('aria-pressed')), disabled: o.map((b) => b.disabled),
+      note: (document.querySelector('#askBody .ask-tier-note') || {}).textContent || '', retry: !!retry && !retry.hidden,
+    };
+  });
+  const gets = () => page.evaluate(() => window.__calls.get.length);
+  const sets = () => page.evaluate(() => window.__calls.set);
+  const answerGet = (v, i = 0) => page.evaluate(([v, i]) => window.__getQ[i](v), [v, i]);
+  const answerSet = (v) => page.evaluate((v) => window.__setQ.shift()(v), v);
+  const pend = (what) => page.evaluate((w) => window[w].length, what);
+  const ownerPanel = () => page.evaluate(() => {
+    DESK.mode = 'live'; DESK.authed = true; sessionStorage.setItem('desk_pin', '0000');
+    window.__getQ = []; window.__setQ = []; window.__calls = { get: [], set: [] };
+    window.renderAsk();
+  });
+
+  // ── 1. live, desk UNLOCKED, NO saved history (the toolbar is hidden on exactly this desk) ──
+  await page.evaluate(() => {
+    window.__realGet = deskGetAskModel; window.__realSet = deskSetAskModel; window.__realAsk = deskAsk;
+    window.__getQ = []; window.__setQ = []; window.__calls = { get: [], set: [] }; window.__askReply = null;
+    window.deskChatHistory = () => Promise.resolve([]);
+    window.deskGetAskModel = (pin) => { window.__calls.get.push(pin); return new Promise((resolve) => window.__getQ.push(resolve)); };
+    window.deskSetAskModel = (pin, model) => { window.__calls.set.push({ pin, model }); return new Promise((resolve) => window.__setQ.push(resolve)); };
+    window.deskAsk = () => Promise.resolve(window.__askReply || { ok: true, answer: 'the answer', sources: [] });
+  });
+  await ownerPanel();
+  const tier = page.locator('#askBody .ask-tier');
+  const opts = tier.locator('.ask-tier-opt');
+  await expect(tier, 'the switch is drawn for an unlocked desk even with NO saved history').toBeVisible();
+  await expect(page.locator('#askBody .ask-toolbar'), '(and that desk has no toolbar — the switch must not live in it)').toBeHidden();
+  await expect(tier.locator('[role=group]'), 'a named group').toHaveAttribute('aria-label', 'Ask-the-desk model');
+  await expect(tier.locator('[role=status]'), 'its note is announced').toHaveCount(1);
+  await expect(tier, 'it says who it applies to').toContainText('Applies to every question, visitors included.');
+
+  // A. UNREAD — nothing known: nothing selected, every option disabled, no default shown as if stored
+  let s = await snap();
+  expect(s.labels, 'the three models, cheapest first').toEqual(LABELS);
+  expect([s.pressed, s.disabled, s.retry], 'unread: NOTHING selected, everything disabled').toEqual([NONE, [true, true, true], false]);
+  expect(await gets(), 'one read, with the PIN').toBe(1);
+  expect(await page.evaluate(() => window.__calls.get[0])).toBe('0000');
+  await opts.nth(2).click({ force: true, timeout: 2000 }).catch(() => {});
+  expect(await sets(), 'a click on a disabled option sends nothing').toEqual([]);
+  // THE GUARD, not the attribute: strip every `disabled` and press them all — the unread control is still inert
+  await page.evaluate(() => document.querySelectorAll('#askBody .ask-tier-opt').forEach((b) => { b.disabled = false; b.click(); }));
+  expect(await sets(), 'with the disabled attributes REMOVED the handler still sends nothing: the guard holds the unread state').toEqual([]);
+
+  // B. FAILED — refused or unreachable (also what the CI test credential gets): nothing selected, says why, can retry
+  await answerGet({ ok: false });
+  await expect(tier.locator('.ask-tier-note')).toContainText(/Could not read the model setting/i);
+  s = await snap();
+  expect([s.pressed, s.disabled, s.retry], 'failed: nothing selected, everything disabled, a way to try again').toEqual([NONE, [true, true, true], true]);
+  expect(s.note, 'and it names the other possible cause (a PIN that is not the owner\'s)').toMatch(/not the owner/i);
+  await expect(tier.locator('.ask-tier-retry'), 'the retry button is actually SHOWN (layout, not just the hidden flag)').toBeVisible();
+  await page.evaluate(() => { document.querySelectorAll('#askBody .ask-tier-opt').forEach((b) => { b.disabled = false; b.click(); }); });
+  expect(await sets(), 'a failed switch is inert too').toEqual([]);
+
+  // retry → EMPTY (the row is missing: the setting cannot be created from here)
+  await tier.locator('.ask-tier-retry').click();
+  expect(await gets(), 'Try again asks again').toBe(2);
+  await page.evaluate(() => window.__getQ[1]({ ok: true, model: null }));
+  await expect(tier.locator('.ask-tier-note')).toContainText(/built-in default/i);
+  s = await snap();
+  expect([s.pressed, s.disabled, s.retry], 'empty: nothing selected (the default is not drawn as stored), disabled, retry offered').toEqual([NONE, [true, true, true], true]);
+
+  // a stored value this page does not offer is a failed read, never guessed at
+  await tier.locator('.ask-tier-retry').click();
+  await page.evaluate(() => window.__getQ[2]({ ok: true, model: 'claude-fable-9' }));
+  await expect(tier.locator('.ask-tier-note')).toContainText(/not one this page offers/i);
+  s = await snap();
+  expect([s.pressed, s.disabled], 'an unrecognised stored model selects nothing').toEqual([NONE, [true, true, true]]);
+
+  // C. STORED — exactly one selected, all enabled
+  await tier.locator('.ask-tier-retry').click();
+  await page.evaluate(() => window.__getQ[3]({ ok: true, model: 'claude-sonnet-5-5' }));
+  await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  s = await snap();
+  expect([s.pressed, s.disabled, s.retry, s.note], 'stored: Sonnet selected, nothing else, all enabled, nothing to retry, no note').toEqual([['false', 'true', 'false'], [false, false, false], false, '']);
+  await expect(tier.locator('.ask-tier-retry'), 'and the retry button is actually HIDDEN (a class that sets display must not outrank [hidden])').toBeHidden();
+
+  // choosing what is already chosen, or something that is not a model, sends nothing
+  await opts.nth(1).click();
+  await page.evaluate(() => window.askTierWrite('0000', 'gpt-4'));
+  await page.evaluate(() => window.askTierWrite('0000', ''));
+  expect(await sets(), 'the already-selected model, an unknown id and an empty one are never written').toEqual([]);
+
+  // ── 2. SAVE: claims only that the row moved; the selection follows what the SERVER stored ──
+  await opts.nth(2).click();
+  await expect.poll(() => pend('__setQ'), 'the write is sent').toBe(1);
+  expect(await sets(), 'with the PIN and the model clicked').toEqual([{ pin: '0000', model: 'claude-opus-5-5' }]);
+  s = await snap();
+  expect([s.pressed, s.disabled, s.note], 'while saving: still on the STORED model, everything disabled').toEqual([['false', 'true', 'false'], [true, true, true], 'Saving…']);
+  await answerSet({ ok: true, model: 'claude-opus-5-5' });
+  await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  s = await snap();
+  expect([s.pressed, s.disabled], 'saved: Opus selected, enabled again').toEqual([['false', 'false', 'true'], [false, false, false]]);
+  expect(s.note, 'it says the setting moved and when it applies').toBe('Saved — applies from your next question.');
+  expect(s.note, 'and NEVER that the model is in use (only the next answer can prove that)').not.toMatch(/in use|active|using|live|now/i);
+  // the selection follows the model the server stored, not the one clicked
+  await opts.nth(0).click();
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  await answerSet({ ok: true, model: 'claude-sonnet-5-5' });
+  await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  expect((await snap()).pressed, 'clicked Haiku, the server stored Sonnet: the control shows Sonnet').toEqual(['false', 'true', 'false']);
+  // keyboard: focus + Enter chooses, like a click
+  await opts.nth(2).focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  expect((await sets()).at(-1), 'Enter on a focused option sends it').toEqual({ pin: '0000', model: 'claude-opus-5-5' });
+  await answerSet({ ok: true, model: 'claude-opus-5-5' });
+  await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
+
+  // ── 3. a REFUSED save reverts the selection to what the row says now ──
+  const getsBefore = await gets();
+  await opts.nth(0).click();
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  await answerSet({ ok: false });
+  await expect.poll(() => gets(), 'a refusal re-reads the row (after a failed write the truth is unknown)').toBe(getsBefore + 1);
+  s = await snap();
+  expect([s.pressed, s.disabled], 'while it re-reads: nothing selected, disabled').toEqual([NONE, [true, true, true]]);
+  await answerGet({ ok: true, model: 'claude-opus-5-5' }, getsBefore);
+  await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  s = await snap();
+  expect(s.pressed, 'reverted: Opus again — the screen says what the row says').toEqual(['false', 'false', 'true']);
+  expect(s.note, 'and the refusal is said').toMatch(/^Not saved — the stored model is still Opus 5\.5\.$/);
+  // refused, and the row turns out to have changed elsewhere: the control shows THAT
+  await opts.nth(0).click();
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  await answerSet({ ok: false, error: 'unknown model' });
+  await expect.poll(() => gets()).toBe(getsBefore + 2);
+  await answerGet({ ok: true, model: 'claude-sonnet-5-5' }, getsBefore + 1);
+  await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  // refused, and the re-read fails too: nothing is claimed
+  await opts.nth(2).click();
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  await answerSet({ ok: false });
+  await expect.poll(() => gets()).toBe(getsBefore + 3);
+  await answerGet({ ok: false }, getsBefore + 2);
+  await expect(tier.locator('.ask-tier-note')).toContainText(/Not saved\. Could not read/i);
+  expect((await snap()).pressed, 'refused and unreadable: nothing selected').toEqual(NONE);
+
+  // ── 4. a save in flight, then the panel is rebuilt (an unlock or refresh): the old reply lands nowhere ──
+  await ownerPanel();
+  await answerGet({ ok: true, model: 'claude-sonnet-5-5' });
+  await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await opts.nth(0).click();
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  await page.evaluate(() => window.renderAsk());                       // the panel is rebuilt: a new read begins
+  expect((await snap()).pressed, 'the rebuilt panel starts unread').toEqual(NONE);
+  await answerSet({ ok: true, model: 'claude-haiku-5-5' });          // the OLD save replies now
+  expect((await snap()).pressed, 'the superseded save claims nothing').toEqual(NONE);
+  await answerGet({ ok: true, model: 'claude-opus-5-5' }, 1);          // the new read: the truth
+  await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  // two reads in flight: the OLDER one landing last must not win
+  await page.evaluate(() => { window.__getQ = []; window.__calls.get = []; window.renderAsk(); window.renderAsk(); });
+  await answerGet({ ok: true, model: 'claude-sonnet-5-5' }, 1);
+  await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await answerGet({ ok: true, model: 'claude-haiku-5-5' }, 0);
+  await page.waitForTimeout(150);
+  expect((await snap()).pressed, 'a late reply from an older read changes nothing').toEqual(['false', 'true', 'false']);
+
+  // ── 5. PROOF under an answer, and the owner told which model a failed question asked for ──
+  const form = page.locator('#askBody form');
+  const ask = async (reply, q) => {
+    await page.evaluate((r) => { window.__askReply = r; }, reply);
+    await form.locator('input.input').fill(q);
+    await form.locator('button[type=submit]').click();
+  };
+  expect(await page.evaluate(() => ['claude-haiku-5-5', 'claude-opus-5-5-20261001', 'claude-sonnet-5-5-x', 'claude-haiku-5-50', 'claude-opus-5', '', null, undefined].map((x) => askModelLabel(x))),
+    'a label is found by id, or by id plus a dash (the provider\'s dated ids); anything else is shown as given').toEqual(['Haiku 5.5', 'Opus 5.5', 'Sonnet 5.5', 'claude-haiku-5-50', 'claude-opus-5', '', '', '']);
+  await ask({ ok: true, answer: 'a1', sources: [], model: 'claude-haiku-5-5-20261001', tierSource: 'row' }, 'one');
+  await expect(page.locator('#askBody .ask-model').last()).toHaveText('Answered by Haiku 5.5');
+  await expect(page.locator('#askBody .ask-model').last(), 'the title carries what the provider said and who chose').toHaveAttribute('title', /claude-haiku-5-5-20261001.*stored setting/);
+  await ask({ ok: true, answer: 'a2', sources: [], model: 'claude-haiku-5-5', tierSource: 'default' }, 'two');
+  await expect(page.locator('#askBody .ask-model').last()).toContainText(/Answered by Haiku 5\.5 · fallback/);
+  await ask({ ok: true, answer: 'a3', sources: [], model: 'claude-sonnet-5-5', tierSource: 'override' }, 'three');
+  await expect(page.locator('#askBody .ask-model').last()).toContainText(/Answered by Sonnet 5\.5 · fallback/);
+  await ask({ ok: true, answer: 'a4', sources: [], model: 'claude-opus-5-5' }, 'four (an older server names no source)');
+  await expect(page.locator('#askBody .ask-model').last(), 'no source named: the model is shown and nothing is claimed about a fallback').toHaveText('Answered by Opus 5.5');
+  await ask({ ok: true, answer: 'a5', sources: [], model: 'claude-future-9', tierSource: 'row' }, 'five');
+  await expect(page.locator('#askBody .ask-model').last(), 'an id the page does not know is shown as the provider said it').toHaveText('Answered by claude-future-9');
+  await ask({ ok: true, answer: 'a6', sources: [] }, 'six (no model in the reply)');
+  await expect(page.locator('#askBody .ask-a').last()).toHaveText('a6');
+  await expect(page.locator('#askBody .ask-model'), 'no model in the reply, no proof line: still the five from before').toHaveCount(5);
+  await ask({ ok: false, error: 'model call failed (HTTP 400) — tools not supported', model: 'claude-haiku-5-5', tierSource: 'row' }, 'seven');
+  await expect(page.locator('#askBody .lock-error'), 'a failed question tells the owner which tier it asked for').toContainText(/HTTP 400.*\(model: Haiku 5\.5\)/);
+
+  // ── 6. the same panel for everyone else: nothing, even when a reply carries a model ──
+  const gcount = await gets();
+  await page.evaluate(() => { DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.renderAsk(); });
+  await expect(page.locator('#askBody .ask-tier'), 'a visitor (locked desk) has no switch').toHaveCount(0);
+  expect(await gets(), 'and it asked the database for nothing').toBe(gcount);
+  await page.evaluate(() => { window.__askReply = { ok: true, answer: 'open answer', sources: [], model: 'claude-opus-5-5', tierSource: 'row' }; });
+  await form.locator('input.input').fill('open question');
+  await form.locator('button[type=submit]').click();
+  await expect(page.locator('#askBody .ask-a').last()).toHaveText('open answer');
+  await expect(page.locator('#askBody .ask-model'), 'a reply that carries a model to a visitor renders no proof line').toHaveCount(0);
+  // Lock while a read is still in flight: the late reply lands nowhere, and the panel holds no admin state
+  await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); window.__getQ = []; window.__calls.get = []; window.renderAsk(); });
+  expect(await pend('__getQ'), 'an unlocked render has a read in flight').toBe(1);
+  await page.evaluate(() => { DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.renderAsk(); });
+  await page.evaluate(() => window.__getQ[0]({ ok: true, model: 'claude-opus-5-5' }));
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => [askTier, askTierPaint]), 'a reply that lands after Lock changes nothing and no repaint hook is left pointing at the old panel')
+    .toEqual([{ phase: 'unread', stored: null, note: '' }, null]);
+  // unlocking again starts from UNREAD: nothing of the earlier owner session is kept
+  await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); window.__getQ = []; window.__calls.get = []; window.renderAsk(); });
+  expect((await snap()).pressed, 'a re-unlocked desk starts unread (Lock left nothing behind)').toEqual(NONE);
+  expect(await gets(), 'and reads afresh').toBe(1);
+  // demo has no live assistant: no switch
+  await page.evaluate(() => { DESK.mode = 'demo'; window.renderAsk(); });
+  await expect(page.locator('#askBody .ask-tier')).toHaveCount(0);
+  await page.evaluate(() => { DESK.mode = 'live'; });
+
+  // ── 7. what the REAL wrappers put on the wire ──
+  const calls = [];
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+  let mode = 'ok';
+  await page.route('https://stub.invalid/rest/v1/rpc/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const fn = new URL(req.url()).pathname.split('/').pop();
+    calls.push([fn, JSON.parse(req.postData() || '{}')]);
+    if (mode === 'down') return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{}' });
+    const body = mode === 'empty' ? { ok: true, model: null } : mode === 'refused' ? { ok: false } : { ok: true, model: 'claude-opus-5-5', updatedAt: '2026-10-14T00:00:00Z' };
+    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  const wire = await page.evaluate(async () => {
+    const real = DESK_DB.url;
+    DESK_DB.url = 'https://stub.invalid';
+    try {
+      const out = {};
+      out.get = await window.__realGet('0000');
+      out.set = await window.__realSet('0000', 'claude-sonnet-5-5');
+      return out;
+    } finally { DESK_DB.url = real; }
+  });
+  expect(calls, 'the right functions, with the PIN and the argument named as the database names it').toEqual([
+    ['desk_get_ask_model', { pin: '0000' }],
+    ['desk_set_ask_model', { pin: '0000', new_model: 'claude-sonnet-5-5' }],
+  ]);
+  expect(wire.get, 'a stored model passes through').toMatchObject({ ok: true, model: 'claude-opus-5-5' });
+  for (const [m, want] of [['empty', { ok: true, model: null }], ['refused', { ok: false }], ['down', { ok: false }]]) {
+    mode = m;
+    const got = await page.evaluate(async () => {
+      const real = DESK_DB.url; DESK_DB.url = 'https://stub.invalid';
+      try { return await window.__realGet('0000'); } finally { DESK_DB.url = real; }
+    });
+    expect(got, `the read answers ${JSON.stringify(want)} when the database says ${m} (empty is NOT a refusal)`).toEqual(want);
+  }
+
+  // ── 8. it fits: nothing runs past the panel, no label is cut (phone width included) ──
+  await ownerPanel();
+  await answerGet({ ok: true, model: 'claude-sonnet-5-5' });
+  await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  const fit = await page.evaluate(() => {
+    const box = document.getElementById('askBody').getBoundingClientRect();
+    const t = document.querySelector('#askBody .ask-tier').getBoundingClientRect();
+    const o = [...document.querySelectorAll('#askBody .ask-tier-opt')];
+    return {
+      insideX: t.left >= box.left - 1 && t.right <= box.right + 1,
+      clipped: o.filter((b) => b.scrollWidth > b.clientWidth).map((b) => b.textContent),
+      tall: o.map((b) => Math.round(b.getBoundingClientRect().height)),
+      pageScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+    };
+  });
+  expect(fit.insideX, 'the switch sits inside the Ask panel').toBe(true);
+  expect(fit.clipped, 'no label is cut').toEqual([]);
+  expect(Math.min(...fit.tall), 'each option is a usable tap target').toBeGreaterThanOrEqual(30);
+  expect(fit.pageScroll, 'the page does not scroll sideways because of it').toBe(false);
+
+  // tidy: put the real functions back
+  await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskGetAskModel = window.__realGet; window.deskSetAskModel = window.__realSet; window.deskAsk = window.__realAsk; });
   expect(errs, 'no page errors through any of it').toEqual([]);
 });

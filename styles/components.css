@@ -230,6 +230,25 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-sources a { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-accent); text-decoration: none; }
 .ask-sources a:hover, .ask-sources a:focus-visible { text-decoration: underline; }
 
+/* The model switch (desk_021) — its OWN row, NOT inside .ask-toolbar: that is display:none while Clear is
+   hidden, which is every desk with no saved history. The pressed pair is the verify toggle's (already
+   contrast-checked; the accent is not the gain/loss red, which is P&L-only). Disabled is a state of the
+   control, not of the page: no opacity, so the text keeps the contrast it was checked at. */
+.ask-tier { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--space-2); margin: 0 0 var(--space-2); }
+.ask-tier-label { font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .04em; }
+.ask-tier-group { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+.ask-tier-opt { appearance: none; border: 0; background: none; font: 600 var(--font-xs)/1 var(--font-sans); color: var(--color-text-primary); padding: 6px 10px; min-height: 30px; cursor: pointer; }
+.ask-tier-opt + .ask-tier-opt { border-left: 1px solid var(--color-border); }
+.ask-tier-opt[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
+.ask-tier-opt:disabled { color: var(--color-text-secondary); cursor: not-allowed; }
+.ask-tier-opt:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.ask-tier-retry { min-height: 30px; padding: 4px 10px; font-size: var(--font-xs); box-shadow: none; }
+.ask-tier-cap { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
+.ask-tier-note { flex: 1 1 100%; margin: 0; font: 400 var(--font-2xs)/1.4 var(--font-sans); color: var(--color-text-secondary); }
+.ask-tier-note:empty { display: none; }
+/* under an answer: which model produced it */
+.ask-model { margin: -2px 0 var(--space-2); padding-left: var(--space-3); font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
+
 /* ── watchlists (owner request 2026-07-29) ─────────────────────────────────
    Rendered as TILES, not a table (owner request, same day): each list is a
    labelled band. The idiom came from the market strip, which this panel then
