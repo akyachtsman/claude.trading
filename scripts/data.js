@@ -565,6 +565,32 @@ async function deskChatClear(pin) {
 function deskGetSystemPrompt(pin) { return deskRpcOk('desk_get_system_prompt', pin); }
 function deskSetSystemPrompt(pin, content) { return deskRpcOk('desk_set_system_prompt', pin, { new_content: content }); }
 
+/* The model that answers Ask-the-desk (desk_021; owner request 2026-10-14). ASK_MODELS is the list the
+   panel offers, cheapest first. It is the SAME list, in the SAME ORDER, as the CHECK in
+   supabase/migrations/desk_021_ask_model_tier.sql and TIER_IDS in supabase/functions/desk-ask/index.ts
+   — tools/ask-model-parity.mjs (run by S69) fails if any of the three drifts. A switch that offers a
+   model the server refuses, or hides one it accepts, is the bug that check exists for.
+   The read answers `{ok:true, model:'…'}`, `{ok:true, model:null}` (readable, nothing stored) or
+   `{ok:false}` (refused, or the call failed — the owner's PIN is the only one that reads it); the three
+   are different facts and the panel must never show one as another. The write answers `{ok:true,
+   model}` with the model the SERVER stored, or `{ok:false, error?}`. */
+const ASK_MODELS = [
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
+];
+/* The provider reports what ANSWERED, which can carry a date suffix the allow-list does not
+   ('claude-haiku-5-5-20260301'), so a label is found by exact id first, then by id-plus-dash prefix;
+   anything else is shown as the raw id rather than guessed at. */
+function askModelLabel(id) {
+  const s = typeof id === 'string' ? id : '';
+  if (!s) return '';
+  const hit = ASK_MODELS.find(m => s === m.id) || ASK_MODELS.find(m => s.startsWith(m.id + '-'));
+  return hit ? hit.label : s;
+}
+function deskGetAskModel(pin) { return deskRpcOk('desk_get_ask_model', pin); }
+function deskSetAskModel(pin, model) { return deskRpcOk('desk_set_ask_model', pin, { new_model: model }); }
+
 /* desk_017: the scheduled-ask roster. It lives in the DATABASE, not
    localStorage, because pg_cron — not this page — is what fires it: the desk
    has to wake ITSELF at 8am, which a setInterval in a closed tab cannot do.

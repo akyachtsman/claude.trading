@@ -7,9 +7,11 @@
 
    How: the same harness shape as tools/econ-check.mjs. The function is transpiled with the
    PINNED esbuild in tools/package.json (`npm ci --prefix tools` once; there is no Deno here)
-   and run in a fresh `vm` context per check, which is a cold isolate: `Deno.serve` is captured,
-   `fetch` is a stub that plays PostgREST (desk_users, desk_system_prompt, desk_chat_memory and
-   the desk_open_ask_take RPC, whose atomic counter is a Map) and the Anthropic API, and `Date`
+   and run in a fresh `vm` context per check, which is a cold isolate (ONE context reused across
+   several questions is a warm one): `Deno.serve` is captured,
+   `fetch` is a stub that plays PostgREST (desk_users — the owner and a TEST user with its own PIN —,
+   desk_system_prompt, desk_chat_memory, desk_ask_model — the model tier, desk_021, with failure modes —
+   and the desk_open_ask_take RPC, whose atomic counter is a Map) and the Anthropic API, and `Date`
    runs on a settable clock so the Pacific day rolls where the check says it does. Nothing
    touches the network, the live Supabase project or an Anthropic key.
 
@@ -33,8 +35,10 @@ const DB_HOST = new URL(DB_URL).hostname;
 const SERVICE_KEY = 'test-service-role-key';          // not a real key, and not secret-shaped
 const CRON_SECRET = 'test-cron-secret';
 const PIN = '4242';
+const TEST_PIN = '9999';            // the CI test credential: a valid PIN on a row with is_test true
 const SALT = 'salty';
 const USER_ID = '11111111-1111-1111-1111-111111111111';
+const TEST_USER_ID = '22222222-2222-2222-2222-222222222222';
 const OWNER_PROMPT = 'OWNER-PROMPT: you are talking to the owner about their own accounts.';
 const PUBLIC_MARK = 'You are the desk assistant embedded in';   // the first words of DEFAULT_SYSTEM, which is committed
 const T0 = Date.parse('2026-10-04T18:00:00Z');        // Sun 11:00 PDT, Oct 4 Pacific
@@ -53,6 +57,9 @@ function fakeDb() {
     memory: [{ question: 'earlier Q', answer: 'earlier A' }],
     memPosts: [],
     take: null,                  // override: (body) => Response, to simulate a failing counter
+    // desk_ask_model, the model tier (desk_021). mode: ok | empty | nullmodel | http500 | throw | badjson | notarray
+    tier: { mode: 'ok', model: 'claude-sonnet-5-5' },
+    omitIsTest: false,           // a desk_users select that leaves is_test out (must read as "not admin")
   };
   db.rpc = () => db.log.filter((c) => c.path === '/rest/v1/rpc/desk_open_ask_take');
   db.touched = (table) => db.log.filter((c) => c.path === `/rest/v1/${table}`);
@@ -77,7 +84,21 @@ function fakeDb() {
     }
     if (u.pathname === '/rest/v1/desk_users' && method === 'GET') {
       if (u.searchParams.get('select') === 'id') return json([{ id: USER_ID }]);
-      return json([{ id: USER_ID, salt: SALT, pin_hash: sha(SALT + PIN) }]);
+      const rows = [
+        { id: USER_ID, salt: SALT, pin_hash: sha(SALT + PIN), is_test: false },
+        { id: TEST_USER_ID, salt: SALT, pin_hash: sha(SALT + TEST_PIN), is_test: true },
+      ];
+      return json(db.omitIsTest ? rows.map(({ is_test, ...r }) => r) : rows);
+    }
+    if (u.pathname === '/rest/v1/desk_ask_model') {
+      const t = db.tier;
+      if (t.mode === 'throw') throw new TypeError('network down');
+      if (t.mode === 'http500') return json({ message: 'boom' }, 500);
+      if (t.mode === 'badjson') return new Response('<html>not json</html>', { status: 200 });
+      if (t.mode === 'notarray') return json({ model: t.model });
+      if (t.mode === 'empty') return json([]);
+      if (t.mode === 'nullmodel') return json([{ model: null }]);
+      return json([{ model: t.model }]);
     }
     if (u.pathname === '/rest/v1/desk_system_prompt') return json([{ content: OWNER_PROMPT }]);
     if (u.pathname === '/rest/v1/desk_chat_memory') {
@@ -99,6 +120,17 @@ const MODEL_OK = () => new Response(JSON.stringify({
     { type: 'text', text: 'the answer' },
   ],
 }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+// the same accepted answer, reported by the provider under another name (a dated id, as it really does)
+const modelAs = (name) => () => new Response(JSON.stringify({
+  stop_reason: 'end_turn', model: name, usage: { input_tokens: 10, output_tokens: 5 },
+  content: [
+    { type: 'web_search_tool_result', content: [{ type: 'web_search_result', url: 'https://example.test/a', title: 'A' }] },
+    { type: 'text', text: 'the answer' },
+  ],
+}), { status: 200, headers: { 'content-type': 'application/json' } });
+const ALL_TIERS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'];
+const withTier = (tier, o = {}) => { const db = fakeDb(); db.tier = tier; return { db, ...o }; };
 
 function boot(code, opts = {}) {
   const clock = { now: opts.now ?? T0 };
@@ -300,6 +332,133 @@ const TESTS = [
     await w.open({ verify: true });
     eq(w.models.length, 1, '...and arming verify on it changes nothing');
   }],
+
+  // ── the model tier (desk_021) ────────────────────────────────────────────────────────────────
+  ['each stored tier reaches the provider on BOTH the answer call and the grounding call, and the owner\'s reply names the model the PROVIDER reported and that the row chose it', async (code) => {
+    for (const id of ALL_TIERS) {
+      const e = boot(code, withTier({ mode: 'ok', model: id }, { model: modelAs(id + '-20261001') }));
+      const r = await e.pin({ verify: true });
+      eq(r.status, 200, `${id}: answered`);
+      eq(e.models.map((m) => m.model), [id, id], `${id}: the answer and its grounding pass ask for the stored model`);
+      eq([r.json.model, r.json.tierSource], [id + '-20261001', 'row'], `${id}: the reply names what answered (the provider's dated id) and the row as the reason`);
+    }
+  }],
+
+  ['the stored row WINS over the ASK_MODEL secret, and a disagreement is logged (not obeyed)', async (code) => {
+    const e = boot(code, withTier({ mode: 'ok', model: 'claude-opus-5-5' }, { env: { ASK_MODEL: 'claude-haiku-5-5' } }));
+    const r = await e.pin();
+    eq([e.models[0].model, r.json.tierSource], ['claude-opus-5-5', 'row'], 'the row answers, not the secret');
+    assert(e.warns.some((w) => /ASK_MODEL .* ignored: the stored tier .* wins/.test(w)), 'the ignored secret is logged: ' + JSON.stringify(e.warns));
+    const same = boot(code, withTier({ mode: 'ok', model: 'claude-opus-5-5' }, { env: { ASK_MODEL: 'claude-opus-5-5' } }));
+    await same.pin();
+    assert(!same.warns.some((w) => /ignored/.test(w)), 'a secret that AGREES with the row says nothing');
+  }],
+
+  ['with no usable row the ASK_MODEL secret is the break-glass: unreadable (5xx, network, garbage), absent, a null model or a value outside the list each still answer, on the secret, and say so', async (code) => {
+    const modes = [
+      [{ mode: 'http500', model: null }, /unreadable \(HTTP 500\)/],
+      [{ mode: 'throw', model: null }, /unreadable/],
+      [{ mode: 'badjson', model: null }, /unreadable/],
+      [{ mode: 'notarray', model: null }, /unreadable/],
+      [{ mode: 'empty', model: null }, /absent/],
+      [{ mode: 'nullmodel', model: null }, /absent/],
+      [{ mode: 'ok', model: 'gpt-4' }, /not an allowed model/],
+      [{ mode: 'ok', model: '' }, /not an allowed model/],
+    ];
+    for (const [tier, why] of modes) {
+      const e = boot(code, withTier(tier, { env: { ASK_MODEL: 'claude-sonnet-5-5' } }));
+      const r = await e.pin();
+      eq([r.status, r.json.ok, e.models[0].model, r.json.tierSource], [200, true, 'claude-sonnet-5-5', 'override'], `${tier.mode}/${tier.model}: answered on the secret`);
+      assert(e.warns.some((w) => why.test(w)), `${tier.mode}/${tier.model}: logged (${why}): ` + JSON.stringify(e.warns));
+    }
+  }],
+
+  ['the secret may name ANY well-formed model id (a retired id on the list can be routed around without a deploy) and is logged when outside the three; a malformed one is ignored', async (code) => {
+    const e = boot(code, withTier({ mode: 'empty', model: null }, { env: { ASK_MODEL: 'claude-opus-6' } }));
+    const r = await e.pin();
+    eq([e.models[0].model, r.json.tierSource], ['claude-opus-6', 'override'], 'a well-formed id outside the three is used');
+    assert(e.warns.some((w) => /outside the offered models/.test(w)), 'and logged');
+    for (const bad of ['gpt-4', 'claude-x; drop table', 'Claude-Opus', 'claude opus', 'claude-']) {
+      const b = boot(code, withTier({ mode: 'empty', model: null }, { env: { ASK_MODEL: bad } }));
+      const rb = await b.pin();
+      eq([rb.status, b.models[0].model, rb.json.tierSource], [200, 'claude-haiku-5-5', 'default'], `"${bad}" is ignored: answered on the fallback`);
+      assert(b.warns.some((w) => /not a model id/.test(w)), `"${bad}": logged`);
+    }
+  }],
+
+  ['with nothing usable anywhere the desk still answers, on the named fallback (Haiku 5.5), and says it was the default', async (code) => {
+    for (const tier of [{ mode: 'http500', model: null }, { mode: 'throw', model: null }, { mode: 'empty', model: null }]) {
+      const e = boot(code, withTier(tier));
+      const r = await e.pin();
+      eq([r.status, r.json.ok, e.models[0].model, r.json.tierSource], [200, true, 'claude-haiku-5-5', 'default'], `${tier.mode}: the fallback`);
+    }
+  }],
+
+  ['NOTHING is cached: one warm isolate follows the row at once, and a read that starts failing is not papered over with the last good value', async (code) => {
+    const e = boot(code);
+    e.db.tier = { mode: 'ok', model: 'claude-opus-5-5' };
+    await e.pin();
+    e.db.tier = { mode: 'ok', model: 'claude-haiku-5-5' };
+    await e.pin();
+    e.db.tier = { mode: 'ok', model: 'claude-sonnet-5-5' };
+    await e.open();
+    e.db.tier = { mode: 'http500', model: null };
+    await e.pin();
+    eq(e.models.map((m) => m.model), ['claude-opus-5-5', 'claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+      'each question asks the row as it stands THEN (and the failed read falls back; it does not reuse the stale opus)');
+  }],
+
+  ['exactly ONE tier read per question, whichever door let it in — and none for a question refused at the door', async (code) => {
+    const reads = (e) => e.db.touched('desk_ask_model').length;
+    const a = boot(code); await a.pin({ verify: true });
+    eq(reads(a), 1, 'a PIN question with a grounding pass: one read (the same model for both calls)');
+    const b = boot(code); await b.open();
+    eq(reads(b), 1, 'an open question: one read');
+    const c = boot(code); await c.call({ question: 'brief', context: {} }, { origin: null, headers: { 'x-cron-secret': CRON_SECRET } });
+    eq(reads(c), 1, 'a scheduled question: one read');
+    const d = boot(code); const rd = await d.open({}, { origin: 'https://evil.example' });
+    eq([rd.status, reads(d)], [403, 0], 'an open question refused for its Origin reads nothing');
+    const f = boot(code); const rf = await f.call({ pin: '0000', question: 'q' });
+    eq([rf.status, reads(f)], [401, 0], 'a wrong PIN reads nothing');
+  }],
+
+  ['visitors follow the switch (owner ruling C2) but are told nothing about it: no `model`, no `tierSource`', async (code) => {
+    const e = boot(code, withTier({ mode: 'ok', model: 'claude-haiku-5-5' }));
+    const r = await e.open();
+    eq([r.status, r.json.ok, r.json.open, e.models[0].model], [200, true, true, 'claude-haiku-5-5'], 'the open question is answered by the stored tier');
+    assert(!('model' in r.json) && !('tierSource' in r.json), 'the visitor reply carries no model name: ' + Object.keys(r.json).join(','));
+  }],
+
+  ['only the ADMIN is told which model answered: the owner\'s PIN and the cron secret are; the TEST credential, a visitor and a desk_users read that leaves is_test out are answered but told nothing (fail closed)', async (code) => {
+    const owner = boot(code); const ro = await owner.pin();
+    assert('model' in ro.json && ro.json.tierSource === 'row', 'the owner is told');
+    const cron = boot(code); const rc = await cron.call({ question: 'brief', context: {} }, { origin: null, headers: { 'x-cron-secret': CRON_SECRET } });
+    assert('model' in rc.json && rc.json.tierSource === 'row', 'the cron path is told (it is the owner\'s own door)');
+    const test = boot(code); const rt = await test.call({ pin: TEST_PIN, question: 'how is NVDA?', context: { market: [] } });
+    eq([rt.status, rt.json.ok, test.models.length, test.db.memPosts.map((m) => m.user_id)], [200, true, 1, [TEST_USER_ID]], 'the test credential is a real PIN: answered, and saved as itself');
+    assert(!('model' in rt.json) && !('tierSource' in rt.json), 'but it is not told the model: ' + Object.keys(rt.json).join(','));
+    const omit = boot(code); omit.db.omitIsTest = true; const rm = await omit.pin();
+    eq([rm.status, rm.json.ok], [200, true], 'a users read without is_test still answers');
+    assert(!('model' in rm.json) && !('tierSource' in rm.json), 'and the owner is NOT treated as admin on a missing field: ' + Object.keys(rm.json).join(','));
+  }],
+
+  ['the admin is shown the tier on a provider failure too (so a refused model is diagnosable); the test credential is not', async (code) => {
+    const fail = () => new Response(JSON.stringify({ error: { message: 'tools not supported on this model' } }), { status: 400, headers: { 'content-type': 'application/json' } });
+    const e = boot(code, withTier({ mode: 'ok', model: 'claude-haiku-5-5' }, { model: fail }));
+    const r = await e.pin();
+    eq([r.status, r.json.ok, r.json.model, r.json.tierSource], [502, false, 'claude-haiku-5-5', 'row'], 'the owner sees which tier was asked for');
+    assert(/HTTP 400.*tools not supported/.test(r.json.error), 'and the provider\'s own words: ' + r.json.error);
+    const t = boot(code, withTier({ mode: 'ok', model: 'claude-haiku-5-5' }, { model: fail }));
+    const rt = await t.call({ pin: TEST_PIN, question: 'q', context: {} });
+    assert(rt.status === 502 && !('model' in rt.json) && !('tierSource' in rt.json), 'the test credential is told only the error: ' + JSON.stringify(rt.json));
+  }],
+
+  ['the saved conversation row keeps the model the PROVIDER reported (typed and scheduled), unchanged by the switch', async (code) => {
+    const e = boot(code, withTier({ mode: 'ok', model: 'claude-opus-5-5' }, { model: modelAs('claude-opus-5-5-20261001') }));
+    await e.pin();
+    await e.call({ question: 'brief', context: {} }, { origin: null, headers: { 'x-cron-secret': CRON_SECRET } });
+    eq(e.db.memPosts.map((m) => [m.origin, m.model]), [['typed', 'claude-opus-5-5-20261001'], ['scheduled', 'claude-opus-5-5-20261001']], 'the stored model name');
+  }],
 ];
 
 async function runSuite(code, { verbose = false } = {}) {
@@ -337,6 +496,32 @@ const MUTANTS = [
   ['ASK_VERIFY=1 forces the grounding pass on an open question (the first version of the guard; Codex, PR #305)', '!anonymous && (VERIFY_ALWAYS || askedToVerify)', 'VERIFY_ALWAYS || (askedToVerify && !anonymous)'],
   ['the empty-question check dropped (an empty open question spends the quota)', "if (!question) return reply(400, { ok: false, error: 'question is required' });", ''],
   ['open answers not marked open', '...(anonymous ? { open: true } : {}),', ''],
+  // ── the model tier (desk_021). `find` / `repl` may be ARRAYS (one entry per edit) for damage that takes two lines. ──
+  ['the stored tier is never read (the secret and the fallback decide)', 'const tierRow = await readTierRow(supaUrl, svc);', "const tierRow: TierRead = { ok: false, why: 'mutant' };"],
+  ['the ASK_MODEL secret BEATS the stored row (the owner moves the switch and nothing changes)', '  if (stored) {\n    if (ov && ov !== stored) notes.push', '  if (stored && !usable) {\n    if (ov && ov !== stored) notes.push'],
+  ['a stored value outside the list is used anyway (the allow-list is skipped)', '  else if (!inList(row.model)) notes.push(`stored tier "${clip(row.model)}" is not an allowed model — not used`);\n', ''],
+  ['the break-glass secret may only name one of the three (narrower than before the switch)', "if (!OVERRIDE_SHAPE.test(ov)) notes.push('ASK_MODEL is not a model id — ignored');", "if (!inList(ov)) notes.push('ASK_MODEL is not a model id — ignored');"],
+  ['the secret\'s shape is not checked (any string reaches the provider)', "if (!OVERRIDE_SHAPE.test(ov)) notes.push('ASK_MODEL is not a model id — ignored');", "if (false) notes.push('ASK_MODEL is not a model id — ignored');"],
+  ['a secret that disagrees with the row is not logged', 'if (ov && ov !== stored) notes.push(`ASK_MODEL "${clip(ov)}" ignored: the stored tier "${stored}" wins`);', ''],
+  ['the fallback is a different model than the named constant', "return { model: TIER_FALLBACK, source: 'default', notes };", "return { model: 'claude-opus-5-5', source: 'default', notes };"],
+  ['the tier is CACHED in the isolate (a warm instance serves a tier the owner already changed)',
+    ['async function readTierRow(supaUrl: string, svc: Record<string, string>): Promise<TierRead> {\n  try {', "return { ok: true, model: typeof m === 'string' ? m : null };"],
+    ['async function readTierRow(supaUrl: string, svc: Record<string, string>): Promise<TierRead> {\n  if ((globalThis as Any).__tier) return (globalThis as Any).__tier;\n  try {', "return ((globalThis as Any).__tier = { ok: true, model: typeof m === 'string' ? m : null });"]],
+  ['a failed tier read is FATAL (the network)', "    return { ok: false, why: (e as Any)?.name ?? 'error' };", '    throw e;'],
+  ['a non-OK tier read is FATAL', 'if (!res.ok) return { ok: false, why: `HTTP ${res.status}` };', "if (!res.ok) throw new Error('tier read failed');"],
+  ['the grounding check ignores the tier', '        model,\n        max_tokens: VERIFY_TOKENS,', '        model: TIER_FALLBACK,\n        max_tokens: VERIFY_TOKENS,'],
+  ['the answer call ignores the tier', '        model,\n        max_tokens: MAX_ANSWER_TOKENS,', '        model: TIER_FALLBACK,\n        max_tokens: MAX_ANSWER_TOKENS,'],
+  ['two tier reads per question', 'const tierRow = await readTierRow(supaUrl, svc);', 'await readTierRow(supaUrl, svc);\n  const tierRow = await readTierRow(supaUrl, svc);'],
+  ['the tier is read BEFORE the door (a refused question still reads it)', "if (!question) return reply(400, { ok: false, error: 'question is required' });", "if (!question) return reply(400, { ok: false, error: 'question is required' });\n  await readTierRow(supaUrl, svc);"],
+  ['the tier read sends a browser-shaped user-agent (the gateway refuses the secret key)', 'desk_ask_model?select=model&id=eq.true`, { headers: svc,', "desk_ask_model?select=model&id=eq.true`, { headers: { ...svc, 'user-agent': 'Mozilla/5.0' },"],
+  ['EVERY PIN is admin (the test credential is told the model)', 'isAdmin = u.is_test === false;', 'isAdmin = true;'],
+  ['admin is read as `!is_test` (a missing field makes the caller an admin)', 'isAdmin = u.is_test === false;', 'isAdmin = !u.is_test;'],
+  ['a visitor is told the model', 'const adminProof = (answered?: string | null) => isAdmin ? {', 'const adminProof = (answered?: string | null) => true ? {'],
+  ['the cron path is not admin', "    if (!userId) return reply(500, { ok: false, error: 'no owner row in desk_users' });\n    isAdmin = true;\n", "    if (!userId) return reply(500, { ok: false, error: 'no owner row in desk_users' });\n"],
+  ['the admin is not told where the choice came from', ', tierSource: tier.source } : {}', ' } : {}'],
+  ['the reply names the model that was ASKED for, not the one the provider reports', '...adminProof(finalMsg?.model), usage, checked,', '...adminProof(), usage, checked,'],
+  ['the provider-failure reply carries no tier', '        ...adminProof(),   // which tier was asked for, so a provider refusal of one model is diagnosable\n', ''],
+  ['the saved conversation row stores the model that was asked for', 'model: finalMsg?.model ?? model, sources, usage, checked, origin', 'model, sources, usage, checked, origin'],
 ];
 
 // The esbuild pinned (exact version + integrity hash) in tools/package.json and its lockfile.
@@ -358,10 +543,11 @@ if (process.argv.includes('--mutants')) {
   console.log(`\nmutants (${MUTANTS.length}) — each must be CAUGHT by at least one check`);
   let killed = 0;
   for (const [name, find, repl] of MUTANTS) {
-    const n = src.split(find).length - 1;
-    if (n !== 1) { console.log(`  INVALID   ${name} (anchor found ${n}x)`); exit = 1; continue; }
+    const edits = Array.isArray(find) ? find.map((f, i) => [f, repl[i]]) : [[find, repl]];
+    const bad = edits.find(([f]) => src.split(f).length - 1 !== 1);
+    if (bad) { console.log(`  INVALID   ${name} (anchor found ${src.split(bad[0]).length - 1}x)`); exit = 1; continue; }
     let mutated;
-    try { mutated = transpile(src.replace(find, () => repl)); }
+    try { mutated = transpile(edits.reduce((t, [f, r]) => t.replace(f, () => r), src)); }
     catch { console.log(`  INVALID   ${name} (the mutant does not transpile)`); exit = 1; continue; }
     const f = await runSuite(mutated);
     if (f.length) { killed++; console.log(`  caught    ${name}  <- ${f[0].name.slice(0, 110)}`); }
