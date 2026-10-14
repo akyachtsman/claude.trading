@@ -242,6 +242,9 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-tier-opt[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
 .ask-tier-opt:disabled { color: var(--color-text-secondary); cursor: not-allowed; }
 .ask-tier-opt:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+/* A mis-tap rewrites the model for every question the desk answers, so on a touch screen the target is as tall as the
+   buttons beside it. */
+@media (hover: none) { .ask-tier-opt { min-height: 40px; } }
 .ask-tier-retry { min-height: 30px; padding: 4px 10px; font-size: var(--font-xs); box-shadow: none; }
 .ask-tier-cap { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
 .ask-tier-note { flex: 1 1 100%; margin: 0; font: 400 var(--font-2xs)/1.4 var(--font-sans); color: var(--color-text-secondary); }

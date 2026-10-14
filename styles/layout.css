@@ -276,6 +276,12 @@
      and there is no row height to fill. */
   .top-boxes > .col-rail { align-self: start; }
   .top-boxes > .col-rail > .panel { min-height: 158px; max-height: 420px; flex: 0 0 auto; display: flex; flex-direction: column; }
+  /* The owner's MODEL SWITCH row (desk_021) is drawn INSIDE this fixed budget — 50px, up to ~135px with its
+     note and a retry button — so on a stacked layout it starved the thread: at 810px the answers rendered into
+     a 0px box, the same fault as 2026-08-09 above (found by the ui-tester, QA round 1). The panel that carries
+     the switch gets that height back; a visitor's panel has no .ask-tier and keeps 420. At >= 1120 the cap is
+     lifted entirely, below. */
+  @media (max-width: 1119px) { .top-boxes > .col-rail > .panel:has(.ask-tier) { max-height: 560px; } }
   /* `.top-boxes .panel-body` caps its children at 320px and scrolls them — right
      for a news list, wrong for Ask: capping askBody scrolls the COMPOSER out of
      view instead of the thread. Ask opts out and delegates scrolling downward. */

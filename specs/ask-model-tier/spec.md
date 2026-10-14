@@ -1,6 +1,6 @@
 # Spec — Ask-the-desk model tier (admin-controlled)
 
-> **STATUS (2026-10-14): `specify` COMPLETE; amended with `plan.md` v2 after an independent review (FR1, FR5, FR8, SC8, A4). One owner decision (D1, in `plan.md`) is open and concerns only the rollout order, not the requirements.**
+> **STATUS (2026-10-14): `specify` COMPLETE; amended with `plan.md` v2 after an independent review (FR1, FR5, FR8, SC8, A4). The one rollout decision (D1, in `plan.md`) was APPROVED by the owner ("D1 as recommended"): the migration seeds the STORED tier at Opus 5.5 and Haiku 5.5 is proven live through the switch; Haiku stays the built-in fallback. Where C3 below says "the row starts at Haiku", read: the row is SEEDED at Opus 5.5 until Haiku is proven, and the built-in fallback is Haiku.**
 
 WHAT and WHY only. HOW lives in `plan.md`. Constitution: the five imported directives (`global.md`, `git.md`, `design.md`, `data.md`, `test.md`). Input: `brief.md` (the owner's design brief and the measurements taken on this project). Changes only the Ask-the-desk panel and the answers it gets; no other panel.
 

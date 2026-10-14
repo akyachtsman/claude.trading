@@ -3536,14 +3536,15 @@ function renderAsk() {
   tierBox.appendChild(el('span', 'ask-tier-label', 'Model'));
   const tierGroup = el('div', 'ask-tier-group');
   tierGroup.setAttribute('role', 'group'); tierGroup.setAttribute('aria-label', 'Ask-the-desk model');
+  let tierRefocus = null;   /* the option the owner used: every option is disabled while a save runs, which drops keyboard focus to <body> */
   const tierBtns = ASK_MODELS.map(m => {
     const b = el('button', 'ask-tier-opt', m.label); b.type = 'button'; b.dataset.model = m.id;
-    b.addEventListener('click', () => askTierWrite(pin, m.id));
+    b.addEventListener('click', () => { tierRefocus = m.id; askTierWrite(pin, m.id); });
     tierGroup.appendChild(b);
     return b;
   });
   const tierRetry = el('button', 'btn btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
-  tierRetry.addEventListener('click', () => askTierRead(pin));
+  tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pin); });   /* '*' = whichever option ends up selected */
   const tierNote = el('p', 'ask-tier-note', ''); tierNote.setAttribute('role', 'status');
   tierBox.appendChild(tierGroup); tierBox.appendChild(tierRetry);
   tierBox.appendChild(el('span', 'ask-tier-cap', 'Applies to every question, visitors included.'));
@@ -3556,6 +3557,15 @@ function renderAsk() {
       b.disabled = !can;
       b.setAttribute('aria-pressed', b.dataset.model === shown ? 'true' : 'false');
     });
+    /* give focus back to the option that was used, once they are enabled again — but only if focus was LOST (WCAG 2.4.3);
+       a move the owner made meanwhile is theirs */
+    if (can && tierRefocus) {
+      const f = tierBtns.find(x => tierRefocus === '*' ? x.getAttribute('aria-pressed') === 'true' : x.dataset.model === tierRefocus);
+      tierRefocus = null;
+      if (f && (!document.activeElement || document.activeElement === document.body)) f.focus({ preventScroll: true });
+    } else if (askTier.phase === 'failed' || askTier.phase === 'empty') {
+      tierRefocus = null;   /* a stale target must not pull focus back later */
+    }
     tierRetry.hidden = !(askTier.phase === 'failed' || askTier.phase === 'empty');
     tierNote.textContent = askTier.note;
   };

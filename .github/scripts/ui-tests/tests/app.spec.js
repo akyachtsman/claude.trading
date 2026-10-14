@@ -10314,7 +10314,7 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
 
-// ─────────────────────────────────────────────────────────────────�
+// ──────────────────────────────────────────────────────────────────
 // S69 — the Ask panel's MODEL SWITCH (desk_021; owner request 2026-10-14). The owner chooses which
 // of three models answers the desk (Haiku 5.5 / Sonnet 5.5 / Opus 5.5) from the Ask panel; the
 // choice is a database row the server reads on every question. What this scenario holds the PAGE to:
@@ -10334,7 +10334,7 @@ test('S68: the POSITIONS column lists what the accounts hold — an option under
 // The SERVER's side (which model is asked, precedence, admin-only proof, no caching) is
 // tools/ask-gate-check.mjs, and the database's side (grants, denials, stamps) is
 // tools/ask-model-tier-verify.sql — a PR runner can reach neither Supabase nor Anthropic.
-// ─────────────────────────────────────────────────────────────────�
+// ──────────────────────────────────────────────────────────────────
 test('S69: the owner switches which model answers Ask the desk — four honest states, a refused save reverts, "Saved" never says "in use", the answer names the model, a visitor sees none of it', async ({ page, renderWitness }) => {
   renderWitness();
 
@@ -10360,6 +10360,13 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
     };
   });
   const gets = () => page.evaluate(() => window.__calls.get.length);
+  // how much of the Ask panel the owner can actually USE: the answers' own box, and whether the disclaimer is cut off by the panel's cap
+  const room = () => page.evaluate(() => {
+    const th = document.querySelector('#askBody .ask-thread');
+    const panel = document.getElementById('askBody').closest('.panel');
+    const disc = document.querySelector('#askBody .ai-disclaimer');
+    return { thread: th ? th.clientHeight : -1, discClipped: Math.round(disc.getBoundingClientRect().bottom - panel.getBoundingClientRect().bottom) };
+  });
   const sets = () => page.evaluate(() => window.__calls.set);
   const answerGet = (v, i = 0) => page.evaluate(([v, i]) => window.__getQ[i](v), [v, i]);
   const answerSet = (v) => page.evaluate((v) => window.__setQ.shift()(v), v);
@@ -10407,6 +10414,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   expect([s.pressed, s.disabled, s.retry], 'failed: nothing selected, everything disabled, a way to try again').toEqual([NONE, [true, true, true], true]);
   expect(s.note, 'and it names the other possible cause (a PIN that is not the owner\'s)').toMatch(/not the owner/i);
   await expect(tier.locator('.ask-tier-retry'), 'the retry button is actually SHOWN (layout, not just the hidden flag)').toBeVisible();
+  expect((await room()).discClipped, 'the failed state (a taller row: note + retry) does not push the panel\'s own footer out of its box').toBeLessThanOrEqual(0);
   await page.evaluate(() => { document.querySelectorAll('#askBody .ask-tier-opt').forEach((b) => { b.disabled = false; b.click(); }); });
   expect(await sets(), 'a failed switch is inert too').toEqual([]);
 
@@ -10417,6 +10425,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await expect(tier.locator('.ask-tier-note')).toContainText(/built-in default/i);
   s = await snap();
   expect([s.pressed, s.disabled, s.retry], 'empty: nothing selected (the default is not drawn as stored), disabled, retry offered').toEqual([NONE, [true, true, true], true]);
+  expect((await room()).discClipped, 'the empty state (the tallest note) does not push the panel\'s footer out of its box either').toBeLessThanOrEqual(0);
 
   // a stored value this page does not offer is a failed read, never guessed at
   await tier.locator('.ask-tier-retry').click();
@@ -10429,6 +10438,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await tier.locator('.ask-tier-retry').click();
   await page.evaluate(() => window.__getQ[3]({ ok: true, model: 'claude-sonnet-5-5' }));
   await expect(opts.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await expect(opts.nth(1), 'Try again hid itself: focus went to the selected option, not to <body>').toBeFocused();
   s = await snap();
   expect([s.pressed, s.disabled, s.retry, s.note], 'stored: Sonnet selected, nothing else, all enabled, nothing to retry, no note').toEqual([['false', 'true', 'false'], [false, false, false], false, '']);
   await expect(tier.locator('.ask-tier-retry'), 'and the retry button is actually HIDDEN (a class that sets display must not outrank [hidden])').toBeHidden();
@@ -10464,6 +10474,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   expect((await sets()).at(-1), 'Enter on a focused option sends it').toEqual({ pin: '0000', model: 'claude-opus-5-5' });
   await answerSet({ ok: true, model: 'claude-opus-5-5' });
   await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  await expect(opts.nth(2), 'every option was disabled while the save ran, which drops keyboard focus to <body>: it comes back to the option used (WCAG 2.4.3)').toBeFocused();
 
   // ── 3. a REFUSED save reverts the selection to what the row says now ──
   const getsBefore = await gets();
@@ -10539,6 +10550,12 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await expect(page.locator('#askBody .ask-model'), 'no model in the reply, no proof line: still the five from before').toHaveCount(5);
   await ask({ ok: false, error: 'model call failed (HTTP 400) — tools not supported', model: 'claude-haiku-5-5', tierSource: 'row' }, 'seven');
   await expect(page.locator('#askBody .lock-error'), 'a failed question tells the owner which tier it asked for').toContainText(/HTTP 400.*\(model: Haiku 5\.5\)/);
+
+  // the owner's switch row lives INSIDE the stacked panel's fixed height budget: it must leave the answers room to be read
+  // (at 810px it once left 0px — answers rendered into a box with no height)
+  const r = await room();
+  expect(r.thread, 'with the switch drawn and answers in the thread, the thread keeps at least 100px (the stacked cap once squeezed it to 0)').toBeGreaterThanOrEqual(100);
+  expect(r.discClipped, 'and the footer is inside the panel').toBeLessThanOrEqual(0);
 
   // ── 6. the same panel for everyone else: nothing, even when a reply carries a model ──
   const gcount = await gets();
@@ -10622,6 +10639,9 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   expect(fit.insideX, 'the switch sits inside the Ask panel').toBe(true);
   expect(fit.clipped, 'no label is cut').toEqual([]);
   expect(Math.min(...fit.tall), 'each option is a usable tap target').toBeGreaterThanOrEqual(30);
+  if (await page.evaluate(() => matchMedia('(hover: none)').matches)) {
+    expect(Math.min(...fit.tall), 'on a touch screen (a mis-tap rewrites the model for every question) it is as tall as the buttons beside it').toBeGreaterThanOrEqual(40);
+  }
   expect(fit.pageScroll, 'the page does not scroll sideways because of it').toBe(false);
 
   // tidy: put the real functions back

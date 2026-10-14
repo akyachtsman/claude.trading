@@ -67,7 +67,7 @@ function fakeDb() {
     const h = new Headers(init.headers);
     const method = (init.method || 'GET').toUpperCase();
     const body = init.body ? JSON.parse(init.body) : null;
-    db.log.push({ method, path: u.pathname, search: u.search, body });
+    db.log.push({ method, path: u.pathname, search: u.search, body, signal: !!init.signal });
     // the gateway, as CLAUDE.md records it: a secret key on a browser-shaped request is refused
     if (/mozilla/i.test(h.get('user-agent') || '')) return new Response('{"message":"Forbidden use of secret API key in browser"}', { status: 401 });
     if (h.get('apikey') !== SERVICE_KEY || h.get('authorization') !== `Bearer ${SERVICE_KEY}`) return new Response('{"message":"Invalid API key"}', { status: 401 });
@@ -83,11 +83,20 @@ function fakeDb() {
       return json(true);
     }
     if (u.pathname === '/rest/v1/desk_users' && method === 'GET') {
-      if (u.searchParams.get('select') === 'id') return json([{ id: USER_ID }]);
-      const rows = [
+      // PostgREST honours `select=` (only those columns come back), `is_test=eq.…` and `limit=`, and refuses a column that does not exist
+      const known = ['id', 'salt', 'pin_hash', 'is_test'];
+      const cols = (u.searchParams.get('select') || '*').split(',');
+      if (cols[0] !== '*' && cols.some((c) => !known.includes(c))) return json({ message: 'column does not exist' }, 400);
+      let rows = [
         { id: USER_ID, salt: SALT, pin_hash: sha(SALT + PIN), is_test: false },
         { id: TEST_USER_ID, salt: SALT, pin_hash: sha(SALT + TEST_PIN), is_test: true },
       ];
+      const f = u.searchParams.get('is_test');
+      if (f === 'eq.false') rows = rows.filter((r) => !r.is_test);
+      if (f === 'eq.true') rows = rows.filter((r) => r.is_test);
+      const lim = Number(u.searchParams.get('limit'));
+      if (lim) rows = rows.slice(0, lim);
+      rows = rows.map((r) => (cols[0] === '*' ? r : Object.fromEntries(cols.map((c) => [c, r[c]]))));
       return json(db.omitIsTest ? rows.map(({ is_test, ...r }) => r) : rows);
     }
     if (u.pathname === '/rest/v1/desk_ask_model') {
@@ -96,9 +105,14 @@ function fakeDb() {
       if (t.mode === 'http500') return json({ message: 'boom' }, 500);
       if (t.mode === 'badjson') return new Response('<html>not json</html>', { status: 200 });
       if (t.mode === 'notarray') return json({ model: t.model });
-      if (t.mode === 'empty') return json([]);
-      if (t.mode === 'nullmodel') return json([{ model: null }]);
-      return json([{ model: t.model }]);
+      // the same honesty for the tier table: only the columns asked for, a wrong column is a 400, the one row has id = true
+      const known = ['id', 'model', 'updated_at', 'updated_by'];
+      const cols = (u.searchParams.get('select') || '*').split(',');
+      if (cols[0] !== '*' && cols.some((c) => !known.includes(c))) return json({ message: 'column does not exist' }, 400);
+      const idf = u.searchParams.get('id');
+      if (t.mode === 'empty' || (idf !== null && idf !== 'eq.true')) return json([]);
+      const row = { id: true, model: t.mode === 'nullmodel' ? null : t.model, updated_at: '2026-10-14T00:00:00Z', updated_by: null };
+      return json([cols[0] === '*' ? row : Object.fromEntries(cols.map((c) => [c, row[c]]))]);
     }
     if (u.pathname === '/rest/v1/desk_system_prompt') return json([{ content: OWNER_PROMPT }]);
     if (u.pathname === '/rest/v1/desk_chat_memory') {
@@ -459,6 +473,41 @@ const TESTS = [
     await e.call({ question: 'brief', context: {} }, { origin: null, headers: { 'x-cron-secret': CRON_SECRET } });
     eq(e.db.memPosts.map((m) => [m.origin, m.model]), [['typed', 'claude-opus-5-5-20261001'], ['scheduled', 'claude-opus-5-5-20261001']], 'the stored model name');
   }],
+
+  ['the tier read is bounded by a timeout and asks for the model column of the ONE row; a secret with stray spaces is trimmed, not ignored', async (code) => {
+    const e = boot(code, withTier({ mode: 'empty', model: null }, { env: { ASK_MODEL: '  claude-sonnet-5-5  ' } }));
+    const r = await e.pin();
+    const read = e.db.touched('desk_ask_model')[0];
+    assert(read.signal === true, 'the tier read carries an abort signal (a hung read must not hold a question)');
+    assert(/select=model(&|$)/.test(read.search) && /id=eq\.true/.test(read.search), 'it asks for the model column of the row whose id is true: ' + read.search);
+    eq([e.models[0].model, r.json.tierSource], ['claude-sonnet-5-5', 'override'], 'the padded secret is used, trimmed');
+  }],
+
+  ['a refusal by the provider carries the proof to the admin only', async (code) => {
+    const refuse = () => new Response(JSON.stringify({ stop_reason: 'refusal', model: 'claude-opus-5-5-20261001', usage: { input_tokens: 1, output_tokens: 1 }, content: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const e = boot(code, withTier({ mode: 'ok', model: 'claude-opus-5-5' }, { model: refuse }));
+    const r = await e.pin();
+    eq([r.status, r.json.ok, r.json.model, r.json.tierSource], [200, false, 'claude-opus-5-5-20261001', 'row'], 'the owner is told which model declined');
+    for (const [who, call] of [['the test credential', (x) => x.call({ pin: TEST_PIN, question: 'q', context: {} })], ['a visitor', (x) => x.open()]]) {
+      const x = boot(code, withTier({ mode: 'ok', model: 'claude-opus-5-5' }, { model: refuse }));
+      const rx = await call(x);
+      assert(rx.json.ok === false && !('model' in rx.json) && !('tierSource' in rx.json), `${who} is told only that it declined: ${JSON.stringify(rx.json)}`);
+    }
+  }],
+
+  ['the provider\'s own words go to the OWNER only: a visitor and the test credential get the status and nothing about the model or the account', async (code) => {
+    const words = 'model claude-haiku-5-5 does not support web_search; your credit balance is too low';
+    const fail = () => new Response(JSON.stringify({ error: { message: words } }), { status: 400, headers: { 'content-type': 'application/json' } });
+    const e = boot(code, withTier({ mode: 'ok', model: 'claude-haiku-5-5' }, { model: fail }));
+    const r = await e.pin();
+    assert(r.json.error.includes('does not support web_search'), 'the owner reads the provider\'s words: ' + r.json.error);
+    for (const [who, call] of [['the test credential', (x) => x.call({ pin: TEST_PIN, question: 'q', context: {} })], ['a visitor', (x) => x.open()]]) {
+      const x = boot(code, withTier({ mode: 'ok', model: 'claude-haiku-5-5' }, { model: fail }));
+      const rx = await call(x);
+      eq([rx.status, rx.json.error], [502, 'model call failed (HTTP 400)'], `${who} gets the status alone`);
+      assert(!/haiku|credit|balance|support/i.test(JSON.stringify(rx.json)), `${who} learns nothing about the model or the account: ${JSON.stringify(rx.json)}`);
+    }
+  }],
 ];
 
 async function runSuite(code, { verbose = false } = {}) {
@@ -522,6 +571,13 @@ const MUTANTS = [
   ['the reply names the model that was ASKED for, not the one the provider reports', '...adminProof(finalMsg?.model), usage, checked,', '...adminProof(), usage, checked,'],
   ['the provider-failure reply carries no tier', '        ...adminProof(),   // which tier was asked for, so a provider refusal of one model is diagnosable\n', ''],
   ['the saved conversation row stores the model that was asked for', 'model: finalMsg?.model ?? model, sources, usage, checked, origin', 'model, sources, usage, checked, origin'],
+  ['the users read no longer asks for is_test (the owner is never told which model answered)', 'desk_users?select=id,salt,pin_hash,is_test', 'desk_users?select=id,salt,pin_hash'],
+  ['the tier query asks for the wrong column', 'desk_ask_model?select=model&id=eq.true`, { headers: svc, signal', 'desk_ask_model?select=mode&id=eq.true`, { headers: svc, signal'],
+  ['the tier query asks for the wrong row', 'desk_ask_model?select=model&id=eq.true`, { headers: svc, signal', 'desk_ask_model?select=model&id=eq.false`, { headers: svc, signal'],
+  ['the tier read has no timeout', 'desk_ask_model?select=model&id=eq.true`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) }', 'desk_ask_model?select=model&id=eq.true`, { headers: svc }'],
+  ['a padded ASK_MODEL secret is not trimmed', "const ov = (override ?? '').trim();", "const ov = (override ?? '');"],
+  ['a refusal carries no proof to the admin', "error: 'The model declined this question.', ...adminProof(msg.model) }", "error: 'The model declined this question.' }"],
+  ['a visitor is shown the provider\'s own words (the model, the account\'s billing state)', "${isAdmin && msg ? ' — ' + msg.slice(0, 300) : ''}", "${msg ? ' — ' + msg.slice(0, 300) : ''}"],
 ];
 
 // The esbuild pinned (exact version + integrity hash) in tools/package.json and its lockfile.

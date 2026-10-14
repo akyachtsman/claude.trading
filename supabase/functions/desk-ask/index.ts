@@ -864,16 +864,19 @@ async function handle(req: Request): Promise<Response> {
          as "model call failed (HTTP 400)" and left nothing to diagnose from,
          in the logs or on screen. Owner hit exactly that on 2026-08-14.
          Logged in full for the dashboard, and the message is passed to the
-         browser too: this panel is PIN-gated and single-user, so there is no
-         third party to leak a provider error to, and a desk that says "prompt
-         is too long" can be acted on while one that says 400 cannot. */
+         browser too — to the OWNER only (`isAdmin`): a desk that says "prompt
+         is too long" can be acted on while one that says 400 cannot. It used to
+         go to everyone, which was right while this panel was PIN-gated; the desk
+         has been open to visitors since 2026-10-04, and a provider's words can
+         name the model that answered, or the account's billing state, which a
+         visitor must not read. A visitor gets the status alone. */
       const detail = await apiRes.text().catch(() => '');
       let msg = '';
       try { msg = JSON.parse(detail)?.error?.message || ''; } catch { /* not JSON */ }
       console.error('desk-ask model call failed', apiRes.status, detail.slice(0, 800));
       return reply(502, {
         ok: false,
-        error: `model call failed (HTTP ${apiRes.status})${msg ? ' — ' + msg.slice(0, 300) : ''}`,
+        error: `model call failed (HTTP ${apiRes.status})${isAdmin && msg ? ' — ' + msg.slice(0, 300) : ''}`,
         ...adminProof(),   // which tier was asked for, so a provider refusal of one model is diagnosable
       });
     }
