@@ -3406,6 +3406,11 @@ function openAskSched(pin, opener) {
    The page is a convenience; the database is the gate (desk_021): a request made without this page is
    refused there unless it carries the owner's PIN. */
 const askTierCanChoose = t => t.phase === 'stored';
+/* The PIN of the session that is on screen now — the same source renderAsk() reads — or null when the desk is locked
+   (or storage is blocked). A save that settles late must never speak with a PIN remembered from an earlier render. */
+function askTierSessionPin() {
+  try { return DESK.authed ? sessionStorage.getItem('desk_pin') : null; } catch { return null; }
+}
 function askTierSet(patch) {
   askTier = { ...askTier, ...patch };
   if (askTierPaint) askTierPaint();
@@ -3450,8 +3455,13 @@ async function askTierWrite(pin, id) {
        committed, and would then be the last word on a row that has since moved: the switch would enable on the old model
        while the database holds the new one (Codex P2, PR #328). So once the write has settled, an UNLOCKED panel asks
        the row again, and the answer is whatever it says now. A locked or demo panel has no repaint hook and asks
-       nothing: there is no panel to be wrong, and no PIN to ask with. */
-    if (askTierPaint) askTierRead(pin);
+       nothing: there is no panel to be wrong, and no PIN to ask with.
+       It asks with the PIN of the session that is on screen NOW, and only when that is the SAME credential that made
+       the write (Codex P2, round 2): the `pin` this function closed over belongs to the render that started the save, and
+       if the desk was locked and a DIFFERENT credential (the CI test user) unlocked it before the save settled, reading with
+       the old PIN would paint the production tier into a panel whose own, denied, read was the truth. */
+    const cur = askTierSessionPin();
+    if (askTierPaint && cur && cur === pin) askTierRead(cur);
     return;
   }
   if (out && out.ok === true && ASK_MODELS.some(m => m.id === out.model)) {

@@ -10585,6 +10585,28 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); window.__getQ = []; window.__calls.get = []; window.renderAsk(); });
   await answerGet({ ok: true, model: 'claude-opus-5-5' }, 0);
   await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  // ...and a DIFFERENT credential that unlocks before the save settles (Codex P2, PR #328, round 2: the CI test user is a valid
+  // PIN the database refuses) must never be read with the OLD PIN: a late save recovers only for the session on screen NOW, and
+  // only when that is the SAME credential that wrote. Otherwise the former owner's read would paint the production tier into a
+  // panel whose own, denied, read was the truth.
+  await opts.nth(0).click();                                                    // Haiku: a save by PIN 0000 is out
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  await page.evaluate(() => {
+    DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.renderAsk();                  // locked...
+    DESK.authed = true; sessionStorage.setItem('desk_pin', '1111');                                  // ...and another credential unlocks
+    window.__getQ = []; window.__calls.get = []; window.renderAsk();                                 // its own read is out
+  });
+  expect(await page.evaluate(() => window.__calls.get), 'the new session reads with ITS OWN PIN').toEqual(['1111']);
+  await answerSet({ ok: true, model: 'claude-haiku-5-5' });                      // the OLD save (PIN 0000) settles now
+  await page.waitForTimeout(150);
+  expect(await page.evaluate(() => window.__calls.get), 'the late save did not read with the former owner\'s PIN, nor with the new session\'s as its own').toEqual(['1111']);
+  await answerGet({ ok: false }, 0);                                             // the new credential's own read: refused
+  await expect(tier.locator('.ask-tier-note')).toContainText(/Could not read/i);
+  expect((await snap()).pressed, 'the refused credential is shown nothing of the production tier').toEqual(NONE);
+  expect((await snap()).disabled, '...and cannot choose').toEqual([true, true, true]);
+  await page.evaluate(() => { sessionStorage.setItem('desk_pin', '0000'); window.__getQ = []; window.__calls.get = []; window.renderAsk(); });   // back to the owner
+  await answerGet({ ok: true, model: 'claude-opus-5-5' }, 0);
+  await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
   // two reads in flight: the OLDER one landing last must not win
   await page.evaluate(() => { window.__getQ = []; window.__calls.get = []; window.renderAsk(); window.renderAsk(); });
   await answerGet({ ok: true, model: 'claude-sonnet-5-5' }, 1);
