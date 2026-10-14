@@ -82,6 +82,7 @@ M = [
  ('CSS: the chosen model is not marked in forced-colours mode', 'css', [("@media (forced-colors: active) { .ask-tier-opt[aria-pressed=\"true\"] { text-decoration: underline; text-underline-offset: 3px; } }\n", "")]),
  ('a visitor is told which model a failed question asked for', 'app', [("const askedModelTag = res => (authed && res && typeof res.model === 'string' && res.model)", "const askedModelTag = res => (res && typeof res.model === 'string' && res.model)")]),
  ('deskAsk rebuilds its result and drops the owner\'s proof fields', 'data', [("which this function must never rebuild away. */\n  return out;", "which this function must never rebuild away. */\n  return { ok: out.ok, answer: out.answer, sources: out.sources, error: out.error };")]),
+ ('a control that became disabled but is still REPORTED as the active element does not count as lost focus (engines differ; CI caught it)', 'app', [("const lost = !a || a === document.body || (tierBox.contains(a) && (a.disabled || a.hidden));", "const lost = !a || a === document.body || (a === tierRetry && tierRetry.hidden);")]),
  ('the sweeps\' shared guard no longer intercepts a write of the model tier', 'spec', [("  await page.route('**/rest/v1/rpc/desk_set_ask_model*', (route) => {\n    blocked.tierWrites++;\n    return route.fulfill({ status: 200, contentType: 'application/json',\n      body: JSON.stringify({ ok: false }) });\n  });\n", "")]),
 ]
 

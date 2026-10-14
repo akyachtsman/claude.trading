@@ -10523,6 +10523,34 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await expect(tier.locator('.ask-tier-retry'), 'refused and unreadable: focus lands on Try again — the one control left — not on <body>').toBeFocused();
   expect((await snap()).pressed, 'refused and unreadable: nothing selected').toEqual(NONE);
 
+  // ── 3b. the same flow in an engine that keeps naming a control that became disabled as the ACTIVE element ──
+  // Older Chromium (the sandbox's) drops focus to <body> the moment a focused button is disabled; current Chromium, WebKit and Firefox
+  // keep reporting it until the next rendering update — CI failed the assertion above on three projects while a local run passed.
+  // The focus return must not depend on which, so it is emulated here: while the used option is disabled, `document.activeElement` names it.
+  await ownerPanel();
+  await answerGet({ ok: true, model: 'claude-opus-5-5' });
+  await expect(opts.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  await page.evaluate(() => {
+    const real = Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement').get;
+    let stale = null;
+    document.addEventListener('focusin', (e) => { stale = e.target; }, { capture: true });
+    Object.defineProperty(document, 'activeElement', { configurable: true, get() {
+      const r = real.call(document);
+      return (!r || r === document.body) && stale && stale.isConnected && stale.disabled ? stale : r;
+    } });
+  });
+  await opts.nth(0).click();
+  await expect.poll(() => pend('__setQ')).toBe(1);
+  expect(await page.evaluate(() => String(document.activeElement && document.activeElement.className)), '(precondition) the engine under test names the disabled option as active').toContain('ask-tier-opt');
+  const gets3b = await gets();
+  await answerSet({ ok: false });
+  await expect.poll(() => gets()).toBe(gets3b + 1);
+  await answerGet({ ok: false }, gets3b);
+  await expect(tier.locator('.ask-tier-note')).toContainText(/Not saved\. Could not read/i);
+  expect(await page.evaluate(() => { const a = Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement').get.call(document); return String(a && a.className); }),
+    'a disabled control that is still REPORTED as active does not stop the focus moving to Try again').toContain('ask-tier-retry');
+  await page.evaluate(() => { delete document.activeElement; });
+
   // ── 4. a save in flight, then the panel is rebuilt (an unlock or refresh): the old reply lands nowhere ──
   await ownerPanel();
   await answerGet({ ok: true, model: 'claude-sonnet-5-5' });

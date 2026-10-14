@@ -3565,7 +3565,10 @@ function renderAsk() {
        the owner made meanwhile is theirs. A disabled or hidden control drops focus to <body> in some engines and stays
        "active" in others, so a hidden Try again counts as lost too. */
     const a = document.activeElement;
-    const lost = !a || a === document.body || (a === tierRetry && tierRetry.hidden);
+    /* Engines differ on WHEN a focused control that has just been disabled or hidden stops being the active element: older
+       Chromium drops it to <body> at once, current Chromium, WebKit and Firefox keep naming the dead control until the next
+       rendering update (CI saw exactly this). So "lost" is "nowhere" OR "on a control of THIS switch that can no longer take it". */
+    const lost = !a || a === document.body || (tierBox.contains(a) && (a.disabled || a.hidden));
     if (can && tierRefocus) {
       const f = tierBtns.find(x => tierRefocus === '*' ? x.getAttribute('aria-pressed') === 'true' : x.dataset.model === tierRefocus);
       tierRefocus = null;
