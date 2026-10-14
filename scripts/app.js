@@ -5057,7 +5057,7 @@ const WB_TICKERS = [
   ['XLB', 'Materials'], ['XLV', 'Health Care'], ['XLY', 'Consumer Disc.'], ['XLP', 'Consumer Staples'],
   ['XLU', 'Utilities'], ['XLRE', 'Real Estate'], ['XLC', 'Communication'],
 ];
-const SMA_COLORS = { 1: 'var(--color-text-primary)', 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-series-2)', 200: 'var(--color-text-secondary)' };
+const SMA_COLORS = { 1: 'var(--color-text-primary)', 25: 'var(--color-series-3)', 50: 'var(--color-accent-bright)', 100: 'var(--color-sma-100)', 200: 'var(--color-text-secondary)' };
 const ytdBars = bars => { const y = bars.t[bars.t.length - 1].slice(0, 4); let n = 0; for (let i = bars.t.length - 1; i >= 0 && bars.t[i].slice(0, 4) === y; i--) n++; return Math.max(n, 5); };
 const paneWindow = (spec, bars) => spec === 'ytd' ? ytdBars(bars) : spec;
 let wbState = null;   /* { data, lamp, sym, days, wdays, off, woff, layout, cfg } */
@@ -7282,7 +7282,7 @@ function renderCharts(data, lamp) {
          hue. Deliberately still THINNER than the S/R rules and the crosshair:
          an average is a trailing reference, not a level, and matching their
          weight would flatten the pane's hierarchy. */
-      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 2 }));
+      if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: color, 'stroke-width': 2, 'data-sma': String(len) }));
     }
 
     /* The SMA price display — a right-edge price tag at each enabled SMA — was

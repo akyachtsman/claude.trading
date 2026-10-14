@@ -657,6 +657,11 @@
                                         (owner request 2026-07-16: no orange,
                                         "more yellow"; was #f5a623 → #eab308) */
     --color-accent-bright: #f5c518;  /* SMA mid — yellow */
+    --color-sma-100: #22d3ee;        /* SMA slow (100) — cyan. It was series-2, the same
+                                        yellow as the 50 and the stochastic %D, so three
+                                        lines read as one (owner 2026-10-14). No orange
+                                        (2026-07-16 ruling); distinct from the green/red
+                                        candles, red %K, purple 25 and grey 200 */
     --color-accent-light: #3d3110;   /* pressed-seg / focus-halo tint. The light
                                         theme's cream #F3E8CC was inherited here,
                                         so a pressed "6M" read yellow-on-cream at
