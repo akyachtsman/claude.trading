@@ -264,6 +264,11 @@ jobs:
           # advertises paths like vendor/console.html, and a matcher anchored to
           # root-level files let a PR touching only that page set ui=false and
           # skip the very ENTRY gate the page exists for.
+          # ADD the directories your app FETCHES AT RUNTIME: a data file the page
+          # renders (content/*.json that builds a form or a list, say) changes what
+          # the browser shows without touching a source file, so a PR touching
+          # only it sets ui=false (claude.insurance, 2026-10-15: `^content/`). The
+          # name is per-project, so the template cannot list it.
           # ⚠️ LOCAL — tailored to THIS project's layout: the app's JS lives in
           # scripts/ (not js/) and its owner-editable rosters in config/. The
           # template's generic regex would skip the browser suite on every
