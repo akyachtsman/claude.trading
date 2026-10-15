@@ -11215,6 +11215,25 @@ test('S73: each answer carries the Pacific time it came in — live, replayed an
   expect([vBefore, vAfter], 'a visitor sees the time too').toContain(await page.locator('#askBody .ask-when').last().textContent());
   await expect(page.locator('#askBody p.ask-model'), 'but never the model line').toHaveCount(0);
 
+  // ── 5. the midnight hour reads 00:xx, never 24:xx (Codex, PR #334). Some engines read `hour12: false` as the h24 cycle
+  //       (older Safari/Chrome did), so the page asks for h23 by name. Chromium here already answers 00 for hour12:false,
+  //       so the engine is EMULATED: a toLocaleTimeString that turns a bare `hour12: false` into h24 — the tell of the
+  //       quirk — and passes an explicit hourCycle through. 08:03Z on Jan 1 is 00:03 PST, the hour the quirk misprints
+  //       as "24:03" under a date that then reads a day late. ──
+  const midnight = await page.evaluate(() => {
+    const real = Date.prototype.toLocaleTimeString;
+    Date.prototype.toLocaleTimeString = function (loc, o) {
+      return real.call(this, loc, o && o.hour12 === false && !o.hourCycle ? Object.assign({}, o, { hour12: undefined, hourCycle: 'h24' }) : o);
+    };
+    try {
+      const probe = new Date('2026-01-01T08:03:00Z').toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Los_Angeles' });
+      return { probe, when: askWhen('2026-01-01T08:03:00.123456+00:00'), noon: askWhen('2026-10-14T19:32:51Z') };
+    } finally { Date.prototype.toLocaleTimeString = real; }
+  });
+  expect(midnight.probe, 'the emulation really does misprint the midnight hour for a bare hour12:false').toBe('24:03');
+  expect(midnight.when, 'Pacific 00:03 reads 00:03 under its own date, in the line and in the tooltip').toEqual({ t: 'Jan 1, 00:03 PST', full: '2026-01-01 00:03 PST' });
+  expect(midnight.noon.t, 'and the rest of the day is untouched').toBe('Oct 14, 12:32 PDT');
+
   // tidy: put the real functions back
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskAsk = window.__real.ask; window.deskChatHistory = window.__real.hist; window.deskGetAskModel = window.__real.get; window.deskSetAskModel = window.__real.set; renderAsk(); });
   expect(errs, 'no page errors through any of it').toEqual([]);

@@ -1184,10 +1184,12 @@ function withinCloseSettleGrace(now) {
    America/Los_Angeles rather than the viewer's locale, so stamps, bar times,
    and news times agree with the owner's clock everywhere. */
 const DESK_TZ = 'America/Los_Angeles';
-function fmtClock(iso) {         /* "HH:mm PDT/PST"; '' if unparseable */
+function fmtClock(iso) {         /* "HH:mm PDT/PST"; '' if unparseable. `hourCycle: 'h23'` by name, NOT `hour12: false`:
+                                    some engines read a bare hour12:false as the h24 cycle and print the midnight hour
+                                    as "24:03" (under a date that then reads a day late, as the answer time line does) */
   const d = new Date(iso);
   return isNaN(d.getTime()) ? ''
-    : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short', timeZone: DESK_TZ });
+    : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short', timeZone: DESK_TZ });
 }
 /* intraday bar stamp: feed times are UTC 'YYYY-MM-DD HH:mm' → Pacific display;
    date-only daily bars pass through untouched */
