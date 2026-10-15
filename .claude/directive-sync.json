@@ -1,6 +1,6 @@
 {
   "upstream": {
-    "sha": "8c1a39801d157ddc049d96cee3ef13a2a6077e2e",
+    "sha": "a9c8859d3c4f889c8cb7e897cdfbfd1a309c1a3a",
     "synced": "2026-10-15"
   },
   "refresh_kept": {
@@ -15,9 +15,9 @@
       "local": "e04fca5ac00eaafdaff11218fee6ef4f1755d670"
     },
     ".github/workflows/qa.yml": {
-      "blob": "fda7e7c028a70dbbc34d94c95834cd68ed5066e1",
-      "reason": "Template plus six local items, all listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan step, the html-validate steps, the tailored UI_PATHS, the ui-tests job-level GREP_INVERT env and the notify job. Checked by diffing against the template: the only differences are those items.",
-      "local": "fff2d9112211411d874c920ce2b3d1d9c90aaf2a"
+      "blob": "f59b326762cf6b0c4204bf14ee8dac707070222e",
+      "local": "97dd1729f10008962bfd3fd4c55310bcc6d67437",
+      "reason": "Template plus six local items, all listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan step, the html-validate steps, the tailored UI_PATHS (scripts/, config/ and check-ui-viewports.js added), the ui-tests job-level GREP_INVERT env and the notify job. The 2026-10-15 template change (a comment under UI_PATHS about directories an app fetches at runtime) is taken; the project's regex already carries config/, its runtime-fetched roster directory. Checked by a 3-way merge against the template at the stamp: the only differences are those items."
     },
     ".github/scripts/ui-tests/playwright.config.js": {
       "blob": "c55256cb71b416a79e0ab09a30a5a6afcbc87e83",

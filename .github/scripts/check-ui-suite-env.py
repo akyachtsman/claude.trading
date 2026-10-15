@@ -59,6 +59,7 @@ sys.dont_write_bytecode = True
 import json
 import os
 import re
+import subprocess
 
 # The shared YAML 1.2 reader, this file's sibling: the action is read as GitHub
 # reads it, so `include-hidden-files: yes` is the string GitHub sees, not
@@ -106,9 +107,14 @@ ACTION = ARGV[0] if ARGV else ".github/actions/ui-suite/action.yml"
 # The config is included for the same reason: the run imports it too.
 # DISCOVERED, not listed: every JS/TS file under the kit (specs, the config,
 # and any helper a spec imports), so a spec added later is covered the moment it
-# exists rather than when someone remembers to name it here. Walked on disk, not
-# via `git ls-files`, so an unstaged new file is not invisible. Overridable
-# (positional files after ACTION) so the cases can point it at a fixture spec.
+# exists rather than when someone remembers to name it here. In a git work tree
+# the list is `git ls-files --cached --others --exclude-standard`: an unstaged new
+# file is still listed (`--others`), but a file the project ignores or excludes
+# is not -- it never reaches CI, so a local-only wrapper config beside the kit
+# (one that reads PW_CHROMIUM, say) no longer fails the guard (claude.trading,
+# 2026-10-15). Outside a work tree, where nothing is ignored, the kit is walked
+# on disk. Overridable (positional files after ACTION) so the cases can point it
+# at a fixture spec.
 KIT_SKIP_DIRS = {"node_modules", "test-results", "playwright-report", ".git"}
 # Playwright's default testMatch is `**/*.@(spec|test).?(c|m)[jt]s?(x)`, so the
 # JSX/TSX forms run too; every one of them is scanned.
@@ -116,6 +122,19 @@ KIT_EXTS = tuple(f".{c}{l}s{x}" for c in ("", "c", "m") for l in ("j", "t") for 
 
 
 def discover_kit_files(root=KIT_DIR):
+    inside = subprocess.run(["git", "-C", root, "rev-parse", "--is-inside-work-tree"],
+                            capture_output=True, text=True) if os.path.isdir(root) else None
+    if inside is not None and inside.returncode == 0 and inside.stdout.strip() == "true":
+        listed = subprocess.run(["git", "-C", root, "ls-files", "-z", "--cached", "--others",
+                                 "--exclude-standard", "--", "."], capture_output=True)
+        if listed.returncode != 0:
+            sys.exit(f"CANNOT CHECK: git ls-files failed under {root}: "
+                     f"{listed.stderr.decode(errors='replace').strip()}")
+        rels = [p for p in listed.stdout.decode("utf-8", errors="surrogateescape").split("\0") if p]
+        return tuple(sorted(
+            os.path.join(root, p) for p in rels
+            if p.endswith(KIT_EXTS) and not KIT_SKIP_DIRS.intersection(p.split("/"))
+            and os.path.isfile(os.path.join(root, p))))
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in KIT_SKIP_DIRS)

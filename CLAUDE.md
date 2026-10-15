@@ -548,9 +548,11 @@ broader than it is:
   for CI, not a verdict.
 - **Keep run output out of the tree**: set `PLAYWRIGHT_JSON_OUTPUT_FILE` and pass
   `--output` to a scratch path, or a run wipes and rewrites `.agent-reports/`.
-- **`check-ui-suite-env.py` fails locally while `pw.local.config.mjs` exists** (it reads
-  `PW_CHROMIUM`, which the composite does not set; the file is untracked and git-excluded, so CI
-  never sees it): move the wrapper aside for that one run (measured by the 2026-10-15 refresh).
+- **`check-ui-suite-env.py` passes with `pw.local.config.mjs` beside the kit** (measured by the
+  second 2026-10-15 refresh: exit 0, wrapper present). Upstream's guard now lists the kit through
+  `git ls-files --cached --others --exclude-standard`, so a git-excluded wrapper (it reads
+  `PW_CHROMIUM`, which the composite does not set) is never scanned; the first 2026-10-15 refresh
+  had to move it aside. The wrapper must STAY in `.git/info/exclude` for this to hold.
 - **Overlay scrollbars reserve no layout width here**, so the S40 roster-column
   residual (a 9–10 character symbol clipping where a bar takes width) cannot be
   reproduced in this sandbox at all.
