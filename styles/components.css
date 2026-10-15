@@ -266,8 +266,12 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
 .ask-tier-cap { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
 .ask-tier-note { flex: 1 1 100%; margin: 0; font: 400 var(--font-2xs)/1.4 var(--font-sans); color: var(--color-text-secondary); }
 .ask-tier-note:empty { display: none; }
-/* under an answer: which model produced it */
-.ask-model { margin: -2px 0 var(--space-2); padding-left: var(--space-3); font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
+/* under an answer: when it came in (Pacific), then which model produced it. The time has the model line's footprint
+   and, when a model line follows, sits tight on top of it as one pair (`:has` — a browser without it just leaves the
+   ordinary gap between the two). */
+.ask-when, .ask-model { margin: -2px 0 var(--space-2); padding-left: var(--space-3); font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
+.ask-when:has(+ .ask-model) { margin-bottom: calc(-1 * var(--space-2)); }
+.ask-when + .ask-model { margin-top: 0; }
 
 /* ── watchlists (owner request 2026-07-29) ─────────────────────────────────
    Rendered as TILES, not a table (owner request, same day): each list is a
