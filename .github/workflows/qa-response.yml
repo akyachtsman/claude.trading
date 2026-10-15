@@ -94,9 +94,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Without APP_URL there is nothing to test against: the suite would run
-      # every scenario against the placeholder and fail for a config gap rather
-      # than a defect. Say so once and stop.
       # Silence is the defect this names: a dispatch from a feature branch
       # otherwise reports green while having run main's specs.
       # Says SELECTED, never "ran" — this step precedes the APP_URL guard and the
@@ -126,6 +123,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Suite revision selected: $TESTED_SHA ($TESTED_REF)"
 
+      # The live URL comes from vars.APP_URL and from nothing else: without it
+      # this workflow names no URL to test against, so it says so once and stops
+      # rather than run the suite. A baseURL default filled in to the kit's
+      # playwright.config.js is NOT read by this gate: a project that relied on
+      # it goes red here until it sets the repository variable (pilots
+      # claude.prop + claude.trading, 2026-10-13).
       - name: Require APP_URL
         if: ${{ vars.APP_URL == '' }}
         run: |

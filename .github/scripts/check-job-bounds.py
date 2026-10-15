@@ -82,10 +82,15 @@ timeout-minutes at all, and their ceiling is the calling job's. They ARE read,
 transitively, to see whether a caller reaches ui-suite through a local wrapper.
 """
 
+# Before any import: a guard that imports a sibling module (gh_yaml.py) must
+# not leave __pycache__/ in the project it checks, where `git add -A` after
+# the gate would commit it (claude.prop, 2026-10-13).
+import sys
+sys.dont_write_bytecode = True
+
 import posixpath
 import re
 import shlex
-import sys
 from pathlib import Path, PurePosixPath
 
 try:

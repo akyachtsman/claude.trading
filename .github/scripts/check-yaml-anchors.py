@@ -32,7 +32,12 @@ Usage:
 Needs PyYAML (on GitHub's runner images) and gh_yaml.py beside this file.
 """
 
+# Before any import: a guard that imports a sibling module (gh_yaml.py) must
+# not leave __pycache__/ in the project it checks, where `git add -A` after
+# the gate would commit it (claude.prop, 2026-10-13).
 import sys
+sys.dont_write_bytecode = True
+
 from pathlib import Path
 
 try:

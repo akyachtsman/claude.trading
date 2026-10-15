@@ -19,6 +19,16 @@ runs:
         # also hide a genuine secret pasted into them.
         # (Like check-secret-scan.js, this comment names no token literally — writing
         # one out here would re-create exactly the self-match it describes.)
+        # Two sk- forms, neither subsuming the other: the generic one takes letters
+        # and digits only (a hyphenated tail would also hit kebab-case prose), and
+        # an Anthropic key carries hyphens and underscores after its sk-ant- prefix.
+        # The private-key form matches any PEM/PGP header whose label ends in
+        # PRIVATE KEY (PKCS#8, RSA, EC, OPENSSH, DSA, ENCRYPTED, PGP ... BLOCK) and
+        # never a PUBLIC KEY or CERTIFICATE one. A private key usually lives in a
+        # file of its own, so the pathspec names those too: *.pem, *.key, *.p8
+        # and the extensionless ssh names (id_rsa, id_dsa, id_ecdsa, id_ed25519;
+        # never their .pub halves). Upstream's
+        # check-secret-scan-cases.py pins each catch and each twin (2026-10-13).
         # `|| rc=$?` is required: the step runs under `bash -eo pipefail`, where a
         # bare grep exiting 1 (clean — no match) would abort the step.
         # `-l` prints matching FILENAMES ONLY, and that is a security property,
@@ -36,8 +46,8 @@ runs:
         # are single-quoted so the SHELL never expands them; git's `*` crosses `/`.
         rc=0
         hits=$(git grep --untracked -lE \
-          'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|xoxb[-]|sb_secret_[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*(c2VydmljZV9yb2xl|NlcnZpY2Vfcm9sZ|zZXJ2aWNlX3JvbG)|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}' \
-          -- '*.js' '*.ts' '*.tsx' '*.mjs' '*.html' '*.css' '*.json' '*.md' '*.sh' '*.py' '*.toml' '*.env' '.env.*' '*/.env.*' '*.yml' '*.yaml' ':!*node_modules/*') || rc=$?
+          'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}|pat[A-Za-z0-9]{17}\.[a-f0-9]{64}|pat[lr]_[A-Za-z0-9]{10,}|sk-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|xoxb[-]|sb_secret_[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*(c2VydmljZV9yb2xl|NlcnZpY2Vfcm9sZ|zZXJ2aWNlX3JvbG)|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----' \
+          -- '*.js' '*.ts' '*.tsx' '*.mjs' '*.html' '*.css' '*.json' '*.md' '*.sh' '*.py' '*.toml' '*.sql' '*.jsonl' '*.pem' '*.key' '*.p8' '*id_rsa' '*id_dsa' '*id_ecdsa' '*id_ed25519' '*.env' '.env.*' '*/.env.*' '*.yml' '*.yaml' ':!*node_modules/*') || rc=$?
         # 0 = a match (a secret), 1 = clean, >=2 = git grep itself failed (128:
         # not a git repository, a bad pathspec). Folding
         # the error case into "clean" is how a scan reports green after failing
