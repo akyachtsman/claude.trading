@@ -135,7 +135,21 @@ jobs:
             # reactions and inline review comments are invisible here). Match on the
             # stable prefix; the trailing flourish varies ("Hooray!", "Breezy!").
             # The body is untrusted text: it is compared, never executed.
-            case "$COMMENT_BODY" in
+            # ⚠️ LEADING HTML COMMENTS ARE SKIPPED FIRST. Since 2026-10-15 Codex
+            # opens every all-clear with `<!-- codex-review-receipt:v1 -->` and a
+            # blank line, so a bare prefix match never fired and codex-flagged
+            # could no longer clear itself (#457: the run on its clean verdict
+            # succeeded and removed nothing). Only comments and whitespace BEFORE
+            # the verdict are dropped; the verdict must still open what is left.
+            verdict_body=$COMMENT_BODY
+            while :; do
+              verdict_body=${verdict_body#"${verdict_body%%[![:space:]]*}"}
+              case "$verdict_body" in
+                '<!--'*'-->'*) verdict_body=${verdict_body#*-->} ;;
+                *) break ;;
+              esac
+            done
+            case "$verdict_body" in
               "Codex Review: Didn't find any major issues"*)
                 # The verdict names its commit ("Reviewed commit: `<sha>`") and
                 # the label is a MERGE BLOCKER, so the SHA is load-bearing: a
@@ -148,7 +162,7 @@ jobs:
                 # is the start-of-buffer anchor, not an escaped backtick — the
                 # escaped form silently matches nothing (caught by the stub test
                 # for this very change, not by reading).
-                verdict_sha=$(printf '%s' "$COMMENT_BODY" \
+                verdict_sha=$(printf '%s' "$verdict_body" \
                   | grep -oE '`[0-9a-f]{7,40}`' | head -1 | tr -d '`' || true)
                 head_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
                 if [ -z "$verdict_sha" ]; then

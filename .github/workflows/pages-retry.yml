@@ -71,6 +71,7 @@ jobs:
           WF_ID: ${{ github.event.workflow_run.workflow_id }}
           ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           SHA: ${{ github.event.workflow_run.head_sha }}
+          CREATED: ${{ github.event.workflow_run.created_at }}
         run: |
           set -euo pipefail
           echo "Pages deploy run ${RUN_ID} (commit ${SHA:0:7}) failed on attempt ${ATTEMPT}."
@@ -108,8 +109,21 @@ jobs:
           # 2026-08-26). A re-run replays THIS run's commit, so when two deploys fail in
           # one outage, two retries start and the older one can finish last and put the
           # stale commit back on the site. Before every re-run request, ask whether a
-          # newer run of the same workflow exists, and stop if one does: that run
-          # carries the newer content, and its own failure starts its own retry.
+          # newer run of the same workflow still COUNTS, and stop if one does: that run
+          # carries the newer content. It counts while it is queued or running (it may
+          # yet deploy, or fail and retry itself), once it SUCCEEDED (re-running this
+          # one would overwrite it) and once it FAILED (its failure starts its own
+          # retry). A newer run that was cancelled, timed out or skipped does NOT count:
+          # no retry ever fires for it, so standing down here left the site on the
+          # build before this one (Codex on claude.trading#336, 2026-10-15). Every newer
+          # run is read, not just the newest: under a cancelled newest, an older newer
+          # run may have succeeded, and re-running this one would overwrite it. A cancel
+          # by Pages' own concurrency group needs no special case: it happens only when
+          # a still newer run was queued, and that run counts.
+          # Every page, not the first 100 (Codex, #458): the list is filtered on the
+          # server to runs created at or after this one, so the pages walked are the
+          # few newer runs, never the workflow's whole history, and each page's count
+          # is summed.
           # Keyed on the workflow ID, NEVER a name: the runs API reports this workflow
           # as "pages build and deployment" (prose, spaces) while the trigger above
           # needs the slug "pages-build-deployment", so a name filter matches nothing,
@@ -128,11 +142,14 @@ jobs:
           # the re-run and cancelling it, judged not worth its code for a gap that
           # narrow.
           superseded() {
-            local newest
-            newest=$(gh api "repos/${REPO}/actions/workflows/${WF_ID}/runs?per_page=1" \
-              --jq '.workflow_runs[0].id // empty' 2>/dev/null) || return 1
-            case "$newest" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$newest" -gt "$RUN_ID" ]
+            local counting
+            counting=$(gh api --paginate \
+              "repos/${REPO}/actions/workflows/${WF_ID}/runs?per_page=100&created=%3E%3D${CREATED}" \
+              --jq "[.workflow_runs[] | select(.id > ${RUN_ID})
+                     | select(.status != \"completed\" or .conclusion == \"success\" or .conclusion == \"failure\")]
+                    | length" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }') || return 1
+            case "$counting" in ''|*[!0-9]*) return 1 ;; esac
+            [ "$counting" -gt 0 ]
           }
 
           # Full re-run (not just failed jobs): re-running the whole run is what
@@ -141,7 +158,7 @@ jobs:
           for wait in 0 20 40 80 160; do
             [ "$wait" -gt 0 ] && { echo "re-run request failed; waiting ${wait}s"; sleep "$wait"; }
             if superseded; then
-              echo "A newer Pages deploy run exists: not re-running ${RUN_ID} (commit ${SHA:0:7}), which would put older content back."
+              echo "A newer Pages deploy run is pending, succeeded or failed: not re-running ${RUN_ID} (commit ${SHA:0:7}), which would put older content back."
               exit 0
             fi
             # A failing command in an `if` CONDITION does not trip `set -e`, which is what
