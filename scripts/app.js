@@ -3693,6 +3693,10 @@ function renderAsk() {
         if (sched) qEl.title = 'Asked automatically on a schedule';
         thread.appendChild(qEl);
         thread.appendChild(el('p', 'ask-a', r.answer));
+        /* desk_022: the history now carries `model` for the owner's PIN, and only when it is a real provider id (the
+           morning Routine's rows are null). The same line as a live answer, in the same place; no `tierSource` is
+           stored, so a replayed line can never claim a fallback. */
+        appendModelProof(r);
         appendSources(r.sources);
       });
       clearBtn.hidden = !(rows && rows.length);
