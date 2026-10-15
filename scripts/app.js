@@ -3664,6 +3664,18 @@ function renderAsk() {
     line.title = 'Reported by the model provider: ' + res.model + (named ? '. Chosen by ' + (TIER_SOURCES[named] || named) + '.' : '.');
     thread.appendChild(line);
   };
+  /* WHEN an answer came in (owner 2026-10-15), under every answer — a live one, a replayed one and a visitor's alike
+     (the model line is the owner's alone; the time is not private). Pacific, date always drawn (`askWhen`); the exact
+     instant with its year is the tooltip. A live answer is stamped when its reply LANDS in this tab; a replayed one
+     carries the row's own `created_at` (the moment it was stored, within a second of the same). A missing or junk time
+     draws no line. */
+  const appendWhen = iso => {
+    const w = askWhen(iso);
+    if (!w) return;
+    const line = el('p', 'ask-when', w.t);
+    line.title = 'Answer received ' + w.full;
+    thread.appendChild(line);
+  };
   /* On a failed question the owner is told which model was asked for, so a provider refusing one model is
      diagnosable from the screen (the server sends it to the owner only). */
   const askedModelTag = res => (authed && res && typeof res.model === 'string' && res.model) ? ' (model: ' + askModelLabel(res.model) + ')' : '';
@@ -3693,6 +3705,7 @@ function renderAsk() {
         if (sched) qEl.title = 'Asked automatically on a schedule';
         thread.appendChild(qEl);
         thread.appendChild(el('p', 'ask-a', r.answer));
+        appendWhen(r.created_at);
         /* desk_022: the history now carries `model` for the owner's PIN, and only when it is a real provider id (the
            morning Routine's rows are null). The same line as a live answer, in the same place; no `tierSource` is
            stored, so a replayed line can never claim a fallback. */
@@ -3751,12 +3764,14 @@ function renderAsk() {
       .catch(e => (e && e.name === 'AbortError')
         ? { ok: false, stopped: true }
         : { ok: false, error: 'Could not reach the ask service — try again in a moment.' });
+    const arrivedAt = new Date().toISOString();   // when the reply landed, read before anything is drawn
     btn.disabled = false; btn.textContent = 'Ask'; input.disabled = false;
     stopBtn.hidden = true;
     askAbort = null;
     askBusy = false;
     if (res && res.ok) {
       thread.appendChild(el('p', 'ask-a', res.answer));
+      appendWhen(arrivedAt);
       appendModelProof(res);
       appendSources(res.sources);
       clearBtn.hidden = false;

@@ -11054,22 +11054,23 @@ test('S72: a replayed answer says which model gave it — the same line as a liv
     let cur = null;
     for (const c of th.children) {
       if (c.matches('p.ask-q')) { cur = { q: c.textContent, kinds: [] }; out.push(cur); }
-      else if (cur) cur.kinds.push(c.matches('p.ask-a') ? 'a' : c.matches('p.ask-model') ? 'model:' + c.textContent + '|' + c.title : c.matches('details.ask-sources') ? 'sources' : c.tagName);
+      else if (cur) cur.kinds.push(c.matches('p.ask-a') ? 'a' : c.matches('p.ask-when') ? 'when' : c.matches('p.ask-model') ? 'model:' + c.textContent + '|' + c.title : c.matches('details.ask-sources') ? 'sources' : c.tagName);
     }
     return out;
   });
 
-  // ── 1. the OWNER's desk (unlocked): the line sits between the answer and its sources, exactly as for a live answer ──
+  // ── 1. the OWNER's desk (unlocked): the line sits between the answer and its sources, exactly as for a live answer
+  //       (S73's time stamp, `when`, sits between the answer and the model line; every row here carries a created_at) ──
   await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); renderAsk(); });
   await expect(page.locator('#askBody .ask-q'), 'all seven saved exchanges are replayed').toHaveCount(7);
   expect(await shape()).toEqual([
-    { q: 'q-haiku',   kinds: ['a', 'model:Answered by Haiku 5.5|Reported by the model provider: claude-haiku-5-5-20260301.', 'sources'] },
-    { q: 'q-routine', kinds: ['a'] },
-    { q: 'q-opus',    kinds: ['a', 'model:Answered by Opus 5.5|Reported by the model provider: claude-opus-5-5.'] },
-    { q: 'q-future',  kinds: ['a', 'model:Answered by claude-future-9|Reported by the model provider: claude-future-9.'] },
-    { q: 'q-nokey',   kinds: ['a'] },
-    { q: 'q-number',  kinds: ['a'] },
-    { q: 'q-empty',   kinds: ['a'] },
+    { q: 'q-haiku',   kinds: ['a', 'when', 'model:Answered by Haiku 5.5|Reported by the model provider: claude-haiku-5-5-20260301.', 'sources'] },
+    { q: 'q-routine', kinds: ['a', 'when'] },
+    { q: 'q-opus',    kinds: ['a', 'when', 'model:Answered by Opus 5.5|Reported by the model provider: claude-opus-5-5.'] },
+    { q: 'q-future',  kinds: ['a', 'when', 'model:Answered by claude-future-9|Reported by the model provider: claude-future-9.'] },
+    { q: 'q-nokey',   kinds: ['a', 'when'] },
+    { q: 'q-number',  kinds: ['a', 'when'] },
+    { q: 'q-empty',   kinds: ['a', 'when'] },
   ]);
   // a dated provider id resolves to its label, an id the page does not know is shown as given, and a null / missing / non-string / empty model prints nothing
   await expect(page.locator('#askBody p.ask-model'), 'three of the seven rows carry a model').toHaveCount(3);
@@ -11087,6 +11088,132 @@ test('S72: a replayed answer says which model gave it — the same line as a liv
   expect(await page.evaluate(() => window.__calls), 'the history is a PIN RPC: not asked for without a PIN').toBe(0);
   await expect(page.locator('#askBody .ask-q'), 'no saved exchange is drawn for a visitor').toHaveCount(0);
   await expect(page.locator('#askBody p.ask-model'), 'and so no model line').toHaveCount(0);
+
+  // tidy: put the real functions back
+  await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskAsk = window.__real.ask; window.deskChatHistory = window.__real.hist; window.deskGetAskModel = window.__real.get; window.deskSetAskModel = window.__real.set; renderAsk(); });
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S73 — every answer says WHEN it came in (owner 2026-10-15, looking at a thread of answers with no times on them:
+// "I'd like a timestamp on when the answers came in"). One quiet line under each answer — a live one (stamped when
+// its reply lands in the tab), a replayed one (the saved row's own created_at) and a visitor's alike; the model line
+// is the owner's alone, the time is not. Pacific like every other clock on the desk (never the viewer's zone), the
+// DATE always drawn (a thread runs across days, and an omitted "today" goes stale across midnight), the exact
+// instant with its year in the tooltip. A missing or junk time draws NO line — never "Invalid Date".
+// ─────────────────────────────────────────────────────────────────────────────
+test('S73: each answer carries the Pacific time it came in — live, replayed and a visitor\'s; nothing where the time is missing', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '#askBody', 15000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(String(e)));
+
+  // Expected strings are worked out HERE with Intl, not with the page's own helpers.
+  const pt = (iso) => {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short' })
+      .formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+    return `${p.month} ${p.day}, ${p.hour}:${p.minute} ${p.timeZoneName}`;
+  };
+  // What Postgres hands back (microseconds, +00:00), a plain Z stamp, and a December one (PST, and a UTC date that is
+  // still the evening before in Pacific).
+  const T1 = '2026-10-14T19:32:51.560011+00:00', T2 = '2026-12-05T01:03:56.487577+00:00', T3 = '2026-10-14T17:34:14Z';
+  expect([pt(T1), pt(T2), pt(T3)], 'the expectation itself is the Pacific clock').toEqual(['Oct 14, 12:32 PDT', 'Dec 4, 17:03 PST', 'Oct 14, 10:34 PDT']);
+
+  const ROWS = [
+    { id: 1, question: 'q-one',    answer: 'a1', sources: [{ title: 'one source', url: 'https://example.com/a' }], origin: 'typed',     model: 'claude-haiku-5-5', created_at: T1 },
+    { id: 2, question: 'q-two',    answer: 'a2', sources: [], origin: 'scheduled', model: null,                created_at: T2 },
+    { id: 3, question: 'q-three',  answer: 'a3', sources: [], origin: 'typed',     model: 'claude-opus-5-5',   created_at: T3 },
+    { id: 4, question: 'q-null',   answer: 'a4', sources: [], origin: 'typed',                                created_at: null },
+    { id: 5, question: 'q-nokey',  answer: 'a5', sources: [], origin: 'typed' },
+    { id: 6, question: 'q-junk',   answer: 'a6', sources: [], origin: 'typed',                                created_at: 'not a time' },
+    { id: 7, question: 'q-number', answer: 'a7', sources: [], origin: 'typed',                                created_at: 1760470371000 },
+    { id: 8, question: 'q-empty',  answer: 'a8', sources: [], origin: 'typed',                                created_at: '' },
+    { id: 9, question: 'q-year',   answer: 'a9', sources: [], origin: 'typed',                                created_at: '2026' },   // a valid Date, not a timestamp
+    { id: 10, question: 'q-month', answer: 'a10', sources: [], origin: 'typed',                               created_at: '2026-13-45T25:99:00Z' },   // shaped like one, not a date
+  ];
+  await page.evaluate((rows) => {
+    window.__real = { ask: deskAsk, hist: deskChatHistory, get: deskGetAskModel, set: deskSetAskModel };
+    window.__rows = rows; window.__reply = null;
+    window.deskChatHistory = () => Promise.resolve(window.__rows);
+    window.deskGetAskModel = () => Promise.resolve({ ok: true, model: 'claude-haiku-5-5' });
+    window.deskSetAskModel = () => Promise.resolve({ ok: false });
+    window.deskAsk = () => Promise.resolve(window.__reply || { ok: true, answer: 'a live answer', sources: [], model: 'claude-haiku-5-5', tierSource: 'row' });
+    DESK.mode = 'live';
+  }, ROWS);
+
+  const shape = () => page.evaluate(() => {
+    const th = document.querySelector('#askBody .ask-thread'), out = [];
+    let cur = null;
+    for (const c of th.children) {
+      if (c.matches('p.ask-q')) { cur = { q: c.textContent, kinds: [] }; out.push(cur); }
+      else if (cur) cur.kinds.push(c.matches('p.ask-a') ? 'a' : c.matches('p.ask-when') ? 'when:' + c.textContent + '|' + c.title : c.matches('p.ask-model') ? 'model' : c.matches('details.ask-sources') ? 'sources' : c.tagName);
+    }
+    return out;
+  });
+
+  // ── 1. the OWNER's desk, REPLAYED: the time sits right under the answer, before the model line and the sources ──
+  await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); renderAsk(); });
+  await expect(page.locator('#askBody .ask-q'), 'all ten saved exchanges are replayed').toHaveCount(10);
+  expect(await shape()).toEqual([
+    { q: 'q-one',    kinds: ['a', 'when:Oct 14, 12:32 PDT|Answer received 2026-10-14 12:32 PDT', 'model', 'sources'] },
+    { q: 'q-two',    kinds: ['a', 'when:Dec 4, 17:03 PST|Answer received 2026-12-04 17:03 PST'] },
+    { q: 'q-three',  kinds: ['a', 'when:Oct 14, 10:34 PDT|Answer received 2026-10-14 10:34 PDT', 'model'] },
+    { q: 'q-null',   kinds: ['a'] },
+    { q: 'q-nokey',  kinds: ['a'] },
+    { q: 'q-junk',   kinds: ['a'] },
+    { q: 'q-number', kinds: ['a'] },
+    { q: 'q-empty',  kinds: ['a'] },
+    { q: 'q-year',   kinds: ['a'] },
+    { q: 'q-month',  kinds: ['a'] },
+  ]);
+  for (const t of await page.locator('#askBody .ask-when').allTextContents()) {
+    expect(t, 'every time drawn is a real one — a time that cannot be read says nothing, never "Invalid Date" or NaN').toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} P[DS]T$/);
+  }
+  // quiet and smaller than the answer, in the model line's own muted ink, left-aligned with it and sitting tight on it
+  const look = await page.evaluate(() => {
+    const w = document.querySelector('#askBody p.ask-when'), m = document.querySelector('#askBody p.ask-when + p.ask-model'), a = document.querySelector('#askBody p.ask-a');
+    const ink = (() => { const p = document.createElement('span'); p.style.color = 'var(--color-text-secondary)'; document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; })();
+    const wr = w.getBoundingClientRect(), mr = m.getBoundingClientRect(), ar = a.getBoundingClientRect();
+    return { muted: getComputedStyle(w).color === ink, smaller: parseFloat(getComputedStyle(w).fontSize) < parseFloat(getComputedStyle(a).fontSize),
+      belowAnswer: wr.top >= ar.bottom - 1, pairGap: Math.round(mr.top - wr.bottom), sameLeft: Math.abs(mr.left - wr.left) < 1 };
+  });
+  expect(look.muted, 'the muted secondary ink').toBe(true);
+  expect(look.smaller, 'smaller than the answer').toBe(true);
+  expect(look.belowAnswer, 'under the answer, not above it').toBe(true);
+  expect(look.sameLeft, 'left-aligned with the model line').toBe(true);
+  expect(look.pairGap, 'the time and the model line read as one pair (no full gap between them)').toBeLessThan(5);
+
+  // ── 2. a LIVE answer on the owner's desk is stamped when its reply lands (the Pacific time NOW) ──
+  const form = page.locator('#askBody form');
+  const before = pt(new Date().toISOString());
+  await form.locator('input.input').fill('what now');
+  await form.locator('button[type=submit]').click();
+  await expect(page.locator('#askBody .ask-a').last()).toHaveText('a live answer');
+  const after = pt(new Date().toISOString());
+  const live = await page.locator('#askBody .ask-when').last().textContent();
+  expect([before, after], 'the live line is the Pacific time the reply landed').toContain(live);
+  expect((await shape()).at(-1).kinds.map((k) => k.split(':')[0]), 'between the answer and the model line, like a replayed one').toEqual(['a', 'when', 'model']);
+  await expect(page.locator('#askBody .ask-when').last(), 'its tooltip holds the year').toHaveAttribute('title', /^Answer received 20\d\d-\d\d-\d\d \d\d:\d\d P[DS]T$/);
+
+  // ── 3. a failed question and a stopped one are not answers: no time is drawn for them ──
+  const whens = await page.locator('#askBody .ask-when').count();
+  await page.evaluate(() => { window.__reply = { ok: false, error: 'the model could not answer' }; });
+  await form.locator('input.input').fill('this one fails');
+  await form.locator('button[type=submit]').click();
+  await expect(page.locator('#askBody .lock-error')).toContainText(/could not answer/);
+  await expect(page.locator('#askBody .ask-when'), 'a refused question gets no time').toHaveCount(whens);
+
+  // ── 4. a VISITOR (locked): no saved conversation and no model line — but a live answer is still stamped ──
+  await page.evaluate(() => { window.__reply = null; DESK.authed = false; sessionStorage.removeItem('desk_pin'); renderAsk(); });
+  await expect(form.locator('input.input')).toBeEnabled();
+  await expect(page.locator('#askBody .ask-q'), 'nothing saved is drawn for a visitor').toHaveCount(0);
+  const vBefore = pt(new Date().toISOString());
+  await form.locator('input.input').fill('visitor question');
+  await form.locator('button[type=submit]').click();
+  await expect(page.locator('#askBody .ask-a').last()).toHaveText('a live answer');
+  const vAfter = pt(new Date().toISOString());
+  expect([vBefore, vAfter], 'a visitor sees the time too').toContain(await page.locator('#askBody .ask-when').last().textContent());
+  await expect(page.locator('#askBody p.ask-model'), 'but never the model line').toHaveCount(0);
 
   // tidy: put the real functions back
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskAsk = window.__real.ask; window.deskChatHistory = window.__real.hist; window.deskGetAskModel = window.__real.get; window.deskSetAskModel = window.__real.set; renderAsk(); });

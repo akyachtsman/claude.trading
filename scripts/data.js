@@ -1257,6 +1257,22 @@ function fmtStampDateTime(iso) { /* Pacific "YYYY-MM-DD HH:mm TZ"; '' if unparse
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-CA', { timeZone: DESK_TZ }) + ' ' + fmtClock(iso);
 }
 
+/* When an Ask answer came in (owner 2026-10-15: "a timestamp on when the answers came in"), Pacific like every other
+   clock: `t` is "Oct 14, 12:32 PDT", `full` the exact instant with its year for the tooltip. The date is ALWAYS drawn —
+   a thread runs across days, and an omitted "today" would go stale across Pacific midnight with the tab still open (the
+   news rows' lesson). Postgres hands back microseconds ("…:56.487577+00:00"); not every engine's Date parses more than
+   milliseconds, so the fraction is cut to three digits first. null when it is not a parseable string (a missing or junk
+   created_at) — the caller then draws NO line, never "Invalid Date". */
+function askWhen(iso) {
+  const s = typeof iso === 'string' ? iso.replace(/(\.\d{3})\d+/, '$1') : '';
+  /* an ISO date-time or nothing: `new Date('2026')` and `new Date('March 7')` are both valid dates, and a stamp
+     built from one would be a confident wrong time */
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  return { t: fmtShortDate(ptDateKey(d)) + ', ' + fmtClock(s), full: fmtStampDateTime(s) };
+}
+
 /* "Mon D" short date from an ISO date/datetime; passes a value already in that
    form through (demo labels). '' if empty. */
 function fmtShortDate(d) {
