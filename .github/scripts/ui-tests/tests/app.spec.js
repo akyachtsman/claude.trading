@@ -11015,3 +11015,80 @@ test('S71: the SMA lines draw in distinct colours — the 100-day is no longer t
   await page.keyboard.press('Escape');
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────�
+// S72 — a REPLAYED answer names the model that gave it (desk_022, owner 2026-10-15: "apply desk_022"). Until then the
+// panel printed `Answered by Haiku 5.5` under an answer AS IT ARRIVED, but a saved one replayed after a reload showed
+// nothing, because the history RPC never returned `model`. It now does — for the owner's PIN only, and only for a real
+// provider id (the morning Routine's rows are null) — and the replay draws the SAME line, in the same place (answer,
+// proof, sources). No tierSource is stored, so a replayed line can never claim a fallback.
+// ─────────────────────────────────────────────────────────────────�
+test('S72: a replayed answer says which model gave it — the same line as a live one, none where the server sent no model, none for a locked desk', async ({ page, renderWitness }) => {
+  renderWitness();
+  await gotoDemo(page, '#askBody', 15000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(String(e)));
+
+  const when = (m) => `2026-10-14T17:${String(m).padStart(2, '0')}:14Z`;
+  const ROWS = [
+    { id: 1, question: 'q-haiku',   answer: 'a1', sources: [{ title: 'one source', url: 'https://example.com/a' }], origin: 'typed',     model: 'claude-haiku-5-5-20260301', created_at: when(30) },
+    { id: 2, question: 'q-routine', answer: 'a2', sources: [], origin: 'scheduled', model: null,                        created_at: when(31) },
+    { id: 3, question: 'q-opus',    answer: 'a3', sources: [], origin: 'scheduled', model: 'claude-opus-5-5',           created_at: when(32) },
+    { id: 4, question: 'q-future',  answer: 'a4', sources: [], origin: 'typed',     model: 'claude-future-9',           created_at: when(33) },
+    { id: 5, question: 'q-nokey',   answer: 'a5', sources: [], origin: 'typed',                                        created_at: when(34) },   // an older server: no `model` key at all
+    { id: 6, question: 'q-number',  answer: 'a6', sources: [], origin: 'typed',     model: 123,                         created_at: when(35) },   // not a string: nothing to print
+    { id: 7, question: 'q-empty',   answer: 'a7', sources: [], origin: 'typed',     model: '',                          created_at: when(36) },
+  ];
+  await page.evaluate((rows) => {
+    window.__real = { ask: deskAsk, hist: deskChatHistory, get: deskGetAskModel, set: deskSetAskModel };
+    window.__rows = rows; window.__calls = 0;
+    window.deskChatHistory = () => { window.__calls++; return Promise.resolve(window.__rows); };
+    window.deskGetAskModel = () => Promise.resolve({ ok: true, model: 'claude-haiku-5-5' });
+    window.deskSetAskModel = () => Promise.resolve({ ok: false });
+    window.deskAsk = () => Promise.resolve({ ok: false, error: 'not used' });
+    DESK.mode = 'live';
+  }, ROWS);
+
+  const shape = () => page.evaluate(() => {
+    const th = document.querySelector('#askBody .ask-thread'), out = [];
+    let cur = null;
+    for (const c of th.children) {
+      if (c.matches('p.ask-q')) { cur = { q: c.textContent, kinds: [] }; out.push(cur); }
+      else if (cur) cur.kinds.push(c.matches('p.ask-a') ? 'a' : c.matches('p.ask-model') ? 'model:' + c.textContent + '|' + c.title : c.matches('details.ask-sources') ? 'sources' : c.tagName);
+    }
+    return out;
+  });
+
+  // ── 1. the OWNER's desk (unlocked): the line sits between the answer and its sources, exactly as for a live answer ──
+  await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); renderAsk(); });
+  await expect(page.locator('#askBody .ask-q'), 'all seven saved exchanges are replayed').toHaveCount(7);
+  expect(await shape()).toEqual([
+    { q: 'q-haiku',   kinds: ['a', 'model:Answered by Haiku 5.5|Reported by the model provider: claude-haiku-5-5-20260301.', 'sources'] },
+    { q: 'q-routine', kinds: ['a'] },
+    { q: 'q-opus',    kinds: ['a', 'model:Answered by Opus 5.5|Reported by the model provider: claude-opus-5-5.'] },
+    { q: 'q-future',  kinds: ['a', 'model:Answered by claude-future-9|Reported by the model provider: claude-future-9.'] },
+    { q: 'q-nokey',   kinds: ['a'] },
+    { q: 'q-number',  kinds: ['a'] },
+    { q: 'q-empty',   kinds: ['a'] },
+  ]);
+  // a dated provider id resolves to its label, an id the page does not know is shown as given, and a null / missing / non-string / empty model prints nothing
+  await expect(page.locator('#askBody p.ask-model'), 'three of the seven rows carry a model').toHaveCount(3);
+  expect(await page.locator('#askBody p.ask-model').allTextContents(), 'and not one of them claims a fallback (no tierSource is stored)').toEqual(
+    ['Answered by Haiku 5.5', 'Answered by Opus 5.5', 'Answered by claude-future-9']);
+  const style = await page.evaluate(() => {
+    const m = document.querySelector('#askBody p.ask-model'), a = document.querySelector('#askBody p.ask-a');
+    return { sameClass: m.className, muted: getComputedStyle(m).color === (() => { const p = document.createElement('span'); p.style.color = 'var(--color-text-secondary)'; document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; })(), smaller: parseFloat(getComputedStyle(m).fontSize) < parseFloat(getComputedStyle(a).fontSize) };
+  });
+  expect(style, 'it is the live line\'s own style — quiet and smaller than the answer').toEqual({ sameClass: 'ask-model', muted: true, smaller: true });
+
+  // ── 2. a LOCKED desk (an open visitor) never asks for the saved conversation, so it can draw no line, whatever a stub would send ──
+  await page.evaluate(() => { DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.__calls = 0; renderAsk(); });
+  await expect(page.locator('#askBody form')).toBeVisible();
+  expect(await page.evaluate(() => window.__calls), 'the history is a PIN RPC: not asked for without a PIN').toBe(0);
+  await expect(page.locator('#askBody .ask-q'), 'no saved exchange is drawn for a visitor').toHaveCount(0);
+  await expect(page.locator('#askBody p.ask-model'), 'and so no model line').toHaveCount(0);
+
+  // tidy: put the real functions back
+  await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskAsk = window.__real.ask; window.deskChatHistory = window.__real.hist; window.deskGetAskModel = window.__real.get; window.deskSetAskModel = window.__real.set; renderAsk(); });
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
