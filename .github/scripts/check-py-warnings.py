@@ -28,8 +28,14 @@ this check passes on every run after the first -- a guard that self-disarms,
 which is the exact class of defect it is here to catch.
 """
 
-import subprocess
+# Before any import, as in every guard in this directory: a guard must not
+# leave __pycache__/ in the project it checks, where `git add -A` after the
+# gate would commit it (claude.prop, 2026-10-13). This one imports no sibling
+# today; the line keeps one added later from bringing the cache back.
 import sys
+sys.dont_write_bytecode = True
+
+import subprocess
 import warnings
 
 CATEGORIES = (SyntaxWarning, DeprecationWarning)

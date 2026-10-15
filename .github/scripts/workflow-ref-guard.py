@@ -65,8 +65,13 @@ static-checks job:
       run: python3 .github/scripts/workflow-ref-guard.py
 """
 
-import json
+# Before any import: a guard that imports a sibling module (gh_yaml.py) must
+# not leave __pycache__/ in the project it checks, where `git add -A` after
+# the gate would commit it (claude.prop, 2026-10-13).
 import sys
+sys.dont_write_bytecode = True
+
+import json
 from pathlib import Path
 
 try:

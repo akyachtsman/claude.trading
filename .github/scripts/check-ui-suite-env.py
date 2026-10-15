@@ -50,10 +50,15 @@ Options:
 """
 
 # Design history (#333-#347 rounds): claude.directives, docs/internal/gate-history.md → *check-ui-suite-env.py*.
+# Before any import: a guard that imports a sibling module (gh_yaml.py) must
+# not leave __pycache__/ in the project it checks, where `git add -A` after
+# the gate would commit it (claude.prop, 2026-10-13).
+import sys
+sys.dont_write_bytecode = True
+
 import json
 import os
 import re
-import sys
 
 # The shared YAML 1.2 reader, this file's sibling: the action is read as GitHub
 # reads it, so `include-hidden-files: yes` is the string GitHub sees, not

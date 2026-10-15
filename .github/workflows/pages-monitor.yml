@@ -80,6 +80,7 @@ permissions:
   issues: write
   pages: read   # lets the Pages API return the real html_url
   actions: read # the watched workflow's runs (a superseded cancel vs a failed deploy) and its Pages artifact
+  checks: read  # job annotations: the record that a concurrency group, not a person or a timeout, cancelled the run
 
 jobs:
   monitor:
@@ -175,14 +176,36 @@ jobs:
           # have started before the cancelled run ended, i.e. it could have
           # caused the cancel; a later unrelated run (a rejected off-main
           # dispatch, say) does not excuse a manually cancelled deploy.
+          # Overlap in time only says a supersede was POSSIBLE: a manual cancel
+          # or a timeout that happens while a newer run exists passes it too. So
+          # suppression also needs the record GitHub leaves on a job cancelled by
+          # its concurrency group ("Canceling since a higher priority waiting
+          # request"), the same test ci-monitor.yml applies (claude.prop#124,
+          # Codex). The one exception is a run with NO job at all: the pending
+          # slot's eviction cancels a run before any job exists, so no annotation
+          # can be written (#447, Codex). Such a run deployed nothing, and the
+          # overlapping newer run carries the deploy, so it counts as superseded
+          # whoever cancelled it. Every page of jobs and annotations is read; an
+          # unreadable jobs answer is not "no job" and stays errored.
           # Anything else cancelled, or a lookup that fails, stays errored.
+          cancelled_by_group() {
+            local ids msgs='' j
+            ids=$(gh api --paginate "repos/$REPO/actions/runs/$1/jobs?per_page=100" --jq '.jobs[].id' 2>/dev/null) || return 1
+            [ -n "${ids//[[:space:]]/}" ] || return 0
+            for j in $ids; do
+              msgs="$msgs
+          $(gh api --paginate "repos/$REPO/check-runs/$j/annotations?per_page=100" --jq '.[].message' 2>/dev/null || true)"
+            done
+            grep -q 'Canceling since a higher priority waiting request' <<<"$msgs"
+          }
           if [ "${RUN_CONCLUSION:-}" = "cancelled" ] && [ -n "${RUN_WORKFLOW_ID:-}" ] \
-             && [ -n "${RUN_NUMBER:-}" ] && [ -n "${RUN_BRANCH:-}" ] && [ -n "${RUN_UPDATED:-}" ]; then
+             && [ -n "${RUN_NUMBER:-}" ] && [ -n "${RUN_BRANCH:-}" ] && [ -n "${RUN_UPDATED:-}" ] \
+             && [ -n "${RUN_ID:-}" ]; then
             newest=$(gh api -X GET "repos/$REPO/actions/workflows/$RUN_WORKFLOW_ID/runs" \
               -f branch="$RUN_BRANCH" -F per_page=10 \
               --jq "[.workflow_runs[] | select(.head_repository.id == .repository.id) | select(.run_number > $RUN_NUMBER) | select(.created_at <= \"$RUN_UPDATED\") | .run_number] | max // 0" \
               2>/dev/null) || newest=0
-            if [ "${newest:-0}" -gt "$RUN_NUMBER" ] 2>/dev/null; then
+            if [ "${newest:-0}" -gt "$RUN_NUMBER" ] 2>/dev/null && cancelled_by_group "$RUN_ID"; then
               {
                 echo "## ⏭️ Pages deploy superseded"
                 echo ""

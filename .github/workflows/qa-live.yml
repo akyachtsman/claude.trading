@@ -119,9 +119,12 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # Fail in seconds, not after a cold install: with no URL the config falls
-      # back to its placeholder and every scenario fails on an invalid address
-      # (audit, 2026-10-06; qa-response.yml carries the same guard).
+      # Fail in seconds, not after a cold install (audit, 2026-10-06;
+      # qa-response.yml carries the same guard). The live URL comes from the
+      # app_url dispatch input or vars.APP_URL and from nothing else. A baseURL
+      # default filled in to the kit's playwright.config.js is NOT read by this
+      # gate: a project that relied on it goes red here until it sets the
+      # repository variable (pilots claude.prop + claude.trading, 2026-10-13).
       - name: Require APP_URL
         env:
           URL: ${{ github.event.inputs.app_url || vars.APP_URL }}
