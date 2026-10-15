@@ -156,11 +156,19 @@ const VERIFY_TOKENS = 1500;
 // system prompt has demanded a search before every answer since 2026-07 and
 // was ignored, so this is stated as a fact about what happens next rather than
 // as another instruction the model may weigh.
+// The draft is NEVER shown: only the final message is returned and stored. This
+// note used to end "If the search shows your draft was wrong, say so plainly",
+// and the final answer then apologised to the owner for a draft they had never
+// seen (a saved Haiku answer, 2026-10-15: "My earlier draft was not grounded in
+// a search…"). It now says the draft stays unseen and must not be mentioned.
+// That a search had to be forced is not lost: it is recorded in
+// `checked.forcedSearch`, stored and returned with the answer.
 const NO_SEARCH_NOTE =
   'You produced that answer without running a single web_search this turn. That is not permitted — ' +
   'anything you believe from training data may be out of date, and this desk has already been wrong ' +
-  'that way. Run the search now and answer again. If the search shows your draft was wrong, say so ' +
-  'plainly rather than quietly correcting it.';
+  'that way. That draft was never shown to the reader and will not be. Run the search now and write ' +
+  'the answer the reader will see, from what the search and your other tools returned this turn. Do ' +
+  'not mention the draft, an earlier answer or a correction: the reader has seen none of them.';
 const MAX_RESUMES = 3;         // pause_turn resumptions
 const MAX_ITERS = 18;         // overall loop safety net (tool calls + resumes + wrap-up) — raised
                                 // alongside MAX_TOOL_CALLS so a sequential (non-batched) run through

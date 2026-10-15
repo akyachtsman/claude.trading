@@ -458,6 +458,24 @@ const TESTS = [
     eq(env.models.slice(2).map((m) => m.model), ['claude-haiku-5-5'], 'the next question runs on the new model');
   }],
 
+  ['the forced-search retry speaks to a reader who has seen no draft: the draft is never returned or stored, and the note says so and forbids mentioning it (owner 2026-10-15 — an answer apologised for a draft nobody saw)', async (code) => {
+    const draft = () => new Response(JSON.stringify({ stop_reason: 'end_turn', model: 'claude-haiku-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'text', text: 'DRAFT-FROM-MEMORY the company sells widgets' }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    const e = boot(code, { model: (n) => (n === 1 ? draft() : MODEL_OK()) });
+    const r = await e.pin();
+    eq([r.status, r.json.ok, e.models.length, r.json.checked.forcedSearch], [200, true, 2, true], 'a draft with no source is sent back once, and the reply records that it was');
+    const last = e.models[1].messages.at(-1);
+    eq(last.role, 'user', 'the retry ends on the server\'s note');
+    const note = String(last.content);
+    assert(/Run the search now/.test(note) && /web_search/.test(note), 'the note still demands the search: ' + note);
+    assert(/never shown to the reader/i.test(note), 'it says the draft was never shown: ' + note);
+    assert(/Do not mention the draft/i.test(note), 'it forbids mentioning the draft: ' + note);
+    assert(!/say so plainly|quietly correcting/i.test(note), 'it no longer asks for a confession of the draft: ' + note);
+    assert(!/DRAFT-FROM-MEMORY/.test(r.text), 'the draft is not in the reply');
+    assert(!/DRAFT-FROM-MEMORY/.test(JSON.stringify(e.db.memPosts)), 'and not in the saved conversation');
+    eq(r.json.answer, 'the answer', 'only the final message is the answer');
+  }],
+
   ['visitors follow the switch (owner ruling C2) but are told nothing about it: no `model`, no `tierSource`', async (code) => {
     const e = boot(code, withTier({ mode: 'ok', model: 'claude-haiku-5-5' }));
     const r = await e.open();
@@ -656,6 +674,12 @@ const MUTANTS = [
   ['the passages are not trimmed (a stray space at every seam)', "return passages.map((p) => p.trim()).filter(Boolean).join('\\n\\n');", "return passages.filter(Boolean).join('\\n\\n');"],
   ['a whitespace-only passage is kept (a blank line left in the answer)', "return passages.map((p) => p.trim()).filter(Boolean).join('\\n\\n');", "return passages.map((p) => p.trim()).join('\\n\\n');"],
   ['a trailing text run is dropped (the last fragment of the answer is lost)', "if (open !== null) passages.push(open);\n", "void 0;\n"],
+  // ── the forced-search note (2026-10-15) ──
+  ['the note asks for a confession of the draft again (the answer apologises for a draft nobody saw)', "Do ' +\n  'not mention the draft, an earlier answer or a correction: the reader has seen none of them.';", "If the search shows your draft was wrong, say so plainly rather than quietly correcting it.';"],
+  ['the note no longer says the draft was never shown', 'That draft was never shown to the reader and will not be. Run the search now', 'Run the search now'],
+  ['the note stops forbidding a mention of the draft', "Do ' +\n  'not mention the draft, an earlier answer or a correction: the reader has seen none of them.';", "';"],
+  ['the note stops demanding the search', 'Run the search now and write ', 'Write '],
+  ['the note drops the web_search tool name', 'without running a single web_search this turn', 'without running a single search this turn'],
 ];
 
 // The esbuild pinned (exact version + integrity hash) in tools/package.json and its lockfile.
