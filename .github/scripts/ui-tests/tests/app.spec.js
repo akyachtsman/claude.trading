@@ -9496,15 +9496,17 @@ test('S65: 1W — five sessions of bars for the futures and the yields, a daily 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCENARIO 66 — A symbol typed into the SYMBOL column's entry box (or the header Load box) is PUSHED INTO THE LIST at the top. Owner 2026-10-08, after
-// typing in Load only replaced the ACTIVE symbol ("keeps overwriting in the same spot"): "make Load add to the list"; owner 2026-10-09, with a screenshot:
-// "put a blank empty space on top of the left column and I will type in a symbol and it will just get pushed into the list" — and the + went. Both doors run
-// `wbPushSymbol`: the new symbol takes slot 0 and everything above the first empty slot moves down one place; it is saved BEFORE the lookup (whether or not
-// the quote resolves), never duplicated, an open editor is settled first, and a full column is said out loud. A symbol ALREADY in the column is lifted to the
-// top and its older copy goes (owner 2026-10-09: "if there are duplicates, I would just remove the existing or the older one"). A slot commit, a roster click
-// and the loader itself still write no slot (S40 pins the roster). The picker/entry alignment, and the absence of an ACTIVE row, are S40.
+// SCENARIO 66 — A symbol typed into the SYMBOL column's entry box is PUSHED INTO THE LIST at the top; the header Load box (up next to LIVE) only CHARTS.
+// Owner 2026-10-08, after typing in Load only replaced the ACTIVE symbol ("keeps overwriting in the same spot"): "make Load add to the list"; owner 2026-10-09,
+// with a screenshot: "put a blank empty space on top of the left column and I will type in a symbol and it will just get pushed into the list" — and the +
+// went; owner 2026-10-16, with a screenshot of TSLA typed in the header box: "I only want to push symbols into the middle column when I'm entering it in the
+// symbol area, not the upper area next to live" — which took the push back OUT of Load. The entry box runs `wbPushSymbol`: the new symbol takes slot 0 and
+// everything above the first empty slot moves down one place; it is saved BEFORE the lookup (whether or not the quote resolves), never duplicated, an open
+// editor is settled first, and a full column is said out loud. A symbol ALREADY in the column is lifted to the top and its older copy goes (owner 2026-10-09:
+// "if there are duplicates, I would just remove the existing or the older one"). The header Load box, a slot commit, a roster click and the loader itself
+// write no slot (S40 pins the roster). The picker/entry alignment, and the absence of an ACTIVE row, are S40.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S66: a symbol typed in the entry box or the Load box is pushed in at the top of the list — saved before the lookup, a duplicate lifts the old copy to the top, an open editor settled first', async ({ page, renderWitness }) => {
+test('S66: a symbol typed in the entry box is pushed in at the top of the list — saved before the lookup, a duplicate lifts the old copy to the top, an open editor settled first — and the header Load box only charts', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(150_000);
   await gotoDemo(page, '.wb-slots', 15000, 1200);
@@ -9574,15 +9576,26 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   expect([mid[0], mid[1], mid[50], mid[51], mid.length], 'a gap far down is the one used up: S0..S49 moved down one place, S51 stayed').toEqual([R[8], 'S0', 'S49', 'S51', 100]);
   expect(await page.evaluate(() => document.querySelector('.wb-slots').scrollTop), 'and the list is scrolled back to the top, where the new symbol is').toBe(0);
 
-  // ── 4. the header Load box is the SAME door: charts it and pushes it in at the top
+  // ── 4. the header Load box is NOT a door (owner 2026-10-16): it charts what is typed and writes no slot, new symbol or listed one
+  // Its own words say so (Codex P2, PR #339: the aria-label and the tooltip still promised an add after the handler stopped doing it) — and the entry box still says it adds
+  expect(await loadBox.getAttribute('aria-label'), 'the Load input names what it does: it does NOT add').toMatch(/not added/i);
+  expect(await page.locator('#wbSymForm button[type="submit"]').getAttribute('title'), 'and so does the Load button\'s tooltip').toMatch(/not added/i);
+  expect(await entry.getAttribute('aria-label'), 'the entry box still says it adds').toMatch(/^Add a symbol/);
   await seed(['AAA', 'BBB']);
   await load(R[9]); await settle();
-  expect(await first(4), 'Load also pushes in at the top').toEqual([R[9], 'AAA', 'BBB', '']);
-  expect(await page.evaluate(() => wbState.sym), 'and charts it').toBe(R[9]);
+  expect(await page.evaluate(() => wbState.sym), 'Load charts it').toBe(R[9]);
+  expect(await first(4), 'and pushes NOTHING into the column — AAA and BBB did not move, no slot was used').toEqual(['AAA', 'BBB', '', '']);
+  expect(await drawn(R[9]), 'the SYMBOL column does not draw it').toBe(0);
   await load(R[10]); await settle();
-  expect(await first(4), 'the next one goes on top of that').toEqual([R[10], R[9], 'AAA', 'BBB']);
-  await load(R[9]); await settle();
-  expect(await first(4), 'Load of a symbol already listed lifts it to the top too').toEqual([R[9], R[10], 'AAA', 'BBB']);
+  expect(await page.evaluate(() => wbState.sym), 'the next one is charted too').toBe(R[10]);
+  expect(await first(4), 'and still nothing is pushed in').toEqual(['AAA', 'BBB', '', '']);
+  await seed(['AAA', R[9], 'BBB', R[10]]);
+  await load(R[10]); await settle();
+  expect(await page.evaluate(() => wbState.sym), 'Load of a symbol already listed charts it').toBe(R[10]);
+  expect(await first(5), 'but does NOT lift it to the top — the column is exactly as it was').toEqual(['AAA', R[9], 'BBB', R[10], '']);
+  expect((await storedSyms(page)).length, 'and is still exactly 100 long').toBe(100);
+  await type(R[11]); await settle();
+  expect(await first(6), 'the entry box beside it still pushes in at the top, as ever').toEqual([R[11], 'AAA', R[9], 'BBB', R[10], '']);
 
   // ── 4b. a symbol ALREADY in the column is lifted to the top and its older copy goes (owner 2026-10-09: "I would just remove the existing or the older one")
   await seed(['AAA', 'BBB', 'CCC', 'DDD']);
@@ -9627,7 +9640,7 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   expect(await slotBtn(page, 0).textContent(), 'and DRAWN in its slot').toContain('ZZQX');
   await expect(page.locator('#wbInfo')).toContainText('Live ticker lookups are off in demo mode');
 
-  // ── 7. only the two typing boxes push: the loader itself writes nothing
+  // ── 7. only the entry box pushes: the loader itself writes nothing (and, since 2026-10-16, neither does the header Load box that calls it — step 4)
   await seed(['AAA']);
   await page.evaluate((sym) => { wbLoadSymbol(sym); }, R[11]);
   await settle();
@@ -9690,7 +9703,8 @@ test('S66: a symbol typed in the entry box or the Load box is pushed in at the t
   expect(await first(4), 'a lookup that fails removes nothing').toEqual(['ALSO', 'NOPE', 'AAA', '']);
   await expect(page.locator('#wbInfo')).toContainText('No data found for ALSO');
   await load('LOAD'); await page.waitForTimeout(150);
-  expect(await first(5), 'Load behaves the same while a lookup is pending').toEqual(['LOAD', 'ALSO', 'NOPE', 'AAA', '']);
+  expect(await first(5), 'Load while a lookup is pending adds nothing: the column is as the entry box left it').toEqual(['ALSO', 'NOPE', 'AAA', '', '']);
+  await expect(page.locator('#wbInfo'), 'and it is looking the symbol up, to chart it').toContainText('Loading LOAD');
 
   // ── 11. it survives a reload
   await page.evaluate(() => { DESK.mode = 'demo'; });
