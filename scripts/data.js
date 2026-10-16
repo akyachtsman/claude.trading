@@ -394,6 +394,33 @@ function stochSeries(s, { k, kSmooth, d } = STOCH) {
   return { k: kLine, d: sma(kLine, d) };
 }
 
+/* PARTIAL slow stochastic — what a strip draws, DASHED, while a short history cannot yet carry the full setting (owner 2026-10-16, after a recent listing's
+   92-15-15 strip read "INSUFFICIENT HISTORY — NEEDS ~120 BARS": "can it just do a partial display?"). It is the SAME formula as stochSeries with every window
+   clipped to the bars that exist: raw %K over min(k, bars so far), the two smoothings over min(len, values so far). It starts at PARTIAL_MIN_BARS — a handful of
+   bars always sits at the edge of its own range, so %K would only flip between 0 and 100 — and from `kFrom` / `dFrom` on it IS stochSeries, value for value (those
+   are the first indices where the full setting has a line). NOTHING that decides anything reads it: the doctrine marks, the candle colour (the weekly
+   stochastic crossover) and tools/watchlist-scan.mjs keep the real series, so a partial number is a picture and never a signal. */
+const PARTIAL_MIN_BARS = 10;
+function stochPartial(s, { k, kSmooth, d } = STOCH) {
+  const n = s.c.length;
+  const from = Math.min(k, PARTIAL_MIN_BARS) - 1;
+  const raw = new Array(n).fill(null);
+  for (let i = from; i < n; i++) {
+    const w = Math.min(k, i + 1);
+    let hi = -Infinity, lo = Infinity;
+    for (let j = i - w + 1; j <= i; j++) { if (s.h[j] > hi) hi = s.h[j]; if (s.l[j] < lo) lo = s.l[j]; }
+    raw[i] = hi === lo ? 50 : (s.c[i] - lo) / (hi - lo) * 100;
+  }
+  /* expanding mean: the last `len` values, or fewer while fewer exist; a null ends the run, so the warm-up slots stay null */
+  const sma = (arr, len) => arr.map((_, i) => {
+    let sum = 0, cnt = 0;
+    for (let j = i; j >= 0 && cnt < len && arr[j] != null; j--) { sum += arr[j]; cnt++; }
+    return cnt ? sum / cnt : null;
+  });
+  const kLine = sma(raw, kSmooth);
+  return { k: kLine, d: sma(kLine, d), kFrom: k + kSmooth - 2, dFrom: k + kSmooth + d - 3 };
+}
+
 /* RSI, Wilder's smoothing (standard formula) — a full series aligned to `bars`,
    same recurrence as the desk-ask edge function's get_technicals tool (owner
    request 2026-07-25: show it in the charts workbench crosshair too, per pane,
