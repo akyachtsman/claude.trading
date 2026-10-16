@@ -9577,6 +9577,10 @@ test('S66: a symbol typed in the entry box is pushed in at the top of the list �
   expect(await page.evaluate(() => document.querySelector('.wb-slots').scrollTop), 'and the list is scrolled back to the top, where the new symbol is').toBe(0);
 
   // ── 4. the header Load box is NOT a door (owner 2026-10-16): it charts what is typed and writes no slot, new symbol or listed one
+  // Its own words say so (Codex P2, PR #339: the aria-label and the tooltip still promised an add after the handler stopped doing it) — and the entry box still says it adds
+  expect(await loadBox.getAttribute('aria-label'), 'the Load input names what it does: it does NOT add').toMatch(/not added/i);
+  expect(await page.locator('#wbSymForm button[type="submit"]').getAttribute('title'), 'and so does the Load button\'s tooltip').toMatch(/not added/i);
+  expect(await entry.getAttribute('aria-label'), 'the entry box still says it adds').toMatch(/^Add a symbol/);
   await seed(['AAA', 'BBB']);
   await load(R[9]); await settle();
   expect(await page.evaluate(() => wbState.sym), 'Load charts it').toBe(R[9]);
