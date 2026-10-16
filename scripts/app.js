@@ -7147,6 +7147,8 @@ function renderCharts(data, lamp) {
     const strips = [];
     if (opts.cfg.stoch) strips.push(['native', st, opts.stochCaption, opts.hideNativeMarks ? null : marks]);
     if (opts.cfg.stochW && opts.stW) strips.push(['weekly', opts.stW, opts.stochWCaption || (stochWTag() + ' · WEEKLY SCALE'), opts.marksW || null]);
+    /* strip identity → its stochPartial, filled only for a strip whose real %D does not exist yet (see the warm-up block); the crosshair reads it */
+    const partials = {};
     /* Volume + stochastic pane heights are user-draggable (the resize bars
        below) and persisted per pane; the PRICE pane absorbs the change
        (owner request 2026-07-16). The weekly strip has its OWN height
@@ -7492,15 +7494,46 @@ function renderCharts(data, lamp) {
       text(capText, x0 + 6, yTop - 4, { 'font-size': 8, 'letter-spacing': '.08em' });
       /* Warm-up gate (Codex #147): a short daily series can be long enough for
          the 14-3-3 daily stoch yet far short of the 92-15-15 weekly scale
-         (needs ~120 bars before %D exists) — say so instead of rendering a
-         silently empty strip. Partial case: %K alive, %D still warming. */
+         (needs ~120 bars before %D exists) — and a strip left silently empty
+         would not say why. Since 2026-10-16 (owner: "can it just do a partial
+         display?", after a recent listing's weekly strip read INSUFFICIENT
+         HISTORY) such a strip draws stochPartial instead: the same formula over
+         the bars that exist, DASHED and dim so it cannot be read as the real
+         setting, from the first bar it can say anything about up to the bar
+         where the real line begins (the dashed path ends ON that first real
+         point, so the two read as one line), with a note INSIDE the strip — the
+         caption line above it is already full. Only the DRAWING reads it: the
+         doctrine marks, the candle colour and the crosshair's plain readout stay
+         on the real series, which is why a partial strip's candles are
+         coloured by price and the note says so. The gate is "the series has no
+         %D at all": a long series' own leading warm-up slots stay empty, as they
+         always did. */
       {
         const cfgS = which === 'weekly' ? WSTOCH : (opts.stochCfgNative || STOCH);
         const warm = cfgS.k + cfgS.kSmooth + cfgS.d - 2;
-        const hasK = series.k.some(v => v != null);
         const hasD = series.d.some(v => v != null);
-        if (!hasK) text('INSUFFICIENT HISTORY — NEEDS ~' + warm + ' BARS', x0 + 6 + plotW / 2 - 90, yTop + hS / 2 + 3, { 'font-size': 8, 'letter-spacing': '.06em' });
-        else if (!hasD) text('%D WARMING UP — NEEDS ~' + warm + ' BARS', x0 + plotW - 170, yTop - 4, { 'font-size': 7, 'letter-spacing': '.04em' });
+        const part = hasD ? null : stochPartial(bars, cfgS);
+        const partOk = !!part && part.k.some(v => v != null);
+        if (partOk) {
+          partials[which] = part;
+          for (const [key, col] of [['k', WB.kLine], ['d', WB.dLine]]) {
+            let d = '', bridged = false;
+            for (let i = i0; i < end; i++) {
+              const real = series[key][i];
+              if (real == null) {
+                if (part[key][i] != null) d += (d ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sy(part[key][i]).toFixed(1);
+              } else if (d && !bridged) { d += 'L' + x(i).toFixed(1) + ' ' + sy(real).toFixed(1); bridged = true; }
+            }
+            if (d) svg.appendChild(svgEl('path', { d, fill: 'none', stroke: col, 'stroke-width': 1.5, 'stroke-opacity': 0.6, 'stroke-dasharray': '3 3', 'data-partial': key }));
+          }
+          const nBars = bars.c.length;
+          const note = plotW >= 230
+            ? 'PARTIAL — ' + nBars + ' OF ' + warm + ' BARS' + (which === 'weekly' && opts.colorSt ? ' · CANDLES BY PRICE' : '')
+            : 'PARTIAL ' + nBars + '/' + warm;
+          text(note, x0 + 6 + plotW - 4, yTop + 9, { 'font-size': 7, 'letter-spacing': '.04em', 'text-anchor': 'end', stroke: WB.canvas, 'stroke-width': 3, 'paint-order': 'stroke', 'data-partial-note': which });
+        } else if (!hasD) {
+          text('INSUFFICIENT HISTORY — NEEDS ~' + warm + ' BARS', x0 + 6 + plotW / 2 - 90, yTop + hS / 2 + 3, { 'font-size': 8, 'letter-spacing': '.06em' });
+        }
       }
       if (which === 'native') {
         const pinned = stochPinned(st);
@@ -7715,6 +7748,11 @@ function renderCharts(data, lamp) {
       if (!weeklyOn && st.k[i] != null) bits.push('%K ' + st.k[i].toFixed(0) + ' %D ' + (st.d[i] == null ? '—' : st.d[i].toFixed(0)));
       if (opts.rsi && opts.rsi[i] != null) bits.push('RSI ' + opts.rsi[i].toFixed(0));
       if (weeklyReady) bits.push('W ' + opts.stW.k[i].toFixed(0) + '/' + (opts.stW.d[i] == null ? '—' : opts.stW.d[i].toFixed(0)));
+      /* a bar the DASHED partial line covers reads out too, marked `~` — a line you can hover with no number beside it would invite a guess, and a bare
+         number would pass for the real setting. Only where the real %K does not exist; everywhere else the plain readout above stands. */
+      const pnum = v => (v == null ? '—' : v.toFixed(0));
+      if (!weeklyOn && st.k[i] == null && partials.native && partials.native.k[i] != null) bits.push('%K~ ' + pnum(partials.native.k[i]) + ' %D~ ' + pnum(partials.native.d[i]));
+      if (weeklyOn && !weeklyReady && partials.weekly && partials.weekly.k[i] != null) bits.push('W~ ' + pnum(partials.weekly.k[i]) + '/' + pnum(partials.weekly.d[i]));
       const smaParts = [];
       for (const [len] of opts.smas || []) {
         if (i < len - 1) continue;

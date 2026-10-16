@@ -11252,3 +11252,161 @@ test('S73: each answer carries the Pacific time it came in — live, replayed an
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskAsk = window.__real.ask; window.deskChatHistory = window.__real.hist; window.deskGetAskModel = window.__real.get; window.deskSetAskModel = window.__real.set; renderAsk(); });
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO 74 — A strip that cannot carry its full setting yet draws a PARTIAL line. Owner 2026-10-16, with a screenshot of a recent listing's weekly strip reading
+// "INSUFFICIENT HISTORY — NEEDS ~120 BARS": "why do you need 120 bars? Can it just do a partial display?" — "build the partial display". 92-15-15 has no line before bar
+// 106 and no %D before bar 120, so `stochPartial` (data.js) runs the SAME formula over the bars that exist (windows clipped, never shorter than 10 bars) and the strip
+// draws it DASHED and dim, ending ON the first real point, with a note inside the strip. It is a picture, never a signal: the real series, the candle colour (price
+// direction while there is no real %D) and the doctrine marks do not read it, and a bar it covers reads out marked `~`. A series whose %D exists draws nothing extra.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S74: a short-history strip draws a PARTIAL dashed line — the same formula over the bars that exist, joined to the real line, noted, hover-readable, and never used for candle colour', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(150_000);
+  await gotoDemo(page, '.wb-slots', 15000, 1200);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await installPaneProbe(page);
+
+  // ── 1. the math, through the page's own functions: from the first full index on it IS stochSeries; before it, a line that stays in 0..100 and starts at bar 10
+  const math = await page.evaluate(() => {
+    const base = wbState.data.symbols['SPY'];                      // 800 demo bars
+    const out = {};
+    /* a second series whose FIRST bar is the extreme of every early window: on the demo's own bars the first bar is never the high or the low, so a window
+       clipped one bar short of the data (the first bar left out) would change nothing and pass */
+    const spiky = {}; for (const key of ['t', 'o', 'h', 'l', 'c', 'v']) spiky[key] = base[key].slice(0, 200);
+    spiky.h[0] = base.h[0] * 3; spiky.l[0] = base.l[0] / 3;
+    for (const [name, cfg] of [['W', WSTOCH], ['D', STOCH], ['I', ISTOCH]]) {
+      const full = stochSeries(base, cfg), part = stochPartial(base, cfg);
+      let maxK = 0, maxD = 0;
+      for (const ser of [base, spiky]) {
+        const f = stochSeries(ser, cfg), q = stochPartial(ser, cfg);
+        for (let i = q.kFrom; i < ser.c.length; i++) maxK = Math.max(maxK, Math.abs(q.k[i] - f.k[i]));
+        for (let i = q.dFrom; i < ser.c.length; i++) maxD = Math.max(maxD, Math.abs(q.d[i] - f.d[i]));
+      }
+      const first = (a) => a.findIndex((v) => v != null);
+      out[name] = {
+        kFrom: part.kFrom, dFrom: part.dFrom, fullK: first(full.k), fullD: first(full.d), maxK, maxD,
+        firstPartialK: first(part.k), firstPartialD: first(part.d),
+        inRange: [...part.k, ...part.d].every((v) => v == null || (v >= 0 && v <= 100)),
+      };
+    }
+    const flat = (n) => ({ c: Array(n).fill(10), h: Array(n).fill(10), l: Array(n).fill(10) });
+    out.flat = stochPartial(flat(30), WSTOCH).k[29];
+    out.tiny = stochPartial(flat(8), WSTOCH).k.every((v) => v == null);
+    return out;
+  });
+  for (const name of ['W', 'D', 'I']) {
+    const m = math[name];
+    expect([m.kFrom, m.dFrom], `${name}: the "full" indices are where stochSeries first has a line`).toEqual([m.fullK, m.fullD]);
+    expect(m.maxK, `${name}: from the first full %K on, partial %K IS stochSeries`).toBeLessThan(1e-9);
+    expect(m.maxD, `${name}: from the first full %D on, partial %D IS stochSeries`).toBeLessThan(1e-9);
+    expect([m.firstPartialK, m.firstPartialD], `${name}: it starts at the tenth bar — fewer always sit at the edge of their own range`).toEqual([9, 9]);
+    expect(m.inRange, `${name}: it stays within 0..100`).toBe(true);
+  }
+  expect(math.flat, 'a flat range reads 50, as in the real series').toBe(50);
+  expect(math.tiny, 'fewer than ten bars give nothing to draw').toBe(true);
+
+  // ── helpers: put a short-history symbol on the chart, read what the LONG-TERM pane drew, hover it
+  const inject = (sym, n) => page.evaluate(([sym, n]) => {
+    const base = wbState.data.symbols['SPY'];
+    const s = {}; for (const k of ['t', 'o', 'h', 'l', 'c', 'v']) s[k] = base[k].slice(-n);
+    wbState.data.symbols[sym] = s;
+    wbPick(sym);
+    return s.c.length;
+  }, [sym, n]);
+  const read = () => page.evaluate(() => {
+    const svg = document.getElementById('wbChart');
+    const overlay = svg.querySelector('rect[style*="cursor: grab"]');            // the first pane drawn is the LONG-TERM one
+    const pts = (el) => (el.getAttribute('d').match(/[ML][-\d.]+[ ,][-\d.]+/g) || []).map((s) => s.slice(1).split(/[ ,]/).map(Number));
+    const pane = window.__pane(/LONG-TERM/);
+    const texts = [...svg.querySelectorAll('text')];
+    const cap = texts.find((t) => /CANDLE COLOUR/.test(t.textContent) && pane.inPane(+t.getAttribute('x')));
+    const solid = [...svg.querySelectorAll('path[stroke]:not([data-partial])')].map((p) => ({ p, b: p.getBBox() }))
+      .filter((o) => pane.inPane(o.b.x) && cap && o.b.y > +cap.getAttribute('y'));
+    const nearest = (stroke) => solid.filter((o) => o.p.getAttribute('stroke') === stroke).sort((a, c) => a.b.y - c.b.y)[0];
+    const kS = nearest('#e23b3b');
+    const noteEl = svg.querySelector('[data-partial-note]');
+    const nb = noteEl ? noteEl.getBBox() : null;
+    const cb = cap ? cap.getBBox() : null;
+    return {
+      plotW: +overlay.getAttribute('width'),
+      partial: [...svg.querySelectorAll('path[data-partial]')].map((p) => ({ key: p.getAttribute('data-partial'), dash: p.getAttribute('stroke-dasharray'), op: +p.getAttribute('stroke-opacity'), stroke: p.getAttribute('stroke'), pts: pts(p) })),
+      solidK: kS ? pts(kS.p) : null,
+      notes: [...svg.querySelectorAll('[data-partial-note]')].map((t) => t.textContent),
+      noteBelowCaption: nb && cb ? nb.y >= cb.y + cb.height - 0.5 : null,
+      noteInsidePlot: nb ? nb.x + nb.width <= +overlay.getAttribute('x') + +overlay.getAttribute('width') + 0.5 : null,
+      insufficient: texts.filter((t) => /INSUFFICIENT HISTORY/.test(t.textContent)).length,
+      solidStrokes: [...svg.querySelectorAll('path[stroke]:not([data-partial])')].map((p) => p.getAttribute('stroke')),
+    };
+  });
+  const hover = async (frac) => {
+    const ov = page.locator('#wbChart rect[style*="cursor: grab"]').first();
+    await ov.scrollIntoViewIfNeeded();
+    const b = await ov.boundingBox();
+    await page.mouse.move(b.x + b.width * 0.5, b.y + b.height * 0.3);
+    await page.mouse.move(b.x + b.width * frac, b.y + b.height * 0.3, { steps: 4 });
+    await page.waitForTimeout(150);
+    return (await page.locator('#wbTip').textContent()) || '';
+  };
+  const noteFor = (plotW, n) => (plotW >= 230 ? `PARTIAL — ${n} OF 120 BARS · CANDLES BY PRICE` : `PARTIAL ${n}/120`);
+
+  // ── 2. 70 bars: NO real line at all. Two dashed dim lines in the LONG-TERM weekly strip, the note, no "insufficient", the candles still by price, the real series untouched
+  expect(await inject('NEWA', 70)).toBe(70);
+  await page.waitForTimeout(900);
+  const a = await read();
+  expect(a.partial.map((p) => p.key).sort(), 'a dashed %K and a dashed %D').toEqual(['d', 'k']);
+  for (const p of a.partial) {
+    expect(p.dash, `${p.key}: dashed`).toMatch(/\d/);
+    expect(p.op, `${p.key}: dim — it must not read as the real setting`).toBeLessThan(1);
+    expect(a.solidStrokes, `${p.key}: in the same colour as the real %K/%D lines`).toContain(p.stroke);
+    expect(p.pts.length, `${p.key}: from the tenth bar to the last — 61 of the 70`).toBe(61);
+  }
+  expect(a.notes, 'one note, inside the strip').toEqual([noteFor(a.plotW, 70)]);
+  expect(a.noteBelowCaption, 'the note sits under the strip caption, not on it').toBe(true);
+  expect(a.noteInsidePlot, 'and inside the plot width').toBe(true);
+  expect(a.insufficient, 'no more INSUFFICIENT HISTORY').toBe(0);
+  expect(await page.evaluate(() => { const w = weeklyStochOnDaily(wbState.data.symbols.NEWA); return [w.k.some((v) => v != null), w.d.some((v) => v != null)]; }), 'the REAL weekly series is still empty — the partial one is a picture only').toEqual([false, false]);
+  const candles = await page.evaluate(() => {
+    const { rects } = window.__pane(/LONG-TERM/);
+    const s = wbState.data.symbols.NEWA;
+    const r = [...rects].sort((x, y) => x.cx - y.cx);
+    return { n: r.length, bars: s.c.length, agree: r.filter((c, i) => c.fill.includes('gain') === (s.c[i] >= s.o[i])).length };
+  });
+  expect(candles.n, 'every candle of the LONG-TERM pane is read').toBe(70);
+  expect(candles.agree, 'the candles are coloured by PRICE direction while there is no real %D (the note says so)').toBe(70);
+  expect(await hover(0.5), 'the hover readout marks a partial value with ~').toMatch(/W~ \d+\/\d+/);
+  expect(await hover(0.5), 'and never passes it off as the real W reading').not.toMatch(/\bW \d/);
+
+  // ── 3. 110 bars: the real %K begins at bar 106, %D never exists. The dashed %K ENDS ON the first real point; the dashed %D runs to the last bar
+  expect(await inject('NEWB', 110)).toBe(110);
+  await page.waitForTimeout(900);
+  const b = await read();
+  const k = b.partial.find((p) => p.key === 'k'), d = b.partial.find((p) => p.key === 'd');
+  expect([k && k.pts.length, d && d.pts.length], 'dashed %K: bars 10..105 (the last one the first real point); dashed %D: bars 10..110').toEqual([97, 101]);
+  expect(b.solidK && b.solidK.length, 'the real %K is its last five bars').toBe(5);
+  expect(k.pts[k.pts.length - 1], 'the dashed %K ends exactly where the real %K begins').toEqual(b.solidK[0]);
+  expect(b.notes, 'the note counts the bars').toEqual([noteFor(b.plotW, 110)]);
+  expect(await hover(0.3), 'a partial bar reads W~').toMatch(/W~ \d+\/\d+/);
+  const real110 = await hover(0.995);
+  expect(real110, 'the last bar has a real %K and no %D: the plain readout stands').toMatch(/\bW \d+\/—/);
+  expect(real110, 'and is not marked partial').not.toMatch(/W~/);
+
+  // ── 4. 130 bars: %D exists, so NOTHING extra is drawn — a long series' own leading warm-up stays empty, as it always did
+  expect(await inject('NEWC', 130)).toBe(130);
+  await page.waitForTimeout(900);
+  const c = await read();
+  expect([c.partial.length, c.notes.length, c.insufficient], 'no dashed line, no note, no INSUFFICIENT').toEqual([0, 0, 0]);
+  const real130 = await hover(0.995);
+  expect(real130, 'the last bar reads the real W').toMatch(/\bW \d+\/\d+/);
+  expect(real130, 'unmarked').not.toMatch(/W~/);
+  expect(await hover(0.02), 'the warm-up bars of a long series read nothing').not.toMatch(/\bW[~ ]\d/);
+
+  // ── 5. the demo's own long symbols draw no partial anything
+  await page.evaluate(() => wbPick('SPY'));
+  await page.waitForTimeout(900);
+  const spy = await read();
+  expect([spy.partial.length, spy.notes.length], 'a full-history symbol is untouched').toEqual([0, 0]);
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});

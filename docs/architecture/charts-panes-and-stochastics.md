@@ -107,6 +107,27 @@ The three Pro panes in `scripts/app.js` (`renderCharts` / `drawPane`): volume av
   (like `data-volma`) so a test can read its resolved stroke. Guarded by S71; by hand, six regressions (the 100 back
   on series-2, on the 50's token, the dark token turned yellow, the token missing from the daylight theme, the
   daylight token equal to the 50, the `data-sma` attribute dropped) each fail it on desktop.
+  **A strip that cannot carry its full setting yet draws a PARTIAL line (owner 2026-10-16, from a screenshot of a recent listing's weekly strip reading
+  `INSUFFICIENT HISTORY — NEEDS ~120 BARS`: "why do you need 120 bars? Can it just do a partial display?" — "build the partial display").** Why 120: 92-15-15 is a raw
+  %K over 92 bars, smoothed over 15 (the first %K line is bar 106), smoothed over 15 again (the first %D is bar 120) — `warm` in `drawPane`, `kFrom` / `dFrom` in
+  `stochPartial`. A stock with fewer daily bars (a new listing: `quote-proxy` fetches up to five years, so this is the stock's age and never a short fetch) drew an
+  empty strip with that sentence. It now draws `stochPartial` (`data.js`, next to `stochSeries`): the SAME formula with every window clipped to the bars that exist
+  (raw %K over `min(k, bars so far)`, each smoothing over `min(len, values so far)`), starting at the tenth bar (`PARTIAL_MIN_BARS` — a handful of bars always sits at the
+  edge of its own range, so %K would only flip between 0 and 100), and from `kFrom` / `dFrom` on it IS `stochSeries`, value for value (S74 proves it, on the demo's bars
+  AND on a series whose first bar is the extreme of every early window — the demo bars alone let a window one bar short survive every check). What is drawn: a DASHED
+  (`3 3`), dimmer (`stroke-opacity .6`) line in the real %K / %D colours (`path[data-partial="k|d"]`) over the bars where the real line has no value, ENDING ON the first
+  real point so the two read as one line, and a note INSIDE the strip's top-right corner (the caption line above it is already full) — `PARTIAL — 70 OF 120 BARS`, with
+  `· CANDLES BY PRICE` on the strip that colours the candles, and the short `PARTIAL 70/120` when the plot is narrower than 230px (`plotW`). **The gate is "the series has no
+  real %D at all"** — so 106–119 bars draws the real %K solid with the dashed line before it, and a long series' own leading warm-up stays empty exactly as before.
+  **It is a picture, never a signal, so NOTHING that decides anything reads it:** the doctrine marks (`stochMarks` on the real series), the candle colour (`colorSt` is the
+  real weekly series, which is null until %D exists, so a partial strip's candles are coloured by PRICE direction — the note says so, otherwise visible dashed crossovers
+  beside candles that ignore them would read as a fault), `tools/watchlist-scan.mjs` (it loads `stochSeries`, unchanged: a symbol needing `barsNeeded` bars is still listed
+  unpriced, never scanned on a partial number) and the crosshair's plain readout. A bar the dashed line covers reads out marked **`~`** (`W~ 63/61`, `%K~ 63 %D~ 61` on a
+  daily strip) so the line is never an unlabelled number and a partial number never passes for the real one; every other bar reads as before. `INSUFFICIENT HISTORY` survives
+  only where even the partial has nothing (under ten bars: reachable on Pro 3's 15-minute series early in a session, because the ≥30-bar guard in `renderCharts` counts DAILY
+  bars) — that path is not covered by a test (the intraday feed needs a live desk). In practice only the weekly strip of a 30–119-bar listing is ever partial (a pane needs
+  30 bars to draw at all; the 14-3-3 strip needs 18). Guarded by S74 (13 hand mutants, each caught: solid, undimmed, drawn beside a real %D, note dropped, window one bar short,
+  starting at bar 1, candle colour reading it, line not joined, readout unmarked or dropped, gate on %K instead of %D, the old message kept, %D not expanded).
   **A LAST-PRICE TAB is a different thing and IS on all three panes** (owner
   request 2026-08-12, from a reference terminal's white flag): a pentagon
   notched at the price axis, `--color-text-primary` on `--color-bg` — which
