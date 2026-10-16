@@ -1,7 +1,7 @@
 {
   "upstream": {
-    "sha": "bde28c9719f1feadaba23cf1cdb6c7b98b43eb4a",
-    "synced": "2026-10-15"
+    "sha": "e78b6dd58796b4aa68056fb99e2416ed8f8d8f88",
+    "synced": "2026-10-16"
   },
   "refresh_kept": {
     ".github/actions/ui-suite/action.yml": {

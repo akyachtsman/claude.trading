@@ -112,10 +112,18 @@ jobs:
           # newer run of the same workflow still COUNTS, and stop if one does: that run
           # carries the newer content. It counts while it is queued or running (it may
           # yet deploy, or fail and retry itself), once it SUCCEEDED (re-running this
-          # one would overwrite it) and once it FAILED (its failure starts its own
-          # retry). A newer run that was cancelled, timed out or skipped does NOT count:
-          # no retry ever fires for it, so standing down here left the site on the
-          # build before this one (Codex on claude.trading#336, 2026-10-15). Every newer
+          # one would overwrite it) and once it FAILED on an attempt that still
+          # retries: run_attempt below 4, the same bound as this job's `if:` above
+          # (change both together). A newer failure on its LAST attempt starts no
+          # retry, so standing down for it left both unretried (Codex on
+          # claude.trading#337, 2026-10-15). A newer run still RUNNING its last
+          # attempt still counts: it may succeed, and re-running this one could then
+          # overwrite it. If it fails instead, nothing retries either: a gap of the
+          # same check-then-act kind as the KNOWN LIMIT below, left open because
+          # closing it means waiting on a run still in flight. A newer
+          # run that was cancelled, timed out or skipped does NOT count: no retry
+          # ever fires for it, so standing down here left the site on the build
+          # before this one (Codex on claude.trading#336, 2026-10-15). Every newer
           # run is read, not just the newest: under a cancelled newest, an older newer
           # run may have succeeded, and re-running this one would overwrite it. A cancel
           # by Pages' own concurrency group needs no special case: it happens only when
@@ -146,7 +154,8 @@ jobs:
             counting=$(gh api --paginate \
               "repos/${REPO}/actions/workflows/${WF_ID}/runs?per_page=100&created=%3E%3D${CREATED}" \
               --jq "[.workflow_runs[] | select(.id > ${RUN_ID})
-                     | select(.status != \"completed\" or .conclusion == \"success\" or .conclusion == \"failure\")]
+                     | select(.status != \"completed\" or .conclusion == \"success\"
+                             or (.conclusion == \"failure\" and .run_attempt < 4))]
                     | length" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }') || return 1
             case "$counting" in ''|*[!0-9]*) return 1 ;; esac
             [ "$counting" -gt 0 ]
