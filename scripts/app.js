@@ -4989,11 +4989,11 @@ async function wbLoadSymbol(sym, noStore) {
   /* THIS LOADER PINS NOTHING (owner ruling 2026-08-26: "I didn't want a field to
      push into the list"). The SYMBOL column is 100 permanent slots the owner
      edits in place, so charting a symbol — a slot commit, a roster click —
-     writes no slot. The exceptions are the two typing boxes
-     (owner 2026-10-08 and 2026-10-09): the header Load box's submit handler and
-     the entry box on top of the SYMBOL column call wbPushSymbol THEMSELVES
-     before they call this, so the add is a separate, synchronous act and never
-     a side effect of a lookup. Loading a symbol charts it and nothing else. */
+     writes no slot. The one exception is the entry box on top of the SYMBOL column
+     (owner 2026-10-09; the header Load box was a second one from 2026-10-08 until
+     the owner took it back on 2026-10-16): it calls wbPushSymbol ITSELF before it
+     calls this, so the add is a separate, synchronous act and never a side effect
+     of a lookup. Loading a symbol charts it and nothing else. */
   if (wbState.data.symbols[sym]) { say(''); wbPick(sym, noStore); return true; }
   if (DESK.mode === 'demo' || !DESK_DB.url) {
     say('Live ticker lookups are off in demo mode');
@@ -5969,9 +5969,9 @@ function wbSlotDelClick(ev) {
   if (i >= 0) wbDeleteSlot(i);
 }
 /* PUSH a symbol into the list at the TOP (owner 2026-10-09, with a screenshot: "put a blank empty space on top of the left column and I will type in a
-   symbol and it will just get pushed into the list"). Two doors lead here and behave identically — the entry box on top of the SYMBOL column and the
-   header Load box — so there is ONE rule to learn: the new symbol takes slot 0 and everything above the first empty slot moves down one place (a slot 0
-   that is already empty is simply filled). It is `wbInsertSlot(0)`, so the column stays exactly WB_SLOTS long and nothing is dropped; with all 100 filled it
+   symbol and it will just get pushed into the list"). ONE door leads here, the entry box on top of the SYMBOL column (the header Load box was a second
+   from 2026-10-08 until the owner took it back on 2026-10-16: it only charts): the new symbol takes slot 0 and everything above the first empty slot
+   moves down one place (a slot 0 that is already empty is simply filled). It is `wbInsertSlot(0)`, so the column stays exactly WB_SLOTS long and nothing is dropped; with all 100 filled it
    says so out loud and charts anyway. One ALREADY in the column is LIFTED to the top and its older copy goes (owner 2026-10-09: "if there are duplicates, I
    would just remove the existing or the older one from the list"): the rows above it shift down one place, so nothing is dropped, nothing is left as a hole
    and the column is still exactly WB_SLOTS long; it works on a full column too, since it uses up no empty slot. Any further copy of it lower down (a twin
@@ -8270,13 +8270,14 @@ function wireCharts() {
        box validates with it too, and two inputs that disagree about what a
        ticker is would be a bug nobody could see from either one. */
     if (!WL_SYM_RE.test(sym)) { symNote.textContent = 'Ticker not recognized'; return; }
-    /* Charts it AND pushes it into the SYMBOL column at the top (owner 2026-10-08,
-       reversing the 2026-08-26 "this box is a chart control, not an add control"
-       for the two typing boxes — see wbPushSymbol for where it lands and why it
-       is saved first). It breaks a pending slot pair for the same reason a
-       roster click does — see wbRailBtn. */
+    /* Charts it and NOTHING ELSE: this box is a chart control, not an add control
+       (owner 2026-10-16, with a screenshot of TSLA typed up here: "I only want to
+       push symbols into the middle column when I'm entering it in the symbol
+       area, not the upper area next to live" — that WITHDREW the 2026-10-08 ruling
+       that made this box add what it charts; the entry box on top of the SYMBOL
+       column is the only door into wbPushSymbol). It breaks a pending slot pair
+       for the same reason a roster click does — see wbRailBtn. */
     wbSlotClick = { i: -1, at: 0 };
-    wbPushSymbol(sym);
     wbLoadSymbol(sym);
   });
 

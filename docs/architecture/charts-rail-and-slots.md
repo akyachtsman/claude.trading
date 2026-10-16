@@ -34,9 +34,7 @@
   owner's symbols. A pre-2026-08-26 stack migrates by landing in slots 0..n-1 in
   the order it was already displayed. **NOTHING PINS ANY MORE** — not the loader,
   not a roster click. Charting a symbol charts it and
-  writes no slot, which is what makes the column mean "what I typed". **The ONE
-  exception, added 2026-10-08, is the header Load box's SUBMIT — see "The Load
-  box adds what it charts" below.**
+  writes no slot, which is what makes the column mean "what I typed". **The ONE exception is the ENTRY BOX on top of the SYMBOL column — see "Typing boxes PUSH the symbol in at the top" below. The header Load box was a second one from 2026-10-08 until the owner took it back on 2026-10-16: it charts and writes no slot.**
   What follows is all load-bearing. **A slot is a cheap `<button>` until
   double-clicked, and at most ONE is an `<input>` at a time** (`wbEditSlot` /
   `wbEditDraft` in module state): `renderCharts` rebuilds this rail on every
@@ -278,10 +276,7 @@
   symbol in slot 0, so the row repeated the first slot after every push. The
   charted symbol is still marked where it stands (`aria-current` and a background on
   its slot and on its roster name) and the pane header names it; a symbol charted from
-  the roster that is not in the column is marked in the roster column only. The header **Load box
-  stays** (owner ruling, asked and answered), and until 2026-10-08 it wrote
-  NOTHING — it charted, like every other path (it now ADDS what it charts, see
-  "The Load box adds what it charts"). Both it and a slot commit validate with the
+  the roster that is not in the column is marked in the roster column only. The header **Load box stays** (owner ruling, asked and answered): it wrote NOTHING until 2026-10-08, ADDED what it charted from 2026-10-08, and writes NOTHING again since 2026-10-16 (see "Typing boxes PUSH the symbol in at the top"). Both it and a slot commit validate with the
   shared `WL_SYM_RE` (the submit handler had an inline third copy of that regex;
   it is gone).
   **THE FIRST CUT OF THIS WAS WRONG AND IS WORTH RECORDING.** PR #281 shipped an
@@ -555,7 +550,7 @@ module state `wbRailMsg`, cleared by its own timer) — never a silent no-op. **
 LAST stock. S64 therefore reads the store directly after the Insert key, BEFORE anything is typed (the typed write
 would normalise it and hide the fault). Reached by Insert on a focused slot (ABOVE that row), which puts the owner in the
 new slot's editor (`wbInsertAndEdit` → `wbFocusSlotEditor`, shared with the click-to-edit path), and — at index 0 — by the
-two typing boxes through `wbPushSymbol` (see "Typing boxes PUSH the symbol in at the top"). There is no `+` any more.
+entry box through `wbPushSymbol` (see "Typing boxes PUSH the symbol in at the top"). There is no `+` any more.
 
 **The drag is ONE delegated `pointerdown` on `#wbSidebar` (`wbSlotPointerDown`), not a listener per button —
 and that was MEASURED, not assumed.** The first cut wired each filled slot; in WebKit a `pointerdown`
@@ -655,7 +650,7 @@ Gesture rules, each of which S64 holds:
   different stock. The roving tab stop moves with it (`wbSlotTab = to`).
 - **Keyboard parity** (an arrangement only a mouse can make is not one everyone can): Alt+ArrowUp/Down moves
   the focused stock one place; Insert opens a slot above it (with the drag, the way to put one BETWEEN stocks).
-- **Typing boxes PUSH the symbol in at the top (owner 2026-10-09).** History, because it took four rounds: 2026-10-07 the owner asked for "an
+- **Typing boxes PUSH the symbol in at the top (owner 2026-10-09) — the ENTRY box only, since 2026-10-16.** History, because it took four rounds: 2026-10-07 the owner asked for "an
   open slot so I can push in more stocks" and got a `+` (and the Insert key) that opened an empty slot ABOVE the row last worked on;
   2026-10-08 "it just overwrites what I input last" — a slot just filled IS the row last worked on, so every `+` landed at the same index; the
   `+` was changed to open BELOW the row last worked on (`wbAddTarget`, `wbSlotWorked`); then, with a screenshot of the ACTIVE box, "keeps overwriting
@@ -663,8 +658,7 @@ Gesture rules, each of which S64 holds:
   END of the list (`wbAddLoaded`, reversing the 2026-08-26 "I didn't want a field to push into the list" for that box); and finally, with another
   screenshot and after asking "how does + work?": "This is a little confusing for me … put a blank empty space on top of the left column and I will
   type in a symbol and it will just get pushed into the list." The `+`, `wbAddTarget`, `wbAddNext`, `wbSlotWorked` and the end-of-column case of
-  `wbInsertSlot` were DELETED, and there is ONE rule with two doors: the ENTRY BOX on top of the SYMBOL column (`wbEntryInput`) and the header Load
-  box's submit both call `wbPushSymbol(sym)`. The rules: (1) the new symbol takes slot 0 and everything above the first EMPTY slot moves down one
+  `wbInsertSlot` were DELETED, and there is ONE rule with ONE door: the ENTRY BOX on top of the SYMBOL column (`wbEntryInput`) calls `wbPushSymbol(sym)` (the header Load box was a second door until 2026-10-16, rule 8 below). The rules: (1) the new symbol takes slot 0 and everything above the first EMPTY slot moves down one
   place — `wbInsertSlot(0)`, so the column stays exactly 100 long and nothing is dropped; a slot 0 that is already empty is simply filled; a full
   column is refused with the `role="status"` note and the symbol is charted anyway. (2) SAVED FIRST, whether or not the lookup resolves — the
   same rule as a slot commit — so a slow or failed quote can neither lose the symbol nor reorder two typed in a row (an add after the lookup was the
@@ -679,8 +673,11 @@ Gesture rules, each of which S64 holds:
   text that is not a ticker (`WL_SYM_RE`) is refused with a note in the rail and left in the box. It is ONE node for the page's life, re-seated by
   every `renderWbSidebar` (the rail is rebuilt on every chart repaint and 60 s poll — a box rebuilt with it would lose what the owner was typing),
   which keeps its focus and caret as it does the slot editor's. (7) The loader (`wbLoadSymbol`), a roster click and a slot commit
-  still write nothing (a slot commit may still type a copy of a symbol that is already listed: "a slot keeps whatever was typed"); the header input's `change` handler (a roster symbol committed by blur) is unchanged and still only charts. S66 pins all of
-  it (24 mutants), S64 the Insert key, S40 the alignment.
+  still write nothing (a slot commit may still type a copy of a symbol that is already listed: "a slot keeps whatever was typed"); the header input's `change` handler (a roster symbol committed by blur) is unchanged and still only charts. (8) **THE HEADER LOAD BOX ONLY CHARTS (owner 2026-10-16, with a screenshot of TSLA typed in it: "I only want to push symbols into the middle column when I'm entering it in the
+  symbol area, not the upper area next to live").** Its submit handler resets the pending slot pair (a navigation, like a roster click) and calls `wbLoadSymbol` — no `wbPushSymbol` — so a
+  symbol typed there is charted and no slot is written, a symbol already in the column is NOT lifted, and the column is left exactly as it was. That took back the 2026-10-08 ruling that
+  made the box add what it charted (`wbAddLoaded`, then the shared `wbPushSymbol`); the entry box is the only door. S66 step 4 pins it. S66 pins all of
+  it (24 hand mutants against the shape before 2026-10-16, each caught then; the Load change adds one — the push put back — which fails step 4, and the older 24 were not re-run against it), S64 the Insert key, S40 the alignment.
 - **Deleting a stock (owner 2026-10-10: "in addition to pushing, I also want to be able to delete symbols from that list").** Until then the only way out of the
   column was to open a slot's editor and empty its text, which leaves a HOLE where the stock was (S45: "nothing below it moves up"; that editing ruling stands). A
   delete is a different act and CLOSES the gap, like the lift in `wbPushSymbol`: `wbDeleteSlot(i)` is one splice — the stock out, an empty slot added at the
