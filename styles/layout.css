@@ -1127,4 +1127,6 @@
     .wl-edit, .wl-add--tray, .wl-trash, .wl-lock, .wl-newlist, .news-topic-x { min-width: 44px; min-height: 44px; }
     .wl-add--tray, .wl-trash, .wl-lock, .news-topic-x { width: 44px; height: 44px; }
     .wl-newlist { height: 44px; }
+    /* a finger needs 44px; padding with an equal negative margin grows the hit area without growing the note's line */
+    .news-topic-raw { padding: 14px 8px; margin: -14px -4px; }
   }

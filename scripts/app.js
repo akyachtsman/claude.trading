@@ -2815,7 +2815,7 @@ function renderNews(news, lamp) {
        blank rather than blaming the refresh, or the owner retries a sweep that
        is working. Read from the payload's echoed topic, never the input box:
        the box holds what they are typing now, the panel shows what came back. */
-    const t = DESK.data.newsTopic;
+    const t = DESK.data.newsQuery || DESK.data.newsTopic;
     list.appendChild(el('p', 'stamp', t
       ? `No headlines for “${t}” — try a broader phrase, or clear the topic for the full sweep.`
       : 'No headlines in the latest snapshot — check back after the next refresh.'));
@@ -8683,6 +8683,115 @@ function writeNewsTopic(v) {
   try { v ? localStorage.setItem(NEWS_TOPIC_KEY, v) : localStorage.removeItem(NEWS_TOPIC_KEY); } catch { /* private mode */ }
 }
 
+/* ── the AI helper's reading of the typed topic (owner request 2026-10-17, specs/news-topic-ai) ──
+   Typing `cerebres` finds nothing; desk-news can turn what was typed into the phrase most likely meant
+   (`Cerebras`). The page asks ONCE per typing — a request of its own, {action:'interpret', topic}, that never
+   searches — keeps the answer, and every search after that sends {topic, query}. So a refresh, a reload, a retry
+   or "Refresh now" never spends the helper again, and a lost search reply can neither lose nor repeat a reading.
+
+   `newsInterp` = {t: the topic it was made for, q: the phrase searched, ai: the verdict, day: the Pacific day} is
+   the SOURCE OF TRUTH; localStorage only carries it across a reload, so a failed write cannot make every poll ask
+   again. Rows and note both read it, which is what keeps the note describing the search the rows came from. A
+   FAILURE noted on an earlier Pacific day is ignored ("daily limit reached" must not outlive its day), and a reply
+   with no `ai` (the function not yet deployed) is kept as 'none', so an old server is asked once a day, not once a
+   poll. Demo never asks: it has no news search and no network. */
+const NEWS_AI_KEY = 'news_topic_ai_v1';
+const NEWS_AI_KEEP = ['rewrote', 'same'];    /* verdicts that stay true across days; every other one (a failure, or 'none' from a server that does not know the action) is asked again on a new Pacific day */
+const NEWS_AI_WHY = {
+  off: 'the AI helper is switched off',
+  unconfigured: 'the AI helper is not set up',
+  origin: 'the AI helper only works on the desk page',
+  limit: 'the AI helper’s daily limit was reached',
+  slow: 'the AI helper was too slow',
+  error: 'the AI helper had an error',
+  unusable: 'the AI helper’s answer was not usable',
+  unavailable: 'the AI helper was unavailable',      /* also what the counter being unreachable, and any code this page does not know, read as */
+};
+let newsInterp = null, newsInterpLoaded = false, newsInterpFlight = null;
+function readNewsInterp() {
+  try {
+    const o = JSON.parse(localStorage.getItem(NEWS_AI_KEY) || 'null');
+    if (o && typeof o.t === 'string' && typeof o.q === 'string' && typeof o.ai === 'string' && typeof o.day === 'string') {
+      return { t: o.t, q: cleanNewsTopic(o.q), ai: o.ai, day: o.day };
+    }
+  } catch { /* private mode, or a corrupt value */ }
+  return null;
+}
+function setNewsInterp(v) {
+  newsInterp = v; newsInterpLoaded = true;
+  try { v ? localStorage.setItem(NEWS_AI_KEY, JSON.stringify(v)) : localStorage.removeItem(NEWS_AI_KEY); } catch { /* the in-memory copy stands */ }
+}
+/* the stored reading, only if it is FOR this topic and still true today */
+function newsInterpFor(topic) {
+  if (!newsInterpLoaded) { newsInterp = readNewsInterp(); newsInterpLoaded = true; }
+  const v = newsInterp;
+  if (!v || !topic || v.t !== topic || !v.q) return null;
+  if (!NEWS_AI_KEEP.includes(v.ai) && v.day !== ptDateKey(new Date())) return null;
+  return v;
+}
+/* the phrase the rows on screen must have been searched for: the topic's reading when it rewrote it, else the topic */
+function newsQueryInForce() {
+  const t = cleanNewsTopic(readNewsTopic());
+  if (!t) return '';
+  const v = DESK.mode === 'demo' ? null : newsInterpFor(t);
+  return v && v.ai === 'rewrote' ? v.q : t;
+}
+/* one request per topic at a time: a poll or "Refresh now" that arrives while it is out waits for the same answer.
+   Returns null when there is NOTHING TO WAIT FOR (demo, no topic, a reading already held) so the caller does not
+   await at all and the search goes out in the same tick it always did; otherwise the promise of the reading, which
+   never rejects (a failed request resolves null and the search simply runs as typed). */
+function ensureNewsInterp(topic) {
+  if (!topic || DESK.mode === 'demo') return null;
+  if (newsInterpFor(topic)) return null;
+  if (newsInterpFlight && newsInterpFlight.t === topic) return newsInterpFlight.p;
+  const flight = { t: topic, p: null };
+  flight.p = (async () => {
+    try {
+      const r = await deskFeed('desk-news', { action: 'interpret', topic });
+      if (cleanNewsTopic(readNewsTopic()) !== topic) return null;     /* retyped while it was out: not this topic's reading any more */
+      let ai = typeof r.ai === 'string' && r.ai ? r.ai : 'none';
+      const q = ai === 'rewrote' ? cleanNewsTopic(r.query) : '';
+      if (ai === 'rewrote' && !q) ai = 'unusable';                    /* a rewrite with no phrase is no rewrite */
+      setNewsInterp({ t: topic, q: q || topic, ai, day: ptDateKey(new Date()) });
+      paintNewsNote();
+      return newsInterp;
+    } catch { return null; }
+    finally { if (newsInterpFlight === flight) newsInterpFlight = null; }
+  })();
+  newsInterpFlight = flight;
+  return flight.p;
+}
+/* The note: what was SEARCHED when that is not what was typed (with the way back), or why the typed text was searched
+   as typed. Built from the stored reading, never from a reply. The <p> is a live region that stays in the DOM — its
+   text is replaced or emptied, never toggled with `hidden`, so a screen reader announces each change. */
+function paintNewsNote() {
+  const note = document.getElementById('newsTopicNote');
+  if (!note) return;
+  while (note.firstChild) note.removeChild(note.firstChild);
+  const t = cleanNewsTopic(readNewsTopic());
+  const v = t && DESK.mode !== 'demo' ? newsInterpFor(t) : null;
+  if (!v || v.ai === 'same' || v.ai === 'none') return;
+  if (v.ai === 'rewrote') {
+    note.appendChild(document.createTextNode(`Showing news for “${v.q}” — you typed “${v.t}”. `));
+    const b = el('button', 'news-topic-raw', 'Search as typed');
+    b.type = 'button';
+    b.addEventListener('click', searchNewsAsTyped);
+    note.appendChild(b);
+    return;
+  }
+  note.appendChild(document.createTextNode(`Searched as typed — ${NEWS_AI_WHY[v.ai] || NEWS_AI_WHY.unavailable}.`));
+}
+/* the way back from a wrong reading: search exactly what was typed, and keep it that way until the topic changes */
+function searchNewsAsTyped() {
+  const t = cleanNewsTopic(readNewsTopic());
+  if (!t) return;
+  setNewsInterp({ t, q: t, ai: 'same', day: ptDateKey(new Date()) });
+  paintNewsNote();
+  const list = document.getElementById('newsList');
+  if (list) list.focus({ preventScroll: true });     /* the button just left the page; keep focus somewhere sensible without raising a phone keyboard */
+  refreshNews(true);
+}
+
 /* Commit on ENTER or blur, never per keystroke: each submit is a live upstream
    search, so firing one on every letter of "fed rate cut" would be twelve
    sweeps to answer one question. The ✕ is a separate control rather than
@@ -8701,13 +8810,16 @@ function wireNewsTopic() {
   box.value = saved;
   const paint = () => { clear.hidden = !box.value.trim(); };
   paint();
+  paintNewsNote();   /* a reload keeps the reading (and so the note) of the topic that was showing */
 
   const commit = () => {
     const next = cleanNewsTopic(box.value);
     box.value = next;
     if (next === readNewsTopic()) { paint(); return; }   /* nothing changed — don't re-sweep */
     writeNewsTopic(next);
+    setNewsInterp(null);   /* a reading belongs to ONE typing; the next refresh asks for this topic's */
     paint();
+    paintNewsNote();
     /* force:true so the change is answered NOW. Without it a topic typed while
        the market is shut would sit behind the 60-minute cache and look dead. */
     refreshNews(true);
@@ -8725,9 +8837,14 @@ function wireNewsTopic() {
 async function refreshNews(force) {
   const topic = readNewsTopic();
   try {
+    /* the reading of the typed topic first (once per typing, see above), then the search for the phrase it gave */
+    const reading = ensureNewsInterp(cleanNewsTopic(topic));
+    if (reading) await reading;
+    const query = newsQueryInForce();
     const body = {};
     if (force) body.force = true;
     if (topic) body.topic = topic;
+    if (topic && query && query !== cleanNewsTopic(topic)) body.query = query;
     const news = await deskFeed('desk-news', Object.keys(body).length ? body : undefined);
     /* Drop a reply whose topic is not the one currently asked for: a slow
        search can otherwise land after the owner has retyped and repaint the
@@ -8738,6 +8855,8 @@ async function refreshNews(force) {
        reply always agrees with its own request, so that comparison could never
        drop one. */
     if (news.topic !== undefined && (news.topic || '') !== cleanNewsTopic(readNewsTopic())) return;
+    /* ...and the SAME for the phrase: rows for the old reading must not land under a newer one (or under "as typed") */
+    if (news.query !== undefined && (news.query || '') !== newsQueryInForce()) return;
     clearTimeout(newsRetry.timer); newsRetry.wait = 0;
     /* the feed's row clocks are UTC HH:mm — display Pacific (owner ruling) */
     /* newsWhen() overwrites `t` with the Pacific clock and adds `d`/`full`.
@@ -8748,6 +8867,8 @@ async function refreshNews(force) {
     DESK.data.news = (news.items || []).map(it => ({ ...it, ...newsWhen(it.ts, it.t) }));
     /* the topic THESE rows came back for — what the empty state names */
     DESK.data.newsTopic = news.topic || topic;
+    DESK.data.newsQuery = news.query || DESK.data.newsTopic;   /* the phrase SEARCHED — what an empty result names */
+    paintNewsNote();   /* a reading restored from storage has not painted yet */
     newsStamp = { generatedAt: news.generatedAt, asOf: news.asOf };
     feedLanded.news = Date.now();
     newsLive = true;

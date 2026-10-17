@@ -820,6 +820,17 @@ body.wl-drag-active .wl-tile { cursor: grabbing; }
   font-size: 11px; cursor: pointer;
 }
 .news-topic-x:hover { border-color: var(--color-border-hover); color: var(--color-text-primary); }
+/* The AI helper's note under the topic box (specs/news-topic-ai D9): muted like every stamp, wrapping inside the
+   311px rail, and EMPTY most of the time (an empty <p> must take no room, so no margin then). Never a gain/loss colour. */
+.news-topic-note { margin: 4px 10px 0; line-height: 1.4; overflow-wrap: anywhere; }
+.news-topic-note:empty { margin: 0; }
+/* "Search as typed": a text button that reads as the link it is, inside the sentence */
+.news-topic-raw {
+  display: inline; margin: 0; padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px;
+}
+.news-topic-raw:hover { color: var(--color-text-primary); }
+.news-topic-raw:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 
 /* ── Economy panel (.econ-*) — owner request 2026-09-30 ──────────────────────
    A table of seven indicators, each row: [label / value + change / date] at the
