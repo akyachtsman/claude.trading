@@ -8753,8 +8753,7 @@ function ensureNewsInterp(topic) {
       const q = ai === 'rewrote' ? cleanNewsTopic(r.query) : '';
       if (ai === 'rewrote' && !q) ai = 'unusable';                    /* a rewrite with no phrase is no rewrite */
       setNewsInterp({ t: topic, q: q || topic, ai, day: ptDateKey(new Date()) });
-      paintNewsNote();
-      return newsInterp;
+      return newsInterp;   /* no note yet: it is drawn when the rows for this phrase land (refreshNews), never before */
     } catch { return null; }
     finally { if (newsInterpFlight === flight) newsInterpFlight = null; }
   })();
@@ -8767,10 +8766,19 @@ function ensureNewsInterp(topic) {
 function paintNewsNote() {
   const note = document.getElementById('newsTopicNote');
   if (!note) return;
-  while (note.firstChild) note.removeChild(note.firstChild);
   const t = cleanNewsTopic(readNewsTopic());
   const v = t && DESK.mode !== 'demo' ? newsInterpFor(t) : null;
-  if (!v || v.ai === 'same' || v.ai === 'none') return;
+  /* The note describes the search the headlines ON SCREEN came from (spec FR3) — so it is drawn only once the rows
+     for this reading's phrase have landed, and never while a slower search is still out or after one failed. */
+  const shown = v && v.ai !== 'same' && v.ai !== 'none'
+    && DESK.data.newsTopic === v.t && DESK.data.newsQuery === (v.ai === 'rewrote' ? v.q : v.t);
+  /* Idempotent: a poll that changes nothing must not rebuild the live region (a screen reader would announce the same
+     sentence every few minutes, and a focused "Search as typed" button would lose its focus mid-press). */
+  const key = shown ? `${v.ai}|${v.t}|${v.q}` : '';
+  if ((note.dataset.k || '') === key) return;
+  note.dataset.k = key;
+  while (note.firstChild) note.removeChild(note.firstChild);
+  if (!shown) return;
   if (v.ai === 'rewrote') {
     note.appendChild(document.createTextNode(`Showing news for “${v.q}” — you typed “${v.t}”. `));
     const b = el('button', 'news-topic-raw', 'Search as typed');
@@ -8779,7 +8787,7 @@ function paintNewsNote() {
     note.appendChild(b);
     return;
   }
-  note.appendChild(document.createTextNode(`Searched as typed — ${NEWS_AI_WHY[v.ai] || NEWS_AI_WHY.unavailable}.`));
+  note.appendChild(document.createTextNode(`Searched as typed — ${Object.prototype.hasOwnProperty.call(NEWS_AI_WHY, v.ai) ? NEWS_AI_WHY[v.ai] : NEWS_AI_WHY.unavailable}.`));
 }
 /* the way back from a wrong reading: search exactly what was typed, and keep it that way until the topic changes */
 function searchNewsAsTyped() {
@@ -8810,7 +8818,6 @@ function wireNewsTopic() {
   box.value = saved;
   const paint = () => { clear.hidden = !box.value.trim(); };
   paint();
-  paintNewsNote();   /* a reload keeps the reading (and so the note) of the topic that was showing */
 
   const commit = () => {
     const next = cleanNewsTopic(box.value);
@@ -8840,6 +8847,8 @@ async function refreshNews(force) {
     /* the reading of the typed topic first (once per typing, see above), then the search for the phrase it gave */
     const reading = ensureNewsInterp(cleanNewsTopic(topic));
     if (reading) await reading;
+    /* retyped (or cleared) while the reading was out: the retype has its own refresh; this one would search an abandoned topic */
+    if (cleanNewsTopic(readNewsTopic()) !== cleanNewsTopic(topic)) return;
     const query = newsQueryInForce();
     const body = {};
     if (force) body.force = true;

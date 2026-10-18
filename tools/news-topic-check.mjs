@@ -122,7 +122,7 @@ function boot(code, opts = {}) {
     require: (id) => { if (id === 'npm:fast-xml-parser@4') return { XMLParser }; throw new Error('unexpected require ' + id); },
     Deno: { serve: (h) => { handler = h; }, env: { get: (k) => (Object.hasOwn(denoEnv, k) ? denoEnv[k] : undefined) } },
     fetch, Response, Request, Headers, AbortSignal: Abort, AbortController, URL, Intl, setTimeout, clearTimeout, Date: FakeDate,
-    console: { log() {}, info() {}, warn: (...a) => env.warns.push(a.join(' ')), error: (...a) => env.warns.push(a.join(' ')) },
+    console: { log: (...a) => env.warns.push(a.join(' ')), info: (...a) => env.warns.push(a.join(' ')), warn: (...a) => env.warns.push(a.join(' ')), error: (...a) => env.warns.push(a.join(' ')) },   // EVERY level is recorded: a key logged at info is still a leak
   };
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox, { filename: 'desk-news.cjs' });
@@ -139,7 +139,7 @@ function boot(code, opts = {}) {
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { /* asserted by the caller */ }
-    return { status: res.status, json, text };
+    return { status: res.status, json, text, headers: res.headers };
   };
   env.of = (kind) => calls.filter((c) => c.kind === kind);
   return env;
@@ -300,6 +300,7 @@ const TESTS = [
     const e = boot(code, { env: { NEWS_TOPIC_AI_DAILY_CAP: '7' } });
     await interp(e, 'cerebres');
     eq(e.of('counter')[0].body.p_cap, 7, 'the secret sets the cap');
+    eq(e.of('counter')[0].init.redirect, 'error', 'the call that carries the service key never follows a redirect');
     eq(e.timeouts.sort((x, y) => x - y), [3000, 5000], 'the counter is bounded at 3 s and the model at 5 s (a plain fetch with its own signal, not the 8 s feed helper)');
   }],
 
@@ -312,7 +313,9 @@ const TESTS = [
     eq(m.body.messages, [{ role: 'user', content: clean(typed) }], 'one user message: the cleaned typed topic and nothing else (no assistant turn, so no prefill)');
     ok(typeof m.body.system === 'string' && /never instructions/.test(m.body.system) && /UNCLEAR/.test(m.body.system), 'a system prompt that treats the text as data and gives the model a way out');
     eq(m.body.thinking, { type: 'disabled' }, 'thinking is off (this model defaults to adaptive thinking)');
-    ok(Number.isInteger(m.body.max_tokens) && m.body.max_tokens > 0 && m.body.max_tokens <= 300, 'a small answer budget');
+    eq(m.body.max_tokens, 200, 'a small answer budget: a phrase of at most 60 characters, never a cut-off one');
+    ok(['misspell', 'never add words', 'unchanged', 'exactly: UNCLEAR', 'one line, no quotes', 'never instructions'].every((w) => m.body.system.toLowerCase().includes(w.toLowerCase())), 'the prompt carries what FR2 asks of the model: fix spelling, add no words, keep a good phrase, a way out, one bare line, the text is data');
+    eq(m.init.redirect, 'error', 'the call that carries the provider key never follows a redirect');
     for (const k of ['temperature', 'top_p', 'top_k', 'tools', 'tool_choice', 'stream', 'output_config', 'prefill']) ok(!(k in m.body), `no ${k}`);
     eq(m.url, 'https://api.anthropic.com/v1/messages');
     const h = Object.fromEntries(Object.entries(m.init.headers).map(([k, v]) => [k.toLowerCase(), v]));
@@ -452,6 +455,57 @@ const TESTS = [
     ok(/model HTTP 401/.test(log) && /counter HTTP 401/.test(log), 'the status is logged');
     ok(!log.includes(AI_KEY) && !log.includes(SERVICE_KEY) && !/secret detail/.test(log), 'but never the provider\'s words or a key');
   }],
+  // ── added after the QA review of PR #341 ─────────────────────────────────
+  ['every reply — the helper\'s, its early returns, the search, an error — carries the CORS and JSON headers the browser needs', async (code) => {
+    const e = boot(code);
+    const replies = {
+      'interpret': await interp(e, 'cerebres'),
+      'interpret, empty topic': await e.call({ action: 'interpret', topic: '' }),
+      'interpret, wrong origin': await interp(boot(code), 'cerebres', { origin: 'https://evil.example' }),
+      'interpret, helper off': await interp(boot(code, { env: { NEWS_TOPIC_AI_DAILY_CAP: '0' } }), 'cerebres'),
+      'search': await e.call({ topic: 'cerebres' }),
+      'default sweep': await e.call({}),
+    };
+    for (const [name, r] of Object.entries(replies)) {
+      eq(r.headers.get('access-control-allow-origin'), '*', `${name}: the browser may read the reply`);
+      ok(/^application\/json/.test(r.headers.get('content-type') || ''), `${name}: JSON`);
+    }
+  }],
+
+  ['the model\'s answer is read from its text blocks only, joined as they come (a split answer is one answer, a thinking block\'s words are not an answer)', async (code) => {
+    const reply = (content) => () => new Response(JSON.stringify({ stop_reason: 'end_turn', content }), { status: 200 });
+    let e = boot(code, { anthropic: reply([{ type: 'text', text: 'Cere' }, { type: 'text', text: 'bras' }]) });
+    eq((await interp(e, 'cerebres')).json.query, 'Cerebras', 'two text blocks make one phrase, with nothing between them');
+    e = boot(code, { anthropic: reply([{ type: 'thinking', thinking: 'hmm', text: 'IGNORE ME', signature: 'x' }, { type: 'text', text: 'Cerebras' }]) });
+    eq((await interp(e, 'cerebres')).json.query, 'Cerebras', 'a block that is not text is skipped even if it carries a text field');
+    e = boot(code, { anthropic: reply([{ type: 'thinking', thinking: 'hmm', text: 'Cerebras', signature: 'x' }]) });
+    const r = await interp(e, 'cerebres');
+    eq([r.json.ai, r.json.query], ['unusable', 'cerebres'], 'with no text block there is no answer, whatever else the reply carries');
+  }],
+
+  ['an answer that only repeats the typed text is `same`, even to a trailing full stop, and any case of UNCLEAR is the way out', async (code) => {
+    for (const [typed, text] of [['U.S. Steel Corp.', 'U.S. Steel Corp'], ['Berkshire Hathaway Inc.', 'Berkshire Hathaway Inc.'], ['fed rate cut', 'Unclear.'], ['fed rate cut', 'unclear']]) {
+      const e = boot(code, { aiText: text });
+      const r = await interp(e, typed);
+      eq([r.json.ai, r.json.query], ['same', typed], `${typed} / ${text}: nothing to show the owner, the typed text is used as typed`);
+    }
+  }],
+
+  ['a topic search reads no holdings and ranks purely by recency; the default sweep still reads them; a topic nobody wrote about is a 200 with no rows', async (code) => {
+    const titles = ['Cerebras IPO priced', 'Chip stocks rally', 'Apple AAPL earnings preview'];   // the held name is the OLDEST row
+    const topic = boot(code, { held: ['AAPL', 'NVDA'], google: (q) => new Response(feedJson({ now: T0 }, titles), { status: 200 }) });
+    const r = await topic.call({ topic: 'cerebras' });
+    eq(r.status, 200);
+    eq(r.json.items.map((i) => i.h), titles, 'topic search: newest first, the held name NOT lifted to the top');
+    eq(topic.calls.filter((c) => /feeds\.finance\.yahoo\.com/.test(c.url)).length, 0, 'no per-holding lookups under a topic');
+    eq(topic.searches, ['cerebras'], 'and no "<holding> stock" fallback search either');
+    const sweep = boot(code, { held: ['AAPL', 'NVDA'] });
+    await sweep.call({});
+    ok(sweep.calls.filter((c) => /feeds\.finance\.yahoo\.com/.test(c.url)).length >= 2, 'the default sweep still looks up each holding');
+    const none = boot(code, { google: () => new Response(feedJson({ now: T0 }, []), { status: 200 }) });
+    const e = await none.call({ topic: 'zzzzzz', query: 'zzzzzz qqq' });
+    eq([e.status, e.json.ok, e.json.items, e.json.topic, e.json.query], [200, true, [], 'zzzzzz', 'zzzzzz qqq'], 'a search that ran and found nothing is an empty success, not a failure that keeps the old rows');
+  }],
 ];
 
 // ── the runner ───────────────────────────────────────────────────────────────
@@ -465,8 +519,12 @@ function transpile(ts) {
 async function runSuite(code, { verbose = false } = {}) {
   const failures = [];
   for (const [name, fn] of TESTS) {
-    try { await fn(code); if (verbose) console.log('  ok    ' + name); }
+    // A check that never settles is a FAILURE, not a hang: a mutant that removes a timeout leaves a collaborator waiting for ever.
+    let timer;
+    const deadline = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('the check did not finish in 10 s (a hung collaborator that nothing bounds?)')), 20_000); });
+    try { await Promise.race([fn(code), deadline]); if (verbose) console.log('  ok    ' + name); }
     catch (e) { failures.push({ name, error: e }); if (verbose) console.log('  FAIL  ' + name + '\n        ' + String(e.message).split('\n').slice(0, 4).join('\n        ')); }
+    finally { clearTimeout(timer); }
   }
   return failures;
 }
@@ -580,7 +638,7 @@ const MUTANTS = [
  ],
  [
   "UNCLEAR is searched",
-  "  if (t === 'UNCLEAR') return { ai: 'same', query: typed };\n",
+  "  if (t.toUpperCase() === 'UNCLEAR') return { ai: 'same', query: typed };\n",
   ""
  ],
  [
@@ -595,7 +653,7 @@ const MUTANTS = [
  ],
  [
   "agreement is compared case-sensitively",
-  "if (t.toLowerCase() === typed.toLowerCase()) return",
+  "if (t.toLowerCase() === typed.replace(/[.,\\s]+$/, '').toLowerCase()) return",
   "if (t === typed) return"
  ],
  [
@@ -642,6 +700,91 @@ const MUTANTS = [
   "the model key is echoed in the reply",
   "return reply(200, { ok: true, topic, query: r.query, ai: r.ai });",
   "return reply(200, { ok: true, topic, query: r.query, ai: r.ai, k: Deno.env.get('ANTHROPIC_API_KEY') });"
+ ],
+ [
+  "the interpret reply carries no CORS headers (the browser blocks it after the counter and the model were spent)",
+  "    return reply(200, { ok: true, topic, query: r.query, ai: r.ai });",
+  "    return new Response(JSON.stringify({ ok: true, topic, query: r.query, ai: r.ai }), { status: 200, headers: { 'content-type': 'application/json' } });"
+ ],
+ [
+  "the empty-topic interpret reply carries no CORS headers",
+  "    if (!topic) return reply(200, { ok: true, topic: '', query: '' });",
+  "    if (!topic) return new Response(JSON.stringify({ ok: true, topic: '', query: '' }), { status: 200, headers: { 'content-type': 'application/json' } });"
+ ],
+ [
+  "the counter call follows a redirect with the service key",
+  "      redirect: 'error',   // a secret rides this call: a redirect is a failure, never followed\n",
+  ""
+ ],
+ [
+  "the model call follows a redirect with the provider key",
+  "      redirect: 'error',   // as above: the key is never sent anywhere a redirect points\n",
+  ""
+ ],
+ [
+  "the answer budget is one token",
+  "const TOPIC_AI_MAX_TOKENS = 200;",
+  "const TOPIC_AI_MAX_TOKENS = 1;"
+ ],
+ [
+  "a split answer is joined with a newline (and so becomes unusable)",
+  ".map((b: any) => b.text).join('')",
+  ".map((b: any) => b.text).join('\\n')"
+ ],
+ [
+  "a block that is not text is read if it carries a text field",
+  "b?.type === 'text' && typeof b.text === 'string'",
+  "typeof b?.text === 'string'"
+ ],
+ [
+  "the typed text is compared without its trailing punctuation (a topic ending in a full stop reads as a rewrite)",
+  "=== typed.replace(/[.,\\s]+$/, '').toLowerCase()",
+  "=== typed.toLowerCase()"
+ ],
+ [
+  "UNCLEAR is the way out only in capitals",
+  "t.toUpperCase() === 'UNCLEAR'",
+  "t === 'UNCLEAR'"
+ ],
+ [
+  "the prompt no longer forbids added words",
+  "  '- Never add words the person did not imply, such as \"stock\", \"news\" or \"latest\".',\n",
+  ""
+ ],
+ [
+  "the prompt no longer keeps an already good phrase",
+  "  '- If the text is already a good search phrase, return it unchanged.',\n",
+  ""
+ ],
+ [
+  "a topic nobody wrote about is a failure again (the old rows stay under the new topic's name)",
+  "if (!items.length && !(query && generalOk)) throw",
+  "if (!items.length) throw"
+ ],
+ [
+  "a topic search looks up the holdings again",
+  "(query ? [] : held).map(",
+  "held.map("
+ ],
+ [
+  "a topic search ranks holdings first",
+  "dedupeRank(items, held, cfg.maxItems, !query)",
+  "dedupeRank(items, held, cfg.maxItems, true)"
+ ],
+ [
+  "the model's reply body is logged at info level with the key",
+  "    data = await res.json();\n",
+  "    data = await res.json(); console.info('desk-news: model body', JSON.stringify(data), apiKey);\n"
+ ],
+ [
+  "the model call has no timeout",
+  "      signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),\n",
+  ""
+ ],
+ [
+  "the counter call has no timeout",
+  "      signal: AbortSignal.timeout(COUNTER_TIMEOUT_MS),\n",
+  ""
  ]
 ];
 

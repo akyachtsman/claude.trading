@@ -396,11 +396,12 @@ export function validateAiPhrase(raw: unknown, typed: string): { ai: 'rewrote' |
   if (quoted) t = quoted[1];
   t = t.replace(/[.,\s]+$/, '');
   if (!t) return bad;
-  if (t === 'UNCLEAR') return { ai: 'same', query: typed };
+  if (t.toUpperCase() === 'UNCLEAR') return { ai: 'same', query: typed };
   if (t.split(' ').length > 8) return bad;
   // allowed characters only AND at most 60 of them: cleanTopic() slices at 60, so a longer line is not equal to its own cleaned form
   if (cleanTopic(t) !== t) return bad;
-  if (t.toLowerCase() === typed.toLowerCase()) return { ai: 'same', query: typed };
+  // the typed text goes through the same trailing-punctuation strip, or `U.S. Steel Corp.` echoed back reads as a rewrite
+  if (t.toLowerCase() === typed.replace(/[.,\s]+$/, '').toLowerCase()) return { ai: 'same', query: typed };
   return { ai: 'rewrote', query: t };
 }
 
@@ -423,6 +424,7 @@ async function interpretTopic(typed: string, origin: string | null): Promise<{ q
       headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({ p_day: PT_DAY.format(new Date()), p_cap: cap }),
       signal: AbortSignal.timeout(COUNTER_TIMEOUT_MS),
+      redirect: 'error',   // a secret rides this call: a redirect is a failure, never followed
     });
     if (!res.ok) { console.warn('desk-news: counter HTTP', res.status); return asTyped('counter'); }
     took = (await res.json()) === true;
@@ -436,6 +438,7 @@ async function interpretTopic(typed: string, origin: string | null): Promise<{ q
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+      redirect: 'error',   // as above: the key is never sent anywhere a redirect points
       body: JSON.stringify({
         model: TOPIC_AI_MODEL,
         max_tokens: TOPIC_AI_MAX_TOKENS,

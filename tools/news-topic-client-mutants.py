@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Mutation run for the News topic AI helper's CLIENT guards (specs/news-topic-ai): break each guard in scripts/app.js,
-index.html or styles/components.css, run scenario S75 on the desktop project, and require it to FAIL. A guard whose removal
+index.html or styles/components.css, run scenario S75 on the desktop and mobile-chrome projects, and require it to FAIL. A guard whose removal
 leaves S75 green is a guard nothing checks.
 
     python3 tools/news-topic-client-mutants.py            # every mutant
     python3 tools/news-topic-client-mutants.py --list     # names only
     python3 tools/news-topic-client-mutants.py yesterday  # only mutants whose name contains "yesterday"
 
-Projects: desktop (MUT_PROJECTS overrides, comma-separated; mobile-chrome, tablet-chromium and iphone-chromium are the kit's
+Projects: desktop and mobile-chrome (the touch one, for the 44px target; MUT_PROJECTS overrides, comma-separated; mobile-chrome, tablet-chromium and iphone-chromium are the kit's
 other projects run as CHROMIUM — the sandbox cannot launch WebKit). Needs the kit's node_modules
 (`npm ci --prefix .github/scripts/ui-tests`) and a Chromium: set PW_CHROMIUM to a browser binary (default
 /opt/pw-browsers/chromium). The runner starts its own static server on MUT_PORT (default 8792) and writes a throwaway
@@ -17,10 +17,10 @@ comes from this file."""
 import hashlib, os, re, subprocess, sys, tempfile, time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 KIT = os.path.join(ROOT, '.github/scripts/ui-tests')
-F = {'app': 'scripts/app.js', 'html': 'index.html', 'css': 'styles/components.css'}
+F = {'app': 'scripts/app.js', 'html': 'index.html', 'css': 'styles/components.css', 'layout': 'styles/layout.css'}
 PORT = os.environ.get('MUT_PORT', '8792')
 CHROMIUM = os.environ.get('PW_CHROMIUM', '/opt/pw-browsers/chromium')
-PROJECTS = os.environ.get('MUT_PROJECTS', 'desktop').split(',')
+PROJECTS = os.environ.get('MUT_PROJECTS', 'desktop,mobile-chrome').split(',')
 SCEN = 'S75'
 
 M = [
@@ -43,10 +43,24 @@ M = [
  ('the empty state names the typed topic, not the phrase searched', 'app', [("const t = DESK.data.newsQuery || DESK.data.newsTopic;", "const t = DESK.data.newsTopic;")]),
  ('demo asks the helper', 'app', [("  if (!topic || DESK.mode === 'demo') return null;\n  if (newsInterpFor(topic)) return null;", "  if (!topic) return null;\n  if (newsInterpFor(topic)) return null;")]),
  ('demo shows a stored reading', 'app', [("const v = t && DESK.mode !== 'demo' ? newsInterpFor(t) : null;", "const v = t ? newsInterpFor(t) : null;")]),
- ('an unknown verdict code reads as nothing', 'app', [("${NEWS_AI_WHY[v.ai] || NEWS_AI_WHY.unavailable}", "${NEWS_AI_WHY[v.ai] || ''}")]),
+ ('an unknown verdict code reads as nothing', 'app', [("NEWS_AI_WHY[v.ai] : NEWS_AI_WHY.unavailable}", "NEWS_AI_WHY[v.ai] : ''}")]),
  ('the note is toggled with `hidden` (a live region that comes and goes)', 'html', [('<p id="newsTopicNote" class="stamp news-topic-note" role="status"></p>', '<p id="newsTopicNote" class="stamp news-topic-note" role="status" hidden></p>')]),
  ('the note is painted in the loss colour', 'css', [(".news-topic-note { margin: 4px 10px 0;", ".news-topic-note { color: var(--color-loss); margin: 4px 10px 0;")]),
  ('the note cannot wrap (it overruns the rail)', 'css', [("overflow-wrap: anywhere; }\n.news-topic-note:empty", "overflow-wrap: anywhere; white-space: nowrap; }\n.news-topic-note:empty")]),
+ ('the note is drawn when the reading lands, whatever rows are on screen (FR3: it must describe the rows)', 'app', [
+   ("      return newsInterp;   /* no note yet: it is drawn when the rows for this phrase land (refreshNews), never before */", "      paintNewsNote();\n      return newsInterp;"),
+   ("    && DESK.data.newsTopic === v.t && DESK.data.newsQuery === (v.ai === 'rewrote' ? v.q : v.t);", ";")]),
+ ('a poll that changes nothing rebuilds the live region (focus lost, re-announced)', 'app', [("  if ((note.dataset.k || '') === key) return;\n", "")]),
+ ('a refresh keeps searching a topic that was retyped while its reading was out', 'app', [("    if (cleanNewsTopic(readNewsTopic()) !== cleanNewsTopic(topic)) return;\n", "")]),
+ ('a verdict named like an Object property reads as its value ([object Object])', 'app', [("Object.prototype.hasOwnProperty.call(NEWS_AI_WHY, v.ai) ? NEWS_AI_WHY[v.ai] : NEWS_AI_WHY.unavailable", "NEWS_AI_WHY[v.ai] || NEWS_AI_WHY.unavailable")]),
+ ('leaving the box unchanged re-sweeps and re-asks', 'app', [("    if (next === readNewsTopic()) { paint(); return; }   /* nothing changed — don't re-sweep */\n", "")]),
+ ('a real reload never reads the stored reading', 'app', [("let newsInterp = null, newsInterpLoaded = false, newsInterpFlight = null;", "let newsInterp = null, newsInterpLoaded = true, newsInterpFlight = null;")]),
+ ('a held reading still makes the search wait a tick (a resolved promise instead of null)', 'app', [("  if (newsInterpFor(topic)) return null;\n  if (newsInterpFlight", "  if (newsInterpFor(topic)) return Promise.resolve(null);\n  if (newsInterpFlight")]),
+ ('a retry during an outage asks the helper again', 'app', [("  if (newsInterpFor(topic)) return null;\n  if (newsInterpFlight", "  if (newsLive && newsInterpFor(topic)) return null;\n  if (newsInterpFlight")]),
+ ('a corrupt storage value stops the news', 'app', [("  } catch { /* private mode, or a corrupt value */ }", "  } catch (e) { throw e; }")]),
+ ('retyping leaves the old note up until the new rows land', 'app', [("    paint();\n    paintNewsNote();\n    /* force:true", "    paint();\n    /* force:true")]),
+ ('an empty note keeps its margin', 'css', [(".news-topic-note:empty { margin: 0; }\n", "")]),
+ ('the touch target is back under 44px', 'layout', [(".news-topic-raw { padding: 15px 8px; margin: -15px -4px; }", ".news-topic-raw { padding: 14px 8px; margin: -14px -4px; }")]),
 ]
 
 if '--list' in sys.argv:
