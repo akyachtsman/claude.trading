@@ -6,14 +6,15 @@ leaves S75 green is a guard nothing checks.
     python3 tools/news-topic-client-mutants.py            # every mutant
     python3 tools/news-topic-client-mutants.py --list     # names only
     python3 tools/news-topic-client-mutants.py yesterday  # only mutants whose name contains "yesterday"
+    python3 tools/news-topic-client-mutants.py --shard=2/4  # every 4th mutant from the 2nd (CI splits the run into shards)
 
 Projects: desktop and mobile-chrome (the touch one, for the 44px target; MUT_PROJECTS overrides, comma-separated; mobile-chrome, tablet-chromium and iphone-chromium are the kit's
 other projects run as CHROMIUM — the sandbox cannot launch WebKit). Needs the kit's node_modules
 (`npm ci --prefix .github/scripts/ui-tests`) and a Chromium: set PW_CHROMIUM to a browser binary (default
 /opt/pw-browsers/chromium). The runner starts its own static server on MUT_PORT (default 8792) and writes a throwaway
 config next to the kit's playwright.config.js (removed afterwards). Each file is restored after every mutant, also on an
-error, and checked byte-identical at the end. Not run by CI. The count quoted in docs/architecture/edge-feeds-and-heatmap.md
-comes from this file."""
+error, and checked byte-identical at the end. Run by CI: qa.yml's news-client-mutants job, in shards. The count quoted in
+docs/architecture/edge-feeds-and-heatmap.md comes from this file."""
 import hashlib, os, re, subprocess, sys, tempfile, time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 KIT = os.path.join(ROOT, '.github/scripts/ui-tests')
@@ -89,6 +90,12 @@ def is_catch(out):
 md5 = lambda p: hashlib.md5(open(p, 'rb').read()).hexdigest()
 
 only = [a for a in sys.argv[1:] if not a.startswith('--')]
+shard = next((a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--shard=')), None)
+if shard:
+    sm = re.fullmatch(r'([1-9]\d*)/([1-9]\d*)', shard)
+    if not sm or int(sm.group(1)) > int(sm.group(2)): print(f'--shard wants K/N with 1 <= K <= N, not {shard!r}'); sys.exit(2)
+    k, nshards = int(sm.group(1)), int(sm.group(2))
+    M = [m for i, m in enumerate(M) if i % nshards == k - 1]
 OUT = tempfile.mkdtemp(prefix='news-topic-mut-')
 cfg = os.path.join(KIT, '.pw-mutants.config.mjs')
 open(cfg, 'w').write(f"""import base from './playwright.config.js';

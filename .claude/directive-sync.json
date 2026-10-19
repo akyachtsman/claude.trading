@@ -16,8 +16,8 @@
     },
     ".github/workflows/qa.yml": {
       "blob": "f59b326762cf6b0c4204bf14ee8dac707070222e",
-      "local": "97dd1729f10008962bfd3fd4c55310bcc6d67437",
-      "reason": "Template plus six local items, all listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan step, the html-validate steps, the tailored UI_PATHS (scripts/, config/ and check-ui-viewports.js added), the ui-tests job-level GREP_INVERT env and the notify job. The 2026-10-15 template change (a comment under UI_PATHS about directories an app fetches at runtime) is taken; the project's regex already carries config/, its runtime-fetched roster directory. Checked by a 3-way merge against the template at the stamp: the only differences are those items."
+      "local": "86584c80714b1124be646694543c44a44acc93b6",
+      "reason": "Template plus eight local items, all listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan step, the html-validate steps, the tailored UI_PATHS (scripts/, config/ and check-ui-viewports.js added), the ui-tests job-level GREP_INVERT env, the notify job, and (2026-10-19) the news-checks and news-client-mutants jobs with ui-changes' news_client output and notify's needs on both. The 2026-10-15 template change (a comment under UI_PATHS about directories an app fetches at runtime) is taken; the project's regex already carries config/, its runtime-fetched roster directory. Checked by a 3-way merge against the template at the stamp: the only differences are those items."
     },
     ".github/scripts/ui-tests/playwright.config.js": {
       "blob": "c55256cb71b416a79e0ab09a30a5a6afcbc87e83",
