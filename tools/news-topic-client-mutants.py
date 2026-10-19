@@ -60,6 +60,14 @@ M = [
  ('a corrupt storage value stops the news', 'app', [("  } catch { /* private mode, or a corrupt value */ }", "  } catch (e) { throw e; }")]),
  ('retyping leaves the old note up until the new rows land', 'app', [("    paint();\n    paintNewsNote();\n    /* force:true", "    paint();\n    /* force:true")]),
  ('an empty note keeps its margin', 'css', [(".news-topic-note:empty { margin: 0; }\n", "")]),
+ ('no stopwatch: a slow helper still holds the search up', 'app', [("        const timer = setTimeout(() => resolve(NEWS_AI_SLOW), NEWS_AI_WAIT_MS);\n", "        const timer = 0;\n")]),
+ ('the stopwatch is 10 s, not 3', 'app', [("const NEWS_AI_WAIT_MS = 3000;", "const NEWS_AI_WAIT_MS = 10000;")]),
+ ('the stopwatch is 1 s, not 3 (a typical answer is cut off)', 'app', [("const NEWS_AI_WAIT_MS = 3000;", "const NEWS_AI_WAIT_MS = 1000;")]),
+ ('a slow reading is not stored (a poll asks the helper again)', 'app', [("        setNewsInterp({ t: topic, q: topic, ai: 'slow', day: ptDateKey(new Date()) });\n        return newsInterp;\n", "        return null;\n")]),
+ ('a late answer after the stopwatch is stored over the slow reading', 'app', [
+   ("        const timer = setTimeout(() => resolve(NEWS_AI_SLOW), NEWS_AI_WAIT_MS);\n", "        let late = false; const timer = setTimeout(() => { late = true; resolve(NEWS_AI_SLOW); }, NEWS_AI_WAIT_MS);\n"),
+   ("(v) => { clearTimeout(timer); resolve(v); }", "(v) => { clearTimeout(timer); resolve(v); if (late && v && v.ai === 'rewrote' && cleanNewsTopic(readNewsTopic()) === topic) setNewsInterp({ t: topic, q: cleanNewsTopic(v.query), ai: 'rewrote', day: ptDateKey(new Date()) }); }")]),
+ ('a slow reading is kept across days', 'app', [("const NEWS_AI_KEEP = ['rewrote', 'same'];", "const NEWS_AI_KEEP = ['rewrote', 'same', 'slow'];")]),
  ('the touch target is back under 44px', 'layout', [(".news-topic-raw { padding: 15px 8px; margin: -15px -4px; }", ".news-topic-raw { padding: 14px 8px; margin: -14px -4px; }")]),
 ]
 

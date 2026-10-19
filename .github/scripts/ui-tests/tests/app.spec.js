@@ -11449,7 +11449,7 @@ test('S75: the news topic asks the AI helper once per typing, shows what it sear
     window.__reply = reply;
     deskFeed = (name, body) => {
       const b = JSON.parse(JSON.stringify(body || {}));
-      window.__n.calls.push({ name, body: b });
+      window.__n.calls.push({ name, body: b, at: performance.now() });
       return b.action === 'interpret' ? window.__n.interpret(b) : window.__n.search(b);
     };
     window.__defaults = () => {
@@ -11615,6 +11615,54 @@ test('S75: the news topic asks the AI helper once per typing, shows what it sear
   eqS(await page.evaluate(() => localStorage.getItem('news_topic_ai_v1')), null, 'nothing was stored for a request that never got an answer');
   await page.evaluate(async () => { await refreshNews(); });
   eqS(await interprets(), 2, 'so the next refresh tries the reading again');
+
+  // 4b) the page's OWN stopwatch (owner 2026-10-19, "build the 3 second version"): a helper that has not answered in 3 s no longer holds the
+  //     search up. The typed text is searched at once, the reading is noted as `slow` (asked again on a new Pacific day, not on every poll), and
+  //     the answer that lands after that is IGNORED — stored, it would change the phrase in force under the as-typed search already out
+  await page.evaluate(() => {
+    __reset();
+    __n.interpret = (b) => new Promise((res) => { __n.gate = () => res({ ok: true, topic: b.topic, query: 'Cerebras', ai: 'rewrote' }); });
+  });
+  await type('cerebres');
+  await page.waitForTimeout(2200);
+  eqS((await searches()).length, 0, 'at 2.2 s the helper still has its time: no search has gone out');
+  await idle(1);
+  const gapMs = await page.evaluate(() => {
+    const i = __n.calls.find((c) => c.body.action === 'interpret'), q = __n.calls.find((c) => c.body.action !== 'interpret');
+    return q.at - i.at;
+  });
+  expect(gapMs, 'the search went out when the stopwatch ran out: about 3 s after the interpret request').toBeGreaterThanOrEqual(2900);
+  expect(gapMs, 'and not much later').toBeLessThan(5000);
+  eqS((await searches())[0], { force: true, topic: 'cerebres' }, 'searched as typed: no `query`');
+  eqS(await page.evaluate(() => JSON.parse(localStorage.getItem('news_topic_ai_v1'))), { t: 'cerebres', q: 'cerebres', ai: 'slow', day: await today() },
+    'the reading is noted as slow, with its Pacific day');
+  await expect(note).toHaveText(`Searched as typed — ${WHY.slow}.`);
+  await expect(page.locator('.news-row').first()).toContainText('Headlines for cerebres');
+  await page.evaluate(async () => { __n.gate(); await new Promise((r) => setTimeout(r, 300)); });       // the late answer lands now
+  eqS(await page.evaluate(() => JSON.parse(localStorage.getItem('news_topic_ai_v1')).ai), 'slow', 'the late answer was not stored over the slow reading');
+  eqS((await searches()).length, 1, 'and it started no new search');
+  await expect(note).toHaveText(`Searched as typed — ${WHY.slow}.`);
+  await expect(page.locator('.news-row').first(), 'the rows the as-typed search brought stay on screen').toContainText('Headlines for cerebres');
+  await page.evaluate(async () => { await refreshNews(); });
+  eqS([await interprets(), (await searches()).length], [1, 2], 'a refresh the same day searches as typed and does not ask the helper again');
+  await page.evaluate(() => {
+    setNewsInterp({ t: 'cerebres', q: 'cerebres', ai: 'slow', day: '2000-01-01' });
+    __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: 'Cerebras', ai: 'rewrote' });
+  });
+  await page.evaluate(async () => { await refreshNews(); });
+  eqS(await interprets(), 2, 'a slow reading from an earlier day is asked for again');
+  await expect(note).toContainText('Showing news for “Cerebras”');
+
+  // 4c) retyped while the helper is still out: the abandoned topic's stopwatch runs out later and stores nothing
+  await page.evaluate(() => { __reset(); __n.interpret = () => new Promise(() => {}); });    // never answers
+  await type('cerebres');
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: b.topic, ai: 'same' }); });
+  await type('fed rate cut');
+  await idle(1);
+  await page.waitForTimeout(3200);                                                           // the abandoned stopwatch runs out in here
+  eqS(await page.evaluate(() => JSON.parse(localStorage.getItem('news_topic_ai_v1'))), { t: 'fed rate cut', q: 'fed rate cut', ai: 'same', day: await today() },
+    'the stored reading is the new topic\'s own: the abandoned topic\'s stopwatch stored nothing');
 
   // 5) a failed write to localStorage must not make every poll ask again: the in-memory copy stands
   await page.evaluate(() => {

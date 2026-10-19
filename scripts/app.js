@@ -8707,6 +8707,8 @@ function writeNewsTopic(v) {
    with no `ai` (the function not yet deployed) is kept as 'none', so an old server is asked once a day, not once a
    poll. Demo never asks: it has no news search and no network. */
 const NEWS_AI_KEY = 'news_topic_ai_v1';
+const NEWS_AI_WAIT_MS = 3000;                /* the page's OWN stopwatch on the helper (owner 2026-10-19, "build the 3 second version"): desk-news bounds itself at about 8 s (counter 3 s, then the model 5 s) and boot() awaits the first news fetch, so a slow helper held the whole page start. Typical answer ~1 s. */
+const NEWS_AI_SLOW = { slow: true };        /* what the stopwatch resolves to: never a server reply */
 const NEWS_AI_KEEP = ['rewrote', 'same'];    /* verdicts that stay true across days; every other one (a failure, or 'none' from a server that does not know the action) is asked again on a new Pacific day */
 const NEWS_AI_WHY = {
   off: 'the AI helper is switched off',
@@ -8750,7 +8752,8 @@ function newsQueryInForce() {
 /* one request per topic at a time: a poll or "Refresh now" that arrives while it is out waits for the same answer.
    Returns null when there is NOTHING TO WAIT FOR (demo, no topic, a reading already held) so the caller does not
    await at all and the search goes out in the same tick it always did; otherwise the promise of the reading, which
-   never rejects (a failed request resolves null and the search simply runs as typed). */
+   never rejects (a failed request resolves null and the search simply runs as typed). It waits at most
+   NEWS_AI_WAIT_MS: after that the reading is 'slow' and the search runs as typed. */
 function ensureNewsInterp(topic) {
   if (!topic || DESK.mode === 'demo') return null;
   if (newsInterpFor(topic)) return null;
@@ -8758,8 +8761,19 @@ function ensureNewsInterp(topic) {
   const flight = { t: topic, p: null };
   flight.p = (async () => {
     try {
-      const r = await deskFeed('desk-news', { action: 'interpret', topic });
+      /* The request races the stopwatch. When the stopwatch wins the typed text is searched AT ONCE and the reading is noted as
+         'slow' (the server's own word for it, same day-long memory, so a slow helper is not asked again every poll); the reply
+         that lands later is IGNORED, never stored — a late rewrite would change the phrase in force while the as-typed search
+         is out, the query guard would drop that search's rows as stale, and they would stay missing until the next poll. */
+      const r = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(NEWS_AI_SLOW), NEWS_AI_WAIT_MS);
+        deskFeed('desk-news', { action: 'interpret', topic }).then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+      });
       if (cleanNewsTopic(readNewsTopic()) !== topic) return null;     /* retyped while it was out: not this topic's reading any more */
+      if (r === NEWS_AI_SLOW) {
+        setNewsInterp({ t: topic, q: topic, ai: 'slow', day: ptDateKey(new Date()) });
+        return newsInterp;
+      }
       let ai = typeof r.ai === 'string' && r.ai ? r.ai : 'none';
       const q = ai === 'rewrote' ? cleanNewsTopic(r.query) : '';
       if (ai === 'rewrote' && !q) ai = 'unusable';                    /* a rewrite with no phrase is no rewrite */
