@@ -7173,7 +7173,17 @@ function renderCharts(data, lamp) {
        bounds future drags, not stored/invalidated values (Codex #114). Scale
        volume + stochastic down together to fit. */
     const MIN_PH = 140;
-    const gaps = (vH ? 8 : 0) + strips.length * 14;
+    /* The band above each strip holds the caption (8px type, its glyphs reach
+       ~10px above the strip) AND the white resize-grip pill. They shared the
+       14px band until 2026-10-19 (owner: "fix the resize grip pills") — the
+       pill is centred and the caption starts at the left, so any caption wider
+       than about half the plot ran underneath it ("STOCH 14-3-3 · DAILY" lost
+       its "· DAILY") and on a phone every strip caption did. 20px gives the
+       pill a row of its own ABOVE the caption: pill centre GRIP_UP (16) above
+       the strip top, i.e. 18.5..13.5, clear of the caption's glyph tops (~10.3)
+       and of the block above (20). Never narrower: three sites read it. */
+    const STRIP_GAP = 20, GRIP_UP = 16;
+    const gaps = (vH ? 8 : 0) + strips.length * STRIP_GAP;
     const hBudget = H - pY - navReserve - MIN_PH - gaps;
     const hNeed = vH + sH + sWH;
     if (hNeed > hBudget && hNeed > 0) {
@@ -7183,10 +7193,10 @@ function renderCharts(data, lamp) {
       sWH = sWH ? Math.max(24, Math.round(sWH * scale)) : 0;
     }
     const stripHs = strips.map(([which]) => (which === 'weekly' ? sWH : sH));
-    const pH = H - pY - navReserve - (vH ? vH + 8 : 0) - strips.length * 14 - stripHs.reduce((a, b) => a + b, 0);
+    const pH = H - pY - navReserve - (vH ? vH + 8 : 0) - strips.length * STRIP_GAP - stripHs.reduce((a, b) => a + b, 0);
     const vY = pY + pH + (vH ? 8 : 0);
     let stripCursor = vY + vH;
-    const stripTops = strips.map((_, i) => { stripCursor += 14; const y = stripCursor; stripCursor += stripHs[i]; return y; });
+    const stripTops = strips.map((_, i) => { stripCursor += STRIP_GAP; const y = stripCursor; stripCursor += stripHs[i]; return y; });
     const chartBot = strips.length ? stripCursor : vY + vH;
 
     text(caption, x0 + 6, 13, { 'font-size': 9, 'font-weight': 600, 'letter-spacing': '.08em', 'font-family': 'var(--font-sans)' });
@@ -7665,10 +7675,11 @@ function renderCharts(data, lamp) {
       svg.appendChild(svgEl('line', { x1: x0 + 6, y1: barY, x2: x0 + 6 + plotW, y2: barY, stroke: WB.label, 'stroke-width': 1, 'stroke-opacity': 0.4, 'shape-rendering': 'crispEdges', 'pointer-events': 'none' }));
       /* grab-handle pill widened + fully opaque (owner report 2026-07-23: too
          subtle to spot between volume and stochastic) — reads unmistakably as
-         a draggable white bar now, same across every pane. */
+         a draggable white bar now, same across every pane. data-grip names the
+         bar it belongs to (S76 selects by it, never by the white fill). */
       const gw = 56;
-      svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2.5, width: gw, height: 5, rx: 2.5, fill: '#FFFFFF', 'pointer-events': 'none' }));
-      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize; touch-action: none' });
+      svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2.5, width: gw, height: 5, rx: 2.5, fill: '#FFFFFF', 'pointer-events': 'none', 'data-grip': kind }));
+      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize; touch-action: none', 'data-grip-hit': kind });
       svg.appendChild(hit);
       hit.addEventListener('pointerdown', ev => {
         ev.preventDefault(); ev.stopPropagation();
@@ -7680,7 +7691,7 @@ function renderCharts(data, lamp) {
           return;
         }
         const navR = opts.nav ? 58 : 30;
-        const budget = H - pY - navR - ((vH ? 8 : 0) + strips.length * 14) - 140; /* keep price ≥ 140px */
+        const budget = H - pY - navR - ((vH ? 8 : 0) + strips.length * STRIP_GAP) - 140; /* keep price ≥ 140px */
         const minH = kind === 'vol' ? 24 : 40;
         /* max for each bar = the budget minus everything it does NOT resize */
         const rawMax = kind === 'vol' ? budget - sH - sWH : kind === 'stoch' ? budget - vH - sWH : budget - vH - sH;
@@ -7692,8 +7703,8 @@ function renderCharts(data, lamp) {
     /* top bar resizes the FIRST strip by its identity — 'stochW' when the
        weekly strip stands alone (Codex #147: it must write stochWH, not the
        hidden daily strip's stochH) */
-    if (strips.length) resizeBar(stripTops[0] - 7, strips[0][0] === 'weekly' ? 'stochW' : 'stoch', stripHs[0]);
-    if (hasN && hasW) resizeBar(stripTops[1] - 7, 'stochSplit', sH, sWH);
+    if (strips.length) resizeBar(stripTops[0] - GRIP_UP, strips[0][0] === 'weekly' ? 'stochW' : 'stoch', stripHs[0]);
+    if (hasN && hasW) resizeBar(stripTops[1] - GRIP_UP, 'stochSplit', sH, sWH);
 
     overlay.addEventListener('pointerdown', ev => {
       ev.preventDefault();
