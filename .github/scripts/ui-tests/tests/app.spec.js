@@ -11410,3 +11410,331 @@ test('S74: a short-history strip draws a PARTIAL dashed line — the same formul
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S75 — the News topic box's AI helper (specs/news-topic-ai): the page asks ONCE per typing, keeps the answer, says
+// what it searched, and can always go back to exactly what was typed.
+//
+// Typing `cerebres` finds nothing; desk-news can turn it into `Cerebras`. The page sends {action:'interpret', topic}
+// (a request of its own that never searches), stores {t, q, ai, day}, then searches with {topic, query}. What this
+// scenario proves is the PAGE's side: how many requests go out and with what, what the note says, what survives a
+// reload, a failed write, a lost reply, a new day, an old server and a late search reply. What the MODEL would answer for
+// `cerebres` is not a claim a browser test can make (spec A4) — the stand-in answers whatever each step scripts; the
+// server's handling of every answer is tools/news-topic-check.mjs.
+//
+// Demo with `DESK.mode` forced live and `deskFeed` replaced by a recorder (the collaborator, never the subject: the
+// subject is the page's own storing, single-flight, guards and note). The expected note wording is written out here,
+// not borrowed from the app.
+// ─────────────────────────────────────────────────────────────────────────────
+const eqS = (got, want, msg) => expect(got, msg).toEqual(want);
+test('S75: the news topic asks the AI helper once per typing, shows what it searched, and can go back to exactly what was typed', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(120_000);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await gotoDemo(page, '.news-row', 20000);
+
+  const WHY = {
+    off: 'the AI helper is switched off', unconfigured: 'the AI helper is not set up', origin: 'the AI helper only works on the desk page',
+    limit: 'the AI helper’s daily limit was reached', counter: 'the AI helper was unavailable', slow: 'the AI helper was too slow',
+    error: 'the AI helper had an error', unusable: 'the AI helper’s answer was not usable', mystery: 'the AI helper was unavailable',
+  };
+  const note = page.locator('#newsTopicNote');
+  const box = page.locator('#newsTopic');
+  // the recorder: every desk-news call, the scripted answers, and a reset between steps. `keep` leaves the storage alone (a reload).
+  const INSTALL = (keep) => {
+    window.__n = { calls: [], interpret: null, search: null, gate: null };
+    const reply = (b, extra) => ({ ok: true, topic: b.topic || '', query: b.query || b.topic || '', generatedAt: new Date().toISOString(), asOf: '2026-10-17',
+      items: [{ t: '09:00', ts: new Date().toISOString(), src: 'Wire', h: 'Headlines for ' + (b.query || b.topic || 'everything'), url: 'https://x.test/h', chips: [] }], ...(extra || {}) });
+    window.__reply = reply;
+    deskFeed = (name, body) => {
+      const b = JSON.parse(JSON.stringify(body || {}));
+      window.__n.calls.push({ name, body: b });
+      return b.action === 'interpret' ? window.__n.interpret(b) : window.__n.search(b);
+    };
+    window.__defaults = () => {
+      __n.calls.length = 0; __n.gate = null;
+      __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: 'Cerebras', ai: 'rewrote' });
+      __n.search = async (b) => reply(b);
+    };
+    window.__reset = () => {
+      __defaults();
+      localStorage.removeItem(NEWS_TOPIC_KEY); setNewsInterp(null); newsInterpFlight = null;
+      DESK.data.newsTopic = undefined; DESK.data.newsQuery = undefined;
+      document.getElementById('newsTopic').value = ''; paintNewsNote();
+    };
+    DESK.mode = 'live';
+    if (keep) __defaults(); else __reset();
+  };
+  await page.evaluate(INSTALL, false);
+  const calls = () => page.evaluate(() => __n.calls);
+  const interprets = () => page.evaluate(() => __n.calls.filter((c) => c.body.action === 'interpret').length);
+  const searches = () => page.evaluate(() => __n.calls.filter((c) => c.body.action !== 'interpret').map((c) => c.body));
+  const type = async (t) => { await box.fill(t); await box.press('Enter'); };
+  const idle = async (n) => expect.poll(async () => (await searches()).length, { message: 'a search went out', timeout: 8000 }).toBeGreaterThanOrEqual(n);
+  const today = () => page.evaluate(() => ptDateKey(new Date()));
+
+  // 0) the live region is in the DOM from the start, empty, and never `hidden`
+  await expect(note).toHaveAttribute('role', 'status');
+  eqS(await note.evaluate((n) => ({ hidden: n.hidden, text: n.textContent, height: Math.round(n.getBoundingClientRect().height), margin: getComputedStyle(n).marginTop })), { hidden: false, text: '', height: 0, margin: '0px' },
+    'an empty note takes no room (no height, no margin) and is not toggled with `hidden` (a screen reader announces text changes in a live region that stays put)');
+
+  // 1) a typing: ONE interpret request, then a search for the phrase it gave
+  await type('cerebres');
+  await idle(1);
+  eqS((await calls()).map((c) => c.body), [{ action: 'interpret', topic: 'cerebres' }, { force: true, topic: 'cerebres', query: 'Cerebras' }],
+    'one interpret request of its own, then the search for the phrase it gave (topic as typed, query as read)');
+  await expect(note).toHaveText('Showing news for “Cerebras” — you typed “cerebres”. Search as typed');
+  await expect(note.locator('button.news-topic-raw')).toHaveText('Search as typed');
+  await expect(page.locator('.news-row').first()).toContainText('Headlines for Cerebras');
+  eqS(await page.evaluate(() => JSON.parse(localStorage.getItem('news_topic_ai_v1'))), { t: 'cerebres', q: 'Cerebras', ai: 'rewrote', day: await today() }, 'the reading is stored with its Pacific day');
+
+  // 1b) a NEW topic drops the old reading and gets its own: the rewrite of `cerebres` must not leak onto `fed rate cut`
+  await page.evaluate(() => { __n.calls.length = 0; __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: b.topic, ai: 'same' }); });
+  await type('fed rate cut');
+  await idle(1);
+  eqS((await calls()).map((c) => c.body), [{ action: 'interpret', topic: 'fed rate cut' }, { force: true, topic: 'fed rate cut' }], 'a new topic is read afresh and searched as the reading says (here: as typed)');
+  await expect(note).toHaveText('');
+  await page.evaluate(() => { __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: 'Cerebras', ai: 'rewrote' }); });
+  await type('cerebres');
+  await idle(2);
+  await expect(note).toContainText('Showing news for “Cerebras”');
+
+  // 1c) the note describes the rows ON SCREEN (FR3): the reading is in but its search is still out -> the old rows stand and the note says nothing yet
+  await page.evaluate(() => {
+    __reset();
+    DESK.data.newsTopic = 'fed rate cut'; DESK.data.newsQuery = 'fed rate cut';    // the rows on screen belong to another topic
+    __n.search = (b) => new Promise((res) => { __n.gate = () => res(__reply(b)); });
+  });
+  await type('cerebres');
+  await expect.poll(async () => (await searches()).length, { message: 'the search for the reading is out' }).toBe(1);
+  await page.waitForTimeout(150);
+  eqS(await interprets(), 1);
+  await expect(note, 'the reading is in but its headlines are not: no note describes rows that are not on screen').toHaveText('');
+  await page.evaluate(() => __n.gate());
+  await expect(note, 'and the note appears with the rows it describes').toHaveText('Showing news for “Cerebras” — you typed “cerebres”. Search as typed');
+
+  // 1d) a search that FAILS leaves no note; its retry asks the helper nothing (the reading is stored) and then draws the note with the rows
+  await page.evaluate(() => {
+    __reset();
+    DESK.data.newsTopic = 'fed rate cut'; DESK.data.newsQuery = 'fed rate cut';
+    __n.search = async () => { throw new Error('HTTP 502'); };
+    newsLive = false;                                               // an outage: no rows have landed yet, so the page is retrying
+  });
+  await type('cerebres');
+  await expect.poll(async () => (await searches()).length).toBe(1);
+  await page.waitForTimeout(150);
+  await expect(note, 'a failed search shows no note: nothing it describes is on screen').toHaveText('');
+  await page.evaluate(async () => { clearTimeout(newsRetry.timer); __n.calls.length = 0; __n.search = async (b) => __reply(b); await refreshNews(); });
+  eqS([await interprets(), (await searches()).map((b) => b.query)], [0, ['Cerebras']], 'the retry of a failed search spends nothing: the reading was kept, only the search is repeated');
+  await expect(note).toHaveText('Showing news for “Cerebras” — you typed “cerebres”. Search as typed');
+
+  // 1e) retyping empties the note at once: it never describes the old topic's search under the new topic, whatever the new reading is doing
+  await page.evaluate(() => { __n.interpret = () => new Promise(() => {}); });   // the next reading never answers
+  await type('fed rate');
+  await expect(note, 'the old note goes the moment the topic changes').toHaveText('');
+  await page.evaluate(() => { newsInterpFlight = null; __defaults(); });   // let the next steps start from a live topic again
+  await type('cerebres');
+  await expect(note).toContainText('Showing news for “Cerebras”');
+
+  // 2) refresh, "Refresh now" and a reload never ask again — and keep searching for the phrase
+  await page.evaluate(async () => { __n.calls.length = 0; await refreshNews(); await refreshNews(true); newsInterp = null; newsInterpLoaded = false; await refreshNews(); });
+  eqS(await interprets(), 0, 'no refresh, forced refresh or reload spends the helper again');
+  eqS((await searches()).map((b) => b.query), ['Cerebras', 'Cerebras', 'Cerebras'], 'every search is for the phrase the one reading gave (the reload read it back from storage)');
+  await expect(note).toHaveText('Showing news for “Cerebras” — you typed “cerebres”. Search as typed');
+
+  // 2b) a poll that changes nothing leaves the live region alone: the focused button keeps its focus and a screen reader hears nothing new
+  await note.locator('button.news-topic-raw').focus();
+  await page.evaluate(() => { window.__mut = 0; new MutationObserver((m) => { __mut += m.length; }).observe(document.getElementById('newsTopicNote'), { childList: true, subtree: true, characterData: true }); });
+  await page.evaluate(async () => { await refreshNews(); await refreshNews(true); });
+  eqS(await page.evaluate(() => [__mut, document.activeElement && document.activeElement.className]), [0, 'news-topic-raw'], 'two polls with the same reading: no mutation of the note, focus still on the button');
+
+  // 2b') with the reading held there is nothing to wait for: the search goes out in the SAME tick it always did (S52 guards the demo half)
+  eqS(await page.evaluate(async () => { __n.calls.length = 0; const p = refreshNews(); const n = __n.calls.length; await p; return n; }), 1,
+    'the search request is made before refreshNews first yields');
+
+  // 2c) leaving the box without changing it re-sweeps nothing and spends nothing
+  await page.evaluate(() => { __n.calls.length = 0; });
+  await box.focus();
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(150);
+  eqS((await calls()).length, 0, 'a blur with the same topic makes no request at all');
+
+  // 2d) a REAL reload: a fresh page reads the reading back from storage (not by poking this page's module state) and asks nothing
+  const page2 = await page.context().newPage();
+  page2.on('pageerror', (e) => errs.push(e.message));
+  await gotoDemo(page2, '.news-row', 20000);
+  await page2.evaluate(INSTALL, true);
+  await page2.evaluate(async () => { await refreshNews(); });
+  eqS(await page2.evaluate(() => __n.calls.map((c) => c.body)), [{ topic: 'cerebres', query: 'Cerebras' }],
+    'a reloaded page found the stored reading: one search for the phrase, no interpret request');
+  await expect(page2.locator('#newsTopicNote')).toHaveText('Showing news for “Cerebras” — you typed “cerebres”. Search as typed');
+  await page2.close();
+
+  // 3) two refreshes while the reading is in flight make ONE request
+  await page.evaluate(() => { __reset(); localStorage.setItem(NEWS_TOPIC_KEY, 'cerebres'); __n.interpret = (b) => new Promise((res) => { __n.gate = () => res({ ok: true, topic: b.topic, query: 'Cerebras', ai: 'rewrote' }); }); });
+  await page.evaluate(() => { window.__p = [refreshNews(), refreshNews(true)]; });
+  await expect.poll(interprets, { message: 'the interpret request is out' }).toBe(1);
+  await page.waitForTimeout(150);
+  eqS(await interprets(), 1, 'a poll or "Refresh now" arriving while the reading is out waits for it instead of asking again');
+  await page.evaluate(async () => { __n.gate(); await Promise.all(__p); });
+  eqS((await searches()).map((b) => b.query), ['Cerebras', 'Cerebras'], 'both then search for the phrase');
+
+  // 3b) a reading that lands AFTER the topic was retyped belongs to the old topic and is not stored
+  await page.evaluate(() => {
+    __reset();
+    __n.interpret = (b) => (b.topic === 'cerebres' ? new Promise((res) => { __n.gate = () => res({ ok: true, topic: b.topic, query: 'Cerebras', ai: 'rewrote' }); })
+      : Promise.resolve({ ok: true, topic: b.topic, query: b.topic, ai: 'same' }));
+  });
+  await type('cerebres');
+  await expect.poll(interprets).toBe(1);
+  await type('fed rate');
+  await idle(1);
+  await page.evaluate(async () => { __n.gate(); await new Promise((r) => setTimeout(r, 100)); });
+  eqS(await page.evaluate(() => JSON.parse(localStorage.getItem('news_topic_ai_v1')).t), 'fed rate', 'the late reading for the old topic was dropped, not stored over the new one');
+  await expect(note).toHaveText('');
+  eqS((await searches()).map((b) => b.topic), ['fed rate'], 'and the refresh that was waiting for it searched nothing for the abandoned topic');
+
+  // 3c) a stored reading is only ever FOR the topic it was made for: another tab (or an older save) can leave the storage
+  //     holding `cerebres` -> `Cerebras` while the saved topic is `fed rate`; that reading must neither be used nor searched
+  await page.evaluate(() => {
+    __reset(); __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: b.topic, ai: 'same' });
+    localStorage.setItem(NEWS_TOPIC_KEY, 'fed rate');
+    setNewsInterp({ t: 'cerebres', q: 'Cerebras', ai: 'rewrote', day: ptDateKey(new Date()) });
+  });
+  await page.evaluate(async () => { await refreshNews(); });
+  eqS(await calls().then((c) => c.map((x) => x.body)), [{ action: 'interpret', topic: 'fed rate' }, { topic: 'fed rate' }],
+    'the reading for another topic is not used: the saved topic is read afresh and searched without the other topic\'s phrase');
+
+  // 4) a lost reply (the request throws): the search runs AS TYPED, nothing is stored, and the next refresh asks again
+  await page.evaluate(() => { __reset(); __n.interpret = () => Promise.reject(new Error('network down')); });
+  await type('cerebres');
+  await idle(1);
+  eqS((await searches())[0], { force: true, topic: 'cerebres' }, 'searched as typed: no `query`');
+  await expect(note).toHaveText('');
+  eqS(await page.evaluate(() => localStorage.getItem('news_topic_ai_v1')), null, 'nothing was stored for a request that never got an answer');
+  await page.evaluate(async () => { await refreshNews(); });
+  eqS(await interprets(), 2, 'so the next refresh tries the reading again');
+
+  // 5) a failed write to localStorage must not make every poll ask again: the in-memory copy stands
+  await page.evaluate(() => {
+    __reset(); window.__realSet = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) { if (k === 'news_topic_ai_v1') throw new Error('quota'); return window.__realSet.call(this, k, v); };
+  });
+  await type('cerebres');
+  await idle(1);
+  await page.evaluate(async () => { await refreshNews(); await refreshNews(); Storage.prototype.setItem = window.__realSet; });
+  eqS(await interprets(), 1, 'one request across three refreshes although the write failed');
+  await expect(note).toContainText('Showing news for “Cerebras”');
+
+  // 6) every verdict: `same` says nothing; each failure says why, in the past tense; the search is AS TYPED for all of them
+  for (const ai of ['same', 'off', 'unconfigured', 'origin', 'limit', 'counter', 'slow', 'error', 'unusable', 'mystery', '__proto__', 'constructor']) {
+    await page.evaluate((v) => { __reset(); __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: b.topic, ai: v }); }, ai);
+    await type('cerebres');
+    await idle(1);
+    eqS((await searches())[0], { force: true, topic: 'cerebres' }, `${ai}: searched as typed`);
+    if (ai === 'same') await expect(note, 'same: the model agreed, so there is nothing to say').toHaveText('');
+    else await expect(note, `${ai}: the reason, in plain words`).toHaveText(`Searched as typed — ${Object.hasOwn(WHY, ai) ? WHY[ai] : WHY.mystery}.`);
+    await page.evaluate(async () => { await refreshNews(); });
+    eqS(await interprets(), 1, `${ai}: a verdict noted today stands — no asking again on every poll`);
+  }
+
+  await page.evaluate(() => { __reset(); __n.interpret = async (b) => ({ ok: true, topic: b.topic, query: '???', ai: 'rewrote' }); });
+  await type('cerebres');
+  await idle(1);
+  await expect(note, 'a "rewrote" with no phrase is no rewrite: searched as typed, and said so').toHaveText(`Searched as typed — ${WHY.unusable}.`);
+  eqS((await searches())[0], { force: true, topic: 'cerebres' });
+
+  // 7) a failure noted on an EARLIER Pacific day is ignored (asked again); `none` (an old server) is too; a rewrite and an agreement stay true
+  for (const [ai, asksAgain] of [['limit', true], ['error', true], ['none', true], ['rewrote', false], ['same', false]]) {
+    await page.evaluate(([v]) => {
+      __reset(); localStorage.setItem(NEWS_TOPIC_KEY, 'cerebres');
+      setNewsInterp({ t: 'cerebres', q: v === 'rewrote' ? 'Cerebras' : 'cerebres', ai: v, day: '2000-01-01' });
+    }, [ai]);
+    await page.evaluate(async () => { await refreshNews(); });
+    eqS((await interprets()) === 1, asksAgain, `a stored "${ai}" from an earlier day ${asksAgain ? 'is asked for again' : 'still stands'}`);
+  }
+
+  // 8) an OLD server (the client ships first): the interpret request is answered as an ordinary search with no `ai` -> kept as `none`,
+  //    no note, searched as typed, and not asked again today
+  await page.evaluate(() => { __reset(); __n.interpret = async (b) => __reply(b); });
+  await type('cerebres');
+  await idle(1);
+  await expect(note).toHaveText('');
+  eqS((await searches())[0], { force: true, topic: 'cerebres' }, 'searched as typed');
+  eqS(await page.evaluate(() => JSON.parse(localStorage.getItem('news_topic_ai_v1')).ai), 'none');
+  await page.evaluate(async () => { await refreshNews(); });
+  eqS(await interprets(), 1, 'one extra request a day against an old server, not one per poll');
+
+  // 8b) a corrupt or foreign value in the storage key (it is shared by every page on this origin) is ignored: the news still loads, the helper is asked again
+  for (const junk of ['{{{', '[]', '"x"', '{"t":"cerebres","q":"Cerebras","ai":5,"day":"2026-10-17"}', '{"t":1,"q":"Cerebras","ai":"rewrote","day":"2026-10-17"}']) {
+    await page.evaluate((j) => { __reset(); localStorage.setItem(NEWS_TOPIC_KEY, 'cerebres'); localStorage.setItem('news_topic_ai_v1', j); newsInterp = null; newsInterpLoaded = false; }, junk);
+    await page.evaluate(async () => { await refreshNews(); });
+    eqS([await interprets(), (await searches()).map((b) => b.query)], [1, ['Cerebras']], `${junk}: ignored — the helper is asked, the news loads`);
+  }
+
+  // 9) a LATE search reply for the phrase that has since been replaced is dropped, and never shows under the newer note
+  await page.evaluate(() => { __reset(); });
+  await type('cerebres');
+  await expect(note.locator('button.news-topic-raw'), 'the note is drawn once the rows for the rewrite have landed').toBeVisible();
+  await page.evaluate(() => {
+    __n.calls.length = 0;
+    __n.search = (b) => (b.query === 'Cerebras' ? new Promise((res) => { __n.gate = () => res(__reply(b)); }) : Promise.resolve(__reply(b)));
+    window.__p = refreshNews();                                      // the next poll: its search for the rewritten phrase is held open
+  });
+  await expect.poll(async () => (await searches()).length).toBe(1);
+  await note.locator('button.news-topic-raw').click();               // "Search as typed" while that search is still out
+  await expect(page.locator('.news-row').first()).toContainText('Headlines for cerebres');
+  await expect(note, 'after the override the note has nothing to say (it is searching exactly what was typed)').toHaveText('');
+  await page.evaluate(async () => { __n.gate(); await __p; await new Promise((r) => setTimeout(r, 100)); });
+  await expect(page.locator('.news-row').first(), 'the late reply for the old phrase did not repaint').toContainText('Headlines for cerebres');
+  eqS(await page.evaluate(() => DESK.data.newsQuery), 'cerebres');
+  eqS(await page.evaluate(() => document.activeElement && document.activeElement.id), 'newsList', 'focus moved to the list when the button left the page');
+  eqS((await searches()).map((b) => b.query ?? null), ['Cerebras', null], 'the override searched exactly what was typed (no `query`) and stays that way');
+  await page.evaluate(async () => { __n.calls.length = 0; await refreshNews(); });
+  eqS([await interprets(), (await searches())[0].query ?? null], [0, null], 'and a later refresh neither asks again nor goes back to the rewrite');
+
+  // 10) the empty state names the phrase SEARCHED
+  await page.evaluate(() => { __reset(); __n.search = async (b) => ({ ...__reply(b), items: [] }); });
+  await type('cerebres');
+  await expect(page.locator('#newsList')).toContainText('No headlines for “Cerebras”');
+
+  // 11) ✕ clears the note, the stored reading and the topic
+  await page.locator('#newsTopicClear').click();
+  await expect(note).toHaveText('');
+  eqS(await page.evaluate(() => [localStorage.getItem('news_topic_v1'), localStorage.getItem('news_topic_ai_v1')]), [null, null]);
+  await idle(1);
+  eqS((await searches()).at(-1), { force: true }, 'the full sweep returns: no topic, no query');
+
+  // 12) demo never asks and never shows a note, even over a stored reading
+  await page.evaluate(() => { __reset(); DESK.mode = 'demo'; });
+  await type('cerebres');
+  await idle(1);
+  eqS(await interprets(), 0, 'demo makes no interpret request');
+  eqS((await searches())[0], { force: true, topic: 'cerebres' }, 'and searches as typed');
+  await page.evaluate(() => { setNewsInterp({ t: 'cerebres', q: 'Cerebras', ai: 'rewrote', day: ptDateKey(new Date()) }); DESK.data.newsTopic = 'cerebres'; DESK.data.newsQuery = 'Cerebras'; paintNewsNote(); });   // the rows match the reading, so ONLY demo stops the note
+  await expect(note, 'a reading in storage shows nothing in demo').toHaveText('');
+  await page.evaluate(() => { DESK.mode = 'live'; __reset(); });
+
+  // 13) the note at this project's own width: wraps inside the rail, in the muted stamp ink, with a real focusable button
+  const long = 'wafer scale chip maker cerebras systems ipo filing';
+  await page.evaluate((l) => {
+    localStorage.setItem(NEWS_TOPIC_KEY, 'cerebres'); document.getElementById('newsTopic').value = 'cerebres';
+    setNewsInterp({ t: 'cerebres', q: l, ai: 'rewrote', day: ptDateKey(new Date()) });
+    DESK.data.newsTopic = 'cerebres'; DESK.data.newsQuery = l;      // the rows on screen are the rewrite's, so the note is drawn
+    paintNewsNote();
+  }, long);
+  const m = await page.evaluate(() => {
+    const n = document.getElementById('newsTopicNote'), panel = n.closest('.panel'), stamp = document.getElementById('newsStamp'), b = n.querySelector('button');
+    const r = n.getBoundingClientRect(), pr = panel.getBoundingClientRect(), br = b.getBoundingClientRect();
+    return { coarse: matchMedia('(pointer: coarse)').matches, hit: Math.round(br.height * 10) / 10, noteInk: getComputedStyle(n).color, stampInk: getComputedStyle(stamp).color, overflowX: n.scrollWidth - n.clientWidth,
+      leftOk: r.left >= pr.left - 1, rightOk: r.right <= pr.right + 1, btnInside: br.right <= pr.right + 1 && br.left >= pr.left - 1, height: Math.round(r.height), lines: Math.round(r.height / parseFloat(getComputedStyle(n).lineHeight)) };
+  });
+  eqS([m.noteInk === m.stampInk, m.overflowX <= 1, m.leftOk, m.rightOk, m.btnInside], [true, true, true, true, true],
+    `the note is the muted stamp ink, wraps inside the panel and the button stays inside it (${JSON.stringify(m)})`);
+  if (m.coarse) expect(m.hit, `a finger needs a 44px target for "Search as typed" (${JSON.stringify(m)})`).toBeGreaterThanOrEqual(44);
+  await note.locator('button.news-topic-raw').focus();
+  await expect(note.locator('button.news-topic-raw')).toBeFocused();
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});

@@ -9,9 +9,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20261016b">
-<link rel="stylesheet" href="styles/components.css?v=20261016b">
-<link rel="stylesheet" href="styles/layout.css?v=20261016b">
+<link rel="stylesheet" href="styles/tokens.css?v=20261017b">
+<link rel="stylesheet" href="styles/components.css?v=20261017b">
+<link rel="stylesheet" href="styles/layout.css?v=20261017b">
 </head>
 <body>
 <div class="shell">
@@ -92,6 +92,10 @@
                  aria-label="Narrow news to a topic">
           <button id="newsTopicClear" class="news-topic-x" type="button" hidden aria-label="Clear topic">✕</button>
         </div>
+        <!-- The AI helper's note (specs/news-topic-ai): says what the news was SEARCHED for when that is not what was typed,
+             and offers "Search as typed". A live region that is never `hidden` — its text is set or emptied, so a
+             screen reader hears each change; an empty <p> takes no room. -->
+        <p id="newsTopicNote" class="stamp news-topic-note" role="status"></p>
         <section class="panel-body" id="newsList" tabindex="0" aria-label="News headlines — scrollable"></section>
       </section>
     </aside>
@@ -553,8 +557,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20261016b"></script>
-<script src="scripts/data.js?v=20261016b"></script>
-<script src="scripts/app.js?v=20261016b"></script>
+<script src="scripts/config.js?v=20261017b"></script>
+<script src="scripts/data.js?v=20261017b"></script>
+<script src="scripts/app.js?v=20261017b"></script>
 </body>
 </html>
