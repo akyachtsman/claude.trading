@@ -167,3 +167,18 @@ The three Pro panes in `scripts/app.js` (`renderCharts` / `drawPane`): volume av
   `syncZoomPressed()` (end of `renderCharts`) is what lights the restored
   button: `wireCharts()` runs before the feed has built `wbState`, so the
   pressed state it sets at load is provisional.
+
+**The resize-grip pills sit on a row of their own (owner 2026-10-19: "fix the resize grip pills").** Every pane has a draggable bar above its VOLUME pane and above each
+stochastic strip: a faint line with a 56x5 white pill centred on it (`resizeBar` in `drawPane`; the pill carries `data-grip="vol|stoch|stochW|stochSplit"`, its hit area
+`data-grip-hit`, and tests select by those markers, never by the white fill). The pill above a STRIP used to share a 14px band with the strip's caption — and the
+pill is CENTRED while the caption starts at the left, so any caption wider than about half the plot ran underneath it (`STOCH 14-3-3 · DAILY` read `STOCH 14-3-3 ·`
+under it; at 900px and below, and on a phone, every strip caption; measured before the change: 5 of the demo's 7 pills over a caption at 1152px, 6 of 7 at 900px
+and at 390px). The band is now `STRIP_GAP` = 20px (one constant, read by the height budget, the price-pane height, `stripTops` and the drag's `budget`) and the
+pill's centre is `GRIP_UP` = 16px above the strip top: its box runs 18.5–13.5 above the strip, clear of the caption's glyph tops (~10.3) and of the block above
+(20). The pill stays CENTRED — the fix is vertical, never a sideways slide, which has no room on a phone (a pane is ~110 user units wide there and its caption can be
+wider than the pane). The volume pill is untouched (it lives in the 8px gap above the volume pane, where no text is). **Never narrow `STRIP_GAP` back to 14 or move
+`GRIP_UP` below ~12** without re-running S76: each puts the pill back over the caption or over the block above, and the price pane's height budget (`MIN_PH`) is
+computed from the same constant, so the three places cannot drift. Guarded by S76 (pill box vs every text and badge within half a pixel, centred on its own hit
+area both ways, nothing drawn touching it above or below, and a real drag on the first strip's bar still grows that strip); by hand, seven regressions (the old 14/7
+geometry, a pill nudged sideways, the pill moved up with the band left at 14, the hit area left at the old place, either marker dropped, the pill back on the caption
+row) each fail it on desktop and mobile-chrome.
