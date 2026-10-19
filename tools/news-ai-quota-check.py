@@ -18,7 +18,7 @@ PGUSER; trust auth is fine) and the `psql` client. It never touches a Supabase p
     install -d -o postgres /tmp/pgscratch && runuser -u postgres -- /usr/lib/postgresql/16/bin/initdb -D /tmp/pgscratch/data -A trust -U postgres
     runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D /tmp/pgscratch/data -o "-p 54398 -k /tmp/pgscratch -c listen_addresses=" -l /tmp/pgscratch/log -w start
     PGHOST=/tmp/pgscratch PGPORT=54398 PGUSER=postgres python3 tools/news-ai-quota-check.py
-Not run by CI."""
+Run by CI: qa.yml's news-checks job, against a postgres:16 service container."""
 import json, os, re, subprocess, sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 MIG = open(os.path.join(ROOT, 'supabase/migrations/desk_023_news_ai_quota.sql')).read()

@@ -203,12 +203,69 @@ jobs:
           npm ci --ignore-scripts --prefix "$UI_TESTS_DIR"
           npx --prefix "$UI_TESTS_DIR" html-validate index.html
 
+  # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
+  # The News topic AI helper's server and database harnesses (owner 2026-10-19:
+  # "yes" to running them in CI; until then they ran only by hand). Cheap and
+  # path-independent, so they run on every trigger, like static-checks:
+  #   news-topic-check.mjs --mutants  desk-news against the committed source in a
+  #                                   vm with stubbed collaborators, then every
+  #                                   single-edit mutant must be caught (exit 1
+  #                                   on a failed check, a surviving or an
+  #                                   INVALID mutant — a moved anchor is a fix
+  #                                   to the harness, not a flake)
+  #   news-ai-quota-check.py          desk_023 on a SCRATCH Postgres (the service
+  #                                   container below — never a Supabase
+  #                                   project): the verify probe, a 20-way burst
+  #                                   proving the counter atomic, Ask's counter
+  #                                   independent, then 12 migration mutants
+  # The page's half (S75 under 41 mutants) is the news-client-mutants job.
+  news-checks:
+    name: News helper checks (server + database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install the pinned esbuild
+        run: npm ci --prefix tools
+
+      - name: desk-news checks and mutants
+        run: node tools/news-topic-check.mjs --mutants
+
+      - name: desk_023 on a scratch Postgres, burst and mutants
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+        run: python3 tools/news-ai-quota-check.py
+
   ui-changes:
     name: Detect UI-relevant changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       ui: ${{ steps.diff.outputs.ui }}
+      # ⚠️ LOCAL ADDITION — see the news-client-mutants job.
+      news_client: ${{ steps.news.outputs.run }}
 
     steps:
       - name: Checkout (full history for base diff)
@@ -332,6 +389,92 @@ jobs:
                exit 1 ;;
           esac
 
+      # ⚠️ LOCAL ADDITION — whether the news-client-mutants job runs: whenever the
+      # browser suite does (its mutants anchor on scripts/app.js, index.html and
+      # styles/, and S75 lives in the kit), and also when only the mutant runner
+      # itself changed, which UI_PATHS does not match.
+      - name: News client mutants needed?
+        id: news
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          UI: ${{ steps.diff.outputs.ui }}
+        run: |
+          if [ "$UI" = "true" ] || [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! files=$(git diff --name-only "$BASE_SHA"...HEAD); then
+            echo "::error::could not diff $BASE_SHA...HEAD — refusing to guess whether the news client mutants are needed."
+            exit 1
+          fi
+          if printf '%s\n' "$files" | grep -qE '^tools/news-topic-client-mutants\.py$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
+  # The News topic AI helper's page guards (owner 2026-10-19, with news-checks):
+  # tools/news-topic-client-mutants.py breaks each of 41 guards in scripts/app.js,
+  # index.html or styles/ in turn and requires S75 to FAIL on desktop and
+  # mobile-chrome (Chromium only — it needs no WebKit). It exits non-zero when S75
+  # is red on the untouched tree, when a mutant survives, or when an anchor moved
+  # (INVALID): an edit to a guarded line means updating the runner in the same PR.
+  # Every file is restored and checked byte-identical at the end. Split into
+  # two shards (each runs S75's baseline, then every 2nd mutant): the whole run
+  # took 8m50s in the build sandbox (2026-10-19), and a hosted runner is slower.
+  news-client-mutants:
+    name: News helper page mutants (S75, shard ${{ matrix.shard }}/2)
+    needs: [static-checks, ui-changes]
+    if: needs.ui-changes.outputs.news_client == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.UI_TESTS_DIR }}/package-lock.json
+
+      - name: Install the kit
+        run: npm ci --prefix "$UI_TESTS_DIR"
+
+      # Its OWN cache key: the ui-suite composite caches chromium AND webkit under
+      # pw-<os>-<lockfile hash>, and a chromium-only save under that key would
+      # hand the composite a cache hit with no webkit in it.
+      - name: Cache Chromium
+        id: pw-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-chromium-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', env.UI_TESTS_DIR)) }}
+
+      - name: Install Chromium
+        working-directory: ${{ env.UI_TESTS_DIR }}
+        env:
+          HIT: ${{ steps.pw-cache.outputs.cache-hit }}
+        run: |
+          if [ "$HIT" = "true" ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+          echo "PW_CHROMIUM=$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+
+      - name: S75 under every page mutant
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python3 tools/news-topic-client-mutants.py "--shard=$SHARD/2"
+
   ui-tests:
     name: UI Tests (local server)
     needs: [static-checks, ui-changes]
@@ -450,8 +593,9 @@ jobs:
   # the PR has since moved past.
   notify:
     name: Notify PR on green
-    needs: [static-checks, ui-changes, ui-tests]
-    if: ${{ always() && github.event_name == 'pull_request' && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') }}
+    # news-checks and news-client-mutants are LOCAL ADDITIONS (see their jobs).
+    needs: [static-checks, ui-changes, ui-tests, news-checks, news-client-mutants]
+    if: ${{ always() && github.event_name == 'pull_request' && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') && needs.news-checks.result == 'success' && (needs.news-client-mutants.result == 'success' || needs.news-client-mutants.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
