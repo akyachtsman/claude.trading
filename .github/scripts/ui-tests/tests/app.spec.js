@@ -11738,3 +11738,108 @@ test('S75: the news topic asks the AI helper once per typing, shows what it sear
 
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S76 — the white resize-grip pills sit on a row of their own.
+//
+// Each pane has a draggable bar above its VOLUME pane and above every stochastic strip, drawn as a faint line with a
+// 56x5 white pill centred on it. The pill above a strip used to share a 14px band with the strip's caption
+// (`STOCH 14-3-3 · DAILY`), which starts at the LEFT: any caption wider than about half the plot ran underneath the
+// centred pill and lost its tail, and on a phone every strip caption did (owner 2026-10-19, "fix the resize grip
+// pills"). The band is now 20px and the pill has the upper half of it to itself.
+//
+// Selected by the `data-grip` / `data-grip-hit` markers, never by the white fill (a pill that lost its fill, or a
+// stray white rect, must not decide what is being measured). Read off the live layout at the project's OWN width:
+// the caption's real text box against the pill's real box, so the check holds for whatever font the engine falls
+// back to — and the stacked phone layout, where the captions are widest against the plot, is the strongest case.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S76: the resize-grip pills never cover a strip caption, stay centred on their bar, sit on empty canvas, and still resize', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  await gotoDemo(page, '#wbChart', 15000, 1200);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+
+  // ── 1. what is drawn: one pill and one hit area per bar, in the same order
+  const read = () => page.evaluate(() => {
+    const svg = document.getElementById('wbChart');
+    const box = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+    const pills = [...svg.querySelectorAll('rect[data-grip]')];
+    const hits = [...svg.querySelectorAll('rect[data-grip-hit]')];
+    const texts = [...svg.querySelectorAll('text')].filter((t) => t.textContent.trim());
+    const badges = [...svg.querySelectorAll('rect')].filter((r) => r.getAttribute('rx') === '2' && r.getAttribute('height') === '12');
+    /* what counts as CONTENT under a pill: anything that is not the canvas fill or a transparent hit/overlay rect */
+    const isContent = (el) => {
+      if (el === svg) return false;
+      if (el.tagName === 'rect') { const f = el.getAttribute('fill'); return !(f === 'transparent' || f === 'var(--color-bg)' || f === 'none'); }
+      return true;
+    };
+    return pills.map((p, i) => {
+      const pb = box(p), hb = hits[i] ? box(hits[i]) : null;
+      const near = (rect) => texts.concat(badges).filter((t) => {
+        const tb = box(t);
+        return Math.min(rect.r, tb.r) - Math.max(rect.l, tb.l) > 0 && Math.min(rect.b, tb.b) - Math.max(rect.t, tb.t) > 0;
+      }).map((t) => (t.textContent || 'badge').slice(0, 30));
+      const grown = { l: pb.l, r: pb.r, t: pb.t - 0.5, b: pb.b + 0.5 };       // half a pixel of clearance each way (the phone's volume pill sits 0.8px above its VOL label)
+      const content = [];
+      const probes = 6;
+      for (const y of [pb.t - 0.5, pb.b + 0.5]) {
+        for (let k = 0; k < probes; k++) {
+          const x = pb.l + 3 + (pb.r - pb.l - 6) * (k / (probes - 1));
+          for (const el of document.elementsFromPoint(x, y)) if (svg.contains(el) && isContent(el)) content.push(el.tagName + (y < pb.t ? ' above' : ' below'));
+        }
+      }
+      return {
+        kind: p.getAttribute('data-grip'), hitKind: hits[i] && hits[i].getAttribute('data-grip-hit'),
+        w: +(pb.r - pb.l).toFixed(1), h: +(pb.b - pb.t).toFixed(1),
+        dx: hb ? +(((pb.l + pb.r) / 2) - ((hb.l + hb.r) / 2)).toFixed(2) : null,
+        dy: hb ? +(((pb.t + pb.b) / 2) - ((hb.t + hb.b) / 2)).toFixed(2) : null,
+        over: near(grown), content,
+      };
+    });
+  });
+  const pills = await read();
+  const kinds = pills.map((p) => p.kind).sort();
+  expect(kinds, 'the demo draws a bar above each pane\'s volume (3), each pane\'s first strip (3) and the long-term pane\'s strip split (1)')
+    .toEqual(['stoch', 'stoch', 'stoch', 'stochSplit', 'vol', 'vol', 'vol']);
+  expect(pills.map((p) => p.hitKind), 'every pill has the hit area of its own bar, in order').toEqual(pills.map((p) => p.kind));
+  for (const p of pills) expect([p.w, p.h], `${p.kind}: the pill keeps its 56x5 shape (at the page's own scale)`).not.toEqual([0, 0]);
+
+  // ── 2. never over text or a badge, centred on its own hit area, and the canvas around it is empty
+  for (const [i, p] of pills.entries()) {
+    expect(p.over, `pill ${i} (${p.kind}) covers nothing: no caption, label or badge within half a pixel`).toEqual([]);
+    expect(Math.abs(p.dx), `pill ${i} (${p.kind}) stays centred on its bar`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(p.dy), `pill ${i} (${p.kind}) sits on the middle of its hit area (the hit area moved with it)`).toBeLessThanOrEqual(1);
+    expect(p.content, `pill ${i} (${p.kind}) has no candle, bar, line or text touching it above or below`).toEqual([]);
+  }
+
+  // ── 3. the bars still resize: drag the first stochastic bar up and its strip grows (the hit area moved with the pill)
+  const hit = page.locator('rect[data-grip-hit="stoch"]').first();
+  await hit.scrollIntoViewIfNeeded();
+  const hb = await hit.boundingBox();
+  const heights = () => page.evaluate(() => JSON.stringify(wbState.cfg));
+  const before = await heights();
+  const cx = hb.x + hb.width / 2, cy = hb.y + hb.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx, cy - 12, { steps: 3 });
+  await page.mouse.move(cx, cy - 30, { steps: 3 });
+  await page.mouse.up();
+  const after = await heights();
+  const grew = (() => {
+    const a = JSON.parse(before), b = JSON.parse(after), out = [];
+    for (const pane of Object.keys(b)) if (b[pane] && typeof b[pane] === 'object' && (b[pane].stochH ?? 0) > (a[pane] && a[pane].stochH != null ? a[pane].stochH : 0)) out.push(pane);
+    return out;
+  })();
+  expect(grew.length, 'dragging a strip\'s bar up grew exactly one pane\'s stochastic strip').toBe(1);
+
+  // the drag redrew the panes: the pills are still all there, still clear
+  const again = await read();
+  expect(again.length, 'every bar is still drawn after the resize').toBe(7);
+  for (const [i, p] of again.entries()) {
+    expect(p.over, `after the resize, pill ${i} (${p.kind}) still covers nothing`).toEqual([]);
+    expect(p.content, `after the resize, pill ${i} (${p.kind}) still sits on empty canvas`).toEqual([]);
+  }
+
+  expect(errs, 'no page errors through any of it').toEqual([]);
+});
