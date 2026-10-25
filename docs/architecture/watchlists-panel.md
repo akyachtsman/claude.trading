@@ -153,8 +153,8 @@ The Watchlists panel's tile / band rendering, placement, display rules and chart
     scrolls the PAGE** (`wlPageScroll`, `WL_PAGE_MAX_STEP` 22; Codex review of
     PR #306). A wrapped band can be taller than the screen — a 40-tile list is eleven
     rows at phone width and the roster allows 2,000 symbols a list — and the pointer
-    owns the drag: an armed touch drag keeps `touch-action: none` (`.wl-armed`), so a
-    finger cannot scroll the page itself, and without this a slot on an off-screen row,
+    owns the drag (an armed tile kept `touch-action: none` until 2026-10-25, when the
+    owner's iPhone rule removed it), and without this a slot on an off-screen row,
     or in a band far from the grabbed tile, could not be reached inside one gesture.
     Faster the nearer the edge; `wlDragPaint` is redone after every step because the
     tiles move under a STILL pointer; one rAF loop (`wlDrag.raf`) that runs only while

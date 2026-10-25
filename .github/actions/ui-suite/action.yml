@@ -16,12 +16,8 @@
 #   arithmetic, and what 120 deliberately does not cover are in CALLER BOUND
 #   at the end of this header. These measure THIS composite's `npm install`
 #   path below, not a stricter `npm ci`.
-#   That 120 is ENFORCED, not merely documented: check-job-bounds.py rejects any
-#   ui-suite caller below it, and templates/workflows/qa.yml invokes the guard in
-#   its static-checks job. If you copied this composite, copy
-#   templates/scripts/check-job-bounds.py to .github/scripts/ and keep that step,
-#   or the 120 reverts to being a number in a comment — which is what it was until
-#   #291, and what let three callers sit at 40.
+#   No script checks that 120: keep every caller of this composite at or above
+#   it by hand, whenever you copy the composite or edit a caller.
 #   The browser install is NOT the whole cost, whatever an earlier version of
 #   this note said: those warm figures are the suite's own share, and each scales
 #   with the number of projects in playwright.config.js. That is also the best
@@ -51,8 +47,8 @@
 # in all three callers (qa.yml, qa-live.yml, qa-response.yml), byte-identical
 # by convention only, and qa-live.yml had already drifted (the closing
 # cache-COMPOUNDS paragraph, merged below). The callers now carry a pointer here.
-# The number itself lives in check-job-bounds.py as UI_SUITE_FLOOR, which
-# enforces it; what follows is the reasoning behind it.
+# The number lives here and nothing enforces it, so keep the callers at or
+# above it by hand; what follows is the reasoning behind it.
 #
 # 120, NOT 90 or 60 (and never 40). The calling job runs this composite: dependency install + playwright
 # install + EVERY project in playwright.config.js + retries + artifact
@@ -74,8 +70,7 @@
 # tests. (#296 quotes 3.7x; that compares claude.trading's 29m34s TEST PHASE
 # against claude.prop's WHOLE JOB. Like for like it is 3.8x.)
 #
-#     cold-cache browser install   21m25s   (claude.directives
-#                                            check-job-bounds.py, rule 3)
+#     cold-cache browser install   21m25s   (claude.directives)
 #
 # NOTE the composite installs with `npm install`, not `npm ci` — an earlier
 # version of this block said ci. They differ in resolution and speed, so
@@ -186,11 +181,10 @@
 # and yields an inconclusive signal, which this file treats as the worse
 # failure.
 #
-# The 57-minute figure in claude.directives' check-job-bounds.py header is NOT a sizing input,
-# however tempting the arithmetic. Read it in context: that run "sat 57
-# minutes on a browser install", cited under "an unbounded job that WEDGES".
-# It is the pathology bounds exist to kill. Size to survive it and you have
-# built a bound that cannot trip on its own purpose.
+# A run that sat 57 minutes on a browser install is NOT a sizing input,
+# however tempting the arithmetic: it is a job that WEDGED, the pathology
+# bounds exist to kill. Size to survive it and you have built a bound that
+# cannot trip on its own purpose.
 #
 # 40 was wrong in the other direction, and the failure mode is why this
 # comment is long: a cancelled run is NOT a red one. It reads as
@@ -319,7 +313,7 @@ runs:
     # not values.
     #
     # So correctness beat feedback speed: the gate is now the last thing before
-    # the run, and check-ui-suite-env.py enforces that adjacency mechanically.
+    # the run. No script checks that adjacency: keep it by hand.
     # THE COST IS REAL — a config this gate would reject now costs a browser
     # install first. It is bounded by the cache step above (the ~20 minutes is a
     # cold-cache figure, not the steady state), and a gate that certifies a
@@ -334,8 +328,7 @@ runs:
     # each get their own exit code and their own printed line (#282).
     #
     # Copy templates/scripts/check-ui-viewports.js to .github/scripts/ WITH this
-    # composite — this step names it by path and fails at resolution without it,
-    # the same coupling check-job-bounds.py has with qa.yml.
+    # composite — this step names it by path and fails at resolution without it.
     #
     # That coupling is DERIVED now, not just documented here. /refresh-repo greps
     # its callers for `.github/scripts/*` paths, and until 2026-09-01 its pattern
@@ -520,20 +513,16 @@ runs:
 
     - name: Clear any stale Playwright report
       shell: bash
-      # THE SAME ENV AS THE THREE STEPS AFTER IT, and the reason is the guard
-      # rather than this step's own needs. Since #347 round 21 this step is part
-      # of `check-ui-suite-env.py` -> SEQUENCE: outside it, skipping this step,
-      # making it advisory or changing its command all left the guard green,
-      # while an uncleared report from a previous invocation satisfied the
-      # post-run gate. Folding it in gets every rule at once, and one rule over
+      # THE SAME ENV AS THE THREE STEPS AFTER IT, kept by hand: one rule over
       # four steps beats an exemption that has to be re-argued on every read.
+      # An uncleared report from a previous invocation satisfies the post-run
+      # gate, so this step is part of the sequence like the other three.
       # An `rm` does not import the config, so most of this block is inert here —
       # deliberately, and REPORT_PATH is not: it decides which file is cleared,
       # and it must be the one the other three read and write.
       # The four blocks stay written out: GitHub's runner refuses YAML anchors in
       # an action.yml ("Anchors are not currently supported"), workflows only
-      # (audit R8, declined 2026-10-12; TIME-SENSITIVE.md → GitHub), and
-      # check-yaml-anchors.py refuses one here before GitHub does.
+      # (audit R8, declined 2026-10-12; TIME-SENSITIVE.md → GitHub).
       env:
         APP_URL: ${{ inputs.app-url }}
         TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
@@ -582,15 +571,15 @@ runs:
         TEST_AUTH_SUCCESS_SELECTOR: ${{ inputs.test-auth-success-selector }}
         APP_PAGES: ${{ inputs.app-pages }}
         # REPORT_PATH is on ALL THREE steps, not just the one that uses it.
-        # check-ui-suite-env.py enforces exact env parity across the sequence,
-        # and that rule is not bureaucratic: two of these steps IMPORT the
+        # Keep exact env parity across the sequence by hand, and that rule is
+        # not bureaucratic: two of these steps IMPORT the
         # config, so a variable present at one evaluation and absent at another
         # is a config that can differ between them (#333 round 10).
         # FROM THE VALIDATED OUTPUT, never the action input — every consumer in
         # this composite now reads a value the validator accepted (#347 r10).
         REPORT_PATH: ${{ steps.report-path.outputs.relative }}
-        # Same value on every step of the sequence: check-ui-suite-env.py
-        # requires identical env, and two of these steps import the config. See
+        # Same value on every step of the sequence, kept identical by hand: two
+        # of these steps import the config. See
         # the run step for why this variable is pinned at all (#347 round 18).
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
       # CommonJS: it loads only because .github/scripts/package.json declares
@@ -604,8 +593,8 @@ runs:
         # Deliberately NO TESTS_DIR here, and none on the viewport check above
         # either — neither step declares one, so neither shadows an inherited
         # value and neither can branch on the other's absence.
-        # check-ui-suite-env.py enforces that these two mappings match exactly,
-        # and that both steps run from the same working-directory.
+        # Keep these two mappings identical by hand, and both steps on the same
+        # working-directory.
         APP_URL: ${{ inputs.app-url }}
         TEST_AUTH_CREDENTIAL: ${{ inputs.test-auth-credential }}
         TEST_AUTH_EMAIL: ${{ inputs.test-auth-email }}
@@ -688,8 +677,8 @@ runs:
         APP_PAGES: ${{ inputs.app-pages }}
         # REPORT_PATH: see its comment on "Check three viewport classes are declared".
         REPORT_PATH: ${{ steps.report-path.outputs.relative }}
-        # Same value on every step of the sequence: check-ui-suite-env.py
-        # requires identical env, and two of these steps import the config. See
+        # Same value on every step of the sequence, kept identical by hand: two
+        # of these steps import the config. See
         # the run step for why this variable is pinned at all (#347 round 18).
         PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ steps.report-path.outputs.relative }}
       # THROUGH THE ENVIRONMENT, NOT INTERPOLATED. `${{ }}` is substituted into

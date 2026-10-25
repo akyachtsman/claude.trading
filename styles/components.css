@@ -184,7 +184,9 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   background: rgba(0, 0, 0, .4); padding: var(--space-4);
 }
 .modal-backdrop[hidden] { display: none; }   /* the class's own display:flex would otherwise beat [hidden] */
-.modal-panel { width: 100%; max-width: 640px; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; }
+/* 85dvh after the 85vh fallback (design.md → iPhone and iPad, 2026-10-25): on an iPhone `vh` is the
+   screen with the address bar HIDDEN, so a dialog sized in vh alone runs under the bar. */
+.modal-panel { width: 100%; max-width: 640px; max-height: 85vh; max-height: 85dvh; display: flex; flex-direction: column; overflow: hidden; }
 .modal-panel .panel-body { overflow-y: auto; }
 .sys-prompt-text {
   width: 100%; box-sizing: border-box; resize: vertical; min-height: 240px;
@@ -641,12 +643,11 @@ a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underlin
   box-shadow: var(--shadow-raised);
 }
 .wl-tile.wl-dragging { opacity: .35; }
-/* Armed = a finger has rested on the tile and the drag is about to take over,
-   so the browser must stop treating the gesture as a scroll. Applied ONLY
-   while armed: `touch-action: none` on every tile would make the panel
-   unscrollable on a phone, which is the same class of mistake as stripping
-   double-tap zoom from tiles that had no removal wired (PR #200). */
-.wl-tile.wl-armed { touch-action: none; outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
+/* Armed = a finger has rested on the tile and the drag is about to take over.
+   The outline only: no `touch-action: none` (owner 2026-10-25, design.md →
+   iPhone and iPad — it stops a finger while a mouse wheel still works, and it
+   could not stop a pan already under way: touch-action is fixed at finger-down). */
+.wl-tile.wl-armed { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
 body.wl-drag-active { cursor: grabbing; }
 body.wl-drag-active .wl-tile { cursor: grabbing; }
 /* Placed by wlDragPaint with left/top/height — ABSOLUTE, so it takes no grid cell

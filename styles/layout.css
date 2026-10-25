@@ -829,12 +829,11 @@
      A filled slot shows a grab cursor — the only hint that it can be picked up, since a click still
      charts it and a double-click still edits it. The press-and-move itself is wired in
      wbWireSlotDrag; none of this changes what a click does.
-     ARMED = a finger has rested on the slot and the drag is about to take over, so the browser must
-     stop reading the gesture as a scroll. Applied ONLY while armed, exactly like `.wl-armed`:
-     `touch-action: none` on every slot would make the list unscrollable on a phone, and the base
-     `manipulation` above (which keeps the double-tap edit from becoming a zoom) stays the rule. */
+     ARMED = a finger has rested on the slot and the drag is about to take over: an outline only. No
+     `touch-action: none` (owner 2026-10-25, design.md → iPhone and iPad); the base `manipulation`
+     above (which keeps the double-tap edit from becoming a zoom) stays the rule. */
   .wb-slot:not(.wb-slot--empty) { cursor: grab; }
-  .wb-slot.wb-armed { touch-action: none; outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
+  .wb-slot.wb-armed { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
   /* The row being carried stays where it is, dimmed, so the list does not reflow under the pointer. */
   .wb-rail-row.wb-dragging { opacity: .35; }
   /* Placed by wbSlotDragPaint with top: ABSOLUTE inside `.wb-slots` (positioned above), so it takes
