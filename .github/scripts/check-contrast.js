@@ -38,7 +38,9 @@
 // declares a background and no colour). Neither method subsumes the other. A
 // complete check resolves each element's EFFECTIVE background through the
 // cascade — a different program from this one, and nobody has written it.
-// So: "9/9 OK" means the nine listed pairs passed. Before trusting it, confirm
+// So: "9/9 OK" means the nine listed pairs passed — or "11/11", when the two
+// control-edge pairs are in the run too (see CONTROL_EDGE_PAIRS below for when
+// they are). Either count is the listed pairs and nothing more. Before trusting it, confirm
 // your token roles match the ones assumed below, derive your own pairs from
 // your components.css, and check by hand any text using --color-accent below
 // 18.66px (or below 24px when not bold).
@@ -220,17 +222,100 @@ const pairs = [
   // pointer touches the control.
   ['--color-on-accent', '--color-accent-hover', AA, 'on-accent / accent-hover (button hover)'],
   ['--color-accent', '--color-surface', AA_LARGE, 'accent / surface (large)'],
-  // design.md's error-message copy rule creates --color-danger; it carries meaning,
-  // so it needs the same AA floor as any other body text.
+  // --color-danger carries meaning (error and destructive text), so it needs the
+  // same AA floor as any other body text.
   ['--color-danger', '--color-surface', AA, 'danger / surface'],
   ['--color-danger', '--color-bg', AA, 'danger / bg'],
 ];
 
-// The measured set, derived from `pairs` so there is no second list of names.
-// The scanner needs it: after #337 round 9 a measured token is recorded ONLY
-// from a top-level `:root` rule and refused anywhere else, so "is this name
-// measured" is a question the scan itself has to answer.
-const MEASURED = new Set(pairs.flatMap(([fg, bg]) => [fg, bg]));
+// ── THE CONTROL EDGE, AND WHY IT IS CONDITIONAL (#470) ──────────────────────
+// A form field's border is what tells a person it can be typed in. WCAG 1.4.11
+// gives that edge a 3:1 floor against whatever is next to it, and the house
+// tokens.css carries a token for exactly this role — --color-border-input —
+// apart from --color-border, which is for edges nothing depends on and sits
+// near 1.3:1 by design. Until #470 nothing here measured it: the edge of every
+// control in every project was "checked by hand", which is to say not checked.
+//
+// It cannot simply join `pairs` above. Projects still on the OLDER starter
+// tokens.css have no --color-border-input at all, and every pair above is
+// required — a missing token fails the run (see the "all pairs must be
+// evaluable" refusal at the end). Adding it unconditionally would turn every
+// one of those projects red overnight, for a token their stylesheet never
+// had, and the tempting fix for that red is a local edit deleting the pair —
+// which is the exception-that-hides-the-finding the #328 message warns about.
+//
+// So the pair is REQUIRED only where the project has said it is on the house
+// style, and the place it says so is its directive-sync record:
+//   .claude/directive-sync.json  containing  "house_style": true
+// That marker means styles/tokens.css and styles/components.css ARE the house
+// files, and the house tokens.css declares --color-border-input — so a marked
+// project missing it has dropped a house token, and that fails exactly like
+// dropping --color-on-accent. Only the literal boolean `true` marks: false,
+// the string "true", a missing key, an absent file — all unmarked. A marker
+// is a claim someone made on purpose; anything less is not one.
+//
+// Unmarked, the pairs are measured IF the file declares the token — a project
+// that adopted the role is held to it whatever its sync record says — and are
+// otherwise left out of the run entirely: not counted in N/M, not a failure,
+// and one line saying so and why. A legacy project stays green at 9/9, the
+// count it always had. The marker is per PROJECT; the declaration is per FILE,
+// so in a themed project one theme file can carry the token and another not.
+//
+// The token is in MEASURED either way (see below), marked or not. That is the
+// fail-closed half: "does this file declare it" must have one answer, so a
+// --color-border-input in a `[data-theme]` block, a media query or declared
+// twice is refused like any other measured token's — never read as "not
+// declared" and skipped. That is a change for a legacy project that put the
+// token in such a block: it now fails with the same message design.md's
+// one-palette-per-file rule already gives every other measured token.
+const CONTROL_EDGE_TOKEN = '--color-border-input';
+const CONTROL_EDGE_PAIRS = [
+  [CONTROL_EDGE_TOKEN, '--color-surface', AA_LARGE, 'border-input / surface (control edge)'],
+  [CONTROL_EDGE_TOKEN, '--color-bg', AA_LARGE, 'border-input / bg (control edge)'],
+];
+const ALL_PAIRS = [...pairs, ...CONTROL_EDGE_PAIRS];
+
+// The measured set, derived from the pair lists so there is no second list of
+// names. The scanner needs it: after #337 round 9 a measured token is recorded
+// ONLY from a top-level `:root` rule and refused anywhere else, so "is this
+// name measured" is a question the scan itself has to answer. It is built from
+// ALL_PAIRS, not from whichever pairs one file's run ends up using — see the
+// control-edge comment above for why the conditional token is always in it.
+const MEASURED = new Set(ALL_PAIRS.flatMap(([fg, bg]) => [fg, bg]));
+
+// ── READING THE HOUSE-STYLE MARKER ──────────────────────────────────────────
+// Relative to the cwd, like every token path here: the guard runs from the
+// project root, which is where .claude/ lives.
+// Returns { marked, note } — `note` is a line to print, or null.
+// An ABSENT file is silent: most projects that predate the marker have one
+// without the key, and a fresh repo may have none — neither is news.
+// A file that EXISTS but cannot be read or parsed is the case with a choice in
+// it, and the choice is: UNMARKED, said out loud. Failing the run instead would
+// red-build a project's contrast job over a sync record, which is not a
+// contrast problem; /env-chk and /refresh-repo read the same file (its
+// `upstream.sha` is their drift baseline), so a broken one surfaces there, and
+// they are the tools that rewrite it. Treating
+// it as MARKED would require a pair on the strength of a claim nobody can read.
+// Unmarked is also the side that costs least if it is wrong: the control-edge
+// pairs are still measured wherever a file declares the token, so the only
+// thing a broken marker can hide is a house project that DROPPED the token —
+// and the line below names the file, so the log says what was assumed.
+const MARKER_FILE = join('.claude', 'directive-sync.json');
+function readHouseStyleMarker() {
+  if (!existsSync(MARKER_FILE)) return { marked: false, note: null };
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(MARKER_FILE, 'utf8'));
+  } catch (e) {
+    return {
+      marked: false,
+      note: `  note  ${MARKER_FILE} could not be read as JSON (${e.code || e.name}) — treated as NOT on the house style;`
+        + ' repair the file (/refresh-repo rewrites it)',
+    };
+  }
+  const marked = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.house_style === true;
+  return { marked, note: marked ? `  house style: ${MARKER_FILE} has "house_style": true — the control-edge pairs are required` : null };
+}
 
 // ── CSS whitespace, not JavaScript's ────────────────────────────────────────
 // CSS whitespace is exactly these five code points. String.prototype.trim()
@@ -631,6 +716,9 @@ function scanDeclarations(rawCss) {
   return { decls };
 }
 
+const HOUSE = readHouseStyleMarker();
+if (HOUSE.note) console.log(HOUSE.note);
+
 let exitCode = 0;
 for (const FILE of FILES) {
 const scan = scanDeclarations(readFileSync(FILE, 'utf8'));
@@ -755,9 +843,23 @@ if (ambiguous.length > 0) {
   continue;
 }
 
+// This file's pair list. Decided AFTER the ambiguity refusal, so "declared"
+// below has one answer: the control-edge token is in MEASURED, so any
+// declaration of it outside a top-level `:root` already failed the scan, and a
+// second, different value already failed above. What is left in `decls` is the
+// one declaration CSS applies — in #hex or not. A non-hex declaration counts as
+// DECLARED, so the pairs join the run and then fail the evaluable check: a
+// project that adopted the role in oklch() is told so, never quietly skipped.
+const edgeDeclared = Object.prototype.hasOwnProperty.call(decls, CONTROL_EDGE_TOKEN);
+const filePairs = HOUSE.marked || edgeDeclared ? ALL_PAIRS : pairs;
+if (filePairs === pairs) {
+  console.log(`  note  control-edge pairs not measured in ${FILE}: this project is not on the house style`
+    + ` (${MARKER_FILE} has no "house_style": true) and the file does not declare ${CONTROL_EDGE_TOKEN}`);
+}
+
 let failed = false;
 let evaluated = 0;
-for (const [fgName, bgName, thr, name] of pairs) {
+for (const [fgName, bgName, thr, name] of filePairs) {
   const fg = t[fgName], bg = t[bgName];
   if (!fg || !bg) { console.log(`  skip  ${name} (token missing)`); continue; }
   evaluated++;
@@ -770,13 +872,15 @@ for (const [fgName, bgName, thr, name] of pairs) {
 // certifies WCAG AA having measured nothing. The token regex only reads #hex,
 // so a tokens.css written in oklch()/rgb()/hsl()/var() skips every pair —
 // exactly the palettes /design-intake now produces.
-// ALL six pairs must be evaluable, not merely one. These are the standard token
+// ALL of this file's pairs must be evaluable, not merely one — the nine, plus
+// the two control-edge pairs whenever they joined the run above (on the house
+// style, or declared). These are the standard token
 // contract, and every pair is a required check — warning on a partial run let a
 // palette be certified while normal-text contrast was never measured at all,
 // which is the same vacuous pass as measuring nothing.
-if (evaluated < pairs.length) {
-  const missing = pairs.filter(([fg, bg]) => !t[fg] || !t[bg]).map(([, , , name]) => name);
-  console.error(`\ncheck-contrast: FAIL — ${FILE}: only ${evaluated}/${pairs.length} pairs were evaluable.`);
+if (evaluated < filePairs.length) {
+  const missing = filePairs.filter(([fg, bg]) => !t[fg] || !t[bg]).map(([, , , name]) => name);
+  console.error(`\ncheck-contrast: FAIL — ${FILE}: only ${evaluated}/${filePairs.length} pairs were evaluable.`);
   console.error(`  Not measured: ${missing.join('; ')}`);
   console.error('  Each needs both tokens declared in #hex form (oklch()/rgb()/hsl()/var()');
   console.error('  are not parsed). Declare the missing tokens, or extend this script.');
@@ -787,7 +891,7 @@ if (evaluated < pairs.length) {
   // an exception that keeps the literal and hides the finding. This gate reads
   // tokens, not components.css, so it cannot see the literal itself — it names
   // the pattern instead.
-  const needed = [...new Set(pairs.filter(([fg, bg]) => !t[fg] || !t[bg]).flatMap(([fg, bg]) => [fg, bg]))];
+  const needed = [...new Set(filePairs.filter(([fg, bg]) => !t[fg] || !t[bg]).flatMap(([fg, bg]) => [fg, bg]))];
   const undeclared = needed.filter((n) => !decls[n]);
   const notHex = needed.filter((n) => decls[n] && !t[n]);
   if (notHex.length) console.error(`  Declared, but not in #hex form: ${notHex.join(', ')}`);
@@ -798,6 +902,15 @@ if (evaluated < pairs.length) {
     console.error('  declare a token for it and use var() there. Do not add an exception — that');
     console.error('  keeps the literal and hides the finding.');
   }
+  // A marked project missing the control-edge token is a different story from
+  // a hard-coded literal: the house tokens.css declares it, so the file has
+  // drifted from the house file the marker says it is. Say which rule made the
+  // pair required, or the next reader deletes the marker to go green.
+  if (HOUSE.marked && undeclared.includes(CONTROL_EDGE_TOKEN)) {
+    console.error(`  ${MARKER_FILE} marks this project as on the house style, so the control-edge`);
+    console.error(`  pairs are required: the house tokens.css declares ${CONTROL_EDGE_TOKEN} (3:1 against`);
+    console.error('  --color-surface and --color-bg, WCAG 1.4.11). Restore it from the house file.');
+  }
   exitCode = 1;
   continue;
 }
@@ -805,7 +918,7 @@ if (evaluated < pairs.length) {
 // the file — the pair list cannot see the roles this project actually gives its
 // tokens (see the header). An unqualified "meets WCAG AA" in a CI log is a
 // completeness this script has no basis for.
-console.log(failed ? `check-contrast: FAIL — fix ${FILE}` : `check-contrast: OK — ${evaluated}/${pairs.length} assumed pairs meet WCAG AA in ${FILE}`);
+console.log(failed ? `check-contrast: FAIL — fix ${FILE}` : `check-contrast: OK — ${evaluated}/${filePairs.length} assumed pairs meet WCAG AA in ${FILE}`);
 if (!failed) console.log('        a floor, not a coverage report: pairs not listed, and tokens used in a role other than the one assumed, are NOT measured — read this script\'s header before trusting the count');
 if (failed) exitCode = 1;
 }

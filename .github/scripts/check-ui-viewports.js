@@ -835,19 +835,11 @@ function decideFromRows(ROWS, TESTS, SOURCE) {
     // ui-suite composite invokes this again with `--report` afterwards.
     // Read from argv directly: `opt()` is defined further down, in the section
     // that runs in the CHILD, and this block is the parent.
-    // BOTH SPELLINGS, still. The original reason was a disagreement: round 7
-    // found check-ui-suite-env.py accepting `--report=<path>` while this
-    // parser understood only the space-separated form, so that spelling passed
-    // the guard and then got the declaration-only verdict at exit 0 — the
-    // guard certifying a command this script silently ignored.
-    //
-    // That guard no longer decides anything from the flag's spelling: since
-    // round 10 it pins the composite's command bodies verbatim, and the pinned
-    // post-run body uses the space-separated form. So the coupling is gone
-    // rather than resolved. Both spellings stay supported HERE because this
-    // script is also run by hand and from project scripts, where `--report=`
-    // is the more natural spelling, and a flag that is silently ignored is the
-    // exact failure round 7 recorded.
+    // BOTH SPELLINGS. The composite's post-run body uses the space-separated
+    // form; both stay supported HERE because this script is also run by hand
+    // and from project scripts, where `--report=` is the more natural
+    // spelling, and a flag that is silently ignored gets the declaration-only
+    // verdict at exit 0.
     //
     // BOTH SPELLINGS THROUGH THE SHARED SCANNER, which is also what makes a
     // config named `--report` stop being read as this flag (#347 round 18).
@@ -1067,7 +1059,7 @@ if (!VERDICT_FILE) {
   // claim does not make it.
   //
   // Nothing is lost that was ever sound: the composite has always passed both
-  // flags, and `check-ui-suite-env.py` pins that, so no shipped CI path changes.
+  // flags (keep it that way by hand), so no shipped CI path changes.
   // What changes is the DIRECT invocation documented in test.md, which now names
   // both flags because a single import after the run cannot corroborate itself.
   if (wantsReport && !declaredIdx.given) {

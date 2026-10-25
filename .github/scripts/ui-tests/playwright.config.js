@@ -81,6 +81,9 @@ export default defineConfig({
       use: { ...devices['Pixel 5'] },
     },
     {
+      // WebKit, the engine of every iPhone browser, and the only WebKit project
+      // here: keep it (test.md → UI coverage gates, *Overlays fit and scroll*).
+      // A Chromium phone profile does not stand in for it.
       name: 'iphone',
       use: { ...devices['iPhone 12'] },
     },

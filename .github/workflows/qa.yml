@@ -3,30 +3,31 @@
 # actions from templates/actions/ into .github/actions/ (secret-scan, ui-suite).
 #
 # Jobs:
-#   static-checks — secret scan (composite), contrast guardrail, and the
-#                   workflow-ref, job-bounds, Python-compile, ui-suite env and
-#                   YAML-anchor guards; the blocking gate, runs on every trigger.
-#   ui-changes    — diffs the PR against its base and decides whether the
-#                   browser job is needed. Non-PR events (push to main)
-#                   always run UI tests.
+#   static-checks — secret scan (composite) and contrast guardrail; the
+#                   blocking gate, runs on every trigger.
 #   ui-tests      — Playwright against a local server via the ui-suite
-#                   composite. BLOCKING by default for the static/no-backend
-#                   tier (the suite runs fully against the bundled http-server);
+#                   composite, on every trigger (skipped with a notice only
+#                   while the repo has no index.html yet and no build).
+#                   BLOCKING by default for the static/no-backend tier (the
+#                   suite runs fully against the bundled http-server);
 #                   set advisory-run: 'true' only as an explicit, temporary
 #                   opt-out — and flip it back once the blocking issue is fixed.
+#   ⚠️ LOCAL ADDITIONS: news-checks (every trigger), ui-changes (upstream
+#   dropped it 2026-10; kept here ONLY because its news_client output gates
+#   news-client-mutants — it no longer gates ui-tests), news-client-mutants
+#   and notify. See each job.
 #
 # Required setup:
 #   - TEST_AUTH_CREDENTIAL / TEST_AUTH_EMAIL repository secrets: set them only
 #     for a login that needs a credential from outside. Which gates need which,
 #     and when to leave both unset: docs/standards/cicd-setup.md -> Step 5.
 #   - Set UI_TESTS_DIR below to the path of your Playwright test directory
-#   - Adjust the UI_PATHS regex in the ui-changes job to your project layout
 #   - A project with the CI-build opt-in (global.md -> Hosting & Deployment)
 #     sets BUILD_CMD and SITE_DIR below to the SAME values as its
-#     pages-deploy.yml, and BUILD_PATHS to its build inputs (required with a
-#     build: the change detection refuses to run without it). The browser job
-#     then runs the build and serves SITE_DIR, so it tests what is deployed,
-#     and a change to a build input alone still runs it. Without the opt-in
+#     pages-deploy.yml, and BUILD_PATHS to its build inputs (read by the
+#     toolkit's Pages edit reminder, not by this workflow). The browser job
+#     then runs the build and serves SITE_DIR, so it tests what is deployed.
+#     Without the opt-in
 #     leave all three as shipped: no build, the repo root is served. It serves
 #     the tree UNFILTERED (dotfiles and deny-listed paths included), so it
 #     tests the site's behaviour, not what pages-deploy.yml leaves out; it does
@@ -70,9 +71,10 @@ env:
   # SITE_DIR; empty BUILD_CMD means no build and SITE_DIR stays '.'.
   BUILD_CMD: ''
   SITE_DIR: '.'
-  # Extended regex of the build INPUTS, matched against the PR file list beside
-  # UI_PATHS, e.g. '^src/|^package(-lock)?\.json$|^tsconfig\.json$|^tailwind\.config\.'.
-  # Empty: nothing beyond UI_PATHS.
+  # Extended regex of the build INPUTS, e.g.
+  # '^src/|^package(-lock)?\.json$|^tsconfig\.json$|^tailwind\.config\.'.
+  # Not read by this workflow: the toolkit's Pages edit reminder reads it to
+  # know which edits change the deployed site. Empty: no build.
   BUILD_PATHS: ''
 
 jobs:
@@ -134,59 +136,6 @@ jobs:
       - name: Contrast guardrail (WCAG AA)
         run: node .github/scripts/check-contrast.js
 
-
-      # The four Python guards below that read YAML (workflow-ref-guard,
-      # check-job-bounds, check-ui-suite-env, check-yaml-anchors) import
-      # .github/scripts/gh_yaml.py, which reads it as GitHub does (YAML 1.2),
-      # so install it beside them.
-      - name: Workflow cross-reference guard
-        # Every `workflow_run.workflows:` entry must name a real workflow. GitHub
-        # raises no error when one does not — the watcher simply never fires.
-        run: python3 .github/scripts/workflow-ref-guard.py
-
-      - name: Job bounds guard
-        # ENFORCED: every job bounded, none >= 360, ui-suite callers >= 120.
-        # Without this step the 120 below is a NUMBER IN A COMMENT: an edit back
-        # to 40 passes CI and then cancels healthy cold runs, which read as
-        # inconclusive rather than red, so nobody chases them.
-        # ADVISORY: the direct-`playwright install` floor of 30 prints and never
-        # fails the build — identifying a playwright invocation inside a `run:`
-        # block means parsing bash, and the heuristic is not sound enough to gate
-        # on (rule 3 in the script header). Do not read a green run as proof that
-        # floor was met. Scans .github/workflows; it skips templates/workflows,
-        # which only claude.directives has, and says so.
-        run: python3 .github/scripts/check-job-bounds.py
-
-      - name: Tracked Python compiles without warnings
-        # A `\` in a plain (non-raw) docstring is invisible on 3.11, a
-        # SyntaxWarning on 3.12, and a SyntaxError on 3.15 — at which point the
-        # guard carrying it stops running and stops checking. This compiles every
-        # tracked .py with warnings promoted to errors, so the class cannot come
-        # back silently on a future interpreter. Cheap: no imports, no execution.
-        run: python3 .github/scripts/check-py-warnings.py
-
-      - name: ui-suite composite env parity
-        # The composite's viewport checks IMPORT the Playwright config, so a
-        # variable added to its run step and not to the check steps makes the
-        # check read a DIFFERENT config from the one the suite runs: green check,
-        # different run. This compares the steps, and checks every process.env
-        # read in the kit is wired from an input. A variable that needs no input
-        # (set outside the composite, by a self-hosted runner say, or never set
-        # in CI because its reader handles unset) goes in
-        # .github/ui-suite-env-exempt.json as {"NAME": "why it needs none"}, never
-        # in the script, so the next template refresh keeps it. --kit-dir is the
-        # same UI_TESTS_DIR the ui-suite runs: a moved kit left the guard scanning
-        # the default (Codex, #395).
-        run: python3 .github/scripts/check-ui-suite-env.py --kit-dir "$UI_TESTS_DIR"
-
-      - name: Workflow and action YAML parses as GitHub parses it
-        # PyYAML accepts what GitHub refuses: an anchor or alias in an action's
-        # action.yml (the runner: "Anchors are not currently supported";
-        # workflows may use them) and a merge key (`<<`) anywhere. A composite
-        # is read only by a job that uses it, and fails there; this reads every
-        # workflow and every .github/actions/**/action.yml on every trigger and
-        # names the file and line instead.
-        run: python3 .github/scripts/check-yaml-anchors.py
 
       # ⚠️ LOCAL ADDITION — CLAUDE.md → Required Commands lists `npx html-validate
       # index.html`, but no CI step ran it. Pinned through the ui-tests lockfile
@@ -477,19 +426,17 @@ jobs:
 
   ui-tests:
     name: UI Tests (local server)
-    needs: [static-checks, ui-changes]
-    if: needs.ui-changes.outputs.ui == 'true'
+    needs: [static-checks]
     runs-on: ubuntu-latest
-    # 120 is the fleet FLOOR for a ui-suite caller — UI_SUITE_FLOOR in check-job-bounds.py,
-    # which enforces it. Set HIGHER if your suite needs it, never lower, and raise it BEFORE
-    # adding projects. Why 120 (measurements, arithmetic, what it does NOT cover): the
+    # 120 is the fleet FLOOR for a ui-suite caller. Set HIGHER if your suite
+    # needs it, never lower, and raise it BEFORE adding projects. Why 120 (measurements, arithmetic, what it does NOT cover): the
     # CALLER BOUND section of .github/actions/ui-suite/action.yml's header.
     timeout-minutes: 120
     # ⚠️ LOCAL ADDITION — replaces a local `grep-invert` input on the ui-suite
-    # composite, which is now a verbatim upstream drop-in (that input made it fail
-    # upstream's check-ui-suite-env.py: the run step is pinned to `npx playwright
-    # test`). Job env reaches every composite step, so the config-evaluating gates
-    # and the run all see the same value (the parity that guard exists to protect);
+    # composite, which is a verbatim upstream drop-in (its run step is pinned to
+    # `npx playwright test`; the guard that enforced that, check-ui-suite-env.py,
+    # was retired upstream 2026-10). Job env reaches every composite step, so the
+    # config-evaluating gates and the run all see the same value;
     # playwright.config.js turns it into `grepInvert`. The live-gated scenarios do
     # NOT self-skip on a local server: they gate on liveBackendConfigured(), which
     # reads the COMMITTED scripts/config.js, and this desk is live — so S14 would
@@ -527,11 +474,18 @@ jobs:
       # build implies it (the opt-in is Actions-source); otherwise the repo is
       # branch-source, where the managed build publishes links differently, so
       # it only warns. Also exports the normalised directory ('' and '/'
-      # mean the repo root) to serve, as a step output.
+      # mean the repo root) to serve, as a step output. With no build and no
+      # index.html yet (a fresh repo) there is nothing to load: it skips the
+      # suite with a notice rather than hand Playwright a directory listing.
       - name: Check the site directory
         id: site
         run: |
           src="${SITE_DIR%/}"; [ -n "$src" ] || src="."
+          if [ -z "$BUILD_CMD" ] && [ ! -f "$src/index.html" ]; then
+            echo "::notice::No index.html yet — skipping the browser suite."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ ! -f "$src/index.html" ]; then
             echo "::error::$src/index.html is missing: nothing for the suite to load."
             exit 1
@@ -563,6 +517,7 @@ jobs:
       # (TEST_AUTH_CREDENTIAL empty and the login form ships none), and
       # qa-live.yml stays the live gate.
       - uses: ./.github/actions/ui-suite
+        if: steps.site.outputs.skip != 'true'
         with:
           tests-dir: ${{ env.UI_TESTS_DIR }}
           app-url: http://localhost:8080
@@ -581,9 +536,9 @@ jobs:
           advisory-run: 'false'
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
-  # A precise, PR-scoped, stale-SHA-guarded "green" wake comment — distinct from
-  # ci-notify.yml's workflow_run watcher, which fires on any push (not just
-  # PRs) and can name a superseded commit on its branch-fallback match. It fires
+  # A precise, PR-scoped, stale-SHA-guarded "green" wake comment (the retired
+  # ci-notify.yml watcher fired on any push and could name a superseded commit;
+  # upstream deleted it 2026-10, so this job is the only wake signal). It fires
   # for DRAFT PRs too: the draft-PR-immediately flow means most PRs are drafts
   # while CI runs, and a draft gate would silence the very signal this job is for.
   # A failed comment is a visible ::warning::, never a red job — the comment is a

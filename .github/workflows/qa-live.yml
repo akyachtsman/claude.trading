@@ -7,10 +7,9 @@
 # ACTION: if Settings -> Pages -> Source is "GitHub Actions", add your deploy
 # workflow's exact `name:` to the list below: "Pages Deploy" for
 # templates/workflows/pages-deploy.yml, else your own. Add, never replace. It is
-# not pre-filled because on a branch-source project that name matches nothing
-# and workflow-ref-guard fails the build. Then list it for this file in
-# .github/workflow-ref-required.json, so adopting this template verbatim later
-# fails the guard instead of dropping the arm (cicd-setup.md -> 9c-bis).
+# not pre-filled because on a branch-source project that name matches nothing.
+# Keep it through every template refresh: a dropped arm fails nothing, the live
+# gate simply stops firing (cicd-setup.md -> 9c-bis).
 # ACTION: the job's `if:` gate needs NO workflow-name condition — it reads
 # `github.event.workflow_run.conclusion`, which is agnostic to which workflow
 # fired it. Do not "helpfully" add one; that re-breaks exactly what this fixes.
@@ -56,10 +55,8 @@ on:
 # suite of a real deploy. Only a run that will test the deploy shares it.
 concurrency:
   group: qa-live-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success' && format('skipped-{0}', github.run_id) || github.event_name == 'workflow_run' && github.event.workflow_run.event != 'dynamic' && (github.event.workflow_run.head_branch != github.event.repository.default_branch || github.event.workflow_run.head_repository.full_name != github.repository) && format('offbranch-{0}', github.run_id) || github.ref }}
-  # Keep the literal `true` exactly as written: ci-monitor greps for that form
-  # to decide whether a cancelled run could have been superseded, and an
-  # expression could have evaluated false for the newer run (Codex, #424). The
-  # runs that must not cancel are kept out of the shared group above instead.
+  # The runs that must not cancel are kept out of the shared group above, not
+  # by making this an expression.
   cancel-in-progress: true
 
 # Least privilege: read the repo and run tests against the live URL.
@@ -112,9 +109,8 @@ jobs:
          github.event.workflow_run.head_repository.full_name == github.repository)) &&
        needs.published.outputs.published != 'none')
     runs-on: ubuntu-latest
-    # 120 is the fleet FLOOR for a ui-suite caller — UI_SUITE_FLOOR in check-job-bounds.py,
-    # which enforces it. Set HIGHER if your suite needs it, never lower, and raise it BEFORE
-    # adding projects. Why 120 (measurements, arithmetic, what it does NOT cover): the
+    # 120 is the fleet FLOOR for a ui-suite caller. Set HIGHER if your suite
+    # needs it, never lower, and raise it BEFORE adding projects. Why 120 (measurements, arithmetic, what it does NOT cover): the
     # CALLER BOUND section of .github/actions/ui-suite/action.yml's header.
     timeout-minutes: 120
 

@@ -1,13 +1,13 @@
 {
   "upstream": {
-    "sha": "e78b6dd58796b4aa68056fb99e2416ed8f8d8f88",
-    "synced": "2026-10-16"
+    "sha": "d23c82297deea3c6c84fcc9125631ac7edf5fcb2",
+    "synced": "2026-10-25"
   },
   "refresh_kept": {
     ".github/actions/ui-suite/action.yml": {
-      "blob": "e8b1fb82fa00aa5ecf9866164d1b5b426aad545f",
-      "reason": "Template plus one comment-only LOCAL NOTE under the test-auth-email input: this kit has no identifier-first auth path (single-step 6-digit PIN gate) and S2 throws if TEST_AUTH_EMAIL is ever set. Recorded in CLAUDE.md under Local deviations; keep on every refresh.",
-      "local": "37b7e7977077298794498d53b8d5c548212af6b3"
+      "blob": "040076baad2156b212fde73be21396a53519a60d",
+      "local": "4c29b1f6f328833647a94e15826d0a4a9d248e8e",
+      "reason": "Template (2026-10-25 refresh, 3-way merged) plus one comment-only LOCAL NOTE under the test-auth-email input: this kit has no identifier-first auth path (single-step 6-digit PIN gate) and S2 throws if TEST_AUTH_EMAIL is ever set. Recorded in CLAUDE.md under Local deviations; keep on every refresh."
     },
     ".github/actions/ui-suite/validate-report-path.py": {
       "blob": "e92bcea0ba5d72f2f2aa934628795dca1e782d2b",
@@ -15,14 +15,14 @@
       "local": "e04fca5ac00eaafdaff11218fee6ef4f1755d670"
     },
     ".github/workflows/qa.yml": {
-      "blob": "f59b326762cf6b0c4204bf14ee8dac707070222e",
-      "local": "86584c80714b1124be646694543c44a44acc93b6",
-      "reason": "Template plus eight local items, all listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan step, the html-validate steps, the tailored UI_PATHS (scripts/, config/ and check-ui-viewports.js added), the ui-tests job-level GREP_INVERT env, the notify job, and (2026-10-19) the news-checks and news-client-mutants jobs with ui-changes' news_client output and notify's needs on both. The 2026-10-15 template change (a comment under UI_PATHS about directories an app fetches at runtime) is taken; the project's regex already carries config/, its runtime-fetched roster directory. Checked by a 3-way merge against the template at the stamp: the only differences are those items."
+      "blob": "9648a8f93a9bf215bdc3e48e96685ba6d4e4f5ab",
+      "local": "eeaa0de91b0e0f8c9235df1fd0b1c34e32e775f1",
+      "reason": "Template (2026-10-25 refresh: retired guard steps deleted, ui-tests now runs on every trigger as upstream's does) plus local items listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan, the html-validate steps, the ui-tests job-level GREP_INVERT env, the ui-changes job (upstream dropped it; kept only for its news_client output), the news-checks and news-client-mutants jobs, and the notify job. Checked by a 3-way merge against the template at the stamp; its one conflict was the retired guard steps (taken out) next to the local jobs (kept)."
     },
     ".github/scripts/ui-tests/playwright.config.js": {
-      "blob": "c55256cb71b416a79e0ab09a30a5a6afcbc87e83",
-      "reason": "Takes the template's GITHUB_WORKSPACE-derived screenshot directory. Keeps the local grepInvert (qa.yml's GREP_INVERT job env), the production APP_URL default, the bounded-timeout comments and the project-specific viewport notes; the template's comment rewording and REPLACE_* placeholder are not wanted.",
-      "local": "cd2d71d05eb8070e507fd617b62b90ce56200526"
+      "blob": "9a2b4ad9a65ab1f9ce5afbd0395af8aaecbb3573",
+      "local": "d7348a3816598e34e76bbeebec7af85ff85abae5",
+      "reason": "Takes the 2026-10-25 template's iphone-project comment (the only WebKit project; keep it). Keeps the local grepInvert (qa.yml's GREP_INVERT job env), the production APP_URL default, the bounded-timeout comments and the project-specific viewport notes; the template's comment rewording and REPLACE_* placeholder are not wanted."
     },
     ".github/scripts/ui-tests/package.json": {
       "blob": "30f21e71d425bef49c192a79cd880c25280ac291",
@@ -30,9 +30,9 @@
       "local": "6a61bcf4ee394b8949a32a1bd9d6d95ce17e7b2c"
     },
     ".github/scripts/ui-tests/tests/app.spec.js": {
-      "blob": "823167be7a14d7057e433aafa59d2fc70b654888",
-      "reason": "Project-specific suite (scenarios S5-S73, about 11,000 lines) that defines its helpers inline; the 1,300-line template spec is a starter. KD-1 (S2 passes with no auth gate) was run on this refresh and reads CLEAR. The template's move of helpers into tests/lib/ is not taken (see tests/lib/auth.js).",
-      "local": "e09230f7140215afd907e1e30ddf5bce12d190c1"
+      "blob": "e0e84eac8d78a742ea7db54302bc8997c9a28708",
+      "local": "09fa8b7a677ab7edfe9c9e4ad98176d9f509c569",
+      "reason": "Project-specific suite (S5-S77, about 12,000 lines) that defines its helpers inline; the template spec is a starter. 2026-10-25: the template's DISMISS scenario (with its fitProblems check) was PORTED in, with a local attachJson helper and the local gotoAndAuth (roster writes blocked); ENTRY is not taken (no APP_PAGES). KD-1 reads CLEAR. The move of helpers into tests/lib/ is not taken (see tests/lib/auth.js). Later on 2026-10-25 (d23c822): the template's FIT_INCOMPLETE budget note was ported into DISMISS; S48 and S77 stay strict through a local fitChecked() that retries an incomplete check once, warm, with a 5s cap."
     },
     ".github/scripts/ui-tests/tests/lib/auth.js": {
       "blob": "ef358668fa8033bc0f002c33075e8677a9f3f7e6",

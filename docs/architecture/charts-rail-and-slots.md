@@ -580,7 +580,13 @@ Gesture rules, each of which S64 holds:
   `WB_SLOT_TOUCH_ARM_MS` (300ms) first, so an ordinary swipe still scrolls the 100-row list. The base
   `touch-action: manipulation` (which keeps the double-tap edit from becoming a zoom, Codex P1 above) stays
   the rule.
-- **Touch: the pan is stopped by a NON-PASSIVE `touchmove`, not by a class (Codex P1, PR #313).** The first cut
+- **SUPERSEDED 2026-10-25 — nothing cancels the pan any more.** The owner's iPhone rule (claude.directives
+  `design.md` → *iPhone and iPad*: never lock scrolling by cancelling `touchmove`, never `touch-action: none`)
+  removed `holdScroll` and `.wb-armed`'s `touch-action: none`. On a real phone the first move after the rest
+  now pans and the press ends in a `pointercancel`, which changes nothing; a stock is moved on a phone with
+  the entry box, Insert and the ×. S64 step 12 now asserts that no `touchmove` is ever cancelled. The
+  paragraph below is the history of what was removed.
+- **(History) Touch: the pan is stopped by a NON-PASSIVE `touchmove`, not by a class (Codex P1, PR #313).** The first cut
   copied the watchlist tiles' device — add `.wb-armed` (`touch-action: none`) after the hold. But
   `touch-action` is evaluated when the finger goes DOWN and cannot be changed for the gesture in progress, so
   on a real phone the first move after the rest starts a native pan and the browser sends `pointercancel`:
