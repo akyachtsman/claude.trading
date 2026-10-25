@@ -457,11 +457,11 @@ test('ibkr parseStatements: NAV from the newest equity row, day P&L from the two
   assert.deepEqual([...I.parseStatements(null)], []);
 });
 
-test('ibkr parseStatements: a position with no quantity is not kept as an open position', { todo: 'BUG: a missing/non-numeric @_position gives qty NaN, which passes `p.qty !== 0` and is stored (as null) as an open position' }, () => {
+test('ibkr parseStatements: a position with no quantity is not kept as an open position', () => {
   const doc = { FlexQueryResponse: { FlexStatements: { FlexStatement: {
     '@_accountId': 'U1', EquitySummaryInBase: { EquitySummaryByReportDateInBase: { '@_reportDate': '20261013', '@_total': '500' } },
     OpenPositions: { OpenPosition: { '@_symbol': 'NOQTY', '@_positionValue': '100' } } } } } };
-  assert.deepEqual(I.parseStatements(doc)[0].positions.map((p) => p.sym), []);
+  assert.equal(I.parseStatements(doc)[0].positions.length, 0, 'a NaN quantity is not an open position');
 });
 
 test('ibkr accountKeyMap: IBKR_ACCOUNT_MAP when set, else 1-based sorted order', () => {

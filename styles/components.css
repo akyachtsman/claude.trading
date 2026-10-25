@@ -60,6 +60,10 @@
   color: var(--color-text-secondary); margin: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Beside a stamp the TITLE keeps its width and the stamp wraps: shrinking the title first cut "MARKETS" to "MARK…"
+   and "NEWS" to "N…" next to a live "Last updated …, at close" stamp (browser test 2026-10-24). max-width keeps the
+   ellipsis for a title too wide for the header on its own. */
+.panel-header:has(> .stamp) > .panel-title { flex-shrink: 0; max-width: 100%; }
 .panel-body { padding: var(--space-4); min-width: 0; }
 
 /* data-state lamp + as-of stamp — the signature trust layer */

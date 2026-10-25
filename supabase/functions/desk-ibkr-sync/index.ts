@@ -175,8 +175,9 @@ export function parseStatements(doc: any) {
         mkt: Number(p['@_positionValue']),
         unrl: Number(p['@_fifoPnlUnrealized'] ?? 0),
       }))
+      // a missing or non-numeric quantity is NaN, which `!== 0` alone let through as an open position
       // deno-lint-ignore no-explicit-any
-      .filter((p: any) => p.sym && Number.isFinite(p.mkt) && p.qty !== 0);
+      .filter((p: any) => p.sym && Number.isFinite(p.mkt) && Number.isFinite(p.qty) && p.qty !== 0);
     const last = equityRows[equityRows.length - 1], prev = equityRows[equityRows.length - 2];
     return {
       accountId: String(st['@_accountId'] || ''),

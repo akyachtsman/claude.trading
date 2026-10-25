@@ -418,6 +418,8 @@
      true 0.5in, and the 0.5in top margin collapses with the chart's 0.5in
      bottom margin into one half-inch seam between the two panels. */
   .heat-panel { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
+  /* title + lamp + Show + stamp do not fit a phone's header on one line: the stamp drops to a second line rather than the title being cut */
+  .heat-panel > .panel-header { flex-wrap: wrap; row-gap: 4px; }
   /* News is halved to a fixed reel with its own scrollbar (owner ruling
      2026-07-16): the holdings-first list scrolls in place instead of running
      the full page height. */
@@ -580,6 +582,11 @@
   .mk-tile .mk-pct { font: 700 var(--font-lg)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
   .mk-tile .mk-last { font: 400 var(--font-xs)/1.2 var(--font-mono); color: var(--color-text-secondary); }
   .mk-tile .up { color: var(--color-gain); } .mk-tile .down { color: var(--color-loss); }
+  /* the after-hours proxy line ("SPY +0.40% after hrs"): small like the price under it, the tag set off by a gap and
+     wrapping whole under the figure when the tile is too narrow — it had no rule and rendered at body size with no space */
+  .mk-tile .mk-ext { display: flex; flex-wrap: wrap; column-gap: 4px; font: 500 var(--font-2xs)/1.3 var(--font-mono); font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .mk-tile .mk-ext-pct, .mk-tile .mk-ext-tag { white-space: nowrap; }
+  .mk-tile .mk-ext-tag { color: var(--color-text-secondary); font-family: var(--font-sans); }
   .mk-chart-wrap { position: relative; }
   #mktChart { display: block; width: 100%; height: 150px; }
   #mktChart text { pointer-events: none; }
@@ -991,9 +998,11 @@
   .wb-pane-bar { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; position: relative; }
   .wb-pane-bar[hidden] { display: none; }
   /* max-width + min-width:0 keep a narrow pane from being widened by its zoom
-     presets; the seg scrolls instead */
-  .wb-pane-bar .seg { max-width: 100%; min-width: 0; overflow-x: auto; }
-  .wb-pane-bar .seg button { min-height: 22px; padding: 2px 7px; font-size: 9px; }
+     presets; the presets WRAP onto a second row instead. They used to scroll
+     sideways, and on a phone only 1M and 3M showed, with nothing saying 6M,
+     YTD, 1Y and All were there (browser test 2026-10-24). */
+  .wb-pane-bar .seg { max-width: 100%; min-width: 0; flex-wrap: wrap; }
+  .wb-pane-bar .seg button { min-height: 22px; min-width: 0; padding: 2px 7px; font-size: 9px; }
   .wb-pane-bar .wb-pane-gear, .wb-pane-bar .wb-pane-lock { min-height: 22px; min-width: 22px; padding: 2px 6px; font-size: 12px; }
   .wb-pane-lock[aria-pressed="true"] { background: var(--color-surface-2); color: var(--color-accent); }
   .wb-settings {

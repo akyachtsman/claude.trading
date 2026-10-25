@@ -170,9 +170,7 @@ test('the emulated h24 engine misprints a bare hour12:false, and fmtClock surviv
   assert.equal(d.fmtClock('2026-10-14T07:03:00Z'), '00:03 PDT');
 });
 
-test('fmtBarT / fmtClockBare / newsWhen print the Pacific midnight hour as 00 in an h24 engine',
-  { todo: 'BUG: fmtBarT, fmtClockBare, newsWhen and utcHmToPt still pass a bare `hour12: false` (fmtClock was fixed to hourCycle h23 in PR #334) — such an engine prints "24:03"' },
-  () => {
+test('fmtBarT / fmtClockBare / newsWhen / utcHmToPt print the Pacific midnight hour as 00 in an h24 engine', () => {
     const d = h24Engine(loadData({ now: at('2026-10-14T17:00:00Z') }));
     assert.equal(d.fmtBarT('2026-10-14 07:03'), '2026-10-14 00:03 PT');
     assert.equal(d.fmtClockBare('2026-10-14T07:03:00Z'), '00:03');

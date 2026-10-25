@@ -308,13 +308,20 @@ test('desk-heatmap: lastTradingDayIso is the New York calendar day, weekends rol
   assert.equal(day('2026-10-19T15:00:00Z'), '2026-10-19', 'Monday');
 });
 
-test('desk-heatmap and desk-maps: lastTradingDayIso rolls an NYSE holiday back to the session before it', {
-  todo: 'BUG (minor): lastTradingDayIso only rolls weekends back, so on Thanksgiving the payload asOf names the holiday itself',
-}, () => {
+test('desk-heatmap and desk-maps: lastTradingDayIso rolls an NYSE holiday back to the session before it', () => {
   for (const name of ['desk-heatmap', 'desk-maps']) {
     const h = loadEdge(name, ['lastTradingDayIso'], { now: at('2026-11-26T18:00:00Z') });
     assert.equal(h.lastTradingDayIso(), '2026-11-25', name);
+    h.clock.now = at('2027-12-26T18:00:00Z'); // Sunday after a Friday holiday (Christmas observed Dec 24)
+    assert.equal(h.lastTradingDayIso(), '2027-12-23', `${name}: a weekend after a holiday rolls past both`);
+    h.clock.now = at('2026-11-27T18:00:00Z');
+    assert.equal(h.lastTradingDayIso(), '2026-11-27', `${name}: the day after is itself`);
   }
+});
+
+test('desk-maps: its NYSE_HOLIDAYS copy agrees with desk-heatmap\'s', () => {
+  const m = loadEdge('desk-maps', ['NYSE_HOLIDAYS']);
+  assert.deepEqual([...m.NYSE_HOLIDAYS].sort(), [...heat().NYSE_HOLIDAYS].sort());
 });
 
 test('desk-heatmap: scrubbed() removes the service key from anything it prints', () => {

@@ -1,4 +1,7 @@
 node_modules/
+# The MCP config Claude Code reads is .mcp.json at the repo root (data.md → MCP
+# Configuration); it can hold a Supabase token. .claude/mcp.json is never read.
+.mcp.json
 .claude/mcp.json
 .env
 .env.*
@@ -22,3 +25,4 @@ __pycache__/
 
 # local-only Playwright override (sandbox browser revision)
 .github/scripts/ui-tests/pw.local.config.js
+.github/scripts/ui-tests/pw.local.config.mjs
