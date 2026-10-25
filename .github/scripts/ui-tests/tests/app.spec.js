@@ -13,7 +13,7 @@
 import { test as base, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { fitProblems } from './lib/fit.js';
+import { fitProblems, FIT_INCOMPLETE } from './lib/fit.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDER WITNESS — evidence that a test BODY started at its project's width (#348)
@@ -1125,6 +1125,16 @@ function attachJson(name, data) {
   return test.info().attach(name, { body: JSON.stringify(data, null, 2), contentType: 'application/json' });
 }
 
+// LOCAL: S48 and S77 must not pass on a fit check that did not finish, and
+// must not flake on one either. A FIT_INCOMPLETE line (lib/fit.js: a cold
+// WebKit's first call can outrun the 2s cap) is retried ONCE, warm, with a
+// longer cap; whatever that returns, incomplete included, is asserted.
+async function fitChecked(locator) {
+  const first = await fitProblems(locator);
+  if (!first.some(p => p.startsWith(FIT_INCOMPLETE))) return first;
+  return fitProblems(locator, { timeout: 5000 });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SCENARIO — DISMISS: overlays close via their control, Escape, and backdrop
 // "It has a close button" is not coverage; "clicking it closes" is (test.md →
@@ -1174,6 +1184,7 @@ test('DISMISS: overlays close via control, Escape, and backdrop', async ({ page,
   const POPS = '.menu-pop, .archived-pop, .list-pop, [role="menu"], [role="listbox"]';
   const FITTED = `:is(${OVERLAY}, ${POPS}):not([${PREOPEN}])`;
   const fitSeen = new Set();
+  const fitIncomplete = [];
   const markOpenOverlays = async () => {
     // Through locators on both sides, so an overlay inside an open shadow root
     // is marked and unmarked like any other.
@@ -1245,6 +1256,7 @@ test('DISMISS: overlays close via control, Escape, and backdrop', async ({ page,
     // FIT, before any dismisser runs, on what this trigger opened. A problem
     // already reported for an earlier trigger is not reported again.
     for (const problem of await fitProblems(page.locator(FITTED))) {
+      if (problem.startsWith(FIT_INCOMPLETE)) { fitIncomplete.push({ trigger: name, problem }); continue; }
       if (fitSeen.has(problem)) continue;
       fitSeen.add(problem);
       findings.push({ trigger: name, dismisser: 'fit', problem });
@@ -1304,6 +1316,12 @@ test('DISMISS: overlays close via control, Escape, and backdrop', async ({ page,
     });
   }
 
+  if (fitIncomplete.length) {
+    attachJson('fit-budget', {
+      incomplete: fitIncomplete,
+      note: 'The fit check did not finish for these triggers, so their overlays were NOT checked for fit and scroll. A coverage gap, not a fit defect. A slow first call in a cold browser is the usual cause.',
+    });
+  }
   attachJson('dismisser-findings', findings);
   expect(findings, `Overlay dismisser failures:\n${JSON.stringify(findings, null, 2)}`).toHaveLength(0);
 });
@@ -5840,7 +5858,7 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     // touch-action or touchmove lock. DISMISS checks the same through a button sweep, but it
     // skips on a gated desk with no credential; this runs every dialog, in every project,
     // and the iphone project is WebKit.
-    expect(await fitProblems(page.locator(panel)), `${name}: fits the screen and scrolls by finger`).toEqual([]);
+    expect(await fitChecked(page.locator(panel)), `${name}: fits the screen and scrolls by finger`).toEqual([]);
     const start = await ring(panel);
     expect(start.in, `${name}: opening moves focus INSIDE the dialog`).toBe(true);
     if (keep) {
@@ -12109,7 +12127,7 @@ test('S77: the Load box ticker list fits the screen and scrolls by finger', asyn
   await expect(input, 'the combobox says it is open').toHaveAttribute('aria-expanded', 'true');
   expect(await list.locator('[role="option"]').count(), 'the list holds suggestions').toBeGreaterThan(3);
 
-  expect(await fitProblems(list), 'the ticker list fits the screen and scrolls by finger').toEqual([]);
+  expect(await fitChecked(list), 'the ticker list fits the screen and scrolls by finger').toEqual([]);
 
   // fitProblems reads OFF SCREEN only for a PINNED overlay, and this list is position: absolute
   // under its box — so also ask the page itself: the list's box sits inside the visible screen

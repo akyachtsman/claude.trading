@@ -1,6 +1,6 @@
 {
   "upstream": {
-    "sha": "83597ffec71473b0c972e8802fdc5ed5417ecccc",
+    "sha": "d23c82297deea3c6c84fcc9125631ac7edf5fcb2",
     "synced": "2026-10-25"
   },
   "refresh_kept": {
@@ -30,9 +30,9 @@
       "local": "6a61bcf4ee394b8949a32a1bd9d6d95ce17e7b2c"
     },
     ".github/scripts/ui-tests/tests/app.spec.js": {
-      "blob": "5740dc4f57fe645c18052dcf237c472851ce41e3",
-      "local": "867bf4846ddc559d55728962297e1fa8aeeb9ca1",
-      "reason": "Project-specific suite (S5-S77, about 12,000 lines) that defines its helpers inline; the template spec is a starter. 2026-10-25: the template's DISMISS scenario (with its fitProblems check) was PORTED in, with a local attachJson helper and the local gotoAndAuth (roster writes blocked); ENTRY is not taken (no APP_PAGES). KD-1 reads CLEAR. The move of helpers into tests/lib/ is not taken (see tests/lib/auth.js)."
+      "blob": "e0e84eac8d78a742ea7db54302bc8997c9a28708",
+      "local": "09fa8b7a677ab7edfe9c9e4ad98176d9f509c569",
+      "reason": "Project-specific suite (S5-S77, about 12,000 lines) that defines its helpers inline; the template spec is a starter. 2026-10-25: the template's DISMISS scenario (with its fitProblems check) was PORTED in, with a local attachJson helper and the local gotoAndAuth (roster writes blocked); ENTRY is not taken (no APP_PAGES). KD-1 reads CLEAR. The move of helpers into tests/lib/ is not taken (see tests/lib/auth.js). Later on 2026-10-25 (d23c822): the template's FIT_INCOMPLETE budget note was ported into DISMISS; S48 and S77 stay strict through a local fitChecked() that retries an incomplete check once, warm, with a 5s cap."
     },
     ".github/scripts/ui-tests/tests/lib/auth.js": {
       "blob": "ef358668fa8033bc0f002c33075e8677a9f3f7e6",

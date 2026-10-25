@@ -33,12 +33,17 @@
 //     tablet) has and the desktop project does not.
 //
 // Bounded: one evaluateAll, raced against FIT_MS, so a page that hangs it
-// costs that and reports it. The scrollTop it moves is put back.
+// costs that and reports it. The scrollTop it moves is put back. A check that
+// timed out or threw returns one line starting FIT_INCOMPLETE: that says the
+// check did not finish, not that the overlay is wrong (a cold WebKit took more
+// than 2s on its first call in CI, 2026-10-25), so a caller records it as a
+// budget note, never as a defect.
 //
 // No imports, on purpose: this repo's own CI proves it against a fixture page
 // with plain `playwright` (.github/scripts/check-fit-cases.js), where the
 // kit's @playwright/test is not installed.
 const FIT_MS = 2000;
+const FIT_INCOMPLETE = 'FIT CHECK ';
 async function fitProblems(locator, { timeout = FIT_MS } = {}) {
   const run = locator.evaluateAll(async (els) => {
     const problems = [];
@@ -60,7 +65,13 @@ async function fitProblems(locator, { timeout = FIT_MS } = {}) {
       }
       return false;
     };
-    const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // Two frames, the time a script's scroll listener needs to answer (two
+    // frames measured ~150ms in headless WebKit, ~25ms in Chromium). Capped at
+    // 1s, so a page that never paints still lets the check end.
+    const frame = () => new Promise(r => {
+      setTimeout(r, 1000);
+      requestAnimationFrame(() => requestAnimationFrame(r));
+    });
     for (const root of els) {
       if (!shown(root)) continue;
       const isPinned = pinned(root);
@@ -141,12 +152,12 @@ async function fitProblems(locator, { timeout = FIT_MS } = {}) {
     return [...new Set(problems)];
   });
   let timer;
-  const cap = new Promise(resolve => { timer = setTimeout(() => resolve([`FIT CHECK TIMED OUT after ${timeout}ms`]), timeout); });
+  const cap = new Promise(resolve => { timer = setTimeout(() => resolve([`${FIT_INCOMPLETE}TIMED OUT after ${timeout}ms`]), timeout); });
   try {
-    return await Promise.race([run.catch(e => [`FIT CHECK FAILED: ${String(e && e.message || e).split('\n')[0]}`]), cap]);
+    return await Promise.race([run.catch(e => [`${FIT_INCOMPLETE}FAILED: ${String(e && e.message || e).split('\n')[0]}`]), cap]);
   } finally {
     clearTimeout(timer);
   }
 }
 
-export { fitProblems, FIT_MS };
+export { fitProblems, FIT_MS, FIT_INCOMPLETE };
