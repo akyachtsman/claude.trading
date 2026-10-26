@@ -135,16 +135,14 @@ jobs:
       tests-dir: .github/scripts/ui-tests
       build-cmd: ''
       site-dir: '.'
+      # S10, S11 and S14 need the live backend (a PR runner cannot reach
+      # Supabase); qa-live.yml runs them. shared-qa.yml exports this input to
+      # its UI job as GREP_INVERT (v1.0.3, claude.directives #484), and
+      # playwright.config.js turns that into `grepInvert`.
+      grep-invert: live only
     secrets:
       TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
       TEST_AUTH_EMAIL: ${{ secrets.TEST_AUTH_EMAIL }}
-    # ⚠️ GAP, reported to claude.directives: the full copy set the job env
-    # `GREP_INVERT: 'live only'` on UI Tests, which playwright.config.js turns
-    # into `grepInvert` so S10/S11/S14 (they need the live backend; qa-live.yml
-    # runs them) were left out of the PR run. shared-qa.yml has no input that
-    # reaches the suite's env, and a caller's `env` does not pass into a called
-    # workflow, so this caller cannot carry it: those three scenarios now run
-    # here too, against the live Supabase project.
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The News topic AI helper's server and database harnesses (owner 2026-10-19:
