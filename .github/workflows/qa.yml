@@ -1,38 +1,31 @@
-# qa.yml — Static checks + Playwright against a local server.
-# Copy to .github/workflows/qa.yml in your project, along with the composite
-# actions from templates/actions/ into .github/actions/ (secret-scan, ui-suite).
+# qa.yml — a CALLER of claude.directives' shared-qa.yml (#460 step 4 pilot,
+# 2026-10-26), pinned to the moving release tag @v1. The shared workflow runs
+# the secret-scan composite, the contrast guardrail (Static Checks) and the
+# Playwright suite against a local server (UI Tests), reading every shared
+# composite and script from claude.directives at the called commit; each of its
+# jobs prints "Shared files: akyachtsman/claude.directives@<sha>". In this run a
+# called job shows as "qa / Static Checks" and "qa / UI Tests (local server)".
+# How it works and what a project keeps: claude.directives
+# docs/internal/shared-workflows.md. Rollback is reverting the PR that made
+# this a caller, which restores the full copy.
+#
+# ⚠️ Keep this caller through every /refresh-repo: "pilot of #460 step 4". The
+# deleted composites (.github/actions/secret-scan, .github/actions/ui-suite)
+# and scripts (check-ui-viewports.js, check-contrast.js, package-lock.json) must
+# not be offered back.
 #
 # Jobs:
-#   static-checks — secret scan (composite) and contrast guardrail; the
-#                   blocking gate, runs on every trigger.
-#   ui-tests      — Playwright against a local server via the ui-suite
-#                   composite, on every trigger (skipped with a notice only
-#                   while the repo has no index.html yet and no build).
-#                   BLOCKING by default for the static/no-backend tier (the
-#                   suite runs fully against the bundled http-server);
-#                   set advisory-run: 'true' only as an explicit, temporary
-#                   opt-out — and flip it back once the blocking issue is fixed.
-#   ⚠️ LOCAL ADDITIONS: news-checks (every trigger), ui-changes (upstream
-#   dropped it 2026-10; kept here ONLY because its news_client output gates
-#   news-client-mutants — it no longer gates ui-tests), news-client-mutants
+#   project-checks — this repo's own static checks (extended secret scan,
+#                    html-validate), which used to be steps in Static Checks.
+#                    `qa` needs it, so a red project check still stops the suite.
+#   qa             — the shared workflow (Static Checks, then UI Tests).
+#   ⚠️ LOCAL ADDITIONS: news-checks (every trigger), ui-changes (kept ONLY
+#   because its news_client output gates news-client-mutants), news-client-mutants
 #   and notify. See each job.
 #
-# Required setup:
-#   - TEST_AUTH_CREDENTIAL / TEST_AUTH_EMAIL repository secrets: set them only
-#     for a login that needs a credential from outside. Which gates need which,
-#     and when to leave both unset: docs/standards/cicd-setup.md -> Step 5.
-#   - Set UI_TESTS_DIR below to the path of your Playwright test directory
-#   - A project with the CI-build opt-in (global.md -> Hosting & Deployment)
-#     sets BUILD_CMD and SITE_DIR below to the SAME values as its
-#     pages-deploy.yml, and BUILD_PATHS to its build inputs (read by the
-#     toolkit's Pages edit reminder, not by this workflow). The browser job
-#     then runs the build and serves SITE_DIR, so it tests what is deployed.
-#     Without the opt-in
-#     leave all three as shipped: no build, the repo root is served. It serves
-#     the tree UNFILTERED (dotfiles and deny-listed paths included), so it
-#     tests the site's behaviour, not what pages-deploy.yml leaves out; it does
-#     refuse what that deploy refuses (a SITE_DIR outside the repository, or a
-#     symlink in the site), so a green PR cannot merge into a red deploy.
+# Contrast: .github/scripts/check-contrast.js was byte-identical to the shared
+# copy, so it is deleted and no `contrast-script` is passed; the shared step
+# runs the same pairs against styles/tokens.css.
 
 name: QA — Static + UI Tests
 
@@ -65,21 +58,22 @@ permissions:
   contents: read
 
 env:
-  # Path to the directory containing playwright.config.js and package.json
+  # Read by this file's own jobs (project-checks, ui-changes,
+  # news-client-mutants). A called workflow does not see `env`, so the same
+  # values go to `qa` as inputs below: keep the two in step.
   UI_TESTS_DIR: .github/scripts/ui-tests
-  # CI-build opt-in only (header). BUILD_CMD runs from the repo root and writes
-  # SITE_DIR; empty BUILD_CMD means no build and SITE_DIR stays '.'.
   BUILD_CMD: ''
   SITE_DIR: '.'
-  # Extended regex of the build INPUTS, e.g.
-  # '^src/|^package(-lock)?\.json$|^tsconfig\.json$|^tailwind\.config\.'.
-  # Not read by this workflow: the toolkit's Pages edit reminder reads it to
-  # know which edits change the deployed site. Empty: no build.
+  # Extended regex of the build INPUTS. Not read by the shared workflow: the
+  # toolkit's Pages edit reminder reads it here to know which edits change the
+  # deployed site (ui-changes also appends it to UI_PATHS). Empty: no build.
   BUILD_PATHS: ''
 
 jobs:
-  static-checks:
-    name: Static Checks
+  # ⚠️ LOCAL ADDITION — this repo's own checks, moved out of Static Checks into
+  # a sibling job of `qa` (the slot shared-qa.yml's header documents).
+  project-checks:
+    name: Project Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -87,11 +81,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # ── Secret scan (composite — single source of truth for the pattern) ────
-      - uses: ./.github/actions/secret-scan
-
-      # ⚠️ LOCAL ADDITION: extended secret scan (upstream pattern gap, reported for the Downstream-Finding Loop)
-      # The composite above is byte-locked to the canonical pattern, which has no
+      # Extended secret scan (upstream pattern gap, reported for the Downstream-Finding Loop)
+      # The shared secret-scan composite is byte-locked to the canonical pattern, which has no
       # entry for this project's own token shapes (Anthropic, Supabase secret,
       # GitHub PATs, JWTs, private keys) and skips *.sql/*.py/*.jsonl by extension.
       # `git grep` covers every TRACKED file whatever its type, and its exit codes
@@ -121,28 +112,12 @@ jobs:
             exit 1
           fi
 
-
-      # ── Contrast guardrail ───────────────────────────────────────────────────
-      # WCAG AA check against this project's design tokens — styles/tokens.css or
-      # css/tokens.css by default; elsewhere, append `--tokens <file>` (repeat it
-      # per theme file). With no stylesheet at all it exits with a notice (no
-      # failure) until /design-intake creates tokens.css; once the project has
-      # any CSS, a missing tokens file FAILS the check.
-      # CommonJS, like every .js under .github/scripts/: it runs only because
-      # .github/scripts/package.json declares "type": "commonjs". Without that
-      # manifest Node takes the module type from the ROOT package.json, and a
-      # Vite/Astro/SvelteKit root ("type": "module") kills this step with
-      # "require is not defined in ES module scope".
-      - name: Contrast guardrail (WCAG AA)
-        run: node .github/scripts/check-contrast.js
-
-
       # ⚠️ LOCAL ADDITION — CLAUDE.md → Required Commands lists `npx html-validate
       # index.html`, but no CI step ran it. Pinned through the ui-tests lockfile
       # (devDependency) rather than `npx html-validate@x`, so the whole tool tree is
       # reproducible; `--ignore-scripts` because nothing here needs a postinstall.
       # Node 22 is required by html-validate 11 (engines ^22.22.0) and last in the job
-      # so it cannot change the runtime of the guards above.
+      # so it cannot change the runtime of the scan above.
       - name: Setup Node (html-validate)
         uses: actions/setup-node@v7
         with:
@@ -151,6 +126,25 @@ jobs:
         run: |
           npm ci --ignore-scripts --prefix "$UI_TESTS_DIR"
           npx --prefix "$UI_TESTS_DIR" html-validate index.html
+
+  qa:
+    needs: [project-checks]
+    uses: akyachtsman/claude.directives/.github/workflows/shared-qa.yml@v1
+    with:
+      # The env values above, as inputs (a called workflow does not see `env`).
+      tests-dir: .github/scripts/ui-tests
+      build-cmd: ''
+      site-dir: '.'
+    secrets:
+      TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+      TEST_AUTH_EMAIL: ${{ secrets.TEST_AUTH_EMAIL }}
+    # ⚠️ GAP, reported to claude.directives: the full copy set the job env
+    # `GREP_INVERT: 'live only'` on UI Tests, which playwright.config.js turns
+    # into `grepInvert` so S10/S11/S14 (they need the live backend; qa-live.yml
+    # runs them) were left out of the PR run. shared-qa.yml has no input that
+    # reaches the suite's env, and a caller's `env` does not pass into a called
+    # workflow, so this caller cannot carry it: those three scenarios now run
+    # here too, against the live Supabase project.
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The News topic AI helper's server and database harnesses (owner 2026-10-19:
@@ -374,7 +368,7 @@ jobs:
   # took 8m50s in the build sandbox (2026-10-19), and a hosted runner is slower.
   news-client-mutants:
     name: News helper page mutants (S75, shard ${{ matrix.shard }}/2)
-    needs: [static-checks, ui-changes]
+    needs: [project-checks, ui-changes]
     if: needs.ui-changes.outputs.news_client == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -424,117 +418,6 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: python3 tools/news-topic-client-mutants.py "--shard=$SHARD/2"
 
-  ui-tests:
-    name: UI Tests (local server)
-    needs: [static-checks]
-    runs-on: ubuntu-latest
-    # 120 is the fleet FLOOR for a ui-suite caller. Set HIGHER if your suite
-    # needs it, never lower, and raise it BEFORE adding projects. Why 120 (measurements, arithmetic, what it does NOT cover): the
-    # CALLER BOUND section of .github/actions/ui-suite/action.yml's header.
-    timeout-minutes: 120
-    # ⚠️ LOCAL ADDITION — replaces a local `grep-invert` input on the ui-suite
-    # composite, which is a verbatim upstream drop-in (its run step is pinned to
-    # `npx playwright test`; the guard that enforced that, check-ui-suite-env.py,
-    # was retired upstream 2026-10). Job env reaches every composite step, so the
-    # config-evaluating gates and the run all see the same value;
-    # playwright.config.js turns it into `grepInvert`. The live-gated scenarios do
-    # NOT self-skip on a local server: they gate on liveBackendConfigured(), which
-    # reads the COMMITTED scripts/config.js, and this desk is live — so S14 would
-    # assert the market lamp reads LIVE/EOD against a runner that cannot reach
-    # Supabase, and this blocking job would go red. qa-live.yml leaves it unset:
-    # it is the live gate and must run those scenarios for real.
-    env:
-      GREP_INVERT: 'live only'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # CI-build opt-in only: build exactly as pages-deploy.yml does and serve
-      # its output, so the suite tests what is deployed rather than the
-      # unbuilt tree. With BUILD_CMD empty these two steps are skipped.
-      - name: Setup Node (build)
-        if: env.BUILD_CMD != ''
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          # setup-node v5+ turns npm caching ON by itself when the root
-          # package.json names npm in `packageManager` (or devEngines), and then
-          # needs a lockfile. This step never cached under v4; keep it that way.
-          package-manager-cache: false
-
-      - name: Build
-        if: env.BUILD_CMD != ''
-        run: bash -eo pipefail -c "$BUILD_CMD"
-
-      # Refuse what pages-deploy.yml refuses, so a green PR cannot merge into a
-      # red deploy: a site directory resolving outside the repository, or a
-      # symlink in the site (the deploy publishes link TARGETS). A symlink fails
-      # where that deploy is installed (.github/workflows/pages-deploy.yml) or a
-      # build implies it (the opt-in is Actions-source); otherwise the repo is
-      # branch-source, where the managed build publishes links differently, so
-      # it only warns. Also exports the normalised directory ('' and '/'
-      # mean the repo root) to serve, as a step output. With no build and no
-      # index.html yet (a fresh repo) there is nothing to load: it skips the
-      # suite with a notice rather than hand Playwright a directory listing.
-      - name: Check the site directory
-        id: site
-        run: |
-          src="${SITE_DIR%/}"; [ -n "$src" ] || src="."
-          if [ -z "$BUILD_CMD" ] && [ ! -f "$src/index.html" ]; then
-            echo "::notice::No index.html yet — skipping the browser suite."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ ! -f "$src/index.html" ]; then
-            echo "::error::$src/index.html is missing: nothing for the suite to load."
-            exit 1
-          fi
-          ws=$(realpath -e .)
-          real=$(realpath -e -- "$src")
-          case "$real/" in
-            "$ws"/*) ;;
-            *) echo "::error::SITE_DIR=$SITE_DIR resolves to $real, outside the repository; pages-deploy.yml refuses it."; exit 1 ;;
-          esac
-          # Scanned from inside, so the excluded names apply only BELOW the root
-          # (a site directory that is itself called node_modules is still scanned).
-          links=$(cd "$real" && find . \( -name .git -o -name .github -o -name node_modules \) -prune -o -type l -printf '%P -> %l\n')
-          if [ -n "$links" ] && { [ -n "$BUILD_CMD" ] || [ -f .github/workflows/pages-deploy.yml ]; }; then
-            echo "::error::symlinks in the site, which pages-deploy.yml refuses; replace them with real files:"
-            printf '%s\n' "$links"
-            exit 1
-          elif [ -n "$links" ]; then
-            echo "::warning::symlinks in the site; pages-deploy.yml (Actions-source) refuses them: $(printf '%s; ' "$links")"
-          fi
-          echo "root=$src" >> "$GITHUB_OUTPUT"
-
-      # advisory-run ships 'false': blocking is the default posture for the
-      # static/no-backend tier, where the suite runs fully against the bundled
-      # local server. A template that shipped 'true' handed every new project a
-      # UI suite whose failures show green. Set it 'true' ONLY in a project with
-      # a known open UI failure mid-fix, and flip it back as soon as that lands.
-      # Auth/backend-gated scenarios self-skip when no credential is available
-      # (TEST_AUTH_CREDENTIAL empty and the login form ships none), and
-      # qa-live.yml stays the live gate.
-      - uses: ./.github/actions/ui-suite
-        if: steps.site.outputs.skip != 'true'
-        with:
-          tests-dir: ${{ env.UI_TESTS_DIR }}
-          app-url: http://localhost:8080
-          test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
-          test-auth-email: ${{ secrets.TEST_AUTH_EMAIL }}
-          # VARIABLES, not secrets: selectors and a URL substring, and a masked one
-          # is unreadable in a failure message. Empty keeps the windowed answer (#320)
-          # and S2 reading the gate clearing as success (#379).
-          test-auth-ready-selector: ${{ vars.TEST_AUTH_READY_SELECTOR }}
-          test-auth-ready-request: ${{ vars.TEST_AUTH_READY_REQUEST }}
-          test-auth-success-selector: ${{ vars.TEST_AUTH_SUCCESS_SELECTOR }}
-          artifact-name: playwright-results-local
-          app-pages: ${{ vars.APP_PAGES }}
-          start-local-server: 'true'
-          server-root: ${{ steps.site.outputs.root }}
-          advisory-run: 'false'
-
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # A precise, PR-scoped, stale-SHA-guarded "green" wake comment (the retired
   # ci-notify.yml watcher fired on any push and could name a superseded commit;
@@ -549,8 +432,12 @@ jobs:
   notify:
     name: Notify PR on green
     # news-checks and news-client-mutants are LOCAL ADDITIONS (see their jobs).
-    needs: [static-checks, ui-changes, ui-tests, news-checks, news-client-mutants]
-    if: ${{ always() && github.event_name == 'pull_request' && needs.static-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.ui-tests.result == 'success' || needs.ui-tests.result == 'skipped') && needs.news-checks.result == 'success' && (needs.news-client-mutants.result == 'success' || needs.news-client-mutants.result == 'skipped') }}
+    # The shared Static Checks and UI Tests run INSIDE `qa`, so this job cannot
+    # name them: `needs.qa.result` is success only when both of them were. (The
+    # suite's "no index.html yet" skip is a step inside that job, so `qa` still
+    # reads success then, as the old `ui-tests` skipped arm allowed.)
+    needs: [project-checks, qa, ui-changes, news-checks, news-client-mutants]
+    if: ${{ always() && github.event_name == 'pull_request' && needs.project-checks.result == 'success' && needs.qa.result == 'success' && needs.ui-changes.result == 'success' && needs.news-checks.result == 'success' && (needs.news-client-mutants.result == 'success' || needs.news-client-mutants.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

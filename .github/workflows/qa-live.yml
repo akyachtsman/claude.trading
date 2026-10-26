@@ -1,31 +1,21 @@
-# qa-live.yml — Playwright against the live deployed URL.
-# Copy to .github/workflows/qa-live.yml in your project, along with the
-# ui-suite composite from templates/actions/ into .github/actions/.
-# Triggers automatically after GitHub Pages deploys, or manually via workflow_dispatch.
+# qa-live.yml — a CALLER of claude.directives' shared-qa-live.yml (#460 step 4
+# pilot, 2026-10-26), pinned to the moving release tag @v1: Playwright against
+# the live deployed URL, after GitHub Pages deploys or by hand. The shared
+# workflow reads its composites and scripts from claude.directives at the
+# called commit and prints "Shared files: akyachtsman/claude.directives@<sha>".
+# It carries the full copy's concurrency on its suite job, so this caller needs
+# none. How it works: claude.directives docs/internal/shared-workflows.md.
+#
+# ⚠️ Keep this caller through every /refresh-repo: "pilot of #460 step 4".
 #
 # ⚠️ RULE W2 — Pages has two sources and only one name is ours to pre-fill.
-# ACTION: if Settings -> Pages -> Source is "GitHub Actions", add your deploy
-# workflow's exact `name:` to the list below: "Pages Deploy" for
-# templates/workflows/pages-deploy.yml, else your own. Add, never replace. It is
-# not pre-filled because on a branch-source project that name matches nothing.
-# Keep it through every template refresh: a dropped arm fails nothing, the live
-# gate simply stops firing (cicd-setup.md -> 9c-bis).
-# ACTION: the job's `if:` gate needs NO workflow-name condition — it reads
-# `github.event.workflow_run.conclusion`, which is agnostic to which workflow
-# fired it. Do not "helpfully" add one; that re-breaks exactly what this fixes.
-# Why: docs/standards/automations.md -> Watcher Rules (W2).
+# This project is branch-source (the managed pages-build-deployment). If it
+# ever moves to "GitHub Actions", ADD the deploy workflow's exact `name:` to the
+# list below; never replace. Why: docs/standards/automations.md -> Watcher
+# Rules (W2).
 #
-# Required setup:
-#   - TEST_AUTH_CREDENTIAL / TEST_AUTH_EMAIL repository secrets: set them only
-#     for a login that needs a credential from outside. Which gates need which,
-#     and when to leave both unset: docs/standards/cicd-setup.md -> Step 5.
-#   - Add APP_URL as a repository variable: Settings → Secrets and variables → Variables
-#     e.g. https://<your-username>.github.io/<your-repo>/
-#   - Set UI_TESTS_DIR below to the path of your Playwright test directory
-#
-# Note: the ui-suite composite cannot carry per-step timeout-minutes (the old
-# 8/12-minute sub-timeouts are gone); the job-level timeout-minutes below still
-# bounds the whole run.
+# Required setup: the APP_URL repository variable (the live URL) and, for the
+# gated scenarios, the TEST_AUTH_CREDENTIAL secret.
 
 name: QA — UI Tests (live)
 
@@ -40,112 +30,19 @@ on:
         description: 'Override live app URL (optional)'
         required: false
 
-# Only one live run per ref at a time; a newer trigger cancels the older/queued
-# one. Without this, repeated Pages deploys queue up qa-live runs that can sit
-# for hours (the job timeout below does not start counting until a runner is
-# assigned, so a queued run is not bounded by it).
-# A watched Actions deploy run on another branch, or from a fork, deployed
-# nothing (the job's `if:` skips it), but `github.ref` on a workflow_run is the
-# default branch whichever run fired it, so it gets a group of its own: in the
-# shared one it would cancel the live suite of a real deploy. The managed
-# pages-build-deployment (event `dynamic`) is exempt: it publishes the
-# configured source branch, which need not be the default one. So does a
-# manual run (it may test an override URL) and a watched run that did not
-# succeed (the job skips it): in the shared group either would cancel the live
-# suite of a real deploy. Only a run that will test the deploy shares it.
-concurrency:
-  group: qa-live-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success' && format('skipped-{0}', github.run_id) || github.event_name == 'workflow_run' && github.event.workflow_run.event != 'dynamic' && (github.event.workflow_run.head_branch != github.event.repository.default_branch || github.event.workflow_run.head_repository.full_name != github.repository) && format('offbranch-{0}', github.run_id) || github.ref }}
-  # The runs that must not cancel are kept out of the shared group above, not
-  # by making this an expression.
-  cancel-in-progress: true
-
 # Least privilege: read the repo and run tests against the live URL.
+# `actions: read` is for the shared published-lookup job: a called workflow
+# can only narrow the caller's token, never widen it.
 permissions:
   contents: read
-
-env:
-  UI_TESTS_DIR: .github/scripts/ui-tests
+  actions: read
 
 jobs:
-  # A successful deploy run can still have published nothing: pages-deploy.yml,
-  # installed before a project's first page exists, skips its Publish job. There
-  # is no site to test then, so the suite is skipped. Only a lookup that answers
-  # "every Publish job skipped" counts; any other answer runs the suite.
-  published:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-    outputs:
-      published: ${{ steps.check.outputs.published }}
-    steps:
-      - name: Did the watched deploy publish?
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-        run: |
-          pub=yes
-          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ -n "$RUN_ID" ]; then
-            pub=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.name == "Publish")] | if length > 0 and all(.conclusion == "skipped") then "none" else "yes" end') || pub=yes
-          fi
-          if [ "$pub" = "none" ]; then
-            echo "::notice::the watched deploy published nothing (no site yet), so the live suite is skipped."
-          fi
-          echo "published=$pub" >> "$GITHUB_OUTPUT"
-
-  ui-tests-live:
-    needs: published
-    # For workflow_run: only run when the deploy succeeded AND published, and
-    # (an Actions deploy) ran on this repository's default branch; the managed
-    # pages-build-deployment (event `dynamic`) publishes the configured source
-    # branch. For workflow_dispatch: always run.
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       (github.event.workflow_run.event == 'dynamic' ||
-        (github.event.workflow_run.head_branch == github.event.repository.default_branch &&
-         github.event.workflow_run.head_repository.full_name == github.repository)) &&
-       needs.published.outputs.published != 'none')
-    runs-on: ubuntu-latest
-    # 120 is the fleet FLOOR for a ui-suite caller. Set HIGHER if your suite
-    # needs it, never lower, and raise it BEFORE adding projects. Why 120 (measurements, arithmetic, what it does NOT cover): the
-    # CALLER BOUND section of .github/actions/ui-suite/action.yml's header.
-    timeout-minutes: 120
-
-    steps:
-      # Fail in seconds, not after a cold install (audit, 2026-10-06;
-      # qa-response.yml carries the same guard). The live URL comes from the
-      # app_url dispatch input or vars.APP_URL and from nothing else. A baseURL
-      # default filled in to the kit's playwright.config.js is NOT read by this
-      # gate: a project that relied on it goes red here until it sets the
-      # repository variable (pilots claude.prop + claude.trading, 2026-10-13).
-      - name: Require APP_URL
-        env:
-          URL: ${{ github.event.inputs.app_url || vars.APP_URL }}
-        run: |
-          if [ -z "$URL" ]; then
-            echo "::error::APP_URL repository variable is not set, and no app_url input was given — cannot run the live suite."
-            exit 1
-          fi
-
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # Blocking — this is the authoritative live UI gate.
-      - uses: ./.github/actions/ui-suite
-        with:
-          tests-dir: ${{ env.UI_TESTS_DIR }}
-          # workflow_dispatch input overrides repo variable if provided
-          app-url: ${{ github.event.inputs.app_url || vars.APP_URL }}
-          test-auth-credential: ${{ secrets.TEST_AUTH_CREDENTIAL }}
-          test-auth-email: ${{ secrets.TEST_AUTH_EMAIL }}
-          # VARIABLES, not secrets: selectors and a URL substring, and a masked one
-          # is unreadable in a failure message. Empty keeps the windowed answer (#320)
-          # and S2 reading the gate clearing as success (#379).
-          test-auth-ready-selector: ${{ vars.TEST_AUTH_READY_SELECTOR }}
-          test-auth-ready-request: ${{ vars.TEST_AUTH_READY_REQUEST }}
-          test-auth-success-selector: ${{ vars.TEST_AUTH_SUCCESS_SELECTOR }}
-          artifact-name: playwright-results-live
-          app-pages: ${{ vars.APP_PAGES }}
+  live:
+    uses: akyachtsman/claude.directives/.github/workflows/shared-qa-live.yml@v1
+    with:
+      tests-dir: .github/scripts/ui-tests
+      app-url: ${{ inputs.app_url }}
+    secrets:
+      TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
+      TEST_AUTH_EMAIL: ${{ secrets.TEST_AUTH_EMAIL }}
