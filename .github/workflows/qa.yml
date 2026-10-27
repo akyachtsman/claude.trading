@@ -140,6 +140,12 @@ jobs:
       # its UI job as GREP_INVERT (v1.0.3, claude.directives #484), and
       # playwright.config.js turns that into `grepInvert`.
       grep-invert: live only
+      # The web guards (claude.directives v1.1.0) flag four native confirm()
+      # calls in scripts/app.js. The page does not load styles/components.js
+      # yet, so House.confirm is not there to call: this skip is removed by
+      # the house-style move (/design-intake), which replaces them.
+      guard-skip: |
+        native-dialog:scripts/app.js
     secrets:
       TEST_AUTH_CREDENTIAL: ${{ secrets.TEST_AUTH_CREDENTIAL }}
       TEST_AUTH_EMAIL: ${{ secrets.TEST_AUTH_EMAIL }}
