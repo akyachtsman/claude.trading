@@ -30,6 +30,10 @@
 --
 -- Verify after applying: tools/test-pin-owner-only-verify.sql (one DO block, always rolled back).
 --
+-- Applied 2026-10-27 (owner-approved) by the owner in the Supabase SQL Editor, not through the connector,
+-- so there is no list_migrations row. Read back identical to this file apart from CRLF line ends; the probe
+-- ran live, 15 of 15, rolled back.
+--
 -- revert: re-run the five CREATE OR REPLACE statements below with the one `and not u.is_test`
 -- clause removed from each — that is the pre-desk_024 live definition exactly; no data changes.
 
