@@ -13,6 +13,7 @@
 import { test as base, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fitProblems, FIT_INCOMPLETE } from './lib/fit.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDER WITNESS — evidence that a test BODY started at its project's width (#348)
@@ -1116,6 +1117,213 @@ test('CTRL: no duplicated primary action control', async ({ page, renderWitness 
   expect(dupes,
     `Duplicated primary action control(s) on the current view:\n${JSON.stringify(dupes, null, 2)}`
   ).toHaveLength(0);
+});
+
+// The upstream kit's attachJson (tests/lib/fixtures.js there; this kit keeps its
+// helpers inline). Used by DISMISS.
+function attachJson(name, data) {
+  return test.info().attach(name, { body: JSON.stringify(data, null, 2), contentType: 'application/json' });
+}
+
+// LOCAL: S48 and S77 must not pass on a fit check that did not finish, and
+// must not flake on one either. A FIT_INCOMPLETE line (lib/fit.js: a cold
+// WebKit's first call can outrun the 2s cap) is retried ONCE, warm, with a
+// longer cap; whatever that returns, incomplete included, is asserted.
+async function fitChecked(locator) {
+  const first = await fitProblems(locator);
+  if (!first.some(p => p.startsWith(FIT_INCOMPLETE))) return first;
+  return fitProblems(locator, { timeout: 5000 });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO — DISMISS: overlays close via their control, Escape, and backdrop
+// "It has a close button" is not coverage; "clicking it closes" is (test.md →
+// UI coverage gates). For each trigger that opens a modal/drawer/popover, the
+// container must actually hide after (a) its close/X/Cancel control and
+// (b) Escape — re-opened between checks — and (c) a backdrop click, asserted
+// only when a backdrop element exists (some designs omit it deliberately).
+// FIT rides along, because this is where overlays get opened: before its
+// dismissers run, each overlay or pop-over a trigger opened must fit the visible
+// screen and scroll by finger (fitProblems in lib/fit.js; design.md →
+// iPhone and iPad). It counts in every project; the `iphone` one is WebKit.
+// ─────────────────────────────────────────────────────────────────────────────
+test('DISMISS: overlays close via control, Escape, and backdrop', async ({ page, renderWitness }) => {
+  renderWitness();
+  // BUDGET — 1_200_000, the upstream kit's derivation (templates/ui-tests/
+  // tests/app.spec.js → DISMISS: a sizing estimate over the CAPPED path —
+  // 30 triggers, 2 navigation resets, five 2s clicks and ~3.8s of waits per
+  // trigger plus FIT_MS — not a proven ceiling). This desk's gate is a 6-digit
+  // PIN, the long end of that sum. If it times out, read the run's
+  // `dismiss-budget` attachment rather than re-deriving the sum.
+  // LOCAL: ported 2026-10-25 for the iPhone fit check (this kit had no DISMISS
+  // until then). gotoAndAuth() here is the local one, which installs
+  // blockRosterWrites first, so no trigger this sweeps can reach the roster.
+  test.setTimeout(1_200_000);
+  await gotoAndAuth(page);
+
+  const OVERLAY = 'dialog[open], [role="dialog"], [aria-modal="true"], .modal, .drawer, .popover, .overlay';
+  const CLOSE = '[aria-label*="close" i], .close, .modal-close, button:has-text("Close"), button:has-text("Cancel"), button:has-text("×"), button:has-text("✕")';
+  const TRIGGERS = 'button, [role=button], [aria-haspopup="dialog"]';
+  // AN OVERLAY ALREADY ON SCREEN IS NOT THE TRIGGER'S (audit 2026-10-11, I-9).
+  // Ownership used to be "any matching overlay is visible after the click", so a
+  // decorative `.overlay` (a hero caption) — or an overlay an EARLIER trigger
+  // failed to close — was credited to every trigger, and each one then reported
+  // "no close control" / "still visible" against an element it never opened.
+  // Before each click the overlays visible at that moment are MARKED, and only
+  // an unmarked visible overlay counts as the trigger's: a newly mounted node, or
+  // a reused one that was hidden before the click. After a navigation the marks
+  // are gone with the old document, which is the right answer — nothing on the
+  // new page was there before. RESIDUE: an app that re-mounts a standing overlay
+  // as a NEW node on every click still reads it as owned.
+  const PREOPEN = 'data-uitests-preopen';
+  const OWNED = `:is(${OVERLAY}):not([${PREOPEN}])`;
+  // FIT also checks the pop-overs a trigger opens that are not dialogs (the
+  // house ⋮ menu, Archived (N), a type-ahead list, any ARIA menu or listbox).
+  // They are marked with the overlays, so one standing on the page before the
+  // click is not credited to the trigger either.
+  const POPS = '.menu-pop, .archived-pop, .list-pop, [role="menu"], [role="listbox"]';
+  const FITTED = `:is(${OVERLAY}, ${POPS}):not([${PREOPEN}])`;
+  const fitSeen = new Set();
+  const fitIncomplete = [];
+  const markOpenOverlays = async () => {
+    // Through locators on both sides, so an overlay inside an open shadow root
+    // is marked and unmarked like any other.
+    await page.locator(`[${PREOPEN}]`)
+      .evaluateAll((els, attr) => { for (const el of els) el.removeAttribute(attr); }, PREOPEN)
+      .catch(() => {});
+    await page.locator(`${OVERLAY}, ${POPS}`).locator('visible=true')
+      .evaluateAll((els, attr) => { for (const el of els) el.setAttribute(attr, ''); }, PREOPEN)
+      .catch(() => {});
+  };
+  const overlayVisible = async () => {
+    for (const el of await page.locator(OWNED).all()) {
+      if (await el.isVisible().catch(() => false)) return el;
+    }
+    return null;
+  };
+
+  const findings = [];
+  // The trigger cap is reported, not silent: overlays behind trigger 31 or
+  // later are never checked, so a page with more triggers says so in a
+  // `dismiss-budget` attachment after the loop (test.md: "Dismissers are
+  // proven, not assumed"; audit, 2026-10-06). ONE record per run: when the
+  // reset cap below stops the loop first, its own record is the true stopping
+  // point and this one is not written (Codex, #405).
+  const TRIGGER_CAP = 30;
+  const triggerTotal = await page.locator(TRIGGERS).count();
+  const triggerCount = Math.min(triggerTotal, TRIGGER_CAP);
+  let stoppedByResets = false;
+  // Cap the WASTED work, not the useful work. A navigating trigger is not an
+  // overlay trigger, so it contributes nothing to this scenario's assertions —
+  // the reset it forces is pure cost. Capping resets therefore loses no S9
+  // coverage, where capping triggerCount would. Not silent: hitting the cap
+  // writes a `dismiss-budget` attachment, so a suite that stops early says so
+  // WITHOUT failing the scenario for triggers it never reached.
+  const NAV_RESET_CAP = 2;
+  let navResets = 0;
+
+  for (let i = 0; i < triggerCount; i++) {
+    // Re-resolve per round — the DOM may have re-rendered since discovery.
+    const trigger = page.locator(TRIGGERS).nth(i);
+    if (!await trigger.isVisible().catch(() => false)) continue;
+    const name = ((await trigger.textContent().catch(() => '')) || '').trim().slice(0, 40) || `trigger[${i}]`;
+
+    const urlBefore = page.url();
+    await markOpenOverlays();
+    await trigger.click({ timeout: 2000 }).catch(() => {});
+    await page.waitForTimeout(600);
+    if (page.url() !== urlBefore && !(await overlayVisible())) {
+      // Trigger navigated — not an overlay, so it is S3's territory.
+      if (++navResets > NAV_RESET_CAP) {
+        // ATTACHED, not pushed to findings[] — that array is asserted on at the
+        // end, so recording a BUDGET outcome there failed the scenario for a
+        // navigation-heavy app whose overlays are fine and were simply never
+        // reached. "Not silent" must not mean "counted as a defect": S6 already
+        // makes this distinction and S9 did not.
+        attachJson('dismiss-budget', {
+          navResetCap: NAV_RESET_CAP,
+          stoppedAtTrigger: name,
+          triggersConsidered: i + 1,
+          of: triggerTotal,
+          note: `Stopped after ${NAV_RESET_CAP} navigation resets. Triggers beyond this point were NOT checked for overlay dismissal — a coverage gap, not a dismisser defect. Raise NAV_RESET_CAP and this scenario's timeout together if the app is navigation-heavy.`,
+        });
+        stoppedByResets = true;
+        break;
+      }
+      await gotoAndAuth(page);
+      continue;
+    }
+    // FIT, before any dismisser runs, on what this trigger opened. A problem
+    // already reported for an earlier trigger is not reported again.
+    for (const problem of await fitProblems(page.locator(FITTED))) {
+      if (problem.startsWith(FIT_INCOMPLETE)) { fitIncomplete.push({ trigger: name, problem }); continue; }
+      if (fitSeen.has(problem)) continue;
+      fitSeen.add(problem);
+      findings.push({ trigger: name, dismisser: 'fit', problem });
+    }
+    if (!(await overlayVisible())) continue;  // opens no overlay — S3's territory
+
+    // The trigger owns an overlay: each dismisser must actually hide it.
+    const reopen = async () => {
+      if (await overlayVisible()) return true;
+      await trigger.click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(600);
+      return Boolean(await overlayVisible());
+    };
+
+    // (a) the overlay's own close/X/Cancel control
+    const ov = await overlayVisible();
+    const close = ov.locator(CLOSE).first();
+    if (!(await close.isVisible().catch(() => false))) {
+      findings.push({ trigger: name, dismisser: 'close control', problem: 'no visible close/X/Cancel control in overlay' });
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(300);
+    } else {
+      await close.click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(600);
+      if (await overlayVisible()) findings.push({ trigger: name, dismisser: 'close control', problem: 'overlay still visible after clicking it' });
+    }
+
+    // (b) Escape
+    if (await reopen()) {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+      if (await overlayVisible()) findings.push({ trigger: name, dismisser: 'Escape', problem: 'overlay still visible' });
+    } else {
+      findings.push({ trigger: name, dismisser: 'Escape', problem: 'could not re-open overlay to test' });
+    }
+
+    // (c) backdrop — only asserted when a backdrop element exists
+    const backdrop = page.locator('.backdrop, .modal-backdrop, .overlay-backdrop, [data-backdrop]').first();
+    if (await reopen()) {
+      if (await backdrop.isVisible().catch(() => false)) {
+        await backdrop.click({ position: { x: 4, y: 4 }, timeout: 2000 }).catch(() => {});
+        await page.waitForTimeout(600);
+        if (await overlayVisible()) findings.push({ trigger: name, dismisser: 'backdrop', problem: 'overlay still visible' });
+      }
+    }
+
+    await page.keyboard.press('Escape').catch(() => {});   // leave closed for the next round
+    await page.waitForTimeout(200);
+  }
+
+  if (!stoppedByResets && triggerTotal > TRIGGER_CAP) {
+    attachJson('dismiss-budget', {
+      triggerCap: TRIGGER_CAP,
+      triggersConsidered: TRIGGER_CAP,
+      of: triggerTotal,
+      note: `Only the first ${TRIGGER_CAP} of ${triggerTotal} triggers were considered (a hidden or navigating one among them is skipped, not checked); triggers beyond them were never reached. A coverage gap, not a dismisser defect.`,
+    });
+  }
+
+  if (fitIncomplete.length) {
+    attachJson('fit-budget', {
+      incomplete: fitIncomplete,
+      note: 'The fit check did not finish for these triggers, so their overlays were NOT checked for fit and scroll. A coverage gap, not a fit defect. A slow first call in a cold browser is the usual cause.',
+    });
+  }
+  attachJson('dismisser-findings', findings);
+  expect(findings, `Overlay dismisser failures:\n${JSON.stringify(findings, null, 2)}`).toHaveLength(0);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2297,8 +2505,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // The 2026-09-30 band was one row scrolled sideways, and a drag at its edge had to
   // scroll it (Codex review, PR #294). The band wraps now, so that machinery is GONE —
   // not dormant. What replaces it is vertical: a wrapped band can be taller than the
-  // screen (eleven rows at phone width), and an armed touch drag is `touch-action:
-  // none`, so a finger cannot scroll the page itself. Holding the pointer within
+  // screen (eleven rows at phone width), and the pointer owns the drag. Holding the pointer within
   // WL_PAGE_EDGE_PX of the viewport's bottom / top edge scrolls the PAGE until it runs
   // out, and the loop stops with the drag (Codex review, PR #306).
   expect(await page.evaluate(() => typeof wlAutoScroll + '/' + typeof WL_EDGE_PX),
@@ -5646,6 +5853,12 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     expect(scrim.left, `${name}: the scrim starts at the left edge`).toBe(0);
     expect(Math.abs(scrim.width - scrim.vw), `${name}: and spans the viewport`).toBeLessThanOrEqual(1);
     await page.waitForTimeout(250);   // the dialog's own async content (roster, prompt) has landed
+    // FIT (design.md → iPhone and iPad, owner 2026-10-25): the open dialog fits the visible
+    // screen and what it holds scrolls by finger — no box cut off by overflow: hidden, no
+    // touch-action or touchmove lock. DISMISS checks the same through a button sweep, but it
+    // skips on a gated desk with no credential; this runs every dialog, in every project,
+    // and the iphone project is WebKit.
+    expect(await fitChecked(page.locator(panel)), `${name}: fits the screen and scrolls by finger`).toEqual([]);
     const start = await ring(panel);
     expect(start.in, `${name}: opening moves focus INSIDE the dialog`).toBe(true);
     if (keep) {
@@ -9205,10 +9418,10 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await page.waitForTimeout(300);
   expect(await first(3), 'and nothing moved').toEqual(['AAA', 'BBB', 'CCC']);
 
-  // ── 12. touch (Codex P1): a finger must REST before the drag arms, and once armed the native pan has to be
-  // cancelled by a NON-passive touchmove (touch-action cannot change mid-gesture). Synthetic pointer and
-  // touchmove events through the real handler — this proves the arming rule and the cancel hook, NOT that a
-  // phone's browser honours them; that stays unverified here.
+  // ── 12. touch: a finger must REST before the drag arms, and NOTHING ever cancels the browser's pan — no
+  // touchmove is preventDefault-ed, armed, dragging or after (owner 2026-10-25, design.md → iPhone and iPad;
+  // until then a non-passive touchmove cancelled it while armed, Codex P1). Synthetic pointer and touchmove
+  // events through the real handler: on a real phone the pan now wins and the press ends in a pointercancel.
   const touchRun = (holdMs, stray = false) => page.evaluate(async ({ holdMs, stray }) => {
     const row = n => document.querySelector(`.wb-slots [data-slot="${n}"]`);
     const btn = row(0).querySelector('.wb-slot');
@@ -9238,7 +9451,7 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   expect(early, 'moving before the rest is over leaves the gesture to the browser: no arming, no ghost, no cancelled pan').toEqual({ armed: false, prevented: false, ghosts: 0, preventedWhileDragging: false, after: false });
   expect(await first(4), 'and nothing moved').toEqual([R[1], 'BBB', 'CCC', 'DDD']);
   const rested = await touchRun(420, true);
-  expect(rested, 'a finger that rested 300ms is armed — even with a stray mouse move from ANOTHER pointer landing mid-hold — its pan is cancelled, the drag runs and cancels the pan too, and afterwards the pan is left alone').toEqual({ armed: true, prevented: true, ghosts: 1, preventedWhileDragging: true, after: false });
+  expect(rested, 'a finger that rested 300ms is armed — even with a stray mouse move from ANOTHER pointer landing mid-hold — the (synthetic) drag runs, and no touchmove is ever cancelled: not armed, not dragging, not after').toEqual({ armed: true, prevented: false, ghosts: 1, preventedWhileDragging: false, after: false });
   await page.waitForTimeout(300);
   expect(await first(4), 'and the drop moved the stock').toEqual(['BBB', 'CCC', R[1], 'DDD']);
 
@@ -11892,13 +12105,93 @@ test('S76: the resize-grip pills never cover a strip caption, stay centred on th
   expect(errs, 'no page errors through any of it').toEqual([]);
 });
 
-// S77 — Low-risk UI fixes from the 2026-10-24 browser test, read off the live layout at the project's OWN width:
+// S77 — The ticker list that opens as you type in the charts' Load box fits the screen and
+// scrolls by finger (design.md → iPhone and iPad, owner ruling 2026-10-25; test.md → UI
+// coverage gates, *Overlays fit and scroll*). DISMISS cannot reach it: it opens by TYPING,
+// not from a button. The iphone project is WebKit, the engine of every iPhone browser.
+test('S77: the Load box ticker list fits the screen and scrolls by finger', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  await gotoDemo(page, '#wbChart', 20000, 800);
+
+  const input = page.locator('#wbSymInput');
+  const list = page.locator('#wbSuggest');
+  await input.scrollIntoViewIfNeeded();
+  await input.click();
+  await input.fill('');
+  // 'A' prefix-matches the most of the curated roster, so the list is at its fullest (8 rows).
+  await input.pressSequentially('A');
+  await expect(list, 'typing opens the list').toBeVisible();
+  await expect(input, 'the combobox says it is open').toHaveAttribute('aria-expanded', 'true');
+  expect(await list.locator('[role="option"]').count(), 'the list holds suggestions').toBeGreaterThan(3);
+
+  expect(await fitChecked(list), 'the ticker list fits the screen and scrolls by finger').toEqual([]);
+
+  // fitProblems reads OFF SCREEN only for a PINNED overlay, and this list is position: absolute
+  // under its box — so also ask the page itself: the list's box sits inside the visible screen
+  // sideways, and nothing an ancestor clips is drawn over its four corners (the hit at each
+  // corner is the list or something inside it).
+  const box = await list.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const vv = window.visualViewport;
+    const view = vv ? { left: vv.offsetLeft, right: vv.offsetLeft + vv.width } : { left: 0, right: innerWidth };
+    const inset = 3;
+    const corners = [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+      [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset]];
+    const covered = corners.filter(([x, y]) => {
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return false;   // below the fold: scrolls into view
+      const hit = document.elementFromPoint(x, y);
+      return !(hit && el.contains(hit));
+    }).map(([x, y]) => `${Math.round(x)},${Math.round(y)}`);
+    return { left: r.left, right: r.right, view, covered };
+  });
+  expect(box.left, 'the list starts inside the screen').toBeGreaterThanOrEqual(box.view.left - 1);
+  expect(box.right, 'the list ends inside the screen').toBeLessThanOrEqual(box.view.right + 1);
+  expect(box.covered, 'nothing covers or clips a corner of the list').toEqual([]);
+
+  // A finger scroll of the page itself must still work with the list open.
+  const pageTouch = await page.evaluate(() => getComputedStyle(document.documentElement).touchAction
+    + '|' + getComputedStyle(document.body).touchAction);
+  expect(pageTouch, 'the page carries no touch-action lock').toMatch(/^(auto|manipulation)\|(auto|manipulation)$/);
+
+  // And nowhere else (design.md → iPhone and iPad; removed 2026-10-25): no stylesheet rule and
+  // no inline style anywhere on the page sets touch-action: none — the charts' resize grips
+  // included, which are drawn into the SVG with an inline style — and the viewport never stops
+  // zooming. The touchmove half is S64's step 12.
+  const locks = await page.evaluate(() => {
+    const out = [];
+    const walk = (rules) => {
+      for (const r of rules) {
+        if (r.style && /none/.test(r.style.touchAction || '')) out.push(`rule ${r.selectorText}`);
+        if (r.cssRules) walk(r.cssRules);
+      }
+    };
+    for (const sh of document.styleSheets) { try { walk(sh.cssRules); } catch { /* cross-origin sheet */ } }
+    for (const n of document.querySelectorAll('[style]')) {
+      if (/none/.test(n.style.touchAction || '')) out.push(`inline ${n.tagName.toLowerCase()}${n.id ? '#' + n.id : ''}`);
+    }
+    const vp = document.querySelector('meta[name="viewport"]');
+    return { out, viewport: vp ? vp.content : null };
+  });
+  expect(locks.out, 'no rule or inline style sets touch-action: none').toEqual([]);
+  expect(await page.locator('[data-grip-hit]').count(), 'the resize grips were drawn, so the inline scan saw them').toBeGreaterThan(0);
+  expect(locks.viewport, 'the viewport never stops zooming').not.toMatch(/maximum-scale\s*=\s*1(\.0*)?\b|user-scalable\s*=\s*(no|0)/i);
+  expect(locks.viewport).toMatch(/width=device-width/);
+
+  await page.keyboard.press('Escape');
+  await expect(list, 'Escape closes it').toBeHidden();
+  expect(errs, 'no page errors').toEqual([]);
+});
+
+// S79 — Low-risk UI fixes from the 2026-10-24 browser test, read off the live layout at the project's OWN width:
 // a panel title beside a long live stamp keeps its whole word (it was "MARK…" / "N…"), the heatmap header wraps on a
 // phone instead of cutting its title or scrolling the page, the Markets tiles' after-hours line is small with its tag
 // set apart (it had no rule: 15px, "+0.40%after hrs"), the Pro 1 / Pro 2 span presets are ALL on screen (they scrolled
 // sideways with no cue, only 1M and 3M showing on a phone), and no two numbers of a chart axis ladder overprint one
 // another (a phone's Pro 1 printed 17 price labels on top of each other).
-test('S77: panel titles stay whole, the after-hours line is small, every span preset shows, axis labels never overprint', async ({ page, renderWitness }) => {
+test('S79: panel titles stay whole, the after-hours line is small, every span preset shows, axis labels never overprint', async ({ page, renderWitness }) => {
   renderWitness();
   test.setTimeout(60_000);
   await gotoDemo(page, '#wbChart text', 15000, 800);

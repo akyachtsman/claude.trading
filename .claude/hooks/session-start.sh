@@ -14,9 +14,9 @@
 # an aborted hook is no session at all.
 #
 # Web only. CLI/desktop installs stay manual per global.md -> Skill Bootstrap.
-# pipefail: `curl … | bash` otherwise reports the exit status of bash, which
-# succeeds on empty input — so a blocked fetch would return 0 and the warning
-# below would never print, leaving a stale toolkit and no diagnostic.
+# pipefail: `… | bash` otherwise reports only the exit status of bash. The
+# fetch runs as its own step, so a blocked fetch can never pass as an
+# empty, successful run; pipefail stays as the guard for any pipe added later.
 set -u
 set -o pipefail
 
@@ -53,8 +53,26 @@ fi
 if [ -r "$LOCAL" ] && grep -q 'install the claude.directives toolkit' "$LOCAL"; then
   timeout "$RUN_CAP" bash "$LOCAL" || echo "session-start: toolkit install failed (local) — continuing with the cached toolkit." >&2
 else
+  # Fetch first, run second, so a failed fetch is told apart from a failed
+  # install: only the fetch has a fallback.
   # shellcheck disable=SC2086 # CURL_BOUNDS is a deliberate word-split flag list
-  curl -fsSL $CURL_BOUNDS "$RAW_URL" | timeout "$RUN_CAP" bash || echo "session-start: toolkit install failed (fetch) — continuing with the cached toolkit." >&2
+  if script=$(curl -fsSL $CURL_BOUNDS "$RAW_URL"); then
+    printf '%s\n' "$script" | timeout "$RUN_CAP" bash || echo "session-start: toolkit install failed (fetch) — continuing with the cached toolkit." >&2
+  else
+    # A private claude.directives answers raw reads with 404, while git still
+    # reaches it from a session it is attached to. So refresh (or register) the
+    # marketplace clone over git and run the installer it carries — taken, like
+    # the local copy above, only when the file identifies itself as ours.
+    CLONE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/claude-directives/scripts/install-toolkit.sh"
+    timeout 60 claude plugin marketplace update claude-directives >/dev/null 2>&1 \
+      || timeout 60 claude plugin marketplace add akyachtsman/claude.directives >/dev/null 2>&1 \
+      || echo "session-start: raw fetch failed and the marketplace could not be refreshed over git — trying the clone on disk." >&2
+    if [ -r "$CLONE" ] && grep -q 'install the claude.directives toolkit' "$CLONE"; then
+      timeout "$RUN_CAP" bash "$CLONE" || echo "session-start: toolkit install failed (git) — continuing with the cached toolkit." >&2
+    else
+      echo "session-start: toolkit install failed (fetch, and no git copy) — continuing with the cached toolkit." >&2
+    fi
+  fi
 fi
 
 exit 0

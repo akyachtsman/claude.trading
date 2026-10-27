@@ -1072,8 +1072,7 @@ function wlDragPaint(x, y) {
 }
 
 /* A wrapped band can be taller than the screen (a 40-tile list is eleven rows at phone
-   width, the roster allows 2,000 symbols a list), and the pointer owns the drag: an armed
-   touch drag is `touch-action: none`, so a finger cannot scroll the page, and a mouse
+   width, the roster allows 2,000 symbols a list), and the pointer owns the drag, and a mouse
    wheel is not always to hand. Without help a slot on a row that is off screen — or in a
    band far below the grabbed tile — is unreachable inside one gesture (Codex review, PR
    #306). Holding the pointer within WL_PAGE_EDGE_PX of the viewport's top or bottom edge
@@ -1401,9 +1400,10 @@ function wlWireDrag(tile, from, sym) {
     const startX = ev.clientX, startY = ev.clientY;
     wlDrag.sym = sym; wlDrag.from = from; wlDrag.tile = tile;
     const touch = ev.pointerType === 'touch';
-    /* Arming on touch flips the tile to touch-action:none so the browser stops
-       treating the gesture as a scroll — but only once the finger has rested,
-       so an ordinary swipe over the panel still scrolls the page. */
+    /* A finger must rest WL_TOUCH_ARM_MS before it can drag, so an ordinary swipe
+       over the panel still scrolls the page. Arming no longer sets touch-action:
+       none (owner 2026-10-25, design.md → iPhone and iPad) — it could not stop a
+       pan already under way anyway, since touch-action is fixed at finger-down. */
     if (touch) wlDrag.armed = setTimeout(() => { tile.classList.add('wl-armed'); }, WL_TOUCH_ARM_MS);
     const move = e => {
       if (wlDrag.on) { wlDragMove(e); return; }
@@ -5156,8 +5156,9 @@ window.addEventListener('pointermove', ev => {
 });
 /* pointercancel (e.g. a touch drag the browser reclaims for scroll) must end the
    drag exactly like pointerup, or the workbench sticks in resize mode and the new
-   height is never persisted (Codex #114). touch-action:none on the hit rects keeps
-   a vertical drag from being stolen in the first place. */
+   height is never persisted (Codex #114). The hit rects carry NO touch-action: none
+   any more (owner 2026-10-25, design.md → iPhone and iPad: never cancel touchmove, never `touch-action: none`), so on a phone a vertical finger drag on a grip
+   is the browser's to scroll the page, and it ends here as a pointercancel. */
 const endWbDrag = () => { if (wbDrag && wbDrag.resize) saveWbCfg(); wbDrag = null; };
 window.addEventListener('pointerup', endWbDrag);
 window.addEventListener('pointercancel', endWbDrag);
@@ -6101,8 +6102,7 @@ function wbSlotDragPaint() {
   d.marker = marker;
 }
 /* Hold the pointer at the list's top or bottom edge and the LIST scrolls, faster the closer to the
-   edge, until it runs out — a finger cannot scroll it while a drag is armed (`touch-action: none`),
-   and a stock dragged from slot 3 to slot 60 must be possible in ONE gesture. One rAF loop, running
+   edge, until it runs out — a stock dragged from slot 3 to slot 60 must be possible in ONE gesture. One rAF loop, running
    only while the pointer sits in an edge zone that can still scroll; every move re-arms it and the
    end of the drag cancels it. */
 function wbSlotDragScroll() {
@@ -6183,12 +6183,10 @@ function wbSlotArmClickGuard(btn) {
    on every animation frame of a chart drag and on every poll — it also pushed the double-click's
    second click past WB_SLOT_DBL_MS on a slow machine. The rail element itself is never rebuilt, only
    its contents, so a single listener on it survives every repaint. */
-/* The press in progress, or null: { pid, btn, from, sym, startX, startY, touch, holdScroll }. Module state
+/* The press in progress, or null: { pid, btn, from, sym, startX, startY, touch }. Module state
    with PERMANENT window listeners (below) instead of four listeners added and removed on every press: in
    WebKit each listener add cost ~5ms, which put ~20ms on every plain click and tipped S45's slow
-   double-click over its pairing window on a slow machine. Only a TOUCH press adds a listener of its own —
-   the non-passive touchmove, which must not be permanent (a permanent non-passive touchmove on the window
-   makes every scroll on the page wait for JavaScript). */
+   double-click over its pairing window on a slow machine. */
 let wbSlotPress = null;
 function wbSlotPressEnd() {
   clearTimeout(wbSlotDrag.armed);
@@ -6196,7 +6194,6 @@ function wbSlotPressEnd() {
   wbSlotPress = null;
   if (!p) return;
   p.btn.classList.remove('wb-armed');
-  if (p.holdScroll) window.removeEventListener('touchmove', p.holdScroll);
 }
 function wbSlotPointerDown(ev) {
   if (ev.button != null && ev.button !== 0) return;
@@ -6214,22 +6211,14 @@ function wbSlotPointerDown(ev) {
   /* The gesture belongs to THIS pointer (`pid`). A hybrid device also fires hover moves from a mouse (and
      the browser fakes one after a layout change), and one landing mid-hold read as a far-away move that
      cancelled a resting finger before it armed — found by S64's touch step on iPhone's WebKit. */
-  const press = { pid: ev.pointerId, btn, from, sym, startX: ev.clientX, startY: ev.clientY, touch, holdScroll: null };
-  wbSlotPress = press;
-  /* Arming flips the slot to touch-action: none so the browser stops reading the gesture as a
-     scroll — only once the finger has rested, so a swipe over the list still scrolls it. */
+  wbSlotPress = { pid: ev.pointerId, btn, from, sym, startX: ev.clientX, startY: ev.clientY, touch };
+  /* A finger must rest WB_SLOT_TOUCH_ARM_MS before it can drag, so a swipe over the list scrolls it. */
   if (touch) wbSlotDrag.armed = setTimeout(() => btn.classList.add('wb-armed'), WB_SLOT_TOUCH_ARM_MS);
-  /* `touch-action` is evaluated when the finger goes DOWN and cannot be changed for the gesture in
-     progress, so adding `.wb-armed` after the hold does not stop the browser panning on the first move
-     — it would start the pan and cancel the pointer stream (Codex P1). What does work, and is how
-     touch sortables are built: a NON-PASSIVE `touchmove` listener, in place before the finger moves,
-     that cancels the move while the slot is armed or a drag is running. The first move after a rest is
-     still cancelable (a pan has not begun), and an unarmed move is left alone, so a swipe over the list
-     still scrolls it. Window-level listeners default to passive in Chromium, hence the explicit option. */
-  if (touch) {
-    press.holdScroll = e => { if (e.cancelable && (btn.classList.contains('wb-armed') || wbSlotDrag.on)) e.preventDefault(); };
-    window.addEventListener('touchmove', press.holdScroll, { passive: false });
-  }
+  /* NOTHING cancels the browser's pan any more (owner 2026-10-25, design.md → iPhone and iPad: never cancel touchmove, never `touch-action: none`). Until then a
+     non-passive window `touchmove` called preventDefault while the slot was armed (touch-action is fixed
+     when the finger goes down, so `.wb-armed` alone cannot stop a pan already allowed). Without it a real
+     phone pans on the first move after the rest and ends the press with a pointercancel, which changes
+     nothing: on a phone a stock is moved with the entry box, Insert and the ×, not by dragging. */
 }
 function wbSlotPointerMove(e) {
   const p = wbSlotPress;
@@ -7693,7 +7682,7 @@ function renderCharts(data, lamp) {
          bar it belongs to (S76 selects by it, never by the white fill). */
       const gw = 56;
       svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2.5, width: gw, height: 5, rx: 2.5, fill: '#FFFFFF', 'pointer-events': 'none', 'data-grip': kind }));
-      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize; touch-action: none', 'data-grip-hit': kind });
+      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize', 'data-grip-hit': kind });
       svg.appendChild(hit);
       hit.addEventListener('pointerdown', ev => {
         ev.preventDefault(); ev.stopPropagation();
