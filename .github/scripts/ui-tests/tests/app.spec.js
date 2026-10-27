@@ -152,9 +152,16 @@ const benignPageError = (text) => benignCors(text);
    it (the switch sits in its "failed" state, all three options disabled) — but that
    is ONE predicate in two SQL functions, and nothing else in CI would notice it
    going. So the write is answered here with a refusal and counted apart
-   (`tierWrites`), whatever the credential. Reads stay real. */
+   (`tierWrites`), whatever the credential. Reads stay real.
+
+   And for the ⚙ SYSTEM PROMPT and the ⏱ SCHEDULED ASKS (`desk_set_system_prompt`,
+   `desk_set_ask_schedule`): both are global — the prompt is what the owner's assistant
+   is told, the schedule what `desk-cron-ask` runs AS THE OWNER — and until desk_024 is
+   applied the CI test credential's PIN passes both. Answered here with a refusal (what
+   the database answers that credential once desk_024 is live) and counted apart
+   (`ownerWrites`), whatever the credential. Reads stay real. */
 async function blockRosterWrites(page) {
-  const blocked = { count: 0, tierWrites: 0 };
+  const blocked = { count: 0, tierWrites: 0, ownerWrites: 0 };
   await page.route('**/rest/v1/rpc/desk_set_watchlists*', (route) => {
     blocked.count++;
     return route.fulfill({ status: 200, contentType: 'application/json',
@@ -165,6 +172,13 @@ async function blockRosterWrites(page) {
     return route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ ok: false }) });
   });
+  for (const rpc of ['desk_set_system_prompt', 'desk_set_ask_schedule']) {
+    await page.route(`**/rest/v1/rpc/${rpc}*`, (route) => {
+      blocked.ownerWrites++;
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ ok: false }) });
+    });
+  }
   return blocked;
 }
 
@@ -11028,6 +11042,10 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   const guard = await blockRosterWrites(page);
   const refused = await page.evaluate(() => fetch('/rest/v1/rpc/desk_set_ask_model', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: 'x', new_model: 'claude-haiku-5-5' }) }).then((r) => r.json()));
   expect([guard.tierWrites, guard.count, refused], 'a write of the model tier is intercepted and refused, and not counted as a roster write').toEqual([1, 0, { ok: false }]);
+  // …and the same for the owner's global settings the test PIN could write before desk_024: the ⚙ prompt and the ⏱ schedule
+  const ownerRefused = await page.evaluate(() => Promise.all([['desk_set_system_prompt', { pin: 'x', new_content: 'PROBE' }], ['desk_set_ask_schedule', { pin: 'x', new_rows: [] }]]
+    .map(([rpc, body]) => fetch(`/rest/v1/rpc/${rpc}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()))));
+  expect([guard.ownerWrites, guard.tierWrites, guard.count, ownerRefused], 'a write of the system prompt or the schedule is intercepted, refused and counted apart').toEqual([2, 1, 0, [{ ok: false }, { ok: false }]]);
 
   // tidy: put the real functions back
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskGetAskModel = window.__realGet; window.deskSetAskModel = window.__realSet; window.deskAsk = window.__realAsk; });
