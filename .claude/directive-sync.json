@@ -1,24 +1,9 @@
 {
   "upstream": {
-    "sha": "d23c82297deea3c6c84fcc9125631ac7edf5fcb2",
-    "synced": "2026-10-25"
+    "sha": "d32a9d0cb6f17b77c3771503ec0bfe95931c9043",
+    "synced": "2026-10-27"
   },
   "refresh_kept": {
-    ".github/actions/ui-suite/action.yml": {
-      "blob": "040076baad2156b212fde73be21396a53519a60d",
-      "local": "4c29b1f6f328833647a94e15826d0a4a9d248e8e",
-      "reason": "Template (2026-10-25 refresh, 3-way merged) plus one comment-only LOCAL NOTE under the test-auth-email input: this kit has no identifier-first auth path (single-step 6-digit PIN gate) and S2 throws if TEST_AUTH_EMAIL is ever set. Recorded in CLAUDE.md under Local deviations; keep on every refresh."
-    },
-    ".github/actions/ui-suite/validate-report-path.py": {
-      "blob": "e92bcea0ba5d72f2f2aa934628795dca1e782d2b",
-      "reason": "Template plus a comment-only EXTGLOB LOCAL NOTE (refresh PR #286) recording why extended-glob syntax is deliberately not checked; no behaviour differs. Recorded in CLAUDE.md under Local deviations.",
-      "local": "e04fca5ac00eaafdaff11218fee6ef4f1755d670"
-    },
-    ".github/workflows/qa.yml": {
-      "blob": "9648a8f93a9bf215bdc3e48e96685ba6d4e4f5ab",
-      "local": "eeaa0de91b0e0f8c9235df1fd0b1c34e32e775f1",
-      "reason": "Template (2026-10-25 refresh: retired guard steps deleted, ui-tests now runs on every trigger as upstream's does) plus local items listed in CLAUDE.md under Local deviations: the concurrency block, the extended secret scan, the html-validate steps, the ui-tests job-level GREP_INVERT env, the ui-changes job (upstream dropped it; kept only for its news_client output), the news-checks and news-client-mutants jobs, and the notify job. Checked by a 3-way merge against the template at the stamp; its one conflict was the retired guard steps (taken out) next to the local jobs (kept)."
-    },
     ".github/scripts/ui-tests/playwright.config.js": {
       "blob": "9a2b4ad9a65ab1f9ce5afbd0395af8aaecbb3573",
       "local": "d7348a3816598e34e76bbeebec7af85ff85abae5",
@@ -43,6 +28,11 @@
       "blob": "9f4ccbdf60c4967c247277a72eef40ec8d7002f5",
       "reason": "Not taken, with tests/lib/auth.js: the spec defines its fixtures inline and the extraction has no defect behind it.",
       "local": "absent"
+    },
+    ".github/scripts/check-contrast.js": {
+      "blob": "7daeb6204a05e1e75f68172a244d75af86854578",
+      "local": "absent",
+      "reason": "Deleted in PR #349 (pilot of #460 step 4): the shared qa workflow stages upstream's check-contrast.js itself, and this project adds no contrast pairs of its own (design.md, Accessibility)."
     }
   },
   "refresh_declined": {
