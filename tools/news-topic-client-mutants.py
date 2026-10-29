@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Mutation run for the News topic AI helper's CLIENT guards (specs/news-topic-ai): break each guard in scripts/app.js,
-index.html or styles/components.css, run scenario S75 on the desktop and mobile-chrome projects, and require it to FAIL. A guard whose removal
+index.html or styles/legacy.css, run scenario S75 on the desktop and mobile-chrome projects, and require it to FAIL. A guard whose removal
 leaves S75 green is a guard nothing checks.
 
     python3 tools/news-topic-client-mutants.py            # every mutant
@@ -18,7 +18,7 @@ docs/architecture/edge-feeds-and-heatmap.md comes from this file."""
 import hashlib, os, re, subprocess, sys, tempfile, time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 KIT = os.path.join(ROOT, '.github/scripts/ui-tests')
-F = {'app': 'scripts/app.js', 'html': 'index.html', 'css': 'styles/components.css', 'layout': 'styles/layout.css'}
+F = {'app': 'scripts/app.js', 'html': 'index.html', 'css': 'styles/legacy.css', 'layout': 'styles/layout.css'}
 PORT = os.environ.get('MUT_PORT', '8792')
 CHROMIUM = os.environ.get('PW_CHROMIUM', '/opt/pw-browsers/chromium')
 PROJECTS = os.environ.get('MUT_PROJECTS', 'desktop,mobile-chrome').split(',')

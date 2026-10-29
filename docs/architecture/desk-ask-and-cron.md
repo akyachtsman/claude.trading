@@ -87,7 +87,7 @@ The API returns a reply as a LIST of content blocks, and an answer that cites th
 
 > "How do I get rid of all these?" (six CPI headline links under one answer) — then, offered *collapse* or *remove*: "Collapse them".
 
-Each answer that cites the web used to draw up to six links in a row under it, always. They are now ONE muted line, `Sources (N)`, a native `<details>` drawn CLOSED (`appendSources` in `renderAsk`, `.ask-sources` in `styles/components.css`). It is the same function for an answer that has just arrived and for one replayed from the saved conversation, so both are closed.
+Each answer that cites the web used to draw up to six links in a row under it, always. They are now ONE muted line, `Sources (N)`, a native `<details>` drawn CLOSED (`appendSources` in `renderAsk`, `.ask-sources` in `styles/legacy.css`). It is the same function for an answer that has just arrived and for one replayed from the saved conversation, so both are closed.
 
 - **N is the number of links actually drawn.** The page still looks at the first six sources only (`slice(0, 6)`), still draws only `http(s)` URLs (a `javascript:` or `data:` URL from a web result or a tampered memory row never becomes a link), and a footer with nothing drawable is not drawn at all — never `Sources (0)`.
 - **Why `<details>`, not a script-driven toggle:** Enter, Space and a tap work with no code, the open state belongs to the element, and the `Sources (N)` text is the accessible name. The disclosure arrow is a CSS `::before` with empty alt text (decoration). The line is the muted secondary-text token (the Clear button's, already contrast-checked) — never the accent the links wear and never the gain/loss colours. On a touch screen the line is at least 32px tall.
