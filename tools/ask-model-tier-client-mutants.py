@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Mutation run for the Ask model switch's CLIENT guards: delete or invert each guard in scripts/app.js,
-scripts/data.js, styles/components.css or styles/layout.css, run scenario S69 on the desktop project, and require it
+scripts/data.js, styles/legacy.css or styles/layout.css, run scenario S69 on the desktop project, and require it
 to FAIL. A guard whose removal leaves S69 green is a guard nothing checks.
 
     python3 tools/ask-model-tier-client-mutants.py            # every mutant
@@ -20,7 +20,7 @@ Not run by CI. The counts quoted in docs/architecture/desk-ask-and-cron.md come 
 import os, re, subprocess, sys, tempfile, time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 KIT = os.path.join(ROOT, '.github/scripts/ui-tests')
-F = {'app': 'scripts/app.js', 'data': 'scripts/data.js', 'css': 'styles/components.css', 'layout': 'styles/layout.css',
+F = {'app': 'scripts/app.js', 'data': 'scripts/data.js', 'css': 'styles/legacy.css', 'layout': 'styles/layout.css',
      'spec': '.github/scripts/ui-tests/tests/app.spec.js'}   # the shared sweep helper blockRosterWrites lives in the spec file
 PORT = os.environ.get('MUT_PORT', '8791')
 CHROMIUM = os.environ.get('PW_CHROMIUM', '/opt/pw-browsers/chromium')
@@ -76,7 +76,9 @@ M = [
  ('ASK_MODELS order swapped (parity and the labels)', 'data', [("  { id: 'claude-haiku-5-5', label: 'Haiku 5.5' },\n  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },", "  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },\n  { id: 'claude-haiku-5-5', label: 'Haiku 5.5' },")]),
  ('ASK_MODELS offers a fourth model', 'data', [("  { id: 'claude-opus-5-5', label: 'Opus 5.5' },\n];", "  { id: 'claude-opus-5-5', label: 'Opus 5.5' },\n  { id: 'claude-fable-5-1', label: 'Fable 5.1' },\n];")]),
  ('ASK_MODELS drops Opus', 'data', [("  { id: 'claude-opus-5-5', label: 'Opus 5.5' },\n];", "];")]),
- ('CSS: a class that sets display outranks [hidden] on the retry button', 'css', [(".ask-tier-retry { min-height: 30px;", ".ask-tier-retry { display: inline-flex; min-height: 30px;")]),
+ # Since the house page base loads (2026-10-29), `[hidden]` is `display: none !important`, so a plain `display` on the class can no
+ # longer show the button; only an !important one, later in the cascade (styles/legacy.css loads after the house file), still can.
+ ('CSS: a class that sets display outranks [hidden] on the retry button', 'css', [(".ask-tier-retry { min-height: 30px;", ".ask-tier-retry { display: inline-flex !important; min-height: 30px;")]),
  ('CSS: the options lose their tap-target height', 'css', [(" min-height: 30px; cursor: pointer; }\n.ask-tier-opt + .ask-tier-opt", " cursor: pointer; }\n.ask-tier-opt + .ask-tier-opt")]),
  ('CSS: the touch target is no taller than the desktop one', 'css', [("@media (hover: none) { .ask-tier-opt { min-height: 40px; } }\n", "")]),
  ('layout: the stacked cap is not raised for the owner\'s switch row (answers squeezed to 0px at 810)', 'layout', [("  @media (max-width: 1119px) { .top-boxes > .col-rail > .panel:has(.ask-tier) { max-height: 560px; } }\n", "")]),

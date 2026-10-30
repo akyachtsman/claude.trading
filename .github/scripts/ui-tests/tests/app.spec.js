@@ -1440,7 +1440,7 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness
   // Scoped to the lock panel: since the open Ask (#305) the Ask composer is ALSO a
   // `.lock-form`, so the bare class matched two forms and strict mode threw (qa-live
   // was red on main for four runs). S11 and the button selectors follow the same rule.
-  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.input');
+  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
   await expect(pinInput).toBeVisible();
   // The LOCKED shell, asserted before any credential is offered: a desk that
   // rendered its accounts (or believed itself authenticated) without a PIN would
@@ -1459,7 +1459,7 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
-  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.input');
+  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
   await expect(pinInput).toBeVisible();
   await pinInput.fill('000000');
   await page.locator('#accountGrid .panel-lock .lock-form button').click();
@@ -1476,7 +1476,7 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   await expect(lockError, 'the error line says something').toHaveText(/\S/);
   // Still locked, not merely "an error appeared": the form is still there to try
   // again, the panel still reads Locked, nothing was kept, no data rendered.
-  await expect(page.locator('.panel-lock .lock-form input.input'), 'the PIN form is still offered').toBeVisible();
+  await expect(page.locator('.panel-lock .lock-form input.legacy-input'), 'the PIN form is still offered').toBeVisible();
   await expect(page.locator('#accountGrid .panel-lock .lamp'), 'the panel still reads Locked').toHaveText(/locked/i);
   expect(await page.evaluate(() => DESK.authed), 'a wrong PIN authenticates nothing').toBe(false);
   expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'and a wrong PIN is not remembered').toBeNull();
@@ -2876,19 +2876,19 @@ async function unlockDesk(page) {
   // .lock-form selector there would type the PIN into the assistant box and submit
   // it (leaking the real PIN to Anthropic + desk_chat_memory). The login gate is
   // uniquely identifiable: its input is type=password inside #accountGrid.
-  const gate = page.locator('#accountGrid .lock-form input.input[type="password"]');
+  const gate = page.locator('#accountGrid .lock-form input.legacy-input[type="password"]');
   // wait until the desk has rendered EITHER state (locked gate or authed accounts)
-  await page.locator('#accountGrid .lock-form input.input[type="password"], #accountGrid .hero-number')
+  await page.locator('#accountGrid .lock-form input.legacy-input[type="password"], #accountGrid .hero-number')
     .first().waitFor({ timeout: 15000 });
   if (await gate.count()) {
     await gate.first().fill(AUTH_CREDENTIAL);
     await page.locator('#accountGrid .lock-form button').first().click();
   }
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#askBody form input.input')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('#askBody form input.legacy-input')).toBeVisible({ timeout: 10000 });
 }
 async function askDesk(page, q) {
-  await page.locator('#askBody form input.input').fill(q);
+  await page.locator('#askBody form input.legacy-input').fill(q);
   await page.locator('#askBody form button[type="submit"]').click();
   await expect(page.locator('#askBody .ask-a').last()).toBeVisible({ timeout: 90000 });
 }
@@ -3474,14 +3474,14 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
   });
 
   const form = page.locator('#askBody form');
-  await form.locator('input.input').fill('what is SMH doing?');
+  await form.locator('input.legacy-input').fill('what is SMH doing?');
   await expect(page.locator('.ask-stop'), 'Stop stays hidden until a question is in flight').toBeHidden();
   await form.locator('button[type=submit]').click();
 
   // In flight: Stop offered, and the composer is NOT taken away.
   await expect(page.locator('.ask-stop')).toBeVisible();
   await expect(page.locator('#askBody form button[type=submit]')).toHaveText('Asking…');
-  await expect(page.locator('#askBody form input.input'),
+  await expect(page.locator('#askBody form input.legacy-input'),
     'the composer stays usable — someone reaching for Stop wants to retype').toBeEnabled();
 
   await page.locator('.ask-stop').click();
@@ -3489,7 +3489,7 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
   // After the stop: composer restored, Stop gone, and the outcome is stated.
   await expect(page.locator('#askBody form button[type=submit]')).toHaveText('Ask');
   await expect(page.locator('.ask-stop')).toBeHidden();
-  await expect(page.locator('#askBody form input.input')).toBeEnabled();
+  await expect(page.locator('#askBody form input.legacy-input')).toBeEnabled();
   const note = page.locator('.ask-a--stopped');
   await expect(note, 'a stop must say the answer is still coming').toHaveCount(1);
   await expect(note).toContainText(/still|appear|history|reload/i);
@@ -3536,7 +3536,7 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
   const form = page.locator('#askBody form');
   const verify = page.locator('.ask-verify');
   const send = async (text) => {
-    await form.locator('input.input').fill(text);
+    await form.locator('input.legacy-input').fill(text);
     await form.locator('button[type=submit]').click();
   };
 
@@ -4696,7 +4696,9 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
      - NO `overscroll-behavior` shorthand and no `-y` form anywhere on the page:
        they apply just as hard to a container with nothing to scroll, and then
        they eat the wheel. (`-x: contain` is gone from the bands, so nothing on
-       the page carries any overscroll rule now.) */
+       the page carries any overscroll rule now — but the house components.css,
+       verbatim since 2026-10-29, does, on classes no element uses yet: see the
+       exception below.) */
 test('S42: watchlist bands never scroll sideways — the excess wraps below — the page never does, and nothing is paged', async ({ page, browserName, renderWitness }) => {
   renderWitness();
   // See S4 — same `viewport-override` marker, same reason.
@@ -4766,20 +4768,34 @@ test('S42: watchlist bands never scroll sideways — the excess wraps below — 
   // The whole PAGE, not only this panel: the ban is page-wide. Any rule setting
   // the shorthand expands to `overscroll-behavior-y` in the CSSOM, so reading the
   // -y longhand catches both the shorthand and the -y form, and leaves `-x` alone.
+  //
+  // ONE exception, and it is narrow (2026-10-29, the move onto the house style):
+  // the HOUSE `styles/components.css` is installed verbatim and never edited here,
+  // and it gives its own dialog body, pop-overs and table box `contain`. Those
+  // rules are allowed only while NOTHING on the page matches them — the desk uses
+  // none of those classes yet. The day a panel takes one (step 2 of the move),
+  // its selector matches an element and this fails, so the owner's ban is
+  // decided then, on that panel, and not waved through by the exemption.
   const offenders = await page.evaluate(() => {
     const out = [];
-    const walk = (list) => {
+    const walk = (list, house) => {
       for (const r of list) {
-        if (r.cssRules && r.cssRules.length) walk(r.cssRules);   // @media / @supports
+        if (r.cssRules && r.cssRules.length) walk(r.cssRules, house);   // @media / @supports
         if (r.style && (r.style.getPropertyValue('overscroll-behavior-y')
                         || r.style.getPropertyValue('overscroll-behavior'))) {
-          out.push(r.selectorText || r.cssText.slice(0, 60));
+          const sel = r.selectorText || '';
+          if (house && sel) {
+            let n = 0; try { n = document.querySelectorAll(sel).length; } catch { n = -1; }
+            if (n !== 0) out.push(`house ${sel} matches ${n} element(s)`);
+            continue;
+          }
+          out.push(sel || r.cssText.slice(0, 60));
         }
       }
     };
     for (const sh of document.styleSheets) {
       let list; try { list = sh.cssRules; } catch { continue; }   // cross-origin sheet
-      walk(list);
+      walk(list, !!sh.href && /\/styles\/components\.css$/.test(new URL(sh.href).pathname));
     }
     for (const e of document.querySelectorAll('[style]')) {
       if (/overscroll-behavior(?!-x)/.test(e.getAttribute('style'))) out.push('[style] ' + e.tagName);
@@ -8223,7 +8239,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
   const form = page.locator('#askBody form');
   const sysBtn = page.locator('#askBody button[aria-label="Edit the Ask-the-desk system prompt"]');
   await expect(page.locator('#askLamp'), 'a locked desk no longer locks the Ask panel').toHaveText('Live');
-  await expect(form.locator('input.input'), 'the composer is offered with no PIN').toBeEnabled();
+  await expect(form.locator('input.legacy-input'), 'the composer is offered with no PIN').toBeEnabled();
   await expect(page.locator('#askBody .ask-open-note'), 'and the panel says what an open question is').toContainText(/nothing is saved/i);
   for (const [sel, what] of [['.ask-verify', 'Verify (costs extra; the server ignores it for a visitor)'], ['.ask-sched-btn', '⏱ schedules (a PIN RPC)'], ['.ask-clear', 'Clear (wipes the saved conversation)']]) {
     await expect(page.locator('#askBody ' + sel), `no ${what} for a visitor`).toHaveCount(0);
@@ -8231,7 +8247,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
   await expect(sysBtn, 'no ⚙ prompt editor for a visitor').toHaveCount(0);
   expect(await page.evaluate(() => window.__hist), 'a visitor has no saved conversation, so none is requested (it is a PIN RPC)').toEqual([]);
 
-  await form.locator('input.input').fill('how is NVDA doing?');
+  await form.locator('input.legacy-input').fill('how is NVDA doing?');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('open answer');
   const first = await page.evaluate(() => window.__asks);
@@ -8240,10 +8256,10 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
 
   // the cap (or any refusal) is shown as the red line, the composer stays usable
   await page.evaluate(() => { window.__reply = { ok: false, error: 'Today’s open questions are used up — unlock the desk with its PIN, or try again tomorrow (Pacific time).' }; });
-  await form.locator('input.input').fill('and AMD?');
+  await form.locator('input.legacy-input').fill('and AMD?');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .lock-error'), 'the daily cap is said out loud').toContainText(/used up/i);
-  await expect(form.locator('input.input')).toBeEnabled();
+  await expect(form.locator('input.legacy-input')).toBeEnabled();
 
   // a stopped open question does not promise a history it will never have
   await page.evaluate(() => {
@@ -8252,7 +8268,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
     });
     renderAsk();
   });
-  await form.locator('input.input').fill('a slow one');
+  await form.locator('input.legacy-input').fill('a slow one');
   await form.locator('button[type=submit]').click();
   await page.locator('.ask-stop').click();
   const stopped = page.locator('.ask-a--stopped');
@@ -8293,7 +8309,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
   for (const sel of ['.ask-verify', '.ask-sched-btn', '.ask-clear']) await expect(page.locator('#askBody ' + sel), sel + ' appears with the PIN').toHaveCount(1);
   await expect(sysBtn, '⚙ appears with the PIN').toHaveCount(1);
   await expect.poll(() => page.evaluate(() => window.__hist), 'the saved conversation is requested with the PIN').toEqual(['0000']);
-  await form.locator('input.input').fill('owner question');
+  await form.locator('input.legacy-input').fill('owner question');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('owner answer');
   expect((await page.evaluate(() => window.__asks))[0].pin, 'an unlocked question carries the PIN').toBe('0000');
@@ -8341,7 +8357,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
     await page.goto('./');
     await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
   };
-  const lockForm = page.locator('#accountGrid .panel-lock .lock-form input.input');
+  const lockForm = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
   const lockBtn = page.getByRole('button', { name: 'Lock', exact: true });
   const sysBtn = page.locator('#askBody button[aria-label="Edit the Ask-the-desk system prompt"]');
   const authed = () => page.evaluate(() => DESK.authed);
@@ -8352,7 +8368,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   await expect(lockForm, 'the accounts ask for the PIN').toBeVisible();
   expect(await authed()).toBe(false);
   await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is then remembered').toContainText(/stays unlocked on this device/i);
-  await expect(page.locator('#askBody form input.input'), 'while Ask is open without it').toBeEnabled();
+  await expect(page.locator('#askBody form input.legacy-input'), 'while Ask is open without it').toBeEnabled();
   await expect(sysBtn).toHaveCount(0);
 
   // B. a wrong PIN stores nothing anywhere; the right one is remembered by BOTH copies
@@ -8403,7 +8419,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   expect(await stores(), 'Lock forgets the tab\'s copy and the device\'s').toEqual({ session: null, device: null });
   await expect(lockForm).toBeVisible();
   await expect(sysBtn, 'Ask drops its private parts but stays open').toHaveCount(0);
-  await expect(page.locator('#askBody form input.input')).toBeEnabled();
+  await expect(page.locator('#askBody form input.legacy-input')).toBeEnabled();
   logins.length = 0;
   await page.reload();
   await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
@@ -10860,7 +10876,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   const form = page.locator('#askBody form');
   const ask = async (reply, q) => {
     await page.evaluate((r) => { window.__askReply = r; }, reply);
-    await form.locator('input.input').fill(q);
+    await form.locator('input.legacy-input').fill(q);
     await form.locator('button[type=submit]').click();
   };
   expect(await page.evaluate(() => ['claude-haiku-5-5', 'claude-opus-5-5-20261001', 'claude-sonnet-5-5-x', 'claude-haiku-5-50', 'claude-opus-5', '', null, undefined].map((x) => askModelLabel(x))),
@@ -10917,7 +10933,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await expect(page.locator('#askBody .ask-tier'), 'a visitor (locked desk) has no switch').toHaveCount(0);
   expect(await gets(), 'and it asked the database for nothing').toBe(gcount);
   await page.evaluate(() => { window.__askReply = { ok: true, answer: 'open answer', sources: [], model: 'claude-opus-5-5', tierSource: 'row' }; });
-  await form.locator('input.input').fill('open question');
+  await form.locator('input.legacy-input').fill('open question');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('open answer');
   await expect(page.locator('#askBody .ask-model'), 'a reply that carries a model to a visitor renders no proof line').toHaveCount(0);
@@ -11090,7 +11106,7 @@ test('S70: the sources under an answer sit behind one "Sources (N)" line, closed
   const foot = page.locator('#askBody .ask-thread details.ask-sources');
   const form = page.locator('#askBody form');
   const ask = async (q) => {
-    await form.locator('input.input').fill(q);
+    await form.locator('input.legacy-input').fill(q);
     await form.locator('button[type=submit]').click();
   };
   const state = () => page.evaluate(() => [...document.querySelectorAll('#askBody .ask-thread details.ask-sources')].map((d) => ({
@@ -11143,7 +11159,7 @@ test('S70: the sources under an answer sit behind one "Sources (N)" line, closed
   //      when the thread is tall enough for them), and does not scroll the page. Run as the OWNER: the stacked Ask panel gives a
   //      visitor's thread almost no height at 810px, a layout limit older than this change and not what this step checks. ──
   await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); renderAsk(); });
-  await expect(form.locator('input.input')).toBeEnabled();
+  await expect(form.locator('input.legacy-input')).toBeEnabled();
   for (let i = 3; i <= 7; i++) { await ask('question ' + i); await expect(page.locator('#askBody .ask-a').last()).toContainText('answer ' + i); }
   const last = foot.last();
   const scrollable = await thread.evaluate((t) => t.scrollHeight > t.clientHeight + 4);
@@ -11431,7 +11447,7 @@ test('S73: each answer carries the Pacific time it came in — live, replayed an
   // ── 2. a LIVE answer on the owner's desk is stamped when its reply lands (the Pacific time NOW) ──
   const form = page.locator('#askBody form');
   const before = pt(new Date().toISOString());
-  await form.locator('input.input').fill('what now');
+  await form.locator('input.legacy-input').fill('what now');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('a live answer');
   const after = pt(new Date().toISOString());
@@ -11443,17 +11459,17 @@ test('S73: each answer carries the Pacific time it came in — live, replayed an
   // ── 3. a failed question and a stopped one are not answers: no time is drawn for them ──
   const whens = await page.locator('#askBody .ask-when').count();
   await page.evaluate(() => { window.__reply = { ok: false, error: 'the model could not answer' }; });
-  await form.locator('input.input').fill('this one fails');
+  await form.locator('input.legacy-input').fill('this one fails');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .lock-error')).toContainText(/could not answer/);
   await expect(page.locator('#askBody .ask-when'), 'a refused question gets no time').toHaveCount(whens);
 
   // ── 4. a VISITOR (locked): no saved conversation and no model line — but a live answer is still stamped ──
   await page.evaluate(() => { window.__reply = null; DESK.authed = false; sessionStorage.removeItem('desk_pin'); renderAsk(); });
-  await expect(form.locator('input.input')).toBeEnabled();
+  await expect(form.locator('input.legacy-input')).toBeEnabled();
   await expect(page.locator('#askBody .ask-q'), 'nothing saved is drawn for a visitor').toHaveCount(0);
   const vBefore = pt(new Date().toISOString());
-  await form.locator('input.input').fill('visitor question');
+  await form.locator('input.legacy-input').fill('visitor question');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('a live answer');
   const vAfter = pt(new Date().toISOString());

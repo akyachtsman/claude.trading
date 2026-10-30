@@ -170,7 +170,7 @@ function renderMasthead() {
       /* a rebuild while a forced refresh is still in flight (feedPollTick lands before the
          slower Economy request) must keep the pending state, not re-enable a button whose
          clicks would be ignored until the whole refresh finishes (Codex review, PR #294) */
-      const refreshBtn = el('button', 'btn btn-secondary', refreshNowPending ? 'Refreshing…' : 'Refresh now');
+      const refreshBtn = el('button', 'legacy-btn legacy-btn-secondary', refreshNowPending ? 'Refreshing…' : 'Refresh now');
       refreshBtn.disabled = refreshNowPending;
       refreshBtn.type = 'button';
       refreshBtn.id = 'refreshNowBtn';
@@ -178,7 +178,7 @@ function renderMasthead() {
       wrap.appendChild(refreshBtn);
     }
     if (DESK.authed) {
-      const lock = el('button', 'btn btn-secondary', 'Lock');
+      const lock = el('button', 'legacy-btn legacy-btn-secondary', 'Lock');
       lock.type = 'button';
       /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
          leaving them live after a lock would let a drag change the order and
@@ -344,7 +344,7 @@ function renderMarkets(market, lamp) {
     }
 
     if (pct != null) {
-      row.appendChild(el('span', (pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' mk-sec-pct', fmtPct(pct)));
+      row.appendChild(el('span', (pct >= 0 ? 'legacy-pill legacy-pill--gain' : 'legacy-pill legacy-pill--loss') + ' mk-sec-pct', fmtPct(pct)));
     } else {
       row.appendChild(el('span', 'mk-sec-pct mk-sec-pct--none', '—'));
     }
@@ -883,7 +883,7 @@ function wlTile(r, pending) {
      in the symbols and just make their fonts bigger"): 12px up to 5 characters, `is-long`
      10px for 6-7 (BTC-USD), `is-xlong` 8px from 8 — a size per length, like the price,
      because CSS cannot branch on text length. Where even that does not fit, the name wraps
-     (see components.css) rather than clipping. */
+     (see legacy.css) rather than clipping. */
   if (r.sym && r.sym.length > 5) name.classList.add('is-long');
   if (r.sym && r.sym.length > 7) name.classList.add('is-xlong');
   /* There is NO session badge on the ticker any more — neither EXT nor CLOSE (owner
@@ -920,7 +920,7 @@ function wlTile(r, pending) {
        CI's Chromium drew it wider than this sandbox's. A figure never clips and the box
        never grows to hold it. */
     const pt = fmtPct(r.pct);
-    const pill = el('span', (r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' wl-pct', pt);
+    const pill = el('span', (r.pct >= 0 ? 'legacy-pill legacy-pill--gain' : 'legacy-pill legacy-pill--loss') + ' wl-pct', pt);
     if (pt.length > 6) pill.classList.add('is-long');
     if (pt.length > 7) pill.classList.add('is-xlong');
     if (pt.length > 8) pill.classList.add('is-xxlong');
@@ -2074,7 +2074,7 @@ async function confirmWlDelList() {
 
    `dblclick` fires on touch double-taps too, but mobile browsers treat a
    double-tap as zoom by default and would swallow it — hence
-   `touch-action: manipulation` on the tiles in components.css. Without that
+   `touch-action: manipulation` on the tiles in legacy.css. Without that
    the gesture works on desktop and silently does nothing on a phone.
 
    Delete/Backspace on a focused tile reaches the same dialog: the tiles are
@@ -2082,7 +2082,7 @@ async function confirmWlDelList() {
    reach is not a remove everyone has. */
 function wlWireRemove(tile, sym, idx, title) {
   /* Marks the tile as actually having a removal wired, so the touch-gesture
-     override in components.css applies ONLY here (Codex review, PR #200).
+     override in legacy.css applies ONLY here (Codex review, PR #200).
      Putting it on every .wl-tile cost mobile users double-tap zoom in demo and
      locked sessions, where nothing is listening for the gesture — a real
      capability traded for nothing. */
@@ -3198,13 +3198,13 @@ function openAskSched(pin, opener) {
       if (!r.enabled) row.classList.add('ask-sched-row--off');
 
       const q = document.createElement('input');
-      q.type = 'text'; q.className = 'input ask-sched-q'; q.value = r.prompt; q.maxLength = 500;
+      q.type = 'text'; q.className = 'legacy-input ask-sched-q'; q.value = r.prompt; q.maxLength = 500;
       q.placeholder = 'e.g. Summarise the market and my watchlist, and name the best setups';
       q.setAttribute('aria-label', 'Question');
       q.addEventListener('input', () => { r.prompt = q.value.slice(0, 500); touch(); });
 
       const cad = document.createElement('select');
-      cad.className = 'input ask-sched-cad';
+      cad.className = 'legacy-input ask-sched-cad';
       cad.setAttribute('aria-label', 'How often');
       for (const [key, label] of ASK_CADENCES) {
         const o = document.createElement('option');
@@ -3226,7 +3226,7 @@ function openAskSched(pin, opener) {
       let when;
       if (askAtTheHour(r)) {
         when = document.createElement('select');
-        when.className = 'input ask-sched-min';
+        when.className = 'legacy-input ask-sched-min';
         when.setAttribute('aria-label', 'Minutes past the hour');
         for (let m = 0; m < 60; m += 5) {
           const o = document.createElement('option');
@@ -3237,7 +3237,7 @@ function openAskSched(pin, opener) {
         when.addEventListener('change', () => { r.atMin = Number(when.value) || 0; touch(); draw(); });
       } else {
         when = document.createElement('input');
-        when.type = 'time'; when.step = '300'; when.className = 'input ask-sched-time';
+        when.type = 'time'; when.step = '300'; when.className = 'legacy-input ask-sched-time';
         when.setAttribute('aria-label', 'Time (Pacific)');
         when.value = String(r.atHour).padStart(2, '0') + ':' + String(r.atMin).padStart(2, '0');
         when.addEventListener('change', () => {
@@ -3260,7 +3260,7 @@ function openAskSched(pin, opener) {
 
       /* Run now uses the DRAFT prompt and does not save — it is how you find out
          what the 8am answer will look like without waiting until 8am. */
-      const now = el('button', 'btn btn-secondary', 'Run now'); now.type = 'button';
+      const now = el('button', 'legacy-btn legacy-btn-secondary', 'Run now'); now.type = 'button';
       now.disabled = !r.prompt.trim() || !askRun || askBusy;
       now.title = 'Ask this question right now, in the thread. Does not save the schedule.';
       now.addEventListener('click', () => {
@@ -3269,7 +3269,7 @@ function openAskSched(pin, opener) {
         askRun(r.prompt.trim(), { scheduled: true });
       });
 
-      const del = el('button', 'btn btn-secondary', '✕'); del.type = 'button';
+      const del = el('button', 'legacy-btn legacy-btn-secondary', '✕'); del.type = 'button';
       del.setAttribute('aria-label', 'Remove this question');
       del.addEventListener('click', () => { askSched.splice(i, 1); touch(); draw(); });
 
@@ -3502,17 +3502,17 @@ function renderAsk() {
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
-  input.type = 'text'; input.className = 'input'; input.maxLength = 500;
+  input.type = 'text'; input.className = 'legacy-input'; input.maxLength = 500;
   input.placeholder = 'Ask about your desk…';
   input.setAttribute('aria-label', 'Ask the desk assistant a question');
-  const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
+  const btn = el('button', 'legacy-btn', 'Ask'); btn.type = 'submit';
   /* Stop (owner request 2026-08-01). A SEPARATE button rather than the Ask
      button changing role: a control that swaps what it does under the cursor is
      how a stop gets pressed as a re-send, and the desk-ask tool loop can run
      long enough (up to 12 tool calls) that the owner is reaching for it while
      the page is still settling. Hidden, not disabled, when idle — an always-on
      Stop with nothing to stop is noise. */
-  const stopBtn = el('button', 'btn btn-secondary ask-stop', 'Stop'); stopBtn.type = 'button';
+  const stopBtn = el('button', 'legacy-btn legacy-btn-secondary ask-stop', 'Stop'); stopBtn.type = 'button';
   stopBtn.hidden = true;
   stopBtn.setAttribute('aria-label', 'Stop waiting for the current answer');
   stopBtn.title = 'Stop waiting for this answer';
@@ -3530,7 +3530,7 @@ function renderAsk() {
      dropping the arm between the failure and the retry is how a deliberate
      choice gets lost. */
   let askVerify = false;
-  const verifyBtn = el('button', 'btn btn-secondary ask-verify', '✓ Verify'); verifyBtn.type = 'button';
+  const verifyBtn = el('button', 'legacy-btn legacy-btn-secondary ask-verify', '✓ Verify'); verifyBtn.type = 'button';
   verifyBtn.setAttribute('aria-pressed', 'false');
   verifyBtn.setAttribute('aria-label', 'Verify the next answer against its data');
   verifyBtn.title = 'Check the next answer against the quotes and technicals behind it. Costs extra; turns itself off afterwards.';
@@ -3540,11 +3540,11 @@ function renderAsk() {
   };
   verifyBtn.addEventListener('click', () => setVerify(!askVerify));
   /* ⏱ beside ⚙ — same idiom, same place. Opens the schedule roster. */
-  const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
+  const schedBtn = el('button', 'legacy-btn legacy-btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
   schedBtn.title = 'Questions the desk asks itself on a schedule — it runs with this page shut';
   schedBtn.addEventListener('click', () => openAskSched(pin, schedBtn));
-  const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
+  const sysBtn = el('button', 'legacy-btn legacy-btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin, sysBtn));
   /* The model switch (desk_021) — the owner's, so only for an unlocked desk. Its OWN row, deliberately NOT
@@ -3562,7 +3562,7 @@ function renderAsk() {
     tierGroup.appendChild(b);
     return b;
   });
-  const tierRetry = el('button', 'btn btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
+  const tierRetry = el('button', 'legacy-btn legacy-btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
   tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pin); });   /* '*' = whichever option ends up selected */
   const tierNote = el('p', 'ask-tier-note', ''); tierNote.setAttribute('role', 'status');
   tierBox.appendChild(tierGroup); tierBox.appendChild(tierRetry);
@@ -3898,7 +3898,7 @@ function renderAccountsUnavailable() {
   const body = el('div', 'panel-body');
   body.appendChild(el('p', 'lock-explain',
     'Your PIN worked — the desk just could not load your accounts. Everything else on the page is unaffected.'));
-  const btn = el('button', 'btn', 'Retry');
+  const btn = el('button', 'legacy-btn', 'Retry');
   btn.type = 'button';
   btn.addEventListener('click', async () => {
     const pin = sessionStorage.getItem('desk_pin');
@@ -3933,9 +3933,9 @@ function renderLockedPanels(why) {
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
-  input.type = 'password'; input.inputMode = 'numeric'; input.className = 'input';
+  input.type = 'password'; input.inputMode = 'numeric'; input.className = 'legacy-input';
   input.placeholder = 'Desk PIN'; input.setAttribute('aria-label', 'Desk PIN');
-  const btn = el('button', 'btn', 'Unlock');
+  const btn = el('button', 'legacy-btn', 'Unlock');
   btn.type = 'submit';
   const err = el('p', 'lock-error', ''); err.hidden = true;
   form.appendChild(input); form.appendChild(btn);
@@ -8067,7 +8067,7 @@ function buildWbSettings() {
     col.appendChild(el('h3', 'wb-set-title', title));
     col.appendChild(el('p', 'wb-set-group', 'Ticker'));
     const tsel = document.createElement('select');
-    tsel.className = 'input wb-set-sym';
+    tsel.className = 'legacy-input wb-set-sym';
     tsel.setAttribute('aria-label', title + ' ticker');
     const follow = document.createElement('option');
     follow.value = ''; follow.textContent = 'Desk symbol';

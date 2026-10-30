@@ -20,11 +20,29 @@ https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/
 - **Branch policy:** Develop on a `claude/<name>` feature branch; PRs target `main`
 
 ## Design
-This project's look is its own — established at kickoff via `/design-intake`
-(per `directives/design.md`), not a shared company theme. It lives in:
-- `styles/tokens.css` — brand primitives (color, type, spacing, radius, shadow)
-- `styles/components.css` — reusable components
+**One house style binds every project (owner rulings 2026-10-19, `directives/design.md`):** the
+house components, words, icons and patterns (design.md sections 1–19) apply here as they are, and
+this project moves onto them by `/design-intake` step 1c, *Move an existing project*
+(claude.directives #470, merged in #473), in three PRs. **Step 1 (make room, no visible change) is
+DONE (2026-10-29, owner go-ahead)**; step 2 moves the panels one PR at a time in the order the owner
+picks from `DESIGN-GAPS.md`; step 3 deletes `styles/legacy.css` once no `legacy-` class is used.
+**Palette ruling (owner, 2026-10-29): this project keeps its OWN colours and fonts** — the light desk
+palette ("Daylight desk ledger": warm paper, warm ink, brass accent, green/red for P&L only), IBM Plex
+Sans and Mono, and the dark Stochastic charts panel (its own token scope on `.area-charts`). So
+design.md's palette import (1b) applies: `tokens.css` keeps its values and declares every house token
+name in this palette, never the house's blue; the status pairs are STATUS, never P&L. The look lives in:
+- `styles/tokens.css` — brand primitives (color, type, spacing, radius, shadow), every house token name declared
+- `styles/components.css` — the HOUSE components, verbatim; never edited here (`/refresh-repo` keeps it current)
+- `styles/components.js` — the HOUSE page script (`House.*`), verbatim; loaded by NO page yet — a panel loads it when it moves (step 2)
+- `styles/legacy.css` — the desk's own components (it was `styles/components.css` until 2026-10-29). The four class
+  names it shared with the house set are renamed with their families: `.legacy-btn`, `.legacy-btn-secondary`,
+  `.legacy-input`, `.legacy-pill` (`--gain`/`--loss`/`--flat`). The house page base is HELD BACK under
+  `.legacy-screen` (on `.shell`; the body-level `.wl-ghost` too): `overflow-wrap` stays `normal` (the house
+  `anywhere` would break the width-derived rails, tiles and tickers), form controls keep their own font, and a
+  link keeps the browser's focus ring. Proved by before/after screenshots of every panel, pop-over and dialog
+  at 390 and 1440 px on `?demo=1`, pixel-identical.
 - `styles/layout.css` — page layout and panel rules (was the inline `<style>` in `index.html`)
+- `DESIGN-GAPS.md` — where each panel still breaks the house standard, one line per panel and group
 - **Reference page:** `index.html` on demo data (see `specs/multi-account-trading-dashboard/design.md` — "Daylight desk ledger")
 
 ## Application Architecture
@@ -33,9 +51,10 @@ section were moved VERBATIM into `docs/architecture/` (2026-09-29; index and sym
 table: `docs/architecture/README.md`) so the always-loaded context stays small. The topic
 files carry the same authority as this file. **Before editing any symbol named below, read
 its topic file** — the reasoning behind each rule is there, not here.
-- `index.html` — markup only (one `<main>` landmark) + 3 stylesheet links + 3
-  script tags; all render-blocking assets share ONE `?v=` cache-bust token (bump
-  them together on every asset change).
+- `index.html` — markup only (one `<main>` landmark) + the IBM Plex font link, 4
+  stylesheet links in this order — `tokens.css`, the house `components.css`,
+  `legacy.css`, `layout.css` — and 3 script tags; all render-blocking assets share
+  ONE `?v=` cache-bust token (bump them together on every asset change).
 - `scripts/config.js` — account roster (`DESK_ACCOUNTS`) + backend endpoints
   (`DESK_DB`). **Empty `DESK_DB.url` ⇒ the whole site runs in DEMO mode.**
   Current state: **LIVE** on the dedicated Supabase project ("trading
@@ -529,7 +548,7 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | Primary content selector | `.account .hero-number` |
 | Nav cards | n/a — single-page dashboard (panels: Accounts, Markets, Heatmap, Stochastic charts, Ask the desk, News, Economy) |
 | Playwright test directory | `.github/scripts/ui-tests` |
-| Key selectors | lock form: `#accountGrid .panel-lock .lock-form input.input` + button `Unlock` (**scope it** — the open Ask composer is ALSO a `.lock-form`, so the bare class matched two forms and S10/S11 went red on `qa-live` for four runs) · error: `.panel-lock .lock-error` (**always scope it** — `.lock-error` is the shared error-line class every modal reuses, so a bare selector matches 5+ elements and Playwright strict mode rejects it) · lamps: `#newsLamp #askLamp #mktLamp #econLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
+| Key selectors | lock form: `#accountGrid .panel-lock .lock-form input.legacy-input` + button `Unlock` (**scope it** — the open Ask composer is ALSO a `.lock-form`, so the bare class matched two forms and S10/S11 went red on `qa-live` for four runs) · error: `.panel-lock .lock-error` (**always scope it** — `.lock-error` is the shared error-line class every modal reuses, so a bare selector matches 5+ elements and Playwright strict mode rejects it) · lamps: `#newsLamp #askLamp #mktLamp #econLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
 
 ### Sandboxed local runs
 What a local Playwright run in this sandbox **cannot** tell you — record per
