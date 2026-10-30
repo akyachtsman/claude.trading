@@ -39,5 +39,6 @@
     "permissions.allow (local extra)": {
       "Artifact": "Owner-approved local addition recorded in CLAUDE.md under Local deviations (the Artifact tool is allow-listed in this project's settings)."
     }
-  }
+  },
+  "house_style": true
 }

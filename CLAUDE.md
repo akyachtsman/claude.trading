@@ -20,11 +20,29 @@ https://raw.githubusercontent.com/akyachtsman/claude.directives/main/directives/
 - **Branch policy:** Develop on a `claude/<name>` feature branch; PRs target `main`
 
 ## Design
-This project's look is its own — established at kickoff via `/design-intake`
-(per `directives/design.md`), not a shared company theme. It lives in:
-- `styles/tokens.css` — brand primitives (color, type, spacing, radius, shadow)
-- `styles/components.css` — reusable components
+**One house style binds every project (owner rulings 2026-10-19, `directives/design.md`):** the
+house components, words, icons and patterns (design.md sections 1–19) apply here as they are, and
+this project moves onto them by `/design-intake` step 1c, *Move an existing project*
+(claude.directives #470, merged in #473), in three PRs. **Step 1 (make room, no visible change) is
+DONE (2026-10-29, owner go-ahead)**; step 2 moves the panels one PR at a time in the order the owner
+picks from `DESIGN-GAPS.md`; step 3 deletes `styles/legacy.css` once no `legacy-` class is used.
+**Palette ruling (owner, 2026-10-29): this project keeps its OWN colours and fonts** — the light desk
+palette ("Daylight desk ledger": warm paper, warm ink, brass accent, green/red for P&L only), IBM Plex
+Sans and Mono, and the dark Stochastic charts panel (its own token scope on `.area-charts`). So
+design.md's palette import (1b) applies: `tokens.css` keeps its values and declares every house token
+name in this palette, never the house's blue; the status pairs are STATUS, never P&L. The look lives in:
+- `styles/tokens.css` — brand primitives (color, type, spacing, radius, shadow), every house token name declared
+- `styles/components.css` — the HOUSE components, verbatim; never edited here (`/refresh-repo` keeps it current)
+- `styles/components.js` — the HOUSE page script (`House.*`), verbatim; loaded by NO page yet — a panel loads it when it moves (step 2)
+- `styles/legacy.css` — the desk's own components (it was `styles/components.css` until 2026-10-29). The four class
+  names it shared with the house set are renamed with their families: `.legacy-btn`, `.legacy-btn-secondary`,
+  `.legacy-input`, `.legacy-pill` (`--gain`/`--loss`/`--flat`). The house page base is HELD BACK under
+  `.legacy-screen` (on `.shell`; the body-level `.wl-ghost` too): `overflow-wrap` stays `normal` (the house
+  `anywhere` would break the width-derived rails, tiles and tickers), form controls keep their own font, and a
+  link keeps the browser's focus ring. Proved by before/after screenshots of every panel, pop-over and dialog
+  at 390 and 1440 px on `?demo=1`, pixel-identical.
 - `styles/layout.css` — page layout and panel rules (was the inline `<style>` in `index.html`)
+- `DESIGN-GAPS.md` — where each panel still breaks the house standard, one line per panel and group
 - **Reference page:** `index.html` on demo data (see `specs/multi-account-trading-dashboard/design.md` — "Daylight desk ledger")
 
 ## Application Architecture
@@ -33,9 +51,10 @@ section were moved VERBATIM into `docs/architecture/` (2026-09-29; index and sym
 table: `docs/architecture/README.md`) so the always-loaded context stays small. The topic
 files carry the same authority as this file. **Before editing any symbol named below, read
 its topic file** — the reasoning behind each rule is there, not here.
-- `index.html` — markup only (one `<main>` landmark) + 3 stylesheet links + 3
-  script tags; all render-blocking assets share ONE `?v=` cache-bust token (bump
-  them together on every asset change).
+- `index.html` — markup only (one `<main>` landmark) + the IBM Plex font link, 4
+  stylesheet links in this order — `tokens.css`, the house `components.css`,
+  `legacy.css`, `layout.css` — and 3 script tags; all render-blocking assets share
+  ONE `?v=` cache-bust token (bump them together on every asset change).
 - `scripts/config.js` — account roster (`DESK_ACCOUNTS`) + backend endpoints
   (`DESK_DB`). **Empty `DESK_DB.url` ⇒ the whole site runs in DEMO mode.**
   Current state: **LIVE** on the dedicated Supabase project ("trading
@@ -238,7 +257,7 @@ its topic file** — the reasoning behind each rule is there, not here.
   data-free placeholder; `desk_005`'s and `desk_018`'s `cron.schedule` calls are commented out so a
   replay cannot point a scratch DB at the live functions). A replay of the directory
   has not been tested, and `list_migrations` plus PITR remain the authoritative
-  history. `desk_007`–`023` each carry a `-- revert:` line (`desk_023`, the News topic AI helper's daily counter, APPLIED 2026-10-19 as version `20261019055228`, the file text verbatim — probed and mutation-checked on a scratch Postgres first, then `tools/news-ai-quota-verify.sql` live, 32 of 32, rolled back; `desk_021`, the model tier, APPLIED 2026-10-14 as version `20261014141011`, the file text verbatim; `desk_022`, the saved-answer model line — `desk_chat_history` returns `model` — APPLIED 2026-10-15 as version `20261015004009`, the file text verbatim). The files target a
+  history. `desk_007`–`024` each carry a `-- revert:` line (`desk_024`, the test PIN shut out of the owner-only prompt / schedule / legacy roster doors, APPLIED 2026-10-27 by the owner in the Supabase SQL Editor — so it has NO `list_migrations` row (the connector asks its own approval question for SQL holding `delete`, which this project's app cannot show) — read back identical to the file apart from the Editor's CRLF line ends, then `tools/test-pin-owner-only-verify.sql` live, 15 of 15, rolled back; `desk_023`, the News topic AI helper's daily counter, APPLIED 2026-10-19 as version `20261019055228`, the file text verbatim — probed and mutation-checked on a scratch Postgres first, then `tools/news-ai-quota-verify.sql` live, 32 of 32, rolled back; `desk_021`, the model tier, APPLIED 2026-10-14 as version `20261014141011`, the file text verbatim; `desk_022`, the saved-answer model line — `desk_chat_history` returns `model` — APPLIED 2026-10-15 as version `20261015004009`, the file text verbatim). The files target a
   Supabase project or branch (roles `anon`/`authenticated` must exist). Two log/file
   mismatches are benign and understood (checked 2026-09-30): live's log carries
   `desk_014b_watchlist_version_never_null`, which `desk_014`'s file already folds in
@@ -434,6 +453,7 @@ real-data rules stay in Project-Specific Coding Standards below.
 - **A browser-side third-party DATA call — CNBC (owner request 2026-10-01).** The live 2Y/10Y/20Y are fetched by each viewer's browser from `quote.cnbc.com` (CNBC refuses servers). This is a plain data `fetch`, NOT vendor JS or an iframe, so the "the desk runs no vendor JS and zero iframes" ruling above stands untouched. Residual: CNBC sees each viewer's IP, user-agent and the page origin (`https://akyachtsman.github.io/`, the default referrer) on every poll; **no desk data crosses** — the request carries only a fixed public URL — and the reply is parsed field by field as untrusted data (`econLiveParseCnbc`: numbers and times only, a non-matching shape is dropped). It is an unofficial endpoint: CNBC can change or block it at any time and the rows then say NOT LIVE and show their official Treasury/FRED reading. The 1D span adds a second browser call of the same kind to `ts-api.cnbc.com` (CNBC's chart feed, `ECON_CHART_URL`; one request per yield, only while 1D is showing) on the same footing. The S1/S3 console allowlist is widened by exactly these two URL prefixes (`OPTIONAL_FEED`, `OPTIONAL_FEED_CHARTS`) and nothing else.
 - **Working-credential reach — MEASURED 2026-10-14; anything WIDER than this later is a finding** (owner request: "measure what YOUR OWN credentials reach before touching the database"). With the Supabase MCP the session connects as `postgres`, **not a superuser, `BYPASSRLS` true**, `application_name` `mgmt-api`, and `list_projects` shows **FOUR projects** in the one organisation — `trading dashboard` (`kwugzhyfjevzwgplhtsd`, the ONLY one this repo may touch) and three belonging to the owner's other repositories (not named in this public file). That is wider than this file used to imply; **knowing the reach is not permission to use it** (the dedicated-project ruling above stands: stay in this project, and ask the owner for anything outside it). `service_role` holds SELECT, INSERT and the privilege to empty the table on every `desk_*` table by project default, so a new table's privileges are revoked and MEASURED, never assumed (`tools/ask-model-tier-verify.sql`). The check, run at session start:
   `select current_user, session_user, (select rolsuper from pg_roles where rolname = session_user), (select rolbypassrls from pg_roles where rolname = session_user), (select application_name from pg_stat_activity where pid = pg_backend_pid());` — expected `postgres | postgres | false | true | mgmt-api` — plus `mcp__Supabase__list_projects` (expected: four).
+- **Secret columns — AUDITED 2026-10-27 (data.md → *Secret Columns*); none is readable by a low role.** Re-run `tools/secret-columns-audit.sql` (read-only, every row `ok`) on every security audit and after any migration that adds a secret column; extend its inventory with the column. Inventory: `desk_users.salt` / `pin_hash` (the PIN, salted SHA-256), Vault's `cron_secret` / `anon_key`, `cron.job.command`, and pg_net's `net.http_request_queue.headers` (the decrypted cron headers, held for the seconds a request is queued); no account number is stored (labels are short names; position rows carry `sym`/`qty`/`mkt`/`unrl`/`dayPct`), no Storage bucket exists, and API keys and the IBKR token are function secrets, not columns. Lowest roles tested: `anon` (a visitor) and `authenticated` (no Auth user exists), by grants AND over the API with the anon key — `desk_users` answers `42501`, any non-public schema `PGRST106` (only `public`, `graphql_public` are exposed), and `pg_graphql` is not enabled; the CI test PIN reaches data only through the PIN RPCs, none of which returns `salt` or `pin_hash` (they appear only inside the hash comparison) or any account number. The lock is a NAMED permission, not a row policy: no browser-role privilege on `desk_users` at all (stronger than a column grant), RLS on with no policy, and SECURITY DEFINER PIN RPCs as the only door; Vault and `cron` give the browser roles no schema USAGE, and the cron jobs read Vault at run time (no literal secret in `cron.job`). **Kept deferral — pg_net grants PUBLIC (accepted 2026-10-27, platform default):** `net.http_request_queue` and `net._http_response` are owned by `supabase_admin`, have no RLS and carry a PUBLIC grant (`=arwdDxtm`), with USAGE on `net` for `anon`/`authenticated` — and `anon` can EXECUTE `net.http_post`. This project's `postgres` role is not their owner and cannot revoke it. It is unreachable today only because `net` is not an exposed API schema and no `public` function reads it. **NEVER add `net` (or `extensions`, `cron`, `vault`) to the API's exposed schemas, enable `pg_graphql` without re-running the audit, or write a `public` function that reads `net.*`** — any of those would hand a visitor the cron secret. Revisit when Supabase changes the default or the owner asks. **Finding FIXED 2026-10-27 (not a secret column):** the CI test PIN (`is_test`) used to pass `desk_get/set_system_prompt`, `desk_get/set_ask_schedule` and the legacy `desk_set_watchlists(pin)` (2026-10-25 security review, HIGH; repo audit I1). `supabase/migrations/desk_024_test_pin_owner_only.sql` adds ONE `and not u.is_test` to each PIN lookup, as `desk_021` does; `desk_login` is unchanged so CI still unlocks. It was proven on a scratch Postgres first by `tools/test-pin-owner-only-verify.sql` (15 steps; fails on the pre-desk_024 bodies, passes after, and catches 9 of 9 mutants: the clause dropped from each function, `anon` EXECUTE revoked, `security invoker`, an unpinned `search_path`, and `desk_login` refusing the test user). **APPLIED 2026-10-27, owner-approved, by the owner pasting the file's five functions into the Supabase SQL Editor**, because the Supabase connector's `apply_migration` / `execute_sql` raise their own approval question for SQL that contains `delete`/`drop`/`update`/`truncate` (even inside a function body), and this project's app cannot show it, so the call times out. As a result it has no `list_migrations` row. Read back: all five bodies equal the file's once the Editor's CRLF line ends are stripped; still SECURITY DEFINER with `search_path=public`; ACLs unchanged (`anon`, `authenticated`, `service_role` EXECUTE, no PUBLIC). The probe was then run live through `execute_sql`: `all_pass: true`, 15 of 15, rolled back, with no probe row left behind. `blockRosterWrites` also refuses `desk_set_system_prompt` / `desk_set_ask_schedule` in every sweep (`ownerWrites`, asserted in S69). Rollback: re-create the five functions without the clause (the file's `-- revert:` line).
 - **NEVER send a browser-shaped `user-agent` on an edge function's own
   Supabase REST call** (learned the hard way, 2026-07-29). This project's
   service key is the newer `sb_secret_…` format, and the API gateway refuses a
@@ -529,7 +549,7 @@ Read by `ui-tester` and the Playwright kit at runtime — fill in before invokin
 | Primary content selector | `.account .hero-number` |
 | Nav cards | n/a — single-page dashboard (panels: Accounts, Markets, Heatmap, Stochastic charts, Ask the desk, News, Economy) |
 | Playwright test directory | `.github/scripts/ui-tests` |
-| Key selectors | lock form: `#accountGrid .panel-lock .lock-form input.input` + button `Unlock` (**scope it** — the open Ask composer is ALSO a `.lock-form`, so the bare class matched two forms and S10/S11 went red on `qa-live` for four runs) · error: `.panel-lock .lock-error` (**always scope it** — `.lock-error` is the shared error-line class every modal reuses, so a bare selector matches 5+ elements and Playwright strict mode rejects it) · lamps: `#newsLamp #askLamp #mktLamp #econLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
+| Key selectors | lock form: `#accountGrid .panel-lock .lock-form input.legacy-input` + button `Unlock` (**scope it** — the open Ask composer is ALSO a `.lock-form`, so the bare class matched two forms and S10/S11 went red on `qa-live` for four runs) · error: `.panel-lock .lock-error` (**always scope it** — `.lock-error` is the shared error-line class every modal reuses, so a bare selector matches 5+ elements and Playwright strict mode rejects it) · lamps: `#newsLamp #askLamp #mktLamp #econLamp` · chart: `#wbChart` · Markets chart: `#mktChart` · news rows: `.news-row` |
 
 ### Sandboxed local runs
 What a local Playwright run in this sandbox **cannot** tell you — record per
