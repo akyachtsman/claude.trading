@@ -18,9 +18,11 @@
 -- them. They apply only to tables supabase_admin creates in public; every desk table is created
 -- (and owned) by postgres, and none in public is owned by supabase_admin.
 --
--- It contains the word TRUNCATE, so from a project thread the owner pastes it into the Supabase SQL
--- Editor (the connector's own approval question cannot be shown there). The DO block refuses to
--- commit unless both data.md check queries come back empty.
+-- The DO block refuses to commit unless both data.md check queries come back empty.
+--
+-- Applied 2026-10-30 (owner-approved) through the Supabase MCP apply_migration as version
+-- 20261030194853: the statements below without the begin/commit lines (the tool wraps its own
+-- transaction). Both check queries then returned 0 rows.
 --
 -- Verify after applying: tools/supabase-defaults-check.sql (read-only; every row ok).
 --
