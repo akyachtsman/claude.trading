@@ -16,7 +16,7 @@ Plain HTML + CSS + vanilla JS served from GitHub Pages, with no build step. Live
 | `docs/architecture/` | Per-panel architecture notes and owner rulings, moved verbatim out of `CLAUDE.md` (charts rail, panes, watchlists, edge functions, ...); start at its `README.md` index |
 | `index.html` | Markup only, plus three script tags |
 | `scripts/` | `config.js` (accounts, backend endpoints), `data.js` (formatters, demo data, feed wrappers), `app.js` (all rendering) |
-| `styles/` | `tokens.css` (design primitives), `components.css` (reusable components) |
+| `styles/` | `tokens.css` (design primitives), `components.css` + `components.js` (the house components and page script, verbatim), `legacy.css` (the desk's own components until each panel moves), `layout.css` (page layout) |
 | `config/` | Owner-editable rosters read at runtime (news feeds, chart watchlist, map filters, watchlist bootstrap) and system-prompt backups |
 | `supabase/` | Edge functions (`functions/`) and SQL migrations (`migrations/`) for the dedicated Supabase project |
 | `specs/` | Spec-driven-development records; `specs/README.md` indexes them with status |

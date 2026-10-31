@@ -9,12 +9,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20261025b">
-<link rel="stylesheet" href="styles/components.css?v=20261025b">
-<link rel="stylesheet" href="styles/layout.css?v=20261025b">
+<link rel="stylesheet" href="styles/tokens.css?v=20261031a">
+<link rel="stylesheet" href="styles/components.css?v=20261031a">
+<link rel="stylesheet" href="styles/legacy.css?v=20261031a">
+<link rel="stylesheet" href="styles/layout.css?v=20261031a">
 </head>
 <body>
-<div class="shell">
+<div class="shell legacy-screen">
 
   <header class="masthead">
     <div>
@@ -87,7 +88,7 @@
              311px and the header already carries title + lamp + stamp, so a
              fourth item would crush the stamp to an ellipsis. -->
         <div class="news-topic">
-          <input id="newsTopic" class="input news-topic-in" type="text" maxlength="60"
+          <input id="newsTopic" class="legacy-input news-topic-in" type="text" maxlength="60"
                  placeholder="Narrow to a topic…" autocomplete="off"
                  aria-label="Narrow news to a topic">
           <button id="newsTopicClear" class="news-topic-x" type="button" hidden aria-label="Clear topic">✕</button>
@@ -138,14 +139,14 @@
       <div class="panel-header">
         <h2 class="panel-title" id="sysPromptTitle">Ask-the-desk system prompt</h2>
         <span class="stamp ml-auto" id="sysPromptStamp">—</span>
-        <button type="button" class="btn btn-secondary" id="sysPromptCloseBtn" aria-label="Close without saving">✕</button>
+        <button type="button" class="legacy-btn legacy-btn-secondary" id="sysPromptCloseBtn" aria-label="Close without saving">✕</button>
       </div>
       <div class="panel-body">
         <p class="lock-explain" id="sysPromptExplain">The exact instructions Ask-the-desk follows on every question.</p>
         <textarea class="sys-prompt-text" id="sysPromptText" rows="12" maxlength="20000" aria-label="Ask-the-desk system prompt"></textarea>
         <p class="sys-prompt-counter" id="sysPromptCounter" aria-live="polite"></p>
         <div class="sys-prompt-actions">
-          <button type="button" class="btn" id="sysPromptSubmit">Save &amp; exit</button>
+          <button type="button" class="legacy-btn" id="sysPromptSubmit">Save &amp; exit</button>
         </div>
         <p class="lock-error" id="sysPromptErr" hidden></p>
       </div>
@@ -172,15 +173,15 @@
     <section class="panel modal-panel" id="askSchedPanel" aria-labelledby="askSchedTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
         <h2 class="panel-title" id="askSchedTitle">Scheduled questions</h2>
-        <button type="button" class="btn btn-secondary ml-auto" id="askSchedCloseBtn" aria-label="Close">✕</button>
+        <button type="button" class="legacy-btn legacy-btn-secondary ml-auto" id="askSchedCloseBtn" aria-label="Close">✕</button>
       </div>
       <div class="panel-body">
         <p class="lock-explain">The desk asks these itself on the schedule you set and answers into the thread — it does not need this page open. All times are Pacific. Up to 10 questions; each firing spends real Claude quota.</p>
         <div id="askSchedList"></div>
         <p class="lock-error" id="askSchedErr" hidden></p>
         <div class="wl-edit-actions">
-          <button type="button" class="btn btn-secondary" id="askSchedAdd">+ Add question</button>
-          <button type="button" class="btn" id="askSchedSave">Save</button>
+          <button type="button" class="legacy-btn legacy-btn-secondary" id="askSchedAdd">+ Add question</button>
+          <button type="button" class="legacy-btn" id="askSchedSave">Save</button>
           <span class="ask-sched-note" id="askSchedNote"></span>
         </div>
       </div>
@@ -190,7 +191,7 @@
     <section class="panel modal-panel wl-quick-panel" id="wlQuickPanel" aria-labelledby="wlQuickTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
         <h2 class="panel-title" id="wlQuickTitle">Add symbols</h2>
-        <button type="button" class="btn btn-secondary ml-auto" id="wlQuickCloseBtn" aria-label="Cancel">✕</button>
+        <button type="button" class="legacy-btn legacy-btn-secondary ml-auto" id="wlQuickCloseBtn" aria-label="Cancel">✕</button>
       </div>
       <div class="panel-body">
         <p class="lock-explain" id="wlQuickHint">Separate symbols with commas, spaces or new lines. Enter adds them; Shift+Enter starts a new line.</p>
@@ -200,9 +201,9 @@
              grammar and would have been saved as a symbol that doesn't exist.
              Pasting a column is the documented workflow, so the field has to
              hold what was pasted. -->
-        <textarea class="input wl-quick-input" id="wlQuickInput" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Symbols to add" aria-describedby="wlQuickHint"></textarea>
+        <textarea class="legacy-input wl-quick-input" id="wlQuickInput" rows="3" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Symbols to add" aria-describedby="wlQuickHint"></textarea>
         <div class="wl-edit-actions">
-          <button type="button" class="btn" id="wlQuickSaveBtn">Add</button>
+          <button type="button" class="legacy-btn" id="wlQuickSaveBtn">Add</button>
         </div>
         <p class="lock-error" id="wlQuickErr" hidden></p>
       </div>
@@ -220,8 +221,8 @@
       <div class="panel-body">
         <p class="lock-explain" id="wlRmText">—</p>
         <div class="wl-edit-actions">
-          <button type="button" class="btn btn-secondary" id="wlRmCancelBtn">Keep it</button>
-          <button type="button" class="btn" id="wlRmConfirmBtn">Remove</button>
+          <button type="button" class="legacy-btn legacy-btn-secondary" id="wlRmCancelBtn">Keep it</button>
+          <button type="button" class="legacy-btn" id="wlRmConfirmBtn">Remove</button>
         </div>
         <p class="lock-error" id="wlRmErr" hidden></p>
       </div>
@@ -237,10 +238,10 @@
       </div>
       <div class="panel-body">
         <label class="lock-explain" for="wlNewInput">Name it. Drag symbols in once it exists, or use the + to add them.</label>
-        <input type="text" class="input" id="wlNewInput" maxlength="60" autocomplete="off" spellcheck="false" placeholder="Earnings this week">
+        <input type="text" class="legacy-input" id="wlNewInput" maxlength="60" autocomplete="off" spellcheck="false" placeholder="Earnings this week">
         <div class="wl-edit-actions">
-          <button type="button" class="btn btn-secondary" id="wlNewCloseBtn">Cancel</button>
-          <button type="button" class="btn" id="wlNewSaveBtn">Create</button>
+          <button type="button" class="legacy-btn legacy-btn-secondary" id="wlNewCloseBtn">Cancel</button>
+          <button type="button" class="legacy-btn" id="wlNewSaveBtn">Create</button>
         </div>
         <p class="lock-error" id="wlNewErr" hidden></p>
       </div>
@@ -258,8 +259,8 @@
       <div class="panel-body">
         <p class="lock-explain" id="wlDelText">—</p>
         <div class="wl-edit-actions">
-          <button type="button" class="btn btn-secondary" id="wlDelCancelBtn">Keep it</button>
-          <button type="button" class="btn" id="wlDelConfirmBtn">Delete</button>
+          <button type="button" class="legacy-btn legacy-btn-secondary" id="wlDelCancelBtn">Keep it</button>
+          <button type="button" class="legacy-btn" id="wlDelConfirmBtn">Delete</button>
         </div>
         <p class="lock-error" id="wlDelErr" hidden></p>
       </div>
@@ -278,7 +279,7 @@
         <h2 class="panel-title" id="wlDetailTitle">—</h2>
         <span class="wl-detail-name" id="wlDetailName"></span>
         <span class="lamp ml-auto" id="wlDetailLamp">—</span>
-        <button type="button" class="btn btn-secondary" id="wlDetailCloseBtn" aria-label="Close">✕</button>
+        <button type="button" class="legacy-btn legacy-btn-secondary" id="wlDetailCloseBtn" aria-label="Close">✕</button>
       </div>
       <div class="panel-body">
         <div class="wl-detail-quote" id="wlDetailQuote"></div>
@@ -302,14 +303,14 @@
       <div class="panel-header">
         <h2 class="panel-title" id="wlEditTitle">Edit watchlists</h2>
         <span class="stamp ml-auto" id="wlEditStamp">—</span>
-        <button type="button" class="btn btn-secondary" id="wlEditCloseBtn" aria-label="Close without saving">✕</button>
+        <button type="button" class="legacy-btn legacy-btn-secondary" id="wlEditCloseBtn" aria-label="Close without saving">✕</button>
       </div>
       <div class="panel-body">
         <p class="lock-explain">Rename a list, paste or edit its symbols, add a list, or delete one. Separate symbols with commas, spaces or new lines.</p>
         <div id="wlEditLists"></div>
         <div class="wl-edit-actions">
-          <button type="button" class="btn btn-secondary" id="wlAddListBtn">+ Add list</button>
-          <button type="button" class="btn" id="wlSaveBtn">Save &amp; exit</button>
+          <button type="button" class="legacy-btn legacy-btn-secondary" id="wlAddListBtn">+ Add list</button>
+          <button type="button" class="legacy-btn" id="wlSaveBtn">Save &amp; exit</button>
         </div>
         <p class="lock-error" id="wlEditErr" hidden></p>
       </div>
@@ -333,10 +334,10 @@
       <h2 class="panel-title" id="chartsTitle">Stochastic charts</h2>
       <span class="lamp lamp--demo" id="chartsLamp">Demo</span>
       <form class="wb-any" id="wbSymForm">
-        <input type="text" class="input wb-any-input" id="wbSymInput" placeholder="Ticker…" aria-label="Chart a symbol — type any ticker. It is not added to the SYMBOL list" maxlength="10" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wbSuggest">
+        <input type="text" class="legacy-input wb-any-input" id="wbSymInput" placeholder="Ticker…" aria-label="Chart a symbol — type any ticker. It is not added to the SYMBOL list" maxlength="10" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wbSuggest">
         <!-- [html-validate-disable-next prefer-native-element -- ARIA combobox listbox for a free-text ticker typeahead; a native <select> can't offer suggestions over arbitrary typed input] -->
         <ul class="wb-suggest" id="wbSuggest" role="listbox" aria-label="Ticker suggestions" hidden></ul>
-        <button type="submit" class="btn btn-secondary wb-gear" title="Chart this symbol. It is not added to the SYMBOL list — use the Symbol box on top of the list for that">Load</button>
+        <button type="submit" class="legacy-btn legacy-btn-secondary wb-gear" title="Chart this symbol. It is not added to the SYMBOL list — use the Symbol box on top of the list for that">Load</button>
       </form>
       <div class="wb-zoom-pair">
         <span class="wb-seg-tag">PANE</span>
@@ -366,8 +367,8 @@
               <span class="wb-seg-tag">PRO 1</span>
               <div class="seg" role="group" aria-label="Pro 1 daily timeframe" id="chartZoom2"></div>
               <div class="wb-pane-controls">
-                <button type="button" class="btn btn-secondary wb-pane-lock" id="wbLock-p2" aria-pressed="false" aria-label="Lock Pro 1 scroll-wheel zoom">🔓</button>
-                <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p2" aria-expanded="false" aria-controls="wbSettings-p2" aria-label="Pro 1 chart settings">⚙</button>
+                <button type="button" class="legacy-btn legacy-btn-secondary wb-pane-lock" id="wbLock-p2" aria-pressed="false" aria-label="Lock Pro 1 scroll-wheel zoom">🔓</button>
+                <button type="button" class="legacy-btn legacy-btn-secondary wb-pane-gear" id="wbGear-p2" aria-expanded="false" aria-controls="wbSettings-p2" aria-label="Pro 1 chart settings">⚙</button>
               </div>
               <div class="wb-settings" id="wbSettings-p2" hidden></div>
             </div>
@@ -375,8 +376,8 @@
               <span class="wb-seg-tag">PRO 2</span>
               <div class="seg" role="group" aria-label="Pro 2 daily timeframe" id="chartZoom"></div>
               <div class="wb-pane-controls">
-                <button type="button" class="btn btn-secondary wb-pane-lock" id="wbLock-p1" aria-pressed="false" aria-label="Lock Pro 2 scroll-wheel zoom">🔓</button>
-                <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p1" aria-expanded="false" aria-controls="wbSettings-p1" aria-label="Pro 2 chart settings">⚙</button>
+                <button type="button" class="legacy-btn legacy-btn-secondary wb-pane-lock" id="wbLock-p1" aria-pressed="false" aria-label="Lock Pro 2 scroll-wheel zoom">🔓</button>
+                <button type="button" class="legacy-btn legacy-btn-secondary wb-pane-gear" id="wbGear-p1" aria-expanded="false" aria-controls="wbSettings-p1" aria-label="Pro 2 chart settings">⚙</button>
               </div>
               <div class="wb-settings" id="wbSettings-p1" hidden></div>
             </div>
@@ -384,8 +385,8 @@
               <span class="wb-seg-tag">PRO 3</span>
               <span class="wb-seg-note">Day trading · drag the range slider below</span>
               <div class="wb-pane-controls">
-                <button type="button" class="btn btn-secondary wb-pane-lock" id="wbLock-p3" aria-pressed="false" aria-label="Lock Pro 3 scroll-wheel zoom">🔓</button>
-                <button type="button" class="btn btn-secondary wb-pane-gear" id="wbGear-p3" aria-expanded="false" aria-controls="wbSettings-p3" aria-label="Pro 3 chart settings">⚙</button>
+                <button type="button" class="legacy-btn legacy-btn-secondary wb-pane-lock" id="wbLock-p3" aria-pressed="false" aria-label="Lock Pro 3 scroll-wheel zoom">🔓</button>
+                <button type="button" class="legacy-btn legacy-btn-secondary wb-pane-gear" id="wbGear-p3" aria-expanded="false" aria-controls="wbSettings-p3" aria-label="Pro 3 chart settings">⚙</button>
               </div>
               <div class="wb-settings" id="wbSettings-p3" hidden></div>
             </div>
@@ -487,7 +488,7 @@
            fetched until it is expanded: the toggle is what triggers the first
            load, so a collapsed panel costs one button and zero network. The
            choice persists (hm_open_v1) so a deliberate open survives a reload. -->
-      <button type="button" class="btn btn-secondary heat-toggle" id="heatToggle"
+      <button type="button" class="legacy-btn legacy-btn-secondary heat-toggle" id="heatToggle"
               aria-expanded="false" aria-controls="heatBody">Show</button>
       <span class="stamp ml-auto" id="heatStamp">—</span>
     </div>
@@ -496,7 +497,7 @@
         <aside class="map-filter" aria-label="Map filter">
           <p class="map-filter-title">Map filter</p>
           <nav id="mapFilterNav" aria-label="Heatmap universe"></nav>
-          <select class="input map-period" id="heatPeriod" aria-label="Performance period"></select>
+          <select class="legacy-input map-period" id="heatPeriod" aria-label="Performance period"></select>
         </aside>
         <div class="heat-wrap">
           <svg id="heatmapSvg" viewBox="0 0 1200 520" preserveAspectRatio="none" role="img" aria-label="Market heatmap: tile size is market cap, color is performance; a movers table follows"></svg>
@@ -557,8 +558,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20261025b"></script>
-<script src="scripts/data.js?v=20261025b"></script>
-<script src="scripts/app.js?v=20261025b"></script>
+<script src="scripts/config.js?v=20261031a"></script>
+<script src="scripts/data.js?v=20261031a"></script>
+<script src="scripts/app.js?v=20261031a"></script>
 </body>
 </html>

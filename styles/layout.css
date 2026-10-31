@@ -58,7 +58,7 @@
      full-width band, its label in the left gutter, tiles packed left-to-right
      with collapsed borders (gap:0 + a -1px top margin fuses the shared edges
      into one hairline). Widening for a full-page panel lives in
-     styles/components.css under .wl-strip. */
+     styles/legacy.css under .wl-strip. */
   /* Watchlists lead the page (owner request 2026-07-29) — the panel sits
      between the masthead and the top band, OUTSIDE .layout, so it carries its
      own bottom margin instead of inheriting that grid's gap. */
@@ -394,7 +394,7 @@
   .mkt-last { font: 600 var(--font-sm)/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
   /* price + % on ONE line so the tile is genuinely half-height */
   .mkt-vals { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
-  .mkt-vals .pill { font-size: 10px; padding: 1px 5px; }
+  .mkt-vals .legacy-pill { font-size: 10px; padding: 1px 5px; }
 
   /* layout: news is a full-height column on the RIGHT. The heatmap and the
      stochastic-charts panel widen across the main + brief/ask area up to the
@@ -454,11 +454,11 @@
   .accounts-side { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
   .accounts-head { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2) var(--space-4); flex-wrap: wrap; min-width: 0; }
   .accounts-head h2 { margin: 0; font: 600 var(--font-lg)/1.2 var(--font-sans); }
-  /* Refresh/Lock much smaller (owner request 2026-08-08). The shared `.btn` is
+  /* Refresh/Lock much smaller (owner request 2026-08-08). The shared `.legacy-btn` is
      44px tall with 20px padding — right for a form's primary action, far too
      heavy for two secondary controls sitting in a header row. Applied at every
      width. */
-  .accounts-head .btn { min-height: 26px; padding: 3px 10px; font-size: var(--font-xs); border-radius: var(--radius-sm); box-shadow: none; }
+  .accounts-head .legacy-btn { min-height: 26px; padding: 3px 10px; font-size: var(--font-xs); border-radius: var(--radius-sm); box-shadow: none; }
   /* The cards: `auto-fit` tracks of at least 340px, so the owner's two accounts
      sit side by side from ~792px up (2 × 340 + the gutter must fit inside the
      inset section) and the row reflows to one column below that with no

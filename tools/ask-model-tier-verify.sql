@@ -13,10 +13,12 @@
 --                           approved applying desk_021 (it inserts two throwaway users, inside the
 --                           transaction that is then aborted, and temporarily removes the row for
 --                           the "no row" steps — also rolled back).
---   The MCP may HOLD that call: docs/architecture/desk-ask-and-cron.md records it holding any statement
---   that contains a destructive keyword (delete, drop, truncate), even inside a string, and this probe
---   necessarily contains them — they ARE the denials it probes. If execute_sql holds it, run the same text
---   in the dashboard SQL editor, or have the owner confirm the hold. Do not reword the keywords away:
+--   The MCP's destructive-SQL detector stops a statement that STARTS with delete, drop or truncate
+--   (inside the DO body too, and an EXECUTE of a literal string that starts so; a comment does not).
+--   The denials below are strings in a list, run through a variable, and the probe ran from a thread
+--   on 2026-10-14 without being stopped. If it ever is stopped, a project thread cannot answer the
+--   form: run the same text from a claude.ai chat with the Supabase connector, the SQL editor behind
+--   that (CLAUDE.md -> Applying a migration). Do not reword the keywords away:
 --   a probe that no longer attempts the delete or the truncate no longer proves they are refused.
 --
 -- What each group proves (the traps from the owner's brief, 2026-10-14, are named):
