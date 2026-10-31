@@ -6923,6 +6923,13 @@ function graftTodayBar(bars, intraRaw) {
 /* ── the two-tier workbench: Pro 1 (daily, short-term) · Pro 2 (weekly,
    long-term) side by side in one SVG, per the three-tier doctrine. Pro 3
    (intraday) awaits the quote-proxy backend. ─────────────────────────── */
+/* the next 1 / 2 / 2.5 / 5 × 10ⁿ step above `t` — how an axis ladder thins itself when its labels would touch */
+function wbNextNice(t) {
+  const mag = Math.pow(10, Math.floor(Math.log10(t) + 1e-9));
+  const n = t / mag;
+  for (const c of [2, 2.5, 5, 10]) if (c > n + 1e-9) return c * mag;
+  return 20 * mag;
+}
 function renderCharts(data, lamp) {
   /* days3 = Pro 3's INTRADAY window in its own bars: 52 × 15-min = 2 sessions
      (was 156 × 5-min before the terminal-fitted 15-min switch — same span).
@@ -7240,12 +7247,15 @@ function renderCharts(data, lamp) {
        gridlines were removed 2026-07-22 to match the terminal's clean panels —
        the axis numbers stay, no lines cross the chart. rawStep is snapped to the
        NEAREST 1/2/2.5/5/10 × 10ⁿ "nice" value so labels stay round. */
-    const rawStep = (hi - lo) / 13;
+    /* ~13 levels where the pane is tall enough, but never closer than AX.big + 4 px apart: on a phone the price
+       pane is a few hundred px tall and 13 levels stacked 17 labels on top of one another (browser test 2026-10-24) */
+    const rawStep = (hi - lo) / Math.max(2, Math.min(13, Math.floor(pH / (AX.big + 5))));
     const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
     const norm = rawStep / mag;
     let nice = 1;
     for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - norm) < Math.abs(nice - norm)) nice = c;
-    const tick = nice * mag;
+    let tick = nice * mag;
+    while (tick / (hi - lo) * pH < AX.big + 4) tick = wbNextNice(tick);
     axisRail(pY, pY + pH);
     for (let v = Math.ceil(lo / tick) * tick; v < hi; v += tick) {
       /* a ruler notch at the axis edge, NOT a gridline crossing the chart */
@@ -7443,7 +7453,9 @@ function renderCharts(data, lamp) {
       const vNorm = vRaw / vMag;
       let vNice = 1;
       for (const c of [1, 2, 2.5, 5, 10]) if (Math.abs(c - vNorm) < Math.abs(vNice - vNorm)) vNice = c;
-      const vTick = vNice * vMag;
+      let vTick = vNice * vMag;
+      /* labels at least AX.small + 3 px apart (a short phone strip overprinted 75.0M / 50.0M / 25.0M); one always stays */
+      while (vTick / vMax * vH < AX.small + 3 && vTick * 2 <= vMax) vTick = wbNextNice(vTick);
       axisRail(vY, vY + vH);
       for (let v = vTick; v <= vMax; v += vTick) {
         const yv = vY + vH - (v / vMax) * vH;
@@ -7461,7 +7473,9 @@ function renderCharts(data, lamp) {
          were removed 2026-07-22 to match the terminal's clean panels — number
          label only at each level, no line across the strip. */
       axisRail(yTop, yTop + hS);
-      for (const g of [0, 20, 40, 60, 80]) {
+      /* every 20 where the strip has room, else every 40 (a short phone strip overprinted all five) */
+      const ladder = hS * 0.2 >= AX.small + 3 ? [0, 20, 40, 60, 80] : hS * 0.4 >= AX.small + 3 ? [0, 40, 80] : [0, 80];
+      for (const g of ladder) {
         axisRow(String(g), sy(g), AX.small, 'var(--color-text-primary)');
       }
       /* Oversold/overbought bands in red on top of the ladder: the WEEKLY strip
@@ -9011,14 +9025,26 @@ function scheduleFeedPoll() {
    prices: without it the poller stopped at the bell and an on-screen extended
    quote could sit nearly two hours behind the tape, which is precisely the
    window the feature exists for. Once 20:00 ET passes and prices really are
-   frozen, the hourly all-feeds tick covers it again. */
+   frozen, the hourly all-feeds tick covers it again.
+   Outside those windows it does NOT stop: it re-checks the clock once a minute
+   (no request) and starts polling when the bell rings. It used to simply return,
+   and nothing but a tab switch or "Refresh now" called it again, so a tab opened
+   before 09:30 ET updated the tiles every 5 minutes all session (audit
+   2026-10-25, I3). The same check moves the all-feeds tick off its hourly
+   closed cadence at the open instead of up to an hour late. */
 const MARKET_POLL_MS = 60000;
 let marketPollTimer = 0;
+let marketPollIdle = false; /* the last check found the market shut */
 function scheduleMarketPoll() {
   clearTimeout(marketPollTimer);
   if (document.hidden) return; /* visibilitychange rearms */
   /* postMarketOpen(): 16:00–20:00 ET, when extended prints are still arriving */
-  if (!(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) return;
+  if (!(marketSessionOpen() || withinCloseSettleGrace() || postMarketOpen())) {
+    marketPollIdle = true;
+    marketPollTimer = setTimeout(scheduleMarketPoll, MARKET_POLL_MS);
+    return;
+  }
+  if (marketPollIdle) { marketPollIdle = false; scheduleFeedPoll(); }
   marketPollTimer = setTimeout(async () => {
     try {
       await refreshMarket(false);

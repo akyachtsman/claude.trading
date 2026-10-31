@@ -12218,3 +12218,120 @@ test('S77: the Load box ticker list fits the screen and scrolls by finger', asyn
   await expect(list, 'Escape closes it').toBeHidden();
   expect(errs, 'no page errors').toEqual([]);
 });
+
+// S79 — Low-risk UI fixes from the 2026-10-24 browser test, read off the live layout at the project's OWN width:
+// a panel title beside a long live stamp keeps its whole word (it was "MARK…" / "N…"), the heatmap header wraps on a
+// phone instead of cutting its title or scrolling the page, the Markets tiles' after-hours line is small with its tag
+// set apart (it had no rule: 15px, "+0.40%after hrs"), the Pro 1 / Pro 2 span presets are ALL on screen (they scrolled
+// sideways with no cue, only 1M and 3M showing on a phone), and no two numbers of a chart axis ladder overprint one
+// another (a phone's Pro 1 printed 17 price labels on top of each other).
+test('S79: panel titles stay whole, the after-hours line is small, every span preset shows, axis labels never overprint', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(60_000);
+  await gotoDemo(page, '#wbChart text', 15000, 800);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+
+  // ── 1. titles next to a stamp as long as a live one
+  const titles = await page.evaluate(() => {
+    for (const id of ['mktStamp', 'newsStamp', 'econStamp', 'heatStamp']) {
+      const e = document.getElementById(id);
+      if (e) e.textContent = 'Last updated 13:00, Oct 23, at close';
+    }
+    return ['mktTitle', 'newsTitle', 'econTitle', 'heatTitle'].map((id) => {
+      const t = document.getElementById(id), h = t.parentElement;
+      return { id, text: t.textContent, cut: t.scrollWidth > t.clientWidth + 0.5, hdrOver: h.scrollWidth > h.clientWidth + 0.5 };
+    });
+  });
+  for (const t of titles) {
+    expect(t.cut, `${t.id} "${t.text}" is not cut beside a long stamp`).toBe(false);
+    expect(t.hdrOver, `${t.id}'s header does not overflow`).toBe(false);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways page scroll').toBe(true);
+
+  // ── 2. the after-hours line under each index tile
+  const exts = await page.evaluate(() => [...document.querySelectorAll('#mktTiles .mk-ext')].map((l) => {
+    const pct = l.querySelector('.mk-ext-pct').getBoundingClientRect(), tag = l.querySelector('.mk-ext-tag').getBoundingClientRect();
+    const tile = l.closest('.mk-tile').getBoundingClientRect();
+    return {
+      fs: parseFloat(getComputedStyle(l).fontSize), h: l.getBoundingClientRect().height,
+      apart: tag.left - pct.right >= 3 || tag.top >= pct.bottom - 1,
+      inside: pct.right <= tile.right + 0.5 && tag.right <= tile.right + 0.5,
+    };
+  }));
+  expect(exts.length, 'the demo draws an after-hours line on all four tiles').toBe(4);
+  for (const [i, x] of exts.entries()) {
+    expect(x.fs, `after-hours line ${i} is small (≤ 12px)`).toBeLessThanOrEqual(12);
+    expect(x.apart, `after-hours line ${i}: the "after hrs" tag is set apart from the figure`).toBe(true);
+    expect(x.inside, `after-hours line ${i} stays inside its tile`).toBe(true);
+    expect(x.h, `after-hours line ${i} takes at most two short lines`).toBeLessThanOrEqual(32);
+  }
+
+  // ── 3. every span preset of Pro 1 and Pro 2 is on screen, none behind a sideways scroll
+  for (const id of ['chartZoom2', 'chartZoom']) {
+    const s = await page.evaluate((id) => {
+      const g = document.getElementById(id), gb = g.getBoundingClientRect();
+      const btns = [...g.querySelectorAll('button')].map((b) => { const r = b.getBoundingClientRect(); return { t: b.textContent, l: r.left, r: r.right, t0: r.top, b: r.bottom }; });
+      return { scroll: g.scrollWidth > g.clientWidth + 0.5, gb: { l: gb.left, r: gb.right, t: gb.top, b: gb.bottom }, btns };
+    }, id);
+    expect(s.btns.map((b) => b.t), `#${id} offers all six presets`).toEqual(['1M', '3M', '6M', 'YTD', '1Y', 'All']);
+    expect(s.scroll, `#${id} does not scroll sideways`).toBe(false);
+    for (const b of s.btns) {
+      expect(b.l >= s.gb.l - 0.5 && b.r <= s.gb.r + 0.5 && b.t0 >= s.gb.t - 0.5 && b.b <= s.gb.b + 0.5, `#${id} ${b.t} is inside its box`).toBe(true);
+    }
+  }
+
+  // ── 4. no two labels of one axis ladder overprint (the ladders' own numbers: weight-500 tabular-nums text down each
+  //       pane's rail — the last-price flag is weight 700 and covers the ladder on purpose, with an opaque body)
+  const clashes = await page.evaluate(() => {
+    const labels = [...document.querySelectorAll('#wbChart text[font-variant-numeric="tabular-nums"][font-weight="500"]')]
+      .map((t) => { const r = t.getBoundingClientRect(); return { s: t.textContent, x: Math.round(r.left), t: r.top, b: r.bottom, fs: t.getAttribute('font-size') }; })
+      .filter((l) => l.b > l.t);
+    const cols = new Map();
+    for (const l of labels) { const k = l.x + '|' + l.fs; if (!cols.has(k)) cols.set(k, []); cols.get(k).push(l); }
+    const out = [];
+    for (const col of cols.values()) {
+      col.sort((a, b) => a.t - b.t);
+      for (let i = 1; i < col.length; i++) if (col[i].t < col[i - 1].b - 1) out.push(col[i - 1].s + ' / ' + col[i].s);
+    }
+    return { n: labels.length, out };
+  });
+  expect(clashes.n, 'the panes drew their axis ladders').toBeGreaterThan(20);
+  expect(clashes.out, 'no axis label overprints its neighbour').toEqual([]);
+
+  expect(errs, 'no page errors').toEqual([]);
+});
+
+// S78 — The 1-minute Markets poll starts by itself at the bell (audit 2026-10-25, I3). It used to return without arming
+// while the market was shut, and only a tab switch or "Refresh now" called it again, so a tab opened before 09:30 ET
+// refreshed the index tiles every 5 minutes all session. On Playwright's clock (installed before navigation), with the
+// fetches stubbed: from 09:25 ET nothing is asked while the market is shut, the market feed is asked within a minute of
+// the open and then once a minute, and the all-feeds poll is re-armed on its open cadence at that moment.
+test('S78: the 1-minute Markets poll starts by itself when the market opens', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(60_000);
+  await page.clock.install({ time: new Date('2026-10-19T13:25:00Z') });   // Monday 09:25 EDT, an ordinary session day
+  await gotoDemo(page, '#mktTiles .mk-tile', 15000);
+  await page.evaluate(() => {
+    window.__s78 = { market: [], feed: 0 };
+    window.refreshMarket = async () => { window.__s78.market.push(Date.now()); };
+    window.refreshWbQuote = () => {}; window.renderMasthead = () => {};
+    window.scheduleFeedPoll = () => { window.__s78.feed++; };
+    window.scheduleMarketPoll();
+  });
+  const state = () => page.evaluate(() => ({ market: window.__s78.market.slice(), feed: window.__s78.feed }));
+  await page.clock.runFor(4 * 60_000);                                   // 09:29
+  let s = await state();
+  expect(s.market, 'nothing is asked while the market is shut').toEqual([]);
+  expect(s.feed, 'the all-feeds poll is left alone while shut').toBe(0);
+  await page.clock.runFor(2 * 60_000 + 5_000);                           // 09:31:05
+  s = await state();
+  expect(s.market.length, 'the market feed is asked within a minute of the open').toBeGreaterThanOrEqual(1);
+  expect(new Date(s.market[0]).toISOString() >= '2026-10-19T13:30:00Z', 'and not before the bell').toBe(true);
+  expect(s.feed, 'the all-feeds poll is re-armed on its open cadence once, at the open').toBe(1);
+  await page.clock.runFor(3 * 60_000);
+  const s2 = await state();
+  expect(s2.market.length - s.market.length, 'then once a minute').toBeGreaterThanOrEqual(2);
+  expect(s2.market.length - s.market.length).toBeLessThanOrEqual(4);
+  expect(s2.feed, 'and the all-feeds poll is not re-armed again').toBe(1);
+});

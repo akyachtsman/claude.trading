@@ -205,6 +205,50 @@ jobs:
           PGUSER: postgres
         run: python3 tools/news-ai-quota-check.py
 
+  # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
+  # The no-browser checks of the edge functions and scripts/data.js, on every
+  # trigger (the browser suite does not run them, so nothing else would).
+  # Nothing here reaches the network or a
+  # Supabase project: every function is transpiled with the pinned esbuild and
+  # run in a `vm` context with `fetch` stubbed.
+  #   tools/unit/*.test.mjs        node:test unit tests of the functions' internal
+  #                                helpers and data.js (a known bug is a `todo`
+  #                                test: reported, not failing)
+  #   econ-check.mjs --mutants     desk-econ, then its mutants must each be caught
+  #   ask-gate-check.mjs --mutants desk-ask's three doors, the open cap, the tier
+  #   ask-model-parity.mjs         the model list is one list in three files
+  #   watchlist-scan --selftest    the morning scan's own selftest, and its mutants
+  server-checks:
+    name: Server and data unit checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install the pinned esbuild
+        run: npm ci --prefix tools
+
+      - name: Unit tests (tools/unit)
+        run: node --test 'tools/unit/*.test.mjs'
+
+      - name: desk-econ checks and mutants
+        run: node tools/econ-check.mjs --mutants
+
+      - name: desk-ask gate checks and mutants
+        run: node tools/ask-gate-check.mjs --mutants
+
+      - name: Ask model list parity
+        run: node tools/ask-model-parity.mjs --selftest && node tools/ask-model-parity.mjs
+
+      - name: Morning scan selftest and mutants
+        run: node tools/watchlist-scan.mjs --selftest && node tools/watchlist-scan-mutants.mjs
+
   ui-changes:
     name: Detect UI-relevant changes
     runs-on: ubuntu-latest
@@ -435,13 +479,13 @@ jobs:
   # the PR has since moved past.
   notify:
     name: Notify PR on green
-    # news-checks and news-client-mutants are LOCAL ADDITIONS (see their jobs).
+    # news-checks, news-client-mutants and server-checks are LOCAL ADDITIONS (see their jobs).
     # The shared Static Checks and UI Tests run INSIDE `qa`, so this job cannot
     # name them: `needs.qa.result` is success only when both of them were. (The
     # suite's "no index.html yet" skip is a step inside that job, so `qa` still
     # reads success then, as the old `ui-tests` skipped arm allowed.)
-    needs: [project-checks, qa, ui-changes, news-checks, news-client-mutants]
-    if: ${{ always() && github.event_name == 'pull_request' && needs.project-checks.result == 'success' && needs.qa.result == 'success' && needs.ui-changes.result == 'success' && needs.news-checks.result == 'success' && (needs.news-client-mutants.result == 'success' || needs.news-client-mutants.result == 'skipped') }}
+    needs: [project-checks, qa, ui-changes, news-checks, news-client-mutants, server-checks]
+    if: ${{ always() && github.event_name == 'pull_request' && needs.project-checks.result == 'success' && needs.qa.result == 'success' && needs.ui-changes.result == 'success' && needs.news-checks.result == 'success' && needs.server-checks.result == 'success' && (needs.news-client-mutants.result == 'success' || needs.news-client-mutants.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

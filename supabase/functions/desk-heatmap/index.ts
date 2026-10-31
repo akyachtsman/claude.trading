@@ -605,12 +605,11 @@ function lastTradingDayIso(): string {
   // Anchor to the US market's calendar day (Eastern time), NOT UTC. After
   // ~20:00 ET the UTC date has already rolled to "tomorrow", so a UTC-based
   // stamp read a day ahead for evening US viewers (e.g. 6pm PT showed the next
-  // date). Weekends roll back to Friday. (desk-news uses the same ET anchor.)
+  // date). Weekends and NYSE holidays roll back to the session before. (desk-news uses the same ET anchor.)
   const etIso = NY_DATE.format(new Date()); // YYYY-MM-DD in ET
   const d = new Date(etIso + 'T12:00:00Z'); // noon-UTC anchor keeps DOW math on the ET date
-  const dow = d.getUTCDay();
-  if (dow === 0) d.setUTCDate(d.getUTCDate() - 2);
-  if (dow === 6) d.setUTCDate(d.getUTCDate() - 1);
+  /* weekends and NYSE holidays roll back to the session before (Thanksgiving names Wednesday, not itself) */
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || NYSE_HOLIDAYS.has(d.toISOString().slice(0, 10))) d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 

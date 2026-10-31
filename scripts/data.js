@@ -1218,6 +1218,9 @@ function fmtClock(iso) {         /* "HH:mm PDT/PST"; '' if unparseable. `hourCyc
   return isNaN(d.getTime()) ? ''
     : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short', timeZone: DESK_TZ });
 }
+/* Bare Pacific "HH:mm" of a Date — every zone-less clock goes through here, with `hourCycle: 'h23'` by name for the
+   reason fmtClock gives (a bare hour12:false prints the midnight hour as "24:03" on some engines) */
+function ptHm(d) { return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: DESK_TZ }); }
 /* intraday bar stamp: feed times are UTC 'YYYY-MM-DD HH:mm' → Pacific display;
    date-only daily bars pass through untouched */
 function fmtBarT(t) {
@@ -1225,7 +1228,7 @@ function fmtBarT(t) {
   const d = new Date(t.replace(' ', 'T') + ':00Z');
   if (isNaN(d.getTime())) return t;
   return d.toLocaleDateString('en-CA', { timeZone: DESK_TZ }) + ' ' +
-    d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ }) + ' PT';
+    ptHm(d) + ' PT';
 }
 /* news row clock, FALLBACK ONLY: the feed's bare UTC 'HH:mm' → Pacific 'HH:mm'.
    Its old comment claimed "headlines are all recent, so today's date is a safe
@@ -1238,7 +1241,7 @@ function utcHmToPt(hm) {
   if (!/^\d\d:\d\d$/.test(hm || '')) return hm;
   const d = new Date(new Date().toISOString().slice(0, 10) + 'T' + hm + ':00Z');
   return isNaN(d.getTime()) ? hm
-    : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ });
+    : ptHm(d);
 }
 function ptDateKey(x) { return x.toLocaleDateString('en-CA', { timeZone: DESK_TZ }); }
 /* The date half, ON ITS OWN, because it is the one part that GOES STALE WHILE
@@ -1276,7 +1279,7 @@ function newsWhen(ts, hm) {
   const d = ts ? new Date(ts) : null;
   if (!d || isNaN(d.getTime())) return { t: utcHmToPt(hm), d: '', full: '' };
   return {
-    t: d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ }),
+    t: ptHm(d),
     d: newsDateLabel(ts),
     full: fmtStampDateTime(ts),
   };
@@ -1317,7 +1320,7 @@ function fmtShortDate(d) {
 function fmtClockBare(iso) {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? ''
-    : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DESK_TZ });
+    : ptHm(d);
 }
 
 /* How far behind the displayed figure is, in whole minutes. Sub-minute reads
