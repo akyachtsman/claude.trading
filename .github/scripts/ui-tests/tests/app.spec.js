@@ -13,6 +13,7 @@
 import { test as base, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fitProblems, FIT_INCOMPLETE } from './lib/fit.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDER WITNESS — evidence that a test BODY started at its project's width (#348)
@@ -151,9 +152,16 @@ const benignPageError = (text) => benignCors(text);
    it (the switch sits in its "failed" state, all three options disabled) — but that
    is ONE predicate in two SQL functions, and nothing else in CI would notice it
    going. So the write is answered here with a refusal and counted apart
-   (`tierWrites`), whatever the credential. Reads stay real. */
+   (`tierWrites`), whatever the credential. Reads stay real.
+
+   And for the ⚙ SYSTEM PROMPT and the ⏱ SCHEDULED ASKS (`desk_set_system_prompt`,
+   `desk_set_ask_schedule`): both are global — the prompt is what the owner's assistant
+   is told, the schedule what `desk-cron-ask` runs AS THE OWNER — and until desk_024 is
+   applied the CI test credential's PIN passes both. Answered here with a refusal (what
+   the database answers that credential once desk_024 is live) and counted apart
+   (`ownerWrites`), whatever the credential. Reads stay real. */
 async function blockRosterWrites(page) {
-  const blocked = { count: 0, tierWrites: 0 };
+  const blocked = { count: 0, tierWrites: 0, ownerWrites: 0 };
   await page.route('**/rest/v1/rpc/desk_set_watchlists*', (route) => {
     blocked.count++;
     return route.fulfill({ status: 200, contentType: 'application/json',
@@ -164,6 +172,13 @@ async function blockRosterWrites(page) {
     return route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ ok: false }) });
   });
+  for (const rpc of ['desk_set_system_prompt', 'desk_set_ask_schedule']) {
+    await page.route(`**/rest/v1/rpc/${rpc}*`, (route) => {
+      blocked.ownerWrites++;
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ ok: false }) });
+    });
+  }
   return blocked;
 }
 
@@ -1118,6 +1133,213 @@ test('CTRL: no duplicated primary action control', async ({ page, renderWitness 
   ).toHaveLength(0);
 });
 
+// The upstream kit's attachJson (tests/lib/fixtures.js there; this kit keeps its
+// helpers inline). Used by DISMISS.
+function attachJson(name, data) {
+  return test.info().attach(name, { body: JSON.stringify(data, null, 2), contentType: 'application/json' });
+}
+
+// LOCAL: S48 and S77 must not pass on a fit check that did not finish, and
+// must not flake on one either. A FIT_INCOMPLETE line (lib/fit.js: a cold
+// WebKit's first call can outrun the 2s cap) is retried ONCE, warm, with a
+// longer cap; whatever that returns, incomplete included, is asserted.
+async function fitChecked(locator) {
+  const first = await fitProblems(locator);
+  if (!first.some(p => p.startsWith(FIT_INCOMPLETE))) return first;
+  return fitProblems(locator, { timeout: 5000 });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENARIO — DISMISS: overlays close via their control, Escape, and backdrop
+// "It has a close button" is not coverage; "clicking it closes" is (test.md →
+// UI coverage gates). For each trigger that opens a modal/drawer/popover, the
+// container must actually hide after (a) its close/X/Cancel control and
+// (b) Escape — re-opened between checks — and (c) a backdrop click, asserted
+// only when a backdrop element exists (some designs omit it deliberately).
+// FIT rides along, because this is where overlays get opened: before its
+// dismissers run, each overlay or pop-over a trigger opened must fit the visible
+// screen and scroll by finger (fitProblems in lib/fit.js; design.md →
+// iPhone and iPad). It counts in every project; the `iphone` one is WebKit.
+// ─────────────────────────────────────────────────────────────────────────────
+test('DISMISS: overlays close via control, Escape, and backdrop', async ({ page, renderWitness }) => {
+  renderWitness();
+  // BUDGET — 1_200_000, the upstream kit's derivation (templates/ui-tests/
+  // tests/app.spec.js → DISMISS: a sizing estimate over the CAPPED path —
+  // 30 triggers, 2 navigation resets, five 2s clicks and ~3.8s of waits per
+  // trigger plus FIT_MS — not a proven ceiling). This desk's gate is a 6-digit
+  // PIN, the long end of that sum. If it times out, read the run's
+  // `dismiss-budget` attachment rather than re-deriving the sum.
+  // LOCAL: ported 2026-10-25 for the iPhone fit check (this kit had no DISMISS
+  // until then). gotoAndAuth() here is the local one, which installs
+  // blockRosterWrites first, so no trigger this sweeps can reach the roster.
+  test.setTimeout(1_200_000);
+  await gotoAndAuth(page);
+
+  const OVERLAY = 'dialog[open], [role="dialog"], [aria-modal="true"], .modal, .drawer, .popover, .overlay';
+  const CLOSE = '[aria-label*="close" i], .close, .modal-close, button:has-text("Close"), button:has-text("Cancel"), button:has-text("×"), button:has-text("✕")';
+  const TRIGGERS = 'button, [role=button], [aria-haspopup="dialog"]';
+  // AN OVERLAY ALREADY ON SCREEN IS NOT THE TRIGGER'S (audit 2026-10-11, I-9).
+  // Ownership used to be "any matching overlay is visible after the click", so a
+  // decorative `.overlay` (a hero caption) — or an overlay an EARLIER trigger
+  // failed to close — was credited to every trigger, and each one then reported
+  // "no close control" / "still visible" against an element it never opened.
+  // Before each click the overlays visible at that moment are MARKED, and only
+  // an unmarked visible overlay counts as the trigger's: a newly mounted node, or
+  // a reused one that was hidden before the click. After a navigation the marks
+  // are gone with the old document, which is the right answer — nothing on the
+  // new page was there before. RESIDUE: an app that re-mounts a standing overlay
+  // as a NEW node on every click still reads it as owned.
+  const PREOPEN = 'data-uitests-preopen';
+  const OWNED = `:is(${OVERLAY}):not([${PREOPEN}])`;
+  // FIT also checks the pop-overs a trigger opens that are not dialogs (the
+  // house ⋮ menu, Archived (N), a type-ahead list, any ARIA menu or listbox).
+  // They are marked with the overlays, so one standing on the page before the
+  // click is not credited to the trigger either.
+  const POPS = '.menu-pop, .archived-pop, .list-pop, [role="menu"], [role="listbox"]';
+  const FITTED = `:is(${OVERLAY}, ${POPS}):not([${PREOPEN}])`;
+  const fitSeen = new Set();
+  const fitIncomplete = [];
+  const markOpenOverlays = async () => {
+    // Through locators on both sides, so an overlay inside an open shadow root
+    // is marked and unmarked like any other.
+    await page.locator(`[${PREOPEN}]`)
+      .evaluateAll((els, attr) => { for (const el of els) el.removeAttribute(attr); }, PREOPEN)
+      .catch(() => {});
+    await page.locator(`${OVERLAY}, ${POPS}`).locator('visible=true')
+      .evaluateAll((els, attr) => { for (const el of els) el.setAttribute(attr, ''); }, PREOPEN)
+      .catch(() => {});
+  };
+  const overlayVisible = async () => {
+    for (const el of await page.locator(OWNED).all()) {
+      if (await el.isVisible().catch(() => false)) return el;
+    }
+    return null;
+  };
+
+  const findings = [];
+  // The trigger cap is reported, not silent: overlays behind trigger 31 or
+  // later are never checked, so a page with more triggers says so in a
+  // `dismiss-budget` attachment after the loop (test.md: "Dismissers are
+  // proven, not assumed"; audit, 2026-10-06). ONE record per run: when the
+  // reset cap below stops the loop first, its own record is the true stopping
+  // point and this one is not written (Codex, #405).
+  const TRIGGER_CAP = 30;
+  const triggerTotal = await page.locator(TRIGGERS).count();
+  const triggerCount = Math.min(triggerTotal, TRIGGER_CAP);
+  let stoppedByResets = false;
+  // Cap the WASTED work, not the useful work. A navigating trigger is not an
+  // overlay trigger, so it contributes nothing to this scenario's assertions —
+  // the reset it forces is pure cost. Capping resets therefore loses no S9
+  // coverage, where capping triggerCount would. Not silent: hitting the cap
+  // writes a `dismiss-budget` attachment, so a suite that stops early says so
+  // WITHOUT failing the scenario for triggers it never reached.
+  const NAV_RESET_CAP = 2;
+  let navResets = 0;
+
+  for (let i = 0; i < triggerCount; i++) {
+    // Re-resolve per round — the DOM may have re-rendered since discovery.
+    const trigger = page.locator(TRIGGERS).nth(i);
+    if (!await trigger.isVisible().catch(() => false)) continue;
+    const name = ((await trigger.textContent().catch(() => '')) || '').trim().slice(0, 40) || `trigger[${i}]`;
+
+    const urlBefore = page.url();
+    await markOpenOverlays();
+    await trigger.click({ timeout: 2000 }).catch(() => {});
+    await page.waitForTimeout(600);
+    if (page.url() !== urlBefore && !(await overlayVisible())) {
+      // Trigger navigated — not an overlay, so it is S3's territory.
+      if (++navResets > NAV_RESET_CAP) {
+        // ATTACHED, not pushed to findings[] — that array is asserted on at the
+        // end, so recording a BUDGET outcome there failed the scenario for a
+        // navigation-heavy app whose overlays are fine and were simply never
+        // reached. "Not silent" must not mean "counted as a defect": S6 already
+        // makes this distinction and S9 did not.
+        attachJson('dismiss-budget', {
+          navResetCap: NAV_RESET_CAP,
+          stoppedAtTrigger: name,
+          triggersConsidered: i + 1,
+          of: triggerTotal,
+          note: `Stopped after ${NAV_RESET_CAP} navigation resets. Triggers beyond this point were NOT checked for overlay dismissal — a coverage gap, not a dismisser defect. Raise NAV_RESET_CAP and this scenario's timeout together if the app is navigation-heavy.`,
+        });
+        stoppedByResets = true;
+        break;
+      }
+      await gotoAndAuth(page);
+      continue;
+    }
+    // FIT, before any dismisser runs, on what this trigger opened. A problem
+    // already reported for an earlier trigger is not reported again.
+    for (const problem of await fitProblems(page.locator(FITTED))) {
+      if (problem.startsWith(FIT_INCOMPLETE)) { fitIncomplete.push({ trigger: name, problem }); continue; }
+      if (fitSeen.has(problem)) continue;
+      fitSeen.add(problem);
+      findings.push({ trigger: name, dismisser: 'fit', problem });
+    }
+    if (!(await overlayVisible())) continue;  // opens no overlay — S3's territory
+
+    // The trigger owns an overlay: each dismisser must actually hide it.
+    const reopen = async () => {
+      if (await overlayVisible()) return true;
+      await trigger.click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(600);
+      return Boolean(await overlayVisible());
+    };
+
+    // (a) the overlay's own close/X/Cancel control
+    const ov = await overlayVisible();
+    const close = ov.locator(CLOSE).first();
+    if (!(await close.isVisible().catch(() => false))) {
+      findings.push({ trigger: name, dismisser: 'close control', problem: 'no visible close/X/Cancel control in overlay' });
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(300);
+    } else {
+      await close.click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(600);
+      if (await overlayVisible()) findings.push({ trigger: name, dismisser: 'close control', problem: 'overlay still visible after clicking it' });
+    }
+
+    // (b) Escape
+    if (await reopen()) {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+      if (await overlayVisible()) findings.push({ trigger: name, dismisser: 'Escape', problem: 'overlay still visible' });
+    } else {
+      findings.push({ trigger: name, dismisser: 'Escape', problem: 'could not re-open overlay to test' });
+    }
+
+    // (c) backdrop — only asserted when a backdrop element exists
+    const backdrop = page.locator('.backdrop, .modal-backdrop, .overlay-backdrop, [data-backdrop]').first();
+    if (await reopen()) {
+      if (await backdrop.isVisible().catch(() => false)) {
+        await backdrop.click({ position: { x: 4, y: 4 }, timeout: 2000 }).catch(() => {});
+        await page.waitForTimeout(600);
+        if (await overlayVisible()) findings.push({ trigger: name, dismisser: 'backdrop', problem: 'overlay still visible' });
+      }
+    }
+
+    await page.keyboard.press('Escape').catch(() => {});   // leave closed for the next round
+    await page.waitForTimeout(200);
+  }
+
+  if (!stoppedByResets && triggerTotal > TRIGGER_CAP) {
+    attachJson('dismiss-budget', {
+      triggerCap: TRIGGER_CAP,
+      triggersConsidered: TRIGGER_CAP,
+      of: triggerTotal,
+      note: `Only the first ${TRIGGER_CAP} of ${triggerTotal} triggers were considered (a hidden or navigating one among them is skipped, not checked); triggers beyond them were never reached. A coverage gap, not a dismisser defect.`,
+    });
+  }
+
+  if (fitIncomplete.length) {
+    attachJson('fit-budget', {
+      incomplete: fitIncomplete,
+      note: 'The fit check did not finish for these triggers, so their overlays were NOT checked for fit and scroll. A coverage gap, not a fit defect. A slow first call in a cold browser is the usual cause.',
+    });
+  }
+  attachJson('dismisser-findings', findings);
+  expect(findings, `Overlay dismisser failures:\n${JSON.stringify(findings, null, 2)}`).toHaveLength(0);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SCENARIO 5+ — Project-Specific Scenarios
 // Source: CLAUDE.md § Project-Specific Test Scenarios
@@ -1218,7 +1440,7 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness
   // Scoped to the lock panel: since the open Ask (#305) the Ask composer is ALSO a
   // `.lock-form`, so the bare class matched two forms and strict mode threw (qa-live
   // was red on main for four runs). S11 and the button selectors follow the same rule.
-  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.input');
+  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
   await expect(pinInput).toBeVisible();
   // The LOCKED shell, asserted before any credential is offered: a desk that
   // rendered its accounts (or believed itself authenticated) without a PIN would
@@ -1237,7 +1459,7 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
-  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.input');
+  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
   await expect(pinInput).toBeVisible();
   await pinInput.fill('000000');
   await page.locator('#accountGrid .panel-lock .lock-form button').click();
@@ -1254,7 +1476,7 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   await expect(lockError, 'the error line says something').toHaveText(/\S/);
   // Still locked, not merely "an error appeared": the form is still there to try
   // again, the panel still reads Locked, nothing was kept, no data rendered.
-  await expect(page.locator('.panel-lock .lock-form input.input'), 'the PIN form is still offered').toBeVisible();
+  await expect(page.locator('.panel-lock .lock-form input.legacy-input'), 'the PIN form is still offered').toBeVisible();
   await expect(page.locator('#accountGrid .panel-lock .lamp'), 'the panel still reads Locked').toHaveText(/locked/i);
   expect(await page.evaluate(() => DESK.authed), 'a wrong PIN authenticates nothing').toBe(false);
   expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'and a wrong PIN is not remembered').toBeNull();
@@ -2297,8 +2519,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // The 2026-09-30 band was one row scrolled sideways, and a drag at its edge had to
   // scroll it (Codex review, PR #294). The band wraps now, so that machinery is GONE —
   // not dormant. What replaces it is vertical: a wrapped band can be taller than the
-  // screen (eleven rows at phone width), and an armed touch drag is `touch-action:
-  // none`, so a finger cannot scroll the page itself. Holding the pointer within
+  // screen (eleven rows at phone width), and the pointer owns the drag. Holding the pointer within
   // WL_PAGE_EDGE_PX of the viewport's bottom / top edge scrolls the PAGE until it runs
   // out, and the loop stops with the drag (Codex review, PR #306).
   expect(await page.evaluate(() => typeof wlAutoScroll + '/' + typeof WL_EDGE_PX),
@@ -2655,19 +2876,19 @@ async function unlockDesk(page) {
   // .lock-form selector there would type the PIN into the assistant box and submit
   // it (leaking the real PIN to Anthropic + desk_chat_memory). The login gate is
   // uniquely identifiable: its input is type=password inside #accountGrid.
-  const gate = page.locator('#accountGrid .lock-form input.input[type="password"]');
+  const gate = page.locator('#accountGrid .lock-form input.legacy-input[type="password"]');
   // wait until the desk has rendered EITHER state (locked gate or authed accounts)
-  await page.locator('#accountGrid .lock-form input.input[type="password"], #accountGrid .hero-number')
+  await page.locator('#accountGrid .lock-form input.legacy-input[type="password"], #accountGrid .hero-number')
     .first().waitFor({ timeout: 15000 });
   if (await gate.count()) {
     await gate.first().fill(AUTH_CREDENTIAL);
     await page.locator('#accountGrid .lock-form button').first().click();
   }
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#askBody form input.input')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('#askBody form input.legacy-input')).toBeVisible({ timeout: 10000 });
 }
 async function askDesk(page, q) {
-  await page.locator('#askBody form input.input').fill(q);
+  await page.locator('#askBody form input.legacy-input').fill(q);
   await page.locator('#askBody form button[type="submit"]').click();
   await expect(page.locator('#askBody .ask-a').last()).toBeVisible({ timeout: 90000 });
 }
@@ -3253,14 +3474,14 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
   });
 
   const form = page.locator('#askBody form');
-  await form.locator('input.input').fill('what is SMH doing?');
+  await form.locator('input.legacy-input').fill('what is SMH doing?');
   await expect(page.locator('.ask-stop'), 'Stop stays hidden until a question is in flight').toBeHidden();
   await form.locator('button[type=submit]').click();
 
   // In flight: Stop offered, and the composer is NOT taken away.
   await expect(page.locator('.ask-stop')).toBeVisible();
   await expect(page.locator('#askBody form button[type=submit]')).toHaveText('Asking…');
-  await expect(page.locator('#askBody form input.input'),
+  await expect(page.locator('#askBody form input.legacy-input'),
     'the composer stays usable — someone reaching for Stop wants to retype').toBeEnabled();
 
   await page.locator('.ask-stop').click();
@@ -3268,7 +3489,7 @@ test('S32: a question can be interrupted, and the stop is not silent', async ({ 
   // After the stop: composer restored, Stop gone, and the outcome is stated.
   await expect(page.locator('#askBody form button[type=submit]')).toHaveText('Ask');
   await expect(page.locator('.ask-stop')).toBeHidden();
-  await expect(page.locator('#askBody form input.input')).toBeEnabled();
+  await expect(page.locator('#askBody form input.legacy-input')).toBeEnabled();
   const note = page.locator('.ask-a--stopped');
   await expect(note, 'a stop must say the answer is still coming').toHaveCount(1);
   await expect(note).toContainText(/still|appear|history|reload/i);
@@ -3315,7 +3536,7 @@ test('S33: verify is armed per question and disarms itself after an answer', asy
   const form = page.locator('#askBody form');
   const verify = page.locator('.ask-verify');
   const send = async (text) => {
-    await form.locator('input.input').fill(text);
+    await form.locator('input.legacy-input').fill(text);
     await form.locator('button[type=submit]').click();
   };
 
@@ -4475,7 +4696,9 @@ test('S40: charts rail — roster picker and column shape', async ({ page, rende
      - NO `overscroll-behavior` shorthand and no `-y` form anywhere on the page:
        they apply just as hard to a container with nothing to scroll, and then
        they eat the wheel. (`-x: contain` is gone from the bands, so nothing on
-       the page carries any overscroll rule now.) */
+       the page carries any overscroll rule now — but the house components.css,
+       verbatim since 2026-10-29, does, on classes no element uses yet: see the
+       exception below.) */
 test('S42: watchlist bands never scroll sideways — the excess wraps below — the page never does, and nothing is paged', async ({ page, browserName, renderWitness }) => {
   renderWitness();
   // See S4 — same `viewport-override` marker, same reason.
@@ -4545,20 +4768,34 @@ test('S42: watchlist bands never scroll sideways — the excess wraps below — 
   // The whole PAGE, not only this panel: the ban is page-wide. Any rule setting
   // the shorthand expands to `overscroll-behavior-y` in the CSSOM, so reading the
   // -y longhand catches both the shorthand and the -y form, and leaves `-x` alone.
+  //
+  // ONE exception, and it is narrow (2026-10-29, the move onto the house style):
+  // the HOUSE `styles/components.css` is installed verbatim and never edited here,
+  // and it gives its own dialog body, pop-overs and table box `contain`. Those
+  // rules are allowed only while NOTHING on the page matches them — the desk uses
+  // none of those classes yet. The day a panel takes one (step 2 of the move),
+  // its selector matches an element and this fails, so the owner's ban is
+  // decided then, on that panel, and not waved through by the exemption.
   const offenders = await page.evaluate(() => {
     const out = [];
-    const walk = (list) => {
+    const walk = (list, house) => {
       for (const r of list) {
-        if (r.cssRules && r.cssRules.length) walk(r.cssRules);   // @media / @supports
+        if (r.cssRules && r.cssRules.length) walk(r.cssRules, house);   // @media / @supports
         if (r.style && (r.style.getPropertyValue('overscroll-behavior-y')
                         || r.style.getPropertyValue('overscroll-behavior'))) {
-          out.push(r.selectorText || r.cssText.slice(0, 60));
+          const sel = r.selectorText || '';
+          if (house && sel) {
+            let n = 0; try { n = document.querySelectorAll(sel).length; } catch { n = -1; }
+            if (n !== 0) out.push(`house ${sel} matches ${n} element(s)`);
+            continue;
+          }
+          out.push(sel || r.cssText.slice(0, 60));
         }
       }
     };
     for (const sh of document.styleSheets) {
       let list; try { list = sh.cssRules; } catch { continue; }   // cross-origin sheet
-      walk(list);
+      walk(list, !!sh.href && /\/styles\/components\.css$/.test(new URL(sh.href).pathname));
     }
     for (const e of document.querySelectorAll('[style]')) {
       if (/overscroll-behavior(?!-x)/.test(e.getAttribute('style'))) out.push('[style] ' + e.tagName);
@@ -5646,6 +5883,12 @@ test('S48: dialogs trap focus, close on Escape and return focus to their opener'
     expect(scrim.left, `${name}: the scrim starts at the left edge`).toBe(0);
     expect(Math.abs(scrim.width - scrim.vw), `${name}: and spans the viewport`).toBeLessThanOrEqual(1);
     await page.waitForTimeout(250);   // the dialog's own async content (roster, prompt) has landed
+    // FIT (design.md → iPhone and iPad, owner 2026-10-25): the open dialog fits the visible
+    // screen and what it holds scrolls by finger — no box cut off by overflow: hidden, no
+    // touch-action or touchmove lock. DISMISS checks the same through a button sweep, but it
+    // skips on a gated desk with no credential; this runs every dialog, in every project,
+    // and the iphone project is WebKit.
+    expect(await fitChecked(page.locator(panel)), `${name}: fits the screen and scrolls by finger`).toEqual([]);
     const start = await ring(panel);
     expect(start.in, `${name}: opening moves focus INSIDE the dialog`).toBe(true);
     if (keep) {
@@ -7996,7 +8239,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
   const form = page.locator('#askBody form');
   const sysBtn = page.locator('#askBody button[aria-label="Edit the Ask-the-desk system prompt"]');
   await expect(page.locator('#askLamp'), 'a locked desk no longer locks the Ask panel').toHaveText('Live');
-  await expect(form.locator('input.input'), 'the composer is offered with no PIN').toBeEnabled();
+  await expect(form.locator('input.legacy-input'), 'the composer is offered with no PIN').toBeEnabled();
   await expect(page.locator('#askBody .ask-open-note'), 'and the panel says what an open question is').toContainText(/nothing is saved/i);
   for (const [sel, what] of [['.ask-verify', 'Verify (costs extra; the server ignores it for a visitor)'], ['.ask-sched-btn', '⏱ schedules (a PIN RPC)'], ['.ask-clear', 'Clear (wipes the saved conversation)']]) {
     await expect(page.locator('#askBody ' + sel), `no ${what} for a visitor`).toHaveCount(0);
@@ -8004,7 +8247,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
   await expect(sysBtn, 'no ⚙ prompt editor for a visitor').toHaveCount(0);
   expect(await page.evaluate(() => window.__hist), 'a visitor has no saved conversation, so none is requested (it is a PIN RPC)').toEqual([]);
 
-  await form.locator('input.input').fill('how is NVDA doing?');
+  await form.locator('input.legacy-input').fill('how is NVDA doing?');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('open answer');
   const first = await page.evaluate(() => window.__asks);
@@ -8013,10 +8256,10 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
 
   // the cap (or any refusal) is shown as the red line, the composer stays usable
   await page.evaluate(() => { window.__reply = { ok: false, error: 'Today’s open questions are used up — unlock the desk with its PIN, or try again tomorrow (Pacific time).' }; });
-  await form.locator('input.input').fill('and AMD?');
+  await form.locator('input.legacy-input').fill('and AMD?');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .lock-error'), 'the daily cap is said out loud').toContainText(/used up/i);
-  await expect(form.locator('input.input')).toBeEnabled();
+  await expect(form.locator('input.legacy-input')).toBeEnabled();
 
   // a stopped open question does not promise a history it will never have
   await page.evaluate(() => {
@@ -8025,7 +8268,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
     });
     renderAsk();
   });
-  await form.locator('input.input').fill('a slow one');
+  await form.locator('input.legacy-input').fill('a slow one');
   await form.locator('button[type=submit]').click();
   await page.locator('.ask-stop').click();
   const stopped = page.locator('.ask-a--stopped');
@@ -8066,7 +8309,7 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
   for (const sel of ['.ask-verify', '.ask-sched-btn', '.ask-clear']) await expect(page.locator('#askBody ' + sel), sel + ' appears with the PIN').toHaveCount(1);
   await expect(sysBtn, '⚙ appears with the PIN').toHaveCount(1);
   await expect.poll(() => page.evaluate(() => window.__hist), 'the saved conversation is requested with the PIN').toEqual(['0000']);
-  await form.locator('input.input').fill('owner question');
+  await form.locator('input.legacy-input').fill('owner question');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('owner answer');
   expect((await page.evaluate(() => window.__asks))[0].pin, 'an unlocked question carries the PIN').toBe('0000');
@@ -8114,7 +8357,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
     await page.goto('./');
     await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
   };
-  const lockForm = page.locator('#accountGrid .panel-lock .lock-form input.input');
+  const lockForm = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
   const lockBtn = page.getByRole('button', { name: 'Lock', exact: true });
   const sysBtn = page.locator('#askBody button[aria-label="Edit the Ask-the-desk system prompt"]');
   const authed = () => page.evaluate(() => DESK.authed);
@@ -8125,7 +8368,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   await expect(lockForm, 'the accounts ask for the PIN').toBeVisible();
   expect(await authed()).toBe(false);
   await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is then remembered').toContainText(/stays unlocked on this device/i);
-  await expect(page.locator('#askBody form input.input'), 'while Ask is open without it').toBeEnabled();
+  await expect(page.locator('#askBody form input.legacy-input'), 'while Ask is open without it').toBeEnabled();
   await expect(sysBtn).toHaveCount(0);
 
   // B. a wrong PIN stores nothing anywhere; the right one is remembered by BOTH copies
@@ -8176,7 +8419,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   expect(await stores(), 'Lock forgets the tab\'s copy and the device\'s').toEqual({ session: null, device: null });
   await expect(lockForm).toBeVisible();
   await expect(sysBtn, 'Ask drops its private parts but stays open').toHaveCount(0);
-  await expect(page.locator('#askBody form input.input')).toBeEnabled();
+  await expect(page.locator('#askBody form input.legacy-input')).toBeEnabled();
   logins.length = 0;
   await page.reload();
   await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
@@ -9205,10 +9448,10 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   await page.waitForTimeout(300);
   expect(await first(3), 'and nothing moved').toEqual(['AAA', 'BBB', 'CCC']);
 
-  // ── 12. touch (Codex P1): a finger must REST before the drag arms, and once armed the native pan has to be
-  // cancelled by a NON-passive touchmove (touch-action cannot change mid-gesture). Synthetic pointer and
-  // touchmove events through the real handler — this proves the arming rule and the cancel hook, NOT that a
-  // phone's browser honours them; that stays unverified here.
+  // ── 12. touch: a finger must REST before the drag arms, and NOTHING ever cancels the browser's pan — no
+  // touchmove is preventDefault-ed, armed, dragging or after (owner 2026-10-25, design.md → iPhone and iPad;
+  // until then a non-passive touchmove cancelled it while armed, Codex P1). Synthetic pointer and touchmove
+  // events through the real handler: on a real phone the pan now wins and the press ends in a pointercancel.
   const touchRun = (holdMs, stray = false) => page.evaluate(async ({ holdMs, stray }) => {
     const row = n => document.querySelector(`.wb-slots [data-slot="${n}"]`);
     const btn = row(0).querySelector('.wb-slot');
@@ -9238,7 +9481,7 @@ test('S64: a stock in the symbol column can be dragged to a new place, and a slo
   expect(early, 'moving before the rest is over leaves the gesture to the browser: no arming, no ghost, no cancelled pan').toEqual({ armed: false, prevented: false, ghosts: 0, preventedWhileDragging: false, after: false });
   expect(await first(4), 'and nothing moved').toEqual([R[1], 'BBB', 'CCC', 'DDD']);
   const rested = await touchRun(420, true);
-  expect(rested, 'a finger that rested 300ms is armed — even with a stray mouse move from ANOTHER pointer landing mid-hold — its pan is cancelled, the drag runs and cancels the pan too, and afterwards the pan is left alone').toEqual({ armed: true, prevented: true, ghosts: 1, preventedWhileDragging: true, after: false });
+  expect(rested, 'a finger that rested 300ms is armed — even with a stray mouse move from ANOTHER pointer landing mid-hold — the (synthetic) drag runs, and no touchmove is ever cancelled: not armed, not dragging, not after').toEqual({ armed: true, prevented: false, ghosts: 1, preventedWhileDragging: false, after: false });
   await page.waitForTimeout(300);
   expect(await first(4), 'and the drop moved the stock').toEqual(['BBB', 'CCC', R[1], 'DDD']);
 
@@ -10633,7 +10876,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   const form = page.locator('#askBody form');
   const ask = async (reply, q) => {
     await page.evaluate((r) => { window.__askReply = r; }, reply);
-    await form.locator('input.input').fill(q);
+    await form.locator('input.legacy-input').fill(q);
     await form.locator('button[type=submit]').click();
   };
   expect(await page.evaluate(() => ['claude-haiku-5-5', 'claude-opus-5-5-20261001', 'claude-sonnet-5-5-x', 'claude-haiku-5-50', 'claude-opus-5', '', null, undefined].map((x) => askModelLabel(x))),
@@ -10690,7 +10933,7 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   await expect(page.locator('#askBody .ask-tier'), 'a visitor (locked desk) has no switch').toHaveCount(0);
   expect(await gets(), 'and it asked the database for nothing').toBe(gcount);
   await page.evaluate(() => { window.__askReply = { ok: true, answer: 'open answer', sources: [], model: 'claude-opus-5-5', tierSource: 'row' }; });
-  await form.locator('input.input').fill('open question');
+  await form.locator('input.legacy-input').fill('open question');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('open answer');
   await expect(page.locator('#askBody .ask-model'), 'a reply that carries a model to a visitor renders no proof line').toHaveCount(0);
@@ -10815,6 +11058,10 @@ test('S69: the owner switches which model answers Ask the desk — four honest s
   const guard = await blockRosterWrites(page);
   const refused = await page.evaluate(() => fetch('/rest/v1/rpc/desk_set_ask_model', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: 'x', new_model: 'claude-haiku-5-5' }) }).then((r) => r.json()));
   expect([guard.tierWrites, guard.count, refused], 'a write of the model tier is intercepted and refused, and not counted as a roster write').toEqual([1, 0, { ok: false }]);
+  // …and the same for the owner's global settings the test PIN could write before desk_024: the ⚙ prompt and the ⏱ schedule
+  const ownerRefused = await page.evaluate(() => Promise.all([['desk_set_system_prompt', { pin: 'x', new_content: 'PROBE' }], ['desk_set_ask_schedule', { pin: 'x', new_rows: [] }]]
+    .map(([rpc, body]) => fetch(`/rest/v1/rpc/${rpc}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()))));
+  expect([guard.ownerWrites, guard.tierWrites, guard.count, ownerRefused], 'a write of the system prompt or the schedule is intercepted, refused and counted apart').toEqual([2, 1, 0, [{ ok: false }, { ok: false }]]);
 
   // tidy: put the real functions back
   await page.evaluate(() => { DESK.mode = 'demo'; DESK.authed = false; sessionStorage.removeItem('desk_pin'); window.deskGetAskModel = window.__realGet; window.deskSetAskModel = window.__realSet; window.deskAsk = window.__realAsk; });
@@ -10859,7 +11106,7 @@ test('S70: the sources under an answer sit behind one "Sources (N)" line, closed
   const foot = page.locator('#askBody .ask-thread details.ask-sources');
   const form = page.locator('#askBody form');
   const ask = async (q) => {
-    await form.locator('input.input').fill(q);
+    await form.locator('input.legacy-input').fill(q);
     await form.locator('button[type=submit]').click();
   };
   const state = () => page.evaluate(() => [...document.querySelectorAll('#askBody .ask-thread details.ask-sources')].map((d) => ({
@@ -10912,7 +11159,7 @@ test('S70: the sources under an answer sit behind one "Sources (N)" line, closed
   //      when the thread is tall enough for them), and does not scroll the page. Run as the OWNER: the stacked Ask panel gives a
   //      visitor's thread almost no height at 810px, a layout limit older than this change and not what this step checks. ──
   await page.evaluate(() => { DESK.authed = true; sessionStorage.setItem('desk_pin', '0000'); renderAsk(); });
-  await expect(form.locator('input.input')).toBeEnabled();
+  await expect(form.locator('input.legacy-input')).toBeEnabled();
   for (let i = 3; i <= 7; i++) { await ask('question ' + i); await expect(page.locator('#askBody .ask-a').last()).toContainText('answer ' + i); }
   const last = foot.last();
   const scrollable = await thread.evaluate((t) => t.scrollHeight > t.clientHeight + 4);
@@ -11200,7 +11447,7 @@ test('S73: each answer carries the Pacific time it came in — live, replayed an
   // ── 2. a LIVE answer on the owner's desk is stamped when its reply lands (the Pacific time NOW) ──
   const form = page.locator('#askBody form');
   const before = pt(new Date().toISOString());
-  await form.locator('input.input').fill('what now');
+  await form.locator('input.legacy-input').fill('what now');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('a live answer');
   const after = pt(new Date().toISOString());
@@ -11212,17 +11459,17 @@ test('S73: each answer carries the Pacific time it came in — live, replayed an
   // ── 3. a failed question and a stopped one are not answers: no time is drawn for them ──
   const whens = await page.locator('#askBody .ask-when').count();
   await page.evaluate(() => { window.__reply = { ok: false, error: 'the model could not answer' }; });
-  await form.locator('input.input').fill('this one fails');
+  await form.locator('input.legacy-input').fill('this one fails');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .lock-error')).toContainText(/could not answer/);
   await expect(page.locator('#askBody .ask-when'), 'a refused question gets no time').toHaveCount(whens);
 
   // ── 4. a VISITOR (locked): no saved conversation and no model line — but a live answer is still stamped ──
   await page.evaluate(() => { window.__reply = null; DESK.authed = false; sessionStorage.removeItem('desk_pin'); renderAsk(); });
-  await expect(form.locator('input.input')).toBeEnabled();
+  await expect(form.locator('input.legacy-input')).toBeEnabled();
   await expect(page.locator('#askBody .ask-q'), 'nothing saved is drawn for a visitor').toHaveCount(0);
   const vBefore = pt(new Date().toISOString());
-  await form.locator('input.input').fill('visitor question');
+  await form.locator('input.legacy-input').fill('visitor question');
   await form.locator('button[type=submit]').click();
   await expect(page.locator('#askBody .ask-a').last()).toHaveText('a live answer');
   const vAfter = pt(new Date().toISOString());
@@ -11890,4 +12137,84 @@ test('S76: the resize-grip pills never cover a strip caption, stay centred on th
   }
 
   expect(errs, 'no page errors through any of it').toEqual([]);
+});
+
+// S77 — The ticker list that opens as you type in the charts' Load box fits the screen and
+// scrolls by finger (design.md → iPhone and iPad, owner ruling 2026-10-25; test.md → UI
+// coverage gates, *Overlays fit and scroll*). DISMISS cannot reach it: it opens by TYPING,
+// not from a button. The iphone project is WebKit, the engine of every iPhone browser.
+test('S77: the Load box ticker list fits the screen and scrolls by finger', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  await gotoDemo(page, '#wbChart', 20000, 800);
+
+  const input = page.locator('#wbSymInput');
+  const list = page.locator('#wbSuggest');
+  await input.scrollIntoViewIfNeeded();
+  await input.click();
+  await input.fill('');
+  // 'A' prefix-matches the most of the curated roster, so the list is at its fullest (8 rows).
+  await input.pressSequentially('A');
+  await expect(list, 'typing opens the list').toBeVisible();
+  await expect(input, 'the combobox says it is open').toHaveAttribute('aria-expanded', 'true');
+  expect(await list.locator('[role="option"]').count(), 'the list holds suggestions').toBeGreaterThan(3);
+
+  expect(await fitChecked(list), 'the ticker list fits the screen and scrolls by finger').toEqual([]);
+
+  // fitProblems reads OFF SCREEN only for a PINNED overlay, and this list is position: absolute
+  // under its box — so also ask the page itself: the list's box sits inside the visible screen
+  // sideways, and nothing an ancestor clips is drawn over its four corners (the hit at each
+  // corner is the list or something inside it).
+  const box = await list.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const vv = window.visualViewport;
+    const view = vv ? { left: vv.offsetLeft, right: vv.offsetLeft + vv.width } : { left: 0, right: innerWidth };
+    const inset = 3;
+    const corners = [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+      [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset]];
+    const covered = corners.filter(([x, y]) => {
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return false;   // below the fold: scrolls into view
+      const hit = document.elementFromPoint(x, y);
+      return !(hit && el.contains(hit));
+    }).map(([x, y]) => `${Math.round(x)},${Math.round(y)}`);
+    return { left: r.left, right: r.right, view, covered };
+  });
+  expect(box.left, 'the list starts inside the screen').toBeGreaterThanOrEqual(box.view.left - 1);
+  expect(box.right, 'the list ends inside the screen').toBeLessThanOrEqual(box.view.right + 1);
+  expect(box.covered, 'nothing covers or clips a corner of the list').toEqual([]);
+
+  // A finger scroll of the page itself must still work with the list open.
+  const pageTouch = await page.evaluate(() => getComputedStyle(document.documentElement).touchAction
+    + '|' + getComputedStyle(document.body).touchAction);
+  expect(pageTouch, 'the page carries no touch-action lock').toMatch(/^(auto|manipulation)\|(auto|manipulation)$/);
+
+  // And nowhere else (design.md → iPhone and iPad; removed 2026-10-25): no stylesheet rule and
+  // no inline style anywhere on the page sets touch-action: none — the charts' resize grips
+  // included, which are drawn into the SVG with an inline style — and the viewport never stops
+  // zooming. The touchmove half is S64's step 12.
+  const locks = await page.evaluate(() => {
+    const out = [];
+    const walk = (rules) => {
+      for (const r of rules) {
+        if (r.style && /none/.test(r.style.touchAction || '')) out.push(`rule ${r.selectorText}`);
+        if (r.cssRules) walk(r.cssRules);
+      }
+    };
+    for (const sh of document.styleSheets) { try { walk(sh.cssRules); } catch { /* cross-origin sheet */ } }
+    for (const n of document.querySelectorAll('[style]')) {
+      if (/none/.test(n.style.touchAction || '')) out.push(`inline ${n.tagName.toLowerCase()}${n.id ? '#' + n.id : ''}`);
+    }
+    const vp = document.querySelector('meta[name="viewport"]');
+    return { out, viewport: vp ? vp.content : null };
+  });
+  expect(locks.out, 'no rule or inline style sets touch-action: none').toEqual([]);
+  expect(await page.locator('[data-grip-hit]').count(), 'the resize grips were drawn, so the inline scan saw them').toBeGreaterThan(0);
+  expect(locks.viewport, 'the viewport never stops zooming').not.toMatch(/maximum-scale\s*=\s*1(\.0*)?\b|user-scalable\s*=\s*(no|0)/i);
+  expect(locks.viewport).toMatch(/width=device-width/);
+
+  await page.keyboard.press('Escape');
+  await expect(list, 'Escape closes it').toBeHidden();
+  expect(errs, 'no page errors').toEqual([]);
 });

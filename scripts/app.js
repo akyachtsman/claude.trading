@@ -170,7 +170,7 @@ function renderMasthead() {
       /* a rebuild while a forced refresh is still in flight (feedPollTick lands before the
          slower Economy request) must keep the pending state, not re-enable a button whose
          clicks would be ignored until the whole refresh finishes (Codex review, PR #294) */
-      const refreshBtn = el('button', 'btn btn-secondary', refreshNowPending ? 'Refreshing…' : 'Refresh now');
+      const refreshBtn = el('button', 'legacy-btn legacy-btn-secondary', refreshNowPending ? 'Refreshing…' : 'Refresh now');
       refreshBtn.disabled = refreshNowPending;
       refreshBtn.type = 'button';
       refreshBtn.id = 'refreshNowBtn';
@@ -178,7 +178,7 @@ function renderMasthead() {
       wrap.appendChild(refreshBtn);
     }
     if (DESK.authed) {
-      const lock = el('button', 'btn btn-secondary', 'Lock');
+      const lock = el('button', 'legacy-btn legacy-btn-secondary', 'Lock');
       lock.type = 'button';
       /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
          leaving them live after a lock would let a drag change the order and
@@ -344,7 +344,7 @@ function renderMarkets(market, lamp) {
     }
 
     if (pct != null) {
-      row.appendChild(el('span', (pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' mk-sec-pct', fmtPct(pct)));
+      row.appendChild(el('span', (pct >= 0 ? 'legacy-pill legacy-pill--gain' : 'legacy-pill legacy-pill--loss') + ' mk-sec-pct', fmtPct(pct)));
     } else {
       row.appendChild(el('span', 'mk-sec-pct mk-sec-pct--none', '—'));
     }
@@ -883,7 +883,7 @@ function wlTile(r, pending) {
      in the symbols and just make their fonts bigger"): 12px up to 5 characters, `is-long`
      10px for 6-7 (BTC-USD), `is-xlong` 8px from 8 — a size per length, like the price,
      because CSS cannot branch on text length. Where even that does not fit, the name wraps
-     (see components.css) rather than clipping. */
+     (see legacy.css) rather than clipping. */
   if (r.sym && r.sym.length > 5) name.classList.add('is-long');
   if (r.sym && r.sym.length > 7) name.classList.add('is-xlong');
   /* There is NO session badge on the ticker any more — neither EXT nor CLOSE (owner
@@ -920,7 +920,7 @@ function wlTile(r, pending) {
        CI's Chromium drew it wider than this sandbox's. A figure never clips and the box
        never grows to hold it. */
     const pt = fmtPct(r.pct);
-    const pill = el('span', (r.pct >= 0 ? 'pill pill--gain' : 'pill pill--loss') + ' wl-pct', pt);
+    const pill = el('span', (r.pct >= 0 ? 'legacy-pill legacy-pill--gain' : 'legacy-pill legacy-pill--loss') + ' wl-pct', pt);
     if (pt.length > 6) pill.classList.add('is-long');
     if (pt.length > 7) pill.classList.add('is-xlong');
     if (pt.length > 8) pill.classList.add('is-xxlong');
@@ -1072,8 +1072,7 @@ function wlDragPaint(x, y) {
 }
 
 /* A wrapped band can be taller than the screen (a 40-tile list is eleven rows at phone
-   width, the roster allows 2,000 symbols a list), and the pointer owns the drag: an armed
-   touch drag is `touch-action: none`, so a finger cannot scroll the page, and a mouse
+   width, the roster allows 2,000 symbols a list), and the pointer owns the drag, and a mouse
    wheel is not always to hand. Without help a slot on a row that is off screen — or in a
    band far below the grabbed tile — is unreachable inside one gesture (Codex review, PR
    #306). Holding the pointer within WL_PAGE_EDGE_PX of the viewport's top or bottom edge
@@ -1401,9 +1400,10 @@ function wlWireDrag(tile, from, sym) {
     const startX = ev.clientX, startY = ev.clientY;
     wlDrag.sym = sym; wlDrag.from = from; wlDrag.tile = tile;
     const touch = ev.pointerType === 'touch';
-    /* Arming on touch flips the tile to touch-action:none so the browser stops
-       treating the gesture as a scroll — but only once the finger has rested,
-       so an ordinary swipe over the panel still scrolls the page. */
+    /* A finger must rest WL_TOUCH_ARM_MS before it can drag, so an ordinary swipe
+       over the panel still scrolls the page. Arming no longer sets touch-action:
+       none (owner 2026-10-25, design.md → iPhone and iPad) — it could not stop a
+       pan already under way anyway, since touch-action is fixed at finger-down. */
     if (touch) wlDrag.armed = setTimeout(() => { tile.classList.add('wl-armed'); }, WL_TOUCH_ARM_MS);
     const move = e => {
       if (wlDrag.on) { wlDragMove(e); return; }
@@ -2074,7 +2074,7 @@ async function confirmWlDelList() {
 
    `dblclick` fires on touch double-taps too, but mobile browsers treat a
    double-tap as zoom by default and would swallow it — hence
-   `touch-action: manipulation` on the tiles in components.css. Without that
+   `touch-action: manipulation` on the tiles in legacy.css. Without that
    the gesture works on desktop and silently does nothing on a phone.
 
    Delete/Backspace on a focused tile reaches the same dialog: the tiles are
@@ -2082,7 +2082,7 @@ async function confirmWlDelList() {
    reach is not a remove everyone has. */
 function wlWireRemove(tile, sym, idx, title) {
   /* Marks the tile as actually having a removal wired, so the touch-gesture
-     override in components.css applies ONLY here (Codex review, PR #200).
+     override in legacy.css applies ONLY here (Codex review, PR #200).
      Putting it on every .wl-tile cost mobile users double-tap zoom in demo and
      locked sessions, where nothing is listening for the gesture — a real
      capability traded for nothing. */
@@ -3198,13 +3198,13 @@ function openAskSched(pin, opener) {
       if (!r.enabled) row.classList.add('ask-sched-row--off');
 
       const q = document.createElement('input');
-      q.type = 'text'; q.className = 'input ask-sched-q'; q.value = r.prompt; q.maxLength = 500;
+      q.type = 'text'; q.className = 'legacy-input ask-sched-q'; q.value = r.prompt; q.maxLength = 500;
       q.placeholder = 'e.g. Summarise the market and my watchlist, and name the best setups';
       q.setAttribute('aria-label', 'Question');
       q.addEventListener('input', () => { r.prompt = q.value.slice(0, 500); touch(); });
 
       const cad = document.createElement('select');
-      cad.className = 'input ask-sched-cad';
+      cad.className = 'legacy-input ask-sched-cad';
       cad.setAttribute('aria-label', 'How often');
       for (const [key, label] of ASK_CADENCES) {
         const o = document.createElement('option');
@@ -3226,7 +3226,7 @@ function openAskSched(pin, opener) {
       let when;
       if (askAtTheHour(r)) {
         when = document.createElement('select');
-        when.className = 'input ask-sched-min';
+        when.className = 'legacy-input ask-sched-min';
         when.setAttribute('aria-label', 'Minutes past the hour');
         for (let m = 0; m < 60; m += 5) {
           const o = document.createElement('option');
@@ -3237,7 +3237,7 @@ function openAskSched(pin, opener) {
         when.addEventListener('change', () => { r.atMin = Number(when.value) || 0; touch(); draw(); });
       } else {
         when = document.createElement('input');
-        when.type = 'time'; when.step = '300'; when.className = 'input ask-sched-time';
+        when.type = 'time'; when.step = '300'; when.className = 'legacy-input ask-sched-time';
         when.setAttribute('aria-label', 'Time (Pacific)');
         when.value = String(r.atHour).padStart(2, '0') + ':' + String(r.atMin).padStart(2, '0');
         when.addEventListener('change', () => {
@@ -3260,7 +3260,7 @@ function openAskSched(pin, opener) {
 
       /* Run now uses the DRAFT prompt and does not save — it is how you find out
          what the 8am answer will look like without waiting until 8am. */
-      const now = el('button', 'btn btn-secondary', 'Run now'); now.type = 'button';
+      const now = el('button', 'legacy-btn legacy-btn-secondary', 'Run now'); now.type = 'button';
       now.disabled = !r.prompt.trim() || !askRun || askBusy;
       now.title = 'Ask this question right now, in the thread. Does not save the schedule.';
       now.addEventListener('click', () => {
@@ -3269,7 +3269,7 @@ function openAskSched(pin, opener) {
         askRun(r.prompt.trim(), { scheduled: true });
       });
 
-      const del = el('button', 'btn btn-secondary', '✕'); del.type = 'button';
+      const del = el('button', 'legacy-btn legacy-btn-secondary', '✕'); del.type = 'button';
       del.setAttribute('aria-label', 'Remove this question');
       del.addEventListener('click', () => { askSched.splice(i, 1); touch(); draw(); });
 
@@ -3502,17 +3502,17 @@ function renderAsk() {
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
-  input.type = 'text'; input.className = 'input'; input.maxLength = 500;
+  input.type = 'text'; input.className = 'legacy-input'; input.maxLength = 500;
   input.placeholder = 'Ask about your desk…';
   input.setAttribute('aria-label', 'Ask the desk assistant a question');
-  const btn = el('button', 'btn', 'Ask'); btn.type = 'submit';
+  const btn = el('button', 'legacy-btn', 'Ask'); btn.type = 'submit';
   /* Stop (owner request 2026-08-01). A SEPARATE button rather than the Ask
      button changing role: a control that swaps what it does under the cursor is
      how a stop gets pressed as a re-send, and the desk-ask tool loop can run
      long enough (up to 12 tool calls) that the owner is reaching for it while
      the page is still settling. Hidden, not disabled, when idle — an always-on
      Stop with nothing to stop is noise. */
-  const stopBtn = el('button', 'btn btn-secondary ask-stop', 'Stop'); stopBtn.type = 'button';
+  const stopBtn = el('button', 'legacy-btn legacy-btn-secondary ask-stop', 'Stop'); stopBtn.type = 'button';
   stopBtn.hidden = true;
   stopBtn.setAttribute('aria-label', 'Stop waiting for the current answer');
   stopBtn.title = 'Stop waiting for this answer';
@@ -3530,7 +3530,7 @@ function renderAsk() {
      dropping the arm between the failure and the retry is how a deliberate
      choice gets lost. */
   let askVerify = false;
-  const verifyBtn = el('button', 'btn btn-secondary ask-verify', '✓ Verify'); verifyBtn.type = 'button';
+  const verifyBtn = el('button', 'legacy-btn legacy-btn-secondary ask-verify', '✓ Verify'); verifyBtn.type = 'button';
   verifyBtn.setAttribute('aria-pressed', 'false');
   verifyBtn.setAttribute('aria-label', 'Verify the next answer against its data');
   verifyBtn.title = 'Check the next answer against the quotes and technicals behind it. Costs extra; turns itself off afterwards.';
@@ -3540,11 +3540,11 @@ function renderAsk() {
   };
   verifyBtn.addEventListener('click', () => setVerify(!askVerify));
   /* ⏱ beside ⚙ — same idiom, same place. Opens the schedule roster. */
-  const schedBtn = el('button', 'btn btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
+  const schedBtn = el('button', 'legacy-btn legacy-btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
   schedBtn.title = 'Questions the desk asks itself on a schedule — it runs with this page shut';
   schedBtn.addEventListener('click', () => openAskSched(pin, schedBtn));
-  const sysBtn = el('button', 'btn btn-secondary', '⚙'); sysBtn.type = 'button';
+  const sysBtn = el('button', 'legacy-btn legacy-btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
   sysBtn.addEventListener('click', () => openSysPromptModal(pin, sysBtn));
   /* The model switch (desk_021) — the owner's, so only for an unlocked desk. Its OWN row, deliberately NOT
@@ -3562,7 +3562,7 @@ function renderAsk() {
     tierGroup.appendChild(b);
     return b;
   });
-  const tierRetry = el('button', 'btn btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
+  const tierRetry = el('button', 'legacy-btn legacy-btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
   tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pin); });   /* '*' = whichever option ends up selected */
   const tierNote = el('p', 'ask-tier-note', ''); tierNote.setAttribute('role', 'status');
   tierBox.appendChild(tierGroup); tierBox.appendChild(tierRetry);
@@ -3898,7 +3898,7 @@ function renderAccountsUnavailable() {
   const body = el('div', 'panel-body');
   body.appendChild(el('p', 'lock-explain',
     'Your PIN worked — the desk just could not load your accounts. Everything else on the page is unaffected.'));
-  const btn = el('button', 'btn', 'Retry');
+  const btn = el('button', 'legacy-btn', 'Retry');
   btn.type = 'button';
   btn.addEventListener('click', async () => {
     const pin = sessionStorage.getItem('desk_pin');
@@ -3933,9 +3933,9 @@ function renderLockedPanels(why) {
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
-  input.type = 'password'; input.inputMode = 'numeric'; input.className = 'input';
+  input.type = 'password'; input.inputMode = 'numeric'; input.className = 'legacy-input';
   input.placeholder = 'Desk PIN'; input.setAttribute('aria-label', 'Desk PIN');
-  const btn = el('button', 'btn', 'Unlock');
+  const btn = el('button', 'legacy-btn', 'Unlock');
   btn.type = 'submit';
   const err = el('p', 'lock-error', ''); err.hidden = true;
   form.appendChild(input); form.appendChild(btn);
@@ -5156,8 +5156,9 @@ window.addEventListener('pointermove', ev => {
 });
 /* pointercancel (e.g. a touch drag the browser reclaims for scroll) must end the
    drag exactly like pointerup, or the workbench sticks in resize mode and the new
-   height is never persisted (Codex #114). touch-action:none on the hit rects keeps
-   a vertical drag from being stolen in the first place. */
+   height is never persisted (Codex #114). The hit rects carry NO touch-action: none
+   any more (owner 2026-10-25, design.md → iPhone and iPad: never cancel touchmove, never `touch-action: none`), so on a phone a vertical finger drag on a grip
+   is the browser's to scroll the page, and it ends here as a pointercancel. */
 const endWbDrag = () => { if (wbDrag && wbDrag.resize) saveWbCfg(); wbDrag = null; };
 window.addEventListener('pointerup', endWbDrag);
 window.addEventListener('pointercancel', endWbDrag);
@@ -6101,8 +6102,7 @@ function wbSlotDragPaint() {
   d.marker = marker;
 }
 /* Hold the pointer at the list's top or bottom edge and the LIST scrolls, faster the closer to the
-   edge, until it runs out — a finger cannot scroll it while a drag is armed (`touch-action: none`),
-   and a stock dragged from slot 3 to slot 60 must be possible in ONE gesture. One rAF loop, running
+   edge, until it runs out — a stock dragged from slot 3 to slot 60 must be possible in ONE gesture. One rAF loop, running
    only while the pointer sits in an edge zone that can still scroll; every move re-arms it and the
    end of the drag cancels it. */
 function wbSlotDragScroll() {
@@ -6183,12 +6183,10 @@ function wbSlotArmClickGuard(btn) {
    on every animation frame of a chart drag and on every poll — it also pushed the double-click's
    second click past WB_SLOT_DBL_MS on a slow machine. The rail element itself is never rebuilt, only
    its contents, so a single listener on it survives every repaint. */
-/* The press in progress, or null: { pid, btn, from, sym, startX, startY, touch, holdScroll }. Module state
+/* The press in progress, or null: { pid, btn, from, sym, startX, startY, touch }. Module state
    with PERMANENT window listeners (below) instead of four listeners added and removed on every press: in
    WebKit each listener add cost ~5ms, which put ~20ms on every plain click and tipped S45's slow
-   double-click over its pairing window on a slow machine. Only a TOUCH press adds a listener of its own —
-   the non-passive touchmove, which must not be permanent (a permanent non-passive touchmove on the window
-   makes every scroll on the page wait for JavaScript). */
+   double-click over its pairing window on a slow machine. */
 let wbSlotPress = null;
 function wbSlotPressEnd() {
   clearTimeout(wbSlotDrag.armed);
@@ -6196,7 +6194,6 @@ function wbSlotPressEnd() {
   wbSlotPress = null;
   if (!p) return;
   p.btn.classList.remove('wb-armed');
-  if (p.holdScroll) window.removeEventListener('touchmove', p.holdScroll);
 }
 function wbSlotPointerDown(ev) {
   if (ev.button != null && ev.button !== 0) return;
@@ -6214,22 +6211,14 @@ function wbSlotPointerDown(ev) {
   /* The gesture belongs to THIS pointer (`pid`). A hybrid device also fires hover moves from a mouse (and
      the browser fakes one after a layout change), and one landing mid-hold read as a far-away move that
      cancelled a resting finger before it armed — found by S64's touch step on iPhone's WebKit. */
-  const press = { pid: ev.pointerId, btn, from, sym, startX: ev.clientX, startY: ev.clientY, touch, holdScroll: null };
-  wbSlotPress = press;
-  /* Arming flips the slot to touch-action: none so the browser stops reading the gesture as a
-     scroll — only once the finger has rested, so a swipe over the list still scrolls it. */
+  wbSlotPress = { pid: ev.pointerId, btn, from, sym, startX: ev.clientX, startY: ev.clientY, touch };
+  /* A finger must rest WB_SLOT_TOUCH_ARM_MS before it can drag, so a swipe over the list scrolls it. */
   if (touch) wbSlotDrag.armed = setTimeout(() => btn.classList.add('wb-armed'), WB_SLOT_TOUCH_ARM_MS);
-  /* `touch-action` is evaluated when the finger goes DOWN and cannot be changed for the gesture in
-     progress, so adding `.wb-armed` after the hold does not stop the browser panning on the first move
-     — it would start the pan and cancel the pointer stream (Codex P1). What does work, and is how
-     touch sortables are built: a NON-PASSIVE `touchmove` listener, in place before the finger moves,
-     that cancels the move while the slot is armed or a drag is running. The first move after a rest is
-     still cancelable (a pan has not begun), and an unarmed move is left alone, so a swipe over the list
-     still scrolls it. Window-level listeners default to passive in Chromium, hence the explicit option. */
-  if (touch) {
-    press.holdScroll = e => { if (e.cancelable && (btn.classList.contains('wb-armed') || wbSlotDrag.on)) e.preventDefault(); };
-    window.addEventListener('touchmove', press.holdScroll, { passive: false });
-  }
+  /* NOTHING cancels the browser's pan any more (owner 2026-10-25, design.md → iPhone and iPad: never cancel touchmove, never `touch-action: none`). Until then a
+     non-passive window `touchmove` called preventDefault while the slot was armed (touch-action is fixed
+     when the finger goes down, so `.wb-armed` alone cannot stop a pan already allowed). Without it a real
+     phone pans on the first move after the rest and ends the press with a pointercancel, which changes
+     nothing: on a phone a stock is moved with the entry box, Insert and the ×, not by dragging. */
 }
 function wbSlotPointerMove(e) {
   const p = wbSlotPress;
@@ -7679,7 +7668,7 @@ function renderCharts(data, lamp) {
          bar it belongs to (S76 selects by it, never by the white fill). */
       const gw = 56;
       svg.appendChild(svgEl('rect', { x: x0 + 6 + plotW / 2 - gw / 2, y: barY - 2.5, width: gw, height: 5, rx: 2.5, fill: '#FFFFFF', 'pointer-events': 'none', 'data-grip': kind }));
-      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize; touch-action: none', 'data-grip-hit': kind });
+      const hit = svgEl('rect', { x: x0 + 6, y: barY - 5, width: plotW, height: 10, fill: 'transparent', style: 'cursor: row-resize', 'data-grip-hit': kind });
       svg.appendChild(hit);
       hit.addEventListener('pointerdown', ev => {
         ev.preventDefault(); ev.stopPropagation();
@@ -8078,7 +8067,7 @@ function buildWbSettings() {
     col.appendChild(el('h3', 'wb-set-title', title));
     col.appendChild(el('p', 'wb-set-group', 'Ticker'));
     const tsel = document.createElement('select');
-    tsel.className = 'input wb-set-sym';
+    tsel.className = 'legacy-input wb-set-sym';
     tsel.setAttribute('aria-label', title + ' ticker');
     const follow = document.createElement('option');
     follow.value = ''; follow.textContent = 'Desk symbol';

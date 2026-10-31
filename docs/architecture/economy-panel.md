@@ -318,7 +318,7 @@ The Economy indicators feed (`supabase/functions/desk-econ`, `config/econ-indica
   3:30 pm ET snapshot. **Rollback** = redeploy v1 — `supabase/functions/desk-econ/index.ts` as of `cd5f920` (the #294 merge on `main`, byte-identical to the `f78a03f` branch commit v1 was deployed from; that commit is no longer reachable from any branch after the squash merge) — with `verify_jwt` ON; the
   `econ:treasury` row is then simply unused.
 
-## The panel (UI) — `scripts/app.js` Economy block, `styles/components.css` `.econ-*`
+## The panel (UI) — `scripts/app.js` Economy block, `styles/legacy.css` `.econ-*`
 
 Built 2026-09-30 into the desk row's 4th slot (`<aside class="panel area-econ">`).
 Everything for it sits in ONE block of `app.js` (before the widgets section) plus

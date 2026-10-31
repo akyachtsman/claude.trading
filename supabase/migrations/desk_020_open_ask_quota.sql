@@ -15,9 +15,10 @@
 -- it is a counter, not a calendar. There is NO pruning: the table gains one tiny
 -- row per day an open question was asked (~365 a year), so it needs no cron job and
 -- no clean-up inside the function. (An in-function prune was written and dropped —
--- the Supabase MCP holds any statement containing a destructive keyword for
--- confirmation and the apply timed out; a year of rows is a few KB. Tidy by hand if
--- ever wanted.)
+-- its `delete` statement set off the Supabase MCP's destructive-SQL detector, whose
+-- form a project thread cannot show, and the apply timed out; a year of rows is a few
+-- KB. Tidy by hand if ever wanted. Today a needed `delete` stays in and the migration
+-- is applied from a claude.ai chat: CLAUDE.md -> Applying a migration.)
 --
 -- Same posture as desk_006: RLS is enabled with NO policy (deny-all), and only the
 -- service role may call the function — the browser's anon key can neither read the

@@ -1,949 +1,403 @@
-/* ── components.css — claude.trading reusable components ─────────────────────
-   One uniform module grammar: every surface is a .panel with the same chrome;
-   every panel carries a data-state lamp + as-of stamp (the trust layer is the
-   visual identity). All values read var(--…) from tokens.css. Meets design.md
-   universal rules: 44px targets, :focus-visible, reduced motion. */
+/* ── components.css — this project's reusable components ─────────────────────
+   The HOUSE set (design.md, owner rulings 2026-10-19), built on tokens.css. Each
+   block names the design.md section it implements. Every value references
+   var(--…), so re-theming happens in tokens.css alone. A screen never adds its
+   own button, card, pill or dialog class: a size or layout need is a modifier on
+   the shared one. Meets the craft rules in design.md (44px targets,
+   :focus-visible, reduced motion) and the iPhone rules (design.md -> iPhone
+   and iPad). The behaviour these need (the confirmation
+   dialog, the Archived (N) fit, the empty state, inline messages) lives in ONE
+   shared script per project, never per page: components.js, beside this file. */
 
-/* buttons */
+/* ── Page base: the canvas, text colour and font every page starts from ─────── */
+/* border-box, so padding and borders stay inside a component's width and a
+   width: 100% card never overflows its grid track on a phone. */
+*, *::before, *::after { box-sizing: border-box; }
+html { background: var(--color-bg); }
+body {
+  margin: 0; background: var(--color-bg); color: var(--color-text-primary);
+  font: var(--font-base)/1.5 var(--font-sans);
+  -webkit-text-size-adjust: 100%;
+  /* A long unbroken name (a file name, an id) wraps instead of pushing the page
+     sideways, wherever it sits. anywhere, not break-word: break-word gives a
+     flex item no break points when it sizes, so free text in a flex row (Back,
+     a dialog title, a menu action) would still hold the row open. One rule for
+     the page, so no component has to remember it. */
+  overflow-wrap: anywhere;
+}
+/* The two places that keep whole words: a table, so its columns size to whole
+   words and a wide one scrolls in its own box (.table-wrap), and the controls
+   with short fixed labels, so a squeezed row never splits a word in a button. */
+.table, .btn, .pill, .tag, .segmented [role="tab"] { overflow-wrap: break-word; }
+/* ...and the controls are never wider than their box, so a single word longer
+   than the whole row (a long translation) still splits rather than push the
+   page sideways. */
+.btn, .pill, .tag, .segmented [role="tab"] { max-width: 100%; }
+/* A picture or video never paints wider than its box (a phone photo is
+   thousands of pixels wide), keeping its shape as it shrinks. */
+img, video { max-width: 100%; height: auto; }
+/* hidden always hides: a component's own display (a flex pop-over, a dialog
+   backdrop) would otherwise override the browser's rule and show it. */
+[hidden] { display: none !important; }
+/* Form controls take the house font too; browsers give them their own. */
+button, input, select, textarea { font-family: inherit; }
+h1, h2, h3 { line-height: 1.25; margin: 0 0 var(--space-3); }
+h1 { font-size: var(--font-2xl); } h2 { font-size: var(--font-xl); } h3 { font-size: var(--font-lg); }
+a { color: var(--color-accent); }
+a:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+/* The page's content box: the inset the body's margin: 0 removed, 16px on a
+   phone, 24px from a tablet up, centred and capped on a wide screen. A banner
+   (full width) sits outside it. */
+.page { max-width: 1440px; margin: 0 auto; padding: var(--space-4); }
+@media (min-width: 700px) { .page { padding: var(--space-6); } }
+/* An iPhone on its side puts the notch over the left or right edge. The inset is
+   0 everywhere else, and on an iPhone too unless the page's viewport meta says
+   viewport-fit=cover, so this changes nothing until a page asks for it. */
+.page {
+  padding-left: max(var(--space-4), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--space-4), env(safe-area-inset-right, 0px));
+}
+@media (min-width: 700px) {
+  .page {
+    padding-left: max(var(--space-6), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--space-6), env(safe-area-inset-right, 0px));
+  }
+}
+/* Every height tied to the screen is given twice: vh first, for a browser
+   without dvh, then dvh. On an iPhone, vh is the screen with Safari's address
+   bar hidden, so 88vh runs past the bottom of the screen while the bar shows;
+   dvh is the height actually showing (design.md -> iPhone and iPad). */
+/* An action link standing on its own (Back, Clear filters, any link that does
+   something rather than sits in a sentence) gets the 44px target a link in
+   running text is exempt from. Works on <a> or <button>. */
+.link-action {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  min-height: var(--size-target-min); min-width: var(--size-target-min);
+  background: none; border: 0; padding: 0 var(--space-1);
+  font: 600 var(--font-sm)/1.2 var(--font-sans); color: var(--color-accent);
+  text-decoration: none;
+}
+.link-action:hover { text-decoration: underline; }
+.link-action:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ── Buttons (§4): .btn is Secondary; add .btn-primary, .btn-danger or .btn-delete */
 .btn {
-  min-height: 44px; padding: 10px 20px; border: none; cursor: pointer;
-  border-radius: var(--radius-md);
-  background: var(--color-accent); color: var(--color-on-accent);
-  font: 500 var(--font-base)/1.2 var(--font-sans);
-  box-shadow: var(--shadow-sm); transition: background .15s ease, border-color .15s ease;
+  min-height: var(--size-target-min); padding: var(--space-2) var(--space-4);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--color-border-input); border-radius: var(--radius-md); cursor: pointer;
+  background: var(--color-surface); color: var(--color-text-primary);
+  font: 600 var(--font-sm)/1.2 var(--font-sans); text-decoration: none;
+  transition: background .15s ease, border-color .15s ease;
 }
-.btn:hover, .btn:focus-visible { background: var(--color-accent-hover); }
-.btn:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
-.btn-secondary {
-  background: var(--color-surface-2); color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
+.btn:hover { border-color: var(--color-text-secondary); }
+/* Focus needs its OWN indicator, not the hover state: accent -> accent-hover is a
+   ~1.4:1 shift, so a keyboard user cannot tell where focus is (design.md ->
+   Accessibility, non-negotiable). Outline sits outside the box, so it also reads
+   against whatever surface the button is on. */
+.btn:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+.btn-secondary { /* the same look as .btn; named so markup can say it */ }
+.btn-primary {
+  background: var(--color-accent); border-color: var(--color-accent);
+  color: var(--color-on-accent);
 }
-.btn-secondary:hover, .btn-secondary:focus-visible {
-  background: var(--color-surface-2); border-color: var(--color-border-hover);
+.btn-primary:hover, .btn-primary:focus-visible {
+  background: var(--color-accent-hover); border-color: var(--color-accent-hover);
+}
+.btn-danger { color: var(--color-danger); border-color: var(--color-danger); }
+.btn-danger:hover, .btn-danger:focus-visible { background: var(--color-danger-bg); }
+/* The filled red final button of a Delete permanently / Permanently archive
+   confirmation, and nowhere else. */
+.btn-delete {
+  background: var(--color-danger); border-color: var(--color-danger);
+  color: var(--color-on-danger);
+}
+.btn-delete:hover, .btn-delete:focus-visible {
+  background: var(--color-danger-hover); border-color: var(--color-danger-hover);
+}
+/* Busy: native `disabled`. Pressable later: aria-disabled="true", which looks
+   the same but stays focusable to say why; the shared script cancels its
+   click, Enter and Space (§4), because ARIA alone stops nothing. */
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+/* Icon-only: still a 44px target; needs aria-label AND title (§3). */
+.btn-icon { min-width: var(--size-target-min); padding: 0; }
+.btn-icon svg { width: 18px; height: 18px; }
+
+/* ── Cards and grids (§5) ─────────────────────────────────────────────────── */
+.grid {
+  display: grid; gap: var(--space-4);
+  grid-template-columns: repeat(3, minmax(0, 1fr));   /* laptop */
+}
+@media (max-width: 1199px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }   /* tablet */
+@media (max-width: 699px)  { .grid { grid-template-columns: minmax(0, 1fr); } }              /* phone */
+.card {
+  position: relative; text-align: left; width: 100%;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg); padding: var(--space-6); box-shadow: var(--shadow-sm);
+  color: var(--color-text-primary); font: inherit;
+}
+/* An actionless card that is itself the control: a native <button> or <a>,
+   never role="button" on a <div> (the keyboard cannot reach that). */
+button.card, a.card { cursor: pointer; display: block; text-decoration: none; }
+/* A card WITH actions: the title's button opens the card through an overlay
+   stretched over it; the actions sit above the overlay (never a button inside
+   a button). */
+.card-open { all: unset; display: block; cursor: pointer; }
+/* The card's own radius: .card-open's all: unset leaves it none to inherit. */
+.card-open::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius-lg); }
+.card-open:focus-visible::after { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+.card:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+/* Names wrap; never an ellipsis or a line clamp (§1.6, §5). */
+.card-title { display: block; font-size: var(--font-lg); font-weight: 600; }
+.card-sub { font-size: var(--font-sm); color: var(--color-text-secondary); }
+/* At most two icon buttons, top-right, Edit then Archive; 3+ become one ⋮ menu.
+   Always visible: never hover-only, so they show on a phone. The padding
+   belongs to the actions box, so a press within 8px of an icon button lands
+   on the box, never on the card's open target beneath it (8px between targets). */
+.card-actions {
+  position: absolute; z-index: 1; top: 0; right: 0; padding: var(--space-2);
+  display: flex; gap: var(--space-2);
+}
+/* The corner is reserved by layout, not per element: a float the size of the
+   actions box (less the card's own padding) sits top-right, so every line in
+   the card (title, context, a pill, a row of its own) flows around it. */
+.card:has(.card-actions) { display: flow-root; }
+.card:has(.card-actions)::before {
+  content: ""; float: right;
+  width: calc(2 * var(--size-target-min) + 3 * var(--space-2) - var(--space-6));
+  height: calc(var(--size-target-min) + 2 * var(--space-2) - var(--space-6));
+}
+/* .card.card-add, not .card-add: it must outrank button.card / a.card's
+   display: block, since the Add card is itself a native button or link. */
+.card.card-add {
+  border-style: dashed; border-color: var(--color-border-input); box-shadow: none; display: flex; align-items: center;
+  justify-content: center; gap: var(--space-2); color: var(--color-accent); font-weight: 600;
 }
 
-/* segmented control (timeframes, view toggles) */
-.seg { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
-.seg button {
-  min-width: 44px; min-height: 44px; padding: 8px 14px; border: none; cursor: pointer;
-  background: transparent; color: var(--color-text-secondary);
-  font: 500 var(--font-sm)/1 var(--font-mono);
-  border-left: 1px solid var(--color-border); transition: background .15s ease, color .15s ease;
+/* ── Lists and tables (§6) ────────────────────────────────────────────────── */
+/* Wider or taller than the screen: scrolls inside its own box, so the page
+   never scrolls sideways and the sticky header stays visible. */
+.table-wrap { overflow: auto; overscroll-behavior: contain; max-width: 100%; max-height: 70vh; max-height: 70dvh; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.table { width: 100%; border-collapse: collapse; background: var(--color-surface); }
+.table th, .table td { padding: var(--space-3); border-bottom: 1px solid var(--color-border); text-align: left; }
+.table th {
+  position: sticky; top: 0; background: var(--color-surface);
+  font-size: var(--font-sm); color: var(--color-text-secondary); font-weight: 600;
 }
-.seg button:first-child { border-left: none; }
-.seg button:hover, .seg button:focus-visible { color: var(--color-text-primary); background: var(--color-surface-2); }
-.seg button:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
-.seg button[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
+/* A sortable header's control: a native button, so the keyboard reaches it.
+   aria-sort stays on the <th>. */
+.th-sort {
+  all: unset; cursor: pointer; font: inherit; color: inherit;
+  display: inline-flex; align-items: center;
+  min-height: var(--size-target-min); min-width: var(--size-target-min);   /* a 44px target */
+}
+/* A cell holding a 44px control keeps 4px above and below, so controls in
+   neighbouring rows (and the header) stay 8px apart (§ Accessibility, targets). */
+.table th:has(> .th-sort) { padding-top: var(--space-1); padding-bottom: var(--space-1); }
+.th-sort:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+/* A row's opening control (§6), a link or a button in its name cell: a 44px
+   target, not the height of one line of text. */
+.row-open {
+  display: inline-flex; align-items: center; cursor: pointer; text-align: left;
+  min-height: var(--size-target-min); min-width: var(--size-target-min);
+  background: none; border: 0; padding: 0; font: inherit; color: var(--color-accent);
+}
+.table td:has(> .row-open) { padding-top: var(--space-1); padding-bottom: var(--space-1); }
+.row-open:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+/* A row's own actions (§6): the last cell, right-aligned, icon buttons 8px
+   apart; a .menu-btn takes their place at three or more. */
+.row-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+/* No nowrap: .row-actions is a non-wrapping flex row already, and nowrap here
+   would reach a ⋮ menu placed inside the cell and stop its labels wrapping. */
+.table td:has(> .row-actions) { width: 1%; padding-top: var(--space-1); padding-bottom: var(--space-1); }
 
-/* inputs */
+/* ── Forms and fields (§12) ───────────────────────────────────────────────── */
+.field { display: flex; flex-direction: column; gap: var(--space-1); }
+.label { font-size: var(--font-sm); font-weight: 600; color: var(--color-text-primary); }
+.label .req { color: var(--color-danger); }
+/* max-width: a <select> sizes to its longest option, which may be a sentence. */
 .input {
-  min-height: 48px; padding: 10px 14px; font-size: 16px; /* 16px: no iOS zoom */
-  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  background: var(--color-surface-2); color: var(--color-text-primary);
+  max-width: 100%; min-height: var(--size-input-min); padding: var(--space-2) var(--space-4);
+  font-size: var(--font-input-min); /* never below 16px: prevents iOS zoom on focus */
+  border: 1px solid var(--color-border-input); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text-primary);
 }
-.input:focus-visible { outline: none; border-color: var(--color-accent-bright); box-shadow: 0 0 0 3px var(--color-accent-light); }
+/* The same 3px accent ring as every other control: a pale halo alone is about
+   1.1:1 against the surface and cannot be seen. */
+.input:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 1px; border-color: var(--color-accent); }
+/* Placeholder text at 4.5:1 (secondary on the surface is 5.56:1); the search box
+   uses it as its label. Firefox dims placeholders by default, hence opacity. */
+.input::placeholder { color: var(--color-text-secondary); opacity: 1; }
+/* Locked: greyed and not focusable (pair with `disabled`), padlock after the label. */
+.input:disabled { background: var(--color-bg); color: var(--color-text-secondary); cursor: not-allowed; }
 
-/* panel — THE module. Same chrome everywhere. */
-.panel {
-  background: var(--color-surface); border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
-  display: flex; flex-direction: column; min-width: 0;
+/* ── Search and toolbar (§16): search box, filters, then + Add at the right ── */
+/* Wraps on a phone; the search box takes the row's free width. */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.toolbar-add { margin-left: auto; } /* the + Add button, always last */
+/* A native input cannot hold an icon, so the search box is a wrapper: the
+   magnifying glass (from the icon set, aria-hidden) sits over the input's
+   left padding. Markup: <label class="search"><svg aria-hidden="true">…</svg>
+   <input class="input" type="search" placeholder="Search things…" aria-label="Search things"></label> */
+.search { position: relative; display: flex; flex: 1 1 240px; min-width: 0; max-width: 100%; }
+.search .input { width: 100%; padding-left: calc(var(--space-4) + 18px + var(--space-2)); }
+.search svg {
+  position: absolute; left: var(--space-4); top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; color: var(--color-text-secondary); pointer-events: none;
 }
-.panel-header {
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-.panel-title {
-  font: 600 var(--font-sm)/1.2 var(--font-sans);
-  text-transform: uppercase; letter-spacing: .07em;
-  color: var(--color-text-secondary); margin: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.panel-body { padding: var(--space-4); min-width: 0; }
 
-/* data-state lamp + as-of stamp — the signature trust layer */
-.lamp {
-  display: inline-flex; align-items: center; gap: 6px;
-  font: 500 var(--font-xs)/1 var(--font-mono);
-  color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .05em;
-  white-space: nowrap;
+/* design.md sets a 24x24px floor (larger than the browser default, ~13px). */
+.checkbox {
+  width: var(--size-check-min); height: var(--size-check-min);
+  accent-color: var(--color-accent); cursor: pointer;
 }
-.lamp::before {
-  content: ""; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--color-text-secondary); flex: none;
-}
-.lamp--live::before  { background: var(--color-status-live); box-shadow: 0 0 6px var(--color-status-live); }
-.lamp--eod::before   { background: var(--color-accent-bright); box-shadow: 0 0 6px var(--color-accent-bright); }
-.lamp--demo::before  { background: var(--color-series-3); box-shadow: 0 0 6px var(--color-series-3); }
-.lamp--locked::before { background: var(--color-text-secondary); }
-.lamp--stale::before  { background: var(--color-border-hover); }
-.stamp { font: 400 var(--font-2xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
+.checkbox:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
 
-/* P&L pill — text carries meaning, color reinforces */
+/* ── Status pills and tags (§14): words in a pill, one meaning per colour ──── */
 .pill {
-  display: inline-flex; align-items: center; padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  font: 500 var(--font-xs)/1.5 var(--font-mono); white-space: nowrap;
+  display: inline-flex; align-items: center; padding: 2px var(--space-2);
+  border-radius: var(--radius-pill); font-size: var(--font-xs); font-weight: 600;
+  background: var(--color-neutral-bg); color: var(--color-neutral);
 }
-.pill--gain { background: var(--color-gain-dim); color: var(--color-gain); }
-.pill--loss { background: var(--color-loss-dim); color: var(--color-loss); }
-.pill--flat { background: var(--color-surface-2); color: var(--color-text-secondary); }
-
-/* ticker chip (news rows, positions) */
-.chip {
-  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px;
-  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  font: 500 var(--font-xs)/1.5 var(--font-mono); color: var(--color-text-primary);
-  background: var(--color-surface-2); white-space: nowrap;
-}
-.chip .up   { color: var(--color-gain); }
-.chip .down { color: var(--color-loss); }
-
-/* stat block (label over value) */
-.stat { min-width: 0; }
-.stat-label {
-  font: 500 var(--font-xs)/1.4 var(--font-sans);
-  color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em;
-}
-.stat-value { font: 500 var(--font-lg)/1.3 var(--font-mono); color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
-.stat-value.up   { color: var(--color-gain); }
-.stat-value.down { color: var(--color-loss); }
-
-/* hero number (per-account NAV) */
-.hero-number {
-  font: 600 var(--font-3xl)/1.1 var(--font-mono);
-  color: var(--color-text-primary); font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+.pill-success { background: var(--color-success-bg); color: var(--color-success); }
+.pill-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.pill-danger  { background: var(--color-danger-bg);  color: var(--color-danger); }
+.pill-info    { background: var(--color-info-bg);    color: var(--color-info); }
+.pill-expired { background: var(--color-expired-bg); color: var(--color-expired); }
+/* A kind of thing, not a status: never a status colour. */
+.tag {
+  display: inline-flex; padding: 2px var(--space-2); border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); font-size: var(--font-xs); color: var(--color-text-secondary);
 }
 
-/* dense data table — sortable per design.md (header IS the control) */
-.data-table { width: 100%; border-collapse: collapse; font: 400 var(--font-sm)/1.4 var(--font-mono); font-variant-numeric: tabular-nums; }
-.data-table th {
-  font: 600 var(--font-xs)/1.2 var(--font-sans); text-transform: uppercase; letter-spacing: .05em;
-  color: var(--color-text-secondary); text-align: right; padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border); cursor: pointer; min-height: 44px;
-  white-space: nowrap;
+/* ── Empty states (§15) ───────────────────────────────────────────────────── */
+.empty-state { text-align: center; padding: var(--space-12) var(--space-6); color: var(--color-text-secondary); }
+.empty-state .empty-title { font-size: var(--font-base); font-weight: 700; color: var(--color-text-primary); margin-bottom: 6px; }
+.empty-state .empty-sub { font-size: var(--font-sm); max-width: 360px; margin: 0 auto; line-height: 1.5; }
+.empty-state .empty-act { margin-top: var(--space-4); }
+.empty-state.empty-sm { padding: var(--space-6) var(--space-3); }
+
+/* ── Dialogs (§9, §10): one shell; sized to the window, never a fixed width ── */
+/* The backdrop scrolls too, as a last resort: a dialog taller than the screen
+   (a phone on its side, the keyboard up) can still be scrolled into view. */
+.dialog-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-dialog); background: var(--color-backdrop);
+  display: flex; align-items: center; justify-content: center; padding: var(--space-4);
+  overflow-y: auto; overscroll-behavior: contain;
 }
-.data-table th:first-child, .data-table td:first-child { text-align: left; padding-left: 0; }
-.data-table th:last-child, .data-table td:last-child { padding-right: 0; }
-.data-table th:hover, .data-table th:focus-visible { color: var(--color-text-primary); }
-.data-table th:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
-.data-table th[aria-sort="ascending"]::after  { content: " ↑"; color: var(--color-accent-bright); }
-.data-table th[aria-sort="descending"]::after { content: " ↓"; color: var(--color-accent-bright); }
-.data-table td {
-  padding: 6px 8px; text-align: right; color: var(--color-text-primary);
-  border-bottom: 1px solid var(--color-border); white-space: nowrap;
+/* While a dialog is open the page behind it stays still. CSS, not a script:
+   the usual script lock cancels every touchmove, and that also stops a finger
+   scrolling the dialog's own list on an iPhone (design.md -> iPhone and iPad). */
+html:has(.dialog-backdrop:not([hidden])), html:has(dialog.dialog[open]) { overflow: hidden; }
+/* margin: auto keeps a dialog taller than the backdrop reachable from its top;
+   align-items: center alone would push its top off the screen. */
+.dialog {
+  width: min(480px, 94vw); max-height: 88vh; max-height: 88dvh; display: flex; flex-direction: column;
+  margin: auto;
+  background: var(--color-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
 }
-.data-table tbody tr:last-child td { border-bottom: none; }
-.data-table td.up   { color: var(--color-gain); }
-.data-table td.down { color: var(--color-loss); }
+/* A native <dialog> opened with showModal() takes the same shell. */
+dialog.dialog { border: 0; padding: 0; color: inherit; }
+/* .dialog's display: flex would override the browser's hiding of a closed one. */
+dialog.dialog:not([open]) { display: none; }
+dialog.dialog::backdrop { background: var(--color-backdrop); }
+.dialog-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4) var(--space-6); }
+.dialog-title { font-size: var(--font-lg); font-weight: 600; margin: 0; min-width: 0; }
+.dialog-body { padding: 0 var(--space-6) var(--space-4); overflow: auto; overscroll-behavior: contain; }
+/* Cancel (secondary) on the left, the act on the right, right-aligned. */
+.dialog-footer { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-4) var(--space-6); border-top: 1px solid var(--color-border); }
 
-/* compact variant — dense per-account positions */
-.data-table--compact { font-size: var(--font-xs); }
-.data-table--compact th { font-size: 11px; padding: 6px 5px; }
-.data-table--compact td { padding: 5px; }
-.data-table--compact td:first-child { max-width: 108px; overflow: hidden; text-overflow: ellipsis; }
-
-/* series key dot (account identity) */
-.key-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.key-dot--1 { background: var(--color-series-1); }
-.key-dot--2 { background: var(--color-series-2); }
-.key-dot--3 { background: var(--color-series-3); }
-
-/* news row */
-.news-row {
-  display: flex; gap: var(--space-3); align-items: baseline;
-  padding: var(--space-2) 0; border-top: 1px solid var(--color-border);
+/* ── Archived (N) pop-over (§7): stays inside the window, long lists scroll ── */
+/* Every pop-over (Archived, the ⋮ menu, the type-ahead list) is position:
+   fixed, so no card, dialog or sidebar with overflow: hidden can cut it off,
+   and the shared fit places it inside the screen. overscroll-behavior: contain
+   keeps a swipe at the end of its list from scrolling the page behind it. */
+.archived-btn { /* a .btn: the archive icon, then "Archived (N)"; hidden when N is 0 */ }
+.archived-pop, .menu-pop, .list-pop {
+  position: fixed; z-index: var(--z-popover); width: min(360px, 94vw);
+  max-height: min(60vh, 480px); max-height: min(60dvh, 480px);
+  overflow: auto; overscroll-behavior: contain; background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: var(--space-2);
 }
-.news-row:first-child { border-top: none; }
-.news-time { font: 400 var(--font-xs)/1.5 var(--font-mono); color: var(--color-text-secondary); flex: none; width: 52px;
-  display: flex; flex-direction: column; align-items: flex-start; }
-/* The date rides ABOVE the clock and only on rows that are not from today.
-   2xs (11px) rather than the row's 12px because "Jun 29" is 6 characters and
-   the column is 52px: at 12px mono that is ~48px before the column's own
-   rounding, which is close enough to clip on a longer month abbreviation.
-   The column width is deliberately NOT increased — it is shared with every
-   other row, so widening it for the rare dated one would indent all twenty. */
-.news-date { font-size: var(--font-2xs); line-height: 1.25; color: var(--color-text-secondary); white-space: nowrap; }
-.news-main { min-width: 0; }
-.news-headline { display: block; font: 500 var(--font-sm)/1.4 var(--font-sans); color: var(--color-text-primary); margin: 0; text-decoration: none; }
-a.news-headline:hover, a.news-headline:focus-visible { text-decoration: underline; }
-.news-meta { font: 400 var(--font-xs)/1.6 var(--font-sans); color: var(--color-text-secondary); display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.archived-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2); }
 
-.ai-disclaimer {
-  font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary);
-  border-top: 1px solid var(--color-border); padding-top: var(--space-2); margin-top: var(--space-3);
+/* ── The ⋮ menu (§5): a disclosure of native buttons, placed by the same fit ── */
+.menu-btn { /* a .btn-icon in .card-actions: aria-label="More actions", aria-expanded, aria-controls */ }
+.menu-pop { width: min(240px, 94vw); display: flex; flex-direction: column; gap: var(--space-2); } /* 8px between targets */
+.menu-item {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--size-target-min);
+  padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--color-text-primary); font: 500 var(--font-sm) var(--font-sans); text-align: left; cursor: pointer;
 }
+.menu-item:hover { background: var(--color-accent-light); }
+.menu-item:focus-visible { outline: 3px solid var(--color-accent); outline-offset: -3px; }
+.menu-item.danger { color: var(--color-danger); }
+.menu-item.danger:hover { background: var(--color-danger-bg); } /* the checked danger pair, never accent-light */
 
-/* Ask-the-desk system prompt — on-demand modal (owner request 2026-07-23):
-   opened via the ⚙ trigger at the far right of the Ask button, editable
-   immediately; Save & exit or the ✕/backdrop close it. */
-.modal-backdrop {
-  position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, .4); padding: var(--space-4);
+/* ── The type-ahead list (§16): choices that filter as you type ───────────────
+   A /command, an @mention, an autocomplete. A fixed list is a native <select>
+   instead: on a phone it opens the phone's own picker. Markup: the field has
+   role="combobox", aria-expanded, aria-controls and aria-activedescendant;
+   <div class="list-pop" role="listbox" id="…"> of <div class="list-option"
+   role="option" id="…">. House.typeahead (components.js) writes those roles,
+   places it under its field by the shared fit and runs its keys. */
+.list-pop { display: flex; flex-direction: column; }
+.list-option {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  min-height: var(--size-target-min); padding: var(--space-2) var(--space-3); flex: none;
+  border-radius: var(--radius-sm); color: var(--color-text-primary); cursor: pointer;
 }
-.modal-backdrop[hidden] { display: none; }   /* the class's own display:flex would otherwise beat [hidden] */
-.modal-panel { width: 100%; max-width: 640px; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; }
-.modal-panel .panel-body { overflow-y: auto; }
-.sys-prompt-text {
-  width: 100%; box-sizing: border-box; resize: vertical; min-height: 240px;
-  font: 400 var(--font-xs)/1.55 var(--font-mono); color: var(--color-text-primary);
-  background: var(--color-surface); border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+.list-option .list-hint { font-size: var(--font-sm); color: var(--color-text-secondary); text-align: right; }
+.list-option:hover, .list-option[aria-selected="true"] { background: var(--color-accent-light); }
+.list-head { padding: var(--space-2) var(--space-3); font-size: var(--font-xs); font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .06em; }
+
+/* ── Upload box (§13) ─────────────────────────────────────────────────────── */
+.upload {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  padding: var(--space-6); text-align: center; color: var(--color-text-secondary);
+  border: 2px dashed var(--color-border-input); border-radius: var(--radius-md); background: var(--color-surface);
 }
-.sys-prompt-text:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
-.sys-prompt-counter { font: 400 var(--font-2xs)/1.4 var(--font-mono); color: var(--color-text-secondary); text-align: right; margin: 4px 0 0; }
-.sys-prompt-counter.sys-prompt-counter--low { color: var(--color-danger); }
-.sys-prompt-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+/* While a file is over the box, its words go text-primary: the one pair checked on
+   accent-light (design.md -> Accessibility), as on a menu item's hover. */
+.upload.is-over { border-color: var(--color-accent); background: var(--color-accent-light); color: var(--color-text-primary); }
+.upload .upload-limits { font-size: var(--font-sm); }
+.upload img { max-height: 160px; border-radius: var(--radius-sm); } /* the chosen photo's thumbnail (§13) */
 
-/* locked panel (PIN gate) — .lock-explain also serves the equity/ask shells */
-.lock-explain { font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0 0 var(--space-3); }
-.lock-form { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.lock-form .input { flex: 1 1 160px; max-width: 240px; }
-.lock-error { font: 400 var(--font-sm)/1.5 var(--font-sans); color: var(--color-danger); margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
-
-/* ask-the-desk (PIN-gated Claude Q&A) */
-/* height is capped by the panel (col-rail stretches to the Markets tile); the
-   thread flex-fills and scrolls inside — no hard max-height here */
-.ask-thread { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-3); }
-.ask-thread:empty { display: none; }
-.ask-q {
-  font: 500 var(--font-sm)/1.5 var(--font-sans); color: var(--color-text-primary); margin: 0;
-  padding: var(--space-2) var(--space-3); background: var(--color-surface-2);
-  border-radius: var(--radius-sm); align-self: flex-end; max-width: 92%;
+/* ── Messages (§18): errors next to what failed; toasts for success ───────── */
+.inline-msg { font-size: var(--font-sm); margin-top: var(--space-1); color: var(--color-text-secondary); }
+.inline-msg.err { color: var(--color-danger); } /* set role="alert" with it */
+.inline-msg.ok { color: var(--color-success); }
+.toast {
+  position: fixed; z-index: var(--z-toast); left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px)); /* above the iPhone's home bar */
+  max-width: min(480px, 94vw); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
+  background: var(--color-text-primary); color: var(--color-surface); box-shadow: var(--shadow-md);
 }
-.ask-a {
-  font: 400 var(--font-sm)/1.55 var(--font-sans); color: var(--color-text-primary); margin: 0;
-  padding: var(--space-2) var(--space-3); border-left: 2px solid var(--color-accent-bright); max-width: 92%;
-  white-space: pre-wrap; /* Codex review, PR #182: this is still textContent (never innerHTML) —
-    pre-wrap only makes newlines the model already puts in its answer actually
-    render as line breaks instead of collapsing to a space; it does not parse
-    markdown or any markup, so no HTML-injection surface changes. */
+.toast.err { background: var(--color-danger); color: var(--color-on-danger); }
+/* Announcements, maintenance, lockdown: full width, in the flow, never floating. */
+.banner { width: 100%; padding: var(--space-3) var(--space-4); background: var(--color-info-bg); color: var(--color-info); }
+
+/* ── Segmented control (§11): role="tablist" / role="tab" / aria-selected ──── */
+/* Each tab is a native <button role="tab">; the arrow keys come from the shared script (§11). */
+/* More tabs than a phone row holds wrap onto a second line inside the control. */
+.segmented { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--color-border-input); border-radius: var(--radius-md); padding: 2px; gap: var(--space-2); }
+.segmented [role="tab"] {
+  min-height: var(--size-target-min); min-width: var(--size-target-min); padding: 0 var(--space-4); border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--color-text-primary); font: 600 var(--font-sm) var(--font-sans); cursor: pointer;
 }
+/* §14: selection is blue whatever the brand accent; the inset edge gives the
+   selected state its 3:1 against the control, which the pale fill alone lacks. */
+.segmented [role="tab"][aria-selected="true"] { background: var(--color-info-bg); color: var(--color-info); box-shadow: inset 0 0 0 2px var(--color-info); }
+.segmented [role="tab"]:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
 
-.ask-toolbar { display: flex; justify-content: flex-end; margin: 0 0 var(--space-2); }
-.ask-toolbar:has(.ask-clear[hidden]) { display: none; }
-.ask-clear { appearance: none; border: 0; background: none; font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; padding: 4px 6px; border-radius: var(--radius-sm); }
-.ask-clear:hover, .ask-clear:focus-visible { color: var(--color-danger); }
-/* The sources under an answer are COLLAPSED behind one "Sources (N)" line (owner 2026-10-14: "Collapse them"): a
-   native <details>, closed when drawn. The line is muted text (the Clear button's token, already contrast-checked);
-   the links keep their accent colour inside. The disclosure arrow is decoration (the alt text is empty, and a browser
-   that does not read `content: x / y` keeps the plain glyph); open/closed is the details element's own state. */
-.ask-sources { margin: 2px 0 var(--space-2); padding-left: var(--space-3); }
-.ask-sources > summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; padding: 4px 0; border-radius: var(--radius-sm); font: 600 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
-.ask-sources > summary::-webkit-details-marker { display: none; }
-.ask-sources > summary::before { content: '▸'; content: '▸' / ''; font-size: 1.1em; }
-.ask-sources[open] > summary::before { content: '▾'; content: '▾' / ''; }
-.ask-sources > summary:hover { color: var(--color-text-primary); }
-.ask-sources > summary:focus-visible { color: var(--color-text-primary); outline: 2px solid var(--color-accent); outline-offset: 2px; }
-.ask-sources-list { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0 0; }
-/* A finger needs a taller line than a pointer. */
-@media (hover: none) { .ask-sources > summary { min-height: 32px; } }
-.ask-sources a { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-accent); text-decoration: none; }
-.ask-sources a:hover, .ask-sources a:focus-visible { text-decoration: underline; }
-
-/* The model switch (desk_021) — its OWN row, NOT inside .ask-toolbar: that is display:none while Clear is
-   hidden, which is every desk with no saved history. The pressed pair is the verify toggle's (already
-   contrast-checked; the accent is not the gain/loss red, which is P&L-only). Disabled is a state of the
-   control, not of the page: no opacity, so the text keeps the contrast it was checked at. */
-.ask-tier { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--space-2); margin: 0 0 var(--space-2); }
-.ask-tier-label { font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: .04em; }
-.ask-tier-group { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
-.ask-tier-opt { appearance: none; border: 0; background: none; font: 600 var(--font-xs)/1 var(--font-sans); color: var(--color-text-primary); padding: 6px 10px; min-height: 30px; cursor: pointer; }
-.ask-tier-opt + .ask-tier-opt { border-left: 1px solid var(--color-border); }
-.ask-tier-opt[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
-.ask-tier-opt:disabled { color: var(--color-text-secondary); cursor: not-allowed; }
-.ask-tier-opt:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
-.ask-tier-opt:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--color-surface-2); }
-/* Windows High Contrast drops author colours, which leaves the chosen model looking like the other two — and this
-   control says which model answers every question. An underline survives forced colours. */
-@media (forced-colors: active) { .ask-tier-opt[aria-pressed="true"] { text-decoration: underline; text-underline-offset: 3px; } }
-/* A mis-tap rewrites the model for every question the desk answers, so on a touch screen the target is as tall as the
-   buttons beside it. */
-@media (hover: none) { .ask-tier-opt { min-height: 40px; } }
-.ask-tier-retry { min-height: 30px; padding: 4px 10px; font-size: var(--font-xs); box-shadow: none; }
-.ask-tier-cap { font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
-.ask-tier-note { flex: 1 1 100%; margin: 0; font: 400 var(--font-2xs)/1.4 var(--font-sans); color: var(--color-text-secondary); }
-.ask-tier-note:empty { display: none; }
-/* under an answer: when it came in (Pacific), then which model produced it. The time has the model line's footprint
-   and, when a model line follows, sits tight on top of it as one pair (`:has` — a browser without it just leaves the
-   ordinary gap between the two). */
-.ask-when, .ask-model { margin: -2px 0 var(--space-2); padding-left: var(--space-3); font: 400 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary); }
-.ask-when:has(+ .ask-model) { margin-bottom: calc(-1 * var(--space-2)); }
-.ask-when + .ask-model { margin-top: 0; }
-
-/* ── watchlists (owner request 2026-07-29) ─────────────────────────────────
-   Rendered as TILES, not a table (owner request, same day): each list is a
-   labelled band. The idiom came from the market strip, which this panel then
-   replaced outright later the same day; the band/tile chrome still lives with
-   .mkt-group in styles/layout.css and these rules only widen it for a full-width
-   panel. Class-plus-class beats those single-class rules on specificity, so
-   source order is irrelevant. */
-/* EACH LIST IS A BAND (owner request 2026-09-30: horizontal, not the vertical
-   columns of 2026-08-17..09-30) AND IT NEVER SCROLLS SIDEWAYS (owner request
-   2026-10-04: "shrink the watch list as much as possible, but keep all the data
-   still intact. I want to cap the number of stocks to this widescreen to fit it
-   so I don't have to scroll back and forth. And if there's any excess, just
-   create another watch list below it so I can see what I need to get rid of.").
-   That WITHDRAWS the 2026-07-29 ruling (one row per list, scrolled sideways, with
-   an always-visible bar) and the 76px tile that went with it.
-
-   Bands stack top to bottom, ONE per list, every list still on screen at once
-   (the bands ARE the navigation, there are still no tabs). Inside a band the
-   head (name + controls) sits in a fixed block on the LEFT and the tiles fill a
-   GRID to its right: `repeat(auto-fill, minmax(var(--wl-tile-w), 1fr))` packs as
-   many columns as the band's width holds and the EXCESS WRAPS onto further rows
-   BELOW — the "other watch list underneath" — so a long list is read, counted and
-   pruned in full instead of being dragged through a scrollbar. Uniform columns,
-   not a flex wrap: a flex row's last line stretches or ragged-ends, a grid's does
-   not.
-   The band MARKUP never changed — .mkt-group > .wl-band-head + .mkt-group-tiles
-   — so drag-to-arrange, quick add, double-click removal, the detail window and
-   the create/delete controls hang off it exactly as before; only the tile area's
-   display changed. */
-.wl-strip { --wl-tile-w: 60px; display: flex; flex-direction: column; gap: 0; }
-/* No `overflow-x: scroll`, no scrollbar rules, no `overscroll-behavior-x`: nothing
-   in a band scrolls any more (S42 asserts that, and still scans every rule for
-   the banned `overscroll-behavior` shorthand and any `-y` form). `overflow:
-   visible` is deliberate — the tiles' 1px border overlap (below) pokes one pixel
-   past the last column, which the box's own right/bottom padding pays for.
-   `position: relative` is the anchor of the absolutely placed drop marker. */
-.wl-strip .mkt-group-tiles {
-  max-width: none; display: grid; align-content: start;
-  grid-template-columns: repeat(auto-fill, minmax(var(--wl-tile-w), 1fr));
-  overflow: visible; position: relative; padding: 0 1px 1px 0;
-}
-/* Placeholder for a list with no symbols. Height is a tile's height so the
-   band keeps its shape and stays a drop target; muted and italic so it never
-   reads as a ticker. One line, never wrapped, and it spans EVERY column — in a
-   grid it would otherwise be squeezed into the first 60px cell. */
-.wl-band-empty {
-  display: flex; align-items: center; grid-column: 1 / -1;
-  min-height: 56px; padding: 0 var(--space-3);
-  font-size: var(--font-xs); font-style: italic;
-  color: var(--color-text-secondary); white-space: nowrap;
-}
-/* the band must be free to shrink: the grid's tracks come from the box's width */
-.wl-strip .mkt-group { align-items: stretch; }
-.wl-strip .mkt-group-tiles { flex: 1 1 0; min-width: 0; }
-/* Under 640px .mkt-group turns into a COLUMN (styles/layout.css): the head sits
-   above the tiles and the tile grid takes the band's full width and wraps there
-   too (at 390px: five columns). In a column flex-basis governs HEIGHT, so the
-   head's fixed block resets to its content height (see .wl-band-head below). */
-@media (max-width: 640px) {
-  /* .mkt-group turns into a COLUMN here, so `flex: 1 1 0` above would set a
-     ZERO HEIGHT basis on the tile area instead of a width one, collapsing the
-     band to its padding and clipping every tile (Codex review, PR #190). Height
-     must come from content on mobile. */
-  .wl-strip .mkt-group-tiles { flex: 0 0 auto; }
+.section-header {
+  font-size: var(--font-sm); font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border); padding-bottom: var(--space-2);
 }
 
-/* sort control — the shared .seg chrome, shrunk to sit inside a panel header.
-   That header carries title + lamp + ✎ + these four buttons + stamp, which
-   stops fitting on one line on a phone. Measured before fixing (Codex review,
-   PR #191): at 390px the title is already truncated to 30 of 93px, at 360px it
-   is squeezed to ZERO — the panel silently loses its heading, which is worse
-   than the overflow — and by 320px the header spills 24px and the page scrolls
-   sideways. So the header wraps, and below 480px the sort takes its own row
-   where the title keeps its full width. */
-.area-watchlist .panel-header { flex-wrap: wrap; }
-.wl-sort { flex: 0 0 auto; }
-@media (max-width: 480px) {
-  .area-watchlist .wl-sort { order: 1; width: 100%; }
-  .area-watchlist .wl-sort button { flex: 1 1 0; }
+/* `transition` alone is not enough: an @keyframes pulse is an animation, and
+   smooth scrolling is motion too. */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+  html { scroll-behavior: auto !important; }
 }
-.wl-sort button {
-  min-width: 0; min-height: 28px; padding: 4px 9px;
-  font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
-}
-.wl-sort .wl-dir { margin-left: 3px; font-size: 10px; }
-
-/* Chart timeframe (owner request 2026-07-30) — same segmented chrome as the
-   sort beside it, so the header reads as two controls of one kind rather than
-   two different widgets. Seven buttons is wider than the four-way sort, so it
-   is the first thing to take its own row when the header wraps. */
-.wl-tf { flex: 0 0 auto; }
-.wl-tf button {
-  min-width: 0; min-height: 28px; padding: 4px 8px;
-  font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
-}
-@media (max-width: 720px) {
-  .area-watchlist .wl-tf { order: 1; width: 100%; }
-  .area-watchlist .wl-tf button { flex: 1 1 0; }
-}
-
-/* Tile with today's shape (owner request 2026-07-29): the % pill moved beneath
-   the price and a sparkline took its slot. A third text row cannot fit the
-   owner's +10% budget on a 120×48 tile, so padding and the pill tighten to land
-   at 132×52 — +10% wide, +8% tall. */
-/* Every rule here is scoped under .wl-strip on purpose: the .mkt-tile chrome
-   lives in index.html's inline <style>, which loads AFTER this sheet, so a bare
-   .wl-tile would tie on specificity and lose on source order. */
-/* HALF-WIDTH, stacked (owner request 2026-07-31, approved from a mock built on
-   the real page). The sparkline moved out from beside the price to below the
-   % pill, which is what frees the width: 132px → 66px, and the band shows 21
-   tiles instead of 10 at 1600px. Height goes 49 → 63px, which the owner
-   accepted explicitly ("I don't mind the greater height").
-
-   Reading order is now ticker → price → change → line: the number and its
-   direction sit together as one unit, with the path as context beneath, rather
-   than the line splitting them.
-
-   `display: contents` on .wl-vals is what makes that possible. The markup nests
-   the price and the sparkline inside that wrapper, so the line could never be
-   ordered below the pill — which is a SIBLING of the wrapper — while the
-   wrapper generated a box. Dissolving it promotes both to direct flex children
-   of the tile, and `order` can then place all four. */
-/* SHRUNK TO 60px (owner request 2026-10-04: "shrink the watch list as much as
-   possible, but keep all the data still intact" — it was 76px, 64px tall, with
-   the one-row scrolling band). The tile is now a GRID ITEM: its width is the
-   column the band's `auto-fill` grid gives it — never narrower than
-   `--wl-tile-w`, stretched evenly (at most a few px) so the band's right edge is
-   flush — not a `flex-basis`, so there is no `flex` shorthand here at all. What
-   holds the size down is what holds it up: nothing on the tile may be clipped,
-   so the TYPE steps down by string length (price and pill tiers below) instead
-   of the box growing, exactly as it did at 76px, one notch smaller. 60px leaves
-   52px of usable width (1px borders, 3px padding) and the worst real values
-   sit inside it: `700,000.00` (BRK.A) at the 9px tier is ~51px, `+100.50%` at
-   the 10px pill tier ~50px. S27 measures every value against its own tile.
-   The 1px negative right/bottom margin overlaps neighbouring borders so a seam is
-   one line, not two — the grid-era form of the old `.mkt-tile + .mkt-tile
-   { margin-left: -1px }`, which would have pulled only the SECOND tile of each
-   row left. Three classes, so it outranks that rule without leaning on source
-   order. */
-.wl-strip .mkt-group-tiles .wl-tile {
-  margin: 0 -1px -1px 0; padding: 3px; gap: 0; min-width: 0;
-  display: flex; flex-direction: column; align-items: stretch;
-}
-.wl-strip .wl-vals { display: contents; }
-/* The ticker is the biggest thing on the tile (owner 2026-10-06: "remove all the ext in the
-   symbols and just make their fonts bigger"; it was 8px beside an 11px price). 12px for up to 5
-   characters; wlTile() sets `is-long` (6-7 characters) and `is-xlong` (8+) for the smaller tiers
-   below. Plex Sans capitals advance ~0.66em: 5 characters at 12px ~41px of the 52px a tile
-   leaves, 7 at 10px ~46px, 10 at 8px ~53px, which is the one that wraps. */
-.wl-strip .mkt-name { order: 1; font-size: 12px; line-height: 1.15; letter-spacing: .02em; }
-.wl-strip .mkt-last { order: 2; font-size: 11px; line-height: 1.15; }
-/* The change pill keeps the PRICE's size (owner request 2026-08-21: "bigger") —
-   11px beside the price's 11px; the 12px it had was the cost of the 76px tile.
-   A longer figure steps down a tier like the price does — see wlTile(), which
-   sets the classes by string length: +0.54% is 6 characters (11px), -24.21% 7
-   (10px), +100.50% 8 (9px), +1234.56% 9 (8px), +12345.67% 10 (7px). The pill
-   carries 4px of padding of its own, so each tier's text is sized to ~45px of
-   the 52px a tile leaves (0.62em an advance), not the 49px the price may use:
-   PR #306's first cut left the padding out and a 7-character pill at 11px
-   filled the box with nothing to spare — CI's Chromium drew it wider than the
-   sandbox's. Five tiers, none of them a clip. */
-.wl-strip .wl-pct { order: 3; align-self: flex-start; font-size: 11px; line-height: 1.05; padding: 0 2px; }
-.wl-strip .wl-pct.is-long { font-size: 10px; letter-spacing: -.02em; }
-.wl-strip .wl-pct.is-xlong { font-size: 9px; letter-spacing: -.03em; }
-.wl-strip .wl-pct.is-xxlong { font-size: 8px; letter-spacing: -.03em; }
-.wl-strip .wl-pct.is-xxxlong { font-size: 7px; letter-spacing: -.03em; }
-.wl-strip .wl-spark { order: 4; display: block; width: 100%; margin-top: 2px; opacity: .9; }
-/* Full tile width; the SVG carries a viewBox (sparkline() in app.js), so it
-   scales cleanly. 13px tall (was 15) — the line is context, the number is the
-   answer, and a band that now wraps pays for every pixel twice. */
-.wl-strip .wl-spark svg { display: block; width: 100%; height: 13px; }
-/* Long values step down one size rather than clipping — see the note in
-   wlTile(), which sets these classes by string length. A clipped price would be
-   a wrong price. */
-/* Four tiers, sized for HEADROOM rather than to just fit. A single tier was
-   once verified in a sandbox where the IBM Plex webfont could not load, so it
-   was measured against fallback metrics — CI, with the real font, still
-   clipped; and PR #306's first cut put a 12-character price (1,234,567.89) at 8px
-   on the same arithmetic ("~54px against 52") and CI clipped it by ~2px. Plex
-   Mono and the usual fallbacks advance ~0.6em a character (take 0.62 for safety),
-   the tile leaves 52px, and every tier below stays under ~49px at 0.62em:
-   8 chars (1,234.56) at 10px = 48; 9 (12,345.67) at 9px = 48; 10 (123,456.78) at
-   8px = 46; 12 (1,234,567.89) at 7px = 49. An 11- or 13-character price cannot
-   occur (two decimals, a comma every three digits). */
-.wl-strip .mkt-last.is-long { font-size: 10px; letter-spacing: -.02em; }
-.wl-strip .mkt-last.is-xlong { font-size: 9px; letter-spacing: -.03em; }
-.wl-strip .mkt-last.is-xxlong { font-size: 8px; letter-spacing: -.04em; }
-.wl-strip .mkt-last.is-xxxlong { font-size: 7px; letter-spacing: -.04em; }
-/* Last-resort guard: even if a value still overruns, it must not paint over the
-   tile's neighbour — the box clips instead, which S27 then catches as a real
-   finding rather than letting it bleed silently across the band. */
-/* The ticker line WRAPS on every tile, not only long ones. Scoping the wrap to
-   `.is-long` (>5 chars) left a short symbol plus its session badge — SOXL EXT —
-   able to overflow, and that is what kept failing. (Both session badges, EXT and
-   CLOSE, are gone since 2026-10-06; the wrap stays as the guarantee.) Wrapping
-   unconditionally makes `scrollWidth > clientWidth` impossible here for ANY ticker,
-   which is the property worth having; a size that happens to
-   fit is not. The price keeps nowrap + ellipsis: a number must never break
-   across lines, so it steps down in size instead (see the is-long/is-xlong
-   tiers above). */
-.wl-strip .mkt-last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wl-strip .mkt-name { min-width: 0; white-space: normal; overflow-wrap: anywhere; overflow: visible; }
-/* The base .mkt-name carries `letter-spacing: .05em`, which on a 7-character
-   ticker like BTC-USD is ~2.5px of pure air — once enough to push a session
-   badge past the edge. A long ticker drops the tracking as well as the
-   size. A truncated TICKER is milder than a truncated price, but this panel is
-   scanned by ticker, so it is still worth not doing. */
-/* WRAPS rather than shrinking further. Two font-size guesses (10px, then 9px
-   for prices) failed CI because I was tuning numbers against metrics I could
-   not measure. Wrapping is deterministic: a line that can break cannot
-   overflow, whatever the typeface does, so `scrollWidth > clientWidth` is
-   impossible here by construction instead of by a size that happens to fit.
-   Costs one line of height on a tile whose ticker still does not fit on one line
-   (8 characters or more) — and in a grid every tile in that row is as tall as the
-   tallest, so one such tile makes its whole row one line taller; the owner
-   accepted extra height for width. */
-.wl-strip .mkt-name.is-long { font-size: 10px; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
-.wl-strip .mkt-name.is-xlong { font-size: 8px; }
-.wl-strip .wl-tile:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
-
-/* ── quick add / hold-to-remove (owner request 2026-07-30) ─────────────────
-   The list name and its controls share the band's LEFT block. It is a fixed
-   84px (104px until 2026-10-04, when the tiles shrank and the band's width went
-   to them; the three 18px controls need ~58px); the label
-   inside gives up its own flex-basis so a long name still wraps rather than
-   shoving the controls out of view.
-   Scoped under .wl-strip so these two-class rules outrank the shared
-   `.mkt-group-label` in styles/layout.css without depending on source order. */
-/* CONTROLS ON TOP, NAME BENEATH, packed tight (owner report 2026-08-20: "a lot
-   of wasted space in the heading of watchlist — put the name below the little
-   icons and compact it as much as possible"). That report was made against the
-   column layout; it holds in the band's head block just as well, where three
-   18px controls and a name cannot share a line either, so something wraps
-   whatever the order. Putting the CONTROLS first means what wraps is the name,
-   which reads fine on its own line and is the only item that can use the full
-   width.
-
-   `order` rather than moving the markup: the label is the group's accessible
-   name via aria-label on .mkt-group, and the buttons' labels reference the list
-   by title — reordering the DOM would put the controls before the thing they
-   are named after, for anyone reading it linearly.
-
-   No min-height: the head is as tall as one control row plus the name, and the
-   two lines sit centred in the band (`align-content`, because the head is
-   stretched to the band's height and a wrapped flex container would otherwise
-   spread its lines apart to fill it).
-   `flex: 0 0 84px` is a WIDTH here — the band is a row — and is reset to the
-   content height in the stacked mobile block below. */
-.wl-strip .wl-band-head {
-  flex: 0 0 84px; display: flex; flex-wrap: wrap; align-items: center; align-content: center;
-  gap: 1px 2px; min-width: 0;
-}
-.wl-strip .wl-band-head .wl-move, .wl-strip .wl-band-head .wl-del { order: 1; }
-/* "Split off N" — its own line beneath the name, and only on a band that wraps
-   (wlSyncSplit reveals it). A labelled control, not a glyph: it moves stocks into
-   a new saved list, and a bare arrow beside ↑ ↓ × would be pressed by mistake. */
-.wl-strip .wl-band-head .wl-split {
-  order: 3; flex: 1 0 100%; margin-top: 2px; padding: 1px 3px;
-  border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface);
-  color: var(--color-text-secondary); font: 500 9px/1.3 var(--font-sans); letter-spacing: .02em;
-  text-align: center; white-space: nowrap; cursor: pointer;
-}
-.wl-strip .wl-band-head .wl-split:hover:not(:disabled),
-.wl-strip .wl-band-head .wl-split:focus-visible { color: var(--color-accent-bright); border-color: var(--color-accent-bright); }
-.wl-strip .wl-band-head .wl-split:disabled { opacity: .35; cursor: default; }
-.wl-strip .wl-band-head .wl-split[hidden] { display: none; }
-.wl-strip .wl-band-head .mkt-group-label {
-  order: 2; flex: 1 0 100%; min-width: 0;
-  white-space: normal; overflow-wrap: anywhere; line-height: 1.2;
-}
-/* Sized for DISCOVERABILITY, not daintiness (owner report 2026-07-30: "not
-   seeing the way to add symbols"). The first cut was 17px in the secondary text
-   colour beside a 9px label — present, but easy to miss even when looked for.
-   It now carries the accent colour and a full-strength border at 22px, which is
-   also a more honest touch target on a phone. */
-.wl-add {
-  flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--color-accent-bright); border-radius: 50%;
-  background: var(--color-surface); color: var(--color-accent-bright);
-  font: 600 15px/1 var(--font-sans); cursor: pointer;
-}
-.wl-add:hover, .wl-add:focus-visible { background: var(--color-accent-bright); color: var(--color-surface); }
-.wl-add:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 2px; }
-@media (max-width: 640px) {
-  /* the band stacks, so the gutter stops being a fixed column */
-  .wl-strip .wl-band-head { flex-basis: auto; }
-}
-
-/* Removal is a DOUBLE-CLICK (owner ruling 2026-07-30, replacing the hold and its
-   progress fill — there is no wait left to visualise).
-
-   `touch-action: manipulation` is load-bearing, not tidying: mobile browsers
-   reserve a double-tap for zoom and would swallow the gesture, so without it
-   double-click-to-remove works on a desktop and silently does nothing on a
-   phone. It disables double-tap zoom on these tiles only — pinch-zoom and page
-   scrolling are untouched.
-
-   Scoped to .wl-removable, which wlWireRemove() adds (Codex review, PR #200).
-   On every .wl-tile it also stripped double-tap zoom in demo and locked
-   sessions, where no removal is wired — taking away a real gesture in exchange
-   for nothing.
-
-   Selection is suppressed for the same reason a double-click needs it anywhere:
-   the second click would otherwise select the ticker text under the cursor. */
-.wl-strip .wl-tile { position: relative; }
-.wl-strip .wl-tile.wl-removable {
-  touch-action: manipulation;
-  user-select: none; -webkit-user-select: none;
-}
-
-/* ── staging tray, trash and drag (owner request 2026-07-31) ─────────────── */
-
-/* Transient note in the panel header (replaces the staging row's hint line). */
-.wl-note { font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); }
-.wl-note[hidden] { display: none; }
-/* Header-resident now (owner ruling 2026-07-31), so NO `margin-left: auto` —
-   that pushed it to the far edge when it lived on its own row, and in the
-   header it would shove the as-of stamp off its own `ml-auto` anchor. Sized to
-   sit level with the ✎ and the seg controls beside it. */
-.wl-trash {
-  width: 26px; height: 26px; flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px dashed var(--color-border); border-radius: 6px;
-  font-size: 14px; line-height: 1; cursor: pointer; user-select: none;
-}
-.wl-add--tray { width: 26px; height: 26px; flex: 0 0 auto; }
-/* Same trap as `.wl-tray[hidden]` two rules up: a class selector setting
-   `display` outranks the UA's `[hidden] { display: none }`, so setting the
-   attribute alone left both controls on screen in demo — a write control
-   offered where there is nothing to write to. Caught by S21. */
-/* Labelled, so it cannot be confused with the bare + beside it (new SYMBOL
-   tile). Auto width since it carries text. */
-.wl-newlist {
-  width: auto; height: 26px; flex: 0 0 auto; padding: 0 8px;
-  font-size: 11px; letter-spacing: .02em; white-space: nowrap;
-}
-.wl-add[hidden], .wl-trash[hidden], .wl-newlist[hidden] { display: none; }
-/* Delete a whole list, in the band's own gutter beside its ↑/↓. Sized and
-   shaped like .wl-move so the three read as one cluster. The DANGER colour is
-   reserved for hover/focus: at rest this sits beside two harmless arrows and
-   must not shout, but the moment it is the thing under the pointer it has to
-   look different from "move". Not a gain/loss token — those mean P&L. */
-.wl-del {
-  width: 18px; height: 18px; flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid transparent; border-radius: 4px; background: none;
-  color: var(--color-text-secondary); font-size: 13px; line-height: 1;
-  cursor: pointer; padding: 0;
-}
-.wl-del:hover:not(:disabled), .wl-del:focus-visible {
-  color: var(--color-danger); border-color: var(--color-danger);
-}
-.wl-del:disabled { opacity: .35; cursor: default; }
-.wl-del[hidden] { display: none; }
-/* Drop feedback is the ACCENT, never the loss red: gain/loss colour on this
-   desk means P&L, and a red glow on a hover target would read as a number. */
-.wl-trash.wl-drop-over,
-.mkt-group-tiles.wl-drop-over { outline: 2px dashed var(--color-accent-bright); outline-offset: 2px; }
-
-/* The tile follows the pointer; the original stays put at reduced opacity so
-   the row does not reflow underneath the drag. */
-.wl-ghost {
-  position: fixed; top: 0; left: 0; z-index: 60;
-  pointer-events: none; opacity: .9;
-  box-shadow: var(--shadow-raised);
-}
-.wl-tile.wl-dragging { opacity: .35; }
-/* Armed = a finger has rested on the tile and the drag is about to take over,
-   so the browser must stop treating the gesture as a scroll. Applied ONLY
-   while armed: `touch-action: none` on every tile would make the panel
-   unscrollable on a phone, which is the same class of mistake as stripping
-   double-tap zoom from tiles that had no removal wired (PR #200). */
-.wl-tile.wl-armed { touch-action: none; outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
-body.wl-drag-active { cursor: grabbing; }
-body.wl-drag-active .wl-tile { cursor: grabbing; }
-/* Placed by wlDragPaint with left/top/height — ABSOLUTE, so it takes no grid cell
-   and can never push a tile onto the next row (the 3px flex child of the
-   single-row era could, and made the end-of-row autoscroll loop). The tile area
-   is its `position: relative` anchor. */
-.wl-drop-marker {
-  position: absolute; width: 3px; z-index: 2; pointer-events: none;
-  background: var(--color-accent-bright); border-radius: 2px;
-}
-
-.wl-quick-input {
-  width: 100%; margin-bottom: var(--space-3); text-transform: uppercase;
-  resize: vertical; min-height: 62px; font-family: var(--font-mono);
-}
-.wl-quick-panel, .wl-rm-panel { max-width: 420px; }
-
-.wl-edit {
-  appearance: none; border: 0; background: none; cursor: pointer;
-  font: 400 13px/1 var(--font-sans); color: var(--color-text-secondary);
-  padding: 4px 6px; border-radius: var(--radius-sm); margin-left: 6px;
-}
-.wl-edit:hover, .wl-edit:focus-visible { color: var(--color-accent-bright); background: var(--color-surface-2); }
-.wl-empty { font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); margin: var(--space-3) 0 0; }
-
-.wl-missing { font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--color-text-secondary); margin: var(--space-3) 0 0; }
-
-/* watchlist editor (modal) */
-.wl-edit-row { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); margin-bottom: var(--space-3); }
-.wl-edit-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-.wl-edit-title { flex: 1 1 auto; min-width: 0; font: 600 var(--font-sm)/1.3 var(--font-sans); padding: 7px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-primary); }
-.wl-edit-title:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
-.wl-edit-count { font: 400 var(--font-2xs)/1 var(--font-mono); color: var(--color-text-secondary); white-space: nowrap; }
-.wl-edit-del { appearance: none; border: 0; background: none; cursor: pointer; font: 600 var(--font-2xs)/1 var(--font-sans); color: var(--color-text-secondary); padding: 6px 8px; border-radius: var(--radius-sm); }
-.wl-edit-del:hover, .wl-edit-del:focus-visible { color: var(--color-danger); background: var(--color-surface-2); }
-.wl-edit-syms { width: 100%; font: 400 var(--font-xs)/1.5 var(--font-mono); padding: 8px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-primary); resize: vertical; }
-.wl-edit-syms:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: -2px; }
-.wl-edit-actions { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-3); }
-.wl-edit-actions .btn { min-height: 40px; }
-
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
-
-/* ── scheduled asks (owner request 2026-07-31; server-side desk_017) ───────── */
-/* Two lines per row, not one: the question is free text and wants the full
-   width, while the cadence controls are small and fixed. Packed onto one line
-   they competed, and the question — the part that is actually read — was the
-   one that lost. */
-.ask-sched-row { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 8px; margin-bottom: 8px; }
-.ask-sched-head { display: flex; align-items: center; gap: 8px; }
-.ask-sched-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-.ask-sched-row .input { min-height: 34px; font-size: 13px; }
-.ask-sched-q { flex: 1 1 auto; min-width: 0; }
-.ask-sched-cad { flex: 0 0 130px; }
-.ask-sched-min, .ask-sched-time { flex: 0 0 92px; }
-.ask-sched-row .btn { min-height: 30px; padding: 4px 10px; font-size: var(--font-xs); box-shadow: none; }
-.ask-sched-lbl { font: 400 11px/1 var(--font-sans); color: var(--color-text-secondary); white-space: nowrap; }
-/* The on/off label sits at the head of the row, so it carries a little more
-   weight than the secondary "market hrs only" label beside the footer. Fixed
-   width so "On" and "Paused" do not shift the question box as it is toggled. */
-.ask-sched-on { flex: 0 0 42px; font-weight: 600; cursor: pointer; }
-/* A paused row stays fully legible — it is still editable and its text must be
-   readable — but reads as inactive at a glance. Opacity alone, no colour: the
-   gain/loss palette is P&L-only and "paused" is not a loss. */
-.ask-sched-row--off { opacity: .58; }
-.ask-sched-summary { margin: 0 0 8px; font: 500 12px/1.4 var(--font-sans); color: var(--color-text-secondary); }
-.ask-sched-summary--off { color: var(--color-accent-bright); }
-/* The schedule in words plus whether it has actually run — the answer to "is
-   this thing on?", which the controls above it cannot give. */
-.ask-sched-when { flex: 1 1 100%; font: 400 11px/1.4 var(--font-sans); color: var(--color-text-secondary); }
-.ask-sched-note { font: 400 12px/1 var(--font-sans); color: var(--color-text-secondary); align-self: center; }
-.ask-sched-note--warn { color: var(--color-accent-bright); }
-/* A scheduled question is marked so it never reads as one the owner forgot
-   writing. Border, not colour: gain/loss colour on this desk means P&L. */
-.ask-q--sched { border-left: 2px solid var(--color-accent-bright); padding-left: 6px; }
-/* A stopped run is not a failure and not an answer: muted, and its rule is the
-   quiet border colour rather than the accent every real answer carries, so the
-   thread never reads as though the desk replied. Deliberately NOT the loss red
-   — those colours are P&L-only. */
-.ask-a--stopped { color: var(--color-text-secondary); font-style: italic; border-left-color: var(--color-border); }
-/* Sits with the Ask button; secondary weight so Stop never out-shouts Ask. */
-.ask-stop[hidden] { display: none; }
-
-/* ── row reorder + arrangement lock (owner request 2026-07-31) ─────────────── */
-.wl-move {
-  width: 18px; height: 18px; flex: 0 0 auto; padding: 0; margin-left: 2px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--color-border); border-radius: 4px;
-  background: var(--color-surface); color: var(--color-text-secondary);
-  font: 500 10px/1 var(--font-sans); cursor: pointer;
-}
-.wl-move:disabled { opacity: .35; cursor: default; }
-.wl-lock { width: 26px; height: 26px; flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px dashed var(--color-border); border-radius: 6px;
-  font-size: 14px; line-height: 1; cursor: pointer; background: var(--color-surface); }
-.wl-lock[aria-pressed="true"] { border-style: solid; border-color: var(--color-accent-bright); }
-
-/* Ask-the-desk verify toggle. Reuses the .seg pressed pair rather than minting
-   a colour: that combination is already contrast-checked, and the accent is
-   deliberately not the gain/loss red, which is P&L-only. */
-.ask-verify[aria-pressed="true"] { background: var(--color-accent-light); color: var(--color-accent-bright); }
-/* Class selectors set `display`, so they outrank the UA's [hidden] rule. */
-.wl-lock[hidden], .wl-move[hidden] { display: none; }
-
-/* ── watchlist symbol detail (owner request 2026-08-06) ─────────────────────
-   Wider than the other modals: a candle chart needs horizontal room, and at
-   .modal-panel's 640px the bars collapse into a smear. Height is capped by the
-   shared 85vh so the stats never push the chart off a laptop screen. */
-.wl-detail-panel { max-width: 1040px; }
-.wl-detail-name {
-  font-size: var(--font-sm); color: var(--color-text-secondary);
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.wl-detail-quote { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
-.wl-detail-last { font-size: var(--font-xl); font-variant-numeric: tabular-nums; }
-/* Gain/loss on the change only — P&L, never decoration. */
-.wl-detail-chg.up { color: var(--color-gain); }
-.wl-detail-chg.down { color: var(--color-loss); }
-.wl-detail-chg { font-variant-numeric: tabular-nums; }
-/* The extended print sits on its own marked line rather than replacing the
-   last: the regular close and the after-hours price are two different facts,
-   and overwriting one with the other is how an unattributed number ships. */
-.wl-detail-ext {
-  font-size: var(--font-sm); color: var(--color-text-secondary);
-  font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
-}
-.wl-detail-bar { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
-/* Moving-average toggles beside the span control. `flex-wrap` because the four
-   options plus the seven span buttons exceed the modal's width on a phone; the
-   swatch carries each SMA's own line colour, so the chart needs no separate
-   key — the control IS the legend. */
-.wl-detail-smas { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
-.wl-sma-opt { display: inline-flex; align-items: center; gap: 4px; font: 500 var(--font-xs)/1.2 var(--font-sans); color: var(--color-text-secondary); cursor: pointer; }
-.wl-sma-opt input { margin: 0; cursor: pointer; }
-.wl-sma-dot { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
-.wl-detail-chart { display: block; width: 100%; height: 380px; margin-top: var(--space-2); }
-.wl-detail-chart[hidden] { display: none; }
-.wl-detail-empty { color: var(--color-text-secondary); font-size: var(--font-sm); margin-top: var(--space-3); }
-.wl-detail-stats {
-  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
-  margin-top: var(--space-3); padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
-  font-size: var(--font-sm); font-variant-numeric: tabular-nums;
-}
-.wl-detail-stats b { color: var(--color-text-secondary); font-weight: 500; margin-right: 6px; }
-.wl-detail-stats .wl-detail-muted { color: var(--color-text-secondary); }
-/* A tile is a control now, so it has to look like one. */
-.wl-strip .wl-tile { cursor: pointer; }
-@media (max-width: 720px) {
-  .wl-detail-chart { height: 260px; }
-}
-
-/* ── News topic box ──────────────────────────────────────────────────────────
-   Its own row under the News header (owner request 2026-08-14). The rail is
-   311px and the header already carries title + lamp + stamp, so a fourth item
-   there would crush the stamp to an ellipsis. Sized down from the form-input
-   default: .input is 44px for a form's primary field, which is far too heavy
-   for a filter that sits above a list — the same reasoning that put the
-   accounts header buttons at 26px. */
-.news-topic { display: flex; align-items: center; gap: 6px; padding: 6px 10px 0; }
-/* min-height, not height: .input sets min-height 48px for a form's primary
-   field, and a plain `height` loses to it. 34 is as short as this can go while
-   keeping .input's 16px font — that size is deliberate ("no iOS zoom"), and
-   shrinking it would make Safari zoom the page on every tap of this box, which
-   is a worse bug than a slightly tall filter. */
-.news-topic-in { flex: 1 1 auto; min-width: 0; min-height: 34px; height: 34px; padding: 0 8px; }
-.news-topic-x {
-  flex: 0 0 auto; width: 22px; height: 22px; line-height: 1; padding: 0;
-  border: 1px solid var(--color-border); border-radius: var(--radius-sm, 4px);
-  background: var(--color-surface); color: var(--color-text-secondary);
-  font-size: 11px; cursor: pointer;
-}
-.news-topic-x:hover { border-color: var(--color-border-hover); color: var(--color-text-primary); }
-/* The AI helper's note under the topic box (specs/news-topic-ai D9): muted like every stamp, wrapping inside the
-   311px rail, and EMPTY most of the time (an empty <p> must take no room, so no margin then). Never a gain/loss colour. */
-.news-topic-note { margin: 4px 10px 0; line-height: 1.4; overflow-wrap: anywhere; }
-.news-topic-note:empty { margin: 0; }
-/* "Search as typed": a text button that reads as the link it is, inside the sentence */
-.news-topic-raw {
-  display: inline; margin: 0; padding: 0; border: 0; background: none; cursor: pointer;
-  font: inherit; color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px;
-}
-.news-topic-raw:hover { color: var(--color-text-primary); }
-.news-topic-raw:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
-
-/* ── Economy panel (.econ-*) — owner request 2026-09-30 ──────────────────────
-   A table of seven indicators, each row: [label / value + change / date] at the
-   left and ITS OWN chart to the right. The left block is a fixed 104px so the
-   chart column starts on one line down the panel, and every value fits it with
-   room to spare (a clipped yield is a wrong yield). The chart takes whatever
-   width the column has: ~94px in the 232px slot, ~200px at 320.
-   Colour: green and red are P&L-ONLY on this desk, and a yield or an inflation
-   rate rising is not a gain — the change is neutral ink with an arrow, the line
-   is the brass accent. Stale/missing rows go MUTED through the ink token, never
-   through `opacity` on text (that would dodge the contrast gate's pairs). */
-.econ-bar { flex: 0 0 auto; margin: 0 0 var(--space-2); }
-.econ-tf { display: flex; width: 100%; }
-.econ-tf button {
-  flex: 1 1 0; min-width: 0; min-height: 28px; padding: 4px 0;
-  font: 500 var(--font-2xs)/1 var(--font-sans); letter-spacing: .03em; white-space: nowrap;
-}
-.econ-list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
-/* rows share the height the panel is given (beside Markets it is a lot) but never grow past
-   ~104px, and never shrink below 76px: then the BODY scrolls rather than the rows squashing. 76px holds the
-   chart WITH its time axis (and the note under a fallback span) and the info block (~60px) plus the 6px
-   padding either side; the old 52px floor and 56px basis let the content overflow its row in every stacked
-   layout (phone, tablet, a narrow desktop), and the axes made it plainly visible. The basis is the row's own
-   content (`auto`), so a row whose chips wrap onto a second line is taller instead of spilling out. The list
-   deliberately keeps the default `min-height: auto` (its rows' minimum) — `min-height: 0` let it shrink
-   below its rows. */
-.econ-row {
-  flex: 1 1 auto; min-height: 76px; max-height: 104px;
-  display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: var(--space-2); align-items: stretch;
-  padding: 6px 0; border-top: 1px solid var(--color-border);
-}
-.econ-row:first-child { border-top: 0; }
-.econ-info { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
-/* wraps only when it must: the date, NOT LIVE and NEW (an unseen official reading while CNBC is down) are wider than the 104px block, so NEW drops to
-   a second line rather than hanging into the chart column — the chip that matters most (NOT LIVE) is placed before NEW, and kept compact (no border,
-   tight padding and tracking: ~46px against a 42px date) so that date + chip fit one line even in a wide fallback font before the web fonts swap in
-   (the first, bordered chip at ~57px wrapped on CI's phone viewport). If it ever does wrap it wraps whole: visible, inside the block, never clipped */
-.econ-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; min-width: 0; }
-.econ-label {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 500 var(--font-2xs)/1.3 var(--font-sans); color: var(--color-text-secondary);
-}
-.econ-figs { display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; }
-.econ-val { font: 600 var(--font-base)/1.2 var(--font-mono); color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
-.econ-delta { font: 500 var(--font-2xs)/1.2 var(--font-mono); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
-/* the date the reading is FOR: FRED posts a yield about a business day late, so this is the honest signal */
-.econ-date { font: 500 var(--font-2xs)/1.3 var(--font-mono); color: var(--color-text-primary); }
-.econ-new, .econ-tag {
-  flex: none; padding: 1px 4px; border-radius: 3px;
-  font: 700 9px/1.1 var(--font-sans); letter-spacing: .06em; text-transform: uppercase;
-}
-.econ-new { background: var(--color-accent-light); color: var(--color-accent-bright); }
-.econ-tag { border: 1px solid var(--color-border-hover); color: var(--color-text-secondary); }
-/* NOT LIVE: the bond session is open and CNBC is not giving real time (owner 2026-10-01: "I want to be aware"). A SOLID chip in
-   plain ink, so it cannot be mistaken for the outlined LIVE/LAST tags beside it — and not red, because red is for losses here. */
-.econ-nolive { padding: 1px 3px; letter-spacing: .02em; border-width: 0; background: var(--color-text-primary); color: var(--color-surface); }
-/* the source of the number: as small as is still legible, a muted line under the date. Muted through the ink
-   token, never `opacity` (that would dodge the contrast gate's pairs); clipped rather than wrapped so a long
-   name can never push the row taller */
-.econ-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary); }
-.is-stale .econ-val, .is-missing .econ-val, .is-missing .econ-date, .is-missing .econ-delta { color: var(--color-text-secondary); }
-/* the change DIGITS only (owner 2026-10-02): green when the reading rose, red when it fell — the desk's own gain/loss tokens, text on white at
-   5.2 / 5.5:1. A stale row keeps its muted ink (its number is not today's), as it always did. */
-.econ-delta-n.up { color: var(--color-gain); }
-.econ-delta-n.down { color: var(--color-loss); }
-.is-stale .econ-delta-n.up, .is-stale .econ-delta-n.down { color: var(--color-text-secondary); }
-.econ-chart { position: relative; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; transition: opacity .15s ease; }
-.econ-chart svg { display: block; width: 100%; flex: 1 1 0; min-height: 26px; }
-.econ-line { stroke: var(--color-accent-bright); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
-.econ-area { fill: var(--color-accent-bright); fill-opacity: .10; stroke: none; }
-.is-stale .econ-chart svg { opacity: .55; }
-/* no readings to draw: a dashed level line, never an invented one */
-.econ-noline {
-  flex: 1 1 0; min-height: 26px;
-  background: repeating-linear-gradient(90deg, var(--color-border-hover) 0 4px, transparent 4px 8px) center / 100% 1px no-repeat;
-}
-.econ-cap {
-  flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
-  font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary);
-}
-/* The axes (owner 2026-10-01: "numbers across vertical and horizontal lines", on every range). The plot is the line and a value axis
-   beside it; the time axis sits under the line and is exactly as wide as the svg (it carries the same right margin as the value
-   axis is wide), so a tick's left % IS the x the line is drawn at. Small muted ink through the text token, never `opacity`
-   (that would dodge the contrast gate's pairs); the padding gives the top and bottom value labels room to overhang the line's own
-   3-unit margin without touching the time axis. */
-/* the value axis' width lives on the chart column so the time axis (a sibling of the plot) can read it too; a currency row (the
-   crude-oil prices, `.is-px`) needs 38px — its labels run to six characters ("100.25") where a yield's run to four ("4.90") */
-.econ-chart { --econ-yw: 26px; }
-.econ-chart.is-px { --econ-yw: 38px; }
-.econ-plot { flex: 1 1 0; min-height: 26px; min-width: 0; display: flex; padding: 4px 0; }
-.econ-plot svg { flex: 1 1 0; min-width: 0; width: auto; align-self: stretch; }
-/* the chart's description in words (the axes are aria-hidden): visually hidden, still read by a screen reader */
-.econ-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
-.econ-grid { stroke: var(--color-border); stroke-width: 1; stroke-dasharray: 2 3; }
-.econ-grid.is-hide, .econ-ytick.is-hide { visibility: hidden; }   /* econFitValueAxis: two values closer than a label is tall */
-.econ-yaxis { position: relative; flex: none; width: var(--econ-yw); }
-.econ-ytick {
-  position: absolute; left: 4px; transform: translateY(-50%); white-space: nowrap;
-  font: 400 9px/1 var(--font-mono); color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
-}
-.econ-axis {
-  position: relative; flex: none; height: 13px; margin-right: var(--econ-yw, 26px);   /* = the value axis (--econ-yw) */
-  border-top: 1px solid var(--color-border-hover);
-}
-.econ-tickmark { position: absolute; top: 0; width: 1px; height: 3px; background: var(--color-border-hover); }
-.econ-tickmark.is-minor { height: 2px; background: var(--color-border); }
-.econ-xtick {
-  position: absolute; top: 3px; transform: translateX(-50%); white-space: nowrap;
-  font: 400 9px/1.2 var(--font-sans); color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
-}
-.econ-xtick.is-hide { visibility: hidden; }   /* econFitAxis: it would touch a label already kept, or leave the axis */
-.econ-xtick.is-start { transform: none; }
-.econ-xtick.is-end { transform: translateX(-100%); }
-/* a span change whose reply is on the way: the old charts stay, dimmed, under the new label */
-.econ-list.is-pending .econ-chart { opacity: .35; }
-.econ-empty { padding: var(--space-4) 0; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--color-text-secondary); }
