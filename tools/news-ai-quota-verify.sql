@@ -11,10 +11,12 @@
 -- Run it two ways, identically:
 --   * a scratch Postgres:   psql -v ON_ERROR_STOP=0 -f tools/news-ai-quota-verify.sql
 --   * the live project:     the Supabase MCP execute_sql with this file's text, once the owner has
---                           approved applying desk_023. The MCP may HOLD it: it holds any statement
---                           containing a destructive keyword (delete, drop, truncate), even inside a
---                           string, and the denials below ARE those statements. If it holds, run the
---                           same text in the dashboard SQL editor or have the owner confirm the hold.
+--                           approved applying desk_023. The MCP's destructive-SQL detector stops a
+--                           statement that STARTS with delete, drop or truncate (inside the DO body
+--                           too, and an EXECUTE of a literal string that starts so). If it stops this
+--                           probe, a project thread cannot draw its form: run the same text from a
+--                           claude.ai chat with the Supabase connector, the SQL editor behind that
+--                           (CLAUDE.md -> Applying a migration).
 --                           Do not reword the keywords away: a probe that no longer attempts the
 --                           delete or the truncate no longer proves they are refused.
 --
