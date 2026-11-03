@@ -826,4 +826,7 @@ async function selftest() {
 }
 
 if (process.argv.includes('--selftest')) selftest();
-else if (import.meta.url === 'file://' + process.argv[1]) main();
+// path.resolve + fileURLToPath, not 'file://' + argv[1]: import.meta.url is
+// percent-encoded, so from a folder with a space in its name the old guard
+// never matched and the scan printed nothing and exited 0 (audit I12).
+else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

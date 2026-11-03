@@ -202,6 +202,18 @@ test('quote-proxy handler: a daily lookup symbol is upper-cased and BRK.B goes t
   assert.match(r.body.series.t[0], /^\d{4}-\d{2}-\d{2}$/);
 });
 
+test('quote-proxy handler: a malformed bar timestamp skips that BAR, never the whole symbol (audit I7)', async () => {
+  const bars = dailyBars(40);
+  bars[5][0] = null;   // JSON has no NaN: Yahoo's gap arrives as null
+  bars[9][0] = 1e20;   // out of Date's range — toISOString() used to throw and the symbol answered 502
+  bars[12][0] = 'x';
+  const e = qp({ fetch: () => Promise.resolve(json(yahooChartBody(bars))) });
+  const r = await call(e, qpReq({ symbol: 'SPY' }));
+  assert.equal(r.status, 200, 'the symbol still answers'); isJsonWithCors(r, true);
+  assert.equal(r.body.series.t.length, 37, 'only the three bad bars are gone');
+  assert.ok(r.body.series.t.every((t) => /^20\d{2}-\d{2}-\d{2}$/.test(t)), 'no 1970 bar from a null stamp');
+});
+
 test('quote-proxy handler: prepost is part of the intraday cache key, and ignored for daily', async () => {
   const urls = [];
   const day = ET('2026-10-14T00:00:00-04:00') / 1000;

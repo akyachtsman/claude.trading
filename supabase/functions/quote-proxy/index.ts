@@ -202,6 +202,9 @@ async function yahooChart(symbol: string, range: string, interval: string, intra
     if ([o, h, l, c].some((n) => typeof n !== 'number' || !Number.isFinite(n) || n <= 0)) continue;
     const ts = r.timestamp[i];
     const d = new Date(ts * 1000);
+    // A malformed timestamp skips the BAR, never the symbol: toISOString()
+    // throws on an invalid date and the outer catch answered 502 (audit I7).
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || Number.isNaN(d.getTime())) continue;
     const t = intraday
       ? d.toISOString().slice(0, 16).replace('T', ' ') // YYYY-MM-DD HH:mm (UTC)
       : d.toISOString().slice(0, 10);
