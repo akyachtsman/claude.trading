@@ -12335,3 +12335,100 @@ test('S78: the 1-minute Markets poll starts by itself when the market opens', as
   expect(s2.market.length - s.market.length).toBeLessThanOrEqual(4);
   expect(s2.feed, 'and the all-feeds poll is not re-armed again').toBe(1);
 });
+
+// S80 — Audit fixes (2026-10-25 repo audit, I8 / I9 / I10), each read off its outcome:
+//  I8  a sideways trackpad swipe over the chart is not a zoom (deltaY 0 read as zoom OUT
+//      on every event, and preventDefault killed the page's own scroll / back-swipe);
+//  I9  the watchlist detail window reads as LOADING, never STALE, while its fetch is out;
+//  I10 a roster write that THROWS leaves the dialog closable and the next write allowed
+//      (wlBusy was reset in straight-line code after an await that could reject).
+test('S80: a sideways swipe is not a zoom, the detail window loads without crying STALE, a thrown save does not wedge the dialog', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(60_000);
+  await gotoDemo(page, '#wbChart text', 15000, 800);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+
+  // ── I8: the wheel over the first pane, sideways then vertically
+  const wheel = (dx, dy) => page.evaluate(([dx, dy]) => {
+    const svg = document.getElementById('wbChart');
+    const box = svg.getBoundingClientRect();
+    const g = wbState.paneGeom.find((p) => p.bars && p.bars.c && !(p.cfg && p.cfg.scrollLock));
+    const x = box.left + ((g.x0 + g.x1) / 2) * (box.width / wbState.viewW);
+    const target = document.elementFromPoint(x, box.top + box.height * 0.25) || svg;
+    const before = wbState[g.daysKey];
+    const ev = new WheelEvent('wheel', { deltaX: dx, deltaY: dy, clientX: x, clientY: box.top + box.height * 0.25, bubbles: true, cancelable: true });
+    target.dispatchEvent(ev);
+    return { key: g.daysKey, before, after: wbState[g.daysKey], prevented: ev.defaultPrevented, inside: svg.contains(target) };
+  }, [dx, dy]);
+  const side = await wheel(120, 0);
+  expect(side.inside, 'the wheel lands on the chart').toBe(true);
+  expect(side.prevented, 'a sideways swipe is left to the page').toBe(false);
+  expect(side.after, 'a sideways swipe does not change the window').toBe(side.before);
+  const diag = await wheel(120, 30);
+  expect(diag.prevented, 'a mostly-sideways swipe is not a zoom either').toBe(false);
+  const up = await wheel(0, -120);
+  expect(up.prevented, 'a vertical wheel still zooms').toBe(true);
+  // the rAF render runs after; the window value is set synchronously
+  expect(up.after, 'wheel up zooms in (a narrower window)').toBeLessThan(up.before ?? Infinity);
+
+  // ── I9: forced live, with a quote feed that never answers
+  await page.evaluate(() => {
+    DESK.mode = 'live'; DESK.authed = false;
+    window.deskQuote = () => new Promise(() => {});
+    openWlDetail('ZZQX', null);
+  });
+  await expect(page.locator('#wlDetailBackdrop')).toBeVisible();
+  const loading = await page.evaluate(() => ({
+    lamp: document.getElementById('wlDetailLamp').textContent,
+    cls: document.getElementById('wlDetailLamp').className,
+    stamp: document.getElementById('wlDetailStamp').textContent,
+    empty: document.getElementById('wlDetailEmpty').textContent,
+  }));
+  expect(loading.lamp, 'not STALE while the fetch is out').not.toBe('STALE');
+  expect(loading.cls).not.toMatch(/stale/);
+  expect(loading.stamp).toBe('Fetching…');
+  expect(loading.empty).toBe('Loading…');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlDetailBackdrop')).toBeHidden();
+  // a span change after a reply HAS landed (quote yes, bars no), with the next fetch held open:
+  // it must read as loading, not "No chart data … over this span"
+  await page.evaluate(() => {
+    window.deskQuote = (sym, kind) => Promise.resolve(kind === 'info'
+      ? { ok: true, info: { name: 'Zed Corp', price: 10, change: 0.1, changePct: 1 }, asOf: new Date().toISOString() }
+      : { ok: false });
+    openWlDetail('ZZQX', null);
+  });
+  await expect(page.locator('#wlDetailStamp'), 'the first reply landed').not.toHaveText('Fetching…');
+  await expect(page.locator('#wlDetailEmpty')).toHaveText(/No chart data/);
+  await page.evaluate(() => { window.deskQuote = () => new Promise(() => {}); });
+  await page.locator('#wlDetailTf button[data-tf="1y"]').click();
+  await expect(page.locator('#wlDetailEmpty'), 'a span change reads as loading while its fetch is out').toHaveText('Loading…');
+  expect(await page.locator('#wlDetailLamp').textContent(), 'and the lamp is not STALE').not.toBe('STALE');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlDetailBackdrop')).toBeHidden();
+
+  // ── I10: a save whose repaint THROWS
+  await page.evaluate(() => renderWatchlist());
+  await installFakeRoster(page);
+  await page.evaluate(() => { window.__realLoadWatchlist = loadWatchlist; window.loadWatchlist = async () => { throw new Error('repaint fault'); }; });
+  const direct = await page.evaluate(async () => {
+    const r = await wlMutate(() => { throw new Error('callback fault'); });
+    return { ok: r.ok, err: r.err, inFlight: wlInFlight };
+  });
+  expect(direct.ok, 'wlMutate never rejects: a throw is a failed result').toBe(false);
+  expect(direct.err, 'and it says what to do').toMatch(/reload the page and check/);
+  expect(direct.inFlight, 'the in-flight count is released').toBe(0);
+  await page.locator('#wlTrayAdd').click();
+  await page.locator('#wlQuickInput').fill('SPY');
+  await page.locator('#wlQuickSaveBtn').click();
+  await expect(page.locator('#wlQuickErr'), 'the failure is said on the dialog').toContainText(/reload the page and check/);
+  expect(await page.evaluate(() => wlBusy), 'wlBusy is released').toBe(false);
+  await expect(page.locator('#wlQuickSaveBtn'), 'the button is usable again').toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wlQuickBackdrop'), 'and the dialog still closes').toBeHidden();
+  expect(await page.evaluate(() => [...document.querySelectorAll('[inert]')].length), 'nothing is left inert').toBe(0);
+  await page.evaluate(() => { window.loadWatchlist = window.__realLoadWatchlist; });
+
+  expect(errs, 'no page errors').toEqual([]);
+});

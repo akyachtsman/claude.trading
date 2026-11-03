@@ -1775,7 +1775,15 @@ function wlPick(lists, idx, title) {
 
 async function wlMutate(mutate) {
   wlInFlight++;
-  try { return await wlMutateRun(mutate); } finally { wlInFlight--; }
+  /* NEVER rejects. The four roster dialogs reset `wlBusy` in straight-line code
+     after this await, and their close functions refuse while it is set, so one
+     throw (the mutation callback, or the repaint inside loadWatchlist) used to
+     leave the dialog unclosable, the page behind it inert and every later
+     write refused in silence (audit I10). The save may or may not have landed
+     before the throw, so the message says to check. */
+  try { return await wlMutateRun(mutate); }
+  catch { return { ok: false, err: 'Something went wrong saving that — reload the page and check the list.' }; }
+  finally { wlInFlight--; }
 }
 async function wlMutateRun(mutate) {
   /* No PIN needed — the watchlist RPCs are open (desk_011). Still a
@@ -2167,6 +2175,10 @@ function openWlDetail(sym, invoker) {
   wlDetail.tf = wlTf;
   wlDetail.bars = null;
   wlDetail.info = undefined;
+  /* set BEFORE the first render below: that paint used to see loading false,
+     bars null and read as STALE / "No chart data" while a healthy fetch was out
+     (audit I9). loadWlDetail sets it again for its own callers. */
+  wlDetail.loading = true;
   const title = document.getElementById('wlDetailTitle');
   if (title) title.textContent = sym;
   const nameEl = document.getElementById('wlDetailName');
@@ -2202,6 +2214,7 @@ function renderWlDetailTf() {
       if (wlDetail.tf === key) return;
       wlDetail.tf = key;
       wlDetail.bars = null;
+      wlDetail.loading = true;   /* the render below must read as loading, not STALE */
       renderWlDetailTf();
       renderWlDetail();
       loadWlDetail();
@@ -5177,6 +5190,9 @@ window.addEventListener('wheel', ev => {
   const g = wbState.paneGeom.find(p => vx >= p.x0 && vx <= p.x1);
   if (!g || !g.bars || !g.bars.c) return;
   if (g.cfg && g.cfg.scrollLock) return;   /* locked: let the wheel scroll the page instead */
+  /* a sideways swipe is not a zoom: deltaY 0 used to read as zoom OUT on every
+     event, and preventDefault also killed the trackpad's back-swipe (audit I8) */
+  if (!ev.deltaY || Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) return;
   ev.preventDefault();
   const len = g.bars.c.length;
   const curN = Math.min(paneWindow(wbState[g.daysKey], g.bars), len);
