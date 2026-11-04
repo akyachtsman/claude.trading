@@ -616,7 +616,19 @@ function lastTradingDayIso(): string {
 // ── caches (per universe where applicable) ───────────────────────────────────
 let constituentsCache: { at: number; list: Constituent[] } | null = null;  // 24h, sp500
 let capCache: { at: number; caps: Map<string, number> } | null = null;     // 24h, sp500
-const payloadCache = new Map<string, { at: number; body: unknown }>();     // session-aware
+/* `roster` is the FULL list the period sweep was kicked with, kept beside the
+   body so a cache hit nudges the sweep with the same symbols a refresh does.
+   The hit path used to rebuild it from the DRAWN tiles, so a constituent with
+   no tile was dropped from the ledger on a hit and re-swept on the next
+   refresh, over and over (audit 2026-10-25, I5). */
+const payloadCache = new Map<string, { at: number; body: unknown; roster: string[] }>();     // session-aware
+/* The symbols a cache hit nudges the sweep with: the stored roster, or (for an
+   entry without one) the drawn tiles, which is what the hit path read before. */
+function cacheHitRoster(entry: { body: unknown; roster?: string[] }): string[] {
+  if (Array.isArray(entry.roster) && entry.roster.length) return entry.roster;
+  // deno-lint-ignore no-explicit-any
+  return ((entry.body as any)?.sectors || []).flatMap((s: any) => s.tiles.map((t: any) => t.sym));
+}
 const inflight = new Map<string, Promise<unknown>>();                      // single-flight
 /* `force:true` skips every cache and this function is anon-callable, so honouring
    it unconditionally lets any caller buy a full upstream sweep per request.
@@ -796,14 +808,14 @@ async function advanceSweep(universe: string, symbols: string[]): Promise<void> 
   }
 
   const done = Object.keys(map).length;
-  const row: SweepRow = { at: Date.now(), done, total: symbols.length, map };
-  if (!slice.length) {
-    // Nothing left to sweep. Preserve the original timestamp so the 24h
-    // refresh still fires on schedule — stamping `at` on every no-op call
-    // would hold the ledger permanently "fresh" and freeze the period data.
-    if (fresh && prev!.done === done && prev!.total === symbols.length) return;
-    row.at = fresh ? prev!.at : Date.now();
-  }
+  // `at` is when THIS sweep began, and only a new sweep (no fresh ledger)
+  // moves it. Stamping it on a step — a re-add of a name that rejoined the
+  // roster included — held the ledger permanently "fresh": its 24 h refresh
+  // never fired, the names it kept carried old 1W/1M/YTD figures, and
+  // `periodsAsOf` read as new (audit 2026-10-25, I5).
+  const row: SweepRow = { at: fresh ? prev!.at : Date.now(), done, total: symbols.length, map };
+  // Nothing left to sweep and nothing changed: no write at all.
+  if (!slice.length && fresh && prev!.done === done && prev!.total === symbols.length) return;
   await writeSweepRow(universe, row);
   if (done >= symbols.length) payloadCache.delete(universe); // next call rebuilds WITH periods
 }
@@ -915,12 +927,13 @@ async function refreshSp500(): Promise<unknown> {
   for (const s of sectors) for (const t of s.tiles) harvested.set(t.sym, t.cap);
   capCache = { at: capCache && source === 'yahoo-spark+cap-cache' ? capCache.at : Date.now(), caps: harvested };
 
-  await kickPeriodSweep('sp500', constituents.map((c) => c.sym));
+  const roster = constituents.map((c) => c.sym);
+  await kickPeriodSweep('sp500', roster);
   const body = {
     ok: true, asOf: lastTradingDayIso(), generatedAt: new Date().toISOString(),
     source, count: covered, periodsAsOf: periods ? new Date(periods.at).toISOString() : null, sectors,
   };
-  payloadCache.set('sp500', { at: Date.now(), body });
+  payloadCache.set('sp500', { at: Date.now(), body, roster });
   return body;
 }
 
@@ -957,14 +970,15 @@ async function refreshR2k(): Promise<unknown> {
   if (periods && usable < constituents.length * 0.8) periods = null;
   const { sectors, covered } = buildHeatmap(constituents, quotes, new Map(), periods?.map);
   if (covered < 1200) throw new Error(`r2k coverage too thin (${covered})`);
-  await kickPeriodSweep('r2k', constituents.map((c) => c.sym));
+  const roster = constituents.map((c) => c.sym);
+  await kickPeriodSweep('r2k', roster);
   const body = {
     ok: true, asOf: lastTradingDayIso(), generatedAt: new Date().toISOString(),
     source, universe: 'r2k', count: covered,
     note: `full small-cap band, ${covered} names (cap ranks ${R2K_SKIP + 1}–${R2K_SKIP + R2K_TAKE})`,
     periodsAsOf: periods ? new Date(periods.at).toISOString() : null, sectors,
   };
-  payloadCache.set('r2k', { at: Date.now(), body });
+  payloadCache.set('r2k', { at: Date.now(), body, roster });
   return body;
 }
 
@@ -994,7 +1008,7 @@ async function refreshEtf(): Promise<unknown> {
     source, universe: 'etf', count: covered,
     periodsAsOf: periods ? new Date(periods.at).toISOString() : null, sectors,
   };
-  payloadCache.set('etf', { at: Date.now(), body });
+  payloadCache.set('etf', { at: Date.now(), body, roster: symbols });
   return body;
 }
 
@@ -1022,9 +1036,9 @@ Deno.serve(async (req) => {
   const cached = payloadCache.get(universe);
   if (!force && cached && Date.now() - cached.at < ttlMs()) {
     // cache hits still nudge an incomplete period sweep — otherwise the
-    // sweep would only advance on TTL expiry (hours, off-session)
-    // deno-lint-ignore no-explicit-any
-    const syms = ((cached.body as any)?.sectors || []).flatMap((s: any) => s.tiles.map((t: any) => t.sym));
+    // sweep would only advance on TTL expiry (hours, off-session). With the
+    // SAME roster the refresh used (cacheHitRoster), never the drawn tiles.
+    const syms = cacheHitRoster(cached);
     if (syms.length) await kickPeriodSweep(universe, syms);
     return reply(200, cached.body);
   }

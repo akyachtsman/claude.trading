@@ -45,7 +45,7 @@ const json = (body, status = 200, headers = {}) =>
 const HEAT = ['marketSessionOpen', 'withinCloseSettleGrace', 'withinPostMarket', 'ttlMs', 'inLanes', 'yahooTicker',
   'parseCsv', 'parseConstituents', 'parseScreener', 'parseSpark', 'periodsFromCloses', 'dedupeMultiClass',
   'buildHeatmap', 'r2kConstituents', 'buildEtfMap', 'lastTradingDayIso', 'scrubbed', 'sweepComplete',
-  'mergeFreshQuotes', 'readSweepRow', 'writeSweepRow', 'advanceSweep', 'kickPeriodSweep', 'loadEtfCats',
+  'mergeFreshQuotes', 'readSweepRow', 'writeSweepRow', 'advanceSweep', 'kickPeriodSweep', 'loadEtfCats', 'cacheHitRoster',
   'DEFAULT_ETF_CATS', 'NYSE_HOLIDAYS'];
 const heat = (opts) => loadEdge('desk-heatmap', HEAT, opts);
 const DB_ENV = { SUPABASE_URL: 'https://db.supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'test-service-key-123' };
@@ -449,6 +449,44 @@ test('desk-heatmap: a complete, fresh ledger with nothing to sweep is NOT rewrit
   assert.equal(s.calls.length, 1, 'one read, no Yahoo call, no write');
 });
 
+test('desk-heatmap: a sweep STEP keeps the ledger\'s start time; only a new sweep moves it (audit I5)', async () => {
+  const now = at('2026-10-14T15:00:00Z');
+  const started = now - 7_200_000;
+  let posted = null;
+  // A complete, fresh ledger plus one name that rejoined the roster (NEW): the re-add is swept
+  // and written, but `at` stays where the sweep began, so the 24 h refresh still fires on time.
+  const s = stubFetch([
+    [(u, i) => u.includes('/rest/v1/') && i.method === 'POST', (_u, i) => { posted = JSON.parse(i.body); return json([], 201); }],
+    [(u) => u.includes('/rest/v1/'), () => json([{ at: new Date(started).toISOString(), payload: { done: 1, total: 1, map: { A: { w: 1, m: 1, ytd: 1 } } } }])],
+    [(u) => u.includes('symbols=NEW'), () => json(sparkYear(['NEW']))],
+  ]);
+  const h = heat({ env: DB_ENV, fetch: s.fetch, now });
+  await h.advanceSweep('sp500', ['A', 'NEW']);
+  assert.ok(posted, 'the re-add is written');
+  assert.equal(Date.parse(posted[0].at), started, 'the step did not restamp the ledger');
+  assert.deepEqual([posted[0].payload.done, posted[0].payload.total], [2, 2]);
+
+  // A ledger older than 24 h starts a NEW sweep, stamped now.
+  posted = null;
+  const s2 = stubFetch([
+    [(u, i) => u.includes('/rest/v1/') && i.method === 'POST', (_u, i) => { posted = JSON.parse(i.body); return json([], 201); }],
+    [(u) => u.includes('/rest/v1/'), () => json([{ at: new Date(now - 90_000_000).toISOString(), payload: { done: 1, total: 1, map: { A: { w: 1, m: 1, ytd: 1 } } } }])],
+    [(u) => u.includes('finance.yahoo.com'), () => json(sparkYear(['A']))],
+  ]);
+  const h2 = heat({ env: DB_ENV, fetch: s2.fetch, now });
+  await h2.advanceSweep('sp500', ['A']);
+  assert.equal(Date.parse(posted[0].at), now, 'an expired ledger restarts at now');
+});
+
+test('desk-heatmap: a cache hit nudges the sweep with the FULL roster, not the drawn tiles (audit I5)', () => {
+  const h = heat();
+  const body = { sectors: [{ tiles: [{ sym: 'A' }, { sym: 'B' }] }] };
+  assert.deepEqual(plain(h.cacheHitRoster({ body, roster: ['A', 'B', 'NOTILE'] })), ['A', 'B', 'NOTILE']);
+  assert.deepEqual(plain(h.cacheHitRoster({ body })), ['A', 'B'], 'an entry with no roster falls back to the tiles');
+  assert.deepEqual(plain(h.cacheHitRoster({ body, roster: [] })), ['A', 'B']);
+  assert.deepEqual(plain(h.cacheHitRoster({ body: null })), []);
+});
+
 test('desk-heatmap: a rejected ledger write is logged with the key scrubbed', async () => {
   const key = DB_ENV.SUPABASE_SERVICE_ROLE_KEY;
   const s = stubFetch([[() => true, () => new Response(`denied for ${key}`, { status: 401 })]]);
@@ -459,7 +497,7 @@ test('desk-heatmap: a rejected ledger write is logged with the key scrubbed', as
 });
 
 // ── desk-watchlist ───────────────────────────────────────────────────────────
-const WL = ['rangeKey', 'sessionOpen', 'ttlMs', 'toYahoo', 'num', 'priceRow', 'buildSpark', 'normalizeLists',
+const WL = ['rangeKey', 'sessionOpen', 'ttlMs', 'cacheUsable', 'NYSE_HOLIDAYS', 'toYahoo', 'num', 'priceRow', 'buildSpark', 'normalizeLists',
   'listsFromTable', 'rosterFp', 'listsFromConfig', 'WL_RANGES', 'MAX_SYMBOLS'];
 const wl = (opts) => loadEdge('desk-watchlist', WL, opts);
 
@@ -470,7 +508,7 @@ test('desk-watchlist: rangeKey accepts only its own tokens (nothing the caller s
   assert.deepEqual(Object.keys(plain(w.WL_RANGES)), ['1d', '1mo', '3mo', '6mo', '1y', '2y', '5y']);
 });
 
-test('desk-watchlist: sessionOpen is the weekday 09:30–16:00 ET session and ttlMs follows it (1 min / 60 min)', () => {
+test('desk-watchlist: sessionOpen is the weekday 09:30–16:00 ET session, NYSE holidays shut', () => {
   const w = wl();
   const open = (iso) => w.sessionOpen(new Date(iso));
   assert.equal(open('2026-10-14T13:29:00Z'), false);
@@ -480,10 +518,45 @@ test('desk-watchlist: sessionOpen is the weekday 09:30–16:00 ET session and tt
   assert.equal(open('2026-12-14T14:29:00Z'), false, 'EST: 09:29');
   assert.equal(open('2026-12-14T14:30:00Z'), true, 'EST: 09:30');
   assert.equal(open('2026-10-17T15:00:00Z'), false, 'Saturday');
-  // Documented: holidays are not modelled here (a holiday merely polls at the open cadence).
-  assert.equal(open('2026-11-26T16:00:00Z'), true, 'Thanksgiving polls as open, by design');
-  w.clock.now = at('2026-10-14T15:00:00Z'); assert.equal(w.ttlMs(), 60_000);
-  w.clock.now = at('2026-10-14T21:00:00Z'); assert.equal(w.ttlMs(), 3_600_000);
+  assert.equal(open('2026-11-26T16:00:00Z'), false, 'Thanksgiving is shut');
+  assert.equal(open('2026-11-27T16:00:00Z'), true, 'the day after is open');
+});
+
+test('desk-watchlist: ttlMs is 1 min through the session, the settle grace and post-market, 60 min otherwise (audit I6)', () => {
+  const w = wl();
+  const ttl = (iso) => { w.clock.now = at(iso); return w.ttlMs(); };
+  assert.equal(ttl('2026-10-14T15:00:00Z'), 60_000, 'mid-session');
+  assert.equal(ttl('2026-10-14T20:05:00Z'), 60_000, '16:05 ET, the settle grace');
+  assert.equal(ttl('2026-10-14T21:00:00Z'), 60_000, '17:00 ET, post-market');
+  assert.equal(ttl('2026-10-14T23:59:00Z'), 60_000, '19:59 ET, post-market');
+  assert.equal(ttl('2026-10-15T00:00:00Z'), 3_600_000, '20:00 ET, shut');
+  assert.equal(ttl('2026-10-14T12:00:00Z'), 3_600_000, '08:00 ET, before the open');
+  assert.equal(ttl('2026-10-17T21:00:00Z'), 3_600_000, 'Saturday');
+  assert.equal(ttl('2026-11-26T21:00:00Z'), 3_600_000, 'Thanksgiving afternoon');
+});
+
+test('desk-watchlist: a cache entry taken during the session is dropped once the bell has rung (audit I6)', () => {
+  const w = wl();
+  const usable = (iso, e) => { w.clock.now = at(iso); return w.cacheUsable(e); };
+  const midSession = { at: at('2026-10-14T19:59:30Z'), duringSession: true };       // 15:59:30 ET
+  assert.equal(usable('2026-10-14T19:59:50Z', midSession), true, 'still in session and inside the TTL');
+  assert.equal(usable('2026-10-14T20:00:10Z', midSession), false, 'after the bell: mid-session data is not the close');
+  const afterBell = { at: at('2026-10-14T20:00:30Z'), duringSession: false };
+  assert.equal(usable('2026-10-14T20:01:00Z', afterBell), true, 'a body taken after the bell is kept for its TTL');
+  assert.equal(usable('2026-10-14T20:02:00Z', afterBell), false, 'and expires at 1 min while the grace/post-market runs');
+  const evening = { at: at('2026-10-15T00:30:00Z'), duringSession: false };          // 20:30 ET
+  assert.equal(usable('2026-10-15T01:00:00Z', evening), true, 'closed: 60 min');
+  assert.equal(usable('2026-10-15T01:31:00Z', evening), false);
+  assert.equal(w.cacheUsable(null), false);
+});
+
+test('desk-watchlist: NYSE_HOLIDAYS agrees with scripts/data.js for every year it carries', () => {
+  const w = wl();
+  const d = loadData();
+  const mine = [...w.NYSE_HOLIDAYS].sort();
+  const years = new Set(mine.map((s) => s.slice(0, 4)));
+  const theirs = [...d.NYSE_HOLIDAYS].filter((s) => years.has(s.slice(0, 4))).sort();
+  assert.deepEqual(mine, theirs);
 });
 
 test('desk-watchlist: toYahoo hyphenates a share-class dot only, never an exchange suffix', () => {

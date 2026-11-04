@@ -18,8 +18,9 @@
 //
 // Anon-callable: public market data, roster fixed in committed config, no
 // caller input reaches the upstream URL. Session-aware module cache (1 min
-// while the US session is open, 60 min closed) + single-flight, matching
-// desk-market.
+// while the US session is open, through the 15-minute settle grace and the
+// 16:00–20:00 ET post-market, 60 min otherwise; a body taken mid-session is
+// dropped once the bell has rung) + single-flight, matching desk-market.
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -69,17 +70,59 @@ const DEFAULT_RANGE = '1d';
 const rangeKey = (raw: unknown): string =>
   typeof raw === 'string' && Object.hasOwn(WL_RANGES, raw) ? raw : DEFAULT_RANGE;
 
-// ── session-aware TTL (mirrors desk-market) ─────────────────────────────────
-function sessionOpen(now = new Date()): boolean {
-  // US equities regular session in ET, weekdays. Holidays are not modelled —
-  // a holiday merely polls at the open cadence against an unchanging feed.
-  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = et.getDay();
-  if (day === 0 || day === 6) return false;
-  const mins = et.getHours() * 60 + et.getMinutes();
-  return mins >= 9 * 60 + 30 && mins < 16 * 60;
+// ── session-aware TTL (ported from desk-market, audit 2026-10-25 I6) ────────
+// It used to be 1 min from 09:30 to 16:00 ET and 60 min otherwise, with no
+// settle grace, no post-market window and no mid-session discard: a body
+// cached at 15:59 was served as the close until about 17:00, and after-hours
+// prints lagged up to an hour (the bug desk-market fixed in PRs #193 / #199).
+// HOLIDAY LIST — refresh annually, with scripts/data.js and the other edge copies.
+const NYSE_HOLIDAYS = new Set([
+  '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03', '2026-05-25',
+  '2026-06-19', '2026-07-03', '2026-09-07', '2026-11-26', '2026-12-25',
+  '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31',
+  '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24',
+]);
+// ONE hoisted formatter: building an Intl.DateTimeFormat with a timeZone per
+// call is measurable work, and every cache read asks the clock.
+const NY_CLOCK = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', weekday: 'short',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+// New York minutes past midnight, or null on a weekend or an NYSE holiday.
+function nyTradingMinutes(now: Date): number | null {
+  const parts = NY_CLOCK.formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const dow = get('weekday');
+  if (dow === 'Sat' || dow === 'Sun') return null;
+  if (NYSE_HOLIDAYS.has(`${get('year')}-${get('month')}-${get('day')}`)) return null;
+  return Number(get('hour')) * 60 + Number(get('minute'));
 }
-const ttlMs = () => (sessionOpen() ? 60_000 : 3_600_000);
+function sessionOpen(now = new Date()): boolean {
+  const m = nyTradingMinutes(now);
+  return m !== null && m >= 9 * 60 + 30 && m < 16 * 60;
+}
+// The final regular print can land a few minutes after the bell.
+const CLOSE_SETTLE_GRACE_MIN = 15;
+function withinCloseSettleGrace(now = new Date()): boolean {
+  const m = nyTradingMinutes(now);
+  return m !== null && m >= 16 * 60 && m < 16 * 60 + CLOSE_SETTLE_GRACE_MIN;
+}
+// Post-market (16:00–20:00 ET): prices genuinely move, and the tiles show them.
+function withinPostMarket(now = new Date()): boolean {
+  const m = nyTradingMinutes(now);
+  return m !== null && m >= 16 * 60 && m < 20 * 60;
+}
+const OPEN_TTL_MS = 60_000;
+const CLOSED_TTL_MS = 3_600_000;
+const ttlMs = () =>
+  (sessionOpen() || withinCloseSettleGrace() || withinPostMarket() ? OPEN_TTL_MS : CLOSED_TTL_MS);
+/* A cache entry is usable while it is younger than the TTL — and NOT when it
+   was taken during the session and the session has since shut: that is
+   mid-session data, and after the bell the client labels it as the close. */
+type Stamped = { at: number; duringSession: boolean };
+const cacheUsable = (e: Stamped | null | undefined): boolean =>
+  !!e && !(e.duringSession && !sessionOpen()) && Date.now() - e.at < ttlMs();
 
 // ── Yahoo v7/quote needs a cookie + crumb (401 otherwise) ───────────────────
 // Same handshake quote-proxy uses; cached per warm instance.
@@ -353,7 +396,7 @@ async function loadLists(): Promise<{ lists: List[]; source: 'table' | 'config';
 // whoever asked next, and flipping the control would appear to do nothing (or
 // worse, redraw the wrong window under the right label). Same reasoning as
 // quote-proxy's prepost cache key.
-const cache = new Map<string, { at: number; body: unknown }>();
+const cache = new Map<string, { at: number; body: unknown; duringSession: boolean }>();
 const inflight = new Map<string, Promise<unknown>>(); // single-flight, per range
 
 // The quote roster is IDENTICAL for every timeframe — only the spark series
@@ -365,7 +408,7 @@ const inflight = new Map<string, Promise<unknown>>(); // single-flight, per rang
 // one spark sweep per range.
 // deno-lint-ignore no-explicit-any
 type Sweep = { lists: List[]; source: 'table' | 'config'; fp: string | null; uniq: string[]; truncated: string[]; byYahoo: Map<string, any>; quoted: number };
-let quoteCache: { at: number; data: Sweep } | null = null;
+let quoteCache: { at: number; data: Sweep; duringSession: boolean } | null = null;
 let quoteInflight: Promise<Sweep> | null = null;
 
 async function quoteSweep(): Promise<Sweep> {
@@ -389,20 +432,20 @@ async function quoteSweep(): Promise<Sweep> {
 }
 
 function sharedSweep(): Promise<Sweep> {
-  if (quoteCache && Date.now() - quoteCache.at < ttlMs()) return Promise.resolve(quoteCache.data);
+  if (quoteCache && cacheUsable(quoteCache)) return Promise.resolve(quoteCache.data);
   quoteInflight ??= quoteSweep()
-    .then((s) => { quoteCache = { at: Date.now(), data: s }; return s; })
+    .then((s) => { quoteCache = { at: Date.now(), data: s, duringSession: sessionOpen() }; return s; })
     .finally(() => { quoteInflight = null; });
   return quoteInflight;
 }
 
 // Spark series ARE range-specific, so these stay keyed by timeframe.
-const sparkCache = new Map<string, { at: number; map: Map<string, number[]> }>();
+const sparkCache = new Map<string, { at: number; map: Map<string, number[]>; duringSession: boolean }>();
 const sparkInflight = new Map<string, Promise<Map<string, number[]>>>();
 
 function sharedSparks(uniq: string[], tf: string): Promise<Map<string, number[]>> {
   const hit = sparkCache.get(tf);
-  if (hit && Date.now() - hit.at < ttlMs()) return Promise.resolve(hit.map);
+  if (hit && cacheUsable(hit)) return Promise.resolve(hit.map);
   let job = sparkInflight.get(tf);
   if (!job) {
     const sparkChunks: string[][] = [];
@@ -412,7 +455,7 @@ function sharedSparks(uniq: string[], tf: string): Promise<Map<string, number[]>
       .then((maps) => {
         const out = new Map<string, number[]>();
         for (const m of maps) for (const [k, v] of m) out.set(k, v);
-        sparkCache.set(tf, { at: Date.now(), map: out });
+        sparkCache.set(tf, { at: Date.now(), map: out, duringSession: sessionOpen() });
         return out;
       })
       .finally(() => { sparkInflight.delete(tf); });
@@ -469,7 +512,7 @@ async function refresh(tf: string): Promise<unknown> {
       rows: l.symbols.map((s) => rows.get(s)).filter(Boolean),
     })),
   };
-  cache.set(tf, { at: Date.now(), body });
+  cache.set(tf, { at: Date.now(), body, duringSession: sessionOpen() });
   return body;
 }
 
@@ -547,7 +590,7 @@ Deno.serve(async (req) => {
   }
 
   const hit = cache.get(tf);
-  if (!force && hit && Date.now() - hit.at < ttlMs()) return reply(200, hit.body);
+  if (!force && hit && cacheUsable(hit)) return reply(200, hit.body);
 
   try {
     let job = inflight.get(tf);
