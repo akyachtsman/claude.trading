@@ -275,12 +275,12 @@ function rsiLatest(c: number[], len = 14): number | null {
     if (diff >= 0) avgGain += diff; else avgLoss -= diff;
   }
   avgGain /= len; avgLoss /= len;
-  let rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  let rsi = (avgLoss === 0 ? (avgGain === 0 ? 50 : 100) : 100 - 100 / (1 + avgGain / avgLoss));
   for (let i = len + 1; i < n; i++) {
     const diff = c[i] - c[i - 1];
     avgGain = (avgGain * (len - 1) + Math.max(diff, 0)) / len;
     avgLoss = (avgLoss * (len - 1) + Math.max(-diff, 0)) / len;
-    rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    rsi = (avgLoss === 0 ? (avgGain === 0 ? 50 : 100) : 100 - 100 / (1 + avgGain / avgLoss));
   }
   return Number(rsi.toFixed(2));
 }

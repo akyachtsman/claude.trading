@@ -14,6 +14,8 @@
 
 `stochSeries` and `rsiSeries` are loaded out of `scripts/data.js` in a `vm` context, so a reading here is the number the Pro panes draw. There is no second copy to drift. Checked 2026-10-11 against the dashboard's own code on SPY (swing 78.12/81.72, long-term 85.56/78.86, RSI 59.89: identical), and against the dashboard's own scheduled answer: on the swing pane the script found all 10 names that answer flagged (AVGO, KLAC, MRVL, NVDA, AMD, TSM, SMH, QQQ, SPY, XLK), rejected all 5 it said failed (AAPL, META, ARM, INTC, MU), and found 25 more the cap had cut off.
 
+RSI on a series with NO movement at all (no gain and no loss over the window) is **50**, neutral, since 2026-11-05 (owner: "fix it") — it read 100, overbought. Only gains with no losses is 100. The same rule is in `scripts/data.js` (`rsiOf`), `desk-ask`'s `get_technicals` and `desk-cron-ask`'s `rsiLatest`.
+
 ## Definitions (the owner's scheduled questions, made exact)
 
 **Pro 1 is the LONG-TERM pane: the 92-15-15 slow stochastic on daily bars (`WSTOCH`). %K is the red line, %D the yellow one, and its strip draws its lines at 30 and 80** (`app.js`, the `which === 'weekly' ? [30, 80] : [20, 80]` loop). `--pane=2` runs the same two definitions on Pro 2, the SWING pane (14-3-3, daily).

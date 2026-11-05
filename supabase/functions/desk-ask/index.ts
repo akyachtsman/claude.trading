@@ -665,7 +665,8 @@ async function handle(req: Request): Promise<Response> {
         avgGain = (avgGain * (RSI_LEN - 1) + Math.max(diff, 0)) / RSI_LEN;
         avgLoss = (avgLoss * (RSI_LEN - 1) + Math.max(-diff, 0)) / RSI_LEN;
       }
-      const rsi14 = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+      // No movement at all is neutral (50), never overbought; only gains with no losses is 100.
+      const rsi14 = avgLoss === 0 ? (avgGain === 0 ? 50 : 100) : 100 - 100 / (1 + avgGain / avgLoss);
 
       const round = (v: number | null) => v != null ? Number(v.toFixed(2)) : null;
       return {

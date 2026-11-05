@@ -406,13 +406,14 @@ test('rsiSeries: nothing until len+1 closes, 100 on all-up, 0 on all-down, withi
   assert.equal(zig[14], 50);
 });
 
-test('rsiSeries on a flat series reads neutral, not overbought',
-  { todo: 'BUG?: a constant close series reads RSI 100 (avgLoss 0 ⇒ 100) — an extreme "overbought" for no movement, unlike stochSeries, which reads a flat range as 50' },
-  () => {
-    const d = loadData();
-    const flat = d.rsiSeries({ c: Array(30).fill(10) });
-    assert.equal(flat[29], 50);
-  });
+test('rsiSeries on a flat series reads neutral (50), not overbought; a flat stretch after a rise is still 100', () => {
+  const d = loadData();
+  const flat = d.rsiSeries({ c: Array(30).fill(10) });
+  assert.ok(flat.slice(14).every((x) => x === 50), 'no movement at all is 50 at every bar');
+  // gains then a flat run: losses stay 0 but gains decay above 0, so it is still 100 (not 50)
+  const upThenFlat = d.rsiSeries({ c: [...Array.from({ length: 16 }, (_, i) => 10 + i), ...Array(10).fill(25)] });
+  assert.equal(upThenFlat[25], 100);
+});
 
 // ── Economy helpers ─────────────────────────────────────────────────────────
 test('econShiftMonths clamps to the month end; econShiftDays is calendar arithmetic', () => {
