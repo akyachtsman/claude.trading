@@ -46,7 +46,7 @@ const HEAT = ['marketSessionOpen', 'withinCloseSettleGrace', 'withinPostMarket',
   'parseCsv', 'parseConstituents', 'parseScreener', 'parseSpark', 'periodsFromCloses', 'dedupeMultiClass',
   'buildHeatmap', 'r2kConstituents', 'buildEtfMap', 'lastTradingDayIso', 'scrubbed', 'sweepComplete',
   'mergeFreshQuotes', 'readSweepRow', 'writeSweepRow', 'advanceSweep', 'kickPeriodSweep', 'loadEtfCats', 'cacheHitRoster',
-  'DEFAULT_ETF_CATS', 'NYSE_HOLIDAYS'];
+  'payloadCache', 'DEFAULT_ETF_CATS', 'NYSE_HOLIDAYS'];
 const heat = (opts) => loadEdge('desk-heatmap', HEAT, opts);
 const DB_ENV = { SUPABASE_URL: 'https://db.supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'test-service-key-123' };
 
@@ -445,8 +445,26 @@ test('desk-heatmap: a complete, fresh ledger with nothing to sweep is NOT rewrit
     [(u) => u.includes('/rest/v1/'), () => json([{ at: new Date(now - 7_200_000).toISOString(), payload: { done: 2, total: 2, map } }])],
   ]);
   const h = heat({ env: DB_ENV, fetch: s.fetch, now });
+  // This isolate's cached body was built before the ledger completed, so it has no periods.
+  h.payloadCache.set('sp500', { at: now, body: { sectors: [] }, roster: ['A', 'B'] });
+  h.payloadCache.set('r2k', { at: now, body: { sectors: [] }, roster: ['X'] });
   await h.advanceSweep('sp500', ['A', 'B']);
   assert.equal(s.calls.length, 1, 'one read, no Yahoo call, no write');
+  assert.equal(h.payloadCache.has('sp500'), false, 'the period-less body is dropped, so the next call rebuilds WITH periods');
+  assert.equal(h.payloadCache.has('r2k'), true, 'another universe is left alone');
+});
+
+test('desk-heatmap: an INCOMPLETE ledger keeps the cached body (the sweep is still running)', async () => {
+  const now = at('2026-10-14T15:00:00Z');
+  const s = stubFetch([
+    [(u, i) => u.includes('/rest/v1/') && i.method === 'POST', () => json([], 201)],
+    [(u) => u.includes('/rest/v1/'), () => json([{ at: new Date(now - 7_200_000).toISOString(), payload: { done: 1, total: 2, map: { A: { w: 1, m: 1, ytd: 1 } } } }])],
+    [(u) => u.includes('finance.yahoo.com'), () => json({}, 503)],
+  ]);
+  const h = heat({ env: DB_ENV, fetch: s.fetch, now });
+  h.payloadCache.set('sp500', { at: now, body: { sectors: [] }, roster: ['A', 'B'] });
+  await h.advanceSweep('sp500', ['A', 'B']);
+  assert.equal(h.payloadCache.has('sp500'), true, 'B is still missing, so the body is kept');
 });
 
 test('desk-heatmap: a sweep STEP keeps the ledger\'s start time; only a new sweep moves it (audit I5)', async () => {
