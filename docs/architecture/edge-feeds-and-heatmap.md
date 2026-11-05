@@ -147,6 +147,16 @@ The anon-callable feed functions (`desk-market`, `desk-news`, `desk-heatmap`, `d
   7428.78 flat from 16:00 to 17:10), which is why the Markets index tiles stay
   at-close and the Markets chart keeps fetching regular-session only.
 
+## Heatmap: an unknown screener change is not 0.00% (owner 2026-11-05: "fix it")
+
+Nasdaq's screener sometimes sends a blank, `--` or junk `pctchange`. `parseScreener` used to read the
+blank and `--` as `0`, so a name with no reading was tinted as unchanged. It now reads all three as
+UNKNOWN (`NaN`) and KEEPS the row: its cap, sector and name still rank the r2k roster and size the
+tile, and the Yahoo overlay (`mergeFreshQuotes`) fills the day's move in. A name that no source
+prices is left off the map (`buildHeatmap` / `buildEtfMap` already skip a non-finite `pct`) — the
+owner was told this drops tiles and chose it over a false flat. A REAL `0.00%` is still zero.
+Guarded by `tools/unit/heatmap-watchlist.test.mjs`.
+
 ## News topic AI cleanup (built 2026-10-17; LIVE since 2026-10-19 — `desk_023` applied, `desk-news` v15 deployed, client merged as PR #341)
 
 Owner, after typing `cerebres` (the company is Cerebras) into the News topic box: "doesn't it use AI to infer what I meant?" — then "build option B" (a small AI step cleans up what is typed; option C, AI ranking of the results, was not chosen). Spec and plan: `specs/news-topic-ai/`. The topic box is described above; this is what sits in front of it.

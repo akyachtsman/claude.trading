@@ -219,6 +219,9 @@ test('cron stochLatest / rsiLatest are the dashboard\'s own stochSeries / rsiSer
   }
   assert.equal(cron.rsiLatest([1, 2, 3]), null, 'too short');
   assert.equal(cron.rsiLatest(Array.from({ length: 15 }, (_, i) => 10 + i)), 100, 'only gains');
+  assert.equal(cron.rsiLatest(Array(30).fill(7)), 50, 'no movement at all is neutral, as on the dashboard');
+  assert.equal(cron.rsiLatest(Array(15).fill(7)), 50, 'the first reading (len + 1 closes) too');
+  assert.equal(cron.rsiLatest(Array(30).fill(7)), Number(data.rsiSeries({ c: Array(30).fill(7) })[29].toFixed(2)));
   // a flat range reads 50
   const flat = { h: Array(20).fill(5), l: Array(20).fill(5), c: Array(20).fill(5) };
   assert.deepEqual({ ...cron.stochLatest(flat, cron.STOCH) }, { k: 50, d: 50 });
