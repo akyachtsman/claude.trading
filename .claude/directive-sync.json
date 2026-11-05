@@ -16,8 +16,8 @@
     },
     ".github/scripts/ui-tests/tests/app.spec.js": {
       "blob": "e0e84eac8d78a742ea7db54302bc8997c9a28708",
-      "local": "41ba1493b92b6f6da09d707df0388e8fe0ba35d5",
-      "reason": "Project-specific suite (S5-S80, about 12,000 lines) that defines its helpers inline; the template spec is a starter. 2026-10-25: the template's DISMISS scenario (with its fitProblems check) was PORTED in, with a local attachJson helper and the local gotoAndAuth (roster writes blocked); ENTRY is not taken (no APP_PAGES). KD-1 reads CLEAR. The move of helpers into tests/lib/ is not taken (see tests/lib/auth.js). Later on 2026-10-25 (d23c822): the template's FIT_INCOMPLETE budget note was ported into DISMISS; S48 and S77 stay strict through a local fitChecked() that retries an incomplete check once, warm, with a 5s cap. 2026-11-05: re-recorded after the project's own S78-S80 (PRs #347, #356); the template is unchanged since d32a9d0."
+      "local": "f20b93a84e6e3c73a0ee14f58879f2fc57d82be2",
+      "reason": "Project-specific suite (S5-S80, about 12,000 lines) that defines its helpers inline; the template spec is a starter. 2026-10-25: the template's DISMISS scenario (with its fitProblems check) was PORTED in, with a local attachJson helper and the local gotoAndAuth (roster writes blocked); ENTRY is not taken (no APP_PAGES). KD-1 reads CLEAR. The move of helpers into tests/lib/ is not taken (see tests/lib/auth.js). Later on 2026-10-25 (d23c822): the template's FIT_INCOMPLETE budget note was ported into DISMISS; S48 and S77 stay strict through a local fitChecked() that retries an incomplete check once, warm, with a 5s cap. 2026-11-05: re-recorded after the project's own S78-S80 (PRs #347, #356); the template is unchanged since d32a9d0. Same day: two comments no longer name the deleted qa-response.yml."
     },
     ".github/scripts/ui-tests/tests/lib/auth.js": {
       "blob": "ef358668fa8033bc0f002c33075e8677a9f3f7e6",
