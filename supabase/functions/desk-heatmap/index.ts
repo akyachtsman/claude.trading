@@ -814,8 +814,17 @@ async function advanceSweep(universe: string, symbols: string[]): Promise<void> 
   // never fired, the names it kept carried old 1W/1M/YTD figures, and
   // `periodsAsOf` read as new (audit 2026-10-25, I5).
   const row: SweepRow = { at: fresh ? prev!.at : Date.now(), done, total: symbols.length, map };
-  // Nothing left to sweep and nothing changed: no write at all.
-  if (!slice.length && fresh && prev!.done === done && prev!.total === symbols.length) return;
+  // Nothing left to sweep and nothing changed: no write at all. The ledger is
+  // complete here (every roster symbol is in it), so the cached body is still
+  // dropped: kickPeriodSweep only gets here while this isolate has not loaded
+  // the periods, so that body was built WITHOUT them, and keeping it served a
+  // map with no 1W/1M/YTD until its TTL ran out (up to an hour overnight). The
+  // rebuild loads them and later hits stop at kickPeriodSweep's periodCache
+  // check, so this costs one rebuild per isolate.
+  if (!slice.length && fresh && prev!.done === done && prev!.total === symbols.length) {
+    payloadCache.delete(universe);
+    return;
+  }
   await writeSweepRow(universe, row);
   if (done >= symbols.length) payloadCache.delete(universe); // next call rebuilds WITH periods
 }
