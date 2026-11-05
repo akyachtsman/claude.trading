@@ -6,6 +6,11 @@
 -- Check 1 (default grants): data.md's two queries, with MAINTAIN added (Postgres 17). The first
 --   reads the tables that exist, the second the defaults a future table gets; both must be empty,
 --   so each is one row here holding the count and the offenders. Fixed by desk_025.
+--   1c (data.md, 2026-10-29, added here 2026-11-05): supabase_admin's own default privileges in
+--   public still grant the browser roles everything, and postgres cannot revoke them; that residual
+--   reaches nothing while supabase_admin owns no table, view or foreign table in public. A false row
+--   is a finding to raise with the owner, never one to fix in a migration (postgres cannot revoke
+--   that object's grants either).
 -- Check 2 (pg_net): the PUBLIC grant on net.http_request_queue cannot be revoked here and is
 --   recorded in CLAUDE.md (Secret columns, kept deferral). Its three rules are checked as far as
 --   SQL can see: pg_graphql not installed, and no function in public reads net.*. The third rule —
@@ -22,6 +27,13 @@ with t as (
   where c.relnamespace = 'public'::regnamespace
     and c.relkind in ('r', 'p', 'v', 'm', 'f')
     and has_table_privilege(r.role, c.oid, p.priv)
+), o as (
+  select coalesce(string_agg(format('%s (%s)', c.oid::regclass, c.relkind), ', '), '') as hits,
+         count(*) as n
+  from pg_class c
+  where c.relnamespace = 'public'::regnamespace
+    and c.relkind in ('r', 'p', 'v', 'm', 'f')
+    and c.relowner = 'supabase_admin'::regrole
 ), d as (
   select coalesce(string_agg(format('%s %s', a.grantee::regrole, a.privilege_type), ', '), '') as hits,
          count(*) as n
@@ -37,6 +49,9 @@ select '1a no TRUNCATE/REFERENCES/TRIGGER/MAINTAIN on public tables for anon/aut
 union all
 select '1b postgres default privileges in public grant none of them',
        d.n = 0, nullif(d.hits, '') from d
+union all
+select '1c supabase_admin owns no table, view or foreign table in public',
+       o.n = 0, nullif(o.hits, '') from o
 union all
 select '2a pg_net installed (the recorded deferral applies)',
        true, case when exists (select 1 from pg_extension where extname = 'pg_net')
