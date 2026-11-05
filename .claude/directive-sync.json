@@ -1,13 +1,13 @@
 {
   "upstream": {
-    "sha": "d32a9d0cb6f17b77c3771503ec0bfe95931c9043",
-    "synced": "2026-10-27"
+    "sha": "e3a2f904a80a9da03d52859b2366a022b61ec8d9",
+    "synced": "2026-11-05"
   },
   "refresh_kept": {
     ".github/scripts/ui-tests/playwright.config.js": {
-      "blob": "9a2b4ad9a65ab1f9ce5afbd0395af8aaecbb3573",
+      "blob": "05cb0212a82247b0b3366505152b50152edd1715",
       "local": "d7348a3816598e34e76bbeebec7af85ff85abae5",
-      "reason": "Takes the 2026-10-25 template's iphone-project comment (the only WebKit project; keep it). Keeps the local grepInvert (qa.yml's GREP_INVERT job env), the production APP_URL default, the bounded-timeout comments and the project-specific viewport notes; the template's comment rewording and REPLACE_* placeholder are not wanted."
+      "reason": "Takes the 2026-10-25 template's iphone-project comment (the only WebKit project; keep it). Keeps the local grepInvert (GREP_INVERT, exported by the qa caller's grep-invert input), the production APP_URL default, the bounded-timeout comments and the project-specific viewport notes; the template's comment rewording and REPLACE_* placeholder are not wanted. 2026-11-05 (e3a2f90): upstream's only change is a comment dropping qa-response.yml, a line the local wording never carried."
     },
     ".github/scripts/ui-tests/package.json": {
       "blob": "30f21e71d425bef49c192a79cd880c25280ac291",
@@ -16,8 +16,8 @@
     },
     ".github/scripts/ui-tests/tests/app.spec.js": {
       "blob": "e0e84eac8d78a742ea7db54302bc8997c9a28708",
-      "local": "09fa8b7a677ab7edfe9c9e4ad98176d9f509c569",
-      "reason": "Project-specific suite (S5-S77, about 12,000 lines) that defines its helpers inline; the template spec is a starter. 2026-10-25: the template's DISMISS scenario (with its fitProblems check) was PORTED in, with a local attachJson helper and the local gotoAndAuth (roster writes blocked); ENTRY is not taken (no APP_PAGES). KD-1 reads CLEAR. The move of helpers into tests/lib/ is not taken (see tests/lib/auth.js). Later on 2026-10-25 (d23c822): the template's FIT_INCOMPLETE budget note was ported into DISMISS; S48 and S77 stay strict through a local fitChecked() that retries an incomplete check once, warm, with a 5s cap."
+      "local": "f20b93a84e6e3c73a0ee14f58879f2fc57d82be2",
+      "reason": "Project-specific suite (S5-S80, about 12,000 lines) that defines its helpers inline; the template spec is a starter. 2026-10-25: the template's DISMISS scenario (with its fitProblems check) was PORTED in, with a local attachJson helper and the local gotoAndAuth (roster writes blocked); ENTRY is not taken (no APP_PAGES). KD-1 reads CLEAR. The move of helpers into tests/lib/ is not taken (see tests/lib/auth.js). Later on 2026-10-25 (d23c822): the template's FIT_INCOMPLETE budget note was ported into DISMISS; S48 and S77 stay strict through a local fitChecked() that retries an incomplete check once, warm, with a 5s cap. 2026-11-05: re-recorded after the project's own S78-S80 (PRs #347, #356); the template is unchanged since d32a9d0. Same day: two comments no longer name the deleted qa-response.yml."
     },
     ".github/scripts/ui-tests/tests/lib/auth.js": {
       "blob": "ef358668fa8033bc0f002c33075e8677a9f3f7e6",

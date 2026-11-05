@@ -540,7 +540,7 @@ test('S2: auth gate discovered and credential accepted', async ({ page, renderWi
   renderWitness();
   /* TEST_AUTH_EMAIL IS PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — say so, loudly.
 
-     qa.yml / qa-live.yml / qa-response.yml all pass `test-auth-email` into the
+     qa.yml and qa-live.yml both pass `test-auth-email` into the
      ui-suite composite, which exports TEST_AUTH_EMAIL into the test runner's
      environment (directives#304). Nothing here reads it: detectAuthGate() does not look for
      input[type=email] and detectAndAuth() is handed only the credential.
@@ -571,8 +571,8 @@ test('S2: auth gate discovered and credential accepted', async ({ page, renderWi
   }
   /* TEST_AUTH_READY_SELECTOR / TEST_AUTH_READY_REQUEST / TEST_AUTH_SUCCESS_SELECTOR
      are PLUMBED THROUGH BUT NOT WIRED IN THIS KIT — same shape as the
-     TEST_AUTH_EMAIL guard above, and for the same reason: qa.yml / qa-live.yml /
-     qa-response.yml pass all three into the ui-suite composite (directives#302,
+     TEST_AUTH_EMAIL guard above, and for the same reason: qa.yml and
+     qa-live.yml pass all three into the ui-suite composite (directives#302,
      #320, #379), which exports them into the test runner's environment, but nothing here reads
      them. mechanism below still comes from the windowed detectAuthGate() /
      detectAndAuth() pair, and success below is still decided from domChanged /
