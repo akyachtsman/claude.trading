@@ -425,6 +425,15 @@ function stochPartial(s, { k, kSmooth, d } = STOCH) {
    same recurrence as the desk-ask edge function's get_technicals tool (owner
    request 2026-07-25: show it in the charts workbench crosshair too, per pane,
    at that pane's own bar timeframe, same as %K/%D already do). */
+/* No movement at all (no gain AND no loss) is NEUTRAL, 50 — never the 100 the
+   bare `avgLoss === 0` test gave, which read a flat series as overbought.
+   Only gains and no losses is 100. Same rule in desk-ask's get_technicals and
+   desk-cron-ask's rsiLatest (owner 2026-11-05: "fix it"). */
+function rsiOf(avgGain, avgLoss) {
+  if (avgLoss === 0) return avgGain === 0 ? 50 : 100;
+  return 100 - 100 / (1 + avgGain / avgLoss);
+}
+
 function rsiSeries(bars, len = 14) {
   const c = bars.c, n = c.length;
   const out = new Array(n).fill(null);
@@ -435,12 +444,12 @@ function rsiSeries(bars, len = 14) {
     if (diff >= 0) avgGain += diff; else avgLoss -= diff;
   }
   avgGain /= len; avgLoss /= len;
-  out[len] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  out[len] = rsiOf(avgGain, avgLoss);
   for (let i = len + 1; i < n; i++) {
     const diff = c[i] - c[i - 1];
     avgGain = (avgGain * (len - 1) + Math.max(diff, 0)) / len;
     avgLoss = (avgLoss * (len - 1) + Math.max(-diff, 0)) / len;
-    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    out[i] = rsiOf(avgGain, avgLoss);
   }
   return out;
 }

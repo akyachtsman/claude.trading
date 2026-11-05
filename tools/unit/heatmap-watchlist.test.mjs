@@ -154,24 +154,35 @@ test('desk-heatmap: parseScreener reads Nasdaq\'s formatted strings and register
   assert.deepEqual(b, { pct: 1.23, cap: 1e9, last: 480.1, sector: 'Finance', name: 'Berkshire' });
   assert.equal(m.get('BRK-B'), m.get('BRK.B'), 'the hyphen alias is the SAME quote object');
   assert.deepEqual(plain(m.get('ZERO')), { pct: -0.5, cap: null, last: null }, 'a zero cap and a junk price are null');
-  assert.equal(m.has('JUNK'), false, 'a non-numeric change skips the row');
-  assert.equal(m.size, 3);
+  assert.ok(m.has('JUNK') && Number.isNaN(m.get('JUNK').pct), 'a non-numeric change is UNKNOWN (NaN) and the row is kept');
+  assert.equal(m.size, 4);
   assert.equal(h.parseScreener(null).size, 0);
   assert.equal(h.parseScreener({ data: {} }).size, 0);
 });
 
-test('desk-heatmap: an UNKNOWN screener change ("" or "--") is not read as a flat 0.00%', {
-  todo: 'BUG: parseScreener maps a blank/"--" pctchange to pct 0, so a symbol with no reading tints as flat (unknown must never be 0)',
-}, () => {
+test('desk-heatmap: an UNKNOWN screener change ("" or "--") is not read as a flat 0.00%; the row stays for the overlay', () => {
   const h = heat();
   const m = h.parseScreener({ data: { rows: [
-    { symbol: 'BLANK', pctchange: '', marketCap: '$5,000', lastsale: '$1' },
-    { symbol: 'DASH', pctchange: '--', marketCap: '$5,000', lastsale: '$1' },
+    { symbol: 'BLANK', pctchange: '', marketCap: '$5,000', lastsale: '$1', sector: 'Tech' },
+    { symbol: 'DASH', pctchange: '--', marketCap: '$5,000', lastsale: '$1', sector: 'Tech' },
+    { symbol: 'FLAT', pctchange: '0.00%', marketCap: '$5,000', lastsale: '$1', sector: 'Tech' },
   ] } });
   for (const s of ['BLANK', 'DASH']) {
     const q = m.get(s);
-    assert.ok(!q || q.pct == null || !Number.isFinite(q.pct), `${s} must not read 0.00%`);
+    assert.ok(q, `${s} keeps its row (cap, sector) so the roster and the overlay still see it`);
+    assert.ok(!Number.isFinite(q.pct), `${s} must not read 0.00%`);
+    assert.equal(q.cap, 5000);
   }
+  assert.equal(m.get('FLAT').pct, 0, 'a REAL 0.00% is still zero');
+  const cons = ['BLANK', 'DASH', 'FLAT'].map((sym) => ({ sym, name: sym, sector: 'Tech', ind: '' }));
+  // No other source priced them: the unknown names are left off, never drawn as unchanged.
+  const before = plain(h.buildHeatmap(cons, m, new Map(), null));
+  assert.deepEqual(before.sectors[0].tiles.map((t) => [t.sym, t.pct]), [['FLAT', 0]]);
+  // Yahoo's overlay supplies the day's move: the tile comes back with the REAL figure.
+  const fresh = new Map([['BLANK', { pct: 1.5, cap: null, last: 1.02 }]]);
+  assert.equal(h.mergeFreshQuotes(cons, m, fresh), 1);
+  const after = plain(h.buildHeatmap(cons, m, new Map(), null));
+  assert.deepEqual(after.sectors[0].tiles.map((t) => [t.sym, t.pct]).sort(), [['BLANK', 1.5], ['FLAT', 0]]);
 });
 
 test('desk-heatmap and desk-maps: parseSpark needs two positive closes and rounds to cents', () => {

@@ -264,11 +264,16 @@ export function parseScreener(json: unknown): Map<string, Quote> {
   for (const r of (json as any)?.data?.rows || []) {
     const sym = String(r.symbol || '').trim().toUpperCase();
     if (!sym) continue;
+    /* A blank, "--" or junk change is UNKNOWN (NaN), never a flat 0.00% (owner
+       2026-11-05: "fix it"). The row is KEPT — its cap, sector and name still
+       rank the r2k roster and size the tile — and the Yahoo overlay
+       (`mergeFreshQuotes`) fills the day-% in; only a name that no source
+       prices is left off the map (buildHeatmap / buildEtfMap skip a
+       non-finite pct), which beats tinting it as unchanged. */
     const rawPct = String(r.pctchange ?? '').replace(/[%,+]/g, '').trim();
-    const pct = rawPct === '' || rawPct === '--' ? 0 : Number(rawPct);
+    const pct = rawPct === '' ? NaN : Number(rawPct);
     const cap = Number(String(r.marketCap ?? '').replace(/[$,]/g, ''));
     const last = Number(String(r.lastsale ?? '').replace(/[$,]/g, ''));
-    if (!Number.isFinite(pct)) continue;
     const q: Quote = {
       pct: Number(pct.toFixed(2)),
       cap: Number.isFinite(cap) && cap > 0 ? cap : null,
