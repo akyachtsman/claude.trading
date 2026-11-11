@@ -554,26 +554,44 @@ async function deskRpcOk(fn, pin, extra) {
 }
 async function deskLogin(pin) {
   const out = await deskRpc('desk_login', pin);
-  return out && out.ok ? out : { ok: false, error: 'PIN not recognized — try again.' };
+  if (out && out.ok) return out;
+  /* desk_026: 10 wrong PINs in an hour lock EVERY PIN door, the right PIN included, for an hour. A lock is not a
+     verdict on this PIN — `locked` tells the boot path not to forget a stored one for it. */
+  if (out && typeof out.locked_until === 'string') return { ok: false, locked: true, lockedUntil: out.locked_until, error: deskLockedText(out.locked_until) };
+  return { ok: false, error: 'PIN not recognized — try again.' };
+}
+/* desk_027 (owner 2026-11-11, PIN hardening fix 2): the owner changes the desk PIN to a passphrase of 16 to 200
+   characters. The server decides everything (a wrong current PIN is a counted miss, a lock refuses it, only the owner
+   may, the length and the rest); this only turns its answer into {ok:true} or {ok:false, error}. A failed CALL (no
+   answer, a non-OK status) is `unknown`, never "not changed": the database may have committed the change and the reply
+   been lost on the way back (Codex P2, PR #366) — the caller finds out which (submitPinChange). */
+async function deskChangePin(pin, newPin) {
+  let out;
+  try { out = await deskRpc('desk_change_pin', pin, { new_pin: newPin }); }
+  catch { return { ok: false, unknown: true }; }
+  if (out && out.ok === true) return { ok: true };
+  if (out && typeof out.locked_until === 'string') return { ok: false, locked: true, error: deskLockedText(out.locked_until) };
+  if (out && typeof out.error === 'string' && out.error) return { ok: false, error: out.error };
+  return { ok: false, error: 'The current PIN or passphrase is not right.' };
+}
+function deskLockedText(iso) {
+  const t = fmtClock(iso);
+  return 'Too many wrong PINs — the desk is locked' + (t ? ' until ' + t : ' for an hour') + '. Try again then.';
 }
 
-/* The desk PIN, remembered on THIS DEVICE (owner ruling 2026-10-04: "keep it for accounts at the
-   bottom but leave it unlocked for now"). The working copy is still sessionStorage 'desk_pin' —
-   every reader in app.js uses it — and this is the copy that outlives the tab: boot re-validates
-   it with desk_login (the server stays the gate: nobody else's device holds it) and re-seeds the
-   session copy; an unlock writes both; Lock, and a PIN the server definitely refuses, forget
-   BOTH, so Lock still locks. Residual, accepted by the owner: localStorage is shared by every
-   page on akyachtsman.github.io, so a script on any of the owner's other Pages sites could read it. */
-const DESK_PIN_DEVICE_KEY = 'desk_pin_device_v1';
-function deskPinDeviceGet() {
-  try { return localStorage.getItem(DESK_PIN_DEVICE_KEY) || null; } catch { return null; }
-}
-function deskPinDeviceSet(pin) {
-  try { localStorage.setItem(DESK_PIN_DEVICE_KEY, pin); } catch { /* storage blocked: the session copy still works */ }
+/* The desk PIN is kept for THIS TAB only (owner 2026-11-11, PIN hardening fix 3: "stop keeping
+   the PIN in localStorage"). sessionStorage 'desk_pin' is the working copy every reader in app.js
+   uses; it survives a reload of the tab and dies with it. The device copy that 2026-10-04 added
+   ('desk_pin_device_v1' in localStorage, shared by every page on akyachtsman.github.io) is RETIRED:
+   nothing writes it, and boot wipes any copy an earlier version left behind (deskPinDeviceWipe).
+   Never bring it back without the owner. */
+const DESK_PIN_DEVICE_KEY = 'desk_pin_device_v1';   /* retired 2026-11-11 — only ever removed */
+function deskPinDeviceWipe() {
+  try { localStorage.removeItem(DESK_PIN_DEVICE_KEY); } catch { /* storage blocked: nothing to wipe */ }
 }
 function deskPinForget() {
   try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ }
-  try { localStorage.removeItem(DESK_PIN_DEVICE_KEY); } catch { /* private mode */ }
+  deskPinDeviceWipe();
 }
 async function deskGetDashboard(pin) {
   const out = await deskRpc('desk_get_dashboard', pin);

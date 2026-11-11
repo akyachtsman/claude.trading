@@ -38,7 +38,55 @@ import { fitProblems, FIT_INCOMPLETE } from './lib/fit.js';
 // its first statement, BEFORE any skip/throw preamble — an honest failing or
 // skipping body still entered the callback with a real page at that width, which
 // is exactly what the witness attests. A test added later should do both.
+/* PIN GUARD (desk_026, 2026-11-11). Every wrong PIN that reaches the live database now counts toward the desk-wide
+   lockout (10 misses in an hour lock every PIN door, the owner's included, for an hour). Many scenarios force the page
+   live with an invented PIN and leave DESK_DB.url pointing at the REAL project, so a single PR run sent dozens of fake
+   PINs there and locked the owner out within its first half hour (measured 2026-11-11, the PR #366 run). This fixture
+   runs for EVERY scenario: a request to the real backend that carries a `pin` which is not TEST_AUTH_CREDENTIAL itself
+   is answered here with the refusal the server would give and never leaves the browser. S11's one deliberate miss is
+   the only exception. A scenario's own `page.route` stub still wins (page routes take precedence over context routes). */
+const LIVE_BACKEND = 'https://kwugzhyfjevzwgplhtsd.supabase.co';
 const test = base.extend({
+  pinGuard: [async ({ context }, use, testInfo) => {
+    const refuse = (route, body, status = 200) =>
+      route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+    const body = (req) => { try { const j = req.postDataJSON(); return j && typeof j === 'object' ? j : null; } catch { return null; } };
+    /* What the server counts. A PIN RPC counts ANY `pin` it is handed that is not a real PIN — null and '' included
+       (desk_pin_who(null) is a miss: the probe proves it, and the forced-live scenarios send exactly that). desk-ask
+       reads a null or '' PIN as an open, visitor question and checks nothing, so only a non-empty one counts there. */
+    const spendsAMiss = (req, askFn) => {
+      const j = body(req);
+      if (!j || !('pin' in j)) return false;                                // no PIN sent: nothing is counted
+      const pin = j.pin;
+      if (askFn && (pin === null || pin === undefined || String(pin) === '')) return false;
+      if (AUTH_CREDENTIAL && pin === AUTH_CREDENTIAL) return false;         // the real test PIN: a success, never counted
+      return !/^S11:/.test(testInfo.title);                                 // S11's one deliberate miss passes
+    };
+    await context.route(`${LIVE_BACKEND}/rest/v1/rpc/desk_*`, (route) => {
+      const req = route.request();
+      if (req.method() !== 'POST' || !spendsAMiss(req, false)) return route.fallback();
+      return refuse(route, /desk_chat_history$/.test(new URL(req.url()).pathname) ? [] : { ok: false });
+    });
+    await context.route(`${LIVE_BACKEND}/functions/v1/desk-ask`, (route) => {
+      const req = route.request();
+      if (req.method() !== 'POST' || !spendsAMiss(req, true)) return route.fallback();
+      return refuse(route, { ok: false, error: 'PIN not recognized.' }, 401);
+    });
+    /* And PROVE it: a scenario's own page route outranks this one, so a stub that calls route.continue() would send its
+       fake PIN straight out. Any fake-PIN request answered by a real server (a response WITH a server address; a
+       fulfilled route has none) fails the scenario at teardown, naming the call. */
+    const leaks = [];
+    const isLive = (u) => u.startsWith(`${LIVE_BACKEND}/rest/v1/rpc/desk_`) || u.startsWith(`${LIVE_BACKEND}/functions/v1/desk-ask`);
+    const onResponse = async (res) => {
+      const req = res.request();
+      if (req.method() !== 'POST' || !isLive(req.url()) || !spendsAMiss(req, req.url().includes('/functions/v1/desk-ask'))) return;
+      if (await res.serverAddr().catch(() => null)) leaks.push(new URL(req.url()).pathname);
+    };
+    context.on('response', onResponse);
+    await use();
+    context.off('response', onResponse);
+    if (leaks.length) throw new Error(`PIN guard: ${leaks.length} fake PIN(s) reached the live backend (${[...new Set(leaks)].join(', ')}) — each one counts toward the desk lockout`);
+  }, { auto: true }],
   renderWitness: async ({ page }, use, testInfo) => {
     // Records NOTHING at setup: the body's own call is the witness.
     let recorded = false;
@@ -1455,8 +1503,12 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness
 });
 
 // S11 — Wrong PIN: plain error, still locked, nothing rendered.
-test('S11: invalid PIN shows an error and stays locked (live only)', async ({ page, renderWitness }) => {
+test('S11: invalid PIN shows an error and stays locked (live only)', async ({ page, renderWitness }, testInfo) => {
   renderWitness();
+  // ONE project only (desk_026, 2026-11-11): every wrong PIN now counts toward the desk-wide lockout (10 misses in
+  // an hour lock every PIN door, the owner's included, for an hour), so four projects on every deploy spent four of
+  // the owner's ten. The refusal is the server's, not the browser's, so one project proves it.
+  test.skip(testInfo.project.name !== 'desktop', 'one wrong PIN per run: each counts toward the desk lockout (desk_026)');
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
   const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
@@ -8318,20 +8370,21 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S60 — the accounts keep their PIN but this DEVICE remembers it (owner ruling 2026-10-04:
-// "keep it for accounts at the bottom but leave it unlocked for now"). The server stays the
-// gate: a remembered PIN is validated by desk_login at every boot and re-seeds the tab's
-// copy; an unlock writes both; Lock and a PIN the server definitely refuses forget both; a
-// network blip forgets nothing. Run through the REAL boot against a stubbed backend.
+// S60 — the desk PIN is kept for THIS TAB only (owner 2026-11-11, PIN hardening fix 3: "stop
+// keeping the PIN in localStorage"; it reverses 2026-10-04's device copy). The server stays the
+// gate: the tab's PIN is validated by desk_login at every boot; an unlock writes the tab's copy and
+// nothing else; a device copy left by an earlier version is wiped at boot, UNREAD; Lock and a PIN
+// the server definitely refuses forget the tab's copy; a network blip forgets nothing. Run through
+// the REAL boot against a stubbed backend.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S60: the desk PIN is remembered on this device — validated at every boot, forgotten by Lock and by a refusal, kept through a network blip', async ({ page, renderWitness }) => {
+test('S60: the desk PIN is kept for this tab only — never on the device, validated at every boot, forgotten by Lock and by a refusal, kept through a network blip', async ({ page, renderWitness }) => {
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   const DEVICE = 'desk_pin_device_v1', GOOD = '4321';
   const base = (await (await page.request.get('scripts/config.js')).text()).match(/url:\s*'([^']*)'/)[1];
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
   const logins = [];
-  let blip = false;
+  let blip = false, lockedUntil = null;
   await page.route(`${base}/**`, async (route) => {
     const req = route.request();
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
@@ -8339,6 +8392,8 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
       const pin = JSON.parse(req.postData() || '{}').pin;
       logins.push(pin);
       if (blip) return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{}' });
+      // desk_026: a locked desk refuses every PIN, the right one too, and says until when
+      if (lockedUntil) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: false, locked_until: lockedUntil }) });
       return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: pin === GOOD }) });
     }
     // every other desk call (feeds, dashboard, roster) is out of scope: fail it fast and quietly
@@ -8364,59 +8419,68 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
 
   // A. nothing stored: no login call, the accounts are locked, Ask is open
   await loadLive();
-  expect(logins, 'nothing remembered, so nothing is validated').toEqual([]);
+  expect(logins, 'nothing stored, so nothing is validated').toEqual([]);
   await expect(lockForm, 'the accounts ask for the PIN').toBeVisible();
   expect(await authed()).toBe(false);
-  await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is then remembered').toContainText(/stays unlocked on this device/i);
+  await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is kept for this tab').toContainText(/stays unlocked in this tab/i);
+  await expect(page.locator('#accountGrid .lock-explain'), 'and never promises the device').not.toContainText(/device/i);
   await expect(page.locator('#askBody form input.legacy-input'), 'while Ask is open without it').toBeEnabled();
   await expect(sysBtn).toHaveCount(0);
 
-  // B. a wrong PIN stores nothing anywhere; the right one is remembered by BOTH copies
+  // B. a wrong PIN stores nothing anywhere; the right one is kept by the TAB and by nothing else
   await lockForm.fill('0000');
   await page.locator('#accountGrid .panel-lock .lock-form button').click();
   await expect(page.locator('.panel-lock .lock-error')).toBeVisible();
-  expect(await stores(), 'a wrong PIN is remembered nowhere').toEqual({ session: null, device: null });
+  expect(await stores(), 'a wrong PIN is kept nowhere').toEqual({ session: null, device: null });
   expect(await authed()).toBe(false);
   await lockForm.fill(GOOD);
   await page.locator('#accountGrid .panel-lock .lock-form button').click();
   await expect.poll(authed).toBe(true);
-  expect(await stores(), 'the right PIN is kept for the tab AND the device').toEqual({ session: GOOD, device: GOOD });
+  expect(await stores(), 'the right PIN is kept for the tab and NOT on the device').toEqual({ session: GOOD, device: null });
+  expect(await page.evaluate(() => Object.keys(localStorage).filter(k => /pin/i.test(k))), 'no PIN-named key in localStorage at all').toEqual([]);
 
-  // C. a new tab/session with only the device's copy: validated, re-seeded, unlocked
+  // C. a device copy an EARLIER version left behind is wiped at boot, UNREAD: it unlocks nothing
   await loadLive({ device: GOOD });
-  expect(logins, 'the remembered PIN is checked by the server at boot, not trusted for being stored').toEqual([GOOD]);
+  expect(logins, 'the old device copy is not even sent to the server').toEqual([]);
+  expect(await authed(), 'and does not unlock the desk').toBe(false);
+  expect(await stores(), 'it is gone').toEqual({ session: null, device: null });
+  await expect(lockForm).toBeVisible();
+  // ...in demo mode too (the wipe runs before the mode is read)
+  await page.evaluate(([k]) => localStorage.setItem(k, '4321'), [DEVICE]);
+  await page.goto('./?demo=1');
+  await page.waitForFunction(() => DESK.mode === 'demo');
+  expect((await stores()).device, 'a demo visit wipes the old device copy too').toBe(null);
+
+  // D. a reload of an unlocked TAB: the tab's PIN is validated by the server and unlocks; still nothing on the device
+  await loadLive({ session: GOOD });
+  expect(logins, 'the tab\'s PIN is checked by the server at boot, not trusted for being stored').toEqual([GOOD]);
   expect(await authed(), 'and unlocks the desk').toBe(true);
-  expect(await stores(), 'the tab\'s working copy is re-seeded').toEqual({ session: GOOD, device: GOOD });
-  await expect(lockForm, 'no PIN form on an unlocked device').toHaveCount(0);
+  expect(await stores(), 'the device stays empty').toEqual({ session: GOOD, device: null });
+  await expect(lockForm, 'no PIN form on an unlocked tab').toHaveCount(0);
   await expect(lockBtn).toBeVisible();
   await expect(sysBtn, 'and Ask has its private parts').toHaveCount(1);
 
-  // D. a tab that was ALREADY unlocked becomes an unlocked device (nothing to retype after this ships)
-  await loadLive({ session: GOOD });
-  expect(await authed()).toBe(true);
-  expect(await stores(), 'the tab\'s PIN is now remembered by the device too').toEqual({ session: GOOD, device: GOOD });
-
-  // E. a PIN the server definitely refuses (it was changed) is forgotten everywhere
-  await loadLive({ device: '9999' });
+  // E. a PIN the server definitely refuses (it was changed) is forgotten
+  await loadLive({ session: '9999' });
   expect(logins).toEqual(['9999']);
   expect(await authed()).toBe(false);
-  expect(await stores(), 'a refused PIN is dropped from both copies').toEqual({ session: null, device: null });
+  expect(await stores(), 'a refused PIN is dropped').toEqual({ session: null, device: null });
   await expect(lockForm).toBeVisible();
 
-  // F. a network blip is NOT a wrong PIN: locked this time, but the device keeps it for the next load
+  // F. a network blip is NOT a wrong PIN: locked this time, but the tab keeps it for the next load
   blip = true;
-  await loadLive({ device: GOOD });
+  await loadLive({ session: GOOD });
   expect(logins).toEqual([GOOD]);
   expect(await authed(), 'the blip leaves the desk locked for now').toBe(false);
-  expect((await stores()).device, 'but does not sign the owner out of this device').toBe(GOOD);
+  expect((await stores()).session, 'but does not sign the owner out of this tab').toBe(GOOD);
   blip = false;
 
-  // G. Lock really locks: it forgets BOTH copies, so a reload does not quietly unlock again
-  await loadLive({ device: GOOD });
+  // G. Lock really locks: it forgets the tab's copy, so a reload does not quietly unlock again
+  await loadLive({ session: GOOD });
   expect(await authed()).toBe(true);
   await lockBtn.click();
   expect(await authed()).toBe(false);
-  expect(await stores(), 'Lock forgets the tab\'s copy and the device\'s').toEqual({ session: null, device: null });
+  expect(await stores(), 'Lock forgets the tab\'s copy').toEqual({ session: null, device: null });
   await expect(lockForm).toBeVisible();
   await expect(sysBtn, 'Ask drops its private parts but stays open').toHaveCount(0);
   await expect(page.locator('#askBody form input.legacy-input')).toBeEnabled();
@@ -8425,6 +8489,21 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
   expect(logins, 'after Lock a reload has nothing to validate').toEqual([]);
   expect(await authed()).toBe(false);
+
+  // H. a LOCKED desk (desk_026: 10 wrong PINs in an hour) is not a verdict on the stored PIN: the desk stays locked,
+  // the tab keeps the PIN, and the panel says until when — on the Pacific clock, worked out here with Intl
+  lockedUntil = '2026-11-11T05:58:18+00:00';
+  const until = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(lockedUntil));
+  await loadLive({ session: GOOD });
+  expect(logins).toEqual([GOOD]);
+  expect(await authed(), 'a locked desk does not unlock').toBe(false);
+  expect((await stores()).session, 'and the lock does not sign the owner out of this tab').toBe(GOOD);
+  await expect(page.locator('#accountGrid .lock-explain'), 'the panel says the desk is locked, and until when').toContainText(new RegExp(`locked until ${until} P[DS]T`));
+  await lockForm.fill(GOOD);
+  await page.locator('#accountGrid .panel-lock .lock-form button').click();
+  await expect(page.locator('.panel-lock .lock-error'), 'typing the right PIN while locked says the same').toContainText(new RegExp(`Too many wrong PINs .* locked until ${until} P[DS]T`));
+  expect(await authed()).toBe(false);
+  lockedUntil = null;
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12430,5 +12509,162 @@ test('S80: a sideways swipe is not a zoom, the detail window loads without cryin
   expect(await page.evaluate(() => [...document.querySelectorAll('[inert]')].length), 'nothing is left inert').toBe(0);
   await page.evaluate(() => { window.loadWatchlist = window.__realLoadWatchlist; });
 
+  expect(errs, 'no page errors').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S81 — the owner changes the desk PIN to a passphrase (owner 2026-11-11, PIN hardening fix 2; desk_027).
+// The SERVER decides (tools/pin-change-verify.sql proves that side); this proves the page: the control exists only
+// while unlocked, it refuses what it can see is wrong WITHOUT spending a request (a typo in the new passphrase must
+// not cost one of the lockout's ten misses), it says the server's reason, and on success THIS tab keeps the new one
+// in sessionStorage and nothing anywhere else. Through the REAL boot against a stubbed backend.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S81: the owner changes the desk PIN to a passphrase — only while unlocked, checked before it is sent, kept for this tab only', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  const OLD = '4321', NEW = 'correct horse battery staple';
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  const base = (await (await page.request.get('scripts/config.js')).text()).match(/url:\s*'([^']*)'/)[1];
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+  const changes = [], logins = [], asks = [];
+  // a stateful stand-in: `current` is the secret the "database" holds. `answer.commit` makes a change take effect
+  // whatever the reply says — a 503 with commit:true is the reply lost AFTER the database committed (Codex P2, PR #366)
+  let current = OLD, loginDown = false;
+  let answer = { status: 200, body: { ok: true }, commit: true };
+  await page.route(`${base}/**`, async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const path = new URL(req.url()).pathname;
+    const j = JSON.parse(req.postData() || '{}');
+    if (path.endsWith('/rpc/desk_login')) {
+      logins.push(j.pin);
+      if (loginDown) return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{}' });
+      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: j.pin === current }) });
+    }
+    if (path.endsWith('/rpc/desk_change_pin')) {
+      changes.push(j);
+      if (answer.commit && j.pin === current) current = j.new_pin;
+      return route.fulfill({ status: answer.status, headers: cors, contentType: 'application/json', body: JSON.stringify(answer.body) });
+    }
+    if (path.endsWith('/functions/v1/desk-ask')) asks.push(j.pin);
+    return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{"ok":false}' });
+  });
+
+  // demo: no control
+  await page.goto('./?demo=1');
+  await page.waitForFunction(() => DESK.mode === 'demo');
+  await expect(page.locator('#pinChangeBtn'), 'demo has no passphrase to change').toHaveCount(0);
+
+  // live and LOCKED: no control; the unlock field takes a passphrase (no numeric keypad)
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+  await page.goto('./');
+  await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
+  await expect(page.locator('#pinChangeBtn'), 'a locked desk offers no change').toHaveCount(0);
+  const unlockField = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
+  expect(await unlockField.getAttribute('inputmode'), 'a passphrase is not digits: no numeric keypad').toBe(null);
+  await expect(unlockField).toHaveAttribute('placeholder', /passphrase/i);
+  await expect(page.locator('#accountGrid .lock-explain')).toContainText(/PIN or passphrase/);
+
+  // unlock with the PIN: the control is beside Lock
+  await page.evaluate((p) => sessionStorage.setItem('desk_pin', p), OLD);
+  await page.goto('./');
+  await page.waitForFunction(() => DESK.mode === 'live' && DESK.authed);
+  const btn = page.locator('#pinChangeBtn');
+  await expect(btn).toBeVisible();
+  await expect(btn).toHaveAccessibleName('Change the desk passphrase');
+  await btn.click();
+  const dlg = page.locator('#pinChangePanel');
+  await expect(dlg).toBeVisible();
+  await expect(page.locator('#pinChangeOld'), 'focus opens on the current PIN').toBeFocused();
+  for (const id of ['#pinChangeOld', '#pinChangeNew', '#pinChangeNew2']) expect(await page.locator(id).getAttribute('type'), id + ' is masked').toBe('password');
+  const err = page.locator('#pinChangeErr');
+  const fill = async (o, n, a) => { await page.fill('#pinChangeOld', o); await page.fill('#pinChangeNew', n); await page.fill('#pinChangeNew2', a); await page.click('#pinChangeSaveBtn'); };
+
+  // refused BEFORE sending: nothing reaches the server
+  await fill('', NEW, NEW);
+  await expect(err).toHaveText('Enter the current PIN or passphrase.');
+  await fill(OLD, '123456789012345', '123456789012345');
+  await expect(err).toHaveText('The new passphrase must be at least 16 characters.');
+  await expect(page.locator('#pinChangeNew')).toBeFocused();
+  await fill(OLD, NEW, NEW + '!');
+  await expect(err).toHaveText('The two new passphrases do not match.');
+  await expect(page.locator('#pinChangeNew2')).toBeFocused();
+  expect(changes, 'none of those spent a request (or a lockout miss)').toEqual([]);
+
+  // the server's refusals, each said, and the stored PIN untouched
+  answer = { status: 200, body: { ok: false }, commit: false };
+  await fill('9999', NEW, NEW);
+  await expect(err).toHaveText('The current PIN or passphrase is not right.');
+  await expect(page.locator('#pinChangeSaveBtn')).toBeEnabled();
+  await expect(page.locator('#pinChangeOld')).toBeEnabled();
+  answer = { status: 200, body: { ok: false, error: 'Choose a different passphrase.' }, commit: false };
+  await fill(OLD, NEW, NEW);
+  await expect(err).toHaveText('Choose a different passphrase.');
+  answer = { status: 200, body: { ok: false, locked_until: '2026-11-11T06:44:27+00:00' }, commit: false };
+  await fill(OLD, NEW, NEW);
+  const until = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date('2026-11-11T06:44:27+00:00'));
+  await expect(err).toContainText(new RegExp(`Too many wrong PINs .* locked until ${until} P[DS]T`));
+  // the reply is LOST and nothing was committed: the page asks the server once with the new passphrase, which is refused
+  answer = { status: 503, body: {}, commit: false };
+  logins.length = 0;
+  await fill(OLD, NEW, NEW);
+  await expect(err).toContainText('the new passphrase is not in force: nothing changed');
+  expect(logins, 'one login with the new passphrase settles it').toEqual([NEW]);
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'no refusal touched the tab\'s PIN').toBe(OLD);
+  expect(changes.length).toBe(4);
+  expect(changes[1], 'the request carries the current PIN and the new passphrase, nothing else').toEqual({ pin: OLD, new_pin: NEW });
+
+  // success: this tab keeps the new passphrase, nothing else does; Close returns focus to the control
+  answer = { status: 200, body: { ok: true }, commit: true };
+  await fill(OLD, NEW, NEW);
+  await expect(page.locator('#pinChangeOk')).toHaveText(/Passphrase changed/);
+  await expect(err).toBeHidden();
+  await expect(page.locator('#pinChangeSaveBtn')).toBeHidden();
+  await expect(page.locator('#pinChangeCloseBtn')).toHaveText('Close');
+  await expect(page.locator('#pinChangeCloseBtn')).toBeFocused();
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'this tab keeps the new passphrase').toBe(NEW);
+  expect(await page.evaluate((n) => Object.keys(localStorage).filter(k => (localStorage.getItem(k) || '').includes(n) || /pin/i.test(k)), NEW), 'and nothing in localStorage').toEqual([]);
+  for (const id of ['#pinChangeOld', '#pinChangeNew', '#pinChangeNew2']) await expect(page.locator(id), id + ' is emptied').toHaveValue('');
+  await page.click('#pinChangeCloseBtn');
+  await expect(dlg).toBeHidden();
+  await expect(btn, 'focus goes back to the control').toBeFocused();
+
+  // the Ask panel was drawn with the OLD PIN and is not redrawn: a question sent now must carry the NEW one (Codex P2)
+  await page.fill('#askBody form input.legacy-input', 'what moved today?');
+  await page.locator('#askBody form button[type="submit"]').first().click();
+  await expect.poll(() => asks.length, { timeout: 5000 }).toBeGreaterThan(0);
+  expect(asks.at(-1), 'the Ask panel sends the passphrase in force, not the one it was drawn with').toBe(NEW);
+
+  // the reply is lost AFTER the database committed: the check login finds the new passphrase in force — a success
+  const NEW2 = 'another long passphrase here';
+  await btn.click();
+  answer = { status: 503, body: {}, commit: true };
+  await fill(NEW, NEW2, NEW2);
+  await expect(page.locator('#pinChangeOk'), 'a committed change whose reply was lost is reported as done').toHaveText(/Passphrase changed/);
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'and the tab keeps the passphrase in force').toBe(NEW2);
+  await page.click('#pinChangeCloseBtn');
+
+  // the reply is lost and the server cannot be asked either: say so, keep the tab's PIN, claim nothing
+  await btn.click();
+  answer = { status: 503, body: {}, commit: false };
+  loginDown = true;
+  await fill(NEW2, NEW, NEW);
+  await expect(err).toContainText('could not be asked whether the passphrase changed');
+  await expect(page.locator('#pinChangeOk')).toHaveText('');
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin'))).toBe(NEW2);
+  loginDown = false;
+  await page.click('#pinChangeCloseBtn');
+
+  // a reload unlocks with the passphrase in force; Escape closes a fresh dialog; Lock takes the control away
+  await page.reload();
+  await page.waitForFunction(() => DESK.mode === 'live' && DESK.authed);
+  await btn.click();
+  await expect(page.locator('#pinChangeOk'), 'a re-opened dialog starts clean').toHaveText('');
+  await expect(page.locator('#pinChangeSaveBtn')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dlg).toBeHidden();
+  await page.getByRole('button', { name: 'Lock', exact: true }).click();
+  await expect(btn, 'Lock takes the control away').toHaveCount(0);
   expect(errs, 'no page errors').toEqual([]);
 });

@@ -183,9 +183,17 @@ function renderMasthead() {
       /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
          leaving them live after a lock would let a drag change the order and
          then silently revert (Codex review, PR #190) */
-      /* deskPinForget: the session copy AND the one this device remembers — otherwise Lock
+      /* deskPinForget: the tab's copy (and any retired device copy) — otherwise Lock
          would lock until the next reload and then quietly unlock itself again */
       lock.addEventListener('click', () => { deskPinForget(); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
+      /* desk_027 (owner 2026-11-11, PIN hardening fix 2): change the PIN to a passphrase — only while unlocked */
+      const pass = el('button', 'legacy-btn legacy-btn-secondary', 'Passphrase');
+      pass.type = 'button';
+      pass.id = 'pinChangeBtn';
+      pass.title = 'Change the desk PIN to a passphrase';
+      pass.setAttribute('aria-label', 'Change the desk passphrase');
+      pass.addEventListener('click', () => openPinChange(pass));
+      wrap.appendChild(pass);
       wrap.appendChild(lock);
     }
   }
@@ -1965,6 +1973,82 @@ let wlDelTarget = null;   /* {idx, title} — which band's × was pressed */
 function wlNewErr(msg) { modalErr('wlNewErr', msg); }
 function wlDelErr(msg) { modalErr('wlDelErr', msg); }
 
+/* ── Change the desk passphrase (desk_027, owner 2026-11-11, PIN hardening fix 2) ─────────────────────
+   The server decides everything; the page only refuses what it can see is wrong before sending (an empty field, two
+   new passphrases that differ, fewer than 16 characters) so the owner does not spend one of the lockout's ten misses
+   on a typo in the NEW passphrase. On success THIS tab keeps the new one (sessionStorage — never anything that
+   outlives the tab); every other tab's stored PIN stops working at once and asks again. */
+const PIN_MIN = 16;
+let pinChangeBusy = false;
+function pinChangeErr(msg) { modalErr('pinChangeErr', msg); }
+function openPinChange(invoker) {
+  if (!DESK.authed || pinChangeBusy) return;
+  const back = document.getElementById('pinChangeBackdrop');
+  if (!back) return;
+  for (const id of ['pinChangeOld', 'pinChangeNew', 'pinChangeNew2']) {
+    const f = document.getElementById(id); if (f) { f.value = ''; f.disabled = false; }
+  }
+  const save = document.getElementById('pinChangeSaveBtn');
+  if (save) { save.hidden = false; save.disabled = false; save.textContent = 'Change'; }
+  const close = document.getElementById('pinChangeCloseBtn');
+  if (close) close.textContent = 'Cancel';
+  const ok = document.getElementById('pinChangeOk'); if (ok) ok.textContent = '';
+  pinChangeErr('');
+  openModal(back, { initialFocus: document.getElementById('pinChangeOld'), restoreFocusTo: invoker, onDismiss: closePinChange });
+}
+function closePinChange() {
+  if (pinChangeBusy) return;   /* the answer decides which PIN this tab keeps: never abandon it mid-flight */
+  for (const id of ['pinChangeOld', 'pinChangeNew', 'pinChangeNew2']) { const f = document.getElementById(id); if (f) f.value = ''; }
+  closeModal(document.getElementById('pinChangeBackdrop'));
+}
+async function submitPinChange() {
+  if (pinChangeBusy || !DESK.authed) return;
+  const oldF = document.getElementById('pinChangeOld'), newF = document.getElementById('pinChangeNew'), againF = document.getElementById('pinChangeNew2');
+  const save = document.getElementById('pinChangeSaveBtn'), close = document.getElementById('pinChangeCloseBtn'), ok = document.getElementById('pinChangeOk');
+  if (!oldF || !newF || !againF) return;
+  const cur = oldF.value, next = newF.value;
+  pinChangeErr('');
+  if (!cur) { pinChangeErr('Enter the current PIN or passphrase.'); oldF.focus(); return; }
+  if (next.length < PIN_MIN) { pinChangeErr('The new passphrase must be at least ' + PIN_MIN + ' characters.'); newF.focus(); return; }
+  if (next !== againF.value) { pinChangeErr('The two new passphrases do not match.'); againF.focus(); return; }
+  pinChangeBusy = true;
+  for (const f of [oldF, newF, againF]) f.disabled = true;
+  if (save) { save.disabled = true; save.textContent = 'Changing…'; }
+  if (close) close.disabled = true;
+  let res = await deskChangePin(cur, next);
+  if (res.unknown) {
+    /* The answer was lost, not refused: the change may be in the database already. Ask the server ONCE with the new
+       passphrase — a yes means it was saved; a definite no means the old one stands (that no is one counted miss, the
+       price of not leaving the owner guessing which secret is now in force); anything else stays unknown. */
+    const chk = await deskLogin(next).catch(() => null);
+    res = chk && chk.ok ? { ok: true }
+      : chk && !chk.locked ? { ok: false, error: 'The connection dropped, and the new passphrase is not in force: nothing changed. Try again in a moment.' }
+      : { ok: false, error: 'The connection dropped and the desk could not be asked whether the passphrase changed. This tab keeps the old one; if the desk later refuses it, unlock with the new passphrase.' };
+  }
+  pinChangeBusy = false;
+  if (close) close.disabled = false;
+  if (res.ok) {
+    try { sessionStorage.setItem('desk_pin', next); } catch { /* storage blocked: this tab asks again on reload */ }
+    for (const f of [oldF, newF, againF]) f.value = '';
+    if (save) save.hidden = true;
+    if (close) { close.textContent = 'Close'; close.focus(); }
+    if (ok) ok.textContent = 'Passphrase changed. This tab stays unlocked with it; other tabs will ask for it.';
+    return;
+  }
+  for (const f of [oldF, newF, againF]) f.disabled = false;
+  if (save) { save.disabled = false; save.textContent = 'Change'; }
+  pinChangeErr(res.error || 'The passphrase was not changed.');
+  const next2 = res.locked ? close : oldF;   /* locked: nothing to retype for an hour */
+  if (next2) next2.focus();
+}
+function wirePinChange() {
+  const form = document.getElementById('pinChangeForm');
+  if (!form) return;
+  form.addEventListener('submit', ev => { ev.preventDefault(); submitPinChange(); });
+  const close = document.getElementById('pinChangeCloseBtn');
+  if (close) close.addEventListener('click', closePinChange);
+}
+
 function openWlNewList(invoker) {
   if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
   const back = document.getElementById('wlNewBackdrop');
@@ -3505,7 +3589,10 @@ function renderAsk() {
      read only when it is true, so a blocked sessionStorage cannot take the open panel down. */
   const authed = DESK.authed;
   lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live';
-  const pin = authed ? sessionStorage.getItem('desk_pin') : null;
+  /* The PIN is read when each control is USED, never captured once at render: the owner can change it to a passphrase
+     (desk_027) while this panel stays up, and a captured copy would keep sending the old one — refused, and counted
+     toward the desk-wide lockout (Codex P2, PR #366). */
+  const pinNow = () => (authed ? askTierSessionPin() : null);
 
   const toolbar = el('div', 'ask-toolbar');
   const clearBtn = el('button', 'ask-clear', 'Clear'); clearBtn.type = 'button'; clearBtn.hidden = true;
@@ -3556,10 +3643,10 @@ function renderAsk() {
   const schedBtn = el('button', 'legacy-btn legacy-btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
   schedBtn.title = 'Questions the desk asks itself on a schedule — it runs with this page shut';
-  schedBtn.addEventListener('click', () => openAskSched(pin, schedBtn));
+  schedBtn.addEventListener('click', () => openAskSched(pinNow(), schedBtn));
   const sysBtn = el('button', 'legacy-btn legacy-btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
-  sysBtn.addEventListener('click', () => openSysPromptModal(pin, sysBtn));
+  sysBtn.addEventListener('click', () => openSysPromptModal(pinNow(), sysBtn));
   /* The model switch (desk_021) — the owner's, so only for an unlocked desk. Its OWN row, deliberately NOT
      inside .ask-toolbar: that toolbar is display:none while Clear is hidden, which is every desk with no
      saved history, and a switch nobody can see is the failure to avoid. Toggle buttons in a group
@@ -3571,12 +3658,12 @@ function renderAsk() {
   let tierRefocus = null;   /* the option the owner used: every option is disabled while a save runs, which drops keyboard focus to <body> */
   const tierBtns = ASK_MODELS.map(m => {
     const b = el('button', 'ask-tier-opt', m.label); b.type = 'button'; b.dataset.model = m.id;
-    b.addEventListener('click', () => { if (askTierCanChoose(askTier) && m.id !== askTier.stored) tierRefocus = m.id; askTierWrite(pin, m.id); });   /* only a click that WILL write arms the focus return */
+    b.addEventListener('click', () => { if (askTierCanChoose(askTier) && m.id !== askTier.stored) tierRefocus = m.id; askTierWrite(pinNow(), m.id); });   /* only a click that WILL write arms the focus return */
     tierGroup.appendChild(b);
     return b;
   });
   const tierRetry = el('button', 'legacy-btn legacy-btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
-  tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pin); });   /* '*' = whichever option ends up selected */
+  tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pinNow()); });   /* '*' = whichever option ends up selected */
   const tierNote = el('p', 'ask-tier-note', ''); tierNote.setAttribute('role', 'status');
   tierBox.appendChild(tierGroup); tierBox.appendChild(tierRetry);
   tierBox.appendChild(el('span', 'ask-tier-cap', 'Applies to every question, visitors included.'));
@@ -3619,7 +3706,7 @@ function renderAsk() {
   if (authed) { form.appendChild(verifyBtn); form.appendChild(schedBtn); form.appendChild(sysBtn); }
   if (authed) body.appendChild(toolbar);   /* Clear wipes the saved conversation — a PIN RPC; an open visitor has none */
   body.appendChild(thread); if (authed) body.appendChild(tierBox); body.appendChild(form); body.appendChild(err);
-  if (authed) { askTierPaint = paintTier; paintTier(); askTierRead(pin); }
+  if (authed) { askTierPaint = paintTier; paintTier(); askTierRead(pinNow()); }
   body.appendChild(el('p', 'ai-disclaimer', authed
     ? 'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'
     : 'The desk assistant researches the web and pulls live quotes, and gives directional views. AI-generated; can make mistakes. Not financial advice.'));
@@ -3699,7 +3786,7 @@ function renderAsk() {
   /* An open visitor has no saved conversation to replay (a PIN RPC), so nothing is held back. */
   if (authed) {
     input.disabled = true; btn.disabled = true;
-    deskChatHistory(pin).then(rows => {
+    deskChatHistory(pinNow()).then(rows => {
       /* A failed read is not an empty history — an empty thread would tell the
          owner there is nothing saved when it may all still be there. */
       if (rows === null) {
@@ -3735,7 +3822,7 @@ function renderAsk() {
   clearBtn.addEventListener('click', async () => {
     if (!confirm('Clear the entire saved conversation? This permanently deletes all stored history.')) return;
     clearBtn.disabled = true;
-    const out = await deskChatClear(pin).catch(() => ({ ok: false }));
+    const out = await deskChatClear(pinNow()).catch(() => ({ ok: false }));
     clearBtn.disabled = false;
     if (out && out.ok) {
       err.hidden = true;
@@ -3773,7 +3860,7 @@ function renderAsk() {
        was sent with — the arm the owner set when they pressed Ask is the arm
        that applies to the answer they get back. */
     const verifyThis = askVerify;
-    const res = await deskAsk(pin, q, buildAskContext(), askAbort.signal, verifyThis)
+    const res = await deskAsk(pinNow(), q, buildAskContext(), askAbort.signal, verifyThis)
       .catch(e => (e && e.name === 'AbortError')
         ? { ok: false, stopped: true }
         : { ok: false, error: 'Could not reach the ask service — try again in a moment.' });
@@ -3942,12 +4029,13 @@ function renderLockedPanels(why) {
   lockPanel.appendChild(head);
   const body = el('div', 'panel-body');
   body.appendChild(el('p', 'lock-explain', why ||
-    'Account balances and charts are private — enter the desk PIN to unlock. It then stays unlocked on this device until you press Lock.'));
+    'Account balances and charts are private — enter the desk PIN or passphrase to unlock. It then stays unlocked in this tab until you press Lock or close the tab.'));
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
-  input.type = 'password'; input.inputMode = 'numeric'; input.className = 'legacy-input';
-  input.placeholder = 'Desk PIN'; input.setAttribute('aria-label', 'Desk PIN');
+  /* a passphrase (desk_027) is letters and spaces too: no numeric keypad */
+  input.type = 'password'; input.className = 'legacy-input';
+  input.placeholder = 'PIN or passphrase'; input.setAttribute('aria-label', 'Desk PIN or passphrase');
   const btn = el('button', 'legacy-btn', 'Unlock');
   btn.type = 'submit';
   const err = el('p', 'lock-error', ''); err.hidden = true;
@@ -3962,8 +4050,7 @@ function renderLockedPanels(why) {
     const res = await deskLogin(input.value).catch(() => ({ ok: false, error: 'Could not reach the data service — try again in a moment.' }));
     btn.disabled = false; btn.textContent = 'Unlock';
     if (res && res.ok) {
-      sessionStorage.setItem('desk_pin', input.value);
-      deskPinDeviceSet(input.value);   /* stays unlocked on this device until Lock (owner ruling 2026-10-04) */
+      sessionStorage.setItem('desk_pin', input.value);   /* this tab only (owner 2026-11-11: never localStorage) */
       DESK.authed = true;
       await loadPrivate(input.value);
       renderMasthead();
@@ -10828,6 +10915,9 @@ async function loadWatchlist(force) {
 }
 
 async function boot() {
+  /* The PIN lives in THIS TAB only (owner 2026-11-11). A device copy an earlier version wrote to
+     localStorage is wiped FIRST, unread, in demo and live alike, so it never unlocks anything again. */
+  deskPinDeviceWipe();
   DESK.mode = resolveMode();
   if (DESK.mode === 'demo') {
     DESK.data = buildDemoData();
@@ -10873,22 +10963,16 @@ async function boot() {
   startFeedPolling();
   let pin = null;
   try { pin = sessionStorage.getItem('desk_pin'); } catch { /* storage blocked — the locked shell below */ }
-  /* This tab's PIN first, else the one this device remembers (owner ruling 2026-10-04: the
-     accounts stay locked to everyone else but open here until Lock). Either way it is
-     validated by the server below, never trusted for being stored. */
-  if (!pin) pin = deskPinDeviceGet();
   if (pin) {
     /* null = the login call itself failed (network, HTTP). That is NOT a wrong
        PIN: only a definite {ok:false} discards the stored one, or a blip at
        reload would sign the owner out. */
     const res = await deskLogin(pin).catch(() => null);
     if (res && res.ok) {
-      /* re-seed the working copy, and remember a PIN this tab already held (an unlocked tab
-         at deploy time becomes an unlocked device) */
-      try { sessionStorage.setItem('desk_pin', pin); } catch { /* private mode */ }
-      deskPinDeviceSet(pin);
       DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return;
     }
+    /* a lock (desk_026) says nothing about THIS PIN: keep it, and say why the desk is shut */
+    if (res && res.locked) { renderLockedPanels(res.error); return; }
     if (res) deskPinForget();
   }
   renderLockedPanels();
@@ -10901,4 +10985,5 @@ wireWatchlistEditor();
 wireWatchlistQuickEdits();
 wireWatchlistDetail();
 wireSysPromptModal();
+wirePinChange();
 boot();

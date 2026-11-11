@@ -1138,3 +1138,8 @@
     /* a finger needs 44px; padding with an equal negative margin grows the hit area without growing the note's line */
     .news-topic-raw { padding: 15px 8px; margin: -15px -4px; }
   }
+
+/* Change passphrase dialog (desk_027, 2026-11-11): stacked label → field pairs */
+.passphrase-form label.lock-explain { display: block; margin-bottom: var(--space-1); }
+.passphrase-form .legacy-input { display: block; width: 100%; box-sizing: border-box; margin-bottom: var(--space-3); }
+.passphrase-form .lock-explain:empty { margin: 0; }

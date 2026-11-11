@@ -16,7 +16,9 @@
 --              leaves the prompt, the schedule and the roster exactly as they were; desk_login still lets it unlock.
 --   owner      a non-test PIN still reads the prompt and the schedule and can save the prompt.
 --   wrong PIN  still refused (no existence leak).
---   grants     anon can still execute all five (create or replace must have kept the ACL); each is still security
+--   grants     anon can still execute the four live ones (create or replace must have kept the ACL); each of the five is
+--              still security definer. Since desk_026 (2026-11-11) the legacy desk_set_watchlists is shut to every API
+--              role, so its test-PIN step expects `42501` (refused before it runs) and the grants step counts four;
 --              definer with search_path pinned to public.
 do $probe$
 declare
@@ -45,7 +47,7 @@ begin
       ('test PIN: desk_get_ask_schedule refused', 'anon', $q$select public.desk_get_ask_schedule('probe-test-pin')::text$q$, '{"ok": false}'),
       ('test PIN: desk_set_ask_schedule refused', 'anon', $q$select public.desk_set_ask_schedule('probe-test-pin', '[{"prompt":"PROBE"}]'::jsonb)::text$q$, '{"ok": false}'),
       ('...and the schedule is unchanged',        'postgres', $q$select ((select md5(coalesce(string_agg(id || ':' || prompt || ':' || pos, '|' order by id), '')) from public.desk_ask_schedule) = (select sched from probe_before))::text$q$, 'true'),
-      ('test PIN: legacy desk_set_watchlists refused', 'anon', $q$select public.desk_set_watchlists('probe-test-pin', '[{"title":"PROBE","symbols":["AAA"]}]'::jsonb)::text$q$, '{"ok": false}'),
+      ('test PIN: legacy desk_set_watchlists refused', 'anon', $q$select public.desk_set_watchlists('probe-test-pin', '[{"title":"PROBE","symbols":["AAA"]}]'::jsonb)::text$q$, '42501'),
       ('...and the roster is unchanged',          'postgres', $q$select ((select md5(coalesce(string_agg(id || ':' || title || ':' || array_to_string(symbols, ','), '|' order by id), '')) from public.desk_watchlists) = (select roster from probe_before))::text$q$, 'true'),
       ('test PIN still unlocks (desk_login)',     'anon', $q$select (public.desk_login('probe-test-pin')->>'ok')$q$, 'true'),
       -- ── owner ─────────────────────────────────────────────────────────────────────────────
@@ -56,7 +58,7 @@ begin
       -- ── wrong PIN ─────────────────────────────────────────────────────────────────────────
       ('a wrong PIN is refused',                  'anon', $q$select public.desk_get_system_prompt('not-a-pin')::text$q$, '{"ok": false}'),
       -- ── grants ────────────────────────────────────────────────────────────────────────────
-      ('anon can still execute all five',         'postgres', $q$select (count(*) = 5 and bool_and(has_function_privilege('anon', f, 'execute')))::text from unnest(array['public.desk_get_system_prompt(text)', 'public.desk_set_system_prompt(text,text)', 'public.desk_get_ask_schedule(text)', 'public.desk_set_ask_schedule(text,jsonb)', 'public.desk_set_watchlists(text,jsonb)']) f$q$, 'true'),
+      ('anon can still execute the four live ones', 'postgres', $q$select (count(*) = 4 and bool_and(has_function_privilege('anon', f, 'execute')))::text from unnest(array['public.desk_get_system_prompt(text)', 'public.desk_set_system_prompt(text,text)', 'public.desk_get_ask_schedule(text)', 'public.desk_set_ask_schedule(text,jsonb)']) f$q$, 'true'),
       ('all five still security definer, search_path pinned to public', 'postgres',
                                                   $q$select (count(*) = 5 and bool_and(coalesce(prosecdef and proconfig::text = '{search_path=public}', false)))::text from pg_proc where oid in ('public.desk_get_system_prompt(text)'::regprocedure, 'public.desk_set_system_prompt(text,text)'::regprocedure, 'public.desk_get_ask_schedule(text)'::regprocedure, 'public.desk_set_ask_schedule(text,jsonb)'::regprocedure, 'public.desk_set_watchlists(text,jsonb)'::regprocedure)$q$, 'true')
     ) as t(label, as_role, stmt, want)

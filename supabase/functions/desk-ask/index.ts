@@ -1,7 +1,8 @@
 // ── desk-ask — agentic Claude assistant over the desk ───────────────────────
 // Deployed as a Supabase Edge Function (Deno). Three ways in. The browser sends
-// {pin, question, context}; the PIN is validated against desk_users with the SAME
-// hex(sha256(salt || pin)) scheme as the desk_login RPC. desk-cron-ask sends the
+// {pin, question, context}; the PIN is checked by the database's ONE PIN check,
+// desk_pin_who (desk_026: it counts misses and locks every PIN door after 10 in an
+// hour — this function obeys and feeds the same lock). desk-cron-ask sends the
 // x-cron-secret instead. And since 2026-10-04 (owner: "remove the PIN for ask the
 // desk") a browser on the site's own origin may send NO PIN: an OPEN question,
 // capped per day (desk_open_ask_take, desk_020) and answered as an anonymous
@@ -436,17 +437,24 @@ async function handle(req: Request): Promise<Response> {
     if (!userId) return reply(500, { ok: false, error: 'no owner row in desk_users' });
     isAdmin = true;
   } else if (!anonymous) {
-    // PIN check — same salted-hash scheme as desk_login; capture the matched user id.
-    const usersRes = await fetch(`${supaUrl}/rest/v1/desk_users?select=id,salt,pin_hash,is_test`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
-    if (!usersRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
-    const users: { id: string; salt: string; pin_hash: string; is_test?: boolean }[] = await usersRes.json();
-    const enc = new TextEncoder();
-    for (const u of users) {
-      const digest = await crypto.subtle.digest('SHA-256', enc.encode(u.salt + pin));
-      const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-      if (hex === u.pin_hash) { userId = u.id; isAdmin = u.is_test === false; } // check every row — no early exit
+    // PIN check — the database's ONE PIN check (desk_pin_who, desk_026), never a hash compared here: it counts
+    // a miss toward the desk-wide lockout and refuses every PIN, the right one too, while the desk is locked.
+    // Only `ok === true` with a string id admits; anything else (a refusal, a lock, junk) does not — fail closed.
+    const whoRes = await fetch(`${supaUrl}/rest/v1/rpc/desk_pin_who`, {
+      method: 'POST', headers: { ...svc, 'content-type': 'application/json' }, body: JSON.stringify({ pin }),
+      signal: AbortSignal.timeout(REST_TIMEOUT_MS),
+    });
+    if (!whoRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
+    const who: { ok?: unknown; id?: unknown; is_test?: unknown; locked_until?: unknown } | null = await whoRes.json().catch(() => null);
+    if (who && who.ok === true && typeof who.id === 'string' && who.id) {
+      userId = who.id; isAdmin = who.is_test === false;
+    } else if (who && typeof who.locked_until === 'string') {
+      return reply(429, { ok: false, error: 'Too many wrong PINs — the desk is locked for now. Try again later.', lockedUntil: who.locked_until });
+    } else if (!who || who.ok !== false) {
+      return reply(502, { ok: false, error: 'auth backend unavailable' });
+    } else {
+      return reply(401, { ok: false, error: 'PIN not recognized.' });
     }
-    if (!userId) return reply(401, { ok: false, error: 'PIN not recognized.' });
   }
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
