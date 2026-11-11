@@ -558,22 +558,23 @@ test('askModelLabel: exact id, a dated provider id, anything else as given', () 
   assert.deepEqual([...d.ASK_MODELS.map((m) => m.id)], ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'], 'cheapest first (the parity list)');
 });
 
-test('the device PIN: set and read back, Lock forgets BOTH copies, blocked storage never throws', () => {
+test('the PIN is never kept on the device: the retired copy is only ever wiped, Lock forgets the tab copy, blocked storage never throws', () => {
   const d = loadData();
-  assert.equal(d.deskPinDeviceGet(), null);
-  d.deskPinDeviceSet('1234');
-  assert.equal(d.deskPinDeviceGet(), '1234');
-  assert.equal(d.localStorage.getItem('desk_pin_device_v1'), '1234');
+  assert.equal(typeof d.deskPinDeviceGet, 'undefined', 'nothing reads a device copy any more');
+  assert.equal(typeof d.deskPinDeviceSet, 'undefined', 'nothing writes one');
+  d.localStorage.setItem('desk_pin_device_v1', '1234');
+  d.localStorage.setItem('other', 'kept');
+  d.deskPinDeviceWipe();
+  assert.equal(d.localStorage.getItem('desk_pin_device_v1'), null, 'a copy left by an earlier version is wiped');
+  assert.equal(d.localStorage.getItem('other'), 'kept', 'and nothing else');
+  d.localStorage.setItem('desk_pin_device_v1', '1234');
   d.sessionStorage.setItem('desk_pin', '1234');
   d.deskPinForget();
-  assert.equal(d.deskPinDeviceGet(), null);
-  assert.equal(d.sessionStorage.getItem('desk_pin'), null);
-  d.localStorage.setItem('desk_pin_device_v1', '');
-  assert.equal(d.deskPinDeviceGet(), null, 'an empty stored PIN is no PIN');
+  assert.equal(d.sessionStorage.getItem('desk_pin'), null, 'Lock forgets the tab copy');
+  assert.equal(d.localStorage.getItem('desk_pin_device_v1'), null, 'and any retired device copy');
   const boom = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }, removeItem() { throw new Error('blocked'); } };
   d.localStorage = boom; d.sessionStorage = boom;
-  assert.equal(d.deskPinDeviceGet(), null);
-  assert.doesNotThrow(() => d.deskPinDeviceSet('1'));
+  assert.doesNotThrow(() => d.deskPinDeviceWipe());
   assert.doesNotThrow(() => d.deskPinForget());
 });
 

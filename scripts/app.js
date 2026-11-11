@@ -183,7 +183,7 @@ function renderMasthead() {
       /* renderWatchlist too: its ✎ and its draggable tiles are auth-gated, and
          leaving them live after a lock would let a drag change the order and
          then silently revert (Codex review, PR #190) */
-      /* deskPinForget: the session copy AND the one this device remembers — otherwise Lock
+      /* deskPinForget: the tab's copy (and any retired device copy) — otherwise Lock
          would lock until the next reload and then quietly unlock itself again */
       lock.addEventListener('click', () => { deskPinForget(); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
       wrap.appendChild(lock);
@@ -3942,7 +3942,7 @@ function renderLockedPanels(why) {
   lockPanel.appendChild(head);
   const body = el('div', 'panel-body');
   body.appendChild(el('p', 'lock-explain', why ||
-    'Account balances and charts are private — enter the desk PIN to unlock. It then stays unlocked on this device until you press Lock.'));
+    'Account balances and charts are private — enter the desk PIN to unlock. It then stays unlocked in this tab until you press Lock or close the tab.'));
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
@@ -3962,8 +3962,7 @@ function renderLockedPanels(why) {
     const res = await deskLogin(input.value).catch(() => ({ ok: false, error: 'Could not reach the data service — try again in a moment.' }));
     btn.disabled = false; btn.textContent = 'Unlock';
     if (res && res.ok) {
-      sessionStorage.setItem('desk_pin', input.value);
-      deskPinDeviceSet(input.value);   /* stays unlocked on this device until Lock (owner ruling 2026-10-04) */
+      sessionStorage.setItem('desk_pin', input.value);   /* this tab only (owner 2026-11-11: never localStorage) */
       DESK.authed = true;
       await loadPrivate(input.value);
       renderMasthead();
@@ -10828,6 +10827,9 @@ async function loadWatchlist(force) {
 }
 
 async function boot() {
+  /* The PIN lives in THIS TAB only (owner 2026-11-11). A device copy an earlier version wrote to
+     localStorage is wiped FIRST, unread, in demo and live alike, so it never unlocks anything again. */
+  deskPinDeviceWipe();
   DESK.mode = resolveMode();
   if (DESK.mode === 'demo') {
     DESK.data = buildDemoData();
@@ -10873,20 +10875,12 @@ async function boot() {
   startFeedPolling();
   let pin = null;
   try { pin = sessionStorage.getItem('desk_pin'); } catch { /* storage blocked — the locked shell below */ }
-  /* This tab's PIN first, else the one this device remembers (owner ruling 2026-10-04: the
-     accounts stay locked to everyone else but open here until Lock). Either way it is
-     validated by the server below, never trusted for being stored. */
-  if (!pin) pin = deskPinDeviceGet();
   if (pin) {
     /* null = the login call itself failed (network, HTTP). That is NOT a wrong
        PIN: only a definite {ok:false} discards the stored one, or a blip at
        reload would sign the owner out. */
     const res = await deskLogin(pin).catch(() => null);
     if (res && res.ok) {
-      /* re-seed the working copy, and remember a PIN this tab already held (an unlocked tab
-         at deploy time becomes an unlocked device) */
-      try { sessionStorage.setItem('desk_pin', pin); } catch { /* private mode */ }
-      deskPinDeviceSet(pin);
       DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return;
     }
     /* a lock (desk_026) says nothing about THIS PIN: keep it, and say why the desk is shut */

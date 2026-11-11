@@ -565,23 +565,19 @@ function deskLockedText(iso) {
   return 'Too many wrong PINs — the desk is locked' + (t ? ' until ' + t : ' for an hour') + '. Try again then.';
 }
 
-/* The desk PIN, remembered on THIS DEVICE (owner ruling 2026-10-04: "keep it for accounts at the
-   bottom but leave it unlocked for now"). The working copy is still sessionStorage 'desk_pin' —
-   every reader in app.js uses it — and this is the copy that outlives the tab: boot re-validates
-   it with desk_login (the server stays the gate: nobody else's device holds it) and re-seeds the
-   session copy; an unlock writes both; Lock, and a PIN the server definitely refuses, forget
-   BOTH, so Lock still locks. Residual, accepted by the owner: localStorage is shared by every
-   page on akyachtsman.github.io, so a script on any of the owner's other Pages sites could read it. */
-const DESK_PIN_DEVICE_KEY = 'desk_pin_device_v1';
-function deskPinDeviceGet() {
-  try { return localStorage.getItem(DESK_PIN_DEVICE_KEY) || null; } catch { return null; }
-}
-function deskPinDeviceSet(pin) {
-  try { localStorage.setItem(DESK_PIN_DEVICE_KEY, pin); } catch { /* storage blocked: the session copy still works */ }
+/* The desk PIN is kept for THIS TAB only (owner 2026-11-11, PIN hardening fix 3: "stop keeping
+   the PIN in localStorage"). sessionStorage 'desk_pin' is the working copy every reader in app.js
+   uses; it survives a reload of the tab and dies with it. The device copy that 2026-10-04 added
+   ('desk_pin_device_v1' in localStorage, shared by every page on akyachtsman.github.io) is RETIRED:
+   nothing writes it, and boot wipes any copy an earlier version left behind (deskPinDeviceWipe).
+   Never bring it back without the owner. */
+const DESK_PIN_DEVICE_KEY = 'desk_pin_device_v1';   /* retired 2026-11-11 — only ever removed */
+function deskPinDeviceWipe() {
+  try { localStorage.removeItem(DESK_PIN_DEVICE_KEY); } catch { /* storage blocked: nothing to wipe */ }
 }
 function deskPinForget() {
   try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ }
-  try { localStorage.removeItem(DESK_PIN_DEVICE_KEY); } catch { /* private mode */ }
+  deskPinDeviceWipe();
 }
 async function deskGetDashboard(pin) {
   const out = await deskRpc('desk_get_dashboard', pin);

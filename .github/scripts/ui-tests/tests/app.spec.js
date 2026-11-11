@@ -8370,13 +8370,14 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S60 — the accounts keep their PIN but this DEVICE remembers it (owner ruling 2026-10-04:
-// "keep it for accounts at the bottom but leave it unlocked for now"). The server stays the
-// gate: a remembered PIN is validated by desk_login at every boot and re-seeds the tab's
-// copy; an unlock writes both; Lock and a PIN the server definitely refuses forget both; a
-// network blip forgets nothing. Run through the REAL boot against a stubbed backend.
+// S60 — the desk PIN is kept for THIS TAB only (owner 2026-11-11, PIN hardening fix 3: "stop
+// keeping the PIN in localStorage"; it reverses 2026-10-04's device copy). The server stays the
+// gate: the tab's PIN is validated by desk_login at every boot; an unlock writes the tab's copy and
+// nothing else; a device copy left by an earlier version is wiped at boot, UNREAD; Lock and a PIN
+// the server definitely refuses forget the tab's copy; a network blip forgets nothing. Run through
+// the REAL boot against a stubbed backend.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S60: the desk PIN is remembered on this device — validated at every boot, forgotten by Lock and by a refusal, kept through a network blip', async ({ page, renderWitness }) => {
+test('S60: the desk PIN is kept for this tab only — never on the device, validated at every boot, forgotten by Lock and by a refusal, kept through a network blip', async ({ page, renderWitness }) => {
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   const DEVICE = 'desk_pin_device_v1', GOOD = '4321';
@@ -8418,59 +8419,68 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
 
   // A. nothing stored: no login call, the accounts are locked, Ask is open
   await loadLive();
-  expect(logins, 'nothing remembered, so nothing is validated').toEqual([]);
+  expect(logins, 'nothing stored, so nothing is validated').toEqual([]);
   await expect(lockForm, 'the accounts ask for the PIN').toBeVisible();
   expect(await authed()).toBe(false);
-  await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is then remembered').toContainText(/stays unlocked on this device/i);
+  await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is kept for this tab').toContainText(/stays unlocked in this tab/i);
+  await expect(page.locator('#accountGrid .lock-explain'), 'and never promises the device').not.toContainText(/device/i);
   await expect(page.locator('#askBody form input.legacy-input'), 'while Ask is open without it').toBeEnabled();
   await expect(sysBtn).toHaveCount(0);
 
-  // B. a wrong PIN stores nothing anywhere; the right one is remembered by BOTH copies
+  // B. a wrong PIN stores nothing anywhere; the right one is kept by the TAB and by nothing else
   await lockForm.fill('0000');
   await page.locator('#accountGrid .panel-lock .lock-form button').click();
   await expect(page.locator('.panel-lock .lock-error')).toBeVisible();
-  expect(await stores(), 'a wrong PIN is remembered nowhere').toEqual({ session: null, device: null });
+  expect(await stores(), 'a wrong PIN is kept nowhere').toEqual({ session: null, device: null });
   expect(await authed()).toBe(false);
   await lockForm.fill(GOOD);
   await page.locator('#accountGrid .panel-lock .lock-form button').click();
   await expect.poll(authed).toBe(true);
-  expect(await stores(), 'the right PIN is kept for the tab AND the device').toEqual({ session: GOOD, device: GOOD });
+  expect(await stores(), 'the right PIN is kept for the tab and NOT on the device').toEqual({ session: GOOD, device: null });
+  expect(await page.evaluate(() => Object.keys(localStorage).filter(k => /pin/i.test(k))), 'no PIN-named key in localStorage at all').toEqual([]);
 
-  // C. a new tab/session with only the device's copy: validated, re-seeded, unlocked
+  // C. a device copy an EARLIER version left behind is wiped at boot, UNREAD: it unlocks nothing
   await loadLive({ device: GOOD });
-  expect(logins, 'the remembered PIN is checked by the server at boot, not trusted for being stored').toEqual([GOOD]);
+  expect(logins, 'the old device copy is not even sent to the server').toEqual([]);
+  expect(await authed(), 'and does not unlock the desk').toBe(false);
+  expect(await stores(), 'it is gone').toEqual({ session: null, device: null });
+  await expect(lockForm).toBeVisible();
+  // ...in demo mode too (the wipe runs before the mode is read)
+  await page.evaluate(([k]) => localStorage.setItem(k, '4321'), [DEVICE]);
+  await page.goto('./?demo=1');
+  await page.waitForFunction(() => DESK.mode === 'demo');
+  expect((await stores()).device, 'a demo visit wipes the old device copy too').toBe(null);
+
+  // D. a reload of an unlocked TAB: the tab's PIN is validated by the server and unlocks; still nothing on the device
+  await loadLive({ session: GOOD });
+  expect(logins, 'the tab\'s PIN is checked by the server at boot, not trusted for being stored').toEqual([GOOD]);
   expect(await authed(), 'and unlocks the desk').toBe(true);
-  expect(await stores(), 'the tab\'s working copy is re-seeded').toEqual({ session: GOOD, device: GOOD });
-  await expect(lockForm, 'no PIN form on an unlocked device').toHaveCount(0);
+  expect(await stores(), 'the device stays empty').toEqual({ session: GOOD, device: null });
+  await expect(lockForm, 'no PIN form on an unlocked tab').toHaveCount(0);
   await expect(lockBtn).toBeVisible();
   await expect(sysBtn, 'and Ask has its private parts').toHaveCount(1);
 
-  // D. a tab that was ALREADY unlocked becomes an unlocked device (nothing to retype after this ships)
-  await loadLive({ session: GOOD });
-  expect(await authed()).toBe(true);
-  expect(await stores(), 'the tab\'s PIN is now remembered by the device too').toEqual({ session: GOOD, device: GOOD });
-
-  // E. a PIN the server definitely refuses (it was changed) is forgotten everywhere
-  await loadLive({ device: '9999' });
+  // E. a PIN the server definitely refuses (it was changed) is forgotten
+  await loadLive({ session: '9999' });
   expect(logins).toEqual(['9999']);
   expect(await authed()).toBe(false);
-  expect(await stores(), 'a refused PIN is dropped from both copies').toEqual({ session: null, device: null });
+  expect(await stores(), 'a refused PIN is dropped').toEqual({ session: null, device: null });
   await expect(lockForm).toBeVisible();
 
-  // F. a network blip is NOT a wrong PIN: locked this time, but the device keeps it for the next load
+  // F. a network blip is NOT a wrong PIN: locked this time, but the tab keeps it for the next load
   blip = true;
-  await loadLive({ device: GOOD });
+  await loadLive({ session: GOOD });
   expect(logins).toEqual([GOOD]);
   expect(await authed(), 'the blip leaves the desk locked for now').toBe(false);
-  expect((await stores()).device, 'but does not sign the owner out of this device').toBe(GOOD);
+  expect((await stores()).session, 'but does not sign the owner out of this tab').toBe(GOOD);
   blip = false;
 
-  // G. Lock really locks: it forgets BOTH copies, so a reload does not quietly unlock again
-  await loadLive({ device: GOOD });
+  // G. Lock really locks: it forgets the tab's copy, so a reload does not quietly unlock again
+  await loadLive({ session: GOOD });
   expect(await authed()).toBe(true);
   await lockBtn.click();
   expect(await authed()).toBe(false);
-  expect(await stores(), 'Lock forgets the tab\'s copy and the device\'s').toEqual({ session: null, device: null });
+  expect(await stores(), 'Lock forgets the tab\'s copy').toEqual({ session: null, device: null });
   await expect(lockForm).toBeVisible();
   await expect(sysBtn, 'Ask drops its private parts but stays open').toHaveCount(0);
   await expect(page.locator('#askBody form input.legacy-input')).toBeEnabled();
@@ -8481,13 +8491,13 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   expect(await authed()).toBe(false);
 
   // H. a LOCKED desk (desk_026: 10 wrong PINs in an hour) is not a verdict on the stored PIN: the desk stays locked,
-  // the device keeps the PIN, and the panel says until when — on the Pacific clock, worked out here with Intl
+  // the tab keeps the PIN, and the panel says until when — on the Pacific clock, worked out here with Intl
   lockedUntil = '2026-11-11T05:58:18+00:00';
   const until = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(lockedUntil));
-  await loadLive({ device: GOOD });
+  await loadLive({ session: GOOD });
   expect(logins).toEqual([GOOD]);
   expect(await authed(), 'a locked desk does not unlock').toBe(false);
-  expect((await stores()).device, 'and the lock does not sign the owner out of this device').toBe(GOOD);
+  expect((await stores()).session, 'and the lock does not sign the owner out of this tab').toBe(GOOD);
   await expect(page.locator('#accountGrid .lock-explain'), 'the panel says the desk is locked, and until when').toContainText(new RegExp(`locked until ${until} P[DS]T`));
   await lockForm.fill(GOOD);
   await page.locator('#accountGrid .panel-lock .lock-form button').click();
