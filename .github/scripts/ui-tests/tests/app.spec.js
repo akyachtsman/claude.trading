@@ -12527,18 +12527,27 @@ test('S81: the owner changes the desk PIN to a passphrase — only while unlocke
   page.on('pageerror', e => errs.push(String(e)));
   const base = (await (await page.request.get('scripts/config.js')).text()).match(/url:\s*'([^']*)'/)[1];
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
-  const changes = [];
-  let answer = { status: 200, body: { ok: true } };
+  const changes = [], logins = [], asks = [];
+  // a stateful stand-in: `current` is the secret the "database" holds. `answer.commit` makes a change take effect
+  // whatever the reply says — a 503 with commit:true is the reply lost AFTER the database committed (Codex P2, PR #366)
+  let current = OLD, loginDown = false;
+  let answer = { status: 200, body: { ok: true }, commit: true };
   await page.route(`${base}/**`, async (route) => {
     const req = route.request();
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     const path = new URL(req.url()).pathname;
     const j = JSON.parse(req.postData() || '{}');
-    if (path.endsWith('/rpc/desk_login')) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: j.pin === OLD || j.pin === NEW }) });
+    if (path.endsWith('/rpc/desk_login')) {
+      logins.push(j.pin);
+      if (loginDown) return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{}' });
+      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: j.pin === current }) });
+    }
     if (path.endsWith('/rpc/desk_change_pin')) {
       changes.push(j);
+      if (answer.commit && j.pin === current) current = j.new_pin;
       return route.fulfill({ status: answer.status, headers: cors, contentType: 'application/json', body: JSON.stringify(answer.body) });
     }
+    if (path.endsWith('/functions/v1/desk-ask')) asks.push(j.pin);
     return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{"ok":false}' });
   });
 
@@ -12584,27 +12593,30 @@ test('S81: the owner changes the desk PIN to a passphrase — only while unlocke
   expect(changes, 'none of those spent a request (or a lockout miss)').toEqual([]);
 
   // the server's refusals, each said, and the stored PIN untouched
-  answer = { status: 200, body: { ok: false } };
+  answer = { status: 200, body: { ok: false }, commit: false };
   await fill('9999', NEW, NEW);
   await expect(err).toHaveText('The current PIN or passphrase is not right.');
   await expect(page.locator('#pinChangeSaveBtn')).toBeEnabled();
   await expect(page.locator('#pinChangeOld')).toBeEnabled();
-  answer = { status: 200, body: { ok: false, error: 'Choose a different passphrase.' } };
+  answer = { status: 200, body: { ok: false, error: 'Choose a different passphrase.' }, commit: false };
   await fill(OLD, NEW, NEW);
   await expect(err).toHaveText('Choose a different passphrase.');
-  answer = { status: 200, body: { ok: false, locked_until: '2026-11-11T06:44:27+00:00' } };
+  answer = { status: 200, body: { ok: false, locked_until: '2026-11-11T06:44:27+00:00' }, commit: false };
   await fill(OLD, NEW, NEW);
   const until = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date('2026-11-11T06:44:27+00:00'));
   await expect(err).toContainText(new RegExp(`Too many wrong PINs .* locked until ${until} P[DS]T`));
-  answer = { status: 503, body: {} };
+  // the reply is LOST and nothing was committed: the page asks the server once with the new passphrase, which is refused
+  answer = { status: 503, body: {}, commit: false };
+  logins.length = 0;
   await fill(OLD, NEW, NEW);
-  await expect(err).toContainText('the passphrase was not changed');
+  await expect(err).toContainText('the new passphrase is not in force: nothing changed');
+  expect(logins, 'one login with the new passphrase settles it').toEqual([NEW]);
   expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'no refusal touched the tab\'s PIN').toBe(OLD);
   expect(changes.length).toBe(4);
   expect(changes[1], 'the request carries the current PIN and the new passphrase, nothing else').toEqual({ pin: OLD, new_pin: NEW });
 
   // success: this tab keeps the new passphrase, nothing else does; Close returns focus to the control
-  answer = { status: 200, body: { ok: true } };
+  answer = { status: 200, body: { ok: true }, commit: true };
   await fill(OLD, NEW, NEW);
   await expect(page.locator('#pinChangeOk')).toHaveText(/Passphrase changed/);
   await expect(err).toBeHidden();
@@ -12618,7 +12630,33 @@ test('S81: the owner changes the desk PIN to a passphrase — only while unlocke
   await expect(dlg).toBeHidden();
   await expect(btn, 'focus goes back to the control').toBeFocused();
 
-  // a reload unlocks with the new passphrase; Escape closes a fresh dialog; Lock takes the control away
+  // the Ask panel was drawn with the OLD PIN and is not redrawn: a question sent now must carry the NEW one (Codex P2)
+  await page.fill('#askBody form input.legacy-input', 'what moved today?');
+  await page.locator('#askBody form button[type="submit"]').first().click();
+  await expect.poll(() => asks.length, { timeout: 5000 }).toBeGreaterThan(0);
+  expect(asks.at(-1), 'the Ask panel sends the passphrase in force, not the one it was drawn with').toBe(NEW);
+
+  // the reply is lost AFTER the database committed: the check login finds the new passphrase in force — a success
+  const NEW2 = 'another long passphrase here';
+  await btn.click();
+  answer = { status: 503, body: {}, commit: true };
+  await fill(NEW, NEW2, NEW2);
+  await expect(page.locator('#pinChangeOk'), 'a committed change whose reply was lost is reported as done').toHaveText(/Passphrase changed/);
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'and the tab keeps the passphrase in force').toBe(NEW2);
+  await page.click('#pinChangeCloseBtn');
+
+  // the reply is lost and the server cannot be asked either: say so, keep the tab's PIN, claim nothing
+  await btn.click();
+  answer = { status: 503, body: {}, commit: false };
+  loginDown = true;
+  await fill(NEW2, NEW, NEW);
+  await expect(err).toContainText('could not be asked whether the passphrase changed');
+  await expect(page.locator('#pinChangeOk')).toHaveText('');
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin'))).toBe(NEW2);
+  loginDown = false;
+  await page.click('#pinChangeCloseBtn');
+
+  // a reload unlocks with the passphrase in force; Escape closes a fresh dialog; Lock takes the control away
   await page.reload();
   await page.waitForFunction(() => DESK.mode === 'live' && DESK.authed);
   await btn.click();

@@ -2015,7 +2015,16 @@ async function submitPinChange() {
   for (const f of [oldF, newF, againF]) f.disabled = true;
   if (save) { save.disabled = true; save.textContent = 'Changing…'; }
   if (close) close.disabled = true;
-  const res = await deskChangePin(cur, next);
+  let res = await deskChangePin(cur, next);
+  if (res.unknown) {
+    /* The answer was lost, not refused: the change may be in the database already. Ask the server ONCE with the new
+       passphrase — a yes means it was saved; a definite no means the old one stands (that no is one counted miss, the
+       price of not leaving the owner guessing which secret is now in force); anything else stays unknown. */
+    const chk = await deskLogin(next).catch(() => null);
+    res = chk && chk.ok ? { ok: true }
+      : chk && !chk.locked ? { ok: false, error: 'The connection dropped, and the new passphrase is not in force: nothing changed. Try again in a moment.' }
+      : { ok: false, error: 'The connection dropped and the desk could not be asked whether the passphrase changed. This tab keeps the old one; if the desk later refuses it, unlock with the new passphrase.' };
+  }
   pinChangeBusy = false;
   if (close) close.disabled = false;
   if (res.ok) {
@@ -3580,7 +3589,10 @@ function renderAsk() {
      read only when it is true, so a blocked sessionStorage cannot take the open panel down. */
   const authed = DESK.authed;
   lampEl.className = 'lamp lamp--live'; lampEl.textContent = 'Live';
-  const pin = authed ? sessionStorage.getItem('desk_pin') : null;
+  /* The PIN is read when each control is USED, never captured once at render: the owner can change it to a passphrase
+     (desk_027) while this panel stays up, and a captured copy would keep sending the old one — refused, and counted
+     toward the desk-wide lockout (Codex P2, PR #366). */
+  const pinNow = () => (authed ? askTierSessionPin() : null);
 
   const toolbar = el('div', 'ask-toolbar');
   const clearBtn = el('button', 'ask-clear', 'Clear'); clearBtn.type = 'button'; clearBtn.hidden = true;
@@ -3631,10 +3643,10 @@ function renderAsk() {
   const schedBtn = el('button', 'legacy-btn legacy-btn-secondary ask-sched-btn', '⏱'); schedBtn.type = 'button';
   schedBtn.setAttribute('aria-label', 'Scheduled questions');
   schedBtn.title = 'Questions the desk asks itself on a schedule — it runs with this page shut';
-  schedBtn.addEventListener('click', () => openAskSched(pin, schedBtn));
+  schedBtn.addEventListener('click', () => openAskSched(pinNow(), schedBtn));
   const sysBtn = el('button', 'legacy-btn legacy-btn-secondary', '⚙'); sysBtn.type = 'button';
   sysBtn.setAttribute('aria-label', 'Edit the Ask-the-desk system prompt');
-  sysBtn.addEventListener('click', () => openSysPromptModal(pin, sysBtn));
+  sysBtn.addEventListener('click', () => openSysPromptModal(pinNow(), sysBtn));
   /* The model switch (desk_021) — the owner's, so only for an unlocked desk. Its OWN row, deliberately NOT
      inside .ask-toolbar: that toolbar is display:none while Clear is hidden, which is every desk with no
      saved history, and a switch nobody can see is the failure to avoid. Toggle buttons in a group
@@ -3646,12 +3658,12 @@ function renderAsk() {
   let tierRefocus = null;   /* the option the owner used: every option is disabled while a save runs, which drops keyboard focus to <body> */
   const tierBtns = ASK_MODELS.map(m => {
     const b = el('button', 'ask-tier-opt', m.label); b.type = 'button'; b.dataset.model = m.id;
-    b.addEventListener('click', () => { if (askTierCanChoose(askTier) && m.id !== askTier.stored) tierRefocus = m.id; askTierWrite(pin, m.id); });   /* only a click that WILL write arms the focus return */
+    b.addEventListener('click', () => { if (askTierCanChoose(askTier) && m.id !== askTier.stored) tierRefocus = m.id; askTierWrite(pinNow(), m.id); });   /* only a click that WILL write arms the focus return */
     tierGroup.appendChild(b);
     return b;
   });
   const tierRetry = el('button', 'legacy-btn legacy-btn-secondary ask-tier-retry', 'Try again'); tierRetry.type = 'button';
-  tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pin); });   /* '*' = whichever option ends up selected */
+  tierRetry.addEventListener('click', () => { tierRefocus = '*'; askTierRead(pinNow()); });   /* '*' = whichever option ends up selected */
   const tierNote = el('p', 'ask-tier-note', ''); tierNote.setAttribute('role', 'status');
   tierBox.appendChild(tierGroup); tierBox.appendChild(tierRetry);
   tierBox.appendChild(el('span', 'ask-tier-cap', 'Applies to every question, visitors included.'));
@@ -3694,7 +3706,7 @@ function renderAsk() {
   if (authed) { form.appendChild(verifyBtn); form.appendChild(schedBtn); form.appendChild(sysBtn); }
   if (authed) body.appendChild(toolbar);   /* Clear wipes the saved conversation — a PIN RPC; an open visitor has none */
   body.appendChild(thread); if (authed) body.appendChild(tierBox); body.appendChild(form); body.appendChild(err);
-  if (authed) { askTierPaint = paintTier; paintTier(); askTierRead(pin); }
+  if (authed) { askTierPaint = paintTier; paintTier(); askTierRead(pinNow()); }
   body.appendChild(el('p', 'ai-disclaimer', authed
     ? 'The desk assistant researches the web and pulls live quotes, and gives directional views on your own positions. AI-generated; can make mistakes. Not financial advice.'
     : 'The desk assistant researches the web and pulls live quotes, and gives directional views. AI-generated; can make mistakes. Not financial advice.'));
@@ -3774,7 +3786,7 @@ function renderAsk() {
   /* An open visitor has no saved conversation to replay (a PIN RPC), so nothing is held back. */
   if (authed) {
     input.disabled = true; btn.disabled = true;
-    deskChatHistory(pin).then(rows => {
+    deskChatHistory(pinNow()).then(rows => {
       /* A failed read is not an empty history — an empty thread would tell the
          owner there is nothing saved when it may all still be there. */
       if (rows === null) {
@@ -3810,7 +3822,7 @@ function renderAsk() {
   clearBtn.addEventListener('click', async () => {
     if (!confirm('Clear the entire saved conversation? This permanently deletes all stored history.')) return;
     clearBtn.disabled = true;
-    const out = await deskChatClear(pin).catch(() => ({ ok: false }));
+    const out = await deskChatClear(pinNow()).catch(() => ({ ok: false }));
     clearBtn.disabled = false;
     if (out && out.ok) {
       err.hidden = true;
@@ -3848,7 +3860,7 @@ function renderAsk() {
        was sent with — the arm the owner set when they pressed Ask is the arm
        that applies to the answer they get back. */
     const verifyThis = askVerify;
-    const res = await deskAsk(pin, q, buildAskContext(), askAbort.signal, verifyThis)
+    const res = await deskAsk(pinNow(), q, buildAskContext(), askAbort.signal, verifyThis)
       .catch(e => (e && e.name === 'AbortError')
         ? { ok: false, stopped: true }
         : { ok: false, error: 'Could not reach the ask service — try again in a moment.' });
