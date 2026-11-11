@@ -10889,6 +10889,8 @@ async function boot() {
       deskPinDeviceSet(pin);
       DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return;
     }
+    /* a lock (desk_026) says nothing about THIS PIN: keep it, and say why the desk is shut */
+    if (res && res.locked) { renderLockedPanels(res.error); return; }
     if (res) deskPinForget();
   }
   renderLockedPanels();

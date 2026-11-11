@@ -9,7 +9,8 @@
    PINNED esbuild in tools/package.json (`npm ci --prefix tools` once; there is no Deno here)
    and run in a fresh `vm` context per check, which is a cold isolate (ONE context reused across
    several questions is a warm one): `Deno.serve` is captured,
-   `fetch` is a stub that plays PostgREST (desk_users — the owner and a TEST user with its own PIN —,
+   `fetch` is a stub that plays PostgREST (the desk_pin_who RPC, desk_026 — the owner and a TEST user with its own
+   PIN, a miss counter and the desk-wide lock —, desk_users for the cron path,
    desk_system_prompt, desk_chat_memory, desk_ask_model — the model tier, desk_021, with failure modes —
    and the desk_open_ask_take RPC, whose atomic counter is a Map) and the Anthropic API, and `Date`
    runs on a settable clock so the Pacific day rolls where the check says it does. Nothing
@@ -59,8 +60,13 @@ function fakeDb() {
     take: null,                  // override: (body) => Response, to simulate a failing counter
     // desk_ask_model, the model tier (desk_021). mode: ok | empty | nullmodel | http500 | throw | badjson | notarray
     tier: { mode: 'ok', model: 'claude-sonnet-5-5' },
-    omitIsTest: false,           // a desk_users select that leaves is_test out (must read as "not admin")
+    omitIsTest: false,           // a PIN reply that leaves is_test out (must read as "not admin")
+    // desk_pin_who (desk_026): what the SQL does, in one step — the lock refuses every PIN, a miss is counted
+    lockedUntil: null,           // an ISO time while the desk is locked
+    misses: 0,
+    who: null,                   // override: (body) => Response, to simulate a failing or odd helper
   };
+  db.whoCalls = () => db.log.filter((c) => c.path === '/rest/v1/rpc/desk_pin_who');
   db.rpc = () => db.log.filter((c) => c.path === '/rest/v1/rpc/desk_open_ask_take');
   db.touched = (table) => db.log.filter((c) => c.path === `/rest/v1/${table}`);
   db.handle = async (u, init) => {
@@ -81,6 +87,16 @@ function fakeDb() {
       if (n >= cap) return json(false);
       db.quota.set(day, n + 1);
       return json(true);
+    }
+    if (u.pathname === '/rest/v1/rpc/desk_pin_who') {
+      if (db.who) return db.who(body);
+      if (method !== 'POST') return json({ message: 'cannot execute SELECT FOR UPDATE in a read-only transaction' }, 400);
+      if (db.lockedUntil) return json({ ok: false, locked_until: db.lockedUntil });
+      const users = { [PIN]: { id: USER_ID, is_test: false }, [TEST_PIN]: { id: TEST_USER_ID, is_test: true } };
+      const hit = Object.hasOwn(users, String(body?.pin)) ? users[String(body.pin)] : null;
+      if (hit) return json(db.omitIsTest ? { ok: true, id: hit.id } : { ok: true, ...hit });
+      db.misses++;
+      return json({ ok: false, locked_until: null });
     }
     if (u.pathname === '/rest/v1/desk_users' && method === 'GET') {
       // PostgREST honours `select=` (only those columns come back), `is_test=eq.…` and `limit=`, and refuses a column that does not exist
@@ -223,6 +239,46 @@ const TESTS = [
     const r = await e.call({ pin: '0000', question: 'q' });
     eq([r.status, r.json.ok], [401, false], 'wrong PIN');
     eq([e.models.length, e.db.rpc().length, e.db.memPosts.length], [0, 0, 0], 'no model call, no quota taken, nothing stored');
+    eq(e.db.misses, 1, 'the miss reached the database\'s lockout counter');
+  }],
+
+  ['the PIN is checked ONLY by the database\'s one PIN check (desk_pin_who, desk_026): a POST carrying the PIN, the service key and no browser user-agent; desk_users is never read for a PIN question', async (code) => {
+    const e = boot(code);
+    const r = await e.pin();
+    eq([r.status, r.json.ok], [200, true], 'the owner is answered');
+    const w = e.db.whoCalls();
+    eq([w.length, w[0]?.method, w[0]?.body], [1, 'POST', { pin: PIN }], 'one call, a POST, with the PIN and nothing else');
+    eq(e.db.touched('desk_users').length, 0, 'the salt and the hash are never read by the function any more');
+    eq(e.db.memPosts.map((m) => m.user_id), [USER_ID], 'saved as the id the helper named');
+    assert(w[0]?.signal, 'the call is bounded by a timeout');
+  }],
+
+  ['a LOCKED desk refuses every PIN, the right one too: 429 with the time, before any model call, tier read or stored row', async (code) => {
+    const e = boot(code); e.db.lockedUntil = '2026-10-04T19:00:00+00:00';
+    for (const pin of [PIN, TEST_PIN, '0000']) {
+      const r = await e.call({ pin, question: 'q', context: { market: [] } });
+      eq([r.status, r.json.ok, r.json.lockedUntil], [429, false, '2026-10-04T19:00:00+00:00'], 'locked, for PIN ' + pin);
+      assert(/locked/i.test(r.json.error), 'the error says the desk is locked: ' + r.json.error);
+    }
+    eq([e.models.length, e.db.touched('desk_ask_model').length, e.db.memPosts.length, e.db.rpc().length], [0, 0, 0, 0], 'nothing read, spent or stored');
+  }],
+
+  ['the helper failing or answering junk refuses the question (fail closed): HTTP 500 and a bad body are 502, a reply without ok:true and a string id is never an admission', async (code) => {
+    const cases = [
+      ['HTTP 500', () => new Response('{"message":"boom"}', { status: 500 }), 502],
+      ['not JSON', () => new Response('<html>', { status: 200 }), 502],
+      ['null', () => new Response('null', { status: 200 }), 502],
+      ['ok is the string "true"', () => new Response('{"ok":"true","id":"x"}', { status: 200 }), 502],
+      ['ok:true with no id', () => new Response('{"ok":true}', { status: 200 }), 502],
+      ['ok:true with an empty id', () => new Response('{"ok":true,"id":""}', { status: 200 }), 502],
+      ['ok:true with a numeric id', () => new Response('{"ok":true,"id":7}', { status: 200 }), 502],
+      ['ok:false, no lock', () => new Response('{"ok":false,"locked_until":null}', { status: 200 }), 401],
+    ];
+    for (const [name, who, want] of cases) {
+      const e = boot(code); e.db.who = who;
+      const r = await e.pin();
+      eq([r.status, r.json?.ok, e.models.length, e.db.memPosts.length], [want, false, 0, 0], name);
+    }
   }],
 
   ['cron path unchanged: the secret alone (no PIN, no Origin) is let in as the owner, stored as scheduled, never counted', async (code) => {
@@ -242,7 +298,7 @@ const TESTS = [
     const r = await e.open({ verify: true, context: { accounts: [{ label: 'FORGED', positions: [{ sym: 'ZZZ', dayPct: 9 }] }], market: [{ name: 'S&P' }] } });
     eq([r.status, r.json.ok, r.json.answer, r.json.open, r.json.memoryStored], [200, true, 'the answer', true, false], 'answered, marked open, nothing stored');
     eq(e.db.rpc().map((c) => c.body), [{ p_day: '2026-10-04', p_cap: 25 }], 'one atomic take, for the Pacific day, at the default cap of 25');
-    eq(e.db.touched('desk_users').length, 0, 'no PIN lookup');
+    eq([e.db.touched('desk_users').length, e.db.whoCalls().length], [0, 0], 'no PIN lookup');
     eq(e.db.touched('desk_chat_memory').length, 0, 'the saved conversation is neither read nor written');
     eq(e.models.length, 1, 'ONE model call: verify is ignored for an open question');
     eq(e.db.touched('desk_system_prompt').length, 0, 'the owner\'s PIN-gated stored prompt is never even read');
@@ -483,7 +539,7 @@ const TESTS = [
     assert(!('model' in r.json) && !('tierSource' in r.json), 'the visitor reply carries no model name: ' + Object.keys(r.json).join(','));
   }],
 
-  ['only the ADMIN is told which model answered: the owner\'s PIN and the cron secret are; the TEST credential, a visitor and a desk_users read that leaves is_test out are answered but told nothing (fail closed)', async (code) => {
+  ['only the ADMIN is told which model answered: the owner\'s PIN and the cron secret are; the TEST credential, a visitor and a PIN reply that leaves is_test out are answered but told nothing (fail closed)', async (code) => {
     const owner = boot(code); const ro = await owner.pin();
     assert('model' in ro.json && ro.json.tierSource === 'row', 'the owner is told');
     const cron = boot(code); const rc = await cron.call({ question: 'brief', context: {} }, { origin: null, headers: { 'x-cron-secret': CRON_SECRET } });
@@ -492,7 +548,7 @@ const TESTS = [
     eq([rt.status, rt.json.ok, test.models.length, test.db.memPosts.map((m) => m.user_id)], [200, true, 1, [TEST_USER_ID]], 'the test credential is a real PIN: answered, and saved as itself');
     assert(!('model' in rt.json) && !('tierSource' in rt.json), 'but it is not told the model: ' + Object.keys(rt.json).join(','));
     const omit = boot(code); omit.db.omitIsTest = true; const rm = await omit.pin();
-    eq([rm.status, rm.json.ok], [200, true], 'a users read without is_test still answers');
+    eq([rm.status, rm.json.ok], [200, true], 'a PIN reply without is_test still answers');
     assert(!('model' in rm.json) && !('tierSource' in rm.json), 'and the owner is NOT treated as admin on a missing field: ' + Object.keys(rm.json).join(','));
   }],
 
@@ -620,7 +676,18 @@ const MUTANTS = [
   ['a BLANK cap secret reads as unset (the open path opens by accident)', "if (raw === undefined) return OPEN_ASK_DEFAULT_CAP;", "if (raw === undefined || raw.trim() === '') return OPEN_ASK_DEFAULT_CAP;"],
   ['the day key is UTC, not Pacific', 'PT_DAY.format(new Date())', 'new Date().toISOString().slice(0, 10)'],
   ['PIN and cron questions are counted against the open quota', 'if (anonymous) {\n    const cap = openAskCap();', 'if (true) {\n    const cap = openAskCap();'],
-  ['a wrong PIN is let through as an open question', "if (!userId) return reply(401, { ok: false, error: 'PIN not recognized.' });", 'if (!userId) { /* downgraded */ }'],
+  ['a wrong PIN is let through as an open question', "    } else {\n      return reply(401, { ok: false, error: 'PIN not recognized.' });\n    }", '    } else {\n      /* downgraded */\n    }'],
+  // ── the one PIN check (desk_026) ──
+  ['the PIN is compared in the function again (desk_users read, the lockout never sees a miss)',
+    'const whoRes = await fetch(`${supaUrl}/rest/v1/rpc/desk_pin_who`, {\n      method: \'POST\', headers: { ...svc, \'content-type\': \'application/json\' }, body: JSON.stringify({ pin }),',
+    'await fetch(`${supaUrl}/rest/v1/desk_users?select=id,salt,pin_hash,is_test`, { headers: svc });\n    const whoRes = await fetch(`${supaUrl}/rest/v1/rpc/desk_pin_who`, {\n      method: \'POST\', headers: { ...svc, \'content-type\': \'application/json\' }, body: JSON.stringify({ pin }),'],
+  ['the lock is answered as a plain wrong PIN (the page cannot say it is locked)', "    } else if (who && typeof who.locked_until === 'string') {", "    } else if (false) {"],
+  ['a truthy ok admits (the string "true" passes)', 'if (who && who.ok === true && typeof who.id === \'string\' && who.id) {', 'if (who && who.ok && who.id) {'],
+  ['ok:true with no id admits', 'if (who && who.ok === true && typeof who.id === \'string\' && who.id) {', 'if (who && who.ok === true) {'],
+  ['a junk reply reads as a wrong PIN, not a failed check', "    } else if (!who || who.ok !== false) {", "    } else if (!who) {"],
+  ['an erroring helper reads as a wrong PIN', "if (!whoRes.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });", "if (!whoRes.ok) return reply(401, { ok: false, error: 'PIN not recognized.' });"],
+  ['the helper is asked with a GET (a read-only call that the lockout refuses)', "      method: 'POST', headers: { ...svc, 'content-type': 'application/json' }, body: JSON.stringify({ pin }),", "      method: 'GET', headers: svc,"],
+  ['the helper call has no timeout', "      signal: AbortSignal.timeout(REST_TIMEOUT_MS),\n    });\n    if (!whoRes.ok)", "    });\n    if (!whoRes.ok)"],
   ['the owner\'s stored prompt is READ for an open question (a visitor can coax it out)', 'if (!anonymous) try {\n    const spRes', 'try {\n    const spRes'],
   ['the saved conversation is READ for an open question', 'if (userId) try {\n    const since', 'try {\n    const since'],
   ['an open answer is WRITTEN into the owner conversation', 'if (userId) try {\n    const mres', 'try {\n    const mres'],
@@ -652,15 +719,14 @@ const MUTANTS = [
     ['const tierRow = await readTierRow(supaUrl, svc);', '        model,\n        max_tokens: MAX_ANSWER_TOKENS,'],
     ["const tierRow: TierRead = { ok: false, why: 'mutant' };", '        model: resolveTier(await readTierRow(supaUrl, svc), Deno.env.get(\'ASK_MODEL\')).model,\n        max_tokens: MAX_ANSWER_TOKENS,']],
   ['the tier read sends a browser-shaped user-agent (the gateway refuses the secret key)', 'desk_ask_model?select=model&id=eq.true`, { headers: svc,', "desk_ask_model?select=model&id=eq.true`, { headers: { ...svc, 'user-agent': 'Mozilla/5.0' },"],
-  ['EVERY PIN is admin (the test credential is told the model)', 'isAdmin = u.is_test === false;', 'isAdmin = true;'],
-  ['admin is read as `!is_test` (a missing field makes the caller an admin)', 'isAdmin = u.is_test === false;', 'isAdmin = !u.is_test;'],
+  ['EVERY PIN is admin (the test credential is told the model)', 'isAdmin = who.is_test === false;', 'isAdmin = true;'],
+  ['admin is read as `!is_test` (a missing field makes the caller an admin)', 'isAdmin = who.is_test === false;', 'isAdmin = !who.is_test;'],
   ['a visitor is told the model', 'const adminProof = (answered?: string | null) => isAdmin ? {', 'const adminProof = (answered?: string | null) => true ? {'],
   ['the cron path is not admin', "    if (!userId) return reply(500, { ok: false, error: 'no owner row in desk_users' });\n    isAdmin = true;\n", "    if (!userId) return reply(500, { ok: false, error: 'no owner row in desk_users' });\n"],
   ['the admin is not told where the choice came from', ', tierSource: tier.source } : {}', ' } : {}'],
   ['the reply names the model that was ASKED for, not the one the provider reports', '...adminProof(finalMsg?.model), usage, checked,', '...adminProof(), usage, checked,'],
   ['the provider-failure reply carries no tier', '        ...adminProof(),   // which tier was asked for, so a provider refusal of one model is diagnosable\n', ''],
   ['the saved conversation row stores the model that was asked for', 'model: finalMsg?.model ?? model, sources, usage, checked, origin', 'model, sources, usage, checked, origin'],
-  ['the users read no longer asks for is_test (the owner is never told which model answered)', 'desk_users?select=id,salt,pin_hash,is_test', 'desk_users?select=id,salt,pin_hash'],
   ['the tier query asks for the wrong column', 'desk_ask_model?select=model&id=eq.true`, { headers: svc, signal', 'desk_ask_model?select=mode&id=eq.true`, { headers: svc, signal'],
   ['the tier query asks for the wrong row', 'desk_ask_model?select=model&id=eq.true`, { headers: svc, signal', 'desk_ask_model?select=model&id=eq.false`, { headers: svc, signal'],
   ['the tier read has no timeout', 'desk_ask_model?select=model&id=eq.true`, { headers: svc, signal: AbortSignal.timeout(REST_TIMEOUT_MS) }', 'desk_ask_model?select=model&id=eq.true`, { headers: svc }'],

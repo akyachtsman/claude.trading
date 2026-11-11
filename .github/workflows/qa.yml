@@ -165,6 +165,10 @@ jobs:
   #                                   project): the verify probe, a 20-way burst
   #                                   proving the counter atomic, Ask's counter
   #                                   independent, then 12 migration mutants
+  #   pin-lockout-check.py            desk_026 (the PIN lockout, 2026-11-11) on a
+  #                                   replay of supabase/migrations on the same
+  #                                   service container: the verify probe, a
+  #                                   30-way burst, then 19 migration mutants
   # The page's half (S75 under 41 mutants) is the news-client-mutants job.
   news-checks:
     name: News helper checks (server + database)
@@ -204,6 +208,15 @@ jobs:
           PGPORT: '5432'
           PGUSER: postgres
         run: python3 tools/news-ai-quota-check.py
+
+      # desk_026 (2026-11-11): the lockout on every PIN door, on a replay of the
+      # migrations — the probe, a 30-way burst and every mutant must be caught.
+      - name: desk_026 PIN lockout on a scratch Postgres, burst and mutants
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+        run: python3 tools/pin-lockout-check.py
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The no-browser checks of the edge functions and scripts/data.js, on every

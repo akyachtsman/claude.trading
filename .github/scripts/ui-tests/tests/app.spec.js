@@ -1455,8 +1455,12 @@ test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness
 });
 
 // S11 — Wrong PIN: plain error, still locked, nothing rendered.
-test('S11: invalid PIN shows an error and stays locked (live only)', async ({ page, renderWitness }) => {
+test('S11: invalid PIN shows an error and stays locked (live only)', async ({ page, renderWitness }, testInfo) => {
   renderWitness();
+  // ONE project only (desk_026, 2026-11-11): every wrong PIN now counts toward the desk-wide lockout (10 misses in
+  // an hour lock every PIN door, the owner's included, for an hour), so four projects on every deploy spent four of
+  // the owner's ten. The refusal is the server's, not the browser's, so one project proves it.
+  test.skip(testInfo.project.name !== 'desktop', 'one wrong PIN per run: each counts toward the desk lockout (desk_026)');
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
   const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
@@ -8331,7 +8335,7 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   const base = (await (await page.request.get('scripts/config.js')).text()).match(/url:\s*'([^']*)'/)[1];
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
   const logins = [];
-  let blip = false;
+  let blip = false, lockedUntil = null;
   await page.route(`${base}/**`, async (route) => {
     const req = route.request();
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
@@ -8339,6 +8343,8 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
       const pin = JSON.parse(req.postData() || '{}').pin;
       logins.push(pin);
       if (blip) return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{}' });
+      // desk_026: a locked desk refuses every PIN, the right one too, and says until when
+      if (lockedUntil) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: false, locked_until: lockedUntil }) });
       return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: pin === GOOD }) });
     }
     // every other desk call (feeds, dashboard, roster) is out of scope: fail it fast and quietly
@@ -8425,6 +8431,21 @@ test('S60: the desk PIN is remembered on this device — validated at every boot
   await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
   expect(logins, 'after Lock a reload has nothing to validate').toEqual([]);
   expect(await authed()).toBe(false);
+
+  // H. a LOCKED desk (desk_026: 10 wrong PINs in an hour) is not a verdict on the stored PIN: the desk stays locked,
+  // the device keeps the PIN, and the panel says until when — on the Pacific clock, worked out here with Intl
+  lockedUntil = '2026-11-11T05:58:18+00:00';
+  const until = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(lockedUntil));
+  await loadLive({ device: GOOD });
+  expect(logins).toEqual([GOOD]);
+  expect(await authed(), 'a locked desk does not unlock').toBe(false);
+  expect((await stores()).device, 'and the lock does not sign the owner out of this device').toBe(GOOD);
+  await expect(page.locator('#accountGrid .lock-explain'), 'the panel says the desk is locked, and until when').toContainText(new RegExp(`locked until ${until} P[DS]T`));
+  await lockForm.fill(GOOD);
+  await page.locator('#accountGrid .panel-lock .lock-form button').click();
+  await expect(page.locator('.panel-lock .lock-error'), 'typing the right PIN while locked says the same').toContainText(new RegExp(`Too many wrong PINs .* locked until ${until} P[DS]T`));
+  expect(await authed()).toBe(false);
+  lockedUntil = null;
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -554,7 +554,15 @@ async function deskRpcOk(fn, pin, extra) {
 }
 async function deskLogin(pin) {
   const out = await deskRpc('desk_login', pin);
-  return out && out.ok ? out : { ok: false, error: 'PIN not recognized — try again.' };
+  if (out && out.ok) return out;
+  /* desk_026: 10 wrong PINs in an hour lock EVERY PIN door, the right PIN included, for an hour. A lock is not a
+     verdict on this PIN — `locked` tells the boot path not to forget a stored one for it. */
+  if (out && typeof out.locked_until === 'string') return { ok: false, locked: true, lockedUntil: out.locked_until, error: deskLockedText(out.locked_until) };
+  return { ok: false, error: 'PIN not recognized — try again.' };
+}
+function deskLockedText(iso) {
+  const t = fmtClock(iso);
+  return 'Too many wrong PINs — the desk is locked' + (t ? ' until ' + t : ' for an hour') + '. Try again then.';
 }
 
 /* The desk PIN, remembered on THIS DEVICE (owner ruling 2026-10-04: "keep it for accounts at the
