@@ -12511,3 +12511,122 @@ test('S80: a sideways swipe is not a zoom, the detail window loads without cryin
 
   expect(errs, 'no page errors').toEqual([]);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S81 — the owner changes the desk PIN to a passphrase (owner 2026-11-11, PIN hardening fix 2; desk_027).
+// The SERVER decides (tools/pin-change-verify.sql proves that side); this proves the page: the control exists only
+// while unlocked, it refuses what it can see is wrong WITHOUT spending a request (a typo in the new passphrase must
+// not cost one of the lockout's ten misses), it says the server's reason, and on success THIS tab keeps the new one
+// in sessionStorage and nothing anywhere else. Through the REAL boot against a stubbed backend.
+// ─────────────────────────────────────────────────────────────────────────────
+test('S81: the owner changes the desk PIN to a passphrase — only while unlocked, checked before it is sent, kept for this tab only', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
+  const OLD = '4321', NEW = 'correct horse battery staple';
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  const base = (await (await page.request.get('scripts/config.js')).text()).match(/url:\s*'([^']*)'/)[1];
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+  const changes = [];
+  let answer = { status: 200, body: { ok: true } };
+  await page.route(`${base}/**`, async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const path = new URL(req.url()).pathname;
+    const j = JSON.parse(req.postData() || '{}');
+    if (path.endsWith('/rpc/desk_login')) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: j.pin === OLD || j.pin === NEW }) });
+    if (path.endsWith('/rpc/desk_change_pin')) {
+      changes.push(j);
+      return route.fulfill({ status: answer.status, headers: cors, contentType: 'application/json', body: JSON.stringify(answer.body) });
+    }
+    return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{"ok":false}' });
+  });
+
+  // demo: no control
+  await page.goto('./?demo=1');
+  await page.waitForFunction(() => DESK.mode === 'demo');
+  await expect(page.locator('#pinChangeBtn'), 'demo has no passphrase to change').toHaveCount(0);
+
+  // live and LOCKED: no control; the unlock field takes a passphrase (no numeric keypad)
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+  await page.goto('./');
+  await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
+  await expect(page.locator('#pinChangeBtn'), 'a locked desk offers no change').toHaveCount(0);
+  const unlockField = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
+  expect(await unlockField.getAttribute('inputmode'), 'a passphrase is not digits: no numeric keypad').toBe(null);
+  await expect(unlockField).toHaveAttribute('placeholder', /passphrase/i);
+  await expect(page.locator('#accountGrid .lock-explain')).toContainText(/PIN or passphrase/);
+
+  // unlock with the PIN: the control is beside Lock
+  await page.evaluate((p) => sessionStorage.setItem('desk_pin', p), OLD);
+  await page.goto('./');
+  await page.waitForFunction(() => DESK.mode === 'live' && DESK.authed);
+  const btn = page.locator('#pinChangeBtn');
+  await expect(btn).toBeVisible();
+  await expect(btn).toHaveAccessibleName('Change the desk passphrase');
+  await btn.click();
+  const dlg = page.locator('#pinChangePanel');
+  await expect(dlg).toBeVisible();
+  await expect(page.locator('#pinChangeOld'), 'focus opens on the current PIN').toBeFocused();
+  for (const id of ['#pinChangeOld', '#pinChangeNew', '#pinChangeNew2']) expect(await page.locator(id).getAttribute('type'), id + ' is masked').toBe('password');
+  const err = page.locator('#pinChangeErr');
+  const fill = async (o, n, a) => { await page.fill('#pinChangeOld', o); await page.fill('#pinChangeNew', n); await page.fill('#pinChangeNew2', a); await page.click('#pinChangeSaveBtn'); };
+
+  // refused BEFORE sending: nothing reaches the server
+  await fill('', NEW, NEW);
+  await expect(err).toHaveText('Enter the current PIN or passphrase.');
+  await fill(OLD, '123456789012345', '123456789012345');
+  await expect(err).toHaveText('The new passphrase must be at least 16 characters.');
+  await expect(page.locator('#pinChangeNew')).toBeFocused();
+  await fill(OLD, NEW, NEW + '!');
+  await expect(err).toHaveText('The two new passphrases do not match.');
+  await expect(page.locator('#pinChangeNew2')).toBeFocused();
+  expect(changes, 'none of those spent a request (or a lockout miss)').toEqual([]);
+
+  // the server's refusals, each said, and the stored PIN untouched
+  answer = { status: 200, body: { ok: false } };
+  await fill('9999', NEW, NEW);
+  await expect(err).toHaveText('The current PIN or passphrase is not right.');
+  await expect(page.locator('#pinChangeSaveBtn')).toBeEnabled();
+  await expect(page.locator('#pinChangeOld')).toBeEnabled();
+  answer = { status: 200, body: { ok: false, error: 'Choose a different passphrase.' } };
+  await fill(OLD, NEW, NEW);
+  await expect(err).toHaveText('Choose a different passphrase.');
+  answer = { status: 200, body: { ok: false, locked_until: '2026-11-11T06:44:27+00:00' } };
+  await fill(OLD, NEW, NEW);
+  const until = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date('2026-11-11T06:44:27+00:00'));
+  await expect(err).toContainText(new RegExp(`Too many wrong PINs .* locked until ${until} P[DS]T`));
+  answer = { status: 503, body: {} };
+  await fill(OLD, NEW, NEW);
+  await expect(err).toContainText('the passphrase was not changed');
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'no refusal touched the tab\'s PIN').toBe(OLD);
+  expect(changes.length).toBe(4);
+  expect(changes[1], 'the request carries the current PIN and the new passphrase, nothing else').toEqual({ pin: OLD, new_pin: NEW });
+
+  // success: this tab keeps the new passphrase, nothing else does; Close returns focus to the control
+  answer = { status: 200, body: { ok: true } };
+  await fill(OLD, NEW, NEW);
+  await expect(page.locator('#pinChangeOk')).toHaveText(/Passphrase changed/);
+  await expect(err).toBeHidden();
+  await expect(page.locator('#pinChangeSaveBtn')).toBeHidden();
+  await expect(page.locator('#pinChangeCloseBtn')).toHaveText('Close');
+  await expect(page.locator('#pinChangeCloseBtn')).toBeFocused();
+  expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'this tab keeps the new passphrase').toBe(NEW);
+  expect(await page.evaluate((n) => Object.keys(localStorage).filter(k => (localStorage.getItem(k) || '').includes(n) || /pin/i.test(k)), NEW), 'and nothing in localStorage').toEqual([]);
+  for (const id of ['#pinChangeOld', '#pinChangeNew', '#pinChangeNew2']) await expect(page.locator(id), id + ' is emptied').toHaveValue('');
+  await page.click('#pinChangeCloseBtn');
+  await expect(dlg).toBeHidden();
+  await expect(btn, 'focus goes back to the control').toBeFocused();
+
+  // a reload unlocks with the new passphrase; Escape closes a fresh dialog; Lock takes the control away
+  await page.reload();
+  await page.waitForFunction(() => DESK.mode === 'live' && DESK.authed);
+  await btn.click();
+  await expect(page.locator('#pinChangeOk'), 'a re-opened dialog starts clean').toHaveText('');
+  await expect(page.locator('#pinChangeSaveBtn')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dlg).toBeHidden();
+  await page.getByRole('button', { name: 'Lock', exact: true }).click();
+  await expect(btn, 'Lock takes the control away').toHaveCount(0);
+  expect(errs, 'no page errors').toEqual([]);
+});

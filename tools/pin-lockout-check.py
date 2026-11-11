@@ -123,7 +123,7 @@ def fresh(mig_text):
     skip = {'desk_004', 'desk_005'} | ({'desk_025'} if server_major() < 17 else set())
     for f in sorted(glob.glob(os.path.join(ROOT, 'supabase/migrations/desk_0*.sql'))):
         name = os.path.basename(f)
-        if name[:8] in skip or name.startswith('desk_026'): continue
+        if name[:8] in skip or name[:8] >= 'desk_026': continue   # the migration under test and anything after it
         r = psql(DB, '-v', 'ON_ERROR_STOP=1', '-f', f)
         if r.returncode: return None, f'{name} failed: ' + r.stderr.strip()[:300]
     r = subprocess.run(['psql', '-q', '-X', '-d', DB, '-v', 'ON_ERROR_STOP=1'], input=mig_text, capture_output=True, text=True)

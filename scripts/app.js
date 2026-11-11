@@ -186,6 +186,14 @@ function renderMasthead() {
       /* deskPinForget: the tab's copy (and any retired device copy) — otherwise Lock
          would lock until the next reload and then quietly unlock itself again */
       lock.addEventListener('click', () => { deskPinForget(); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
+      /* desk_027 (owner 2026-11-11, PIN hardening fix 2): change the PIN to a passphrase — only while unlocked */
+      const pass = el('button', 'legacy-btn legacy-btn-secondary', 'Passphrase');
+      pass.type = 'button';
+      pass.id = 'pinChangeBtn';
+      pass.title = 'Change the desk PIN to a passphrase';
+      pass.setAttribute('aria-label', 'Change the desk passphrase');
+      pass.addEventListener('click', () => openPinChange(pass));
+      wrap.appendChild(pass);
       wrap.appendChild(lock);
     }
   }
@@ -1964,6 +1972,73 @@ let wlDelTarget = null;   /* {idx, title} — which band's × was pressed */
 
 function wlNewErr(msg) { modalErr('wlNewErr', msg); }
 function wlDelErr(msg) { modalErr('wlDelErr', msg); }
+
+/* ── Change the desk passphrase (desk_027, owner 2026-11-11, PIN hardening fix 2) ─────────────────────
+   The server decides everything; the page only refuses what it can see is wrong before sending (an empty field, two
+   new passphrases that differ, fewer than 16 characters) so the owner does not spend one of the lockout's ten misses
+   on a typo in the NEW passphrase. On success THIS tab keeps the new one (sessionStorage — never anything that
+   outlives the tab); every other tab's stored PIN stops working at once and asks again. */
+const PIN_MIN = 16;
+let pinChangeBusy = false;
+function pinChangeErr(msg) { modalErr('pinChangeErr', msg); }
+function openPinChange(invoker) {
+  if (!DESK.authed || pinChangeBusy) return;
+  const back = document.getElementById('pinChangeBackdrop');
+  if (!back) return;
+  for (const id of ['pinChangeOld', 'pinChangeNew', 'pinChangeNew2']) {
+    const f = document.getElementById(id); if (f) { f.value = ''; f.disabled = false; }
+  }
+  const save = document.getElementById('pinChangeSaveBtn');
+  if (save) { save.hidden = false; save.disabled = false; save.textContent = 'Change'; }
+  const close = document.getElementById('pinChangeCloseBtn');
+  if (close) close.textContent = 'Cancel';
+  const ok = document.getElementById('pinChangeOk'); if (ok) ok.textContent = '';
+  pinChangeErr('');
+  openModal(back, { initialFocus: document.getElementById('pinChangeOld'), restoreFocusTo: invoker, onDismiss: closePinChange });
+}
+function closePinChange() {
+  if (pinChangeBusy) return;   /* the answer decides which PIN this tab keeps: never abandon it mid-flight */
+  for (const id of ['pinChangeOld', 'pinChangeNew', 'pinChangeNew2']) { const f = document.getElementById(id); if (f) f.value = ''; }
+  closeModal(document.getElementById('pinChangeBackdrop'));
+}
+async function submitPinChange() {
+  if (pinChangeBusy || !DESK.authed) return;
+  const oldF = document.getElementById('pinChangeOld'), newF = document.getElementById('pinChangeNew'), againF = document.getElementById('pinChangeNew2');
+  const save = document.getElementById('pinChangeSaveBtn'), close = document.getElementById('pinChangeCloseBtn'), ok = document.getElementById('pinChangeOk');
+  if (!oldF || !newF || !againF) return;
+  const cur = oldF.value, next = newF.value;
+  pinChangeErr('');
+  if (!cur) { pinChangeErr('Enter the current PIN or passphrase.'); oldF.focus(); return; }
+  if (next.length < PIN_MIN) { pinChangeErr('The new passphrase must be at least ' + PIN_MIN + ' characters.'); newF.focus(); return; }
+  if (next !== againF.value) { pinChangeErr('The two new passphrases do not match.'); againF.focus(); return; }
+  pinChangeBusy = true;
+  for (const f of [oldF, newF, againF]) f.disabled = true;
+  if (save) { save.disabled = true; save.textContent = 'Changing…'; }
+  if (close) close.disabled = true;
+  const res = await deskChangePin(cur, next);
+  pinChangeBusy = false;
+  if (close) close.disabled = false;
+  if (res.ok) {
+    try { sessionStorage.setItem('desk_pin', next); } catch { /* storage blocked: this tab asks again on reload */ }
+    for (const f of [oldF, newF, againF]) f.value = '';
+    if (save) save.hidden = true;
+    if (close) { close.textContent = 'Close'; close.focus(); }
+    if (ok) ok.textContent = 'Passphrase changed. This tab stays unlocked with it; other tabs will ask for it.';
+    return;
+  }
+  for (const f of [oldF, newF, againF]) f.disabled = false;
+  if (save) { save.disabled = false; save.textContent = 'Change'; }
+  pinChangeErr(res.error || 'The passphrase was not changed.');
+  const next2 = res.locked ? close : oldF;   /* locked: nothing to retype for an hour */
+  if (next2) next2.focus();
+}
+function wirePinChange() {
+  const form = document.getElementById('pinChangeForm');
+  if (!form) return;
+  form.addEventListener('submit', ev => { ev.preventDefault(); submitPinChange(); });
+  const close = document.getElementById('pinChangeCloseBtn');
+  if (close) close.addEventListener('click', closePinChange);
+}
 
 function openWlNewList(invoker) {
   if (!wlCanEdit() || wlWriting()) { if (wlInFlight && !wlBusy) wlNote(WL_SAVING); return; }
@@ -3942,12 +4017,13 @@ function renderLockedPanels(why) {
   lockPanel.appendChild(head);
   const body = el('div', 'panel-body');
   body.appendChild(el('p', 'lock-explain', why ||
-    'Account balances and charts are private — enter the desk PIN to unlock. It then stays unlocked in this tab until you press Lock or close the tab.'));
+    'Account balances and charts are private — enter the desk PIN or passphrase to unlock. It then stays unlocked in this tab until you press Lock or close the tab.'));
   const form = document.createElement('form');
   form.className = 'lock-form'; form.setAttribute('autocomplete', 'off');
   const input = document.createElement('input');
-  input.type = 'password'; input.inputMode = 'numeric'; input.className = 'legacy-input';
-  input.placeholder = 'Desk PIN'; input.setAttribute('aria-label', 'Desk PIN');
+  /* a passphrase (desk_027) is letters and spaces too: no numeric keypad */
+  input.type = 'password'; input.className = 'legacy-input';
+  input.placeholder = 'PIN or passphrase'; input.setAttribute('aria-label', 'Desk PIN or passphrase');
   const btn = el('button', 'legacy-btn', 'Unlock');
   btn.type = 'submit';
   const err = el('p', 'lock-error', ''); err.hidden = true;
@@ -10897,4 +10973,5 @@ wireWatchlistEditor();
 wireWatchlistQuickEdits();
 wireWatchlistDetail();
 wireSysPromptModal();
+wirePinChange();
 boot();

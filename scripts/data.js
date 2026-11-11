@@ -560,6 +560,19 @@ async function deskLogin(pin) {
   if (out && typeof out.locked_until === 'string') return { ok: false, locked: true, lockedUntil: out.locked_until, error: deskLockedText(out.locked_until) };
   return { ok: false, error: 'PIN not recognized — try again.' };
 }
+/* desk_027 (owner 2026-11-11, PIN hardening fix 2): the owner changes the desk PIN to a passphrase of 16 to 200
+   characters. The server decides everything (a wrong current PIN is a counted miss, a lock refuses it, only the owner
+   may, the length and the rest); this only turns its answer into {ok:true} or {ok:false, error}. A failed call is NOT
+   a refusal of the passphrase: it says the change may not have been saved, never that it was. */
+async function deskChangePin(pin, newPin) {
+  let out;
+  try { out = await deskRpc('desk_change_pin', pin, { new_pin: newPin }); }
+  catch { return { ok: false, error: 'Could not reach the data service — the passphrase was not changed. Try again in a moment.' }; }
+  if (out && out.ok === true) return { ok: true };
+  if (out && typeof out.locked_until === 'string') return { ok: false, locked: true, error: deskLockedText(out.locked_until) };
+  if (out && typeof out.error === 'string' && out.error) return { ok: false, error: out.error };
+  return { ok: false, error: 'The current PIN or passphrase is not right.' };
+}
 function deskLockedText(iso) {
   const t = fmtClock(iso);
   return 'Too many wrong PINs — the desk is locked' + (t ? ' until ' + t : ' for an hour') + '. Try again then.';

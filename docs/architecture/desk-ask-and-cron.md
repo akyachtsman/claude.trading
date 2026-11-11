@@ -120,6 +120,27 @@ Guarded by S70 and `tools/ask-model-tier-client-mutants.py --sources` (13 mutant
 
 **Rollback.** Redeploy `desk-ask` v32 first (`supabase/functions/desk-ask/index.ts` as of `34dfd9a`, md5 `36781d50a01038bec4c36e73a10121f6`, `verify_jwt` OFF), then run `tools/fixtures/desk_026_revert.sql` (the same route as the migration: it holds a `delete`), then, only if the guard is not wanted at all, `drop function public.desk_pin_who(text); drop table public.desk_pin_guard`.
 
+## Changing the desk PIN to a passphrase — owner, 2026-11-11 (`desk_027`)
+
+> PIN hardening fix 2 of 3 ("a stronger secret"), on the plan the owner approved ("Go ahead as written"), applied under the standing OK for the PIN work.
+
+**STATE: LIVE since 2026-11-11.** `desk_027` APPLIED through the connector as version `20261111060646` (no statement starts with DROP, DELETE or TRUNCATE; the file's statements without its own `begin`/`commit`). `tools/pin-change-verify.sql` then ran live: 37 of 37, rolled back; afterwards the guard read exactly as before, no probe row was left, and `desk_pin_set` / `desk_pin_taken` answer `false` to EXECUTE for `anon` and `service_role` while `desk_change_pin` answers `true`. The owner has NOT set a passphrase yet: that is his to do, from the `Passphrase` button beside Lock.
+
+| Piece | What it does | Where |
+|---|---|---|
+| The door | `desk_change_pin(pin, new_pin)`: `desk_pin_who(pin)` first (a wrong current PIN is a counted miss; a lock answers `{ok:false, locked_until}`); the CI test credential is refused (`Only the owner can change the passphrase.`, not counted); 16–200 characters, no space at either end, not the current one, not another user's; then `{ok:true}` | `supabase/migrations/desk_027_change_pin.sql` |
+| The only hash writer | `desk_pin_set(p_id, new_pin)`: a FRESH 16-byte random salt (32 hex, like every existing row), the same salted SHA-256 every door checks; closed to every API role | same |
+| The uniqueness check | `desk_pin_taken(p_id, new_pin)`: would it log in ANOTHER user? `desk_pin_who` takes the first matching row, so a shared PIN would log the owner in as whichever row came first; counts nothing, closed to every API role | same |
+| The page | `Passphrase` beside Lock, only while unlocked; a dialog (`#pinChangeBackdrop`, `openModal`) with the current PIN and the new one twice; the page refuses an empty current field, < 16 characters and a mismatch BEFORE sending (a typo must not spend a lockout miss); success writes the new one to `sessionStorage` only | `scripts/app.js` `openPinChange` / `submitPinChange` / `wirePinChange`, `scripts/data.js` `deskChangePin`, `index.html`, `styles/layout.css` |
+
+**Why a passphrase and not Supabase Auth.** The plan the owner approved: Auth would replace every PIN door, desk-ask's check and the cron path at once; a passphrase keeps all of it and only lengthens the secret. With the lockout (about 240 guesses a day) a 16-character passphrase is out of reach online. Offline, a leaked `desk_users` row is still one salted SHA-256, which is fast to attack; a slower hash (bcrypt through `crypt()`) would change `desk_pin_who` and every stored row, and was not in the plan.
+
+**Every other tab stops working at once.** `desk_pin_who` reads the new hash on the next call, so another tab's stored PIN is refused (the boot path then forgets it) and asks again. The page that made the change stores the new one.
+
+**Verified how.** `tools/pin-change-check.py` replays `desk_001`–`desk_026` on a scratch Postgres, applies `desk_027` and runs the probe; 17 of 17 mutants are caught (the helper bypassed, the test user allowed, each length bound moved either way, the end-space, same-passphrase and other-user checks removed, a reused salt, every row rewritten, either helper opened to the API, the door closed to anon, the door not SECURITY DEFINER, a null not refused, the lock ignored). S81 is the page's side.
+
+**Rollback.** `drop function public.desk_change_pin(text, text); drop function public.desk_pin_set(uuid, text); drop function public.desk_pin_taken(uuid, text)` — that starts with `drop`, so it goes to the owner as a paste. A passphrase already set stays set: it is an ordinary salt and hash, which every door reads as before.
+
 ## Open questions (no PIN) and the remembered PIN — owner, 2026-10-04
 
 > "remove the PIN for ask the desk, keep it for accounts at the bottom but leave it unlocked for now"
