@@ -9,10 +9,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20261111d">
-<link rel="stylesheet" href="styles/components.css?v=20261111d">
-<link rel="stylesheet" href="styles/legacy.css?v=20261111d">
-<link rel="stylesheet" href="styles/layout.css?v=20261111d">
+<link rel="stylesheet" href="styles/tokens.css?v=20261111e">
+<link rel="stylesheet" href="styles/components.css?v=20261111e">
+<link rel="stylesheet" href="styles/legacy.css?v=20261111e">
+<link rel="stylesheet" href="styles/layout.css?v=20261111e">
 </head>
 <body>
 <div class="shell legacy-screen">
@@ -187,33 +187,6 @@
       </div>
     </section>
   </div>
-  <!-- Change the desk passphrase (owner 2026-11-11, PIN hardening fix 2; desk_027). Opened from the
-       "Passphrase" button beside Lock, only while the desk is unlocked. The SERVER decides everything —
-       the current PIN (a wrong one is a counted miss), the lock, the owner, the 16-200 characters — and
-       this tab keeps the new one (sessionStorage); every other tab asks for it. -->
-  <div class="modal-backdrop" id="pinChangeBackdrop" hidden>
-    <section class="panel modal-panel wl-rm-panel" id="pinChangePanel" aria-labelledby="pinChangeTitle" role="dialog" aria-modal="true">
-      <div class="panel-header">
-        <h2 class="panel-title" id="pinChangeTitle">Change passphrase</h2>
-      </div>
-      <form class="panel-body pin-change-form" id="pinChangeForm" autocomplete="off" novalidate>
-        <label class="lock-explain" for="pinChangeOld">Current PIN or passphrase</label>
-        <input type="password" class="legacy-input" id="pinChangeOld" autocomplete="current-password" spellcheck="false">
-        <label class="lock-explain" for="pinChangeNew">New passphrase — at least 16 characters (a few words with spaces is fine)</label>
-        <input type="password" class="legacy-input" id="pinChangeNew" autocomplete="new-password" spellcheck="false" maxlength="200">
-        <label class="lock-explain" for="pinChangeNew2">The new passphrase again</label>
-        <input type="password" class="legacy-input" id="pinChangeNew2" autocomplete="new-password" spellcheck="false" maxlength="200">
-        <p class="lock-explain">Keep it somewhere safe. Other tabs will ask for the new one.</p>
-        <div class="wl-edit-actions">
-          <button type="button" class="legacy-btn legacy-btn-secondary" id="pinChangeCloseBtn">Cancel</button>
-          <button type="submit" class="legacy-btn" id="pinChangeSaveBtn">Change</button>
-        </div>
-        <p class="lock-error" id="pinChangeErr" hidden></p>
-        <p class="lock-explain" id="pinChangeOk" role="status"></p>
-      </form>
-    </section>
-  </div>
-
   <div class="modal-backdrop" id="wlQuickBackdrop" hidden>
     <section class="panel modal-panel wl-quick-panel" id="wlQuickPanel" aria-labelledby="wlQuickTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
@@ -578,6 +551,36 @@
 
   </main>
 
+  <!-- Change the desk passphrase (owner 2026-11-11, PIN hardening fix 2; desk_027). Opened from the
+       "Passphrase" button beside Lock, only while the desk is unlocked. The SERVER decides everything —
+       the current PIN (a wrong one is a counted miss), the lock, the owner, the 16-200 characters — and
+       this tab keeps the new one (sessionStorage); every other tab asks for it. It sits AFTER <main> on
+       purpose (the accounts section stays main's last child, S54): the UI kit's auth-gate helpers take the FIRST input[type=password] on the page, which must be the lock
+       panel's (S2 found no gate while this dialog came first), and no hidden [class*="pin"] may precede the gate. -->
+  <div class="modal-backdrop" id="pinChangeBackdrop" hidden>
+    <section class="panel modal-panel wl-rm-panel" id="pinChangePanel" aria-labelledby="pinChangeTitle" role="dialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="pinChangeTitle">Change passphrase</h2>
+      </div>
+      <form class="panel-body passphrase-form" id="pinChangeForm" autocomplete="off" novalidate>
+        <label class="lock-explain" for="pinChangeOld">Current PIN or passphrase</label>
+        <input type="password" class="legacy-input" id="pinChangeOld" autocomplete="current-password" spellcheck="false">
+        <label class="lock-explain" for="pinChangeNew">New passphrase — at least 16 characters (a few words with spaces is fine)</label>
+        <input type="password" class="legacy-input" id="pinChangeNew" autocomplete="new-password" spellcheck="false" maxlength="200">
+        <label class="lock-explain" for="pinChangeNew2">The new passphrase again</label>
+        <input type="password" class="legacy-input" id="pinChangeNew2" autocomplete="new-password" spellcheck="false" maxlength="200">
+        <p class="lock-explain">Keep it somewhere safe. Other tabs will ask for the new one.</p>
+        <div class="wl-edit-actions">
+          <button type="button" class="legacy-btn legacy-btn-secondary" id="pinChangeCloseBtn">Cancel</button>
+          <button type="submit" class="legacy-btn" id="pinChangeSaveBtn">Change</button>
+        </div>
+        <p class="lock-error" id="pinChangeErr" hidden></p>
+        <p class="lock-explain" id="pinChangeOk" role="status"></p>
+      </form>
+    </section>
+  </div>
+
+
   <footer class="site-footer">
     <p>Data: IBKR Flex reports (accounts) · public market, news and economy feeds fetched live. Every panel shows its own as-of stamp and a lamp (LIVE, EOD or STALE) — read the stamp before trusting a number.</p>
     <p>Nothing here is investment, tax, or legal advice. Past performance is not a guarantee of future results.</p>
@@ -585,8 +588,8 @@
 
 </div>
 
-<script src="scripts/config.js?v=20261111d"></script>
-<script src="scripts/data.js?v=20261111d"></script>
-<script src="scripts/app.js?v=20261111d"></script>
+<script src="scripts/config.js?v=20261111e"></script>
+<script src="scripts/data.js?v=20261111e"></script>
+<script src="scripts/app.js?v=20261111e"></script>
 </body>
 </html>

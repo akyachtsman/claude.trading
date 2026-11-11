@@ -1140,6 +1140,6 @@
   }
 
 /* Change passphrase dialog (desk_027, 2026-11-11): stacked label → field pairs */
-.pin-change-form label.lock-explain { display: block; margin-bottom: var(--space-1); }
-.pin-change-form .legacy-input { display: block; width: 100%; box-sizing: border-box; margin-bottom: var(--space-3); }
-.pin-change-form .lock-explain:empty { margin: 0; }
+.passphrase-form label.lock-explain { display: block; margin-bottom: var(--space-1); }
+.passphrase-form .legacy-input { display: block; width: 100%; box-sizing: border-box; margin-bottom: var(--space-3); }
+.passphrase-form .lock-explain:empty { margin: 0; }
