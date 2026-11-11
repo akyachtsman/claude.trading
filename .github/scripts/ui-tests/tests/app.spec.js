@@ -38,7 +38,55 @@ import { fitProblems, FIT_INCOMPLETE } from './lib/fit.js';
 // its first statement, BEFORE any skip/throw preamble — an honest failing or
 // skipping body still entered the callback with a real page at that width, which
 // is exactly what the witness attests. A test added later should do both.
+/* PIN GUARD (desk_026, 2026-11-11). Every wrong PIN that reaches the live database now counts toward the desk-wide
+   lockout (10 misses in an hour lock every PIN door, the owner's included, for an hour). Many scenarios force the page
+   live with an invented PIN and leave DESK_DB.url pointing at the REAL project, so a single PR run sent dozens of fake
+   PINs there and locked the owner out within its first half hour (measured 2026-11-11, the PR #366 run). This fixture
+   runs for EVERY scenario: a request to the real backend that carries a `pin` which is not TEST_AUTH_CREDENTIAL itself
+   is answered here with the refusal the server would give and never leaves the browser. S11's one deliberate miss is
+   the only exception. A scenario's own `page.route` stub still wins (page routes take precedence over context routes). */
+const LIVE_BACKEND = 'https://kwugzhyfjevzwgplhtsd.supabase.co';
 const test = base.extend({
+  pinGuard: [async ({ context }, use, testInfo) => {
+    const refuse = (route, body, status = 200) =>
+      route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+    const body = (req) => { try { const j = req.postDataJSON(); return j && typeof j === 'object' ? j : null; } catch { return null; } };
+    /* What the server counts. A PIN RPC counts ANY `pin` it is handed that is not a real PIN — null and '' included
+       (desk_pin_who(null) is a miss: the probe proves it, and the forced-live scenarios send exactly that). desk-ask
+       reads a null or '' PIN as an open, visitor question and checks nothing, so only a non-empty one counts there. */
+    const spendsAMiss = (req, askFn) => {
+      const j = body(req);
+      if (!j || !('pin' in j)) return false;                                // no PIN sent: nothing is counted
+      const pin = j.pin;
+      if (askFn && (pin === null || pin === undefined || String(pin) === '')) return false;
+      if (AUTH_CREDENTIAL && pin === AUTH_CREDENTIAL) return false;         // the real test PIN: a success, never counted
+      return !/^S11:/.test(testInfo.title);                                 // S11's one deliberate miss passes
+    };
+    await context.route(`${LIVE_BACKEND}/rest/v1/rpc/desk_*`, (route) => {
+      const req = route.request();
+      if (req.method() !== 'POST' || !spendsAMiss(req, false)) return route.fallback();
+      return refuse(route, /desk_chat_history$/.test(new URL(req.url()).pathname) ? [] : { ok: false });
+    });
+    await context.route(`${LIVE_BACKEND}/functions/v1/desk-ask`, (route) => {
+      const req = route.request();
+      if (req.method() !== 'POST' || !spendsAMiss(req, true)) return route.fallback();
+      return refuse(route, { ok: false, error: 'PIN not recognized.' }, 401);
+    });
+    /* And PROVE it: a scenario's own page route outranks this one, so a stub that calls route.continue() would send its
+       fake PIN straight out. Any fake-PIN request answered by a real server (a response WITH a server address; a
+       fulfilled route has none) fails the scenario at teardown, naming the call. */
+    const leaks = [];
+    const isLive = (u) => u.startsWith(`${LIVE_BACKEND}/rest/v1/rpc/desk_`) || u.startsWith(`${LIVE_BACKEND}/functions/v1/desk-ask`);
+    const onResponse = async (res) => {
+      const req = res.request();
+      if (req.method() !== 'POST' || !isLive(req.url()) || !spendsAMiss(req, req.url().includes('/functions/v1/desk-ask'))) return;
+      if (await res.serverAddr().catch(() => null)) leaks.push(new URL(req.url()).pathname);
+    };
+    context.on('response', onResponse);
+    await use();
+    context.off('response', onResponse);
+    if (leaks.length) throw new Error(`PIN guard: ${leaks.length} fake PIN(s) reached the live backend (${[...new Set(leaks)].join(', ')}) — each one counts toward the desk lockout`);
+  }, { auto: true }],
   renderWitness: async ({ page }, use, testInfo) => {
     // Records NOTHING at setup: the body's own call is the witness.
     let recorded = false;
