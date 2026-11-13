@@ -11266,7 +11266,6 @@ function renderLayers() {
   if (!sec || !grid || !lyData) return;
   const list = lyRows();
   const table = lyState.view === 'table';
-  sec.classList.toggle('is-table', table);
   const sub = document.getElementById('layersSub');
   if (sub) {
     const sp = lyData.stocks.filter(s => s.sp).length, ex = lyData.stocks.length - sp;
@@ -11279,9 +11278,11 @@ function renderLayers() {
   else if (table) renderLayersTable(grid, list);
   else renderLayersTiles(grid, list);
   lySyncHover();
+  lyAlignAsk();
   lyMatchHeight();
 }
-/* Table view: the LEFT half sets the height and the table scrolls inside the right one (section 6). */
+/* Both views: the LEFT half sets the height and the tiles or the table scroll inside the right one, so the panel is
+   the same size in either (section 6; owner 2026-11-13). */
 function lyMatchHeight() {
   const sec = document.getElementById('layersPanel'), left = document.getElementById('layersLeft');
   if (!sec || !left) return;
@@ -11289,7 +11290,32 @@ function lyMatchHeight() {
     lyLeftObs = new ResizeObserver(() => lyMatchHeight());
     lyLeftObs.observe(left);
   }
-  sec.style.setProperty('--ly-left-h', Math.round(left.getBoundingClientRect().height) + 'px');
+  lySetVar(sec, '--ly-left-h', Math.round(left.getBoundingClientRect().height) + 'px');
+}
+/* Writes a layout property on the panel ONLY when its value changes: a custom property is inherited, so every write
+   restyles the whole panel (hundreds of tiles), and WebKit pays for it even when the value is the same. */
+function lySetVar(sec, name, v) {
+  if (sec.style.getPropertyValue(name) === v) return;
+  if (v) sec.style.setProperty(name, v);
+  else sec.style.removeProperty(name);
+}
+/* From the desk row's 1120px gate up, the panel ends where Ask the desk ends (owner 2026-11-13: "shrink its width so
+   that it lines up with the ask desk"). The width is MEASURED (Ask's right edge depends on the Economy column's clamp
+   and the shell's cap) and published as --ly-w, which only the stylesheet's >=1120px rule reads, never an inline
+   width; below the gate the desk row stacks and the panel keeps its full width. */
+let lyAskObs = null;
+function lyAlignAsk() {
+  const sec = document.getElementById('layersPanel'), ask = document.querySelector('section[aria-labelledby="askTitle"]');
+  if (!sec || !ask) return;
+  if (!lyAskObs && typeof ResizeObserver === 'function') {
+    // Ask's right edge moves with Ask's own box and with the window's width, never with the page's height: the page
+    // grows and shrinks on every panel repaint, so it is the window's resize that is listened to, not <html>.
+    lyAskObs = new ResizeObserver(() => lyAlignAsk());
+    lyAskObs.observe(ask);
+    window.addEventListener('resize', lyAlignAsk);
+  }
+  const w = Math.round(ask.getBoundingClientRect().right - sec.getBoundingClientRect().left);
+  lySetVar(sec, '--ly-w', w > 0 ? w + 'px' : '');
 }
 function lySyncHover() {
   const b = document.getElementById('layersHover'), sec = document.getElementById('layersPanel');
