@@ -1184,13 +1184,18 @@
   .ly-frame { display: block; }
   .ly-half { min-width: 0; padding: var(--space-3) var(--space-4); }
   .ly-b { padding-top: 0; padding-right: 10px; padding-bottom: 10px; display: flex; flex-direction: column; min-width: 0; }
-  /* Both views, on a wide screen: two equal halves side by side (owner 2026-11-13: "the size cannot change when we go
-     from table to tiles"). The LEFT half sets the height (--ly-left-h, measured by lyMatchHeight); the tiles or the
-     table scroll inside the right one, so switching views never moves the panel's edges. From the desk row's 1120px
-     gate up the panel ends where Ask the desk ends (--ly-w, measured by lyAlignAsk; owner 2026-11-13). */
+  /* Both views, side by side: the LEFT half sets the height (--ly-left-h, measured by lyMatchHeight) and the tiles or
+     the table scroll inside the right one, so switching views never moves the panel's edges (owner 2026-11-13: "the
+     size cannot change when we go from table to tiles"). The right half never gets narrower than the table needs
+     (560px + its frame, a scrollbar and the half's padding = 604px): the room is taken from the LEFT half (owner
+     2026-11-13: "shorten the left side of the panel to give the right side enough space"), and where both fit the
+     halves stay equal. The panel's OWN width decides it (a container query, not the window's): the panel ends where
+     Ask the desk ends from the desk row's 1120px gate up (--ly-w, measured by lyAlignAsk), so a wide window can hold
+     a narrow panel; under 880px of panel the halves stack. */
+  .area-layers { container: ly / inline-size; }
   @media (min-width: 1120px) { .area-layers { max-width: var(--ly-w, none); } }
-  @media (min-width: 860px) {
-    .ly-frame { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  @container ly (min-width: 880px) {
+    .ly-frame { display: grid; grid-template-columns: minmax(0, 1fr) minmax(604px, 1fr); align-items: start; }
     .ly-b { height: var(--ly-left-h, auto); padding-top: var(--space-3); }
     .ly-b #layersGrid { flex: 1 1 0; min-height: 0; height: auto; }
   }
@@ -1225,6 +1230,10 @@
   .ly-lh { margin: var(--space-3) 0 var(--space-1); font: 600 var(--font-2xs)/1.3 var(--font-sans); text-transform: uppercase; letter-spacing: .06em; color: var(--ly-ink-2); }
   .ly-outer, .ly-secs { display: grid; gap: 4px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ly-secs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  /* A left half narrowed for the table (under 340px) carries the sectors three to a row, so their names are not cut to
+     a few letters; the phone rule below (two to a row) comes later and wins there. */
+  #layersLeft { container: lyl / inline-size; }
+  @container lyl (max-width: 340px) { .ly-secs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   .ly-box {
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; min-height: 44px; padding: 6px 8px;
     border: 1px solid transparent; border-radius: var(--radius-md); background: var(--ly-panel-2); color: var(--ly-ink); cursor: pointer; text-align: left;
@@ -1276,7 +1285,7 @@
   .ly-link[hidden] { display: none; }
   .ly-loading, .ly-empty p { margin: var(--space-4) 0 var(--space-2); color: var(--ly-ink-2); font: 400 var(--font-sm)/1.4 var(--font-sans); }
   .ly-empty { padding-bottom: var(--space-3); }
-  /* The chart box: ONE size for tiles and table. Stacked (under 860px) it is a fixed share of the screen (svh, so it
+  /* The chart box: ONE size for tiles and table. Stacked (a panel under 880px) it is a fixed share of the screen (svh, so it
      does not move as a phone's toolbar hides); the tiles or the table scroll inside it, never the box. */
   #layersGrid { display: flex; flex-direction: column; height: 70vh; height: 70svh; }
   .ly-tiles, .ly-scroll { flex: 1 1 0; min-height: 0; overflow: auto; border: 1px solid var(--ly-border); border-radius: var(--radius-sm); }

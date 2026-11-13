@@ -12793,6 +12793,10 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   const vw = (page.viewportSize() || { width: 0 }).width;
   if (vw >= 1120) expect([tableBox.l, tableBox.r], 'from the charts\' left edge to Ask the desk\'s right edge').toEqual([tableBox.cl, tableBox.ar]);
   else if (vw > 640) expect([tableBox.l, tableBox.r], 'stacked desk row: as wide as the Stochastic charts').toEqual([tableBox.cl, tableBox.cr]);
+  // The table fits its half with nothing to scroll sideways (owner 2026-11-13: "shorten the left side of the panel to
+  // give the right side enough space"): where the panel is narrow the LEFT half gives up the room.
+  if (vw >= 1120) expect(await page.evaluate(() => { const sc = document.querySelector('#layersGrid .ly-scroll'); return sc.scrollWidth - sc.clientWidth; }),
+    'the table fits its half: nothing to scroll sideways').toBeLessThanOrEqual(1);
   // Flag P (VIX at 30 or more: the demo's VIX is) sits beside every ticker, not only in the write-up.
   expect(await page.evaluate(() => lyData.outer.panic), 'the demo VIX is over 30').toBe(true);
   await expect(page.locator('#layersGrid tbody tr .ly-st-top .ly-pill', { hasText: /^Panic$/ })).toHaveCount(total);
