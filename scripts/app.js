@@ -533,9 +533,17 @@ let mktResizeTimer = 0;
 window.addEventListener('resize', () => { clearTimeout(mktResizeTimer); mktResizeTimer = setTimeout(drawMktChart, 150); });
 
 /* ── sortable tables (design.md standard) ──────────────────────────────── */
+/* The ONE comparator every sortable table uses (design.md): a blank sorts last, numbers as numbers, text A–Z with
+   numeric runs read as numbers. Returns the ascending order; a caller multiplies by its direction. */
+const sortBlank = v => v === '' || v === '—' || v == null;
+function sortCompare(x, y, num) {
+  if (sortBlank(x) && sortBlank(y)) return 0;
+  if (sortBlank(x)) return 1;
+  if (sortBlank(y)) return -1;
+  return num ? x - y : ('' + x).localeCompare(y, undefined, { sensitivity: 'base', numeric: true });
+}
 function makeSortable(table) {
   const heads = [...table.tHead.rows[0].cells], body = table.tBodies[0];
-  const blank = v => v === '' || v === '—' || v == null;
   const go = th => {
     const i = th.cellIndex, num = th.dataset.type === 'number';
     const dir = th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
@@ -545,10 +553,8 @@ function makeSortable(table) {
     const val = tr => { const c = tr.cells[i]; return c.dataset.sort ?? c.textContent.trim(); };
     [...body.rows].sort((a, b) => {
       const x = val(a), y = val(b);
-      if (blank(x) && blank(y)) return 0;
-      if (blank(x)) return 1;
-      if (blank(y)) return -1;
-      return (num ? x - y : ('' + x).localeCompare(y, undefined, { sensitivity: 'base', numeric: true })) * s;
+      /* a blank stays last in both directions */
+      return sortBlank(x) || sortBlank(y) ? sortCompare(x, y, num) : sortCompare(x, y, num) * s;
     }).forEach(tr => body.appendChild(tr));
   };
   heads.forEach(th => {
@@ -10868,6 +10874,7 @@ async function loadWatchlist(force) {
     try {
       const cfg = await fetchPublic('config/watchlists.json');
       renderWatchlist(buildDemoWatchlist(cfg.lists || [], wlTf), { cls: 'lamp--demo', text: 'Demo' });
+      if (lyData) renderLayersControls(lyRows());   /* the Layers Heat Map's watchlist filter reads these lists */
     } catch {
       renderWatchlist({ ok: true, lists: [] }, { cls: 'lamp--demo', text: 'Demo' });
     }
@@ -10914,6 +10921,718 @@ async function loadWatchlist(force) {
   } else renderWatchlist(null, { cls: 'lamp--stale', text: 'Stale' });
 }
 
+/* ── Layers Heat Map (owner rulings A–H, 2026-11-13) ─────────────────────────────────────────────────────────────
+   The rules and the layout are ONE file, specs/layers-heat-map/LAYERS_HEAT_MAP.md; the scoring is scripts/layers.js
+   (LAYERS_RULES). This block only draws what layersScore() returns.
+   STEP 1 IS DEMO ONLY: under ?demo=1 the panel draws made-up numbers; in live the section stays `hidden` (real data or
+   nothing) until its daily feed exists — that feed is step 2 and needs the owner's approval before any deploy.
+   Ruling A: green and red mean BUY and SELL here, this panel only. B: tight sizes on a computer, full sizes on a phone.
+   C: names cut with "…" and no visible filter labels. D: no overscroll-behavior (the desk's own table and dialog).
+   E: the write-up is a dialog through openModal(). Every text is set with textContent. */
+const LY_STORE = 'layers_ui_v1';
+let lyData = null;
+const lyState = { mode: 'lean', view: 'tiles', sort: 'vd', dir: -1, sec: -1, q: '', sig: false, wl: 'all', card: null, hover: true };
+let lyWired = false;
+let lyLeftObs = null;
+
+function lyLoadPrefs() {
+  try {
+    const v = JSON.parse(localStorage.getItem(LY_STORE) || '{}') || {};
+    if (['lean', 'buy', 'sell'].includes(v.mode)) lyState.mode = v.mode;
+    if (['tiles', 'table'].includes(v.view)) lyState.view = v.view;
+    if (v.hover === false) lyState.hover = false;
+  } catch { /* storage blocked: the defaults stand */ }
+}
+function lySavePrefs() {
+  try { localStorage.setItem(LY_STORE, JSON.stringify({ mode: lyState.mode, view: lyState.view, hover: lyState.hover })); } catch { /* not kept */ }
+}
+/* The dashboard's own seven heat stops (HEAT.stops), t in −1…+1 spread over −3…+3. */
+function lyHeat(t) {
+  const s = HEAT.stops, p = Math.max(-3, Math.min(3, (Number.isFinite(t) ? t : 0) * 3));
+  let i = 0;
+  while (i < s.length - 2 && p > s[i + 1][0]) i++;
+  const [p0, c0] = s[i], [p1, c1] = s[i + 1], f = (p - p0) / (p1 - p0);
+  return 'rgb(' + c0.map((c, k) => Math.round(c + (c1[k] - c) * f)).join(',') + ')';
+}
+const lySgn = n => (n > 0 ? '+' + n : n < 0 ? '−' + Math.abs(n) : '0');
+const lyDay = iso => { const [y, m, d] = String(iso).split('-').map(Number); return MONTHS[m - 1] + ' ' + d + ', ' + y; };
+const lyShortDay = iso => { const [, m, d] = String(iso).split('-').map(Number); return m + '/' + d; };
+const lyMax = k => LAYERS_RULES.max[k];
+function lyGet(st, k) {
+  if ('ABCD'.includes(k)) return lyData.outer[k];
+  if (k === 'E' || k === 'F') return lyData.sectors[st.sec][k];
+  return st.g[k];
+}
+function lyTiming(st) {
+  const dk = Number.isFinite(st.dk) ? Math.round(st.dk) : null;
+  return st.tm === 'peak' ? 'Daily stochastic ' + dk + ', peaking' : st.tm === 'trough' ? 'Daily stochastic ' + dk + ', bottoming'
+    : 'Daily stochastic ' + (dk == null ? 'not available' : dk) + ', mid-range';
+}
+const lyHeldNote = st => (st.held ? 'Held back from ' + layersVerdict(st.lean) + ' because the daily stochastic is ' + (st.tm === 'peak' ? 'peaking' : 'bottoming') + '.' : '');
+const lySigBuy = g => g[0].includes('BUY');
+
+/* Watchlist membership comes from the watchlists panel's own roster (wlState), read when drawn. */
+function lyLists() {
+  const lists = (wlState.payload && wlState.payload.lists) || [];
+  const by = new Map();
+  for (const l of lists) for (const raw of l.symbols || []) {
+    const sym = String(raw).toUpperCase().replace('-', '.');
+    if (!by.has(sym)) by.set(sym, []);
+    if (!by.get(sym).includes(l.title)) by.get(sym).push(l.title);
+  }
+  return { titles: lists.map(l => l.title), by };
+}
+const lyOnLists = (st, L) => L.by.get(st.sym) || [];
+
+function lyRows() {
+  const q = lyState.q.trim().toLowerCase(), L = lyLists(), w = lyState.wl;
+  const r = lyData.stocks.filter(s => {
+    const on = lyOnLists(s, L);
+    if (w === 'sp' && !s.sp) return false;
+    if (w === 'any' && !on.length) return false;
+    if (w.startsWith('wl:') && !on.includes(w.slice(3))) return false;
+    if (lyState.sec >= 0 && s.sec !== lyState.sec) return false;
+    if (lyState.sig && !s.sig.length) return false;
+    return !q || s.sym.toLowerCase().startsWith(q) || s.name.toLowerCase().includes(q);
+  });
+  const key = lyState.sort, d = lyState.dir;
+  const val = s => key === 'vd' ? layersBand(s.eff) * 1000 + s.lean : key === 'lean' ? s.lean : key === 'L' ? s.L : key === 'S' ? s.S
+    : key === 'tk' ? s.sym : layersCell(s.g[key].L, s.g[key].S, lyMax(key), lyState.mode)[0];
+  /* the desk's one comparator (sortCompare); the ticker breaks a tie, always A–Z */
+  r.sort((a, b) => sortCompare(val(a), val(b), key !== 'tk') * d || sortCompare(a.sym, b.sym, false));
+  return r;
+}
+
+/* ── the ledger: what stocks share (A–D, the eleven sectors, Labels) ── */
+const lyParen = v => { const m = /\(([^)]*)\)/.exec(v); return m ? m[1].split(';')[0] : v; };
+const lyHead = v => v.split(' (')[0];
+const LY_SHORT = {
+  A: [['Oil', lyParen], ['Dollar', lyParen]], B: [['World vs 200-day', lyHead], ['vs 50-day', lyHead]],
+  C: [['10-year', lyParen], ['Core CPI', lyParen], ['Jobs', lyParen]], D: [['VIX', lyHead], ['Above 50-day', lyHead], ['Fear & Greed', lyHead]],
+};
+function lyBox(attrs, tone, lines) {
+  const b = el('button', 'ly-box');
+  b.type = 'button';
+  for (const [k, v] of Object.entries(attrs)) b.setAttribute(k, v);
+  if (tone != null) b.style.background = lyHeat(tone);
+  lines.forEach(([cls, text]) => b.appendChild(el('span', cls, text)));
+  return b;
+}
+function renderLayersLedger() {
+  const box = document.getElementById('layersLedger');
+  if (!box) return;
+  box.textContent = '';
+  const o = lyData.outer;
+  box.appendChild(el('p', 'ly-lh', 'Global and national · the same for every stock · tap for detail'));
+  const outer = el('div', 'ly-outer');
+  for (const k of ['A', 'B', 'C', 'D']) {
+    const x = o[k];
+    outer.appendChild(lyBox({ 'data-out': k, 'aria-expanded': String(lyState.card === k), 'aria-controls': 'layersCard' }, (x.L - x.S) / x.max, [
+      ['ly-bn', k + ' · ' + x.name], ['ly-bv', 'B ' + x.L + ' · S ' + x.S + ' of ' + x.max],
+      ['ly-bm', x.comps.map((c, i) => LY_SHORT[k][i][0] + ' ' + LY_SHORT[k][i][1](c[1])).join(' · ')],
+    ]));
+  }
+  box.appendChild(outer);
+  box.appendChild(el('p', 'ly-lh', 'Sectors · letters E + F · the same for every stock in the sector · tap to filter'));
+  const secs = el('div', 'ly-secs');
+  lyData.sectors.forEach((s, i) => {
+    const L = s.E.L + s.F.L, S = s.E.S + s.F.S;
+    const b = lyBox({ 'data-sec': String(i), 'aria-pressed': String(lyState.sec === i) }, (L - S) / LAYERS_RULES.colour.sectorMax, [
+      ['ly-bn', s.name], ['ly-bv', 'B ' + L + ' · S ' + S + ' of ' + LAYERS_RULES.colour.sectorMax],
+      ['ly-bm', Number.isFinite(s.breadth) ? Math.round(s.breadth) + '% above 50-day' : 'breadth not available'],
+    ]);
+    b.title = s.name;
+    secs.appendChild(b);
+  });
+  secs.appendChild(lyBox({ 'data-out': 'labels', 'aria-expanded': String(lyState.card === 'labels'), 'aria-controls': 'layersCard', class: 'ly-box ly-box--labels' }, null,
+    [['ly-bn', 'Labels'], ['ly-bv', 'No points'], ['ly-bm', 'S&P 500 ' + (lyData.outer.labels[0] && /^[\d,.]+/.exec(lyData.outer.labels[0][1]) || ['—'])[0]]]));
+  box.appendChild(secs);
+  renderLayersCard();
+}
+function lyChips(L, S, max) {
+  const w = el('span', 'ly-chips');
+  w.append(el('span', 'ly-chip ly-chip--buy', 'BUY ' + L + '/' + max), el('span', 'ly-chip ly-chip--sell', 'SELL ' + S + '/' + max));
+  return w;
+}
+function lyCompTable(comps) {
+  const t = el('table', 'ly-ctab'), head = t.createTHead().insertRow();
+  ['Reading', 'BUY', 'SELL'].forEach(h => { const th = el('th', null, h); th.scope = 'col'; head.appendChild(th); });
+  const body = t.createTBody();
+  for (const c of comps) {
+    const tr = body.insertRow(), a = tr.insertCell();
+    a.append(el('span', null, c[0]), el('span', 'ly-v', c[1]));
+    tr.insertCell().append(el('span', 'ly-p ly-p--buy', String(c[2])));
+    tr.insertCell().append(el('span', 'ly-p ly-p--sell', String(c[3])));
+  }
+  return t;
+}
+function renderLayersCard() {
+  const card = document.getElementById('layersCard');
+  if (!card) return;
+  card.textContent = '';
+  const k = lyState.card;
+  card.hidden = !k;
+  if (!k) return;
+  const h = el('div', 'ly-card-h');
+  if (k === 'labels') {
+    h.append(el('b', null, 'Labels'), el('span', 'ly-muted', 'Shown for context, no points'));
+    card.appendChild(h);
+    const ul = el('ul', 'ly-labels');
+    for (const [a, b] of lyData.outer.labels) { const li = el('li'); li.append(el('b', null, a + '. '), document.createTextNode(b)); ul.appendChild(li); }
+    ul.appendChild(el('li', 'ly-muted', 'The Fed and AAII labels are not in yet: each needs a real source first.'));
+    card.appendChild(ul);
+    return;
+  }
+  const o = lyData.outer[k];
+  const t = el('span');
+  t.append(el('span', 'ly-badge', k), el('b', null, ' ' + o.name + ' '), el('span', 'ly-muted', 'Same for every stock'));
+  h.append(t, lyChips(o.L, o.S, o.max));
+  card.append(h, lyCompTable(o.comps), el('p', 'ly-ev', LAYERS_EVIDENCE[k]));
+}
+
+/* ── filters ── */
+function renderLayersControls(list) {
+  const sel = document.getElementById('layersSec');
+  if (sel && sel.options.length !== lyData.sectors.length + 1) {
+    sel.textContent = '';
+    sel.appendChild(new Option('All sectors', '-1'));
+    lyData.sectors.forEach((s, i) => sel.appendChild(new Option(s.name + ' (' + lyData.stocks.filter(x => x.sec === i).length + ')', String(i))));
+  }
+  if (sel) sel.value = String(lyState.sec);
+  const wl = document.getElementById('layersWl');
+  if (wl) {
+    const L = lyLists();
+    const opts = [['all', 'All stocks'], ['sp', 'S&P 500 only'], ['any', 'Any watchlist (' + lyData.stocks.filter(s => lyOnLists(s, L).length).length + ')']];
+    L.titles.forEach(tl => { const n = lyData.stocks.filter(s => lyOnLists(s, L).includes(tl)).length; if (n) opts.push(['wl:' + tl, tl + ' (' + n + ')']); });
+    const sig = opts.map(o => o.join('\u0001')).join('\u0002');
+    if (wl.dataset.k !== sig) {
+      wl.textContent = '';
+      opts.forEach(([v, t]) => wl.appendChild(new Option(t, v)));
+      wl.dataset.k = sig;
+    }
+    if (![...wl.options].some(o => o.value === lyState.wl)) lyState.wl = 'all';
+    wl.value = lyState.wl;
+  }
+  document.querySelectorAll('#layersMode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.m === lyState.mode)));
+  document.querySelectorAll('#layersView button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === lyState.view)));
+  const q = document.getElementById('layersQ');
+  if (q && q.value !== lyState.q) q.value = lyState.q;
+  const sg = document.getElementById('layersSig');
+  if (sg) sg.checked = lyState.sig;
+  const nsig = lyData.stocks.filter(s => s.sig.length).length;
+  const ns = document.getElementById('layersNSig');
+  if (ns) ns.textContent = '(' + nsig + ')';
+  const cnt = document.getElementById('layersCount');
+  if (cnt) {
+    cnt.textContent = list.length + ' of ' + lyData.stocks.length + ' stocks';
+    cnt.title = 'Showing ' + list.length + ' of ' + lyData.stocks.length + ' stocks · ' + nsig + ' with a rule signal this week';
+  }
+  const clr = document.getElementById('layersClear');
+  if (clr) clr.hidden = !lyFiltered();
+}
+const lyFiltered = () => !!(lyState.q.trim() || lyState.sec >= 0 || lyState.wl !== 'all' || lyState.sig);
+function lyClearFilters() { lyState.q = ''; lyState.sec = -1; lyState.wl = 'all'; lyState.sig = false; renderLayers(); }
+
+/* ── tiles and table ── */
+function lyDot(st) {
+  if (!st.sig.length) return null;
+  const g = st.sig[st.sig.length - 1], d = el('span', 'ly-dot ' + (lySigBuy(g) ? 'ly-dot--buy' : 'ly-dot--sell'));
+  d.title = st.sig.map(x => x[0] + ' ' + lyDay(x[1])).join('; ');
+  return d;
+}
+function lyTileValue(st) {
+  if (lyState.mode === 'buy') return String(st.L);
+  if (lyState.mode === 'sell') return String(st.S);
+  return lySgn(st.lean);
+}
+function lyAria(st) {
+  return st.sym + ', ' + st.name + ', ' + layersVerdict(st.eff) + ', lean ' + lySgn(st.lean) + ', BUY ' + st.L + ', SELL ' + st.S
+    + (st.held ? ', held back by the daily stochastic' : '') + (st.sig.length ? ', ' + st.sig.map(g => g[0]).join(' and ') + ' this week' : '');
+}
+function renderLayersTiles(grid, list) {
+  const by = new Map();
+  list.forEach(s => { if (!by.has(s.sec)) by.set(s.sec, []); by.get(s.sec).push(s); });
+  const wrap = el('div', 'ly-tiles');
+  lyData.sectors.forEach((sec, i) => {
+    const l = by.get(i);
+    if (!l) return;
+    const g = el('section', 'ly-tsec');
+    const h = el('h3', 'ly-th', sec.name);
+    h.appendChild(el('span', 'ly-muted', ' · ' + l.length + (l.length === 1 ? ' stock' : ' stocks')));
+    const tg = el('div', 'ly-tgrid');
+    for (const s of l) {
+      const b = el('button', 'ly-tile' + (s.held ? ' is-held' : ''));
+      b.type = 'button';
+      b.dataset.sym = s.sym;
+      b.style.background = lyHeat(layersTone(s, lyState.mode));
+      b.setAttribute('aria-label', lyAria(s));
+      b.append(el('b', 'ly-tk', s.sym), el('span', 'ly-tv', lyTileValue(s)));
+      const d = lyDot(s);
+      if (d) { d.setAttribute('aria-hidden', 'true'); b.appendChild(d); }
+      tg.appendChild(b);
+    }
+    g.append(h, tg);
+    wrap.appendChild(g);
+  });
+  grid.appendChild(wrap);
+}
+const LY_COLS = [['tk', 'Stock', 'signals and flags', 'Sort by ticker'], ['vd', 'Verdict', 'today', 'Strong BUY first, then by lean within each verdict'],
+  ['lean', 'Lean', 'B − S', 'BUY score minus SELL score'], ['L', 'BUY', 'of 100', 'BUY score'], ['S', 'SELL', 'of 100', 'SELL score']];
+const LY_SHORTN = { G: 'Avgs', H: 'Vol.', I: 'Days', J: 'Stoch', K: 'Str.' };
+function lyFlagPills(st) {
+  const out = [];
+  if (st.tm) out.push(['', 'Daily ' + (st.tm === 'peak' ? 'peaking' : 'bottoming') + ' ' + Math.round(st.dk)]);
+  st.sig.forEach(g => out.push([lySigBuy(g) ? 'ly-pill--buy' : 'ly-pill--sell', g[0].replace('Rule ', 'R') + ' ' + lyShortDay(g[1])]));
+  if (st.thin) out.push(['', 'Thin']);
+  // Flag P is the market's, not the stock's, so it sits beside every ticker while it is on (section 4, Flags).
+  if (lyData && lyData.outer && lyData.outer.panic) out.push(['', 'Panic']);
+  return out;
+}
+function renderLayersTable(grid, list) {
+  const scroll = el('div', 'ly-scroll');
+  const t = el('table', 'ly-table');
+  const cg = el('colgroup');
+  ['ly-c-st', 'ly-c-vd', 'ly-c-n', 'ly-c-n', 'ly-c-n', 'ly-c-l', 'ly-c-l', 'ly-c-l', 'ly-c-l', 'ly-c-l'].forEach(c => cg.appendChild(el('col', c)));
+  t.appendChild(cg);
+  const head = t.createTHead();
+  const grp = head.insertRow();
+  grp.className = 'ly-grp';
+  [['', 1], ['Today', 4], ['This stock', 5]].forEach(([txt, n]) => { const th = el('th', null, txt); th.colSpan = n; th.scope = 'colgroup'; grp.appendChild(th); });
+  const hr = head.insertRow();
+  const cols = LY_COLS.concat('GHIJK'.split('').map(k => [k, k, LY_SHORTN[k], LAYERS_NAMES[k] + ', ' + lyMax(k) + ' points']));
+  for (const [key, label, small, title] of cols) {
+    const th = el('th');
+    th.scope = 'col';
+    const on = lyState.sort === key;
+    th.setAttribute('aria-sort', on ? (lyState.dir < 0 ? 'descending' : 'ascending') : 'none');
+    const b = el('button', 'ly-sort', label + (on ? (lyState.dir < 0 ? ' ▼' : ' ▲') : ''));
+    b.type = 'button';
+    b.dataset.sort = key;
+    b.title = title;
+    b.appendChild(el('small', null, small));
+    th.appendChild(b);
+    hr.appendChild(th);
+  }
+  const body = t.createTBody();
+  for (const s of list) {
+    const tr = body.insertRow();
+    tr.dataset.sym = s.sym;
+    const st = tr.insertCell();
+    st.className = 'ly-st';
+    const top = el('span', 'ly-st-top');
+    const nb = el('button', 'ly-name', s.sym);
+    nb.type = 'button';
+    nb.dataset.sym = s.sym;
+    nb.setAttribute('aria-label', 'Open the write-up for ' + s.sym + ', ' + s.name);
+    top.appendChild(nb);
+    const d = lyDot(s);
+    if (d) top.appendChild(d);
+    for (const [cls, txt] of lyFlagPills(s)) top.appendChild(el('span', 'ly-pill' + (cls ? ' ' + cls : ''), txt));
+    st.append(top, el('span', 'ly-nm', s.name));
+    st.querySelector('.ly-nm').title = s.name;
+    const cell = (k, text, tone, extra) => {
+      const c = tr.insertCell();
+      c.className = 'ly-h' + (extra ? ' ' + extra : '');
+      c.dataset.k = k;
+      c.style.background = lyHeat(tone);
+      c.textContent = text;
+      return c;
+    };
+    const vd = cell('lean', layersVerdict(s.eff), s.eff / LAYERS_RULES.colour.lean, 'ly-vd');
+    if (s.held) { const r = el('span', 'ly-ring'); r.title = lyHeldNote(s); r.setAttribute('aria-label', lyHeldNote(s)); vd.appendChild(r); }
+    cell('lean', lySgn(s.lean), s.eff / LAYERS_RULES.colour.lean);
+    cell('L', String(s.L), layersTone(s, 'buy'));
+    cell('S', String(s.S), layersTone(s, 'sell'));
+    for (const k of 'GHIJK') {
+      const g = s.g[k], c = layersCell(g.L, g.S, lyMax(k), lyState.mode);
+      cell(k, lyState.mode === 'lean' ? lySgn(c[0]) : String(c[0]), c[1], k === 'G' ? 'ly-gl' : '');
+    }
+  }
+  scroll.appendChild(t);
+  grid.appendChild(scroll);
+}
+function lyEmpty(grid) {
+  const p = el('div', 'ly-empty');
+  p.appendChild(el('p', null, 'No stocks match your search.'));
+  const b = el('button', 'legacy-btn legacy-btn-secondary ly-clear-search', 'Clear search');
+  b.type = 'button';
+  b.addEventListener('click', () => { lyClearFilters(); const q = document.getElementById('layersQ'); if (q) q.focus(); });
+  p.appendChild(b);
+  grid.appendChild(p);
+}
+
+function renderLayers() {
+  const sec = document.getElementById('layersPanel'), grid = document.getElementById('layersGrid');
+  if (!sec || !grid || !lyData) return;
+  const list = lyRows();
+  const table = lyState.view === 'table';
+  sec.classList.toggle('is-table', table);
+  const sub = document.getElementById('layersSub');
+  if (sub) {
+    const sp = lyData.stocks.filter(s => s.sp).length, ex = lyData.stocks.length - sp;
+    sub.textContent = sp + ' S&P 500 + ' + ex + ' watchlist stocks · close of ' + lyDay(lyData.asOf) + ' · rules ' + lyData.version;
+  }
+  renderLayersLedger();
+  renderLayersControls(list);
+  grid.textContent = '';
+  if (!list.length) lyEmpty(grid);
+  else if (table) renderLayersTable(grid, list);
+  else renderLayersTiles(grid, list);
+  lySyncHover();
+  lyMatchHeight();
+}
+/* Table view: the LEFT half sets the height and the table scrolls inside the right one (section 6). */
+function lyMatchHeight() {
+  const sec = document.getElementById('layersPanel'), left = document.getElementById('layersLeft');
+  if (!sec || !left) return;
+  if (!lyLeftObs && typeof ResizeObserver === 'function') {
+    lyLeftObs = new ResizeObserver(() => lyMatchHeight());
+    lyLeftObs.observe(left);
+  }
+  sec.style.setProperty('--ly-left-h', Math.round(left.getBoundingClientRect().height) + 'px');
+}
+function lySyncHover() {
+  const b = document.getElementById('layersHover'), sec = document.getElementById('layersPanel');
+  if (b) { b.setAttribute('aria-pressed', String(lyState.hover)); b.textContent = lyState.hover ? 'Hover on' : 'Hover off'; }
+  if (sec) sec.classList.toggle('ly-nohover', !lyState.hover);
+  if (!lyState.hover) lyHideTip();
+}
+function renderLayersNotYet() {
+  const ul = document.getElementById('layersNotYet');
+  if (!ul || !lyData) return;
+  ul.textContent = '';
+  const add = t => ul.appendChild(el('span', 'ly-li', t));
+  add('Earnings dates (flag L): the earnings calendar is not connected yet.');
+  add('Economic release dates (flag N) and a sector leader\'s report date (flag O): no confirmed source yet.');
+  add('The Fed and AAII labels: each needs a real source first. The Labels box shows the S&P 500 level only.');
+  const ex = lyData.excluded;
+  if (ex.length) add('Left out: ' + ex.map(e => e.sym + ' (' + e.why + ')').join(', ') + '. The letters are built for single stocks priced in dollars with at least ' + LAYERS_RULES.minSessions + ' sessions of history.');
+  add('Every Nasdaq and Dow stock outside the S&P 500 (the owner\'s "not now, but later").');
+  if (lyData.source === 'demo') add('Real data: this is the demo, made-up numbers. The live panel waits for its daily feed.');
+}
+
+/* ── the hover readings (Hover switch; never on touch, which opens the write-up instead) ── */
+function lyTipEl() { return document.getElementById('layersTip'); }
+function lyHideTip() { const t = lyTipEl(); if (t) t.hidden = true; }
+function lyTipRow(tip, a, b, v) {
+  const d = el('div', 'ly-tr'), s = el('span');
+  s.appendChild(el('span', null, a));
+  if (v) { s.appendChild(el('br')); s.appendChild(el('span', 'ly-v', v)); }
+  d.append(s, el('span', 'ly-tp', b));
+  tip.appendChild(d);
+}
+function lyTipStock(st, k) {
+  const tip = lyTipEl(); tip.textContent = '';
+  const h = el('div', 'ly-tip-h');
+  if (k === 'lean' || k === 'L' || k === 'S' || k === 'tile') {
+    h.appendChild(el('span', null, st.sym + ' · ' + st.name));
+    tip.appendChild(h);
+    [['Today', layersVerdict(st.eff)], ['Timing', lyTiming(st)], ['BUY score', st.L + ' of 100'], ['SELL score', st.S + ' of 100'],
+      ['Lean (BUY minus SELL)', lySgn(st.lean)], ['Outer layers A to F', 'BUY ' + (st.L - st.sl) + ' · SELL ' + (st.S - st.ss) + ' of 40'],
+      ['Stock letters G to K', 'BUY ' + st.sl + ' · SELL ' + st.ss + ' of 60']].forEach(([a, b]) => lyTipRow(tip, a, b));
+    const on = lyOnLists(st, lyLists());
+    if (on.length || !st.sp) tip.appendChild(el('div', 'ly-tip-f', (st.sp ? '' : 'Not in the S&P 500. ') + (on.length ? 'On your ' + on.join(', ') + ' list' + (on.length > 1 ? 's' : '') + '.' : '')));
+    if (st.held) tip.appendChild(el('div', 'ly-tip-f', lyHeldNote(st)));
+    if (st.sig.length) tip.appendChild(el('div', 'ly-tip-f', st.sig.map(g => g[0] + ' fired ' + lyDay(g[1])).join('; ') + '.'));
+  } else {
+    const g = lyGet(st, k);
+    h.append(el('span', null, k + ' · ' + LAYERS_NAMES[k]), el('span', 'ly-tp', 'B ' + g.L + ' · S ' + g.S + ' of ' + lyMax(k)));
+    tip.appendChild(h);
+    g.comps.forEach(c => lyTipRow(tip, c[0], 'B ' + c[2] + ' · S ' + c[3], c[1]));
+    tip.appendChild(el('div', 'ly-tip-f', 'EF'.includes(k) ? 'Same for every stock in ' + lyData.sectors[st.sec].name + '.' : st.sym + ' only.'));
+  }
+}
+function lyTipOuter(k) {
+  const tip = lyTipEl(); tip.textContent = '';
+  if (k === 'labels') {
+    const h = el('div', 'ly-tip-h'); h.append(el('span', null, 'Labels'), el('span', 'ly-tp', 'no points')); tip.appendChild(h);
+    lyData.outer.labels.forEach(([a, b]) => lyTipRow(tip, a, '', b));
+    tip.appendChild(el('div', 'ly-tip-f', 'Shown for context. They change no score.'));
+    return;
+  }
+  const o = lyData.outer[k], h = el('div', 'ly-tip-h');
+  h.append(el('span', null, k + ' · ' + o.name), el('span', 'ly-tp', 'B ' + o.L + ' · S ' + o.S + ' of ' + o.max));
+  tip.appendChild(h);
+  o.comps.forEach(c => lyTipRow(tip, c[0], 'B ' + c[2] + ' · S ' + c[3], c[1]));
+  tip.appendChild(el('div', 'ly-tip-f', LAYERS_EVIDENCE[k]));
+  tip.appendChild(el('div', 'ly-tip-f', 'Same for every stock.'));
+}
+function lyTipSector(i) {
+  const tip = lyTipEl(), sec = lyData.sectors[i]; tip.textContent = '';
+  for (const k of ['E', 'F']) {
+    const g = sec[k], h = el('div', 'ly-tip-h');
+    h.append(el('span', null, (k === 'E' ? sec.name + ' · ' : '') + k + ' · ' + LAYERS_NAMES[k]), el('span', 'ly-tp', 'B ' + g.L + ' · S ' + g.S + ' of ' + lyMax(k)));
+    tip.appendChild(h);
+    g.comps.forEach(c => lyTipRow(tip, c[0], 'B ' + c[2] + ' · S ' + c[3], c[1]));
+  }
+  tip.appendChild(el('div', 'ly-tip-f', 'Same for every stock in ' + sec.name + ' (' + sec.fund + '). Tap to show only this sector.'));
+}
+function lyPlaceTip(x, y) {
+  const tip = lyTipEl();
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect(), W = document.documentElement.clientWidth, H = window.innerHeight;
+  let L = x + 14, T = y + 16;
+  if (L + r.width > W - 8) L = Math.max(8, x - r.width - 14);
+  if (T + r.height > H - 8) T = Math.max(8, y - r.height - 14);
+  tip.style.left = L + 'px'; tip.style.top = T + 'px';
+}
+const lyStock = sym => lyData && lyData.stocks.find(s => s.sym === sym);
+
+function wireLayers() {
+  if (lyWired) return;
+  lyWired = true;
+  const sec = document.getElementById('layersPanel');
+  if (!sec) return;
+  sec.addEventListener('pointermove', ev => {
+    if (ev.pointerType === 'touch' || !lyData) return;
+    if (!lyState.hover) { lyHideTip(); return; }
+    const t = ev.target;
+    const tile = t.closest('.ly-tile');
+    if (tile) { lyTipStock(lyStock(tile.dataset.sym), 'tile'); lyPlaceTip(ev.clientX, ev.clientY); return; }
+    const box = t.closest('.ly-box');
+    if (box) {
+      if (box.dataset.out) lyTipOuter(box.dataset.out); else lyTipSector(Number(box.dataset.sec));
+      lyPlaceTip(ev.clientX, ev.clientY); return;
+    }
+    const td = t.closest('td[data-k]'), tr = t.closest('tr[data-sym]');
+    if (td && tr) { lyTipStock(lyStock(tr.dataset.sym), td.dataset.k); lyPlaceTip(ev.clientX, ev.clientY); return; }
+    lyHideTip();
+  });
+  sec.addEventListener('pointerleave', lyHideTip);
+  sec.addEventListener('click', ev => {
+    const t = ev.target;
+    const box = t.closest('.ly-box');
+    if (box) {
+      lyHideTip();
+      let sel;
+      if (box.dataset.out) { lyState.card = lyState.card === box.dataset.out ? null : box.dataset.out; sel = '[data-out="' + box.dataset.out + '"]'; }
+      else { const i = Number(box.dataset.sec); lyState.sec = lyState.sec === i ? -1 : i; sel = '[data-sec="' + i + '"]'; }
+      renderLayers();
+      const nb = document.querySelector('#layersLedger ' + sel);
+      if (nb) nb.focus({ preventScroll: true });
+      return;
+    }
+    const sb = t.closest('[data-sort]');
+    if (sb) {
+      const k = sb.dataset.sort;
+      if (lyState.sort === k) lyState.dir = -lyState.dir; else { lyState.sort = k; lyState.dir = k === 'tk' ? 1 : -1; }
+      renderLayers();
+      const nb = document.querySelector('#layersGrid [data-sort="' + k + '"]');
+      if (nb) nb.focus({ preventScroll: true });
+      return;
+    }
+    const open = t.closest('.ly-tile, .ly-name');
+    if (open) { lyHideTip(); openLayersDetail(lyStock(open.dataset.sym), open); return; }
+    const mode = t.closest('#layersMode button');
+    if (mode) { lyState.mode = mode.dataset.m; lySavePrefs(); renderLayers(); return; }
+    const view = t.closest('#layersView button');
+    if (view) { lyState.view = view.dataset.v; lySavePrefs(); renderLayers(); return; }
+    const note = t.closest('.ly-note > button');
+    if (note) {
+      const was = note.getAttribute('aria-expanded') === 'true';
+      sec.querySelectorAll('.ly-note > button').forEach(b => b.setAttribute('aria-expanded', 'false'));
+      note.setAttribute('aria-expanded', String(!was));
+      return;
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!ev.target.closest || ev.target.closest('.ly-note')) return;
+    sec.querySelectorAll('.ly-note > button[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+  });
+  sec.addEventListener('keydown', ev => {
+    if (ev.key !== 'Escape') return;
+    const open = sec.querySelector('.ly-note > button[aria-expanded="true"]');
+    if (open) { open.setAttribute('aria-expanded', 'false'); open.focus(); }
+  });
+  const hov = document.getElementById('layersHover');
+  if (hov) hov.addEventListener('click', () => { lyState.hover = !lyState.hover; lySavePrefs(); lySyncHover(); });
+  const q = document.getElementById('layersQ');
+  if (q) q.addEventListener('input', () => { lyState.q = q.value; renderLayers(); });
+  const s = document.getElementById('layersSec');
+  if (s) s.addEventListener('change', () => { lyState.sec = Number(s.value); renderLayers(); });
+  const w = document.getElementById('layersWl');
+  if (w) w.addEventListener('change', () => { lyState.wl = w.value; renderLayers(); });
+  const g = document.getElementById('layersSig');
+  if (g) g.addEventListener('change', () => { lyState.sig = g.checked; renderLayers(); });
+  const c = document.getElementById('layersClear');
+  if (c) c.addEventListener('click', () => { lyClearFilters(); const qq = document.getElementById('layersQ'); if (qq) qq.focus(); });
+  const close = document.getElementById('layersDetailClose');
+  if (close) close.addEventListener('click', () => closeModal(document.getElementById('layersDetailBackdrop')));
+}
+
+/* Step 1: demo only. Live keeps the section hidden — real data or nothing — until the daily feed (step 2) exists. */
+function startLayers() {
+  const sec = document.getElementById('layersPanel');
+  if (!sec) return;
+  if (DESK.mode !== 'demo') { sec.hidden = true; return; }
+  sec.hidden = false;
+  lyLoadPrefs();
+  wireLayers();
+  lySyncHover();
+  /* scored off the first paint: the rest of the page draws first, then ~50 demo stocks are scored in the browser */
+  setTimeout(() => {
+    lyData = layersScore(buildDemoLayersInput(new Date()));
+    const lamp = document.getElementById('layersLamp'), stamp = document.getElementById('layersStamp');
+    if (lamp) { lamp.className = 'lamp lamp--demo'; lamp.textContent = 'Demo'; }
+    if (stamp) stamp.textContent = 'Demo data · close of ' + lyDay(lyData.asOf);
+    renderLayersNotYet();
+    renderLayers();
+  }, 0);
+}
+
+/* ── the write-up (ruling E: a dialog through openModal, like the symbol window) ── */
+function lyReadText(st) {
+  const sec = lyData.sectors[st.sec], p = [], side = st.lean >= 0 ? 'BUY' : 'SELL', own = side === 'BUY' ? st.sl : st.ss;
+  p.push('A BUY scores ' + st.L + ' of 100 and a SELL ' + st.S + '. The outer layers (global, national, sector) give a BUY ' + (st.L - st.sl) + ' of 40 and a SELL ' + (st.S - st.ss)
+    + '. The stock\'s own letters give a BUY ' + st.sl + ' of 60 and a SELL ' + st.ss + '.');
+  const dk = Math.round(st.dk);
+  if (st.tm === 'peak') p.push('Timing: the daily stochastic is at ' + dk + ', over 80, so the stock has already run in the short term.' + (st.held ? ' That holds the verdict back from ' + layersVerdict(st.lean) + ' to ' + layersVerdict(st.eff) + '.' : '') + ' In six years of prices this was a small drag, not a reversal.');
+  if (st.tm === 'trough') p.push('Timing: the daily stochastic is at ' + dk + ', under 20, so the stock has already dropped in the short term.' + (st.held ? ' That holds the verdict back from ' + layersVerdict(st.lean) + ' to ' + layersVerdict(st.eff) + '.' : '') + ' In six years of prices a bounce was a little more likely than usual.');
+  const best = 'GHIJK'.split('').map(k => [k, (side === 'BUY' ? st.g[k].L : st.g[k].S) / lyMax(k)]);
+  const hi = best.filter(b => b[1] >= 0.7).map(b => LAYERS_NAMES[b[0]].toLowerCase()), lo = best.filter(b => b[1] <= 0.2).map(b => LAYERS_NAMES[b[0]].toLowerCase());
+  if (Math.abs(st.lean) >= LAYERS_RULES.verdict.leans) p.push('For a ' + side + ', ' + (hi.length ? 'the strong stock readings are ' + hi.join(', ') : 'no stock reading is strong') + (lo.length ? '; the weak ones are ' + lo.join(', ') : '') + '.');
+  if (Number.isFinite(sec.breadth) && Number.isFinite(sec.rs5)) p.push(sec.name + ': ' + Math.round(sec.breadth) + '% of its stocks are above their 50-day, and the sector fund ' + (sec.rs5 > 0 ? 'beat' : 'lagged') + ' the S&P 500 by ' + Math.abs(sec.rs5).toFixed(2) + ' points over five sessions.');
+  if (st.sig.length) {
+    const g = st.sig[st.sig.length - 1], buy = lySigBuy(g), lean = LAYERS_RULES.verdict.leans;
+    p.push(g[0] + ' fired on ' + lyDay(g[1]) + '. ' + ((buy && st.eff >= lean) || (!buy && st.eff <= -lean) ? 'The layers agree with it.' : (buy && st.eff <= -lean) || (!buy && st.eff >= lean) ? 'The layers lean the other way, so treat it with care.' : 'The layers do not take a side.'));
+  } else p.push('No rule has fired this week, so this score is a ranking that has not been back-tested.');
+  if (Math.abs(st.lean) >= LAYERS_RULES.verdict.leans && own < 20) p.push('The stock\'s own letters earn under 20 of 60 for a ' + side + '. A weak stock subtotal should rule a trade out whatever the outer layers say.');
+  return p;
+}
+function lyFlagList(st) {
+  const ul = el('ul', 'ly-flags');
+  const add = (k, on, text) => { const li = el('li', on ? 'is-on' : ''); li.append(el('span', 'ly-badge', k), el('span', null, text)); ul.appendChild(li); };
+  add('L', false, 'Earnings: not in yet. The earnings calendar is not connected.');
+  const dv = Number.isFinite(st.dv) ? (st.dv >= 1e9 ? '$' + (st.dv / 1e9).toFixed(2) + ' billion' : '$' + Math.round(st.dv / 1e6) + ' million') : 'not available';
+  add('M', st.thin, 'Thin trading: ' + (st.thin ? 'yes' : 'no') + ', about ' + dv + ' traded a day over 20 sessions.');
+  add('N', false, 'Economic release: not in yet. Release dates still need a confirmed source.');
+  add('O', false, 'Sector leader: not in yet. A leader\'s report date still needs a source.');
+  const vix = lyData.outer.vix;
+  add('P', lyData.outer.panic, 'Panic: ' + (lyData.outer.panic ? 'yes' : 'no') + ', VIX ' + (Number.isFinite(vix) ? vix.toFixed(2) : '—') + ' (the flag starts at ' + LAYERS_RULES.flags.panicVix + ').');
+  if (st.tm) add('·', true, lyTiming(st) + '.');
+  return ul;
+}
+function lyLetterBlock(st, k) {
+  const g = lyGet(st, k), d = el('div', 'ly-letter'), h = el('div', 'ly-card-h'), t = el('span');
+  t.append(el('span', 'ly-badge', k), el('b', null, ' ' + LAYERS_NAMES[k]));
+  h.append(t, lyChips(g.L, g.S, lyMax(k)));
+  d.append(h, lyCompTable(g.comps), el('p', 'ly-ev', LAYERS_EVIDENCE[k]));
+  return d;
+}
+const LY_LAYERS = [['Global', 'Same for every stock', ['A', 'B']], ['National (US)', 'Same for every stock', ['C', 'D']],
+  ['Sector', 'Same for every stock in the sector', ['E', 'F']], ['Stock', 'This stock only', ['G', 'H', 'I', 'J', 'K']]];
+function openLayersDetail(st, opener) {
+  const back = document.getElementById('layersDetailBackdrop'), body = document.getElementById('layersDetailBody');
+  if (!st || !back || !body) return;
+  const sec = lyData.sectors[st.sec], on = lyOnLists(st, lyLists());
+  document.getElementById('layersDetailTitle').textContent = st.sym;
+  document.getElementById('layersDetailName').textContent = st.name;
+  body.textContent = '';
+  const meta = el('div', 'ly-meta');
+  meta.append(el('p', null, sec.name + (st.sub ? ' · ' + st.sub : '')),
+    el('p', null, (st.sp ? 'S&P 500' : 'Not in the S&P 500') + (on.length ? ' · on your ' + on.join(', ') + ' list' + (on.length > 1 ? 's' : '') : '')),
+    el('p', 'ly-num', fmtUsd(st.px) + ' · ' + fmtPct(st.chg) + ' on ' + lyDay(lyData.asOf)));
+  body.appendChild(meta);
+  const vb = el('div', 'ly-block ly-verdict');
+  const vt = el('p', 'ly-vline', layersVerdict(st.eff) + ' ');
+  const chip = el('span', 'ly-leanchip', lySgn(st.lean));
+  chip.style.background = lyHeat(st.eff / LAYERS_RULES.colour.lean);
+  chip.title = 'Lean: BUY minus SELL';
+  vt.appendChild(chip);
+  vb.appendChild(vt);
+  if (st.held) vb.appendChild(el('p', 'ly-muted', lyHeldNote(st)));
+  for (const [lab, v, cls] of [['BUY', st.L, 'buy'], ['SELL', st.S, 'sell']]) {
+    const row = el('div', 'ly-sbar'), track = el('span', 'ly-track'), fill = el('span', 'ly-fill ly-fill--' + cls);
+    fill.style.width = Math.max(0, Math.min(100, v)) + '%';
+    track.appendChild(fill);
+    row.append(el('span', null, lab), track, el('span', 'ly-num', v + ' / 100'));
+    vb.appendChild(row);
+  }
+  body.appendChild(vb);
+  const rd = el('div', 'ly-block ly-read');
+  lyReadText(st).forEach(t => rd.appendChild(el('p', null, t)));
+  body.appendChild(rd);
+  const fb = el('div', 'ly-block');
+  const fh = el('div', 'ly-layer-h'); fh.append(el('h3', null, 'Flags'), el('span', 'ly-muted', 'No points; named in every write-up'));
+  fb.append(fh, lyFlagList(st));
+  body.appendChild(fb);
+  const cb = el('div', 'ly-block');
+  const ch = el('div', 'ly-layer-h'); ch.append(el('h3', null, 'Price, 13-week stochastic and daily stochastic'), el('span', 'ly-muted', 'last 180 sessions'));
+  const charts = el('div', 'ly-charts');
+  cb.append(ch, charts);
+  body.appendChild(cb);
+  for (const [name, note, letters] of LY_LAYERS) {
+    let L = 0, S = 0, mx = 0;
+    letters.forEach(k => { const g = lyGet(st, k); L += g.L; S += g.S; mx += lyMax(k); });
+    const b = el('div', 'ly-block'), h = el('div', 'ly-layer-h');
+    h.append(el('h3', null, name + (name === 'Sector' ? ': ' + sec.name : '')), el('span', 'ly-muted', note), lyChips(L, S, mx));
+    b.appendChild(h);
+    letters.forEach(k => b.appendChild(lyLetterBlock(st, k)));
+    body.appendChild(b);
+  }
+  openModal(back, { initialFocus: document.getElementById('layersDetailClose'), restoreFocusTo: opener && opener.isConnected ? opener : null });
+  body.scrollTop = 0;
+  lyDrawCharts(charts, st);
+}
+/* Price with the 25, 50 and 200-day averages, and the two stochastics, from the same bars that were scored (no fetch). */
+function lyDrawCharts(box, st) {
+  const b = st.bars, n0 = b.c.length, n = Math.min(180, n0), off = n0 - n;
+  const ma = w => { const out = []; for (let j = off; j < n0; j++) { if (j < w - 1) { out.push(null); continue; } let s = 0; for (let i = j - w + 1; i <= j; i++) s += b.c[i]; out.push(s / w); } return out; };
+  const px = b.c.slice(off), m25 = ma(25), m50 = ma(50), m200 = ma(200);
+  const wk = st.wk.k.slice(off), dk = st.dl.k.slice(off), dates = b.t.slice(off);
+  const W = 640, H = 220, l = 6, r = 50, t = 8, bt = 20, X = i => l + i / Math.max(1, n - 1) * (W - l - r), xs = px.map((_, i) => X(i));
+  const all = px.concat(m25, m50, m200).filter(v => v != null);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const pad = (hi - lo) * 0.05 || 1; lo -= pad; hi += pad;
+  const Y = v => (v == null ? null : t + (hi - v) / (hi - lo) * (H - t - bt));
+  const path = (ys) => { let d = '', pen = false; ys.forEach((y, i) => { if (y == null || !Number.isFinite(y)) { pen = false; return; } d += (pen ? 'L' : 'M') + xs[i].toFixed(1) + ' ' + y.toFixed(1); pen = true; }); return d; };
+  const ro = el('div', 'ly-readout');
+  const s1 = svgEl('svg', { class: 'ly-ch', viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': st.sym + ' daily close with the 25, 50 and 200-day averages, last ' + n + ' sessions' });
+  const raw = (hi - lo) / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag, step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) {
+    s1.appendChild(svgEl('line', { class: 'ly-grid', x1: l, x2: W - r, y1: Y(v), y2: Y(v) }));
+    const tx = svgEl('text', { x: W - r + 6, y: Y(v) + 3.5 }); tx.textContent = v >= 100 ? v.toFixed(0) : v.toFixed(2); s1.appendChild(tx);
+  }
+  let lastM = null;
+  dates.forEach((d, i) => { const m = d.slice(0, 7); if (m !== lastM) { if (lastM !== null && X(i) < W - r - 20) { const tx = svgEl('text', { x: X(i), y: H - 5 }); tx.textContent = MONTHS[Number(d.slice(5, 7)) - 1]; s1.appendChild(tx); } lastM = m; } });
+  s1.append(svgEl('path', { class: 'ly-ma200', d: path(m200.map(Y)) }), svgEl('path', { class: 'ly-ma50', d: path(m50.map(Y)) }),
+    svgEl('path', { class: 'ly-ma25', d: path(m25.map(Y)) }), svgEl('path', { class: 'ly-px', d: path(px.map(Y)) }));
+  const c1 = svgEl('line', { class: 'ly-cross', y1: t, y2: H - bt, x1: -9, x2: -9 });
+  s1.appendChild(c1);
+  const H2 = 120, t2 = 8, b2 = 8, Y2 = v => (v == null ? null : t2 + (100 - v) / 100 * (H2 - t2 - b2));
+  const s2 = svgEl('svg', { class: 'ly-ch', viewBox: '0 0 ' + W + ' ' + H2, role: 'img', 'aria-label': st.sym + ' 13-week stochastic and daily stochastic with the 20, 30 and 80 lines' });
+  [20, 30, 80].forEach(v => {
+    s2.appendChild(svgEl('line', { class: 'ly-lvl', x1: l, x2: W - r, y1: Y2(v), y2: Y2(v) }));
+    const tx = svgEl('text', { x: W - r + 6, y: Y2(v) + 3.5 }); tx.textContent = String(v); s2.appendChild(tx);
+  });
+  s2.append(svgEl('path', { class: 'ly-dk', d: path(dk.map(Y2)) }), svgEl('path', { class: 'ly-wk', d: path(wk.map(Y2)) }));
+  const c2 = svgEl('line', { class: 'ly-cross', y1: t2, y2: H2 - b2, x1: -9, x2: -9 });
+  s2.appendChild(c2);
+  const fx = v => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(2));
+  const fk = v => (v == null || !Number.isFinite(v) ? '—' : String(Math.round(v)));
+  const setRO = i => {
+    ro.textContent = '';
+    ro.appendChild(el('span', null, lyDay(dates[i])));
+    [['ly-k-px', 'Close', fx(px[i])], ['ly-k-25', '25-day', fx(m25[i])], ['ly-k-50', '50-day', fx(m50[i])], ['ly-k-200', '200-day', fx(m200[i])],
+      ['ly-k-wk', '13-week stochastic', fk(wk[i])], ['ly-k-dk', 'Daily stochastic', fk(dk[i])]].forEach(([cls, a, v]) => {
+      const s = el('span', 'ly-key ' + cls); s.appendChild(el('b', null, a + ' ' + v)); ro.appendChild(s);
+    });
+  };
+  setRO(n - 1);
+  const move = (ev, svg) => {
+    const bb = svg.getBoundingClientRect(), x = (ev.clientX - bb.left) / bb.width * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round((x - l) / (W - l - r) * (n - 1))));
+    [c1, c2].forEach(c => { c.setAttribute('x1', X(i)); c.setAttribute('x2', X(i)); });
+    setRO(i);
+  };
+  [s1, s2].forEach(s => {
+    s.addEventListener('pointermove', ev => move(ev, s));
+    s.addEventListener('pointerdown', ev => move(ev, s));
+    s.addEventListener('pointerleave', () => { [c1, c2].forEach(c => { c.setAttribute('x1', -9); c.setAttribute('x2', -9); }); setRO(n - 1); });
+  });
+  box.append(ro, s1, s2);
+}
+
 async function boot() {
   /* The PIN lives in THIS TAB only (owner 2026-11-11). A device copy an earlier version wrote to
      localStorage is wiped FIRST, unread, in demo and live alike, so it never unlocks anything again. */
@@ -10928,6 +11647,7 @@ async function boot() {
     renderPrivate();
     wireHeatToggle();
     loadHeatmap();
+    startLayers();
     loadCharts();
     loadWatchlist();
     startEcon();
@@ -10956,6 +11676,7 @@ async function boot() {
   renderMasthead();
   wireHeatToggle();
   loadHeatmap();
+  startLayers();   /* step 1: keeps the Layers Heat Map hidden in live (no feed yet) */
   loadCharts();
   loadWatchlist();
   startEcon();

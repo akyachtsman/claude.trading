@@ -9,10 +9,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/tokens.css?v=20261111e">
-<link rel="stylesheet" href="styles/components.css?v=20261111e">
-<link rel="stylesheet" href="styles/legacy.css?v=20261111e">
-<link rel="stylesheet" href="styles/layout.css?v=20261111e">
+<link rel="stylesheet" href="styles/tokens.css?v=20261113b">
+<link rel="stylesheet" href="styles/components.css?v=20261113b">
+<link rel="stylesheet" href="styles/legacy.css?v=20261113b">
+<link rel="stylesheet" href="styles/layout.css?v=20261113b">
 </head>
 <body>
 <div class="shell legacy-screen">
@@ -273,6 +273,17 @@
        alertdialog: it reads, it does not destroy. Carries its own lamp + as-of
        stamp like every panel on the desk — it fetches its own data, so it owes
        its own provenance. -->
+  <div class="modal-backdrop" id="layersDetailBackdrop" hidden>
+    <section class="panel modal-panel ly-scope ly-detail" id="layersDetailPanel" aria-labelledby="layersDetailTitle" role="dialog" aria-modal="true">
+      <div class="panel-header">
+        <h2 class="panel-title" id="layersDetailTitle">—</h2>
+        <span class="ly-dname" id="layersDetailName"></span>
+        <button type="button" class="legacy-btn legacy-btn-secondary ml-auto" id="layersDetailClose" aria-label="Close">✕</button>
+      </div>
+      <div class="panel-body" id="layersDetailBody"></div>
+    </section>
+  </div>
+
   <div class="modal-backdrop" id="wlDetailBackdrop" hidden>
     <section class="panel modal-panel wl-detail-panel" id="wlDetailPanel" aria-labelledby="wlDetailTitle" role="dialog" aria-modal="true">
       <div class="panel-header">
@@ -328,6 +339,69 @@
       </div>
 
   </div>
+
+  <!-- Layers Heat Map (owner rulings A–H, 2026-11-13; the rules: specs/layers-heat-map/LAYERS_HEAT_MAP.md). Right above the
+       Stochastic charts. STEP 1: drawn only under ?demo=1; `hidden` stays on in live until its daily feed exists. -->
+  <section class="panel area-layers ly-scope" id="layersPanel" aria-labelledby="layersTitle" hidden>
+    <div class="ly-frame">
+      <div class="ly-half ly-a" id="layersLeft">
+        <div class="ly-head">
+          <div class="ly-title">
+            <h2 class="panel-title" id="layersTitle">Layers Heat Map</h2>
+            <span class="ly-draft">Draft scoring</span>
+            <span class="lamp" id="layersLamp">Loading</span>
+            <span class="stamp" id="layersStamp">—</span>
+          </div>
+          <p class="ly-sub" id="layersSub"></p>
+          <div class="ly-info">
+            <button type="button" class="ly-btn ly-hover" id="layersHover" aria-pressed="true" title="Turn the hover-over readings on or off">Hover on</button>
+            <span class="ly-note"><button type="button" class="ly-btn" aria-expanded="false" aria-controls="layersNoteRead">How to read it</button><span class="ly-pop" id="layersNoteRead" role="note">
+              <span class="ly-pp">Is today the right time for this stock? Each stock is scored for a BUY and for a SELL on eleven letters. Hover over a box, tile or cell for the reading behind it. Click a stock for its full write-up.</span>
+              <span class="ly-li">Every stock gets two scores from 0 to 100: one for a BUY, one for a SELL. They are scored separately because the tests showed they are not mirror images.</span>
+              <span class="ly-li">Lean is the BUY score minus the SELL score. Green favours a BUY, red a SELL, slate means neither stands out.</span>
+              <span class="ly-li">The verdict puts the lean in words: Strong BUY at +25 or more, Leans BUY from +10, No edge today in between, and the same on the SELL side. Those cut-offs are a first guess, not tested.</span>
+              <span class="ly-li">Timing: a ring marks a stock held back one step. A Strong BUY becomes Leans BUY while the daily stochastic is over 80, and a Strong SELL becomes Leans SELL while it is under 20.</span>
+              <span class="ly-li">The boxes are the layers stocks share (letters A to F, 40 points): global and national apply to every stock, each sector box to the stocks in it. Letters G to K are the stock itself (60 points).</span>
+              <span class="ly-li">A dot beside a ticker means rule 1, 2 or 3 fired this week.</span>
+            </span></span>
+            <span class="ly-note"><button type="button" class="ly-btn" aria-expanded="false" aria-controls="layersNoteCaution">Cautions</button><span class="ly-pop" id="layersNoteCaution" role="note">
+              <span class="ly-li">The scoring is a draft and has not been approved.</span>
+              <span class="ly-li">The scores were tested only on days a rule fired. For a stock with no signal the score is an untested ranking.</span>
+              <span class="ly-li">Red marks the least bad setting for a SELL. In the test the best SELL settings were about a coin flip.</span>
+              <span class="ly-li">A score is a ranking aid. A signal is a watch alert, never an order.</span>
+            </span></span>
+            <span class="ly-note"><button type="button" class="ly-btn" aria-expanded="false" aria-controls="layersNoteYet">Not in yet</button><span class="ly-pop" id="layersNoteYet" role="note">
+              <span class="ly-ul" id="layersNotYet"></span>
+            </span></span>
+          </div>
+        </div>
+        <div class="ly-ledger" id="layersLedger"></div>
+        <div class="ly-card" id="layersCard" hidden></div>
+        <div class="ly-foot">
+          <div class="ly-legend" aria-hidden="true"><span>Favours a SELL</span><span class="ly-bar"></span><span>Favours a BUY</span></div>
+          <p class="ly-fnote">Colour is the lean, BUY minus SELL. A ring marks a verdict held back by the daily stochastic, a dot a rule that fired this week. A score is a ranking aid, never an order.</p>
+        </div>
+      </div>
+      <div class="ly-half ly-b">
+        <div class="ly-controls">
+          <span class="ly-search"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input type="search" id="layersQ" placeholder="Search stocks…" aria-label="Search stocks by ticker or name" autocomplete="off"></span>
+          <select id="layersSec" aria-label="Sector"><option value="-1">All sectors</option></select>
+          <select id="layersWl" aria-label="Watchlist"><option value="all">All stocks</option></select>
+          <div class="seg ly-seg" role="group" aria-label="What the colour shows" id="layersMode">
+            <button type="button" data-m="lean" aria-pressed="true">Lean</button><button type="button" data-m="buy" aria-pressed="false">BUY points</button><button type="button" data-m="sell" aria-pressed="false">SELL points</button>
+          </div>
+          <div class="seg ly-seg" role="group" aria-label="View" id="layersView">
+            <button type="button" data-v="tiles" aria-pressed="true">Tiles</button><button type="button" data-v="table" aria-pressed="false">Table</button>
+          </div>
+          <label class="ly-check"><input type="checkbox" id="layersSig"> Signals this week only <span id="layersNSig"></span></label>
+          <span class="ly-count" id="layersCount"></span>
+          <button type="button" class="ly-link" id="layersClear" hidden>Clear filters</button>
+        </div>
+        <div class="ly-grid" id="layersGrid"><p class="ly-loading">Loading…</p></div>
+      </div>
+    </div>
+    <div class="ly-tip" id="layersTip" hidden></div>
+  </section>
 
   <section class="panel area-charts" aria-labelledby="chartsTitle">
     <div class="panel-header wb-panel-header">
@@ -588,8 +662,9 @@
 
 </div>
 
-<script src="scripts/config.js?v=20261111e"></script>
-<script src="scripts/data.js?v=20261111e"></script>
-<script src="scripts/app.js?v=20261111e"></script>
+<script src="scripts/config.js?v=20261113b"></script>
+<script src="scripts/data.js?v=20261113b"></script>
+<script src="scripts/layers.js?v=20261113b"></script>
+<script src="scripts/app.js?v=20261113b"></script>
 </body>
 </html>

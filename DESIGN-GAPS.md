@@ -58,6 +58,13 @@ The palette and fonts are NOT gaps: the owner ruled this project keeps its own
 - Watchlists — §14 Status pills: each tile's change chip is `.legacy-pill--gain/--loss`, a P&L figure — ask the owner before moving it — `scripts/app.js` (`wlTile`), `styles/legacy.css`
 - Watchlists — §10 Pop-ups: remove, quick add, new list, delete list, the ✎ editor and the symbol detail window are the desk's own shell (see Every panel) — `index.html`
 
+## Layers Heat Map (built 2026-11-13; owner rulings A–H in `specs/layers-heat-map/LAYERS_HEAT_MAP.md` section 7)
+- Layers — palette: green and red mean BUY and SELL in this panel only, on the dashboard's heat stops in a dark scope of its own (`.ly-scope`), not P&L and not the house status pairs (ruling A) — `styles/layout.css` (`.ly-scope`), `scripts/app.js` (`lyHeat`)
+- Layers — §4 Buttons / Type: tight sizes on a computer (26–30px buttons, 11–12px text); a phone or touch screen gets 44px targets and 48px / 16px inputs (ruling B) — `styles/layout.css` (`.ly-*`)
+- Layers — §12 Forms / §16 Search: the search box, the two selects and the two segmented switches are the panel's own (`.ly-search`, `.ly-sel`, `.ly-seg`) with no visible labels (each has an accessible name); company and sector names may be cut with "…" (ruling C) — `index.html` (`#layersPanel`), `styles/layout.css`
+- Layers — §6 Lists and tables / §10 Pop-ups: the table is the dashboard's own sortable table and the write-up the dashboard's `openModal` dialog, because the house `.table-wrap` and `.dialog-body` carry `overscroll-behavior`, which this desk bans (ruling D) — `scripts/app.js` (`renderLayersTable`, `openLayersDetail`), `index.html` (`#layersDetailBackdrop`)
+- Layers — §10 Pop-ups: the three notes and the hover card are the panel's own pop-overs (`.ly-pop`, `#layersTip`), not the house `.menu-pop` (same reason) — `index.html`, `scripts/app.js` (`wireLayers`, `lyPlaceTip`)
+
 ## Heatmap
 - Heatmap — §4 Buttons: Show/Hide is a `.legacy-btn-secondary` — `index.html` (`#heatToggle`)
 - Heatmap — §12 Forms: the period picker is a `select.legacy-input` — `index.html` (`#heatPeriod`)
