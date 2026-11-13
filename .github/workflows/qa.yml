@@ -19,9 +19,22 @@
 #                    html-validate), which used to be steps in Static Checks.
 #                    `qa` needs it, so a red project check still stops the suite.
 #   qa             — the shared workflow (Static Checks, then UI Tests).
-#   ⚠️ LOCAL ADDITIONS: news-checks (every trigger), ui-changes (kept ONLY
-#   because its news_client output gates news-client-mutants), news-client-mutants
-#   and notify. See each job.
+#   ⚠️ LOCAL ADDITIONS: news-checks, server-checks, ui-changes (which decides
+#   what a pull request needs: `qa`, the mutant harnesses, news-client-mutants),
+#   news-client-mutants and notify. See each job.
+#
+# ⚠️ LOCAL — Actions minutes (owner 2026-11-13, before a possible switch to a
+# private repository): a merged pull request cost ~205 runner minutes, ~125 of
+# them AFTER the merge repeating what the pull request had just run. So:
+#   * no run on push to main (the pull request ran this same workflow on the
+#     same files; the accepted risk is a main that moved between the run and
+#     the squash merge — main requires no up-to-date branch);
+#   * qa-live.yml runs only the `live only` scenarios after a deploy
+#     (playwright.config.js);
+#   * on a pull request, `qa` (Static Checks + the browser suite on all four
+#     projects, iPad and iPhone included) runs only when a page path or a
+#     package manifest changed, and the slow mutant harnesses only when the
+#     files they guard changed. A manual dispatch runs everything.
 #
 # Contrast: .github/scripts/check-contrast.js was byte-identical to the shared
 # copy, so it is deleted and no `contrast-script` is passed; the shared step
@@ -32,13 +45,10 @@ name: QA — Static + UI Tests
 on:
   pull_request:
     branches: [main]
-  # push covers only main (the post-merge run). Feature-branch commits are
-  # covered by the pull_request trigger — listing them here too made every
-  # PR commit run the whole workflow twice. Accepted trade-off: commits
-  # pushed before a PR exists get no run; the draft-PR-immediately flow
-  # makes that window moments.
-  push:
-    branches: [main]
+  # ⚠️ LOCAL: NO `push` trigger (owner 2026-11-13, Actions minutes — see the
+  # header). The post-merge run on main repeated the pull request's run on the
+  # same files (~70 runner minutes per merge). Commits pushed before a PR exists
+  # get no run; the draft-PR-immediately flow makes that window moments.
   # Manual escape hatch: pull_request event delivery can die provider-side
   # (observed 2026-07-19) — this lets a session or the Actions tab run the
   # gate by hand on any ref. A dispatch run on the PR's head SHA satisfies
@@ -95,13 +105,23 @@ jobs:
       - name: Extended secret scan (all tracked files)
         run: |
           rc=0
+          # ⚠️ LOCAL (2026-11-13): also the shared composite's own shapes (OpenAI
+          # keys, Slack bot tokens, Airtable tokens, every GitHub token kind), because
+          # `qa` — which runs that composite — is now skipped on a pull request
+          # that touches no page path or manifest, and this job always runs.
           hits=$(git grep -IlE \
             -e 'sk-ant-[A-Za-z0-9_-]{20,}' \
+            -e 'sk-[A-Za-z0-9]{20,}' \
+            -e 'xoxb[-]' \
+            -e 'pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{40,}' \
+            -e 'pat[A-Za-z0-9]{17}\.[a-f0-9]{64}' \
+            -e 'pat[lr]_[A-Za-z0-9]{10,}' \
+            -e 'gh[pousr]_[A-Za-z0-9]{36}' \
             -e 'sb_secret_[A-Za-z0-9_-]{20,}' \
             -e 'ghp_[A-Za-z0-9]{30,}' \
             -e 'github_pat_[A-Za-z0-9_]{30,}' \
             -e 'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}' \
-            -e '-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----') || rc=$?
+            -e '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----') || rc=$?
           if [ "$rc" -eq 0 ]; then
             echo "ERROR: potential secret found in these tracked files:"
             printf '%s\n' "$hits"
@@ -128,7 +148,10 @@ jobs:
           npx --prefix "$UI_TESTS_DIR" html-validate index.html
 
   qa:
-    needs: [project-checks]
+    needs: [project-checks, ui-changes]
+    # ⚠️ LOCAL (2026-11-13): only when a page path or a package manifest changed
+    # (ui-changes → `qa`); always on a manual dispatch.
+    if: needs.ui-changes.outputs.qa == 'true'
     uses: akyachtsman/claude.directives/.github/workflows/shared-qa.yml@v1
     with:
       # The env values above, as inputs (a called workflow does not see `env`).
@@ -152,8 +175,9 @@ jobs:
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The News topic AI helper's server and database harnesses (owner 2026-10-19:
-  # "yes" to running them in CI; until then they ran only by hand). Cheap and
-  # path-independent, so they run on every trigger, like static-checks:
+  # "yes" to running them in CI; until then they ran only by hand). Since
+  # 2026-11-13 (Actions minutes) only when the files they guard changed
+  # (ui-changes → `harness`: supabase/, tools/, …) or on a manual dispatch:
   #   news-topic-check.mjs --mutants  desk-news against the committed source in a
   #                                   vm with stubbed collaborators, then every
   #                                   single-edit mutant must be caught (exit 1
@@ -175,6 +199,8 @@ jobs:
   # The page's half (S75 under 41 mutants) is the news-client-mutants job.
   news-checks:
     name: News helper checks (server + database)
+    needs: [ui-changes]
+    if: needs.ui-changes.outputs.harness == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -232,7 +258,10 @@ jobs:
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The no-browser checks of the edge functions and scripts/data.js, on every
-  # trigger (the browser suite does not run them, so nothing else would).
+  # trigger (the browser suite does not run them, so nothing else would). The
+  # unit tests and the parity check (seconds) always run; the three mutant
+  # harnesses (~7 minutes) only when the files they guard changed (ui-changes →
+  # `harness`, 2026-11-13) or on a manual dispatch.
   # Nothing here reaches the network or a
   # Supabase project: every function is transpiled with the pinned esbuild and
   # run in a `vm` context with `fetch` stubbed.
@@ -245,6 +274,7 @@ jobs:
   #   watchlist-scan --selftest    the morning scan's own selftest, and its mutants
   server-checks:
     name: Server and data unit checks
+    needs: [ui-changes]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -263,15 +293,18 @@ jobs:
         run: node --test 'tools/unit/*.test.mjs'
 
       - name: desk-econ checks and mutants
+        if: needs.ui-changes.outputs.harness == 'true'
         run: node tools/econ-check.mjs --mutants
 
       - name: desk-ask gate checks and mutants
+        if: needs.ui-changes.outputs.harness == 'true'
         run: node tools/ask-gate-check.mjs --mutants
 
       - name: Ask model list parity
         run: node tools/ask-model-parity.mjs --selftest && node tools/ask-model-parity.mjs
 
       - name: Morning scan selftest and mutants
+        if: needs.ui-changes.outputs.harness == 'true'
         run: node tools/watchlist-scan.mjs --selftest && node tools/watchlist-scan-mutants.mjs
 
   ui-changes:
@@ -282,6 +315,9 @@ jobs:
       ui: ${{ steps.diff.outputs.ui }}
       # ⚠️ LOCAL ADDITION — see the news-client-mutants job.
       news_client: ${{ steps.news.outputs.run }}
+      # ⚠️ LOCAL (2026-11-13, Actions minutes) — see the `Which jobs` step.
+      qa: ${{ steps.needs.outputs.qa }}
+      harness: ${{ steps.needs.outputs.harness }}
 
     steps:
       - name: Checkout (full history for base diff)
@@ -374,7 +410,7 @@ jobs:
             echo "No index.html yet — skipping browser job."
             exit 0
           fi
-          # Non-PR events (push to main) always run UI tests unconditionally.
+          # Non-PR events (a manual dispatch; there is no push trigger) always run UI tests.
           if [ "$EVENT" != "pull_request" ]; then
             echo "ui=true" >> "$GITHUB_OUTPUT"
             echo "Non-PR event — UI tests run unconditionally."
@@ -405,29 +441,67 @@ jobs:
                exit 1 ;;
           esac
 
-      # ⚠️ LOCAL ADDITION — whether the news-client-mutants job runs: whenever the
-      # browser suite does (its mutants anchor on scripts/app.js, index.html and
-      # styles/, and S75 lives in the kit), and also when only the mutant runner
-      # itself changed, which UI_PATHS does not match.
+      # ⚠️ LOCAL ADDITION — whether the news-client-mutants job runs: when a file
+      # its mutants anchor on changed (scripts/app.js, index.html, styles/), or the
+      # kit S75 lives in, or the mutant runner itself, or this workflow; always on
+      # a manual dispatch. Until 2026-11-13 it ran with every browser run (~10
+      # runner minutes); narrowed then for Actions minutes.
       - name: News client mutants needed?
         id: news
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          UI: ${{ steps.diff.outputs.ui }}
         run: |
-          if [ "$UI" = "true" ] || [ "$EVENT" != "pull_request" ]; then
+          if [ "$EVENT" != "pull_request" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           if ! files=$(git diff --name-only "$BASE_SHA"...HEAD); then
             echo "::error::could not diff $BASE_SHA...HEAD — refusing to guess whether the news client mutants are needed."
             exit 1
           fi
-          if printf '%s\n' "$files" | grep -qE '^tools/news-topic-client-mutants\.py$'; then
+          if printf '%s\n' "$files" | grep -qE '^(scripts/(app|data|config)\.js|index\.html|styles/.*|\.github/scripts/ui-tests/.*|tools/news-topic-client-mutants\.py|\.github/workflows/qa\.yml)$'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # ⚠️ LOCAL (owner 2026-11-13, Actions minutes) — what else a pull request needs:
+      #   qa      — the shared Static Checks + the browser suite (all four projects,
+      #             ~50 minutes): when a page path changed (`ui`, above), or a
+      #             package manifest (Static Checks runs `npm audit` on every one).
+      #             Project Checks' secret scan covers the shared scan's shapes and
+      #             runs on every pull request.
+      #   harness — the mutant harnesses in news-checks and server-checks: when
+      #             what they load changed — supabase/ (the edge functions and
+      #             migrations), tools/ (the harnesses, fixtures, pinned esbuild),
+      #             scripts/data.js and scripts/config.js (the morning scan loads
+      #             them), config/econ-indicators.json (desk-econ's roster), or
+      #             this workflow.
+      # Both are true on a manual dispatch (`ui` is true for any non-PR event).
+      - name: Which jobs this pull request needs
+        id: needs
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          UI: ${{ steps.diff.outputs.ui }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            { echo "qa=true"; echo "harness=true"; } >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! files=$(git diff --name-only "$BASE_SHA"...HEAD); then
+            echo "::error::could not diff $BASE_SHA...HEAD — refusing to guess which jobs are needed."
+            exit 1
+          fi
+          qa=false
+          if [ "$UI" = "true" ] || printf '%s\n' "$files" | grep -qE '(^|/)package(-lock)?\.json$'; then
+            qa=true
+          fi
+          harness=false
+          if printf '%s\n' "$files" | grep -qE '^(supabase/.*|tools/.*|scripts/(data|config)\.js|config/econ-indicators\.json|\.github/workflows/qa\.yml)$'; then
+            harness=true
+          fi
+          { echo "qa=$qa"; echo "harness=$harness"; } >> "$GITHUB_OUTPUT"
+          echo "qa=$qa harness=$harness"
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The News topic AI helper's page guards (owner 2026-10-19, with news-checks):
@@ -509,8 +583,10 @@ jobs:
     # name them: `needs.qa.result` is success only when both of them were. (The
     # suite's "no index.html yet" skip is a step inside that job, so `qa` still
     # reads success then, as the old `ui-tests` skipped arm allowed.)
+    # `qa` and news-checks may be SKIPPED by ui-changes' decision (2026-11-13);
+    # ui-changes itself must succeed, so a skip is never a broken decision.
     needs: [project-checks, qa, ui-changes, news-checks, news-client-mutants, server-checks]
-    if: ${{ always() && github.event_name == 'pull_request' && needs.project-checks.result == 'success' && needs.qa.result == 'success' && needs.ui-changes.result == 'success' && needs.news-checks.result == 'success' && needs.server-checks.result == 'success' && (needs.news-client-mutants.result == 'success' || needs.news-client-mutants.result == 'skipped') }}
+    if: ${{ always() && github.event_name == 'pull_request' && needs.project-checks.result == 'success' && needs.ui-changes.result == 'success' && (needs.qa.result == 'success' || (needs.qa.result == 'skipped' && needs.ui-changes.outputs.qa == 'false')) && (needs.news-checks.result == 'success' || (needs.news-checks.result == 'skipped' && needs.ui-changes.outputs.harness == 'false')) && needs.server-checks.result == 'success' && (needs.news-client-mutants.result == 'success' || (needs.news-client-mutants.result == 'skipped' && needs.ui-changes.outputs.news_client == 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

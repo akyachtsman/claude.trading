@@ -21,11 +21,22 @@ export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
   retries: 1,
-  // LOCAL ADDITION: scenario-title exclusion, set by qa.yml's ui-tests job env
-  // (`GREP_INVERT: live only`) — the ui-suite composite is a verbatim upstream
-  // drop-in with no such input. Unset = run everything. 'i' matches the CLI's
+  // LOCAL ADDITION: scenario-title exclusion, set by the `grep-invert: live only`
+  // input on qa.yml's `qa` caller, which shared-qa.yml exports to its UI job as
+  // GREP_INVERT — the ui-suite composite has no such input. Unset = run everything. 'i' matches the CLI's
   // --grep-invert, which is what qa.yml used to pass through the composite.
   grepInvert: process.env.GREP_INVERT ? new RegExp(process.env.GREP_INVERT, 'i') : undefined,
+  // LOCAL ADDITION (owner 2026-11-13, Actions minutes): the run qa-live.yml
+  // starts after a Pages deploy runs ONLY the scenarios that need the live
+  // backend — the ones titled `live only` (S10, S11, S14; S15–S19 still skip
+  // without RUN_ASSISTANT_TESTS). Everything else ran on the pull request,
+  // against the same files, minutes earlier; repeating all ~300 against the
+  // deployed copy cost ~50 runner minutes per merge. A called workflow sees its
+  // CALLER's event, and only qa-live.yml is started by `workflow_run`, so a
+  // manual dispatch of qa-live.yml (and every local run) still runs everything.
+  // S10 and S14 run on all four projects, so every viewport class still
+  // reports a result for the ui-suite's viewport gate.
+  grep: process.env.GITHUB_EVENT_NAME === 'workflow_run' ? /live only/i : undefined,
   reporter: [['list'], ['json', { outputFile: '../../../.agent-reports/playwright-results.json' }]],
   use: {
     baseURL: (process.env.APP_URL || 'https://akyachtsman.github.io/claude.trading/').replace(/\/?$/, '/'),
