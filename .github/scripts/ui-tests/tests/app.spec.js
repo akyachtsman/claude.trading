@@ -12769,6 +12769,9 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   // 7. Table view: one row a stock; BUY sorts both ways.
   await page.locator('#layersView [data-v="table"]').click();
   await expect(page.locator('#layersGrid tbody tr')).toHaveCount(total);
+  // Flag P (VIX at 30 or more: the demo's VIX is) sits beside every ticker, not only in the write-up.
+  expect(await page.evaluate(() => lyData.outer.panic), 'the demo VIX is over 30').toBe(true);
+  await expect(page.locator('#layersGrid tbody tr .ly-st-top .ly-pill', { hasText: /^Panic$/ })).toHaveCount(total);
   const buyCol = () => page.locator('#layersGrid tbody td[data-k="L"]').allTextContents();
   await page.locator('#layersGrid [data-sort="L"]').click();
   await expect(page.locator('#layersGrid th:has([data-sort="L"])')).toHaveAttribute('aria-sort', 'descending');

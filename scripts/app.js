@@ -11184,6 +11184,8 @@ function lyFlagPills(st) {
   if (st.tm) out.push(['', 'Daily ' + (st.tm === 'peak' ? 'peaking' : 'bottoming') + ' ' + Math.round(st.dk)]);
   st.sig.forEach(g => out.push([lySigBuy(g) ? 'ly-pill--buy' : 'ly-pill--sell', g[0].replace('Rule ', 'R') + ' ' + lyShortDay(g[1])]));
   if (st.thin) out.push(['', 'Thin']);
+  // Flag P is the market's, not the stock's, so it sits beside every ticker while it is on (section 4, Flags).
+  if (lyData && lyData.outer && lyData.outer.panic) out.push(['', 'Panic']);
   return out;
 }
 function renderLayersTable(grid, list) {
