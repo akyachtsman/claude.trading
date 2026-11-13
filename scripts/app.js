@@ -11290,7 +11290,14 @@ function lyMatchHeight() {
     lyLeftObs = new ResizeObserver(() => lyMatchHeight());
     lyLeftObs.observe(left);
   }
-  sec.style.setProperty('--ly-left-h', Math.round(left.getBoundingClientRect().height) + 'px');
+  lySetVar(sec, '--ly-left-h', Math.round(left.getBoundingClientRect().height) + 'px');
+}
+/* Writes a layout property on the panel ONLY when its value changes: a custom property is inherited, so every write
+   restyles the whole panel (hundreds of tiles), and WebKit pays for it even when the value is the same. */
+function lySetVar(sec, name, v) {
+  if (sec.style.getPropertyValue(name) === v) return;
+  if (v) sec.style.setProperty(name, v);
+  else sec.style.removeProperty(name);
 }
 /* From the desk row's 1120px gate up, the panel ends where Ask the desk ends (owner 2026-11-13: "shrink its width so
    that it lines up with the ask desk"). The width is MEASURED (Ask's right edge depends on the Economy column's clamp
@@ -11301,13 +11308,14 @@ function lyAlignAsk() {
   const sec = document.getElementById('layersPanel'), ask = document.querySelector('section[aria-labelledby="askTitle"]');
   if (!sec || !ask) return;
   if (!lyAskObs && typeof ResizeObserver === 'function') {
+    // Ask's right edge moves with Ask's own box and with the window's width, never with the page's height: the page
+    // grows and shrinks on every panel repaint, so it is the window's resize that is listened to, not <html>.
     lyAskObs = new ResizeObserver(() => lyAlignAsk());
     lyAskObs.observe(ask);
-    lyAskObs.observe(document.documentElement);
+    window.addEventListener('resize', lyAlignAsk);
   }
   const w = Math.round(ask.getBoundingClientRect().right - sec.getBoundingClientRect().left);
-  if (w > 0) sec.style.setProperty('--ly-w', w + 'px');
-  else sec.style.removeProperty('--ly-w');
+  lySetVar(sec, '--ly-w', w > 0 ? w + 'px' : '');
 }
 function lySyncHover() {
   const b = document.getElementById('layersHover'), sec = document.getElementById('layersPanel');

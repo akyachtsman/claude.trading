@@ -2639,7 +2639,16 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // lands — which on a loaded runner can fall BETWEEN the two clicks of a double-click (a
   // tile replaced mid-gesture never sees a `dblclick`). The gesture is retried as a whole, so
   // a regression (no `dblclick` wired, the dialog never opening) still fails every attempt.
+  // A pair split by that repaint is two single clicks, and the first one opens the symbol's detail
+  // window (WL_CLICK_MS later), whose backdrop then covers every tile: each retry first closes a
+  // window a failed attempt left open (iPhone failed both runs on exactly that, PR #371), so a
+  // split pair costs one attempt, not all of them.
   await expect(async () => {
+    const detail = page.locator('#wlDetailBackdrop');
+    if (await detail.isVisible()) {
+      await page.keyboard.press('Escape');
+      await expect(detail).toBeHidden({ timeout: 2000 });
+    }
     await page.locator('.wl-strip .wl-tile').first().dblclick();
     await expect(page.locator('#wlRmBackdrop'), 'double-click still removes').toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 15000, intervals: [250, 500, 1000] });
