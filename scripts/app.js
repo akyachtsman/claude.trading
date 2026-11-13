@@ -11266,7 +11266,6 @@ function renderLayers() {
   if (!sec || !grid || !lyData) return;
   const list = lyRows();
   const table = lyState.view === 'table';
-  sec.classList.toggle('is-table', table);
   const sub = document.getElementById('layersSub');
   if (sub) {
     const sp = lyData.stocks.filter(s => s.sp).length, ex = lyData.stocks.length - sp;
@@ -11279,9 +11278,11 @@ function renderLayers() {
   else if (table) renderLayersTable(grid, list);
   else renderLayersTiles(grid, list);
   lySyncHover();
+  lyAlignAsk();
   lyMatchHeight();
 }
-/* Table view: the LEFT half sets the height and the table scrolls inside the right one (section 6). */
+/* Both views: the LEFT half sets the height and the tiles or the table scroll inside the right one, so the panel is
+   the same size in either (section 6; owner 2026-11-13). */
 function lyMatchHeight() {
   const sec = document.getElementById('layersPanel'), left = document.getElementById('layersLeft');
   if (!sec || !left) return;
@@ -11290,6 +11291,23 @@ function lyMatchHeight() {
     lyLeftObs.observe(left);
   }
   sec.style.setProperty('--ly-left-h', Math.round(left.getBoundingClientRect().height) + 'px');
+}
+/* From the desk row's 1120px gate up, the panel ends where Ask the desk ends (owner 2026-11-13: "shrink its width so
+   that it lines up with the ask desk"). The width is MEASURED (Ask's right edge depends on the Economy column's clamp
+   and the shell's cap) and published as --ly-w, which only the stylesheet's >=1120px rule reads, never an inline
+   width; below the gate the desk row stacks and the panel keeps its full width. */
+let lyAskObs = null;
+function lyAlignAsk() {
+  const sec = document.getElementById('layersPanel'), ask = document.querySelector('section[aria-labelledby="askTitle"]');
+  if (!sec || !ask) return;
+  if (!lyAskObs && typeof ResizeObserver === 'function') {
+    lyAskObs = new ResizeObserver(() => lyAlignAsk());
+    lyAskObs.observe(ask);
+    lyAskObs.observe(document.documentElement);
+  }
+  const w = Math.round(ask.getBoundingClientRect().right - sec.getBoundingClientRect().left);
+  if (w > 0) sec.style.setProperty('--ly-w', w + 'px');
+  else sec.style.removeProperty('--ly-w');
 }
 function lySyncHover() {
   const b = document.getElementById('layersHover'), sec = document.getElementById('layersPanel');

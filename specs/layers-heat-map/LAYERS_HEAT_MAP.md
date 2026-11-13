@@ -193,10 +193,10 @@ Rules 1 and 2. Days 1 to 3 are the run, day 3 is the session tested, and day 0 i
 
 One self-contained dark panel with a thin outline. Nothing reaches past the edge of the chart, and the chart itself never touches the panel's edge: a 10-pixel dark margin sits to its right and below it.
 
-Table view, on a wide screen, is two equal halves side by side, the same width and the same height:
+Both views (tiles and table), on a wide screen, are two equal halves side by side, the same width and the same height; switching views never changes the panel's size (owner, 2026-11-13):
 - LEFT half, top to bottom: title with the draft mark and the "as of" line; a Hover on/off switch and three note buttons at the top right (How to read it, Cautions, Not in yet) that open on hover, on keyboard focus and on tap; the ledger; the colour scale and one line of footnote at the bottom.
-- RIGHT half: the filter row as the chart's heading, then the table. The table scrolls inside the half; its header stays in view. The left half sets the height.
-- Each half is 678 pixels wide when there is room (panel 1356). On a narrower screen both halves shrink equally and the table columns keep their proportions (29%, 16.5%, three at 7.5%, five at 6.4%). Under 860 pixels the halves stack, at 678 wide. On a phone the panel is full width and the ledger wraps into rows of two boxes, with no sideways swipe (owner, 2026-11-13).
+- RIGHT half: the filter row as the chart's heading, then the tiles or the table. They scroll inside the half; the table's header stays in view. The left half sets the height.
+- The panel starts on the Stochastic charts' left edge and, on a screen 1120 pixels or wider (where the Markets, News, Ask and Economy panels sit in one row), ends on the right edge of the Ask the desk panel (owner, 2026-11-13: "shrink its width so that it lines up with the ask desk"; it was 1356 pixels at most). Narrower, it is as wide as the charts. Each half is half of that, and the table columns keep their proportions (29%, 16.5%, three at 7.5%, five at 6.4%). Under 860 pixels the halves stack and the tiles or the table sit in a box of the same fixed height, scrolling inside it. On a phone the panel is full width and the ledger wraps into rows of two boxes, with no sideways swipe (owner, 2026-11-13).
 
 The ledger (the layers that stocks share):
 - "Global and national": four equal boxes, A and B on the first row, C and D on the second. Each shows its name, its points ("B 5 · S 1 of 8") and its readings in short form.
@@ -207,7 +207,7 @@ Filter row: search by ticker or name; sector; watchlist (all stocks, S&P 500 onl
 
 Table: one row per stock. Columns: Stock (ticker, signal dot, flags beside the ticker, company name under it), Verdict, Lean, BUY, SELL, then G, H, I, J, K. No flags column and no outer-letter columns (they live in the ledger). Column widths: 190, 112, 52, 52, 52, 44, 44, 44, 44, 44. The table keeps this tight size and never stretches to fill space. Every header sorts.
 
-Tiles view (the opening view; "the rows are for testing"): the panel is full width, the stocks are tiles grouped by sector, each tile shows the ticker and the number for the chosen colour view, with a ring for a held-back verdict and a dot for a signal.
+Tiles view (the opening view; "the rows are for testing"): the stocks are tiles grouped by sector, in the right half like the table, each tile shows the ticker and the number for the chosen colour view, with a ring for a held-back verdict and a dot for a signal.
 
 The Hover switch (on by default, remembered on the device) turns every hover-over display on or off: the readings on tiles, cells and ledger boxes, and the notes. With it off, the notes still open on a click and a stock still opens its write-up.
 
@@ -300,6 +300,7 @@ What rests on the owner's judgement, not on a test: the timing hold-back, the ve
 
 ## 12. Changes
 
+- 2026-11-13 1:40 PM PT, code.TRADE, the owner's asks ("the size cannot change when we go from table to tiles"; then "shrink its width so that it lines up with the ask desk"): both views now share the table's layout of two equal halves and the tiles scroll inside the right half as the table does, so switching views never changes the panel's size; under 860 pixels both sit in a box of one fixed height. From 1120 pixels up the panel ends on the Ask the desk panel's right edge (no 1356-pixel cap). Section 6 rewritten to match. No scoring rule changed.
 - 2026-11-13 10:50 AM PT, code.TRADE, a reading of G (Codex review of PR #370), for INVEST to confirm: G scores ABOVE and BELOW, so a close exactly ON its average earns nothing on either side, and a cross needs a day strictly on the other side (a touch is not a cross, as in rule 3). The first build counted a close on the average as below, which gave SELL points to a flat price. No number changed.
 - 2026-11-13 9:30 AM PT, code.TRADE: step 1 built (the owner's "Start step 1 now"): the panel, its scorer and its write-up on made-up data under `?demo=1`, hidden on the live site; section 13 added to say where each part lives. No scoring rule changed. The demo's "today" is the last completed session (after 16:15 ET), as section 3 says.
 - 2026-11-13 9:15 AM PT, code.TRADE, INVEST's correction at 9:10 AM PT (replaces the 8:51 answer on rule 3): rule 3 is the plain cross of the long-term %K, with no %D test. BUY: under 30 the session before, at or over 30 now; SELL: over 80 the session before, at or under 80 now; a touch does not count. Reason: "%K above %D" came from the morning scan, which is now off, and the owner does not recognise it as his rule; the plain cross matches his daily phone alert. The panel's rule 3 dot now differs from the morning scan's definition on purpose.

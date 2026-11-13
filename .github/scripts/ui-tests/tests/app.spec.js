@@ -12766,9 +12766,24 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await page.mouse.move(1, 1);
   await expect(page.locator('.ly-note .ly-pop').first(), 'closed once the pointer leaves').toBeHidden();
 
-  // 7. Table view: one row a stock; BUY sorts both ways.
+  // 7. Table view: one row a stock; BUY sorts both ways. The panel keeps its size: switching from tiles to table
+  // moves none of its edges (owner 2026-11-13: "the size cannot change when we go from table to tiles"). It starts on
+  // the Stochastic charts' left edge; from the desk row's 1120px gate up it ends on Ask the desk's right edge ("shrink
+  // its width so that it lines up with the ask desk"), and below it, wider than a phone, on the charts' right edge.
+  const lyBox = () => page.evaluate(() => {
+    const r = document.getElementById('layersPanel').getBoundingClientRect(), c = document.querySelector('.area-charts').getBoundingClientRect();
+    const a = document.querySelector('section[aria-labelledby="askTitle"]').getBoundingClientRect();
+    return { l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height), cl: Math.round(c.left), cr: Math.round(c.right), ar: Math.round(a.right) };
+  });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const tilesBox = await lyBox();
   await page.locator('#layersView [data-v="table"]').click();
   await expect(page.locator('#layersGrid tbody tr')).toHaveCount(total);
+  const tableBox = await lyBox();
+  expect(tableBox, 'tiles and table: the same panel size').toEqual(tilesBox);
+  const vw = (page.viewportSize() || { width: 0 }).width;
+  if (vw >= 1120) expect([tableBox.l, tableBox.r], 'from the charts\' left edge to Ask the desk\'s right edge').toEqual([tableBox.cl, tableBox.ar]);
+  else if (vw > 640) expect([tableBox.l, tableBox.r], 'stacked desk row: as wide as the Stochastic charts').toEqual([tableBox.cl, tableBox.cr]);
   // Flag P (VIX at 30 or more: the demo's VIX is) sits beside every ticker, not only in the write-up.
   expect(await page.evaluate(() => lyData.outer.panic), 'the demo VIX is over 30').toBe(true);
   await expect(page.locator('#layersGrid tbody tr .ly-st-top .ly-pill', { hasText: /^Panic$/ })).toHaveCount(total);
