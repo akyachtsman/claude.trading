@@ -5,6 +5,7 @@
    loadData(opts)        scripts/data.js in a fresh `vm` context with stub storage and a
                          settable clock; returns the context, so every top-level function
                          and `const` the file declares is reachable by name (`ctx.fmtPct`).
+                         `also: ['scripts/layers.js']` runs more page scripts after it, in order.
    loadEdge(name, names) supabase/functions/<name>/index.ts transpiled with the PINNED
                          esbuild (`npm ci --prefix tools` once) and run in a fresh `vm`
                          context with `Deno.serve` captured and `fetch` stubbed. The
@@ -38,7 +39,7 @@ function memStorage() {
   };
 }
 
-export function loadData({ now = Date.parse('2026-10-14T17:00:00Z'), search = '', extra = {} } = {}) {
+export function loadData({ now = Date.parse('2026-10-14T17:00:00Z'), search = '', extra = {}, also = [] } = {}) {
   const clock = { now };
   const ctx = {
     console, Intl, Math, JSON, Date: clockedDate(clock), clock,
@@ -51,6 +52,7 @@ export function loadData({ now = Date.parse('2026-10-14T17:00:00Z'), search = ''
   vm.createContext(ctx);
   vm.runInContext(readFileSync(path.join(ROOT, 'scripts/config.js'), 'utf8'), ctx, { filename: 'config.js' });
   vm.runInContext(readFileSync(path.join(ROOT, 'scripts/data.js'), 'utf8'), ctx, { filename: 'data.js' });
+  for (const f of also) vm.runInContext(readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: path.basename(f) });
   // Top-level `const`/`let` live in the context's lexical scope, not on the global object:
   // reach them through a getter evaluated inside the context.
   return new Proxy(ctx, {

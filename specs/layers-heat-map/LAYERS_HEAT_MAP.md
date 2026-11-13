@@ -1,6 +1,6 @@
 # Layers Heat Map: the rules in one file
 
-Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Not built yet. Last change: 2026-11-13 8:51 AM PT (section 12).
+Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Built on made-up data (step 1, section 13); hidden on the live site until its daily feed is approved. Last change: 2026-11-13 9:30 AM PT (section 12).
 The master copy is this file, `specs/layers-heat-map/LAYERS_HEAT_MAP.md` in claude.trading. The rules were written in project INVEST; the panel is built and kept by project code.TRADE.
 
 ## 0. How this file is used
@@ -161,11 +161,12 @@ Change in the stock (adjusted close) minus the change in the benchmark: against 
 - Daily peaking / Daily bottoming: the daily stochastic is over 80 / under 20, with its value.
 
 ### Rule signals (a dot beside the ticker; the week's signals, since Monday)
-The panel marks a stock where rule 1 (BUY), rule 2 (SELL) or rule 3 fired this week, with the date. Whether a score should also need a rule to have fired is OPEN QUESTION 3. The definitions below are the owner's (2026-11-13); where the simulation's code differs, these win. Every stochastic here is the long-term 92-15-15 line (%K and its %D), from the dashboard's own code.
+The panel marks a stock where rule 1 (BUY), rule 2 (SELL) or rule 3 fired this week, with the date. Whether a score should also need a rule to have fired is OPEN QUESTION 3. The definitions below are the owner's (2026-11-13); where the simulation's code differs, these win. Every stochastic here is the long-term 92-15-15 %K line, from the dashboard's own code.
 
-Rule 3 (the dashboard's definition, as in its morning scan):
-- BUY: %K at or under 30 yesterday, over 30 today, and %K above %D.
-- SELL: %K at or over 80 yesterday, under 80 today, and %K below %D.
+Rule 3 (the plain cross of the long-term %K, with no %D test; owner, 2026-11-13, via INVEST at 9:10 AM PT, matching his daily phone alert):
+- BUY: %K under 30 on the session before, and at or over 30 now.
+- SELL: %K over 80 on the session before, and at or under 80 now.
+- A touch does not count: %K sitting exactly on the line the session before is not a cross.
 
 Rules 1 and 2. Days 1 to 3 are the run, day 3 is the session tested, and day 0 is the session before day 1.
 - Rule 1 BUY needs all of:
@@ -277,7 +278,7 @@ Questions 5 to 7 (rule 3 crossings, written rules 1 and 2, the phone ledger) wer
 
 - Earnings dates (the calendar is not connected; Yahoo publishes them, one more request per stock).
 - Confirmed economic release dates, a leader's report date (flag O), and the Fed and AAII labels.
-- A daily refresh: the simulation is one snapshot, the close of 2026-11-12.
+- Real data: the panel runs on made-up data under `?demo=1` only, and stays hidden on the live site until its daily feed (step 2, section 13) is approved by the owner and deployed.
 - Funds and indexes; every Nasdaq and Dow stock.
 
 ## 10. What the tests showed (6 years of daily bars, today's S&P 500 members, so winners are over-counted)
@@ -299,10 +300,26 @@ What rests on the owner's judgement, not on a test: the timing hold-back, the ve
 
 ## 12. Changes
 
-- 2026-11-13 8:51 AM PT, code.TRADE, the owner's answers relayed by INVEST: rule 3 is the dashboard's crossing on the long-term lines (with %K above or below %D); rules 1 and 2 are written out (section 4, Rule signals), and these numbers win over the simulation's code; on a phone the ledger wraps into rows of two boxes, no sideways swipe (section 6). Open questions 5 to 7 closed.
+- 2026-11-13 9:30 AM PT, code.TRADE: step 1 built (the owner's "Start step 1 now"): the panel, its scorer and its write-up on made-up data under `?demo=1`, hidden on the live site; section 13 added to say where each part lives. No scoring rule changed. The demo's "today" is the last completed session (after 16:15 ET), as section 3 says.
+- 2026-11-13 9:15 AM PT, code.TRADE, INVEST's correction at 9:10 AM PT (replaces the 8:51 answer on rule 3): rule 3 is the plain cross of the long-term %K, with no %D test. BUY: under 30 the session before, at or over 30 now; SELL: over 80 the session before, at or under 80 now; a touch does not count. Reason: "%K above %D" came from the morning scan, which is now off, and the owner does not recognise it as his rule; the plain cross matches his daily phone alert. The panel's rule 3 dot now differs from the morning scan's definition on purpose.
+- 2026-11-13 8:51 AM PT, code.TRADE, the owner's answers relayed by INVEST: rule 3 is the dashboard's crossing on the long-term lines (with %K above or below %D; replaced at 9:15 AM PT); rules 1 and 2 are written out (section 4, Rule signals), and these numbers win over the simulation's code; on a phone the ledger wraps into rows of two boxes, no sideways swipe (section 6). Open questions 5 to 7 closed.
 - 2026-11-13 8:40 AM PT, code.TRADE: this file moved into claude.trading as the only master (owner: "push everything over to code.trade", "I want this panel to be contained in one single MD file"); section 0 rewritten to say so; the private simulation link taken out (the repository is public). INVEST's answers to code.TRADE's build plan written in: letter H gives no point on an exact 1.0 tie; the watchlist stocks' sector comes from Yahoo's profile mapped to GICS (section 2); the adjusted/plain close split and the dashboard's stochastic differences (section 3); hand-typed inputs stay out of live and ruling D is met with the dashboard's own table and dialog (section 7); "after the close" means the first visit after 16:15 ET (section 3). Open questions 5 to 7 added for the owner.
 - 2026-11-13 7:35 AM PT: the owner's rulings A to H written into section 7; the panel sits right above the Stochastic charts panel; the build is code.TRADE's.
 - 2026-11-13 7:25 AM PT, Version 20: a thin outline around the panel and a 10-pixel margin to the right of and below the chart, so the panel's right edge shows.
 - 2026-11-13 12:03 AM PT, Version 19: a Hover on/off switch beside the note buttons.
 - 2026-11-12 11:50 PM PT, Version 18: the two halves sit side by side from a window 860 pixels wide (was 1100), because the owner's window is narrower.
 - 2026-11-12 11:38 PM PT, Version 17: first issue of this file. Table view is two equal halves; the filter row heads the chart; the ledger is four equal boxes and twelve equal boxes; the whole panel is the chart's width.
+
+## 13. In the app (code.TRADE)
+
+Where each part of this file lives in claude.trading. Changing a number here means changing it there, in the same pull request, with its test.
+
+| Part | Where | What it holds |
+|---|---|---|
+| Every point value, cut-off, verdict line, hold-back line and colour divisor | `scripts/layers.js`, `LAYERS_RULES` (stamped `v20`) | ONE frozen table; a new issue of the rules is an edit to it and its tests, nothing else |
+| The scoring (A to K, the lean, the verdict, the hold-back, the flags, rules 1 to 3) | `scripts/layers.js`, `layersScore` | runs in the visitor's browser, on the dashboard's own `stochSeries` (92-15-15 and 14-3-3), never the charts' dashed partial line |
+| The made-up data | `scripts/layers.js`, `buildDemoLayersInput` | generic large caps and invented tickers, never a holding; every signal kind, a held-back verdict and all five verdicts appear |
+| The panel and the write-up | `index.html` (`#layersPanel`, `#layersDetailBackdrop`), `scripts/app.js` (`startLayers`, `renderLayers`, `openLayersDetail`), `styles/layout.css` (`.ly-*`) | the write-up opens through the dashboard's `openModal` (ruling E); the table and dialog are the dashboard's own (ruling D) |
+| Tests | `tools/unit/layers.test.mjs` (a worked example for every letter, the rules, the verdicts, the colour pairs); the browser scenario S82 in `.github/scripts/ui-tests/tests/app.spec.js` | run by CI on every pull request |
+
+Steps: step 1 (the panel on made-up data, hidden live) is built. Step 2 is the daily feed, a new edge function `desk-layers` that gathers the inputs and serves them (no scoring on the server); it needs the owner's approval to deploy (ruling H). Step 3 switches the panel on in live once that feed is deployed and checked.

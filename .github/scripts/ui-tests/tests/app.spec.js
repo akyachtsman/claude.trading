@@ -12668,3 +12668,141 @@ test('S81: the owner changes the desk PIN to a passphrase — only while unlocke
   await expect(btn, 'Lock takes the control away').toHaveCount(0);
   expect(errs, 'no page errors').toEqual([]);
 });
+
+// S82 — The Layers Heat Map (step 1, 2026-11-13; specs/layers-heat-map/LAYERS_HEAT_MAP.md). On the demo: it sits
+// right above the Stochastic charts, carries its lamp and stamp, the ledger (A–D, eleven sectors, Labels), the
+// filters (sector box, search, signals only), the BUY / SELL views, the sortable table, the hover card, a note and
+// the write-up dialog (through openModal: focus in, Escape out, focus back) — and nothing scrolls the page sideways.
+// In live it stays HIDDEN until its feed is deployed (real data or nothing).
+test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its write-up, and stays hidden in live', async ({ page, renderWitness, browser }, testInfo) => {
+  renderWitness();
+  test.setTimeout(120_000);
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  await gotoDemo(page, '#layersGrid .ly-tile', 20000);
+  const panel = page.locator('#layersPanel');
+  const noSideways = async (what) => {
+    const w = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    expect(w[0], what + ': the page does not scroll sideways').toBeLessThanOrEqual(w[1] + 1);
+  };
+
+  // 1. Place, lamp, stamp.
+  expect(await panel.evaluate(p => p.nextElementSibling && p.nextElementSibling.classList.contains('area-charts')), 'right above the charts').toBe(true);
+  await expect(page.locator('#layersLamp')).toHaveText('Demo');
+  await expect(page.locator('#layersStamp')).toContainText('Demo data · close of');
+  const total = await page.evaluate(() => lyData.stocks.length);
+  expect(total).toBeGreaterThan(40);
+  await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(total);
+  await expect(page.locator('#layersCount')).toHaveText(`${total} of ${total} stocks`);
+
+  // 2. The ledger: A–D and Labels, eleven sectors; a box opens its detail, a sector filters.
+  await expect(page.locator('#layersLedger [data-out]')).toHaveCount(5);
+  await expect(page.locator('#layersLedger [data-sec]')).toHaveCount(11);
+  const a = page.locator('#layersLedger [data-out="A"]');
+  await a.click();
+  await expect(a).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#layersCard')).toBeVisible();
+  await expect(page.locator('#layersCard')).toContainText('Brent oil');
+  await a.click();
+  await expect(page.locator('#layersCard')).toBeHidden();
+  const energy = page.locator('#layersLedger [data-sec="7"]');
+  await energy.click();
+  await expect(energy).toHaveAttribute('aria-pressed', 'true');
+  const nEnergy = await page.evaluate(() => lyData.stocks.filter(s => s.sec === 7).length);
+  await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(nEnergy);
+  await expect(page.locator('#layersClear')).toBeVisible();
+  await page.locator('#layersClear').click();
+  await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(total);
+  await expect(page.locator('#layersClear')).toBeHidden();
+
+  // 3. Search, then signals only.
+  await page.locator('#layersQ').fill('msft');
+  await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(1);
+  await expect(page.locator('#layersGrid .ly-tile')).toHaveAttribute('data-sym', 'MSFT');
+  await page.locator('#layersQ').fill('zzzz');
+  await expect(page.locator('#layersGrid .ly-empty')).toContainText('No stocks match');
+  await page.locator('#layersGrid .ly-clear-search').click();
+  await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(total);
+  const nSig = await page.evaluate(() => lyData.stocks.filter(s => s.sig.length).length);
+  expect(nSig, 'the demo carries rule signals').toBeGreaterThan(0);
+  await expect(page.locator('#layersNSig')).toHaveText(`(${nSig})`);
+  await page.locator('#layersSig').check();
+  await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(nSig);
+  await page.locator('#layersSig').uncheck();
+
+  // 4. BUY points: every tile shows its BUY score.
+  await page.locator('#layersMode [data-m="buy"]').click();
+  await expect(page.locator('#layersMode [data-m="buy"]')).toHaveAttribute('aria-pressed', 'true');
+  const buyOk = await page.evaluate(() => [...document.querySelectorAll('#layersGrid .ly-tile')].every(t =>
+    t.querySelector('.ly-tv').textContent === String(lyData.stocks.find(s => s.sym === t.dataset.sym).L)));
+  expect(buyOk, 'BUY view shows the BUY score').toBe(true);
+  await page.locator('#layersMode [data-m="lean"]').click();
+  await noSideways('tiles');
+
+  // 5. The hover card (a pointer that hovers; a touch screen has none).
+  if (!testInfo.project.use.hasTouch) {
+    const tile = page.locator('#layersGrid .ly-tile').first();
+    const sym = await tile.getAttribute('data-sym');
+    await tile.hover();
+    await expect(page.locator('#layersTip')).toBeVisible();
+    await expect(page.locator('#layersTip')).toContainText(sym);
+    await page.mouse.move(1, 1);
+    await expect(page.locator('#layersTip')).toBeHidden();
+    await page.locator('#layersHover').click();
+    await expect(page.locator('#layersHover')).toHaveAttribute('aria-pressed', 'false');
+    await tile.hover();
+    await page.waitForTimeout(300);
+    await expect(page.locator('#layersTip'), 'Hover off: no card').toBeHidden();
+    await page.locator('#layersHover').click();
+  }
+
+  // 6. A note opens and Escape closes it.
+  const note = page.locator('.ly-note > button').first();
+  await note.click();
+  await expect(note).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.ly-note .ly-pop').first()).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(note).toHaveAttribute('aria-expanded', 'false');
+  await page.mouse.move(1, 1);
+  await expect(page.locator('.ly-note .ly-pop').first(), 'closed once the pointer leaves').toBeHidden();
+
+  // 7. Table view: one row a stock; BUY sorts both ways.
+  await page.locator('#layersView [data-v="table"]').click();
+  await expect(page.locator('#layersGrid tbody tr')).toHaveCount(total);
+  const buyCol = () => page.locator('#layersGrid tbody td[data-k="L"]').allTextContents();
+  await page.locator('#layersGrid [data-sort="L"]').click();
+  await expect(page.locator('#layersGrid th:has([data-sort="L"])')).toHaveAttribute('aria-sort', 'descending');
+  let v = (await buyCol()).map(Number);
+  expect(v, 'BUY, highest first').toEqual([...v].sort((x, y) => y - x));
+  await page.locator('#layersGrid [data-sort="L"]').click();
+  await expect(page.locator('#layersGrid th:has([data-sort="L"])')).toHaveAttribute('aria-sort', 'ascending');
+  v = (await buyCol()).map(Number);
+  expect(v, 'BUY, lowest first').toEqual([...v].sort((x, y) => x - y));
+  await noSideways('table');
+
+  // 8. The write-up opens through openModal: focus inside, the page behind inert, Escape closes, focus returns.
+  const opener = page.locator('#layersGrid .ly-name').first();
+  const sym = await opener.textContent();
+  await opener.click();
+  const dlg = page.locator('#layersDetailBackdrop');
+  await expect(dlg).toBeVisible();
+  await expect(page.locator('#layersDetailTitle')).toContainText(sym);
+  await expect(page.locator('#layersDetailClose')).toBeFocused();
+  await expect(page.locator('#layersDetailBody svg').first()).toBeVisible();
+  expect(await page.evaluate(() => !!document.getElementById('layersPanel').closest('[inert]')), 'the panel behind is inert').toBe(true);
+  expect(await fitChecked(page.locator('#layersDetailBackdrop .modal-panel')), 'the write-up fits the screen').toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(dlg).toBeHidden();
+  await expect(opener).toBeFocused();
+  expect(errs, 'no page errors on the demo').toEqual([]);
+
+  // 9. Live: the panel stays hidden (real data or nothing). The backend is answered here, never reached.
+  const live = await browser.newPage();
+  await live.route(`${LIVE_BACKEND}/**`, r => r.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' }));
+  await live.goto(new URL('./', page.url()).href);
+  await live.waitForFunction(() => typeof DESK !== 'undefined' && DESK.mode !== 'demo', null, { timeout: 20000 });
+  await live.waitForTimeout(1500);
+  await expect(live.locator('#layersPanel')).toBeHidden();
+  expect(await live.evaluate(() => [document.getElementById('layersPanel').hidden, lyData === null]), 'hidden, and nothing scored').toEqual([true, true]);
+  await live.close();
+});
