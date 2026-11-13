@@ -1,6 +1,6 @@
 # Layers Heat Map: the rules in one file
 
-Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Not built yet. Last change: 2026-11-13 8:40 AM PT (section 12).
+Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Not built yet. Last change: 2026-11-13 8:51 AM PT (section 12).
 The master copy is this file, `specs/layers-heat-map/LAYERS_HEAT_MAP.md` in claude.trading. The rules were written in project INVEST; the panel is built and kept by project code.TRADE.
 
 ## 0. How this file is used
@@ -161,7 +161,25 @@ Change in the stock (adjusted close) minus the change in the benchmark: against 
 - Daily peaking / Daily bottoming: the daily stochastic is over 80 / under 20, with its value.
 
 ### Rule signals (a dot beside the ticker; the week's signals, since Monday)
-The rules themselves live in INVEST's trading strategies file and are not redefined here. The panel only marks a stock where rule 1 (BUY), rule 2 (SELL) or rule 3 (13-week stochastic crossing up through 30 = BUY, down through 80 = SELL; real crosses only) fired this week, with the date. OPEN QUESTION 3.
+The panel marks a stock where rule 1 (BUY), rule 2 (SELL) or rule 3 fired this week, with the date. Whether a score should also need a rule to have fired is OPEN QUESTION 3. The definitions below are the owner's (2026-11-13); where the simulation's code differs, these win. Every stochastic here is the long-term 92-15-15 line (%K and its %D), from the dashboard's own code.
+
+Rule 3 (the dashboard's definition, as in its morning scan):
+- BUY: %K at or under 30 yesterday, over 30 today, and %K above %D.
+- SELL: %K at or over 80 yesterday, under 80 today, and %K below %D.
+
+Rules 1 and 2. Days 1 to 3 are the run, day 3 is the session tested, and day 0 is the session before day 1.
+- Rule 1 BUY needs all of:
+  - on each of days 1 to 3, the close is at least 1.5% above the prior close and above that day's open;
+  - the lowest low of the 60 sessions ending on day 3 was set no more than 10 sessions before day 1, or during the run;
+  - day 0's close is no more than 8% above that low;
+  - %K rises on each of days 1 to 3 and is at or under 30 on day 3;
+  - it fires on day 3 only (day 0 is not itself a strong up day).
+- Rule 2 SELL is the mirror:
+  - on each of days 1 to 3, the close is at least 1.5% below the prior close and below that day's open;
+  - the highest high of the 60 sessions ending on day 3 was set no more than 10 sessions before day 1, or during the run;
+  - day 0's close is no more than 8% below that high;
+  - %K falls on each of days 1 to 3 and is at or over 70 on day 3;
+  - it fires on day 3 only (day 0 is not itself a strong down day).
 
 ## 5. Colours and type
 
@@ -177,7 +195,7 @@ One self-contained dark panel with a thin outline. Nothing reaches past the edge
 Table view, on a wide screen, is two equal halves side by side, the same width and the same height:
 - LEFT half, top to bottom: title with the draft mark and the "as of" line; a Hover on/off switch and three note buttons at the top right (How to read it, Cautions, Not in yet) that open on hover, on keyboard focus and on tap; the ledger; the colour scale and one line of footnote at the bottom.
 - RIGHT half: the filter row as the chart's heading, then the table. The table scrolls inside the half; its header stays in view. The left half sets the height.
-- Each half is 678 pixels wide when there is room (panel 1356). On a narrower screen both halves shrink equally and the table columns keep their proportions (29%, 16.5%, three at 7.5%, five at 6.4%). Under 860 pixels the halves stack, at 678 wide. On a phone the panel is full width and the ledger is one row that swipes sideways.
+- Each half is 678 pixels wide when there is room (panel 1356). On a narrower screen both halves shrink equally and the table columns keep their proportions (29%, 16.5%, three at 7.5%, five at 6.4%). Under 860 pixels the halves stack, at 678 wide. On a phone the panel is full width and the ledger wraps into rows of two boxes, with no sideways swipe (owner, 2026-11-13).
 
 The ledger (the layers that stocks share):
 - "Global and national": four equal boxes, A and B on the first row, C and D on the second. Each shows its name, its points ("B 5 · S 1 of 8") and its readings in short form.
@@ -252,15 +270,13 @@ Hand-typed inputs (agreed 2026-11-13): the app shows real data or nothing, so th
 2. The hard 80 and 20 lines in the timing hold-back, or a gradual rule (a penalty that grows above 65, mirrored under 35)?
 3. Should "the right time" also need rule 1, 2 or 3 to have fired? Today several energy stocks show Strong BUY in the week a rule 3 SELL fired.
 4. Keep the Labels box or drop it?
-5. Rule 3 crossings: the simulation's (13-week %K under 30 yesterday and 30 or more today, %D not looked at; mirror at 80) or the dashboard morning scan's (%K at or under 30 yesterday, over 30 today, AND %K above %D; mirror: at or over 80, under 80, %K below %D)? code.TRADE suggested the scan's, so the dot agrees with the charts.
-6. Rules 1 and 2 need a written definition in this file before the app can mark them; only the simulation's code defines them today. Until then the dots show rule 3 only, and the panel says so.
-7. On a phone, the ledger as one row that swipes sideways (a swipe past its end can turn into the browser's Back on an iPhone, because `overscroll-behavior` is banned), or wrapped into rows of two boxes, as the watchlist bands were (owner, 2026-10-04)? code.TRADE suggested wrapping.
+
+Questions 5 to 7 (rule 3 crossings, written rules 1 and 2, the phone ledger) were answered by the owner on 2026-11-13 and are written into sections 4 and 6.
 
 ## 9. Not in yet
 
 - Earnings dates (the calendar is not connected; Yahoo publishes them, one more request per stock).
 - Confirmed economic release dates, a leader's report date (flag O), and the Fed and AAII labels.
-- Rule 1 and rule 2 signals (open question 6).
 - A daily refresh: the simulation is one snapshot, the close of 2026-11-12.
 - Funds and indexes; every Nasdaq and Dow stock.
 
@@ -283,6 +299,7 @@ What rests on the owner's judgement, not on a test: the timing hold-back, the ve
 
 ## 12. Changes
 
+- 2026-11-13 8:51 AM PT, code.TRADE, the owner's answers relayed by INVEST: rule 3 is the dashboard's crossing on the long-term lines (with %K above or below %D); rules 1 and 2 are written out (section 4, Rule signals), and these numbers win over the simulation's code; on a phone the ledger wraps into rows of two boxes, no sideways swipe (section 6). Open questions 5 to 7 closed.
 - 2026-11-13 8:40 AM PT, code.TRADE: this file moved into claude.trading as the only master (owner: "push everything over to code.trade", "I want this panel to be contained in one single MD file"); section 0 rewritten to say so; the private simulation link taken out (the repository is public). INVEST's answers to code.TRADE's build plan written in: letter H gives no point on an exact 1.0 tie; the watchlist stocks' sector comes from Yahoo's profile mapped to GICS (section 2); the adjusted/plain close split and the dashboard's stochastic differences (section 3); hand-typed inputs stay out of live and ruling D is met with the dashboard's own table and dialog (section 7); "after the close" means the first visit after 16:15 ET (section 3). Open questions 5 to 7 added for the owner.
 - 2026-11-13 7:35 AM PT: the owner's rulings A to H written into section 7; the panel sits right above the Stochastic charts panel; the build is code.TRADE's.
 - 2026-11-13 7:25 AM PT, Version 20: a thin outline around the panel and a 10-pixel margin to the right of and below the chart, so the panel's right edge shows.
