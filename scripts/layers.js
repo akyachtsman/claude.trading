@@ -273,16 +273,20 @@ function layersMaSide(c, days, crossPts, sidePts, R = LAYERS_RULES) {
   const n = c.length, i = n - 1, label = days + '-day average';
   const ma = lySmaAt(c, days, i), px = lyNum(c[i]);
   if (!Number.isFinite(ma) || !Number.isFinite(px)) return [label, 'not enough history', 0, 0];
-  const ab = px > ma;
-  let before = 0, beforeAbove = 0;
+  // Section 4.G scores ABOVE and BELOW; a close exactly ON its average is
+  // neither, so it earns nothing, and a cross needs a strictly-other-side day
+  // (a touch is not a cross) — Codex P2, PR #370; logged in section 12.
+  const ab = px > ma, be = px < ma;
+  let beforeAbove = 0, beforeBelow = 0;
   for (let j = i - R.G.recent; j < i; j++) {
     const m = lySmaAt(c, days, j), v = lyNum(c[j]);
     if (!Number.isFinite(m) || !Number.isFinite(v)) continue;
-    before++; if (v > m) beforeAbove++;
+    if (v > m) beforeAbove++; else if (v < m) beforeBelow++;
   }
   const d = fmtPct(lyPct(px, ma));
-  if (ab && before && beforeAbove < before) return [label, 'crossed above within ' + R.G.recent + ' sessions (' + d + ')', crossPts, 0];
-  if (!ab && beforeAbove > 0) return [label, 'crossed below within ' + R.G.recent + ' sessions (' + d + ')', 0, crossPts];
+  if (!ab && !be) return [label, 'on the average (' + d + ')', 0, 0];
+  if (ab && beforeBelow > 0) return [label, 'crossed above within ' + R.G.recent + ' sessions (' + d + ')', crossPts, 0];
+  if (be && beforeAbove > 0) return [label, 'crossed below within ' + R.G.recent + ' sessions (' + d + ')', 0, crossPts];
   return [label, (ab ? 'above' : 'below') + ' (' + d + ')', ab ? sidePts : 0, ab ? 0 : sidePts];
 }
 function layersStreak(c) {

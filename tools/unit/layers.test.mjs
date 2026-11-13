@@ -159,6 +159,15 @@ test('G: above an average earns the side points, a cross within five sessions th
   const crossDown = ramp(50, 100, 259).concat([60]);
   assert.deepEqual(J_(d.layersMaSide(crossDown, 25, 4, 2).slice(2)), [0, 4]);
   assert.deepEqual(J_(d.layersMaSide(ramp(1, 2, 20), 200, 10, 5).slice(1)), ['not enough history', 0, 0]);
+  // A close exactly on its average is neither above nor below (Codex P2, PR #370).
+  const flat = Array(260).fill(100);
+  assert.deepEqual(J_(d.layersMaSide(flat, 200, 10, 5).slice(2)), [0, 0], 'flat: on the average, no points');
+  // Above its average for days, then the 25 closes of the window all equal: the last close sits ON the average.
+  const touch = ramp(50, 100, 235).concat(Array(25).fill(120));
+  assert.equal(d.lySmaAt(touch, 25, touch.length - 1), 120);
+  assert.deepEqual(J_(d.layersMaSide(touch, 25, 4, 2).slice(1)), ['on the average (+0.00%)', 0, 0], 'a touch from above is not a cross below');
+  const fromOn = Array(259).fill(100).concat([110]);
+  assert.deepEqual(J_(d.layersMaSide(fromOn, 25, 4, 2).slice(2)), [2, 0], 'leaving the average upward is above, not a cross');
   const G = d.lyLetter(d.LAYERS_RULES.G.avgs.map(([days, x, y]) => d.layersMaSide(up, days, x, y)));
   assert.deepEqual(LS(G), [5 + 3 + 2, 0]);
 });
