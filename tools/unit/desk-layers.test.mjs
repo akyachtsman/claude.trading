@@ -293,6 +293,8 @@ test('with no body yet a request moves the sweep on, stores what it fetched, and
   for (const c of s.calls) {
     const ua = Object.keys(c.init.headers || {}).some((k) => k.toLowerCase() === 'user-agent');
     assert.equal(ua, !c.url.startsWith('https://store.test/'), 'a user-agent goes to third parties only: ' + c.url);
+    // The desk's own name, never a copied Chrome string: Yahoo answered one 429 and FRED reset it (measured 2026-11-14).
+    if (ua) assert.match(c.init.headers['user-agent'], /^Mozilla\/5\.0 \(desk layers;/, c.url);
   }
 });
 test('the whole day: requests until every symbol is in, then ONE assembled body for the target', async () => {
