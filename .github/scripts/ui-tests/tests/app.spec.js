@@ -12867,7 +12867,7 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
     fgLast: fgLast || demo.fearGreed[demo.fearGreed.length - 1].d,
     excluded: [{ sym: 'QQQ', name: 'Invesco QQQ Trust', why: 'a fund' }],
   });
-  const CORS = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-layers-asof, x-layers-target, x-layers-done, x-layers-total' };
+  const CORS = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-layers-asof, x-layers-target, x-layers-done, x-layers-total, x-layers-failed' };
   const answers = [];
   const calls = [];
   const open = async (switchOn) => {
@@ -12878,7 +12878,7 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
       calls.push(Date.now());
       const a = answers.shift() || { status: 503 };
       if (a.status === 503) return r.fulfill({ status: 503, headers: CORS, contentType: 'application/json', body: '{}' });
-      const head = { ...CORS, 'x-layers-target': a.target, 'x-layers-done': String(a.done), 'x-layers-total': String(a.total) };
+      const head = { ...CORS, 'x-layers-target': a.target, 'x-layers-done': String(a.done), 'x-layers-total': String(a.total), ...(a.failed ? { 'x-layers-failed': '1' } : {}) };
       if (!a.payload) return r.fulfill({ status: 200, headers: head, contentType: 'application/json', body: JSON.stringify({ ok: true, ready: false, target: a.target, done: a.done, total: a.total }) });
       return r.fulfill({ status: 200, headers: { ...head, 'x-layers-asof': a.payload.asOf }, contentType: 'application/octet-stream', body: gzipSync(JSON.stringify(a.payload)) });
     });
@@ -12942,6 +12942,14 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
   await expect(live.locator('#layersLamp')).toHaveClass(/\blamp--stale\b/);
   await expect(live.locator('#layersStamp')).toContainText('feed unreachable');
   await expect(live.locator('#layersPanel')).toBeVisible();
+  await expect(live.locator('#layersGrid .ly-tile').first()).toBeVisible();
+
+  // 5b. The server answers with its last body but says its sweep failed (Codex P2, PR #372): STALE, never EOD.
+  answers.push({ target: next, done: 0, total: 0, payload: payload(), failed: true });
+  await live.evaluate(() => lyLivePoll());
+  await expect(live.locator('#layersLamp')).toHaveText('STALE');
+  await expect(live.locator('#layersLamp')).toHaveClass(/\blamp--stale\b/);
+  await expect(live.locator('#layersStamp')).toHaveText('Close of ' + day + ' · feed failing');
   await expect(live.locator('#layersGrid .ly-tile').first()).toBeVisible();
   await live.close();
 

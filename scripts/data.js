@@ -955,7 +955,9 @@ async function deskLayers() {
   const res = await deskPost('/functions/v1/desk-layers', {});
   if (!res.ok) throw new Error('desk-layers → HTTP ' + res.status);
   const num = k => { const v = Number(res.headers.get(k)); return Number.isFinite(v) ? v : null; };
-  const out = { target: res.headers.get('x-layers-target'), done: num('x-layers-done'), total: num('x-layers-total'), payload: null };
+  // `failed`: the server could not move its sweep and served its LAST body anyway — shown, but STALE.
+  const out = { target: res.headers.get('x-layers-target'), done: num('x-layers-done'), total: num('x-layers-total'),
+    failed: res.headers.get('x-layers-failed') === '1', payload: null };
   if (/octet-stream/.test(res.headers.get('content-type') || '')) {
     if (typeof DecompressionStream !== 'function') throw new Error('desk-layers: this browser cannot inflate the feed');
     const text = await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();

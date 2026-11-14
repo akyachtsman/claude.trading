@@ -359,8 +359,10 @@ test('a failed watchlist read is never an empty watchlist: no sweep before one r
   s.box.clock = e.clock;
   s.box.failWatch = true;
   for (let n = 0; n < 3; n++) {
-    const j = await (await e.handler(post())).json();
-    assert.equal(j.ready, false);
+    const res = await e.handler(post());
+    assert.equal(res.status, 503, 'a failed sweep with no body to fall back on is a failure, not "not ready"');
+    assert.equal(res.headers.get('x-layers-failed'), '1');
+    assert.equal((await res.json()).ok, false);
   }
   assert.ok(!s.calls.some((c) => c.url.includes('yahoo')), 'no sweep runs on a roster it could not read');
   s.box.failWatch = false;
@@ -372,4 +374,19 @@ test('a failed watchlist read is never an empty watchlist: no sweep before one r
   const p = JSON.parse(gunzipSync(Buffer.from(await res.arrayBuffer())));
   assert.ok(p.stocks.some((st) => st.s === 'PLTR'), 'the watchlist stock is still in the day');
   assert.ok(e.logs.some((l) => /watchlist read failed/.test(l)));
+});
+test('a failed sweep still serves the last body, but says so (x-layers-failed)', async () => {
+  const { gzipSync } = await import('node:zlib');
+  const gz = gzipSync(JSON.stringify({ ok: true, asOf: '2026-11-12' })).toString('base64');
+  const s = stubStore({ 'layers:body': { at: '2026-11-12T22:00:00Z', payload: { asOf: '2026-11-12', n: 450, gz } } });
+  s.box.failWatch = true;
+  const e = edge({ env: ENV, fetch: s.fetch, now: at('2026-11-14T02:00:00Z') });
+  const res = await e.handler(post());
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-layers-failed'), '1');
+  assert.equal(res.headers.get('x-layers-asof'), '2026-11-12');
+  assert.match(res.headers.get('access-control-expose-headers'), /x-layers-failed/);
+  s.box.failWatch = false;
+  const ok = await e.handler(post());
+  assert.equal(ok.headers.get('x-layers-failed'), null, 'a sweep that moves carries no failure mark');
 });

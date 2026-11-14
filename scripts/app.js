@@ -11554,9 +11554,9 @@ async function lyLivePoll() {
       if (scored.stocks.length) { lyData = scored; lyLive.fgLast = input.fgLast; fresh = true; }
     } catch (e) { console.warn('Layers: the feed did not decode', e && e.message); }
   }
-  lyLive = { ...lyLive, ok: !!r, target: r ? r.target : lyLive.target, done: r ? r.done : null, total: r ? r.total : null };
+  lyLive = { ...lyLive, ok: !!r && !r.failed, answered: !!r, target: r ? r.target : lyLive.target, done: r ? r.done : null, total: r ? r.total : null };
   const sec = document.getElementById('layersPanel');
-  const behind = !r || !lyData || (r.target && lyData.asOf < r.target);
+  const behind = !lyLive.ok || !lyData || (r.target && lyData.asOf < r.target);
   if (lyData && sec) {
     const first = sec.hidden;
     sec.hidden = false;
@@ -11576,7 +11576,7 @@ function lyPaintLiveLamp() {
   lamp.textContent = lyLive.ok ? 'EOD' : 'STALE';
   const gathering = lyLive.ok && lyLive.target && lyData.asOf < lyLive.target && lyLive.total
     ? ' · gathering ' + lyDay(lyLive.target) + ': ' + lyLive.done + ' of ' + lyLive.total : '';
-  stamp.textContent = 'Close of ' + lyDay(lyData.asOf) + gathering + (lyLive.ok ? '' : ' · feed unreachable');
+  stamp.textContent = 'Close of ' + lyDay(lyData.asOf) + gathering + (lyLive.ok ? '' : lyLive.answered ? ' · feed failing' : ' · feed unreachable');
 }
 
 /* ── the write-up (ruling E: a dialog through openModal, like the symbol window) ── */

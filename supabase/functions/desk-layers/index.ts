@@ -38,7 +38,7 @@ const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-  'Access-Control-Expose-Headers': 'x-layers-asof, x-layers-target, x-layers-done, x-layers-total',
+  'Access-Control-Expose-Headers': 'x-layers-asof, x-layers-target, x-layers-done, x-layers-total, x-layers-failed',
 };
 const reply = (status: number, body: unknown, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store', ...extra } });
@@ -624,16 +624,23 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   const target = targetSession(new Date());
   let state: { done: number; total: number; body: Body | null };
+  let failed = false;
   try {
     inflight ??= advance(target).finally(() => { inflight = null; });
     state = await inflight;
   } catch (e) {
+    /* The sweep could not move (roster, watchlist or store unreadable). The last
+       body is still served, but SAID to be served by a failing feed
+       (`x-layers-failed`), so the page lamps it STALE instead of EOD; with no
+       body there is nothing to serve and the reply is a plain failure. */
     console.error('desk-layers: step failed', scrubbed((e as Error)?.message || e));
+    failed = true;
     const body = await readBody().catch(() => null);
     state = { done: 0, total: 0, body };
   }
-  const head = { 'x-layers-target': target, 'x-layers-done': String(state.done), 'x-layers-total': String(state.total) };
-  if (!state.body) return reply(200, { ok: true, ready: false, target, done: state.done, total: state.total }, head);
+  const head: Record<string, string> = { 'x-layers-target': target, 'x-layers-done': String(state.done), 'x-layers-total': String(state.total) };
+  if (failed) head['x-layers-failed'] = '1';
+  if (!state.body) return failed ? reply(503, { ok: false, error: 'the sweep failed' }, head) : reply(200, { ok: true, ready: false, target, done: state.done, total: state.total }, head);
   return new Response(state.body.gz, {
     status: 200,
     headers: { ...CORS, ...head, 'x-layers-asof': state.body.asOf, 'content-type': 'application/octet-stream', 'cache-control': 'no-store' },
