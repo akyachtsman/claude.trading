@@ -11491,13 +11491,13 @@ function wireLayers() {
   if (close) close.addEventListener('click', () => closeModal(document.getElementById('layersDetailBackdrop')));
 }
 
-/* Step 1: demo only. Live keeps the section hidden — real data or nothing — until the daily feed (step 2) exists. */
+/* Demo draws made-up data at once; live shows the section only once the daily feed (desk-layers) has served a real payload. */
 function startLayers() {
   const sec = document.getElementById('layersPanel');
   if (!sec) return;
   if (DESK.mode !== 'demo') {
     /* Live is REAL DATA OR NOTHING: hidden until a real payload has been scored, and never asked at all until the
-       feed is switched on (DESK_LAYERS_LIVE, step 3 — after the owner's deploy). */
+       feed is switched on (DESK_LAYERS_LIVE, on since the owner's deploy of 2026-11-14). */
     sec.hidden = true;
     if (DESK_LAYERS_LIVE) lyLivePoll();
     return;

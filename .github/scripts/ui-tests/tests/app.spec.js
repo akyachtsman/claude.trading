@@ -88,6 +88,19 @@ const test = base.extend({
     context.off('response', onResponse);
     if (leaks.length) throw new Error(`PIN guard: ${leaks.length} fake PIN(s) reached the live backend (${[...new Set(leaks)].join(', ')}) — each one counts toward the desk lockout`);
   }, { auto: true }],
+  /* LAYERS FEED STUB (2026-11-14, the switch shipped ON). Every live page load would otherwise fetch desk-layers' ~2 MB
+     body from the real project (and, after the close, move its real sweep) — on every scenario that boots live, in four
+     projects. It is answered here as "not ready" (the panel stays hidden), except for the live-only scenarios, which
+     run against the deployed site in qa-live. S82 and S83 open their own pages (a new context) with their own stubs. */
+  layersFeedStub: [async ({ context }, use, testInfo) => {
+    if (!/live only/i.test(testInfo.title)) {
+      await context.route(`${LIVE_BACKEND}/functions/v1/desk-layers`, (route) => route.fulfill({
+        status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ ok: true, ready: false, target: '', done: 0, total: 0 }),
+      }));
+    }
+    await use();
+  }, { auto: true }],
   renderWitness: async ({ page }, use, testInfo) => {
     // Records NOTHING at setup: the body's own call is the witness.
     let recorded = false;
@@ -12839,9 +12852,9 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await live.close();
 });
 
-// S83 — The Layers Heat Map's live feed (step 2, 2026-11-14; desk-layers). The page never calls the feed while the
-// switch is off (DESK_LAYERS_LIVE, flipped only after the owner's deploy). With it on — the test rewrites config.js —
-// the panel stays hidden until a real payload has been scored, then shows it under an EOD lamp with the close it
+// S83 — The Layers Heat Map's live feed (desk-layers; step 2 built 2026-11-14, step 3 deployed and switched on the same
+// day). The switch ships ON (DESK_LAYERS_LIVE); with it off — the test rewrites config.js — the page never calls the
+// feed. With it on the panel stays hidden until a real payload has been scored, then shows it under an EOD lamp with the close it
 // is for; a sweep still gathering the next session is named in the stamp and does not rescore; a failed poll keeps
 // the render under a STALE lamp; a Fear & Greed history that stopped is called STALE. The payload is the demo input
 // encoded the way desk-layers encodes it (plain dates, cents, no dividend runs) and gzipped.
@@ -12882,18 +12895,18 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
       if (!a.payload) return r.fulfill({ status: 200, headers: head, contentType: 'application/json', body: JSON.stringify({ ok: true, ready: false, target: a.target, done: a.done, total: a.total }) });
       return r.fulfill({ status: 200, headers: { ...head, 'x-layers-asof': a.payload.asOf }, contentType: 'application/octet-stream', body: gzipSync(JSON.stringify(a.payload)) });
     });
-    if (switchOn) await live.route(/\/scripts\/config\.js/, async r => {
+    await live.route(/\/scripts\/config\.js/, async r => {
       const res = await r.fetch();
-      const body = (await res.text()).replace('const DESK_LAYERS_LIVE = false;', 'const DESK_LAYERS_LIVE = true;');
-      expect(body, 'the switch is in config.js, off').toContain('const DESK_LAYERS_LIVE = true;');
-      await r.fulfill({ response: res, body });
+      const shipped = await res.text();
+      expect(shipped, 'the switch is in config.js, on as shipped').toContain('const DESK_LAYERS_LIVE = true;');
+      await r.fulfill({ response: res, body: switchOn ? shipped : shipped.replace('const DESK_LAYERS_LIVE = true;', 'const DESK_LAYERS_LIVE = false;') });
     });
     await live.goto(new URL('./', page.url()).href);
     await live.waitForFunction(() => typeof DESK !== 'undefined' && DESK.mode !== 'demo', null, { timeout: 20000 });
     return live;
   };
 
-  // 1. Switch off (as shipped): the feed is never asked, the panel stays hidden.
+  // 1. Switched off (the way back, no deploy): the feed is never asked, the panel stays hidden.
   let live = await open(false);
   await live.waitForTimeout(1500);
   expect(calls.length, 'switched off: desk-layers is never called').toBe(0);
