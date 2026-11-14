@@ -17,3 +17,7 @@ const DESK_DB = {
   url: 'https://kwugzhyfjevzwgplhtsd.supabase.co',
   anonKey: 'sb_publishable_5SCxDQzd0D7aEbbgG3C_3w_4cvGNP0E',
 };
+/* The Layers Heat Map's live feed (desk-layers). OFF until the owner has approved and deployed the function (ruling H)
+   and its first daily sweep has been checked — that switch is step 3 of specs/layers-heat-map/LAYERS_HEAT_MAP.md
+   section 13. While it is false the live panel stays hidden and the page never calls the function. */
+const DESK_LAYERS_LIVE = false;

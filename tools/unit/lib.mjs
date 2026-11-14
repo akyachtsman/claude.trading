@@ -93,6 +93,7 @@ export function loadEdge(name, names = [], opts = {}) {
     fetch: opts.fetch || (() => Promise.reject(new Error('network is off in unit tests'))),
     Response, Request, Headers, AbortSignal, AbortController, URL, URLSearchParams, Intl, TextEncoder, TextDecoder,
     setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask, structuredClone, crypto: globalThis.crypto, atob, btoa,
+    Blob, CompressionStream, DecompressionStream, ReadableStream, Uint8Array,
     Date: clockedDate(clock), clock,
     console: opts.console || { log: rec, info: rec, warn: rec, error: rec, debug: rec },
   };

@@ -11335,6 +11335,11 @@ function renderLayersNotYet() {
   if (ex.length) add('Left out: ' + ex.map(e => e.sym + ' (' + e.why + ')').join(', ') + '. The letters are built for single stocks priced in dollars with at least ' + LAYERS_RULES.minSessions + ' sessions of history.');
   add('Every Nasdaq and Dow stock outside the S&P 500 (the owner\'s "not now, but later").');
   if (lyData.source === 'demo') add('Real data: this is the demo, made-up numbers. The live panel waits for its daily feed.');
+  if (lyData.source === 'live') {
+    const fg = lyLive.fgLast;
+    if (!fg) add('CNN Fear & Greed: no reading came with the feed, so its line in letter D is not available.');
+    else if ((Date.parse(lyData.asOf) - Date.parse(fg)) / 86400000 > 7) add('CNN Fear & Greed is STALE: its history file stopped on ' + lyDay(fg) + ', and letter D still uses that last reading.');
+  }
 }
 
 /* ── the hover readings (Hover switch; never on touch, which opens the write-up instead) ── */
@@ -11490,11 +11495,15 @@ function wireLayers() {
 function startLayers() {
   const sec = document.getElementById('layersPanel');
   if (!sec) return;
-  if (DESK.mode !== 'demo') { sec.hidden = true; return; }
+  if (DESK.mode !== 'demo') {
+    /* Live is REAL DATA OR NOTHING: hidden until a real payload has been scored, and never asked at all until the
+       feed is switched on (DESK_LAYERS_LIVE, step 3 — after the owner's deploy). */
+    sec.hidden = true;
+    if (DESK_LAYERS_LIVE) lyLivePoll();
+    return;
+  }
   sec.hidden = false;
-  lyLoadPrefs();
-  wireLayers();
-  lySyncHover();
+  lyWireOnce();
   /* scored off the first paint: the rest of the page draws first, then ~50 demo stocks are scored in the browser */
   setTimeout(() => {
     lyData = layersScore(buildDemoLayersInput(new Date()));
@@ -11504,6 +11513,67 @@ function startLayers() {
     renderLayersNotYet();
     renderLayers();
   }, 0);
+}
+
+let lyStarted = false;
+function lyWireOnce() {
+  if (lyStarted) return;
+  lyStarted = true;
+  lyLoadPrefs();
+  wireLayers();
+  lySyncHover();
+}
+/* ── the live feed (step 2): desk-layers, polled while today's sweep is behind ──
+   One request a minute while the feed is still gathering today's session (each request also moves that sweep on), and
+   every 30 minutes once it is current; nothing while the tab is hidden. A payload is decoded and scored only when its
+   session is new, so a poll that changes nothing repaints nothing but the lamp line. A failed poll keeps the last good
+   render under a STALE lamp; with no render yet the panel stays hidden. */
+const LY_POLL_BEHIND_MS = 60_000, LY_POLL_CURRENT_MS = 30 * 60_000;
+let lyPollTimer = 0, lyPolling = false, lyLive = { fgLast: null, target: null, done: null, total: null, ok: false };
+function lyLiveSchedule(ms) {
+  clearTimeout(lyPollTimer);
+  lyPollTimer = setTimeout(() => {
+    if (document.hidden) document.addEventListener('visibilitychange', function back() {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', back);
+      lyLivePoll();
+    });
+    else lyLivePoll();
+  }, ms);
+}
+async function lyLivePoll() {
+  if (lyPolling) return;
+  lyPolling = true;
+  let r = null;
+  try { r = await deskLayers(); } catch (e) { r = null; }
+  lyPolling = false;
+  if (r && r.payload && (!lyData || lyData.asOf !== r.payload.asOf)) {
+    try {
+      const input = layersDecode(r.payload);
+      const scored = layersScore(input);
+      if (scored.stocks.length) { lyData = scored; lyLive.fgLast = input.fgLast; }
+    } catch (e) { console.warn('Layers: the feed did not decode', e && e.message); }
+  }
+  lyLive = { ...lyLive, ok: !!r, target: r ? r.target : lyLive.target, done: r ? r.done : null, total: r ? r.total : null };
+  const sec = document.getElementById('layersPanel');
+  const behind = !r || !lyData || (r.target && lyData.asOf < r.target);
+  if (lyData && sec) {
+    const first = sec.hidden;
+    sec.hidden = false;
+    lyWireOnce();
+    lyPaintLiveLamp();
+    if (first || (r && r.payload)) { renderLayersNotYet(); renderLayers(); }
+  }
+  lyLiveSchedule(behind ? LY_POLL_BEHIND_MS : LY_POLL_CURRENT_MS);
+}
+function lyPaintLiveLamp() {
+  const lamp = document.getElementById('layersLamp'), stamp = document.getElementById('layersStamp');
+  if (!lyData || !lamp || !stamp) return;
+  lamp.className = 'lamp ' + (lyLive.ok ? 'lamp--eod' : 'lamp--stale');
+  lamp.textContent = lyLive.ok ? 'EOD' : 'STALE';
+  const gathering = lyLive.ok && lyLive.target && lyData.asOf < lyLive.target && lyLive.total
+    ? ' · gathering ' + lyDay(lyLive.target) + ': ' + lyLive.done + ' of ' + lyLive.total : '';
+  stamp.textContent = 'Close of ' + lyDay(lyData.asOf) + gathering + (lyLive.ok ? '' : ' · feed unreachable');
 }
 
 /* ── the write-up (ruling E: a dialog through openModal, like the symbol window) ── */

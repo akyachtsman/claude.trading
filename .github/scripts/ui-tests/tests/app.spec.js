@@ -12,6 +12,7 @@
 
 import { test as base, expect } from '@playwright/test';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fitProblems, FIT_INCOMPLETE } from './lib/fit.js';
 
@@ -12835,5 +12836,116 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await live.waitForTimeout(1500);
   await expect(live.locator('#layersPanel')).toBeHidden();
   expect(await live.evaluate(() => [document.getElementById('layersPanel').hidden, lyData === null]), 'hidden, and nothing scored').toEqual([true, true]);
+  await live.close();
+});
+
+// S83 — The Layers Heat Map's live feed (step 2, 2026-11-14; desk-layers). The page never calls the feed while the
+// switch is off (DESK_LAYERS_LIVE, flipped only after the owner's deploy). With it on — the test rewrites config.js —
+// the panel stays hidden until a real payload has been scored, then shows it under an EOD lamp with the close it
+// is for; a sweep still gathering the next session is named in the stamp and does not rescore; a failed poll keeps
+// the render under a STALE lamp; a Fear & Greed history that stopped is called STALE. The payload is the demo input
+// encoded the way desk-layers encodes it (plain dates, cents, no dividend runs) and gzipped.
+const lyEncode = (b) => {
+  const cents = x => Math.round(x * 100), c = b.c.map(cents);
+  const n = c.length, z = k => (b[k] || b.c);
+  return { t: b.t, c: c.map((v, i) => (i ? v - c[i - 1] : v)), o: z('o').map((x, i) => cents(x) - c[i]), h: z('h').map((x, i) => cents(x) - c[i]),
+    l: z('l').map((x, i) => cents(x) - c[i]), v: (b.v || new Array(n).fill(0)).map(x => Math.round(x)) };
+};
+test('S83: the Layers panel loads its live feed only when switched on, and shows real data or nothing', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await gotoDemo(page, '#layersGrid .ly-tile', 20000);
+  const demo = await page.evaluate(() => buildDemoLayersInput(new Date()));
+  const prev = (iso, k) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - k); return d.toISOString().slice(0, 10); };
+  const fgOld = prev(demo.asOf, 20);
+  const payload = (fgLast) => ({
+    ok: true, v: 1, asOf: demo.asOf, built: 'x', cal: [],
+    market: Object.fromEntries(Object.entries(demo.market).map(([k, b]) => [k, lyEncode(b)])),
+    funds: Object.fromEntries(Object.entries(demo.funds).map(([k, b]) => [k, lyEncode(b)])),
+    stocks: demo.stocks.map(s => ({ s: s.sym, n: s.name, sec: s.sector, sub: s.sub, sp: s.sp ? 1 : 0, b: lyEncode(s.bars) })),
+    fred: Object.fromEntries(Object.entries(demo.fred).map(([k, a]) => [k, a.map(x => [x.d, x.v])])),
+    fg: (fgLast ? demo.fearGreed.filter(x => x.d <= fgLast) : demo.fearGreed).map(x => [x.d, x.v]),
+    fgLast: fgLast || demo.fearGreed[demo.fearGreed.length - 1].d,
+    excluded: [{ sym: 'QQQ', name: 'Invesco QQQ Trust', why: 'a fund' }],
+  });
+  const CORS = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-layers-asof, x-layers-target, x-layers-done, x-layers-total' };
+  const answers = [];
+  const calls = [];
+  const open = async (switchOn) => {
+    const live = await browser.newPage();
+    await live.route(`${LIVE_BACKEND}/**`, r => r.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' }));
+    await live.route(`${LIVE_BACKEND}/functions/v1/desk-layers`, r => {
+      if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 200, headers: { ...CORS, 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' } });
+      calls.push(Date.now());
+      const a = answers.shift() || { status: 503 };
+      if (a.status === 503) return r.fulfill({ status: 503, headers: CORS, contentType: 'application/json', body: '{}' });
+      const head = { ...CORS, 'x-layers-target': a.target, 'x-layers-done': String(a.done), 'x-layers-total': String(a.total) };
+      if (!a.payload) return r.fulfill({ status: 200, headers: head, contentType: 'application/json', body: JSON.stringify({ ok: true, ready: false, target: a.target, done: a.done, total: a.total }) });
+      return r.fulfill({ status: 200, headers: { ...head, 'x-layers-asof': a.payload.asOf }, contentType: 'application/octet-stream', body: gzipSync(JSON.stringify(a.payload)) });
+    });
+    if (switchOn) await live.route(/\/scripts\/config\.js/, async r => {
+      const res = await r.fetch();
+      const body = (await res.text()).replace('const DESK_LAYERS_LIVE = false;', 'const DESK_LAYERS_LIVE = true;');
+      expect(body, 'the switch is in config.js, off').toContain('const DESK_LAYERS_LIVE = true;');
+      await r.fulfill({ response: res, body });
+    });
+    await live.goto(new URL('./', page.url()).href);
+    await live.waitForFunction(() => typeof DESK !== 'undefined' && DESK.mode !== 'demo', null, { timeout: 20000 });
+    return live;
+  };
+
+  // 1. Switch off (as shipped): the feed is never asked, the panel stays hidden.
+  let live = await open(false);
+  await live.waitForTimeout(1500);
+  expect(calls.length, 'switched off: desk-layers is never called').toBe(0);
+  await expect(live.locator('#layersPanel')).toBeHidden();
+  await live.close();
+
+  // 2. Switched on, the first sweep not finished: still hidden, nothing scored.
+  answers.push({ target: demo.asOf, done: 40, total: 590 });
+  live = await open(true);
+  await expect.poll(() => calls.length, { timeout: 15000 }).toBe(1);
+  await live.waitForTimeout(500);
+  expect(await live.evaluate(() => [document.getElementById('layersPanel').hidden, lyData === null])).toEqual([true, true]);
+
+  // 3. A payload: scored and shown, EOD, the close it is for; the demo's own line is not there.
+  answers.push({ target: demo.asOf, done: 590, total: 590, payload: payload() });
+  await live.evaluate(() => lyLivePoll());
+  await expect(live.locator('#layersPanel')).toBeVisible();
+  await expect(live.locator('#layersGrid .ly-tile').first()).toBeVisible();
+  const n = await live.evaluate(() => lyData.stocks.length);
+  expect(n, 'every demo stock with enough history is scored').toBeGreaterThan(40);
+  await expect(live.locator('#layersLamp')).toHaveText('EOD');
+  await expect(live.locator('#layersLamp')).toHaveClass(/\blamp--eod\b/);
+  const day = await live.evaluate(() => lyDay(lyData.asOf));
+  await expect(live.locator('#layersStamp')).toHaveText('Close of ' + day);
+  expect(await live.evaluate(() => lyData.source)).toBe('live');
+  const notYet = live.locator('#layersNotYet');
+  await expect(notYet).toContainText('QQQ (a fund)');
+  await expect(notYet).not.toContainText('this is the demo');
+  await expect(notYet).not.toContainText('Fear & Greed');
+
+  // 4. The next session is still being gathered: named in the stamp, nothing rescored.
+  const next = prev(demo.asOf, -1);
+  await live.evaluate(() => { window.__lyBefore = lyData; });
+  answers.push({ target: next, done: 120, total: 590, payload: payload() });
+  await live.evaluate(() => lyLivePoll());
+  await expect(live.locator('#layersStamp')).toHaveText(new RegExp('^Close of ' + day.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' · gathering .+: 120 of 590$'));
+  expect(await live.evaluate(() => window.__lyBefore === lyData), 'the same session is not scored again').toBe(true);
+
+  // 5. A failed poll keeps the render, STALE.
+  answers.push({ status: 503 });
+  await live.evaluate(() => lyLivePoll());
+  await expect(live.locator('#layersLamp')).toHaveText('STALE');
+  await expect(live.locator('#layersLamp')).toHaveClass(/\blamp--stale\b/);
+  await expect(live.locator('#layersStamp')).toContainText('feed unreachable');
+  await expect(live.locator('#layersPanel')).toBeVisible();
+  await expect(live.locator('#layersGrid .ly-tile').first()).toBeVisible();
+  await live.close();
+
+  // 6. A Fear & Greed history that stopped 20 days back is called STALE.
+  answers.push({ target: demo.asOf, done: 590, total: 590, payload: payload(fgOld) });
+  live = await open(true);
+  await expect(live.locator('#layersPanel')).toBeVisible({ timeout: 20000 });
+  await expect(live.locator('#layersNotYet')).toContainText('CNN Fear & Greed is STALE');
   await live.close();
 });
