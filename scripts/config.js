@@ -17,7 +17,8 @@ const DESK_DB = {
   url: 'https://kwugzhyfjevzwgplhtsd.supabase.co',
   anonKey: 'sb_publishable_5SCxDQzd0D7aEbbgG3C_3w_4cvGNP0E',
 };
-/* The Layers Heat Map's live feed (desk-layers). OFF until the owner has approved and deployed the function (ruling H)
-   and its first daily sweep has been checked — that switch is step 3 of specs/layers-heat-map/LAYERS_HEAT_MAP.md
-   section 13. While it is false the live panel stays hidden and the page never calls the function. */
-const DESK_LAYERS_LIVE = false;
+/* The Layers Heat Map's live feed (desk-layers). ON since 2026-11-14 (step 3 of specs/layers-heat-map/LAYERS_HEAT_MAP.md
+   section 13): the owner approved the deploy ("Deploy it now", ruling H) and the first daily sweep was checked. Set it
+   back to false to take the panel out of live with no deploy: the panel then stays hidden and the page never calls
+   the function. */
+const DESK_LAYERS_LIVE = true;
