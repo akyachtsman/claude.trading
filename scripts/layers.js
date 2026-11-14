@@ -8,7 +8,7 @@
    the dashboard's OWN stochSeries with WSTOCH (92-15-15, the "13-week" line) and STOCH (14-3-3) from data.js — never a
    second copy of the maths, and never stochPartial (a picture, never a signal).
 
-   Input (what the daily feed will serve in step 2; ?demo=1 builds it with buildDemoLayersInput):
+   Input (layersDecode builds it from the daily feed, desk-layers; ?demo=1 builds it with buildDemoLayersInput):
      { asOf: 'YYYY-MM-DD', source,
        market: { brent, dxy, acwx, tnx, vix, hyg, ief, spy, gspc }   each { t, c, a? } (a = adjusted close)
        funds:  { XLK: { t, c, a }, … }                                 the eleven sector funds
@@ -415,6 +415,67 @@ function layersSignals(b, wk, asOf, R = LAYERS_RULES) {
     for (const name of layersRuleAt(b, wk, i, R)) sig.unshift([name, b.t[i]]);
   }
   return sig;
+}
+
+/* ── the live feed's payload → the input above (step 2; desk-layers encodes, this decodes) ──
+   desk-layers sends whole cents: the close as a running difference from the bar before, open/high/low as a difference
+   from their own close, the adjusted close as the close times a factor sent in runs [first index, factor], and the
+   dates as positions in one shared calendar `cal` (a series names its first position `t0` and the positions it skips
+   `sk`, or sends its own dates `t`). A series that does not decode is dropped, never half-built: the scorer then says
+   "not available" (outer letters) or leaves the stock out. Pure, so tools/unit/desk-layers.test.mjs round-trips it
+   against the function's encoder. */
+const LY_ISO = /^\d{4}-\d{2}-\d{2}$/;
+function layersDecodeBars(e, cal) {
+  if (!e || !Array.isArray(e.c) || !e.c.length) return null;
+  const n = e.c.length;
+  if (![e.o, e.h, e.l, e.v].every(a => Array.isArray(a) && a.length === n)) return null;
+  let t;
+  if (Array.isArray(e.t)) t = e.t.slice();
+  else {
+    if (!Array.isArray(cal) || !Number.isInteger(e.t0)) return null;
+    const skip = new Set(Array.isArray(e.sk) ? e.sk : []);
+    t = [];
+    for (let i = e.t0; t.length < n && i < cal.length; i++) if (!skip.has(i)) t.push(cal[i]);
+  }
+  if (t.length !== n || !t.every(d => LY_ISO.test(d))) return null;
+  const c = [], o = [], h = [], l = [], v = [];
+  let run = 0;
+  for (let i = 0; i < n; i++) {
+    run = i ? run + e.c[i] : e.c[i];
+    if (![run, e.o[i], e.h[i], e.l[i], e.v[i]].every(Number.isFinite)) return null;
+    c.push(run / 100); o.push((run + e.o[i]) / 100); h.push((run + e.h[i]) / 100); l.push((run + e.l[i]) / 100); v.push(e.v[i]);
+  }
+  const out = { t, o, h, l, c, v };
+  if (Array.isArray(e.af) && e.af.length) {
+    const a = new Array(n);
+    let k = 0, f = 1;
+    for (let i = 0; i < n; i++) {
+      while (k < e.af.length && e.af[k][0] <= i) { f = Number(e.af[k][1]); k++; }
+      a[i] = Math.round(c[i] * f * 100) / 100;
+    }
+    if (a.every(Number.isFinite)) out.a = a;
+  }
+  return out;
+}
+function layersDecode(p) {
+  if (!p || typeof p !== 'object' || !LY_ISO.test(String(p.asOf)) || !Array.isArray(p.cal)) throw new Error('not a Layers payload');
+  const cal = p.cal, obj = x => (x && typeof x === 'object' ? x : {});
+  const series = src => { const out = {}; for (const [k, e] of Object.entries(obj(src))) { const b = layersDecodeBars(e, cal); if (b) out[k] = b; } return out; };
+  const pairs = arr => (Array.isArray(arr) ? arr : []).filter(r => Array.isArray(r) && LY_ISO.test(String(r[0])) && Number.isFinite(Number(r[1]))).map(r => ({ d: r[0], v: Number(r[1]) }));
+  const f = obj(p.fred);
+  const stocks = [];
+  for (const s of Array.isArray(p.stocks) ? p.stocks : []) {
+    const bars = layersDecodeBars(s && s.b, cal);
+    if (!bars || typeof s.s !== 'string') continue;
+    stocks.push({ sym: s.s, name: String(s.n || s.s), sector: String(s.sec || ''), sub: String(s.sub || ''), sp: s.sp === 1 || s.sp === true, bars });
+  }
+  const excluded = (Array.isArray(p.excluded) ? p.excluded : []).filter(x => x && typeof x.sym === 'string').map(x => ({ sym: x.sym, name: String(x.name || x.sym), why: String(x.why || '') }));
+  return {
+    asOf: p.asOf, source: 'live', built: p.built || null, fgLast: LY_ISO.test(String(p.fgLast)) ? p.fgLast : null,
+    market: series(p.market), funds: series(p.funds),
+    fred: { core: pairs(f.core), unrate: pairs(f.unrate), payems: pairs(f.payems) },
+    fearGreed: pairs(p.fg), stocks, excluded,
+  };
 }
 
 /* ── everything ───────────────────────────────────────────────────────────── */

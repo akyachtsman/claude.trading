@@ -944,6 +944,32 @@ async function deskFeed(name, params) {
   return out;
 }
 
+/* ── Layers Heat Map feed (step 2; specs/layers-heat-map/LAYERS_HEAT_MAP.md section 13) ─────────
+   desk-layers answers either the newest complete payload as GZIP BYTES (content-type application/octet-stream,
+   ~1.6 MB; the page inflates it itself, so nothing depends on a gateway passing a content-encoding through) or, before
+   the first daily sweep has finished, a small JSON `{ok, ready:false, done, total}`. Either way the headers say which
+   session is wanted (`x-layers-target`) and how far today's sweep has got (`x-layers-done` / `x-layers-total`), and a
+   request ADVANCES that sweep, so the page asks again while it is behind. Throws on any failure: the caller keeps its
+   last good render (real data or nothing). */
+async function deskLayers() {
+  const res = await deskPost('/functions/v1/desk-layers', {});
+  if (!res.ok) throw new Error('desk-layers → HTTP ' + res.status);
+  const num = k => { const v = Number(res.headers.get(k)); return Number.isFinite(v) ? v : null; };
+  // `failed`: the server could not move its sweep and served its LAST body anyway — shown, but STALE.
+  const out = { target: res.headers.get('x-layers-target'), done: num('x-layers-done'), total: num('x-layers-total'),
+    failed: res.headers.get('x-layers-failed') === '1', payload: null };
+  if (/octet-stream/.test(res.headers.get('content-type') || '')) {
+    if (typeof DecompressionStream !== 'function') throw new Error('desk-layers: this browser cannot inflate the feed');
+    const text = await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
+    out.payload = JSON.parse(text);
+    if (!out.payload || out.payload.ok !== true) throw new Error('desk-layers: not a payload');
+    return out;
+  }
+  const j = await res.json().catch(() => null);
+  if (!j || j.ok !== true) throw new Error('desk-layers → ' + (j && j.error ? j.error : 'unreadable reply'));
+  return out;
+}
+
 /* ── Economy panel feed + demo rows (owner request 2026-09-30) ───────────────
    deskEcon() is the ONE live call: desk-econ answers {ok, generatedAt,
    refreshInSec, range, stale, rows:[…]} (specs/economy-indicators/spec.md §5).
