@@ -43,11 +43,14 @@ const CORS = {
 const reply = (status: number, body: unknown, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store', ...extra } });
 
-const UA_BROWSER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 /* For OUTBOUND third-party calls only (Yahoo, FRED, GitHub). NEVER on this
    project's own REST calls: the gateway refuses the secret key from anything
-   that looks like a browser (CLAUDE.md, 2026-07-29). */
-const UA = { 'user-agent': UA_BROWSER };
+   that looks like a browser (CLAUDE.md, 2026-07-29).
+   The desk's own honest name, as quote-proxy, desk-charts and desk-econ send on
+   these same hosts — never a copied Chrome string: measured 2026-11-14, Yahoo
+   answered a Chrome user-agent 429 on the chart and crumb calls and FRED reset
+   the connection, while this one got 200 from all three. */
+const UA = { 'user-agent': 'Mozilla/5.0 (desk layers; +https://akyachtsman.github.io/claude.trading/)' };
 
 const CONSTITUENTS_URL = 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv';
 const FEAR_GREED_URL = 'https://raw.githubusercontent.com/whit3rabbit/fear-greed-data/main/fear-greed.csv';
