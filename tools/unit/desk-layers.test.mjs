@@ -76,6 +76,9 @@ test('the eleven sectors and funds are the scorer\'s own table, and Yahoo\'s sec
   assert.equal(new Set(Object.values(e.YAHOO_SECTORS)).size, 11);
   assert.deepEqual(J_(Object.keys(e.MARKET)).sort(), ['acwx', 'brent', 'dxy', 'gspc', 'hyg', 'ief', 'spy', 'tnx', 'vix']);
   assert.equal(e.yahooTicker('brk.b'), 'BRK-B');
+  assert.equal(e.yahooTicker('BF.B'), 'BF-B');
+  assert.equal(e.yahooTicker('DX-Y.NYB'), 'DX-Y.NYB', 'an exchange suffix keeps its dot');
+  for (const sym of J_(Object.values(e.MARKET))) if (!/\.[A-Z]$/.test(sym)) assert.equal(e.yahooTicker(sym), sym);
 });
 
 // ── Yahoo's chart reply ──────────────────────────────────────────────────────
@@ -231,13 +234,14 @@ const ENV = { SUPABASE_URL: 'https://store.test', SUPABASE_SERVICE_ROLE_KEY: 'sk
 function stubStore(seed = {}) {
   const rows = new Map(Object.entries(seed));
   const calls = [];
-  const box = { clock: null };   // set once the function is loaded: each chart then costs 400 ms of its clock
+  const box = { clock: null, failRows: false, failWatch: false };   // clock: set once the function is loaded, each chart then costs 400 ms of it
   const fetch = async (u, init = {}) => {
     const url = String(u);
     calls.push({ url, init });
     if (url.startsWith('https://store.test/rest/v1/desk_feed_cache')) {
       const hasUA = Object.keys(init.headers || {}).some((k) => k.toLowerCase() === 'user-agent');
       if (hasUA) return new Response('{"message":"Forbidden use of secret API key in browser"}', { status: 401 });
+      if (init.method === 'POST' && box.failRows && JSON.parse(init.body).some((r) => r.key.startsWith('layers:y:'))) return new Response('{}', { status: 500 });
       if (init.method === 'POST') { for (const r of JSON.parse(init.body)) rows.set(r.key, { at: r.at, payload: r.payload }); return new Response(null, { status: 201 }); }
       const q = new URL(url).searchParams;
       const keyQ = q.get('key') || '';
@@ -247,7 +251,7 @@ function stubStore(seed = {}) {
       return Response.json(keys.map((k) => ({ key: k, at: rows.get(k).at, payload: rows.get(k).payload,
         last: rows.get(k).payload?.last ?? null, sector: rows.get(k).payload?.sector ?? null, ind: rows.get(k).payload?.ind ?? null })));
     }
-    if (url.startsWith('https://store.test/rest/v1/desk_watchlists')) return Response.json([{ symbols: ['PLTR'] }]);
+    if (url.startsWith('https://store.test/rest/v1/desk_watchlists')) return box.failWatch ? new Response('{}', { status: 503 }) : Response.json([{ symbols: ['PLTR'] }]);
     if (url.includes('constituents.csv')) return new Response(csv());
     if (url.includes('/v8/finance/chart/')) { if (box.clock) box.clock.now += 400; return Response.json(chart(DAYS.slice(0, 5))); }
     if (url.startsWith('https://fc.yahoo.com')) return new Response('', { headers: { 'set-cookie': 'A3=x; path=/' } });
@@ -324,4 +328,48 @@ test('a sweep that ends with too few stocks never replaces the body', async () =
   assert.equal(j.done, j.total, 'every symbol answered');
   assert.equal(s.rows.has('layers:body'), false);
   assert.ok(e.logs.some((l) => /assembly refused, 1 stocks/.test(l)), e.logs.join('\n'));
+});
+test('the dollar index is asked of Yahoo by its own symbol, dot and all', async () => {
+  const s = stubStore();
+  const e = edge({ env: ENV, fetch: s.fetch, now: at('2026-11-14T02:00:00Z') });
+  s.box.clock = e.clock;
+  for (let n = 0; n < 40 && !s.calls.some((c) => c.url.includes('/chart/DX-Y.NYB?')); n++) { await e.handler(post()); e.clock.now += 1000; }
+  assert.ok(s.calls.some((c) => c.url.includes('/v8/finance/chart/DX-Y.NYB?')));
+  assert.ok(!s.calls.some((c) => c.url.includes('DX-Y-NYB')));
+});
+test('a failed store write moves nothing on: those symbols are fetched again and no body is built without them', async () => {
+  const s = stubStore();
+  const e = edge({ env: ENV, fetch: s.fetch, now: at('2026-11-14T02:00:00Z') });
+  s.box.clock = e.clock;
+  s.box.failRows = true;
+  let res;
+  for (let n = 0; n < 40; n++) { res = await e.handler(post()); e.clock.now += 1000; }
+  const j = await res.json();
+  assert.equal(j.ready, false);
+  assert.equal(j.done, 0, 'nothing counts as in while nothing was stored');
+  assert.equal(s.rows.has('layers:body'), false);
+  s.box.failRows = false;
+  let n = 0;
+  do { res = await e.handler(post()); n++; e.clock.now += 1000; } while (res.headers.get('content-type') !== 'application/octet-stream' && n < 80);
+  assert.equal(JSON.parse(gunzipSync(Buffer.from(await res.arrayBuffer()))).stocks.length, 411);
+});
+test('a failed watchlist read is never an empty watchlist: no sweep before one read, and a later failure keeps it', async () => {
+  const s = stubStore();
+  const e = edge({ env: ENV, fetch: s.fetch, now: at('2026-11-14T02:00:00Z') });
+  s.box.clock = e.clock;
+  s.box.failWatch = true;
+  for (let n = 0; n < 3; n++) {
+    const j = await (await e.handler(post())).json();
+    assert.equal(j.ready, false);
+  }
+  assert.ok(!s.calls.some((c) => c.url.includes('yahoo')), 'no sweep runs on a roster it could not read');
+  s.box.failWatch = false;
+  await e.handler(post());                         // one good read
+  s.box.failWatch = true;
+  e.clock.now += 2 * 3600_000;                     // past the hour the roster is kept: it reads again, and fails
+  let res, n = 0;
+  do { res = await e.handler(post()); n++; e.clock.now += 1000; } while (res.headers.get('content-type') !== 'application/octet-stream' && n < 80);
+  const p = JSON.parse(gunzipSync(Buffer.from(await res.arrayBuffer())));
+  assert.ok(p.stocks.some((st) => st.s === 'PLTR'), 'the watchlist stock is still in the day');
+  assert.ok(e.logs.some((l) => /watchlist read failed/.test(l)));
 });

@@ -12926,9 +12926,12 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
 
   // 4. The next session is still being gathered: named in the stamp, nothing rescored.
   const next = prev(demo.asOf, -1);
-  await live.evaluate(() => { window.__lyBefore = lyData; });
+  // The panel is not rebuilt either (Codex P2, PR #372): the same tile node and the keyboard focus on it survive the poll.
+  await live.evaluate(() => { window.__lyBefore = lyData; window.__lyTile = document.querySelector('#layersGrid .ly-tile'); window.__lyTile.focus(); });
   answers.push({ target: next, done: 120, total: 590, payload: payload() });
   await live.evaluate(() => lyLivePoll());
+  expect(await live.evaluate(() => window.__lyTile.isConnected && document.activeElement === window.__lyTile),
+    'an unchanged day leaves the panel as it was (no rebuild, focus kept)').toBe(true);
   await expect(live.locator('#layersStamp')).toHaveText(new RegExp('^Close of ' + day.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' · gathering .+: 120 of 590$'));
   expect(await live.evaluate(() => window.__lyBefore === lyData), 'the same session is not scored again').toBe(true);
 

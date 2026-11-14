@@ -11544,14 +11544,14 @@ function lyLiveSchedule(ms) {
 async function lyLivePoll() {
   if (lyPolling) return;
   lyPolling = true;
-  let r = null;
+  let r = null, fresh = false;
   try { r = await deskLayers(); } catch (e) { r = null; }
   lyPolling = false;
   if (r && r.payload && (!lyData || lyData.asOf !== r.payload.asOf)) {
     try {
       const input = layersDecode(r.payload);
       const scored = layersScore(input);
-      if (scored.stocks.length) { lyData = scored; lyLive.fgLast = input.fgLast; }
+      if (scored.stocks.length) { lyData = scored; lyLive.fgLast = input.fgLast; fresh = true; }
     } catch (e) { console.warn('Layers: the feed did not decode', e && e.message); }
   }
   lyLive = { ...lyLive, ok: !!r, target: r ? r.target : lyLive.target, done: r ? r.done : null, total: r ? r.total : null };
@@ -11562,7 +11562,10 @@ async function lyLivePoll() {
     sec.hidden = false;
     lyWireOnce();
     lyPaintLiveLamp();
-    if (first || (r && r.payload)) { renderLayersNotYet(); renderLayers(); }
+    /* Rebuild only for a NEW scored day (or the first reveal): the same day comes
+       back on every poll while the next one gathers, and a rebuild would throw
+       the reader back to the top and drop keyboard focus each minute. */
+    if (first || fresh) { renderLayersNotYet(); renderLayers(); }
   }
   lyLiveSchedule(behind ? LY_POLL_BEHIND_MS : LY_POLL_CURRENT_MS);
 }

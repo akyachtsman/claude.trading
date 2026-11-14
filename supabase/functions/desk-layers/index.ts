@@ -96,7 +96,10 @@ export const YAHOO_SECTORS: Record<string, string> = {
 export const SYM_RE = /^[A-Z0-9.^=-]{1,10}$/;   // the dashboard's WL_SYM_RE
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 /* Yahoo spells a class share with a dash (BRK-B); the roster with a dot. */
-export const yahooTicker = (sym: string) => sym.trim().toUpperCase().replace(/\./g, '-');
+/* Yahoo writes a share class with a dash (BRK.B → BRK-B) but keeps an exchange
+   suffix's dot (DX-Y.NYB): only a dot before ONE final letter is a class (the
+   rule desk-watchlist's toYahoo uses). */
+export const yahooTicker = (sym: string) => sym.trim().toUpperCase().replace(/\.([A-Z])$/, '-$1');
 
 // ── the trading calendar (New York) ──────────────────────────────────────────
 const NY_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -420,11 +423,18 @@ async function loadRoster(): Promise<Roster> {
   if (rosterCache && Date.now() - rosterCache.at < 3600_000) return rosterCache;
   const members = parseConstituents(await getText(CONSTITUENTS_URL));
   const set = new Set(members.map((m) => m.sym));
-  let watch: string[] = [];
+  /* A failed watchlist read is NOT an empty watchlist: a day assembled without
+     it would leave out every non-S&P watchlist stock until the next session. So
+     it throws (this request serves the stored body and the next one tries
+     again), or keeps the watchlist an earlier read in this isolate got. */
   const res = await fetch(`${storeUrl()}/rest/v1/desk_watchlists?select=symbols`, { headers: storeHeaders(), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }).catch(() => null);
-  if (res && res.ok) watch = watchSymbols(await res.json().catch(() => []), set);
-  else console.warn('desk-layers: watchlist read failed', res ? res.status : 'no answer');   // status only
-  rosterCache = { members, watch, at: Date.now() };
+  const rows = res && res.ok ? await res.json().catch(() => null) : null;
+  if (!Array.isArray(rows)) {
+    console.warn('desk-layers: watchlist read failed', res ? res.status : 'no answer');   // status only
+    if (!rosterCache) throw new Error('watchlist read failed');
+    return { members, watch: rosterCache.watch, at: rosterCache.at };   // not cached: the next request reads again
+  }
+  rosterCache = { members, watch: watchSymbols(rows, set), at: Date.now() };
   return rosterCache;
 }
 export function rosterSymbols(r: { members: Member[]; watch: string[] }): string[] {
@@ -482,7 +492,10 @@ async function sweepStep(target: string, roster: Roster, progress: Progress): Pr
     }
   };
   await Promise.all(Array.from({ length: Math.min(LANES, todo.length) }, lane));
-  await writeRows(out);
+  /* Progress moves only for rows that were STORED: assembly reads the store, so
+     a failed write must leave these symbols to be fetched again, never let an
+     older row stand in for the session. */
+  if (!(await writeRows(out))) return 0;
   for (const r of out) {
     // deno-lint-ignore no-explicit-any
     const p = r.payload as any;
