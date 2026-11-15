@@ -11947,6 +11947,7 @@ let simTrades = [];                 /* [{ id, sym, side, qty, mult, entry, note,
 const simQuotes = new Map();        /* sym → { price, prev, bid, ask, series, at, err } */
 let simLoadAgain = false;
 let simTab = 'open', simLoaded = false, simLoading = null, simErr = '', simDemoId = 0, simTimer = 0, simWired = false;
+let simFor = '';                    /* the mode simTrades was read for: demo trades never stay in memory once the page runs live */
 const SIM_POLL_OPEN_MS = 60_000, SIM_POLL_SHUT_MS = 15 * 60_000;
 
 const simOn = () => DESK.mode === 'demo' || (DESK_SIM_LIVE && DESK.authed);
@@ -11974,9 +11975,17 @@ function simSnapshot(sym) {
   };
 }
 
+/* Live is real data or nothing: trades (and their prices) read for one mode are dropped the moment the page runs in
+   another, so made-up demo trades are never drawn, or priced through the real quote feed, on a live page. */
+function simModeCheck() {
+  if (simFor === DESK.mode) return;
+  simTrades = []; simLoaded = false; simQuotes.clear(); simErr = ''; simFor = DESK.mode;
+}
+
 /* ── storage: demo in memory, live through the PIN RPCs (step 2) ── */
 async function simLoad() {
   if (!simOn()) return;
+  simModeCheck();
   if (DESK.mode === 'demo') {
     if (!simLoaded && lyData) { simTrades = simDemoTrades(); simLoaded = true; }
     return;
@@ -12387,6 +12396,7 @@ async function simRepaint() {
     renderSim();
     return;
   }
+  simModeCheck();
   renderSim();
   await simLoad();
   await simRefreshQuotes(false);

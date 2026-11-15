@@ -13265,6 +13265,21 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   await page.keyboard.press('Escape');
   await expect(page.locator('#simTradeBackdrop')).toBeHidden();
 
+  // the demo's made-up trades never outlive the mode they were made for: this page forced live (the way S68 and
+  // others do) drops them and prices nothing through the real quote feed (WebKit raised six CORS page errors when
+  // they were priced from a CI runner, PR #376)
+  const flipped = await page.evaluate(async () => {
+    const asked = [];
+    window.deskQuote = (sym) => { asked.push(sym); return Promise.resolve({ ok: false }); };
+    window.deskSimList = () => Promise.resolve({ ok: false, error: 'refused' });
+    DESK.mode = 'live'; DESK.authed = true;
+    await simRepaint();
+    const out = { trades: simTrades.length, rows: document.querySelectorAll('#simPanel .sim-row').length, asked };
+    DESK.mode = 'demo'; DESK.authed = false;
+    return out;
+  });
+  expect(flipped, 'forced live: no demo trade kept, drawn or priced').toEqual({ trades: 0, rows: 0, asked: [] });
+
   expect(errs, 'no page errors').toEqual([]);
 
   // Live, through the REAL boot of an unlocked desk with the table's doors stubbed in the browser (nothing reaches
