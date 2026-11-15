@@ -12702,6 +12702,12 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   test.setTimeout(120_000);
   const errs = [];
   page.on('pageerror', e => errs.push(String(e)));
+  // A "ResizeObserver loop" is a pageerror in WebKit only (S42 on the iPad went red on one, PR #375): Chromium fires it
+  // as a window error event and nothing more, so it is counted here, where every project sees it.
+  await page.addInitScript(() => {
+    window.__roLoops = [];
+    window.addEventListener('error', (e) => { if (/ResizeObserver loop/.test(e.message || '')) window.__roLoops.push(e.message); });
+  });
   await gotoDemo(page, '#layersGrid .ly-tile', 20000);
   const panel = page.locator('#layersPanel');
   const noSideways = async (what) => {
@@ -12721,16 +12727,32 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   // 2. The ledger: A–D and Labels, eleven sectors; a box opens its detail, a sector filters.
   await expect(page.locator('#layersLedger [data-out]')).toHaveCount(5);
   await expect(page.locator('#layersLedger [data-sec]')).toHaveCount(11);
+  // No button changes the panel's size (owner 2026-11-15: "I don't want the panel to resize when clicking buttons.
+  // Keep it the same length in the smallest configuration"): a detail card scrolls inside the ledger's own box, which
+  // brings the card's foot into view, and "Clear filters" keeps its place while off.
+  const lyH = () => page.evaluate(() => Math.round(document.getElementById('layersPanel').getBoundingClientRect().height));
+  const h0 = await lyH();
   const a = page.locator('#layersLedger [data-out="A"]');
   await a.click();
   await expect(a).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#layersCard')).toBeVisible();
   await expect(page.locator('#layersCard')).toContainText('Brent oil');
-  await a.click();
+  expect(await lyH(), 'a detail card open: the panel keeps its smallest height').toBe(h0);
+  expect(await page.evaluate(() => {
+    const b = document.getElementById('layersLScroll').getBoundingClientRect(), c = document.getElementById('layersCard').getBoundingClientRect();
+    return Math.round(c.bottom - b.bottom);
+  }), 'the open card is scrolled into the ledger\'s box').toBeLessThanOrEqual(0);
+  for (const k of ['C', 'labels']) {
+    await page.locator(`#layersLedger [data-out="${k}"]`).click();
+    expect(await lyH(), `card ${k}: the same height`).toBe(h0);
+  }
+  await page.locator('#layersLedger [data-out="labels"]').click();
   await expect(page.locator('#layersCard')).toBeHidden();
+  expect(await lyH(), 'card closed: the same height').toBe(h0);
   const energy = page.locator('#layersLedger [data-sec="7"]');
   await energy.click();
   await expect(energy).toHaveAttribute('aria-pressed', 'true');
+  expect(await lyH(), 'a sector filter on: the same height').toBe(h0);
   const nEnergy = await page.evaluate(() => lyData.stocks.filter(s => s.sec === 7).length);
   await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(nEnergy);
   await expect(page.locator('#layersClear')).toBeVisible();
@@ -12751,6 +12773,7 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await expect(page.locator('#layersNSig')).toHaveText(`(${nSig})`);
   await page.locator('#layersSig').check();
   await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(nSig);
+  expect(await lyH(), 'signals only: the same height').toBe(h0);
   await page.locator('#layersSig').uncheck();
 
   // 4. BUY points: every tile shows its BUY score.
@@ -12839,6 +12862,7 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await page.keyboard.press('Escape');
   await expect(dlg).toBeHidden();
   await expect(opener).toBeFocused();
+  expect(await page.evaluate(() => window.__roLoops), 'no ResizeObserver loop (WebKit raises it as a page error)').toEqual([]);
   expect(errs, 'no page errors on the demo').toEqual([]);
 
   // 9. Live: the panel stays hidden (real data or nothing). The backend is answered here, never reached.
@@ -12972,4 +12996,129 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
   await expect(live.locator('#layersPanel')).toBeVisible({ timeout: 20000 });
   await expect(live.locator('#layersNotYet')).toContainText('CNN Fear & Greed is STALE');
   await live.close();
+});
+
+// S84 — The charts rail's ROSTER column edits the watchlist it shows (owner 2026-11-15: "Can the watch list also be editable in the stochastic, basically
+// affecting the same list, but editing in two places?" … "add and a remove feature, just like the column next to it. specifically for watch lists.").
+// Demo and the Charts roster stay read-only; on a live watchlist a box under the picker pushes a ticker in at the top (one already listed is lifted) and the
+// hover × or Delete takes it off — each ONE write to the same saved roster the Watchlists panel draws (a stateful stub, `installFakeRoster`: CI never
+// touches the owner's real roster).
+test('S84: the charts rail roster column adds to and removes from the watchlist it shows — the same list as the Watchlists panel', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(120_000);
+  await gotoDemo(page, '.wb-slots', 15000, 1200);
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  const R = await page.evaluate(() => Object.keys(wbState.data.symbols).slice(0, 5));   // chartable without a quote lookup
+  const pick = page.locator('.wb-rail-pick');
+  const box = page.locator('.wb-rail-roster .wb-roster-entry');
+  const rosterSyms = () => page.evaluate(() => [...document.querySelectorAll('.wb-rail-roster .wb-side-btn .wb-side-sym')].map((n) => n.textContent));
+  const stored = (t) => page.evaluate((title) => (window.__roster.find((l) => l.title === title) || {}).symbols, t);
+  const panelSyms = (t) => page.evaluate((title) => { const l = wlState.payload.lists.find((x) => x.title === title); return l && (l.symbols || l.rows.map((r) => r.sym)); }, t);
+  const slotsBefore = await page.evaluate(() => readWbSticky().syms.join(','));
+
+  // ── 1. demo: a watchlist in the picker carries no box and no ×
+  const demoList = await page.evaluate(() => wlState.payload.lists[0].title);
+  await pick.selectOption({ label: demoList });
+  await expect(page.locator('.wb-rail-roster .wb-side-btn').first()).toBeVisible();
+  expect(await box.count(), 'demo: no add box (nothing to write to)').toBe(0);
+  expect(await page.locator('.wb-roster-del').count(), 'demo: no ×').toBe(0);
+
+  // ── 2. live: a watchlist gets the box under the picker and a × per name; the picker stays on the line of the other two heads
+  await installFakeRoster(page);
+  await page.evaluate(async (r) => {
+    window.__roster = [{ title: 'Radar', symbols: [r[0], r[1], r[2]] }, { title: 'Macro', symbols: [r[3]] }];
+    DESK.mode = 'live';
+    await loadWatchlist(true);
+  }, R);
+  await pick.selectOption({ label: 'Radar' });
+  await expect(box).toBeVisible();
+  expect(await box.getAttribute('aria-label'), 'the box names the list it adds to').toContain('Radar');
+  expect(await rosterSyms()).toEqual([R[0], R[1], R[2]]);
+  expect(await page.locator('.wb-rail-roster .wb-roster-del').count(), 'one × per name').toBe(3);
+  const tops = await page.evaluate(() => ['.wb-rail-pick', '.wb-rail-manual .wb-entry-input', '.wb-rail-posname'].map((s) => Math.round(document.querySelector(s).getBoundingClientRect().top)));
+  expect(new Set(tops).size, 'the picker still sits on one line with the SYMBOL box and the Positions label').toBe(1);
+  const g = await page.evaluate(() => { const p = document.querySelector('.wb-rail-pick').getBoundingClientRect(), b = document.querySelector('.wb-roster-entry').getBoundingClientRect(); return { below: b.top >= p.bottom, h: b.height, w: Math.abs(b.width - p.width) }; });
+  expect([g.below, g.h, g.w < 1], 'the box is under the picker, 20px tall, as wide as it').toEqual([true, 20, true]);
+
+  // ── 3. Enter pushes a ticker in at the TOP of the list, in ONE write, and charts it; the other list and the SYMBOL column are untouched
+  await box.fill(R[3].toLowerCase());
+  await box.press('Enter');
+  await expect.poll(() => rosterWrites(page)).toBe(1);
+  expect(await stored('Radar'), 'pushed in at the top').toEqual([R[3], R[0], R[1], R[2]]);
+  expect(await stored('Macro'), 'the other list is untouched').toEqual([R[3]]);
+  await expect.poll(rosterSyms, { message: 'the column redraws from the saved list' }).toEqual([R[3], R[0], R[1], R[2]]);
+  expect(await panelSyms('Radar'), 'and so does the Watchlists panel: one list, two places').toEqual([R[3], R[0], R[1], R[2]]);
+  expect(await page.evaluate(() => wbState.sym), 'it is charted').toBe(R[3]);
+  expect(await box.inputValue(), 'the box is empty again').toBe('');
+  expect(await box.evaluate((n) => document.activeElement === n), 'and keeps focus for the next one').toBe(true);
+  expect(await page.evaluate(() => readWbSticky().syms.join(',')), 'the SYMBOL column is not written').toBe(slotsBefore);
+
+  // ── 4. a ticker already listed is LIFTED to the top, its older place gone; already first, nothing is written
+  await box.fill(R[1]);
+  await box.press('Enter');
+  await expect.poll(() => rosterWrites(page)).toBe(2);
+  expect(await stored('Radar'), 'lifted, not twinned').toEqual([R[1], R[3], R[0], R[2]]);
+  await expect.poll(rosterSyms).toEqual([R[1], R[3], R[0], R[2]]);
+  await box.fill(R[1]);
+  await box.press('Enter');
+  await page.waitForTimeout(400);
+  expect(await rosterWrites(page), 'already at the top: no write').toBe(2);
+
+  // ── 5. junk is refused out loud and left in the box; Escape empties it
+  await box.fill('!!');
+  await box.press('Enter');
+  await expect(page.locator('.wb-rail-roster .wb-rail-empty[role="status"]')).toContainText('Not a ticker');
+  expect(await box.inputValue(), 'left in the box to correct').toBe('!!');
+  await box.press('Escape');
+  expect(await box.inputValue()).toBe('');
+  expect(await rosterWrites(page), 'nothing written').toBe(2);
+
+  // ── 6. one roster write at a time: with another in flight the add is refused, the text kept
+  await page.evaluate(() => { wlInFlight++; });
+  await box.fill(R[4]);
+  await box.press('Enter');
+  await expect(page.locator('.wb-rail-roster .wb-rail-empty[role="status"]')).toContainText('Another roster change');
+  expect(await box.inputValue(), 'kept to send again').toBe(R[4]);
+  await page.evaluate(() => { wlInFlight--; });
+  await box.press('Escape');
+  expect(await rosterWrites(page)).toBe(2);
+
+  // ── 7. the × takes a name off at once (no confirm), charts nothing; the list closes up
+  const chartedBefore = await page.evaluate(() => wbState.sym);
+  const row = (s) => page.locator('.wb-rail-roster .wb-roster-row').filter({ has: page.locator('.wb-side-sym', { hasText: new RegExp('^' + s.replace(/[.^$]/g, '\\$&') + '$') }) });
+  const canHover = await page.evaluate(() => matchMedia('(hover: hover)').matches);
+  if (canHover) await row(R[0]).locator('.wb-side-btn').hover();
+  else { await row(R[0]).locator('.wb-side-btn').click(); await page.mouse.move(2, 2); await page.waitForTimeout(900); }
+  const x = row(R[0]).locator('.wb-roster-del');
+  await expect(x).toBeVisible();
+  expect(await x.getAttribute('aria-label')).toBe(`Remove ${R[0]} from Radar`);
+  const chartedAtX = await page.evaluate(() => wbState.sym);
+  await x.click();
+  await expect.poll(() => rosterWrites(page)).toBe(3);
+  expect(await stored('Radar'), 'removed').toEqual([R[1], R[3], R[2]]);
+  await expect.poll(rosterSyms).toEqual([R[1], R[3], R[2]]);
+  expect(await page.evaluate(() => wbState.sym), 'the × charts nothing').toBe(canHover ? chartedBefore : chartedAtX);
+  expect(await page.locator('#wlRmBackdrop').isVisible(), 'no confirm dialog: the SYMBOL column\'s rule').toBe(false);
+  expect(await panelSyms('Radar')).toEqual([R[1], R[3], R[2]]);
+
+  // ── 8. Delete on a focused name takes it off and leaves focus on the name that took its place; a held key removes ONE
+  await row(R[3]).locator('.wb-side-btn').focus();
+  await page.keyboard.down('Delete');
+  await expect.poll(() => rosterWrites(page)).toBe(4);
+  await expect.poll(() => page.evaluate(() => document.activeElement && document.activeElement.textContent)).toBe(R[2]);
+  await page.keyboard.down('Delete');   // still held, after the first write landed: Playwright marks a second down of a held key as a repeat
+  await page.keyboard.up('Delete');
+  await page.waitForTimeout(600);
+  expect(await rosterWrites(page), 'a held key removes one name').toBe(4);
+  expect(await stored('Radar')).toEqual([R[1], R[2]]);
+  await expect.poll(() => page.evaluate(() => document.activeElement && document.activeElement.textContent)).toBe(R[2]);
+
+  // ── 9. the Charts roster stays read-only
+  await pick.selectOption({ label: 'Charts roster' });
+  await expect(page.locator('.wb-rail-roster .wb-side-btn').first()).toBeVisible();
+  expect(await box.count(), 'Charts roster: no box').toBe(0);
+  expect(await page.locator('.wb-roster-del').count(), 'Charts roster: no ×').toBe(0);
+  expect(await page.evaluate(() => readWbSticky().syms.join(',')), 'nothing here ever wrote the SYMBOL column').toBe(slotsBefore);
+  expect(errs, 'no page errors').toEqual([]);
 });
