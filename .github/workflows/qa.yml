@@ -196,6 +196,9 @@ jobs:
   #   pin-change-check.py             desk_027 (the owner's passphrase change,
   #                                   2026-11-11) after desk_026 on the same
   #                                   replay: the verify probe, 17 mutants
+  #   sim-trades-check.py             desk_028 (simulated trades, 2026-11-15)
+  #                                   after desk_027 on the same replay: the
+  #                                   verify probe, 16 mutants
   # The page's half (S75 under 41 mutants) is the news-client-mutants job.
   news-checks:
     name: News helper checks (server + database)
@@ -255,6 +258,15 @@ jobs:
           PGPORT: '5432'
           PGUSER: postgres
         run: python3 tools/pin-change-check.py
+
+      # desk_028 (2026-11-15): the simulated trades' table and PIN doors, after
+      # desk_027 on the same replay — the probe, and every mutant must be caught.
+      - name: desk_028 simulated trades on a scratch Postgres, mutants
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+        run: python3 tools/sim-trades-check.py
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The no-browser checks of the edge functions and scripts/data.js, on every

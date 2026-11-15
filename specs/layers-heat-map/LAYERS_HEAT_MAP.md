@@ -1,6 +1,6 @@
 # Layers Heat Map: the rules in one file
 
-Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Live on real data since 2026-11-14 (steps 1–3, section 13); the made-up data is the demo page only. Last change: 2026-11-14 (section 12).
+Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Live on real data since 2026-11-14 (steps 1–3, section 13); the made-up data is the demo page only. Last change: 2026-11-15 (section 12).
 The master copy is this file, `specs/layers-heat-map/LAYERS_HEAT_MAP.md` in claude.trading. The rules were written in project INVEST; the panel is built and kept by project code.TRADE.
 
 ## 0. How this file is used
@@ -300,6 +300,7 @@ What rests on the owner's judgement, not on a test: the timing hold-back, the ve
 
 ## 12. Changes
 
+- 2026-11-15, code.TRADE, the owner's ask ("That's the new name for our layers heat map. It's going to be called strategies chart"): the panel's title on the page is now **Strategies Chart**; the code, ids, files and this file keep the `layers` name. The same day the owner asked for simulated trades beside it: a panel to the right of the chart (from 1120px up) records each made-up trade with every Strategies Chart reading for that stock at the moment it was opened, and a stock's write-up gains a "Simulate trade" button. The panel only READS the scores; no scoring rule changed.
 - 2026-11-15, code.TRADE, the owner's ask ("I don't want the panel to resize when clicking buttons. Keep it the same length in the smallest configuration"): the panel's height is the left half with no ledger card open, held in every layout; an opened card scrolls inside the ledger's own box, which brings its foot into view, and "Clear filters" keeps its place while off. Section 6 updated. No scoring rule changed.
 - 2026-11-14, code.TRADE, the owner's "Deploy it now" on step 3: `desk-layers` is deployed on Supabase and the panel is switched on in live (`DESK_LAYERS_LIVE`). The first day's gathering (session 2026-11-13) was checked before the switch: 561 stocks in, 67 names left out with their reason, the page's own decoding and scoring gave 558 scored stocks across the 11 sectors (section 13). No scoring rule changed.
 - 2026-11-14, code.TRADE, the owner's "Build it now" on step 2: the daily feed `desk-layers` is written and tested, not deployed (section 13). It gathers what section 3 lists from Yahoo, FRED, the S&P 500 constituents file and the community Fear & Greed file, and serves it; the scoring stays in the browser. The page asks it only once the switch `DESK_LAYERS_LIVE` is on (step 3). A Fear & Greed history more than a week older than the session is called STALE on the panel and letter D still uses its last reading (ruling H). No scoring rule changed.
