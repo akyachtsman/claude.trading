@@ -22,3 +22,7 @@ const DESK_DB = {
    back to false to take the panel out of live with no deploy: the panel then stays hidden and the page never calls
    the function. */
 const DESK_LAYERS_LIVE = true;
+/* Simulated trades (owner 2026-11-15): the panel beside the Strategies Chart. Demo draws made-up trades; live waits for
+   its table (`desk_sim_trades`, migration desk_028) and the PIN RPCs. OFF until that migration is applied with the
+   owner's approval: while false a live desk never shows the panel and never calls its RPCs. */
+const DESK_SIM_LIVE = false;

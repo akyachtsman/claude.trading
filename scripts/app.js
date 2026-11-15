@@ -143,6 +143,7 @@ const DESK = {
 
 /* ── masthead ──────────────────────────────────────────────────────────── */
 function renderMasthead() {
+  renderDeskLockBtn();
   const wrap = document.getElementById('mastheadState');
   while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
   /* "MARKETS" label (owner report 2026-07-22): this cluster is the market-feed
@@ -185,7 +186,7 @@ function renderMasthead() {
          then silently revert (Codex review, PR #190) */
       /* deskPinForget: the tab's copy (and any retired device copy) — otherwise Lock
          would lock until the next reload and then quietly unlock itself again */
-      lock.addEventListener('click', () => { deskPinForget(); DESK.authed = false; renderPrivate(); renderMasthead(); renderWatchlist(); });
+      lock.addEventListener('click', deskLockNow);   /* the whole desk (owner 2026-11-15) */
       /* desk_027 (owner 2026-11-11, PIN hardening fix 2): change the PIN to a passphrase — only while unlocked */
       const pass = el('button', 'legacy-btn legacy-btn-secondary', 'Passphrase');
       pass.type = 'button';
@@ -4028,6 +4029,7 @@ function renderLockedPanels(why) {
   wbPosLocked = true;
   wbPurgePositionLoads();   /* repaints the rail itself (renderCharts, or wbRepaintRail when nothing on screen changed) */
   wbRepaintRail();
+  simRepaint();   /* the simulated trades are private: a locked desk shows none */
   const lockPanel = el('section', 'panel panel-lock');
   const head = el('div', 'panel-header');
   head.appendChild(el('h3', 'panel-title', 'Accounts'));
@@ -4056,7 +4058,7 @@ function renderLockedPanels(why) {
     const res = await deskLogin(input.value).catch(() => ({ ok: false, error: 'Could not reach the data service — try again in a moment.' }));
     btn.disabled = false; btn.textContent = 'Unlock';
     if (res && res.ok) {
-      sessionStorage.setItem('desk_pin', input.value);   /* this tab only (owner 2026-11-11: never localStorage) */
+      deskPinKeep(input.value);   /* this tab only (owner 2026-11-11: never localStorage), with the unlock time (2026-11-15) */
       DESK.authed = true;
       await loadPrivate(input.value);
       renderMasthead();
@@ -8804,6 +8806,7 @@ function renderPrivate() {
     renderAccounts(DESK.data.accounts, lamp);
     renderAsk();
     wbRepaintRail();   /* the charts rail's POSITIONS column reads the same accounts */
+    if (DESK.mode !== 'demo') simRepaint();   /* demo starts it from the Strategies Chart's first scoring */
     if (DESK.mode === 'demo') closeSysPromptModal(); /* demo has no live assistant to configure */
   } else {
     renderLockedPanels(); /* renders the OPEN ask panel too — only the accounts are locked */
@@ -11709,6 +11712,7 @@ function startLayers() {
     if (stamp) stamp.textContent = 'Demo data · close of ' + lyDay(lyData.asOf);
     renderLayersNotYet();
     renderLayers();
+    simRepaint();   /* the simulated trades' demo trades are opened on these demo stocks */
   }, 0);
 }
 
@@ -11823,6 +11827,8 @@ function openLayersDetail(st, opener) {
   const sec = lyData.sectors[st.sec], on = lyOnLists(st, lyLists());
   document.getElementById('layersDetailTitle').textContent = st.sym;
   document.getElementById('layersDetailName').textContent = st.name;
+  const simBtn = document.getElementById('layersSimBtn');
+  if (simBtn) { simBtn.dataset.sym = st.sym; simBtn.hidden = !simOn(); }
   body.textContent = '';
   const meta = el('div', 'ly-meta');
   meta.append(el('p', null, sec.name + (st.sub ? ' · ' + st.sub : '')),
@@ -11929,6 +11935,535 @@ function lyDrawCharts(box, st) {
   box.append(ro, s1, s2);
 }
 
+/* ── Simulated trades (owner 2026-11-15) ───────────────────────────────────────────────────────────────────────────
+   "Basically, it's a non-funded testing of our strategies, both options and stock purchases": the owner opens a
+   made-up trade, the panel keeps the moment it was opened, its entry price and EVERY Strategies Chart reading for that
+   stock at that moment (the snapshot), and shows how it has done since, in dollars and percent: today, this week, this
+   month, this year and since it was opened, per trade and for the whole simulation. The sums are scripts/sim.js.
+   Private: drawn only for the unlocked desk (demo draws made-up trades). In live it waits for its table (DESK_SIM_LIVE,
+   step 2), and never fabricates a price: an unpriced trade says so, a total that misses one says so. */
+let simTrades = [];                 /* [{ id, sym, side, qty, mult, entry, note, openedAt, snap, closedAt, exit, exitSnap }] */
+const simQuotes = new Map();        /* sym → { price, prev, bid, ask, series, at, err } */
+let simTab = 'open', simLoaded = false, simLoading = false, simErr = '', simDemoId = 0, simTimer = 0, simWired = false;
+const SIM_POLL_OPEN_MS = 60_000, SIM_POLL_SHUT_MS = 15 * 60_000;
+
+const simOn = () => DESK.mode === 'demo' || (DESK_SIM_LIVE && DESK.authed);
+const simPin = () => { try { return DESK.authed ? sessionStorage.getItem('desk_pin') : null; } catch { return null; } };
+const simNyDay = d => etClock(d).date;
+const simMoney = v => (v == null || !Number.isFinite(v) ? '—' : (v < 0 ? '−' : '') + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2, minimumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2 }));
+const simSignedMoney = v => (v == null || !Number.isFinite(v) ? '—' : (v >= 0 ? '+' : '−') + simMoney(Math.abs(v)));
+const simPx = v => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(v < 1 ? 3 : 2));
+const simTone = v => (v == null || !Number.isFinite(v) || v === 0 ? '' : v > 0 ? 'sim-up' : 'sim-down');
+const simParsed = tr => simParseSym(tr.sym) || { kind: 'stock', sym: tr.sym, under: tr.sym, mult: 1 };
+
+/* The Strategies Chart readings of a stock at this moment, as a plain object stored with the trade (an option takes
+   its UNDERLYING's readings). null when the stock is not on the chart (not scored today, or the chart has no data). */
+function simSnapshot(sym) {
+  const p = simParseSym(sym);
+  const st = p && lyData ? lyStock(p.under) : null;
+  if (!st) return null;
+  const letters = {};
+  for (const k of LAYERS_LETTERS) { const x = lyGet(st, k); if (x) letters[k] = [x.L, x.S]; }
+  return {
+    asOf: lyData.asOf, source: lyData.source || '', version: lyData.version || LAYERS_RULES.version,
+    sym: st.sym, sector: (lyData.sectors[st.sec] || {}).name || '', px: st.px,
+    buy: st.L, sell: st.S, lean: st.lean, eff: st.eff, verdict: layersVerdict(st.eff), held: !!st.held, tm: st.tm || '',
+    k: Number.isFinite(st.k) ? Math.round(st.k * 10) / 10 : null, letters, sig: (st.sig || []).map(([n, d]) => [n, d]),
+  };
+}
+
+/* ── storage: demo in memory, live through the PIN RPCs (step 2) ── */
+async function simLoad() {
+  if (!simOn()) return;
+  if (DESK.mode === 'demo') {
+    if (!simLoaded && lyData) { simTrades = simDemoTrades(); simLoaded = true; }
+    return;
+  }
+  if (simLoading) return;
+  simLoading = true;
+  try {
+    const out = await deskSimList(simPin());
+    if (out.ok) { simTrades = out.trades; simLoaded = true; simErr = ''; }
+    else simErr = out.error || 'Could not read the trades.';
+  } finally { simLoading = false; }
+}
+async function simSave(trade) {
+  if (DESK.mode === 'demo') { simTrades.push({ ...trade, id: 'd' + (++simDemoId) }); return { ok: true }; }
+  const out = await deskSimOpen(simPin(), trade);
+  if (out.ok) await simLoad();
+  return out;
+}
+async function simCloseTrade(id, exit, exitSnap) {
+  if (DESK.mode === 'demo') {
+    const t = simTrades.find(x => x.id === id);
+    if (t) Object.assign(t, { closedAt: new Date().toISOString(), exit, exitSnap });
+    return { ok: !!t };
+  }
+  const out = await deskSimClose(simPin(), id, exit, exitSnap);
+  if (out.ok) await simLoad();
+  return out;
+}
+async function simRemoveTrade(id) {
+  if (DESK.mode === 'demo') { simTrades = simTrades.filter(x => x.id !== id); return { ok: true }; }
+  const out = await deskSimRemove(simPin(), id);
+  if (out.ok) await simLoad();
+  return out;
+}
+
+/* Made-up trades for ?demo=1, opened on demo stocks at their demo prices of a few sessions ago. */
+function simDemoTrades() {
+  const pick = (i, back) => {
+    const st = lyData.stocks[i % lyData.stocks.length], b = st.bars, j = Math.max(0, b.c.length - 1 - back);
+    return { st, day: b.t[j], px: Number(b.c[j]) };
+  };
+  const at = day => day + 'T14:45:00.000Z';
+  const out = [];
+  const a = pick(3, 4), b = pick(11, 18), c = pick(20, 9), d = pick(7, 30);
+  out.push({ id: 'd1', sym: a.st.sym, side: 'buy', qty: 100, mult: 1, entry: a.px, note: 'Strong BUY on the chart', openedAt: at(a.day), snap: simSnapshot(a.st.sym), closedAt: null, exit: null, exitSnap: null });
+  out.push({ id: 'd2', sym: b.st.sym, side: 'sell', qty: 50, mult: 1, entry: b.px, note: 'Leans SELL, weekly %K over 80', openedAt: at(b.day), snap: simSnapshot(b.st.sym), closedAt: null, exit: null, exitSnap: null });
+  const exp = new Date(Date.UTC(new Date().getUTCFullYear() + 1, 0, 15)).toISOString().slice(0, 10);
+  const occ = simOcc(c.st.sym, exp, 'C', Math.round(c.px / 5) * 5);
+  if (occ) {
+    const ser = simDemoOptionSeries(simParseSym(occ), c.st.bars);
+    out.push({ id: 'd3', sym: occ, side: 'buy', qty: 2, mult: 100, entry: simCloseOn(ser, c.day), note: 'Call on a rule 3 BUY signal', openedAt: at(c.day), snap: simSnapshot(c.st.sym), closedAt: null, exit: null, exitSnap: null });
+  }
+  const dEnd = d.st.bars.t[d.st.bars.t.length - 12];
+  out.push({ id: 'd4', sym: d.st.sym, side: 'buy', qty: 30, mult: 1, entry: d.px, note: 'Closed early', openedAt: at(d.day), snap: simSnapshot(d.st.sym),
+    closedAt: dEnd + 'T19:30:00.000Z', exit: Number(d.st.bars.c[d.st.bars.c.length - 12]), exitSnap: null });
+  simDemoId = 4;
+  return out;
+}
+
+/* ── prices: demo from the demo bars, live from the quote feed (stocks today; options once step 3 is deployed) ── */
+function simDemoQuote(sym) {
+  const p = simParseSym(sym);
+  const st = p && lyData ? lyStock(p.under) : null;
+  if (!st) return { err: 'not in the demo' };
+  const series = p.kind === 'option' ? simDemoOptionSeries(p, st.bars) : { t: st.bars.t, c: st.bars.c };
+  const n = series.c.length, price = Number(series.c[n - 1]), prev = Number(series.c[n - 2]);
+  return { price, prev, bid: Math.round(price * 0.985 * 100) / 100, ask: Math.round(price * 1.015 * 100) / 100, series, at: Date.now(), err: '' };
+}
+async function simQuote(sym, force) {
+  if (DESK.mode === 'demo') { const q = simDemoQuote(sym); simQuotes.set(sym, q); return q; }
+  const old = simQuotes.get(sym);
+  try {
+    const [info, daily] = await Promise.all([deskQuote(sym, 'info', false, { force }), deskQuote(sym, 'daily', false, { force })]);
+    const i = info && info.ok ? info.info : null;
+    const price = i && Number.isFinite(i.price) ? i.price : NaN;
+    const prev = i && Number.isFinite(i.price) && Number.isFinite(i.change) ? i.price - i.change : NaN;
+    const series = daily && daily.ok ? daily.series : (old && old.series) || null;
+    if (!Number.isFinite(price)) throw new Error((info && info.error) || 'no price');
+    const q = { price, prev, bid: i.bid, ask: i.ask, series, at: Date.now(), err: '' };
+    simQuotes.set(sym, q);
+    return q;
+  } catch (e) {
+    /* a failed refresh keeps the last good price, marked; with none the trade is unpriced (real data or nothing) */
+    const q = old && old.price ? { ...old, err: String(e && e.message || e) } : { err: String(e && e.message || e) };
+    simQuotes.set(sym, q);
+    return q;
+  }
+}
+async function simRefreshQuotes(force) {
+  const syms = [...new Set(simTrades.filter(t => !t.closedAt).map(t => t.sym))];
+  /* a closed trade still needs its daily bars for the week, month and year that began before it closed */
+  for (const t of simTrades) if (t.closedAt && !simQuotes.has(t.sym)) syms.push(t.sym);
+  await Promise.all(syms.map(s => simQuote(s, force)));
+}
+function simSchedule() {
+  clearTimeout(simTimer);
+  if (!simOn() || DESK.mode === 'demo' || document.hidden) return;
+  simTimer = setTimeout(async () => { await simRefreshQuotes(false); renderSim(); simSchedule(); }, marketSessionOpen(new Date()) ? SIM_POLL_OPEN_MS : SIM_POLL_SHUT_MS);
+}
+
+/* ── numbers ── */
+function simNumbersOf(tr, today) {
+  const q = simQuotes.get(tr.sym) || {};
+  const p = simParsed(tr);
+  return simTradeNumbers({
+    side: tr.side, qty: tr.qty, mult: tr.mult || p.mult, entry: tr.entry,
+    openedDay: simNyDay(new Date(tr.openedAt)), closedDay: tr.closedAt ? simNyDay(new Date(tr.closedAt)) : null, exit: tr.exit,
+  }, q, today);
+}
+
+/* ── the panel ── */
+function renderSim() {
+  const sec = document.getElementById('simPanel');
+  if (!sec) return;
+  const show = DESK.mode === 'demo' || DESK_SIM_LIVE;
+  sec.hidden = !show;
+  if (!show) return;
+  const lamp = document.getElementById('simLamp'), stamp = document.getElementById('simStamp');
+  const list = document.getElementById('simList'), sum = document.getElementById('simSum'), add = document.getElementById('simAddBtn');
+  const tabs = document.getElementById('simTabs');
+  if (!simOn()) {
+    lamp.className = 'lamp lamp--locked'; lamp.textContent = 'Locked';
+    stamp.textContent = 'Private — unlock the desk to see and open simulated trades.';
+    sum.textContent = ''; list.textContent = ''; add.hidden = true; tabs.hidden = true;
+    return;
+  }
+  add.hidden = false; tabs.hidden = false;
+  if (DESK.mode === 'demo') { lamp.className = 'lamp lamp--demo'; lamp.textContent = 'Demo'; }
+  else if (simErr) { lamp.className = 'lamp lamp--stale'; lamp.textContent = 'Stale'; }
+  else { lamp.className = 'lamp ' + (marketSessionOpen(new Date()) ? 'lamp--live' : 'lamp--eod'); lamp.textContent = marketSessionOpen(new Date()) ? 'Delayed' : 'EOD'; }
+  const today = simNyDay(new Date());
+  const nums = new Map(simTrades.map(t => [t.id, simNumbersOf(t, today)]));
+  const first = simTrades.reduce((m, t) => (!m || t.openedAt < m ? t.openedAt : m), null);
+  stamp.textContent = (DESK.mode === 'demo' ? 'Demo data · ' : simErr ? simErr + ' · ' : 'Prices ~15 min delayed · ')
+    + (first ? 'started ' + fmtShortDate(simNyDay(new Date(first))) + ', ' + first.slice(0, 4) : 'no trades yet');
+  /* the whole simulation: $ and % for each period */
+  /* one line a period (Today, Week, Month, YTD, Since start): the gain or loss in dollars and in percent */
+  sum.textContent = '';
+  for (const [k, lab] of SIM_PERIODS) {
+    const t = simTotals([...nums.values()], k);
+    const name = el('span', 'sim-rl', lab), d = el('span', simTone(t.pnl), simSignedMoney(t.pnl)), pc = el('span', simTone(t.pct), t.pct == null ? '—' : fmtPct(t.pct));
+    if (t.missing) name.title = d.title = t.missing + ' trade(s) could not be priced and are left out';
+    sum.append(name, d, pc);
+  }
+  /* the list */
+  tabs.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === simTab)));
+  const keep = list.scrollTop;
+  list.textContent = '';
+  const rows = simTrades.filter(t => (simTab === 'open' ? !t.closedAt : !!t.closedAt))
+    .sort((a, b) => (simTab === 'open' ? (a.openedAt < b.openedAt ? 1 : -1) : (a.closedAt < b.closedAt ? 1 : -1)));
+  if (!simLoaded && DESK.mode !== 'demo') list.appendChild(el('p', 'sim-empty', simErr || 'Loading the trades…'));
+  else if (!rows.length) list.appendChild(el('p', 'sim-empty', simTab === 'open' ? 'No open trades. Press + Trade, or "Simulate trade" in a stock\'s write-up on the Strategies Chart.' : 'No closed trades yet.'));
+  for (const t of rows) list.appendChild(simRow(t, nums.get(t.id)));
+  list.scrollTop = keep;
+}
+function simRow(t, n) {
+  const p = simParsed(t), q = simQuotes.get(t.sym) || {};
+  const b = el('button', 'sim-row');
+  b.type = 'button'; b.dataset.id = t.id;
+  const name = el('span', 'sim-sym', p.under);
+  name.appendChild(el('span', 'sim-side', (t.side === 'sell' ? 'SELL ' : 'BUY ') + t.qty));
+  b.append(name, el('span', 'sim-r sim-mv', simMoney(n.value)));
+  const line = p.kind === 'option' ? simContractLabel(p) : ((lyData && lyStock(p.under)) || {}).name || '';
+  const now = t.closedAt ? 'closed ' + simPx(Number(t.exit)) : simPx(q.price) + (Number.isFinite(q.bid) && Number.isFinite(q.ask) ? ' (' + simPx(q.bid) + '–' + simPx(q.ask) + ')' : '');
+  b.append(el('span', 'sim-muted', line || ' '), el('span', 'sim-r', q.err && !q.price ? 'no price' : now));
+  const pl = el('span', simTone(n.pnl), simSignedMoney(n.pnl) + ' ' + (n.pct == null ? '' : fmtPct(n.pct)));
+  const day = n.periods.day;
+  b.append(pl, el('span', 'sim-r ' + simTone(day && day.pnl), t.closedAt ? 'avg ' + simPx(Number(t.entry)) : 'today ' + (day && day.pct != null ? fmtPct(day.pct) : '—')));
+  const when = askWhen(t.openedAt);
+  const s = t.snap;
+  const snapTxt = (when ? 'Opened ' + when.t : 'Opened —') + (s ? ' · BUY ' + s.buy + ' / SELL ' + s.sell + ' then' : ' · not on the chart then');
+  const st = lyData ? lyStock(p.under) : null;
+  b.appendChild(el('span', 'sim-muted sim-snapl', snapTxt + (s && st ? ', ' + st.L + ' / ' + st.S + ' now' : '')));
+  b.setAttribute('aria-label', p.under + (p.kind === 'option' ? ' ' + simContractLabel(p) : '') + ', ' + (t.side === 'sell' ? 'sell ' : 'buy ') + t.qty
+    + ', result ' + simSignedMoney(n.pnl) + (n.pct == null ? '' : ' ' + fmtPct(n.pct)) + '. Open the details.');
+  if (q.err && q.price) b.title = 'The last refresh failed (' + q.err + '); this is the price read ' + Math.round((Date.now() - q.at) / 60000) + ' min ago.';
+  return b;
+}
+
+/* ── the detail window: numbers per period, the readings then and now, close or remove ── */
+function openSimDetail(id, opener) {
+  const t = simTrades.find(x => String(x.id) === String(id));
+  const back = document.getElementById('simDetailBackdrop'), body = document.getElementById('simDetailBody');
+  if (!t || !back || !body) return;
+  const p = simParsed(t), q = simQuotes.get(t.sym) || {}, n = simNumbersOf(t, simNyDay(new Date()));
+  document.getElementById('simDetailTitle').textContent = p.under + (t.side === 'sell' ? ' · SELL ' : ' · BUY ') + t.qty + (p.kind === 'option' ? ' contract' + (t.qty === 1 ? '' : 's') : ' share' + (t.qty === 1 ? '' : 's'));
+  document.getElementById('simDetailSub').textContent = p.kind === 'option' ? simContractLabel(p) + ' (' + t.sym + ')' : (((lyData && lyStock(p.under)) || {}).name || '');
+  body.textContent = '';
+  const facts = el('table', 'sim-tbl');
+  const fb = el('tbody');
+  const fact = (a, b, cls) => { const r = el('tr'); r.append(el('td', null, a), el('td', cls || null, b)); fb.appendChild(r); };
+  const op = askWhen(t.openedAt);
+  fact('Opened', op ? op.full || op.t : '—');
+  if (t.note) fact('Strategy', t.note);
+  fact('Entry price', simPx(Number(t.entry)));
+  fact('Cost basis', simMoney(n.cost));
+  if (t.closedAt) { const cl = askWhen(t.closedAt); fact('Closed', cl ? cl.full || cl.t : '—'); fact('Exit price', simPx(Number(t.exit))); }
+  else fact('Last price', simPx(q.price) + (Number.isFinite(q.bid) && Number.isFinite(q.ask) ? '  (bid ' + simPx(q.bid) + ', ask ' + simPx(q.ask) + ')' : ''));
+  fact('Market value', simMoney(n.value));
+  fact(t.closedAt ? 'Realized P&L' : 'Unrealized P&L', simSignedMoney(n.pnl) + '  ' + (n.pct == null ? '' : fmtPct(n.pct)), simTone(n.pnl));
+  facts.appendChild(fb);
+  body.appendChild(facts);
+  /* per period */
+  /* one row a period, like the panel's summary: it fits a phone where five columns did not */
+  const pt = el('table', 'sim-tbl'), ph = el('thead'), hr = el('tr');
+  hr.append(el('th', null, 'Period'), el('th', null, '$'), el('th', null, '%'));
+  ph.appendChild(hr); pt.appendChild(ph);
+  const pb = el('tbody');
+  for (const [k, lab] of SIM_PERIODS) {
+    const x = n.periods[k], r = el('tr');
+    r.appendChild(el('td', null, lab));
+    if (!x) r.append(el('td', 'sim-muted', 'closed before'), el('td', 'sim-muted', '—'));
+    else r.append(el('td', simTone(x.pnl), simSignedMoney(x.pnl)), el('td', simTone(x.pct), x.pct == null ? '—' : fmtPct(x.pct)));
+    pb.appendChild(r);
+  }
+  pt.appendChild(pb);
+  const pw = el('div', 'sim-wrap'); pw.append(el('h3', null, 'How it has done'), pt);
+  body.appendChild(pw);
+  /* the Strategies Chart readings: at the moment it was opened, and now */
+  const rw = el('div', 'sim-wrap');
+  rw.appendChild(el('h3', null, 'Strategies Chart readings: when opened and now'));
+  const s = t.snap, st = lyData ? lyStock(p.under) : null, now = st ? simSnapshot(p.under) : null;
+  if (!s && !now) rw.appendChild(el('p', 'sim-muted', p.under + ' is not on the Strategies Chart, so no readings were recorded.'));
+  else {
+    const rt = el('table', 'sim-tbl'), rh = el('thead'), rr = el('tr');
+    rw.appendChild(el('p', 'sim-muted', 'Opened = the chart as of the close of ' + (s ? lyDay(s.asOf) : '—') + '; now = as of the close of ' + (now ? lyDay(now.asOf) : '—') + '.'));
+    rr.append(el('th', null, 'Reading'), el('th', null, 'Opened'), el('th', null, 'Now'));
+    rh.appendChild(rr); rt.appendChild(rh);
+    const rb = el('tbody');
+    const row = (lab, a, b) => { const r = el('tr'); r.append(el('td', null, lab), el('td', null, a), el('td', null, b)); rb.appendChild(r); };
+    const g = (x, f) => (x ? f(x) : '—');
+    row('Verdict', g(s, x => x.verdict + (x.held ? ' (held back)' : '')), g(now, x => x.verdict + (x.held ? ' (held back)' : '')));
+    row('BUY score', g(s, x => x.buy + ' / 100'), g(now, x => x.buy + ' / 100'));
+    row('SELL score', g(s, x => x.sell + ' / 100'), g(now, x => x.sell + ' / 100'));
+    row('Lean (BUY − SELL)', g(s, x => lySgn(x.lean)), g(now, x => lySgn(x.lean)));
+    row('Price on the chart', g(s, x => simPx(x.px)), g(now, x => simPx(x.px)));
+    row('13-week %K', g(s, x => (x.k == null ? '—' : String(x.k))), g(now, x => (x.k == null ? '—' : String(x.k))));
+    for (const k of LAYERS_LETTERS) row('Letter ' + k + ' B / S', g(s, x => (x.letters[k] ? x.letters[k].join(' / ') : '—')), g(now, x => (x.letters[k] ? x.letters[k].join(' / ') : '—')));
+    const sg = x => (x.sig.length ? x.sig.map(([nm, d]) => nm + ' ' + lyShortDay(d)).join('; ') : 'none');
+    row('Signals that week', g(s, sg), g(now, sg));
+    rt.appendChild(rb);
+    rw.appendChild(rt);
+  }
+  body.appendChild(rw);
+  /* close / remove */
+  const act = el('div', 'sim-close');
+  if (!t.closedAt) {
+    const lab = el('label', 'sim-field'), inp = el('input');
+    inp.type = 'number'; inp.step = '0.01'; inp.min = '0'; inp.id = 'simExitPx';
+    if (Number.isFinite(q.price)) inp.value = String(q.price);
+    lab.append(el('span', null, 'Exit price'), inp);
+    const cb = el('button', 'legacy-btn', 'Close trade'); cb.type = 'button'; cb.id = 'simCloseBtn';
+    cb.addEventListener('click', async () => {
+      const v = Number(inp.value);
+      if (!(v > 0)) { simDetailErr('Enter the exit price.'); inp.focus(); return; }
+      cb.disabled = true;
+      const out = await simCloseTrade(t.id, v, simSnapshot(t.sym));
+      cb.disabled = false;
+      if (!out.ok) { simDetailErr(out.error || 'The trade was not closed.'); return; }
+      closeModal(back); renderSim();
+    });
+    act.append(lab, cb);
+  }
+  const rm = el('button', 'legacy-btn legacy-btn-secondary', 'Remove'); rm.type = 'button'; rm.id = 'simRemoveBtn';
+  rm.title = 'Delete this trade from the record (for a mistake — closing keeps it)';
+  rm.addEventListener('click', async () => {
+    if (rm.dataset.armed !== '1') { rm.dataset.armed = '1'; rm.textContent = 'Remove for good?'; return; }
+    rm.disabled = true;
+    const out = await simRemoveTrade(t.id);
+    rm.disabled = false;
+    if (!out.ok) { simDetailErr(out.error || 'The trade was not removed.'); return; }
+    closeModal(back); renderSim();
+  });
+  act.appendChild(rm);
+  body.appendChild(act);
+  const err = el('p', 'lock-error sim-err'); err.id = 'simDetailErr'; err.setAttribute('role', 'alert'); err.hidden = true;
+  body.appendChild(err);
+  openModal(back, { restoreFocusTo: opener });
+}
+function simDetailErr(msg) { const e = document.getElementById('simDetailErr'); if (e) { e.textContent = msg; e.hidden = false; } }
+
+/* ── the open-a-trade dialog ── */
+const simForm = { kind: 'stock', side: 'buy', seq: 0 };
+function simFormSym() {
+  if (simForm.kind === 'stock') { const p = simParseSym(document.getElementById('simSym').value); return p && p.kind === 'stock' ? p.sym : null; }
+  return simOcc(document.getElementById('simUnder').value, document.getElementById('simExp').value, document.getElementById('simRight').value, document.getElementById('simStrike').value);
+}
+function simFormPaint() {
+  document.querySelectorAll('#simTradeForm [data-kind]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.kind === simForm.kind)));
+  document.querySelectorAll('#simTradeForm [data-side]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.side === simForm.side)));
+  document.getElementById('simSymRow').hidden = simForm.kind !== 'stock';
+  document.getElementById('simOptRow').hidden = simForm.kind !== 'option';
+  document.getElementById('simQtyLab').textContent = simForm.kind === 'option' ? 'Contracts (100 shares each)' : 'Shares';
+  const sym = simFormSym(), snapEl = document.getElementById('simSnapNote');
+  const p = sym ? simParseSym(sym) : null, snap = sym ? simSnapshot(sym) : null;
+  snapEl.textContent = !p ? 'The Strategies Chart readings for the stock are recorded with the trade.'
+    : snap ? 'Recorded with the trade: ' + p.under + ' on the Strategies Chart (close of ' + lyDay(snap.asOf) + ') — ' + snap.verdict + ', BUY ' + snap.buy + ' / SELL ' + snap.sell + ', every letter and signal.'
+      : p.under + ' is not on the Strategies Chart today, so no readings will be recorded.';
+}
+async function simFormLookup() {
+  const sym = simFormSym(), out = document.getElementById('simQuote'), entry = document.getElementById('simEntry');
+  simFormPaint();
+  if (!sym) { out.textContent = ''; return; }
+  const seq = ++simForm.seq;
+  out.textContent = 'Looking up ' + sym + '…';
+  const q = await simQuote(sym, false);
+  if (seq !== simForm.seq) return;
+  if (!Number.isFinite(q.price)) {
+    const p = simParseSym(sym);
+    out.textContent = 'No price for ' + sym + (p && p.kind === 'option' && DESK.mode !== 'demo' ? ' — option prices are not connected yet.' : '.') + ' Type the entry price yourself.';
+    return;
+  }
+  out.textContent = 'Last ' + simPx(q.price) + (Number.isFinite(q.bid) && Number.isFinite(q.ask) ? ' · bid ' + simPx(q.bid) + ' · ask ' + simPx(q.ask) : '') + (DESK.mode === 'demo' ? ' (demo)' : ' (~15 min delayed)');
+  if (!entry.dataset.typed) entry.value = String(q.price);
+}
+function openSimTrade(sym, opener) {
+  const back = document.getElementById('simTradeBackdrop');
+  if (!back || !simOn()) return;
+  const p = sym ? simParseSym(sym) : null;
+  simForm.kind = p && p.kind === 'option' ? 'option' : 'stock'; simForm.side = 'buy';
+  document.getElementById('simTradeForm').reset();
+  document.getElementById('simEntry').dataset.typed = '';
+  document.getElementById('simQty').value = simForm.kind === 'option' ? '1' : '100';
+  if (p && p.kind === 'stock') document.getElementById('simSym').value = p.sym;
+  if (p && p.kind === 'option') {
+    document.getElementById('simUnder').value = p.under; document.getElementById('simExp').value = p.exp;
+    document.getElementById('simStrike').value = String(p.strike); document.getElementById('simRight').value = p.right;
+  }
+  document.getElementById('simQuote').textContent = '';
+  const err = document.getElementById('simTradeErr'); err.hidden = true; err.textContent = '';
+  simFormPaint();
+  openModal(back, { restoreFocusTo: opener, initialFocus: p ? document.getElementById('simQty') : document.getElementById('simSym') });
+  if (p) simFormLookup();
+}
+async function submitSimTrade(ev) {
+  ev.preventDefault();
+  const err = document.getElementById('simTradeErr'), btn = document.getElementById('simTradeSubmit');
+  const say = (m, f) => { err.textContent = m; err.hidden = false; if (f) document.getElementById(f).focus(); };
+  const sym = simFormSym();
+  if (!sym) return say(simForm.kind === 'stock' ? 'Type a ticker.' : 'Fill in the underlying, expiry, strike and call or put.', simForm.kind === 'stock' ? 'simSym' : 'simUnder');
+  const p = simParseSym(sym);
+  if (p.kind === 'option' && p.exp < simNyDay(new Date())) return say('That contract has already expired.', 'simExp');
+  const qty = Number(document.getElementById('simQty').value);
+  if (!(Number.isInteger(qty) && qty > 0 && qty <= 1e6)) return say('The quantity is a whole number from 1.', 'simQty');
+  const entry = Number(document.getElementById('simEntry').value);
+  if (!(entry > 0)) return say('Enter the entry price.', 'simEntry');
+  const note = document.getElementById('simNote').value.trim().slice(0, 200);
+  btn.disabled = true;
+  const out = await simSave({ sym, side: simForm.side, qty, mult: p.mult, entry, note, openedAt: new Date().toISOString(), snap: simSnapshot(sym), closedAt: null, exit: null, exitSnap: null });
+  btn.disabled = false;
+  if (!out.ok) return say(out.error || 'The trade was not saved.');
+  closeModal(document.getElementById('simTradeBackdrop'));
+  simTab = 'open';
+  await simRefreshQuotes(false);
+  renderSim();
+}
+
+function wireSim() {
+  if (simWired) return;
+  simWired = true;
+  const add = document.getElementById('simAddBtn');
+  if (add) add.addEventListener('click', () => openSimTrade(null, add));
+  const tabs = document.getElementById('simTabs');
+  if (tabs) tabs.addEventListener('click', ev => { const b = ev.target.closest('[data-tab]'); if (b) { simTab = b.dataset.tab; renderSim(); } });
+  const list = document.getElementById('simList');
+  if (list) list.addEventListener('click', ev => { const r = ev.target.closest('.sim-row'); if (r) openSimDetail(r.dataset.id, r); });
+  const form = document.getElementById('simTradeForm');
+  if (form) {
+    form.addEventListener('submit', submitSimTrade);
+    form.addEventListener('click', ev => {
+      const k = ev.target.closest('[data-kind]'), s = ev.target.closest('[data-side]');
+      if (k) { simForm.kind = k.dataset.kind; simFormPaint(); simFormLookup(); }
+      if (s) { simForm.side = s.dataset.side; simFormPaint(); }
+    });
+    for (const id of ['simSym', 'simUnder', 'simExp', 'simStrike', 'simRight']) {
+      const f = document.getElementById(id);
+      if (f) f.addEventListener('change', simFormLookup);
+    }
+    document.getElementById('simEntry').addEventListener('input', ev => { ev.target.dataset.typed = ev.target.value ? '1' : ''; });
+  }
+  const close = () => closeModal(document.getElementById('simTradeBackdrop'));
+  document.getElementById('simTradeClose').addEventListener('click', close);
+  document.getElementById('simTradeCancel').addEventListener('click', close);
+  document.getElementById('simDetailClose').addEventListener('click', () => closeModal(document.getElementById('simDetailBackdrop')));
+  const fromChart = document.getElementById('layersSimBtn');
+  if (fromChart) fromChart.addEventListener('click', () => {
+    const sym = fromChart.dataset.sym;
+    closeModal(document.getElementById('layersDetailBackdrop'));
+    openSimTrade(sym, document.getElementById('simAddBtn'));
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearTimeout(simTimer); return; }
+    if (simOn() && DESK.mode !== 'demo') simRefreshQuotes(false).then(() => { renderSim(); simSchedule(); });
+  });
+}
+/* Every road that changes what the panel may show (boot, the Strategies Chart's first scoring, unlock, Lock) comes here. */
+async function simRepaint() {
+  wireSim();
+  if (!simOn()) {
+    clearTimeout(simTimer);
+    if (DESK.mode !== 'demo') { simTrades = []; simLoaded = false; simQuotes.clear(); simErr = ''; }
+    renderSim();
+    return;
+  }
+  renderSim();
+  await simLoad();
+  await simRefreshQuotes(false);
+  renderSim();
+  simSchedule();
+}
+
+/* ── The desk lock (owner 2026-11-15: "the pin we're using to access my accounts will be used to lock the entire
+   dashboard"; "a small button, on or off, red or green"; "time out after an hour") ───────────────────────────────
+   A LIVE page draws nothing but the masthead and the lock screen until the desk PIN is checked by desk_login (the one
+   door desk_026's lockout guards: ten misses an hour lock every PIN door for an hour). It then runs the whole desk and
+   locks itself DESK_UNLOCK_MS after the moment of unlocking (sessionStorage 'desk_pin_at'), however busy the tab is.
+   Locking forgets the PIN and RELOADS, so nothing the unlocked desk fetched stays in memory or on screen. Demo is made-up
+   data and is never locked. The server still checks the PIN on every private call; this lock is the page's half. */
+const DESK_UNLOCK_MS = 60 * 60_000;
+let deskLockTimer = 0, deskUnlockBusy = false;
+function deskUnlockedAt() { try { return Number(sessionStorage.getItem('desk_pin_at')) || 0; } catch { return 0; } }
+function deskUnlockLeft(now = Date.now()) { const at = deskUnlockedAt(); return at ? at + DESK_UNLOCK_MS - now : 0; }
+function deskLockNow() {
+  clearTimeout(deskLockTimer);
+  deskPinForget();
+  DESK.authed = false;
+  if (resolveMode() !== 'demo') { location.reload(); return; }
+  /* a ?demo=1 page a test forced live has no lock screen to reload into: it locks in place, as Lock did before */
+  renderPrivate(); renderMasthead(); renderWatchlist();
+}
+function deskLockArm() {
+  clearTimeout(deskLockTimer);
+  if (!DESK.authed || DESK.mode === 'demo') return;
+  const left = deskUnlockLeft();
+  if (left <= 0) { deskLockNow(); return; }
+  deskLockTimer = setTimeout(deskLockArm, Math.min(left, 60_000));   /* re-checked each minute: a throttled timer runs late */
+  renderDeskLockBtn();
+}
+function renderDeskLockBtn() {
+  const b = document.getElementById('deskLockBtn');
+  if (!b) return;
+  b.hidden = DESK.mode === 'demo';
+  const open = !!DESK.authed;
+  b.classList.toggle('is-open', open);
+  b.textContent = open ? 'Unlocked' : 'Locked';
+  const until = open ? fmtClock(new Date(deskUnlockedAt() + DESK_UNLOCK_MS).toISOString()) : '';
+  b.title = open ? 'Unlocked in this tab — it locks itself at ' + until + '. Press to lock now.' : 'Locked — enter the desk PIN or passphrase below.';
+  b.setAttribute('aria-label', open ? 'Desk unlocked until ' + until + '. Lock it now' : 'Desk locked. Go to the PIN field');
+}
+function deskShowLockScreen(msg) {
+  const main = document.getElementById('main'), screen = document.getElementById('deskLockScreen'), note = document.getElementById('deskLockMsg');
+  if (main) main.hidden = true;
+  if (screen) screen.hidden = false;
+  if (note) note.textContent = msg || '';
+  renderDeskLockBtn();
+  const f = document.getElementById('deskUnlockInput');
+  if (f) f.focus({ preventScroll: true });
+}
+async function submitDeskUnlock() {
+  if (deskUnlockBusy) return;
+  const input = document.getElementById('deskUnlockInput'), btn = document.getElementById('deskUnlockSubmit'), note = document.getElementById('deskLockMsg');
+  const pin = input ? input.value : '';
+  const say = t => { if (note) note.textContent = t; };
+  if (!pin) { say('Enter the desk PIN or passphrase.'); if (input) input.focus(); return; }
+  deskUnlockBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  say('');
+  const res = await deskLogin(pin).catch(() => null);
+  deskUnlockBusy = false;
+  if (btn) { btn.disabled = false; btn.textContent = 'Unlock'; }
+  if (!res) { say('Could not reach the data service — try again in a moment.'); return; }
+  if (!res.ok) { say(res.error || 'PIN not recognized — try again.'); input.select(); return; }
+  if (!deskPinKeep(pin)) { say('This browser will not keep the PIN for the tab (storage is blocked), so the desk cannot stay unlocked.'); return; }
+  input.value = '';
+  location.reload();   /* boot checks it again and starts the whole desk, from a clean page */
+}
+let deskLockWired = false;
+function wireDeskLock() {
+  if (deskLockWired) return;
+  deskLockWired = true;
+  const b = document.getElementById('deskLockBtn');
+  /* locked, the button takes you to the PIN field on the lock screen; unlocked, it locks */
+  if (b) b.addEventListener('click', () => { if (DESK.authed) deskLockNow(); else { const f = document.getElementById('deskUnlockInput'); if (f) f.focus(); } });
+  const form = document.getElementById('deskUnlockForm');
+  if (form) form.addEventListener('submit', ev => { ev.preventDefault(); submitDeskUnlock(); });
+  /* a hidden tab's timers run late or not at all: coming back past the hour locks at once */
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && DESK.authed && DESK.mode !== 'demo') deskLockArm(); });
+}
+
 async function boot() {
   /* The PIN lives in THIS TAB only (owner 2026-11-11). A device copy an earlier version wrote to
      localStorage is wiped FIRST, unread, in demo and live alike, so it never unlocks anything again. */
@@ -11950,8 +12485,21 @@ async function boot() {
     loadWidgets();
     return;
   }
-  /* live: public domains render immediately; private waits for PIN */
-  DESK.data = buildDemoData(); /* placeholder series shapes until auth */
+  /* live: NOTHING runs until the desk PIN is checked (owner 2026-11-15: "the entire app dashboard, no matter what
+     the access gets blocked"). A stored PIN past its hour is forgotten unasked; a definite refusal forgets it; a lock
+     (desk_026) or a failed call keeps it and says why, and the lock button asks again. */
+  wireDeskLock();
+  let pin = null;
+  try { pin = sessionStorage.getItem('desk_pin'); } catch { /* storage blocked — locked below */ }
+  if (pin && deskUnlockLeft() <= 0) { deskPinForget(); pin = null; }
+  if (!pin) { deskShowLockScreen(''); return; }
+  const login = await deskLogin(pin).catch(() => null);
+  if (!login) { deskShowLockScreen('Could not reach the data service to check the PIN — press Locked to try again.'); return; }
+  if (login.locked) { deskShowLockScreen(login.error); return; }
+  if (!login.ok) { deskPinForget(); deskShowLockScreen('The PIN this tab held is no longer right — enter it again.'); return; }
+  DESK.authed = true;
+  deskLockArm();
+  DESK.data = buildDemoData(); /* placeholder series shapes until the accounts land */
   /* Owner ruling 2026-07-22: live is REAL DATA OR NOTHING. Blank the demo
      market tiles + headlines so a failed first fetch renders an empty strip/
      Markets/news (Stale lamp) instead of fabricated prices labeled Stale —
@@ -11978,21 +12526,9 @@ async function boot() {
   startEcon();
   loadWidgets();
   startFeedPolling();
-  let pin = null;
-  try { pin = sessionStorage.getItem('desk_pin'); } catch { /* storage blocked — the locked shell below */ }
-  if (pin) {
-    /* null = the login call itself failed (network, HTTP). That is NOT a wrong
-       PIN: only a definite {ok:false} discards the stored one, or a blip at
-       reload would sign the owner out. */
-    const res = await deskLogin(pin).catch(() => null);
-    if (res && res.ok) {
-      DESK.authed = true; await loadPrivate(pin); renderMasthead(); renderWatchlist(); return;
-    }
-    /* a lock (desk_026) says nothing about THIS PIN: keep it, and say why the desk is shut */
-    if (res && res.locked) { renderLockedPanels(res.error); return; }
-    if (res) deskPinForget();
-  }
-  renderLockedPanels();
+  await loadPrivate(pin);
+  renderMasthead();
+  renderWatchlist();
 }
 
 wireCharts();

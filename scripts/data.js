@@ -590,8 +590,41 @@ function deskPinDeviceWipe() {
   try { localStorage.removeItem(DESK_PIN_DEVICE_KEY); } catch { /* storage blocked: nothing to wipe */ }
 }
 function deskPinForget() {
-  try { sessionStorage.removeItem('desk_pin'); } catch { /* private mode */ }
+  try { sessionStorage.removeItem('desk_pin'); sessionStorage.removeItem('desk_pin_at'); } catch { /* private mode */ }
   deskPinDeviceWipe();
+}
+/* Simulated trades (desk_028, owner 2026-11-15). PIN RPCs, owner only; a server row is snake_case and becomes the
+   client shape here. Anything but an `ok:true` reply is {ok:false, error}. Nothing here is money the owner holds. */
+function deskSimRow(r) {
+  if (!r || typeof r !== 'object') return null;
+  const n = v => (v == null || v === '' ? null : Number(v));
+  return { id: String(r.id), sym: String(r.sym || ''), side: r.side === 'sell' ? 'sell' : 'buy', qty: n(r.qty), mult: n(r.mult) || 1,
+    entry: n(r.entry), note: typeof r.note === 'string' ? r.note : '', openedAt: r.opened_at || null, snap: r.snap || null,
+    closedAt: r.closed_at || null, exit: n(r.exit), exitSnap: r.exit_snap || null };
+}
+async function deskSimList(pin) {
+  const out = await deskRpcOk('desk_sim_list', pin);
+  if (!out.ok) return { ok: false, error: 'Could not read the simulated trades.' };
+  return { ok: true, trades: (Array.isArray(out.trades) ? out.trades : []).map(deskSimRow).filter(t => t && t.sym) };
+}
+async function deskSimOpen(pin, t) {
+  const out = await deskRpcOk('desk_sim_open', pin, { p_sym: t.sym, p_side: t.side, p_qty: t.qty, p_mult: t.mult, p_entry: t.entry,
+    p_note: t.note || '', p_snap: t.snap || null });
+  return out.ok ? { ok: true, id: out.id } : { ok: false, error: 'The trade was not saved.' };
+}
+async function deskSimClose(pin, id, exit, exitSnap) {
+  const out = await deskRpcOk('desk_sim_close', pin, { p_id: Number(id), p_exit: exit, p_exit_snap: exitSnap || null });
+  return out.ok ? { ok: true } : { ok: false, error: 'The trade was not closed.' };
+}
+async function deskSimRemove(pin, id) {
+  const out = await deskRpcOk('desk_sim_remove', pin, { p_id: Number(id) });
+  return out.ok ? { ok: true } : { ok: false, error: 'The trade was not removed.' };
+}
+/* Unlocking keeps the PIN for THIS TAB and the moment it was unlocked: the desk locks itself an hour later (owner
+   2026-11-15, "time out after an hour"). A PIN stored without a time (an earlier version) counts as expired. */
+function deskPinKeep(pin) {
+  try { sessionStorage.setItem('desk_pin', pin); sessionStorage.setItem('desk_pin_at', String(Date.now())); return true; }
+  catch { return false; }
 }
 async function deskGetDashboard(pin) {
   const out = await deskRpc('desk_get_dashboard', pin);

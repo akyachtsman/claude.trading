@@ -38,8 +38,8 @@
      `position: fixed; inset: 0`, and a max-width with auto margins centres such a
      box at 1880px, so on a wider window the scrim stopped short of both edges and,
      the page behind being inert, the strips either side did nothing (audit 2026-10-06). */
-  .shell > *:not(.area-charts):not(.area-layers):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(:where(main)),
-  .shell > :where(main) > *:not(.area-charts):not(.area-layers):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(.modal-backdrop) { max-width: 1880px; margin-inline: auto; }
+  .shell > *:not(.area-charts):not(.area-layers):not(.ly-row):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(:where(main)),
+  .shell > :where(main) > *:not(.area-charts):not(.area-layers):not(.ly-row):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(.modal-backdrop) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -436,6 +436,10 @@
   .area-charts { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
   /* The Layers Heat Map sits RIGHT ABOVE the charts (owner ruling F) with the same inset; the shared 0.5in margin collapses between them. */
   .area-layers { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
+  /* Since 2026-11-15 the Layers panel (the Strategies Chart) shares ONE row with the Simulated trades panel: the row
+     carries the inset, the panels inside it carry none. */
+  .ly-row { min-width: 0; margin-block: 0.5in; margin-inline: calc(0.5in - var(--space-4)); }
+  .ly-row > .area-layers { margin: 0; }
 
   /* ── Accounts: the LAST block on the page, cards side by side ──────────────
      Owner request 2026-09-30: "my accounts information to go at the bottom of
@@ -1404,10 +1408,101 @@
     .ly-table thead tr:last-child th { top: 20px; }
   }
   @media (max-width: 640px) {
-    .area-layers { margin-inline: 0; }
+    .area-layers, .ly-row { margin-inline: 0; }
     .ly-outer, .ly-secs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .ly-info { margin-left: 0; }
     .ly-controls select { max-width: none; flex: 1 1 140px; }
     .ly-b { padding-right: var(--space-4); }
   }
   @media (prefers-reduced-motion: reduce) { .ly-scope * { transition: none !important; } }
+
+/* ── Simulated trades (owner 2026-11-15) ─────────────────────────────────────────────────────────────────────────────
+   The column right of the Strategies Chart, top to bottom: from the desk row's 1120px gate up the two panels share
+   one row and this one takes the Strategies Chart's height (its content scrolls inside, so it never makes the row
+   taller); under it, or alone, it is a fixed 560px block below. Dark like the panel beside it; here green and red are
+   PROFIT and LOSS (the gain/loss rule), never BUY and SELL, which the trade's own chip says in words. */
+  .area-sim, .sim-dialog { --sim-gain: #5BE38A; --sim-loss: #FF8A8C; }
+  .area-sim { position: relative; min-width: 0; height: 560px; margin-top: var(--space-4); border-color: var(--ly-border); }
+  .area-sim[hidden] { display: none; }
+  @media (min-width: 1120px) {
+    .ly-row { display: flex; align-items: stretch; gap: var(--space-4); }
+    .ly-row > .area-layers { flex: 0 1 var(--ly-w, 100%); max-width: none; }
+    .ly-row > .area-layers[hidden] { display: none; }
+    .ly-row > .area-sim { flex: 1 1 0; height: auto; min-height: 420px; margin-top: 0; }
+  }
+  .sim-in { position: absolute; inset: 0; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-3) 0; min-width: 0; }
+  .sim-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .sim-head .panel-title { color: var(--ly-ink); overflow: visible; }
+  .sim-add { margin-left: auto; }
+  .sim-stamp { margin: 0; color: var(--ly-ink-2); }
+  .sim-sum { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 1px 10px; font: 500 var(--font-xs)/1.35 var(--font-mono); color: var(--ly-ink-2); }
+  .sim-sum > span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sim-sum > .sim-rl { text-align: left; font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .04em; font-size: var(--font-2xs); }
+  .sim-up { color: var(--sim-gain); } .sim-down { color: var(--sim-loss); }
+  .sim-tabs { display: flex; gap: var(--space-1); }
+  .sim-tabs .ly-btn[aria-pressed="true"], .sim-seg .ly-btn[aria-pressed="true"] { border-color: var(--ly-accent); color: var(--ly-accent); }
+  .sim-list { flex: 1 1 0; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--space-3)); padding: 0 var(--space-3) var(--space-3); border-top: 1px solid var(--ly-border); }
+  .sim-list:focus-visible { outline: 2px solid var(--ly-accent); outline-offset: -2px; }
+  .sim-empty { margin: var(--space-3) 0; font: 400 var(--font-xs)/1.5 var(--font-sans); color: var(--ly-ink-2); }
+  .sim-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px var(--space-2); width: 100%; padding: 8px 2px;
+    border: 0; border-bottom: 1px solid var(--ly-border); background: none; color: var(--ly-ink); text-align: left; cursor: pointer;
+    font: 400 var(--font-2xs)/1.35 var(--font-mono);
+  }
+  .sim-row:hover { background: var(--ly-panel-2); }
+  .sim-row:focus-visible { outline: 2px solid var(--ly-accent); outline-offset: -2px; }
+  .sim-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sim-row .sim-r { text-align: right; }
+  .sim-row .sim-sym { font: 600 var(--font-sm)/1.2 var(--font-sans); }
+  .sim-row .sim-muted, .sim-muted { color: var(--ly-ink-2); }
+  .sim-row .sim-mv { font: 600 var(--font-xs)/1.2 var(--font-mono); align-self: end; }
+  .sim-side { display: inline-block; margin-left: 6px; padding: 1px 4px; border: 1px solid var(--ly-border); border-radius: var(--radius-sm); font: 600 9px/1.2 var(--font-sans); letter-spacing: .05em; vertical-align: 2px; }
+  .sim-row .sim-snapl { grid-column: 1 / -1; font-family: var(--font-sans); }
+  /* dialogs */
+  .sim-dialog { width: min(560px, calc(100vw - 32px)); }
+  .sim-form { display: flex; flex-direction: column; gap: var(--space-2); }
+  .sim-field { display: flex; flex-direction: column; gap: 2px; font: 500 var(--font-xs)/1.3 var(--font-sans); color: var(--ly-ink-2); }
+  .sim-field input, .sim-field select { min-height: 32px; padding: 4px 8px; border: 1px solid var(--ly-border); border-radius: var(--radius-md); background: var(--ly-panel-2); color: var(--ly-ink); font: 400 var(--font-sm)/1.2 var(--font-mono); color-scheme: dark; }
+  .sim-opt { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+  .sim-opt[hidden] { display: none; }
+  .sim-seg { display: flex; gap: var(--space-1); }
+  .sim-quote, .sim-snap { margin: 0; font: 400 var(--font-xs)/1.45 var(--font-sans); color: var(--ly-ink-2); }
+  .sim-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+  .sim-detail { width: min(720px, calc(100vw - 32px)); }
+  .sim-detail .panel-body { display: flex; flex-direction: column; gap: var(--space-3); max-height: min(78vh, 760px); overflow-y: auto; }
+  .sim-detail .panel-body > * { flex: 0 0 auto; }
+  .sim-detail p.sim-muted { margin: 0 0 4px; font: 400 var(--font-xs)/1.4 var(--font-sans); }   /* a flex column shrinks its sections to fit and clips them: the body scrolls instead */
+  .sim-tbl { width: 100%; border-collapse: collapse; font: 400 var(--font-xs)/1.35 var(--font-mono); }
+  .sim-tbl th, .sim-tbl td { padding: 3px 6px; border-bottom: 1px solid var(--ly-border); text-align: right; white-space: nowrap; }
+  .sim-tbl th:first-child, .sim-tbl td:first-child { text-align: left; font-family: var(--font-sans); }
+  .sim-tbl th { font: 600 var(--font-2xs)/1.3 var(--font-sans); color: var(--ly-ink-2); text-transform: uppercase; letter-spacing: .04em; }
+  .sim-wrap { overflow-x: auto; }
+  .sim-detail h3 { margin: 0 0 4px; font: 600 var(--font-sm)/1.3 var(--font-sans); color: var(--ly-ink); }
+  .sim-close { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2); }
+  @media (hover: none) and (pointer: coarse) {
+    .sim-row { min-height: 48px; }
+    .sim-field input, .sim-field select { min-height: 44px; font-size: 16px; }
+    .sim-tabs .ly-btn, .sim-seg .ly-btn, .sim-add { min-height: 44px; }
+  }
+
+/* ── The desk lock (owner 2026-11-15: "a small button, on or off, red or green") ─────────────────────────────────
+   A STATUS light, not P&L: red (--color-danger) = locked, green (--color-status-live) = unlocked, white text on both
+   (5.46:1 and 5.4:1). The dot repeats the state for anyone who cannot tell the two colours apart, with the word. */
+.desk-lock {
+  align-self: center; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 12px 4px 10px;
+  border: 0; border-radius: 999px; background: var(--color-danger); color: var(--color-on-danger, #fff);
+  font: 600 var(--font-2xs)/1 var(--font-sans); letter-spacing: .06em; text-transform: uppercase; cursor: pointer;
+}
+.desk-lock::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.desk-lock.is-open { background: var(--color-status-live); color: #fff; }
+.desk-lock:hover { filter: brightness(.92); }
+.desk-lock:focus-visible { outline: 2px solid var(--color-text); outline-offset: 2px; }
+.desk-lock[hidden] { display: none; }
+@media (pointer: coarse) { .desk-lock { min-height: 44px; } }
+#main[hidden] { display: none; }
+.desk-lockscreen { max-width: 560px; margin: 15vh auto; padding: var(--space-6, 24px); text-align: center; }
+.desk-lockscreen .lock-error:empty { display: none; }
+.desk-lock-form { display: flex; gap: var(--space-2); justify-content: center; margin: var(--space-3) 0 var(--space-2); }
+.desk-lock-form .legacy-input { flex: 0 1 280px; min-width: 0; }
+.desk-lock-small { font-size: var(--font-xs); color: var(--color-text-secondary); }
+@media (pointer: coarse) { .desk-lock-form .legacy-input, .desk-lock-form .legacy-btn { min-height: 44px; } }

@@ -986,6 +986,19 @@ test('S4: no horizontal overflow at 390px mobile viewport', async ({ page, rende
 // (mirrors the S3/S4 preamble: skips the test when gated with no credential, so
 // the navigation/control invariants below never just exercise the login screen)
 // ─────────────────────────────────────────────────────────────────────────────
+// A live page in a fresh tab is LOCKED as a whole since 2026-11-15: this seeds the tab with an invented PIN (and its
+// unlock time) and answers desk_login for it in the browser, so the desk boots unlocked and nothing reaches Supabase.
+async function liveUnlockedStub(live) {
+  await live.addInitScript(() => { try { sessionStorage.setItem('desk_pin', 'stub-pin'); sessionStorage.setItem('desk_pin_at', String(Date.now())); } catch {} });
+  await live.route(`${LIVE_BACKEND}/rest/v1/rpc/desk_login`, r => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"ok":true}' }));
+}
+// The live desk is locked as a whole (owner 2026-11-15): the lock screen's field, then the reload an unlock does.
+async function unlockLiveDesk(page, credential) {
+  await page.goto('./');
+  await page.locator('#deskUnlockInput').fill(String(credential));
+  await Promise.all([page.waitForNavigation(), page.locator('#deskUnlockSubmit').click()]);
+  await expect(page.locator('#main')).toBeVisible({ timeout: 15000 });
+}
 async function gotoAndAuth(page) {
   await blockRosterWrites(page);   // NAV and CTRL click real controls on an authenticated desk
   await page.goto('./');
@@ -1494,25 +1507,23 @@ async function liveBackendConfigured(page) {
 }
 
 // S10 — Locked → login → render (needs backend + TEST_AUTH_CREDENTIAL).
-test('S10: valid PIN unlocks accounts (live only)', async ({ page, renderWitness }) => {
+test('S10: valid PIN unlocks the desk (live only)', async ({ page, renderWitness }) => {
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   test.skip(!AUTH_CREDENTIAL, NO_CREDENTIAL);
   await page.goto('./');
-  // Scoped to the lock panel: since the open Ask (#305) the Ask composer is ALSO a
-  // `.lock-form`, so the bare class matched two forms and strict mode threw (qa-live
-  // was red on main for four runs). S11 and the button selectors follow the same rule.
-  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
+  // The WHOLE live desk is locked (owner 2026-11-15): only the masthead's red Locked button and the lock screen show,
+  // asserted before any credential is offered — a desk that drew anything without a PIN would still "unlock" below.
+  const pinInput = page.locator('#deskUnlockInput');
   await expect(pinInput).toBeVisible();
-  // The LOCKED shell, asserted before any credential is offered: a desk that
-  // rendered its accounts (or believed itself authenticated) without a PIN would
-  // still "unlock" below, so the pre-state is half of what this scenario proves.
-  await expect(page.locator('#accountGrid .panel-lock .lamp'), 'the accounts panel starts locked')
-    .toHaveText(/locked/i);
-  await expect(page.locator('#accountGrid .hero-number'), 'no account data before unlocking').toHaveCount(0);
+  await expect(page.locator('#deskLockBtn'), 'the lock button starts red: Locked').toHaveText(/locked/i);
+  await expect(page.locator('#deskLockBtn')).not.toHaveClass(/is-open/);
+  await expect(page.locator('#main'), 'nothing of the desk shows before the PIN').toBeHidden();
   expect(await page.evaluate(() => DESK.authed), 'not authenticated before the PIN is entered').toBe(false);
   await pinInput.fill(AUTH_CREDENTIAL);
-  await page.locator('#accountGrid .panel-lock .lock-form button').click();
+  await Promise.all([page.waitForNavigation(), page.locator('#deskUnlockSubmit').click()]);   // an unlock reloads the page
+  await expect(page.locator('#deskLockBtn'), 'green: Unlocked').toHaveText(/unlocked/i, { timeout: 15000 });
+  await expect(page.locator('#deskLockBtn')).toHaveClass(/is-open/);
   await expect(page.locator('#accountGrid .hero-number').first()).toBeVisible({ timeout: 15000 });
 });
 
@@ -1525,28 +1536,18 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
   test.skip(testInfo.project.name !== 'desktop', 'one wrong PIN per run: each counts toward the desk lockout (desk_026)');
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
   await page.goto('./');
-  const pinInput = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
+  const pinInput = page.locator('#deskUnlockInput');
   await expect(pinInput).toBeVisible();
   await pinInput.fill('000000');
-  await page.locator('#accountGrid .panel-lock .lock-form button').click();
-  // Scoped to the lock panel ON PURPOSE. `.lock-error` is the desk's shared
-  // error-line class, and every modal that grew a validation message adopted it
-  // — the system prompt editor, watchlist quick-add, remove-confirm and edit. A
-  // bare `.lock-error` matched 2 elements by PR #167 and 5 by PR #196, so
-  // Playwright's strict mode rejected it before the assertion ever ran and S11
-  // failed on a live desk that was behaving correctly. The next modal would have
-  // made it 6; scoping to the panel under test is what keeps this stable.
-  const lockError = page.locator('.panel-lock .lock-error');
-  await expect(lockError).toBeVisible({ timeout: 15000 });
-  // ...with WORDS in it: a visible, empty error line is an unexplained failure.
-  await expect(lockError, 'the error line says something').toHaveText(/\S/);
-  // Still locked, not merely "an error appeared": the form is still there to try
-  // again, the panel still reads Locked, nothing was kept, no data rendered.
-  await expect(page.locator('.panel-lock .lock-form input.legacy-input'), 'the PIN form is still offered').toBeVisible();
-  await expect(page.locator('#accountGrid .panel-lock .lamp'), 'the panel still reads Locked').toHaveText(/locked/i);
+  await page.locator('#deskUnlockSubmit').click();
+  const lockError = page.locator('#deskLockMsg');
+  await expect(lockError, 'the error line says something').toHaveText(/\S/, { timeout: 15000 });
+  // Still locked, not merely "an error appeared": the field is still there, the button still red, nothing kept or drawn.
+  await expect(pinInput, 'the PIN field is still offered').toBeVisible();
+  await expect(page.locator('#deskLockBtn'), 'the button still reads Locked').toHaveText(/^locked$/i);
+  await expect(page.locator('#main')).toBeHidden();
   expect(await page.evaluate(() => DESK.authed), 'a wrong PIN authenticates nothing').toBe(false);
   expect(await page.evaluate(() => sessionStorage.getItem('desk_pin')), 'and a wrong PIN is not remembered').toBeNull();
-  await expect(page.locator('#accountGrid .hero-number')).toHaveCount(0);
 });
 
 // S14 — Live-feed-layer canary (Group C: the committed snapshots are gone,
@@ -1558,7 +1559,9 @@ test('S11: invalid PIN shows an error and stays locked (live only)', async ({ pa
 test('S14: desk lamp reads LIVE/EOD off the market feed (live only)', async ({ page, renderWitness }) => {
   renderWitness();
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  await page.goto('./');
+  // the whole live desk is behind the PIN since 2026-11-15: the feeds run only once it is unlocked
+  test.skip(!AUTH_CREDENTIAL, NO_CREDENTIAL);
+  await unlockLiveDesk(page, AUTH_CREDENTIAL);
   const lamp = page.locator('#mastheadState .lamp').first();
   /* STALE is a THIRD legitimate state for a few minutes after the closing bell,
      and this canary asserted only two — so any run crossing 16:00 ET failed here
@@ -8393,20 +8396,22 @@ test('S59: Ask the desk takes a question without the PIN, and only the PIN adds 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S60 — the desk PIN is kept for THIS TAB only (owner 2026-11-11, PIN hardening fix 3: "stop
-// keeping the PIN in localStorage"; it reverses 2026-10-04's device copy). The server stays the
-// gate: the tab's PIN is validated by desk_login at every boot; an unlock writes the tab's copy and
-// nothing else; a device copy left by an earlier version is wiped at boot, UNREAD; Lock and a PIN
-// the server definitely refuses forget the tab's copy; a network blip forgets nothing. Run through
-// the REAL boot against a stubbed backend.
+// S60 — ONE PIN locks the whole live desk, kept for THIS TAB only, for an hour (owner 2026-11-11, PIN hardening fix 3:
+// "stop keeping the PIN in localStorage"; owner 2026-11-15: "the pin we're using to access my accounts will be used to
+// lock the entire dashboard", "a small button, on or off, red or green", "time out after an hour"). The server stays
+// the gate: the tab's PIN is validated by desk_login at every boot; nothing of the desk runs or shows until it is; an
+// unlock writes the tab's copy and its time and nothing else; a device copy left by an earlier version is wiped at boot,
+// UNREAD; the lock button, a PIN the server definitely refuses and the hour forget the tab's copy; a network blip and a
+// lockout forget nothing. Run through the REAL boot against a stubbed backend.
 // ─────────────────────────────────────────────────────────────────────────────
-test('S60: the desk PIN is kept for this tab only — never on the device, validated at every boot, forgotten by Lock and by a refusal, kept through a network blip', async ({ page, renderWitness }) => {
+test('S60: one PIN locks the whole desk — kept for this tab only and for an hour, validated at every boot, forgotten by the lock button and by a refusal, kept through a network blip', async ({ page, renderWitness }) => {
   renderWitness();
+  test.setTimeout(90_000);
   test.skip(!(await liveBackendConfigured(page)), 'demo-only: DESK_DB is empty');
-  const DEVICE = 'desk_pin_device_v1', GOOD = '4321';
+  const DEVICE = 'desk_pin_device_v1', GOOD = '4321', HOUR = 3600_000;
   const base = (await (await page.request.get('scripts/config.js')).text()).match(/url:\s*'([^']*)'/)[1];
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
-  const logins = [];
+  const logins = [], others = [];
   let blip = false, lockedUntil = null;
   await page.route(`${base}/**`, async (route) => {
     const req = route.request();
@@ -8419,112 +8424,140 @@ test('S60: the desk PIN is kept for this tab only — never on the device, valid
       if (lockedUntil) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: false, locked_until: lockedUntil }) });
       return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ ok: pin === GOOD }) });
     }
+    others.push(new URL(req.url()).pathname);
     // every other desk call (feeds, dashboard, roster) is out of scope: fail it fast and quietly
     return route.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: '{"ok":false}' });
   });
 
   const stores = () => page.evaluate(([k]) => ({ session: sessionStorage.getItem('desk_pin'), device: localStorage.getItem(k) }), [DEVICE]);
+  const settled = () => page.waitForFunction(() => DESK.mode === 'live'
+    && (!document.getElementById('deskLockScreen').hidden || document.querySelector('#accountGrid .panel')), null, { timeout: 20000 });
   const loadLive = async (seed = {}) => {
     await page.goto('./?demo=1');
     await page.evaluate(([k, s]) => {
       localStorage.clear(); sessionStorage.clear();
       if (s.device) localStorage.setItem(k, s.device);
-      if (s.session) sessionStorage.setItem('desk_pin', s.session);
+      if (s.session) { sessionStorage.setItem('desk_pin', s.session); sessionStorage.setItem('desk_pin_at', String(s.at || Date.now())); }
     }, [DEVICE, seed]);
-    logins.length = 0;
+    logins.length = 0; others.length = 0;
     await page.goto('./');
-    await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
+    await settled();
   };
-  const lockForm = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
-  const lockBtn = page.getByRole('button', { name: 'Lock', exact: true });
+  const field = page.locator('#deskUnlockInput'), unlock = page.locator('#deskUnlockSubmit'), note = page.locator('#deskLockMsg');
+  const lockBtn = page.locator('#deskLockBtn');
   const sysBtn = page.locator('#askBody button[aria-label="Edit the Ask-the-desk system prompt"]');
   const authed = () => page.evaluate(() => DESK.authed);
+  const lockedShell = async (why) => {
+    await expect(field, why + ': the lock screen asks for the PIN').toBeVisible();
+    await expect(page.locator('#main'), why + ': nothing of the desk shows').toBeHidden();
+    await expect(lockBtn, why + ': the button reads Locked').toHaveText(/^locked$/i);
+    await expect(lockBtn).not.toHaveClass(/is-open/);
+    expect(await authed()).toBe(false);
+  };
 
-  // A. nothing stored: no login call, the accounts are locked, Ask is open
+  // A. nothing stored: no login call, NOTHING of the desk runs, the page is the lock screen and a red button
   await loadLive();
   expect(logins, 'nothing stored, so nothing is validated').toEqual([]);
-  await expect(lockForm, 'the accounts ask for the PIN').toBeVisible();
-  expect(await authed()).toBe(false);
-  await expect(page.locator('#accountGrid .lock-explain'), 'the lock panel says the PIN is kept for this tab').toContainText(/stays unlocked in this tab/i);
-  await expect(page.locator('#accountGrid .lock-explain'), 'and never promises the device').not.toContainText(/device/i);
-  await expect(page.locator('#askBody form input.legacy-input'), 'while Ask is open without it').toBeEnabled();
-  await expect(sysBtn).toHaveCount(0);
+  await lockedShell('nothing stored');
+  await expect(page.locator('#deskLockScreen'), 'the PIN is kept for this tab and an hour').toContainText(/unlocked in this tab for an hour/i);
+  await expect(page.locator('#deskLockScreen')).not.toContainText(/device/i);
+  await page.waitForTimeout(1500);
+  expect(others, 'a locked desk asks the backend for nothing at all').toEqual([]);
+  const red = await lockBtn.evaluate(b => getComputedStyle(b).backgroundColor);
 
-  // B. a wrong PIN stores nothing anywhere; the right one is kept by the TAB and by nothing else
-  await lockForm.fill('0000');
-  await page.locator('#accountGrid .panel-lock .lock-form button').click();
-  await expect(page.locator('.panel-lock .lock-error')).toBeVisible();
+  // B. a wrong PIN stores nothing anywhere; the right one is kept by the TAB (with its time) and by nothing else
+  await field.fill('0000');
+  await unlock.click();
+  await expect(note).toHaveText(/not recognized/i);
   expect(await stores(), 'a wrong PIN is kept nowhere').toEqual({ session: null, device: null });
-  expect(await authed()).toBe(false);
-  await lockForm.fill(GOOD);
-  await page.locator('#accountGrid .panel-lock .lock-form button').click();
-  await expect.poll(authed).toBe(true);
+  await lockedShell('a wrong PIN');
+  await field.fill(GOOD);
+  await Promise.all([page.waitForNavigation(), unlock.click()]);   // an unlock reloads the page
+  await settled();
+  expect(await authed()).toBe(true);
+  await expect(page.locator('#main'), 'the desk shows').toBeVisible();
+  await expect(lockBtn, 'the button reads Unlocked').toHaveText(/^unlocked$/i);
+  await expect(lockBtn).toHaveClass(/is-open/);
+  expect(await lockBtn.evaluate(b => getComputedStyle(b).backgroundColor), 'and is no longer the red one').not.toBe(red);
   expect(await stores(), 'the right PIN is kept for the tab and NOT on the device').toEqual({ session: GOOD, device: null });
+  const at = Number(await page.evaluate(() => sessionStorage.getItem('desk_pin_at')));
+  expect(Math.abs(Date.now() - at), 'with the moment it was unlocked').toBeLessThan(60_000);
   expect(await page.evaluate(() => Object.keys(localStorage).filter(k => /pin/i.test(k))), 'no PIN-named key in localStorage at all').toEqual([]);
+  await expect(lockBtn, 'the button says when it locks itself').toHaveAttribute('title', /locks itself at \d\d:\d\d P[DS]T/);
 
   // C. a device copy an EARLIER version left behind is wiped at boot, UNREAD: it unlocks nothing
   await loadLive({ device: GOOD });
   expect(logins, 'the old device copy is not even sent to the server').toEqual([]);
-  expect(await authed(), 'and does not unlock the desk').toBe(false);
   expect(await stores(), 'it is gone').toEqual({ session: null, device: null });
-  await expect(lockForm).toBeVisible();
-  // ...in demo mode too (the wipe runs before the mode is read)
+  await lockedShell('an old device copy');
+  // ...in demo mode too (the wipe runs before the mode is read), and demo has no lock
   await page.evaluate(([k]) => localStorage.setItem(k, '4321'), [DEVICE]);
   await page.goto('./?demo=1');
   await page.waitForFunction(() => DESK.mode === 'demo');
   expect((await stores()).device, 'a demo visit wipes the old device copy too').toBe(null);
+  await expect(lockBtn, 'demo is made-up data: no lock').toBeHidden();
+  await expect(page.locator('#main')).toBeVisible();
 
   // D. a reload of an unlocked TAB: the tab's PIN is validated by the server and unlocks; still nothing on the device
   await loadLive({ session: GOOD });
   expect(logins, 'the tab\'s PIN is checked by the server at boot, not trusted for being stored').toEqual([GOOD]);
   expect(await authed(), 'and unlocks the desk').toBe(true);
   expect(await stores(), 'the device stays empty').toEqual({ session: GOOD, device: null });
-  await expect(lockForm, 'no PIN form on an unlocked tab').toHaveCount(0);
-  await expect(lockBtn).toBeVisible();
+  await expect(page.locator('#main')).toBeVisible();
   await expect(sysBtn, 'and Ask has its private parts').toHaveCount(1);
 
   // E. a PIN the server definitely refuses (it was changed) is forgotten
   await loadLive({ session: '9999' });
   expect(logins).toEqual(['9999']);
-  expect(await authed()).toBe(false);
   expect(await stores(), 'a refused PIN is dropped').toEqual({ session: null, device: null });
-  await expect(lockForm).toBeVisible();
+  await lockedShell('a refused PIN');
+  await expect(note).toContainText(/no longer right/i);
 
   // F. a network blip is NOT a wrong PIN: locked this time, but the tab keeps it for the next load
   blip = true;
   await loadLive({ session: GOOD });
   expect(logins).toEqual([GOOD]);
-  expect(await authed(), 'the blip leaves the desk locked for now').toBe(false);
+  await lockedShell('a network blip');
+  await expect(note).toContainText(/could not reach/i);
   expect((await stores()).session, 'but does not sign the owner out of this tab').toBe(GOOD);
   blip = false;
 
-  // G. Lock really locks: it forgets the tab's copy, so a reload does not quietly unlock again
+  // G. the button really locks: it forgets the tab's copy and reloads, so nothing stays on screen or quietly unlocks
   await loadLive({ session: GOOD });
   expect(await authed()).toBe(true);
-  await lockBtn.click();
-  expect(await authed()).toBe(false);
-  expect(await stores(), 'Lock forgets the tab\'s copy').toEqual({ session: null, device: null });
-  await expect(lockForm).toBeVisible();
-  await expect(sysBtn, 'Ask drops its private parts but stays open').toHaveCount(0);
-  await expect(page.locator('#askBody form input.legacy-input')).toBeEnabled();
+  await Promise.all([page.waitForNavigation(), lockBtn.click()]);
+  await settled();
+  expect(await stores(), 'the lock button forgets the tab\'s copy').toEqual({ session: null, device: null });
+  await lockedShell('after the lock button');
   logins.length = 0;
   await page.reload();
-  await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
-  expect(logins, 'after Lock a reload has nothing to validate').toEqual([]);
-  expect(await authed()).toBe(false);
+  await settled();
+  expect(logins, 'after locking a reload has nothing to validate').toEqual([]);
+  await lockedShell('a reload after locking');
 
-  // H. a LOCKED desk (desk_026: 10 wrong PINs in an hour) is not a verdict on the stored PIN: the desk stays locked,
-  // the tab keeps the PIN, and the panel says until when — on the Pacific clock, worked out here with Intl
+  // H. the hour: a tab unlocked more than an hour ago is locked at boot, unasked; one about to reach the hour locks itself
+  await loadLive({ session: GOOD, at: Date.now() - HOUR - 60_000 });
+  expect(logins, 'a PIN past its hour is not even checked').toEqual([]);
+  expect(await stores(), 'it is forgotten').toEqual({ session: null, device: null });
+  await lockedShell('past the hour');
+  await loadLive({ session: GOOD, at: Date.now() - HOUR + 4_000 });
+  expect(await authed(), 'four seconds before the hour it still unlocks').toBe(true);
+  await page.waitForFunction(() => !DESK.authed && !document.getElementById('deskLockScreen').hidden, null, { timeout: 20000 });
+  expect(await stores(), 'and then locks itself, forgetting the PIN').toEqual({ session: null, device: null });
+  await lockedShell('the hour ran out');
+
+  // I. a LOCKED desk (desk_026: 10 wrong PINs in an hour) is not a verdict on the stored PIN: the desk stays locked,
+  // the tab keeps the PIN, and the page says until when — on the Pacific clock, worked out here with Intl
   lockedUntil = '2026-11-11T05:58:18+00:00';
   const until = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(lockedUntil));
   await loadLive({ session: GOOD });
   expect(logins).toEqual([GOOD]);
-  expect(await authed(), 'a locked desk does not unlock').toBe(false);
-  expect((await stores()).session, 'and the lock does not sign the owner out of this tab').toBe(GOOD);
-  await expect(page.locator('#accountGrid .lock-explain'), 'the panel says the desk is locked, and until when').toContainText(new RegExp(`locked until ${until} P[DS]T`));
-  await lockForm.fill(GOOD);
-  await page.locator('#accountGrid .panel-lock .lock-form button').click();
-  await expect(page.locator('.panel-lock .lock-error'), 'typing the right PIN while locked says the same').toContainText(new RegExp(`Too many wrong PINs .* locked until ${until} P[DS]T`));
+  await lockedShell('a lockout');
+  expect((await stores()).session, 'the lock does not sign the owner out of this tab').toBe(GOOD);
+  await expect(note, 'the page says the desk is locked, and until when').toContainText(new RegExp(`locked until ${until} P[DS]T`));
+  await field.fill(GOOD);
+  await unlock.click();
+  await expect(note, 'typing the right PIN while locked says the same').toContainText(new RegExp(`Too many wrong PINs .* locked until ${until} P[DS]T`));
   expect(await authed()).toBe(false);
   lockedUntil = null;
 });
@@ -8795,8 +8828,10 @@ test('S61: a wrapped watchlist can split its excess into a real second list', as
 
   await seed([{ title: 'Radar', symbols: SYMS }, { title: 'Copy', symbols: SYMS }, { title: 'Big', symbols: big(880) }]);   // 1,120 saved, 1,000 unique
   await splitFirst();
+  // The note still says `Moved …` from the split above (a seed does not clear it), so it cannot tell this split has landed; under load the
+  // count was read before the write. Wait for the write itself.
+  await expect.poll(() => rosterWrites(page), { message: 'a symbol repeated across lists counts once, as the feed counts it' }).toBe(1);
   await expect(page.locator('#wlNote')).toContainText('Moved ');
-  expect(await rosterWrites(page), 'a symbol repeated across lists counts once, as the feed counts it').toBe(1);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12582,15 +12617,15 @@ test('S81: the owner changes the desk PIN to a passphrase — only while unlocke
   // live and LOCKED: no control; the unlock field takes a passphrase (no numeric keypad)
   await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
   await page.goto('./');
-  await page.waitForFunction(() => DESK.mode === 'live' && document.querySelector('#accountGrid .panel'), null, { timeout: 20000 });
+  await page.waitForFunction(() => DESK.mode === 'live' && !document.getElementById('deskLockScreen').hidden, null, { timeout: 20000 });
   await expect(page.locator('#pinChangeBtn'), 'a locked desk offers no change').toHaveCount(0);
-  const unlockField = page.locator('#accountGrid .panel-lock .lock-form input.legacy-input');
+  const unlockField = page.locator('#deskUnlockInput');   // the whole desk is locked since 2026-11-15
   expect(await unlockField.getAttribute('inputmode'), 'a passphrase is not digits: no numeric keypad').toBe(null);
   await expect(unlockField).toHaveAttribute('placeholder', /passphrase/i);
-  await expect(page.locator('#accountGrid .lock-explain')).toContainText(/PIN or passphrase/);
+  await expect(page.locator('#deskLockScreen')).toContainText(/PIN or passphrase/);
 
   // unlock with the PIN: the control is beside Lock
-  await page.evaluate((p) => sessionStorage.setItem('desk_pin', p), OLD);
+  await page.evaluate((p) => { sessionStorage.setItem('desk_pin', p); sessionStorage.setItem('desk_pin_at', String(Date.now())); }, OLD);
   await page.goto('./');
   await page.waitForFunction(() => DESK.mode === 'live' && DESK.authed);
   const btn = page.locator('#pinChangeBtn');
@@ -12687,7 +12722,8 @@ test('S81: the owner changes the desk PIN to a passphrase — only while unlocke
   await expect(page.locator('#pinChangeSaveBtn')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dlg).toBeHidden();
-  await page.getByRole('button', { name: 'Lock', exact: true }).click();
+  await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Lock', exact: true }).click()]);   // locking reloads
+  await page.waitForFunction(() => DESK.mode === 'live' && !document.getElementById('deskLockScreen').hidden);
   await expect(btn, 'Lock takes the control away').toHaveCount(0);
   expect(errs, 'no page errors').toEqual([]);
 });
@@ -12716,7 +12752,8 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   };
 
   // 1. Place, lamp, stamp.
-  expect(await panel.evaluate(p => p.nextElementSibling && p.nextElementSibling.classList.contains('area-charts')), 'right above the charts').toBe(true);
+  // since 2026-11-15 it shares a row with the simulated trades (.ly-row); the ROW sits right above the charts
+  expect(await panel.evaluate(p => { const r = p.closest('.ly-row') || p; return !!r.nextElementSibling && r.nextElementSibling.classList.contains('area-charts'); }), 'right above the charts').toBe(true);
   await expect(page.locator('#layersLamp')).toHaveText('Demo');
   await expect(page.locator('#layersStamp')).toContainText('Demo data · close of');
   const total = await page.evaluate(() => lyData.stocks.length);
@@ -12868,6 +12905,7 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   // 9. Live: the panel stays hidden (real data or nothing). The backend is answered here, never reached.
   const live = await browser.newPage();
   await live.route(`${LIVE_BACKEND}/**`, r => r.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' }));
+  await liveUnlockedStub(live);
   await live.goto(new URL('./', page.url()).href);
   await live.waitForFunction(() => typeof DESK !== 'undefined' && DESK.mode !== 'demo', null, { timeout: 20000 });
   await live.waitForTimeout(1500);
@@ -12910,6 +12948,7 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
   const open = async (switchOn) => {
     const live = await browser.newPage();
     await live.route(`${LIVE_BACKEND}/**`, r => r.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' }));
+    await liveUnlockedStub(live);
     await live.route(`${LIVE_BACKEND}/functions/v1/desk-layers`, r => {
       if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 200, headers: { ...CORS, 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' } });
       calls.push(Date.now());
@@ -13120,5 +13159,113 @@ test('S84: the charts rail roster column adds to and removes from the watchlist 
   expect(await box.count(), 'Charts roster: no box').toBe(0);
   expect(await page.locator('.wb-roster-del').count(), 'Charts roster: no ×').toBe(0);
   expect(await page.evaluate(() => readWbSticky().syms.join(',')), 'nothing here ever wrote the SYMBOL column').toBe(slotsBefore);
+  expect(errs, 'no page errors').toEqual([]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S85 — Simulated trades (owner 2026-11-15: "a non-funded testing of our strategies, both options and stock purchases";
+// "fill that space top to bottom"; "all the data points at the moment that I initiate or trigger a trade ... recorded and
+// displayed, versus the current time"; "dollar and percentage"). On the demo: the panel fills the space right of the
+// Strategies Chart, sums the whole simulation for every period in $ and %, lists the trades with what each was opened
+// on, opens a trade's write-up through openModal with the chart's readings THEN and NOW, opens a new trade (from the
+// panel and from a stock's write-up on the Strategies Chart) and refuses a junk one. The money sums themselves are
+// tools/unit/sim.test.mjs. Live, the panel is hidden until its table is switched on (DESK_SIM_LIVE).
+// ─────────────────────────────────────────────────────────────────────────────
+test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ and % for every period, and records the chart readings when a trade opens', async ({ page, renderWitness }, testInfo) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  await gotoDemo(page, '#simList .sim-row', 20000);
+  const wide = (page.viewportSize() || { width: 0 }).width >= 1120;
+  const box = id => page.locator(id).boundingBox();
+  const ly = await box('#layersPanel'), sim = await box('#simPanel');
+  if (wide) {
+    expect(sim.x, 'to the right of the Strategies Chart').toBeGreaterThan(ly.x + ly.width - 1);
+    expect(Math.abs(sim.y - ly.y), 'top to bottom: the same top').toBeLessThan(2);
+    expect(Math.abs(sim.height - ly.height), '...and the same height').toBeLessThan(2);
+  } else {
+    expect(sim.y, 'below the Strategies Chart on a narrower screen').toBeGreaterThan(ly.y + ly.height - 1);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no sideways page scroll').toBe(true);
+  await expect(page.locator('#simLamp')).toHaveText('Demo');
+  await expect(page.locator('#simStamp')).toContainText(/started/);
+  await expect(page.locator('#deskLockBtn'), 'demo has no desk lock').toBeHidden();
+
+  // the whole simulation: one line a period, $ and %
+  const sum = await page.locator('#simSum > span').allTextContents();
+  expect(sum.filter((_, i) => i % 3 === 0)).toEqual(['Today', 'Week', 'Month', 'YTD', 'Since start']);
+  for (let i = 0; i < 15; i += 3) {
+    expect(sum[i + 1], sum[i] + ' in dollars').toMatch(/^([+−][\d,]+(\.\d\d)?|—)$/);
+    expect(sum[i + 2], sum[i] + ' in percent').toMatch(/^([+−-]?\d+\.\d\d%|—)$/);
+  }
+  expect(sum[13], 'since start is known on the demo').not.toBe('—');
+  for (const s of await page.locator('#simSum > span').all()) {
+    const fits = await s.evaluate(e => e.scrollWidth <= e.clientWidth + 1);
+    expect(fits, 'a summary number is never cut: ' + await s.textContent()).toBe(true);
+  }
+
+  // the list: open trades, one of them an option, each saying what it was opened on; the closed tab holds the closed one
+  const rows = page.locator('#simList .sim-row');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.filter({ hasText: /Call|Put/ }), 'an option shows its contract line').toHaveCount(1);
+  for (const r of await rows.all()) await expect(r).toContainText(/Opened .* BUY \d+ \/ SELL \d+/);
+  await page.locator('#simTabs [data-tab="closed"]').click();
+  await expect(page.locator('#simTabs [data-tab="closed"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(rows).toHaveCount(1);
+  await page.locator('#simTabs [data-tab="open"]').click();
+
+  // a trade's write-up: through openModal, the periods in $ and %, the chart's readings when opened and now
+  const first = rows.first();
+  await first.click();
+  const det = page.locator('#simDetailBackdrop');
+  await expect(det).toBeVisible();
+  await expect(page.locator('#simDetailClose')).toBeFocused();
+  const body = page.locator('#simDetailBody');
+  for (const p of ['Today', 'Week', 'Month', 'YTD', 'Since start']) await expect(body.locator('tr', { hasText: p }).first()).toBeVisible();
+  await expect(body.locator('th', { hasText: /^Opened$/ })).toHaveCount(1);
+  await expect(body.locator('th', { hasText: /^Now$/ })).toHaveCount(1);
+  for (const r of ['Verdict', 'BUY score', 'SELL score', 'Lean', '13-week %K', 'Letter A', 'Letter K', 'Signals that week']) await expect(body.locator('tr', { hasText: r }).first(), r).toHaveCount(1);
+  expect(await fitChecked(page.locator('#simDetailPanel')), 'the write-up fits the screen').toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(det).toBeHidden();
+  await expect(first).toBeFocused();
+
+  // a new trade from the panel: refused junk, then MSFT saved with today's chart readings
+  await page.locator('#simAddBtn').click();
+  await expect(page.locator('#simTradeBackdrop')).toBeVisible();
+  expect(await fitChecked(page.locator('#simTradePanel')), 'the form fits the screen').toEqual([]);
+  await page.fill('#simSym', '!!');
+  await page.locator('#simSym').dispatchEvent('change');
+  await page.click('#simTradeSubmit');
+  await expect(page.locator('#simTradeErr')).toBeVisible();
+  await expect(rows, 'nothing saved').toHaveCount(3);
+  await page.fill('#simSym', 'msft');
+  await page.locator('#simSym').dispatchEvent('change');
+  await expect(page.locator('#simEntry')).not.toHaveValue('');
+  await expect(page.locator('#simSnapNote'), 'it says what will be recorded').toContainText(/MSFT on the Strategies Chart/);
+  await page.click('#simTradeSubmit');
+  await expect(page.locator('#simTradeBackdrop')).toBeHidden();
+  await expect(rows).toHaveCount(4);
+  const msft = rows.filter({ hasText: 'MSFT' }).first();
+  await expect(msft).toContainText('BUY 100');
+  const snap = await page.evaluate(() => simTrades.find(t => t.sym === 'MSFT').snap);
+  expect(Object.keys(snap.letters).join(''), 'every letter recorded').toBe('ABCDEFGHIJK');
+  expect(typeof snap.buy === 'number' && typeof snap.sell === 'number' && typeof snap.verdict === 'string', 'scores and verdict recorded').toBe(true);
+
+  // from a stock's write-up on the Strategies Chart
+  await page.locator('#layersGrid .ly-tile').first().click();
+  await expect(page.locator('#layersSimBtn')).toBeVisible();
+  const sym = (await page.locator('#layersDetailTitle').textContent()).trim();
+  await page.click('#layersSimBtn');
+  await expect(page.locator('#layersDetailBackdrop')).toBeHidden();
+  await expect(page.locator('#simTradeBackdrop')).toBeVisible();
+  await expect(page.locator('#simSym')).toHaveValue(sym);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#simTradeBackdrop')).toBeHidden();
+
+  // live, with the table not switched on: the panel is not shown at all (real data or nothing)
+  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = true; renderSim(); });
+  await expect(page.locator('#simPanel')).toBeHidden();
   expect(errs, 'no page errors').toEqual([]);
 });
