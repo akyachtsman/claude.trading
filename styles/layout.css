@@ -809,6 +809,9 @@
   .wb-entry-input::placeholder { color: var(--color-text-secondary); text-transform: none; font-family: var(--font-sans); font-size: 9px; letter-spacing: .02em; }
   .wb-entry-input:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
   .wb-rail-pick:focus-visible { outline: 2px solid var(--color-accent-bright); outline-offset: 1px; }
+  /* A watchlist the page can write puts the SYMBOL column's entry box under the picker (owner 2026-11-15); the picker stays on the first line with the other
+     two heads, the box takes a second line of the same height. */
+  .wb-rail-roster .wb-rail-head { display: flex; flex-direction: column; gap: 2px; }
   .wb-rail-empty { margin: 4px 2px 0; font: 400 9px/1.4 var(--font-sans); font-style: italic; color: var(--color-text-secondary); }
   /* The ACTIVE label (`.wb-rail-sub`) went with the ACTIVE row (owner 2026-10-09: it repeated slot 0 after every push). */
   /* The 100 slots scroll on their OWN, so the entry box

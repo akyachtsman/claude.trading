@@ -719,3 +719,14 @@ fallback, focus not following, an empty slot draggable, no suppression window, t
 slot, a touch hold that never cancels the pan, a touch drag that needs no rest, a gesture driven by any pointer, the
 + or a move that does not settle the open editor, a guard armed at the Escape, a held cancelled press that may
 drag again).
+
+## The ROSTER column edits its watchlist (owner 2026-11-15)
+
+Owner: "Can the watch list also be editable in the stochastic, basically affecting the same list, but editing in two places?" then "add and a remove feature, just like the column next to it. specifically for watch lists." When the roster picker shows a WATCHLIST and the page can write (`wlCanEdit`, i.e. not demo), `wbRosterEditTitle()` names it and the column gains the SYMBOL column's two edits:
+
+- **Add** — `wbRosterEntryInput()`, one node for the page's life (the rail is rebuilt on every repaint), sits UNDER the picker in the roster head, so the picker stays on the line of the other two heads. Enter validates with `WL_SYM_RE`, empties the box, keeps its focus, charts the ticker (`wbLoadSymbol`) and `wbRosterAdd` pushes it in at the TOP of the list; one already listed is lifted there and its older place goes; already first and only once is a no-op (no write).
+- **Remove** — `wbRosterRow()` wraps each name in a `.wb-rail-row` with a `.wb-slot-del.wb-roster-del` ×, the SYMBOL column's overlay and its phone rules (the row last tapped, armed after `WB_SLOT_DEL_ARM_MS`); the one delegated `wbSlotDelClick` routes it to `wbRosterRemove`. Delete / Backspace on a focused name does the same (`preventDefault` first, a repeat ignored). No confirm, as in the SYMBOL column (owner: "just like the column next to it"); refused mid-drag.
+- **Writes** — every edit is one `wlMutate` (authoritative read, `wlPick` by index and title, one version-guarded replace-all), whose `loadWatchlist(true)` repaints the Watchlists panel and the rail together. One roster write at a time: `wlWriting()` refuses with `WL_SAVING` (the box keeps its text). Notes and a `Saving…` line are a `role="status"` paragraph under the roster head (`wbRosterNote`, 4 s).
+- **Repaints** keep the roster column's scroll position and a focused name (by ticker, or by place when that name was just removed, so Delete pressed again takes the next one) and the box's focus and caret.
+- **Never** on the Charts roster (the desk-charts payload, a settings file), and the SYMBOL column (`wb_sticky_v1.syms`) is never written by it. Guarded by S84.
+

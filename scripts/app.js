@@ -6075,6 +6075,8 @@ function wbSlotDelClick(ev) {
   const x = ev.target && ev.target.closest ? ev.target.closest('.wb-slot-del') : null;
   if (!x) return;
   const row = x.closest('.wb-rail-row');
+  /* the ROSTER column's × (a watchlist, owner 2026-11-15) shares the look and this one listener; its row names the stock, not a slot */
+  if (x.classList.contains('wb-roster-del')) { if (row && row.dataset.sym) wbRosterRemove(row.dataset.sym); return; }
   const i = row ? Number(row.dataset.slot) : -1;
   if (i >= 0) wbDeleteSlot(i);
 }
@@ -6149,6 +6151,138 @@ function wbEntryInput() {
   });
   wbEntryNode = inp;
   return inp;
+}
+/* ── the ROSTER column edits the watchlist it shows (owner 2026-11-15: "Can the watch list also be editable in the stochastic, basically affecting the same
+   list, but editing in two places?" … "add and a remove feature, just like the column next to it. specifically for watch lists.") ─────────────────────────
+   When the picker shows a WATCHLIST (never the Charts roster, which is a settings file, and never in demo — `wlCanEdit`, the Watchlists panel's own rule),
+   the column carries what the SYMBOL column beside it carries: a box under the picker that pushes a ticker in at the TOP of that list (one already on it is
+   LIFTED to the top, its older place gone — the SYMBOL column's rule) and charts it, and a × on hover (on a phone, on the row last tapped, armed after
+   WB_SLOT_DEL_ARM_MS) or Delete / Backspace on a focused name that takes it OFF the list at once, with no confirm, as there. It is the SAME saved list the
+   Watchlists panel draws: every edit is one `wlMutate` (the authoritative read, the change, one version-guarded replace-all), whose repaint redraws both
+   places. One roster write at a time (`wlWriting`, the panel's guard); a refusal is said in a note under the picker. */
+let wbRosterMsg = '', wbRosterMsgT = 0, wbRosterSaving = 0;
+let wbRosterTouched = null;          /* { title, sym, armed } — the row last tapped, for a phone's × (see wbSlotTouched) */
+function wbRosterNote(msg) {
+  wbRosterMsg = msg;
+  clearTimeout(wbRosterMsgT);
+  wbRosterMsgT = setTimeout(() => { wbRosterMsg = ''; wbRepaintRail(); }, 4000);
+  wbRepaintRail();
+}
+/* The watchlist the column shows, or null when it shows the Charts roster (read-only) or the page cannot write (demo). */
+function wbRosterEditTitle() {
+  if (!wlCanEdit()) return null;
+  const t = readWbSticky().roster;
+  const lists = (wlState.payload && wlState.payload.lists) || [];
+  return t !== WB_ROSTER_CHARTS && lists.some(l => l.title === t) ? t : null;
+}
+async function wbRosterWrite(change, noopMsg) {
+  const title = wbRosterEditTitle();
+  if (!title) return false;
+  if (wlWriting()) { wbRosterNote(WL_SAVING); return false; }
+  const lists = (wlState.payload && wlState.payload.lists) || [];
+  const idx = lists.findIndex(l => l.title === title);
+  let found = true;
+  wbRosterSaving++;
+  wbRepaintRail();
+  let res;
+  try {
+    /* by index AND title, inside the authoritative read (wlPick): a list renamed or moved meanwhile is refused, never written into another */
+    res = await wlMutate(ls => {
+      const l = wlPick(ls, idx, title);
+      if (!l) { found = false; return false; }
+      return change(l);
+    });
+  } finally { wbRosterSaving--; }
+  if (res.ok) { wbRepaintRail(); return true; }
+  const msg = res.err || (!found ? 'That list moved or was renamed — reload and try again.' : noopMsg);
+  if (msg) wbRosterNote(msg); else wbRepaintRail();
+  return false;
+}
+/* Push in at the top; a ticker already on the list is lifted there (its older place goes). Already first and only once: nothing to write. */
+function wbRosterAdd(sym) {
+  return wbRosterWrite(l => {
+    if (l.symbols[0] === sym && l.symbols.indexOf(sym, 1) < 0) return false;
+    l.symbols = [sym].concat(l.symbols.filter(s => s !== sym));
+    return true;
+  }, '');
+}
+function wbRosterRemove(sym) {
+  if (wbSlotDrag.on || wbSlotPress) return;   /* never mid-gesture, the SYMBOL column's rule */
+  const title = wbRosterEditTitle();
+  if (!title) return;
+  if (wbRosterTouched && wbRosterTouched.sym === sym) wbRosterTouched = null;
+  wbRosterWrite(l => {
+    const i = l.symbols.indexOf(sym);
+    if (i < 0) return false;
+    l.symbols.splice(i, 1);
+    return true;
+  }, sym + ' was already gone from ' + title + '.');
+}
+/* The box under the picker: ONE node for the page's life, like the SYMBOL column's (the rail is rebuilt on every chart repaint and poll). Enter charts the
+   ticker and pushes it in at the top of the list; Escape empties it; text that is not a ticker is refused out loud and left in the box. */
+let wbRosterEntryNode = null;
+function wbRosterEntryInput() {
+  if (wbRosterEntryNode) return wbRosterEntryNode;
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'wb-entry-input wb-roster-entry';
+  inp.maxLength = 24;
+  inp.autocomplete = 'off';
+  inp.spellcheck = false;
+  inp.placeholder = 'Symbol';
+  inp.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { inp.value = ''; ev.preventDefault(); return; }
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    const sym = inp.value.trim().toUpperCase();
+    if (!sym || !wbState) return;
+    if (!WL_SYM_RE.test(sym)) { wbRosterNote('Not a ticker: ' + sym.slice(0, 12)); return; }
+    if (!wbRosterEditTitle()) return;
+    if (wlWriting()) { wbRosterNote(WL_SAVING); return; }   /* the text stays in the box to send again */
+    inp.value = '';
+    wbRosterAdd(sym);
+    wbLoadSymbol(sym);
+    keepPageStill(() => inp.focus({ preventScroll: true }));
+  });
+  wbRosterEntryNode = inp;
+  return inp;
+}
+/* One roster name, as a row with its × when the column can edit (`title`), else the bare button it always was. */
+function wbRosterRow(sym, title) {
+  const b = wbRailBtn(sym);
+  if (!title) return b;
+  const row = el('div', 'wb-rail-row wb-roster-row');
+  row.dataset.sym = sym;
+  b.addEventListener('click', () => {
+    const mark = wbRosterTouched = { title, sym, armed: false };
+    for (const r of document.querySelectorAll('.wb-rail-roster .wb-rail-row.is-touched')) r.classList.remove('is-touched', 'is-armed');
+    const live = [...document.querySelectorAll('.wb-rail-roster .wb-roster-row')].find(r => r.dataset.sym === sym);
+    if (live) live.classList.add('is-touched');
+    setTimeout(() => {
+      if (wbRosterTouched !== mark) return;
+      mark.armed = true;
+      const r = [...document.querySelectorAll('.wb-rail-roster .wb-roster-row')].find(n => n.dataset.sym === sym);
+      if (r) r.classList.add('is-touched', 'is-armed');
+    }, WB_SLOT_DEL_ARM_MS);
+  });
+  b.addEventListener('keydown', ev => {
+    if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
+    ev.preventDefault();                 /* Backspace never navigates back */
+    if (ev.repeat) return;               /* a held key removes ONE name (the SYMBOL column's Codex P1, PR #320) */
+    wbRosterRemove(sym);
+  });
+  row.appendChild(b);
+  const x = el('button', 'wb-slot-del wb-roster-del', '×');
+  x.type = 'button';
+  x.tabIndex = -1;
+  x.title = 'Remove ' + sym + ' from ' + title;
+  x.setAttribute('aria-label', 'Remove ' + sym + ' from ' + title);
+  row.appendChild(x);
+  if (wbRosterTouched && wbRosterTouched.title === title && wbRosterTouched.sym === sym) {
+    row.classList.add('is-touched');
+    if (wbRosterTouched.armed) row.classList.add('is-armed');
+  }
+  return row;
 }
 /* Commit a move and repaint. Focus FOLLOWS the stock when the slot that moved held it (a mouse press
    focuses the button, and the keyboard path is entirely about focus): renderWbSidebar's own restore
@@ -6730,6 +6864,17 @@ function renderWbSidebar(data) {
   /* The ENTRY box is one node that outlives every rebuild (see wbEntryInput), so what is lost on a repaint is its FOCUS and caret, not its text. */
   const entryHadFocus = !!wbEntryNode && document.activeElement === wbEntryNode;
   const entrySel = entryHadFocus ? { start: wbEntryNode.selectionStart, end: wbEntryNode.selectionEnd } : null;
+  const rEntryHadFocus = !!wbRosterEntryNode && document.activeElement === wbRosterEntryNode;
+  const rEntrySel = rEntryHadFocus ? { start: wbRosterEntryNode.selectionStart, end: wbRosterEntryNode.selectionEnd } : null;
+  /* The ROSTER column scrolls too and is rebuilt here: removing a name low in a long list must not throw it back to the top. A focused name is kept by its
+     ticker, or — when that name was just removed — by its place, so Delete pressed again takes the next one. */
+  const dyingRoster = nav.querySelector('.wb-rail-roster');
+  const rosterScroll = dyingRoster ? dyingRoster.scrollTop : 0;
+  const ae = document.activeElement;
+  const dyingRosterBtn = ae && ae.classList && ae.classList.contains('wb-side-btn') && dyingRoster && dyingRoster.contains(ae)
+    ? { sym: ae.closest('.wb-roster-row') ? ae.closest('.wb-roster-row').dataset.sym : null,
+        at: [...dyingRoster.querySelectorAll('.wb-side-btn')].indexOf(ae) }
+    : null;
   /* The SLOT LIST'S SCROLL POSITION, for the same reason and with the same
      force as the caret above. `.wb-slots` is rebuilt from scratch here, so its
      scrollTop resets to 0 — and this rail repaints on every animation frame of
@@ -6861,7 +7006,20 @@ function renderWbSidebar(data) {
     renderWbSidebar(data);
   });
   rHead.appendChild(sel);
+  /* a watchlist the page can write gets the SYMBOL column's two edits (owner 2026-11-15); see wbRosterEditTitle */
+  const editTitle = wbRosterEditTitle();
+  if (editTitle) {
+    const box = wbRosterEntryInput();
+    box.setAttribute('aria-label', 'Add a symbol to ' + editTitle + ' — it is pushed in at the top of that watchlist');
+    box.title = 'Type a symbol and press Enter: it is added at the top of ' + editTitle + ' (the same list as in the Watchlists panel)';
+    rHead.appendChild(box);
+  }
   roster.appendChild(rHead);
+  if (editTitle && (wbRosterMsg || wbRosterSaving)) {
+    const note = el('p', 'wb-rail-empty', wbRosterMsg || 'Saving…');
+    note.setAttribute('role', 'status');
+    roster.appendChild(note);
+  }
 
   let syms;
   if (sel.value === WB_ROSTER_CHARTS) {
@@ -6876,7 +7034,7 @@ function renderWbSidebar(data) {
     syms = (list && (list.symbols || (list.rows || []).map(r => r.sym))) || [];
   }
   if (!syms.length) roster.appendChild(el('p', 'wb-rail-empty', 'This list has no symbols.'));
-  for (const sym of syms) roster.appendChild(wbRailBtn(sym));
+  for (const sym of syms) roster.appendChild(wbRosterRow(sym, editTitle));
 
   /* Restored before the focus block below, so a focus() that does scroll the
      list finds it already where the owner left it. Clamped by the browser to
@@ -6885,6 +7043,8 @@ function renderWbSidebar(data) {
   if (bornSlots && slotScroll) bornSlots.scrollTop = slotScroll;
   const bornPos = nav.querySelector('.wb-rail-pos');
   if (bornPos && posScroll) bornPos.scrollTop = posScroll;
+  const bornRoster = nav.querySelector('.wb-rail-roster');
+  if (bornRoster && rosterScroll) bornRoster.scrollTop = rosterScroll;
 
   /* A repaint the owner did not cause (the 60s poll, a chart landing) can arrive MID-DRAG and
      replaces the rows and the marker; the ghost is outside the rail and the drag state is module
@@ -6921,6 +7081,18 @@ function renderWbSidebar(data) {
     }
   }
 
+  if (dyingRosterBtn && bornRoster) {
+    const btns = [...bornRoster.querySelectorAll('.wb-side-btn')];
+    const byName = dyingRosterBtn.sym && [...bornRoster.querySelectorAll('.wb-roster-row')].find(r => r.dataset.sym === dyingRosterBtn.sym);
+    const nb = byName ? byName.querySelector('.wb-side-btn') : btns[Math.min(dyingRosterBtn.at, btns.length - 1)];
+    if (nb) keepPageStill(() => nb.focus({ preventScroll: true }));
+  }
+  if (rEntryHadFocus && wbRosterEntryNode.isConnected) {
+    keepPageStill(() => {
+      wbRosterEntryNode.focus({ preventScroll: true });
+      try { wbRosterEntryNode.setSelectionRange(rEntrySel.start, rEntrySel.end); } catch (_e) { /* ignore */ }
+    });
+  }
   if (entryHadFocus && wbEntryNode.isConnected) {
     keepPageStill(() => {
       wbEntryNode.focus({ preventScroll: true });
