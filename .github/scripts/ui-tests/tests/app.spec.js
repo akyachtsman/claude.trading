@@ -12702,6 +12702,12 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   test.setTimeout(120_000);
   const errs = [];
   page.on('pageerror', e => errs.push(String(e)));
+  // A "ResizeObserver loop" is a pageerror in WebKit only (S42 on the iPad went red on one, PR #375): Chromium fires it
+  // as a window error event and nothing more, so it is counted here, where every project sees it.
+  await page.addInitScript(() => {
+    window.__roLoops = [];
+    window.addEventListener('error', (e) => { if (/ResizeObserver loop/.test(e.message || '')) window.__roLoops.push(e.message); });
+  });
   await gotoDemo(page, '#layersGrid .ly-tile', 20000);
   const panel = page.locator('#layersPanel');
   const noSideways = async (what) => {
@@ -12856,6 +12862,7 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await page.keyboard.press('Escape');
   await expect(dlg).toBeHidden();
   await expect(opener).toBeFocused();
+  expect(await page.evaluate(() => window.__roLoops), 'no ResizeObserver loop (WebKit raises it as a page error)').toEqual([]);
   expect(errs, 'no page errors on the demo').toEqual([]);
 
   // 9. Live: the panel stays hidden (real data or nothing). The backend is answered here, never reached.

@@ -11295,9 +11295,11 @@ function lyMatchHeight() {
   if (!sec || !left || !box || !ledger) return;
   if (!lyLeftObs && typeof ResizeObserver === 'function') {
     // The left half's own box no longer follows its content (it is held at --ly-left-h), so what can change the
-    // smallest height is watched too: the head (its stamp and wrapping), the ledger and the foot.
+    // smallest height is watched instead: the head (its stamp and wrapping), the ledger and the foot. Never the left
+    // half itself: its height is what this callback writes, and a write that resizes an observed box SHALLOWER than
+    // the one just delivered is a "ResizeObserver loop" error, which WebKit raises on the page (S42 on the iPad).
     lyLeftObs = new ResizeObserver(() => lyMatchHeight());
-    for (const n of [left, left.querySelector('.ly-head'), ledger, left.querySelector('.ly-foot')]) if (n) lyLeftObs.observe(n);
+    for (const n of [left.querySelector('.ly-head'), ledger, left.querySelector('.ly-foot')]) if (n) lyLeftObs.observe(n);
   }
   const cs = getComputedStyle(box);
   const h = left.getBoundingClientRect().height - box.getBoundingClientRect().height
