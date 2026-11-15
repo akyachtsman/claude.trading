@@ -8837,6 +8837,7 @@ async function loadPrivate(pin) {
     renderAccountsUnavailable();
     renderAsk();
     wbRepaintRail();   /* and the POSITIONS column says so rather than keeping the last list */
+    simRepaint();      /* the simulated trades need nothing from the accounts: a failed accounts load must not hide them */
     return;
   }
   const mapped = mapDashboardPayload(payload);
@@ -11944,7 +11945,8 @@ function lyDrawCharts(box, st) {
    step 2), and never fabricates a price: an unpriced trade says so, a total that misses one says so. */
 let simTrades = [];                 /* [{ id, sym, side, qty, mult, entry, note, openedAt, snap, closedAt, exit, exitSnap }] */
 const simQuotes = new Map();        /* sym → { price, prev, bid, ask, series, at, err } */
-let simTab = 'open', simLoaded = false, simLoading = false, simErr = '', simDemoId = 0, simTimer = 0, simWired = false;
+let simLoadAgain = false;
+let simTab = 'open', simLoaded = false, simLoading = null, simErr = '', simDemoId = 0, simTimer = 0, simWired = false;
 const SIM_POLL_OPEN_MS = 60_000, SIM_POLL_SHUT_MS = 15 * 60_000;
 
 const simOn = () => DESK.mode === 'demo' || (DESK_SIM_LIVE && DESK.authed);
@@ -11979,13 +11981,19 @@ async function simLoad() {
     if (!simLoaded && lyData) { simTrades = simDemoTrades(); simLoaded = true; }
     return;
   }
-  if (simLoading) return;
-  simLoading = true;
-  try {
-    const out = await deskSimList(simPin());
-    if (out.ok) { simTrades = out.trades; simLoaded = true; simErr = ''; }
-    else simErr = out.error || 'Could not read the trades.';
-  } finally { simLoading = false; }
+  /* One read at a time; a read asked for while one is out runs once it lands, so a save always sees its own row. */
+  if (simLoading) { simLoadAgain = true; return simLoading; }
+  simLoading = (async () => {
+    try {
+      do {
+        simLoadAgain = false;
+        const out = await deskSimList(simPin());
+        if (out.ok) { simTrades = out.trades; simLoaded = true; simErr = ''; }
+        else simErr = out.error || 'Could not read the trades.';
+      } while (simLoadAgain && simOn());
+    } finally { simLoading = null; }
+  })();
+  return simLoading;
 }
 async function simSave(trade) {
   if (DESK.mode === 'demo') { simTrades.push({ ...trade, id: 'd' + (++simDemoId) }); return { ok: true }; }

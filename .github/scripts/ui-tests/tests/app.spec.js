@@ -8542,7 +8542,8 @@ test('S60: one PIN locks the whole desk — kept for this tab only and for an ho
   await lockedShell('past the hour');
   await loadLive({ session: GOOD, at: Date.now() - HOUR + 4_000 });
   expect(await authed(), 'four seconds before the hour it still unlocks').toBe(true);
-  await page.waitForFunction(() => !DESK.authed && !document.getElementById('deskLockScreen').hidden, null, { timeout: 20000 });
+  // the self-lock reloads the page, so DESK can be momentarily undefined while this is polled
+  await page.waitForFunction(() => typeof DESK !== 'undefined' && !DESK.authed && !document.getElementById('deskLockScreen').hidden, null, { timeout: 20000 });
   expect(await stores(), 'and then locks itself, forgetting the PIN').toEqual({ session: null, device: null });
   await lockedShell('the hour ran out');
 
@@ -13264,8 +13265,82 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   await page.keyboard.press('Escape');
   await expect(page.locator('#simTradeBackdrop')).toBeHidden();
 
-  // live, with the table not switched on: the panel is not shown at all (real data or nothing)
-  await page.evaluate(() => { DESK.mode = 'live'; DESK.authed = true; renderSim(); });
-  await expect(page.locator('#simPanel')).toBeHidden();
   expect(errs, 'no page errors').toEqual([]);
+
+  // Live, through the REAL boot of an unlocked desk with the table's doors stubbed in the browser (nothing reaches
+  // Supabase; every other backend call is a fast 503). Switched off (config.js rewritten, the way back with no deploy)
+  // the panel is not shown and no door is asked. Switched on it lists the owner's trades, and an open, a close and a
+  // remove each go through their own door with the tab's PIN and the exact argument names desk_028 declares, then
+  // read the list again. A refused read says so under a STALE lamp and never draws made-up trades.
+  const doors = [];
+  let simRows = [], listOk = true;
+  const ROW = { id: 7, opened_at: '2026-11-02T15:00:00+00:00', sym: 'ZZQA', side: 'buy', qty: 10, mult: 1, entry: 50, note: '',
+    snap: { buy: 61, sell: 22, letters: { A: [1, 0] } }, closed_at: null, exit: null, exit_snap: null };
+  const openLive = async (switchOn) => {
+    const live = await page.context().newPage();
+    await live.route(`${LIVE_BACKEND}/**`, r => r.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' }));
+    await liveUnlockedStub(live);
+    await live.route(new RegExp('/rest/v1/rpc/desk_sim_'), r => {
+      const fn = r.request().url().split('/rpc/')[1], body = JSON.parse(r.request().postData() || '{}');
+      doors.push({ fn, body });
+      const ok = (o) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(o) });
+      if (fn === 'desk_sim_list') return ok(listOk ? { ok: true, trades: simRows } : { ok: false });
+      if (fn === 'desk_sim_open') { simRows = [...simRows, { ...ROW, id: 8, sym: body.p_sym, side: body.p_side, qty: body.p_qty, entry: body.p_entry, snap: body.p_snap }]; return ok({ ok: true, id: 8 }); }
+      if (fn === 'desk_sim_close') { simRows = simRows.map(t => (t.id === body.p_id ? { ...t, closed_at: '2026-11-14T15:00:00+00:00', exit: body.p_exit } : t)); return ok({ ok: true }); }
+      if (fn === 'desk_sim_remove') { simRows = simRows.filter(t => t.id !== body.p_id); return ok({ ok: true }); }
+      return ok({ ok: false });
+    });
+    await live.route(/\/scripts\/config\.js/, async r => {
+      const res = await r.fetch();
+      const shipped = await res.text();
+      expect(shipped, 'the switch is in config.js, on as shipped').toContain('const DESK_SIM_LIVE = true;');
+      await r.fulfill({ response: res, body: switchOn ? shipped : shipped.replace('const DESK_SIM_LIVE = true;', 'const DESK_SIM_LIVE = false;') });
+    });
+    await live.goto(new URL('./', page.url()).href);
+    await live.waitForFunction(() => typeof DESK !== 'undefined' && DESK.mode !== 'demo' && DESK.authed, null, { timeout: 20000 });
+    return live;
+  };
+  simRows = [ROW];
+  let live = await openLive(false);
+  await live.waitForTimeout(1000);
+  await expect(live.locator('#simPanel'), 'switched off: not shown').toBeHidden();
+  expect(doors.length, 'switched off: no door is asked').toBe(0);
+  await live.close();
+
+  live = await openLive(true);
+  await expect(live.locator('#simPanel')).toBeVisible();
+  await expect(live.locator('#simList .sim-row')).toHaveCount(1);
+  await expect(live.locator('#simList')).toContainText('ZZQA');
+  expect(doors[0], 'the list is read with the tab\'s PIN and nothing else').toEqual({ fn: 'desk_sim_list', body: { pin: 'stub-pin' } });
+  await expect(live.locator('#simLamp')).not.toHaveText(/Demo|Stale/);
+
+  doors.length = 0;
+  expect(await live.evaluate(() => simSave({ sym: 'ZZQB', side: 'sell', qty: 3, mult: 1, entry: 42.5, note: 'n', snap: { buy: 40 } }).then(o => o.ok))).toBe(true);
+  expect(doors.map(d => d.fn), 'an open, then the list read again').toEqual(['desk_sim_open', 'desk_sim_list']);
+  expect(doors[0].body).toEqual({ pin: 'stub-pin', p_sym: 'ZZQB', p_side: 'sell', p_qty: 3, p_mult: 1, p_entry: 42.5, p_note: 'n', p_snap: { buy: 40 } });
+  await live.evaluate(() => renderSim());
+  await expect(live.locator('#simList .sim-row')).toHaveCount(2);
+
+  doors.length = 0;
+  expect(await live.evaluate(() => simCloseTrade('7', 55, { buy: 70 }).then(o => o.ok))).toBe(true);
+  expect(doors[0]).toEqual({ fn: 'desk_sim_close', body: { pin: 'stub-pin', p_id: 7, p_exit: 55, p_exit_snap: { buy: 70 } } });
+  expect(await live.evaluate(() => simTrades.find(t => t.id === '7').exit)).toBe(55);
+
+  doors.length = 0;
+  expect(await live.evaluate(() => simRemoveTrade('8').then(o => o.ok))).toBe(true);
+  expect(doors[0]).toEqual({ fn: 'desk_sim_remove', body: { pin: 'stub-pin', p_id: 8 } });
+  expect(await live.evaluate(() => simTrades.map(t => t.sym))).toEqual(['ZZQA']);
+
+  // a save that lands while a read is still out still sees its own row
+  doors.length = 0;
+  expect(await live.evaluate(async () => { const a = simLoad(); const b = simSave({ sym: 'ZZQC', side: 'buy', qty: 1, mult: 1, entry: 9, note: '' }); await Promise.all([a, b]); return simTrades.map(t => t.sym); }))
+    .toEqual(['ZZQA', 'ZZQC']);
+
+  // a refused read: STALE, said in words, no trade drawn that the server did not send
+  listOk = false;
+  await live.evaluate(() => { simTrades = []; simLoaded = false; return simRepaint(); });
+  await expect(live.locator('#simLamp')).toHaveText('Stale');
+  await expect(live.locator('#simStamp')).toContainText('Could not read');
+  await expect(live.locator('#simList .sim-row')).toHaveCount(0);
+  await live.close();
 });
