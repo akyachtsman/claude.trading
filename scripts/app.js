@@ -11128,7 +11128,9 @@ function renderLayersControls(list) {
     cnt.title = 'Showing ' + list.length + ' of ' + lyData.stocks.length + ' stocks · ' + nsig + ' with a rule signal this week';
   }
   const clr = document.getElementById('layersClear');
-  if (clr) clr.hidden = !lyFiltered();
+  // Kept in its place while off (visibility, not [hidden], which the house sheet forces to display:none): a filter
+  // never re-wraps the controls row (owner 2026-11-15: no resize on a click).
+  if (clr) clr.classList.toggle('is-off', !lyFiltered());
 }
 const lyFiltered = () => !!(lyState.q.trim() || lyState.sec >= 0 || lyState.wl !== 'all' || lyState.sig);
 function lyClearFilters() { lyState.q = ''; lyState.sec = -1; lyState.wl = 'all'; lyState.sig = false; renderLayers(); }
@@ -11282,15 +11284,35 @@ function renderLayers() {
   lyMatchHeight();
 }
 /* Both views: the LEFT half sets the height and the tiles or the table scroll inside the right one, so the panel is
-   the same size in either (section 6; owner 2026-11-13). */
+   the same size in either (section 6; owner 2026-11-13). The height is the left half's SMALLEST: its head, ledger and
+   foot with NO detail card open (owner 2026-11-15: "I don't want the panel to resize when clicking buttons. Keep it
+   the same length in the smallest configuration"). A card opened from a ledger box scrolls inside the ledger's own
+   box (#layersLScroll) instead of growing the panel. So the measure is the left half less the scroll box plus the
+   ledger alone (and the box's padding), never the left half as drawn. */
 function lyMatchHeight() {
   const sec = document.getElementById('layersPanel'), left = document.getElementById('layersLeft');
-  if (!sec || !left) return;
+  const box = document.getElementById('layersLScroll'), ledger = document.getElementById('layersLedger');
+  if (!sec || !left || !box || !ledger) return;
   if (!lyLeftObs && typeof ResizeObserver === 'function') {
+    // The left half's own box no longer follows its content (it is held at --ly-left-h), so what can change the
+    // smallest height is watched too: the head (its stamp and wrapping), the ledger and the foot.
     lyLeftObs = new ResizeObserver(() => lyMatchHeight());
-    lyLeftObs.observe(left);
+    for (const n of [left, left.querySelector('.ly-head'), ledger, left.querySelector('.ly-foot')]) if (n) lyLeftObs.observe(n);
   }
-  lySetVar(sec, '--ly-left-h', Math.round(left.getBoundingClientRect().height) + 'px');
+  const cs = getComputedStyle(box);
+  const h = left.getBoundingClientRect().height - box.getBoundingClientRect().height
+    + ledger.getBoundingClientRect().height + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  lySetVar(sec, '--ly-left-h', Math.round(h) + 'px');
+}
+/* A detail card just opened is brought into the ledger's scroll box: as little as it takes to show its foot, never
+   past its top, and only that box scrolls (never the page). */
+function lyRevealCard() {
+  const box = document.getElementById('layersLScroll'), card = document.getElementById('layersCard');
+  if (!box || !card || card.hidden) return;
+  const b = box.getBoundingClientRect(), c = card.getBoundingClientRect();
+  const pad = parseFloat(getComputedStyle(box).paddingBottom) || 0;
+  const down = Math.min(c.top - b.top, c.bottom - b.bottom + pad);
+  if (down > 0) box.scrollTop += down;
 }
 /* Writes a layout property on the panel ONLY when its value changes: a custom property is inherited, so every write
    restyles the whole panel (hundreds of tiles), and WebKit pays for it even when the value is the same. */
@@ -11439,6 +11461,7 @@ function wireLayers() {
       if (box.dataset.out) { lyState.card = lyState.card === box.dataset.out ? null : box.dataset.out; sel = '[data-out="' + box.dataset.out + '"]'; }
       else { const i = Number(box.dataset.sec); lyState.sec = lyState.sec === i ? -1 : i; sel = '[data-sec="' + i + '"]'; }
       renderLayers();
+      if (box.dataset.out) lyRevealCard();
       const nb = document.querySelector('#layersLedger ' + sel);
       if (nb) nb.focus({ preventScroll: true });
       return;

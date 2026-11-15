@@ -1183,6 +1183,16 @@
   .area-layers[hidden] { display: none; }
   .ly-frame { display: block; }
   .ly-half { min-width: 0; padding: var(--space-3) var(--space-4); }
+  /* The left half is held at its SMALLEST height (--ly-left-h, measured by lyMatchHeight with no detail card open), in
+     every layout, so no button in the panel changes its size (owner 2026-11-15). A card opened from a ledger box
+     scrolls inside the ledger's own box; the head and the foot never move. Only that box scrolls: the notes'
+     pop-overs hang from the head, outside it, and are never clipped by it. The 3px of padding (given back by the
+     margin) keeps a box's focus ring inside the scroll box. The ledger is its own block formatting context so its
+     first heading's margin is part of its measured height. */
+  .ly-a { display: flex; flex-direction: column; height: var(--ly-left-h, auto); }
+  .ly-a > .ly-head, .ly-a > .ly-foot { flex: none; }
+  .ly-lscroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 3px; margin: -3px; }
+  .ly-ledger { display: flow-root; }
   .ly-b { padding-top: 0; padding-right: 10px; padding-bottom: 10px; display: flex; flex-direction: column; min-width: 0; }
   /* Both views, side by side: the LEFT half sets the height (--ly-left-h, measured by lyMatchHeight) and the tiles or
      the table scroll inside the right one, so switching views never moves the panel's edges (owner 2026-11-13: "the
@@ -1283,6 +1293,9 @@
   .ly-count { font: 400 var(--font-2xs)/1.3 var(--font-mono); color: var(--ly-ink-2); }
   .ly-link { background: none; border: 0; padding: 4px 2px; color: var(--ly-accent); font: 500 var(--font-xs)/1.2 var(--font-sans); text-decoration: underline; cursor: pointer; }
   .ly-link[hidden] { display: none; }
+  /* "Clear filters" keeps its place in the controls row while off (owner 2026-11-15: no resize on a click), so a
+     filter can never wrap the row onto another line and grow the panel where the halves stack. */
+  .ly-link.is-off { visibility: hidden; }
   .ly-loading, .ly-empty p { margin: var(--space-4) 0 var(--space-2); color: var(--ly-ink-2); font: 400 var(--font-sm)/1.4 var(--font-sans); }
   .ly-empty { padding-bottom: var(--space-3); }
   /* The chart box: ONE size for tiles and table. Stacked (a panel under 880px) it is a fixed share of the screen (svh, so it

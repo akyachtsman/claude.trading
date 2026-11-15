@@ -12721,16 +12721,32 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   // 2. The ledger: A–D and Labels, eleven sectors; a box opens its detail, a sector filters.
   await expect(page.locator('#layersLedger [data-out]')).toHaveCount(5);
   await expect(page.locator('#layersLedger [data-sec]')).toHaveCount(11);
+  // No button changes the panel's size (owner 2026-11-15: "I don't want the panel to resize when clicking buttons.
+  // Keep it the same length in the smallest configuration"): a detail card scrolls inside the ledger's own box, which
+  // brings the card's foot into view, and "Clear filters" keeps its place while off.
+  const lyH = () => page.evaluate(() => Math.round(document.getElementById('layersPanel').getBoundingClientRect().height));
+  const h0 = await lyH();
   const a = page.locator('#layersLedger [data-out="A"]');
   await a.click();
   await expect(a).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#layersCard')).toBeVisible();
   await expect(page.locator('#layersCard')).toContainText('Brent oil');
-  await a.click();
+  expect(await lyH(), 'a detail card open: the panel keeps its smallest height').toBe(h0);
+  expect(await page.evaluate(() => {
+    const b = document.getElementById('layersLScroll').getBoundingClientRect(), c = document.getElementById('layersCard').getBoundingClientRect();
+    return Math.round(c.bottom - b.bottom);
+  }), 'the open card is scrolled into the ledger\'s box').toBeLessThanOrEqual(0);
+  for (const k of ['C', 'labels']) {
+    await page.locator(`#layersLedger [data-out="${k}"]`).click();
+    expect(await lyH(), `card ${k}: the same height`).toBe(h0);
+  }
+  await page.locator('#layersLedger [data-out="labels"]').click();
   await expect(page.locator('#layersCard')).toBeHidden();
+  expect(await lyH(), 'card closed: the same height').toBe(h0);
   const energy = page.locator('#layersLedger [data-sec="7"]');
   await energy.click();
   await expect(energy).toHaveAttribute('aria-pressed', 'true');
+  expect(await lyH(), 'a sector filter on: the same height').toBe(h0);
   const nEnergy = await page.evaluate(() => lyData.stocks.filter(s => s.sec === 7).length);
   await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(nEnergy);
   await expect(page.locator('#layersClear')).toBeVisible();
@@ -12751,6 +12767,7 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await expect(page.locator('#layersNSig')).toHaveText(`(${nSig})`);
   await page.locator('#layersSig').check();
   await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(nSig);
+  expect(await lyH(), 'signals only: the same height').toBe(h0);
   await page.locator('#layersSig').uncheck();
 
   // 4. BUY points: every tile shows its BUY score.
