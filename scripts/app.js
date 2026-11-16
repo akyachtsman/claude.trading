@@ -12299,6 +12299,21 @@ function simFormPaint() {
     : snap ? 'Recorded with the trade: ' + p.under + ' on the Strategies Chart (close of ' + lyDay(snap.asOf) + ') — ' + snap.verdict + ', BUY ' + snap.buy + ' / SELL ' + snap.sell + ', every letter and signal.'
       : p.under + ' is not on the Strategies Chart today, so no readings will be recorded.';
 }
+/* The size follows the entry price (owner 2026-11-16: about $100,000 of stock, about $10,000 of options, in whole
+   shares or contracts — simSizeQty) until the owner types a quantity of their own; the line under the price says
+   what the trade is worth either way. */
+function simFormSize() {
+  const qtyEl = document.getElementById('simQty'), out = document.getElementById('simSize');
+  const entry = Number(document.getElementById('simEntry').value), mult = simForm.kind === 'option' ? 100 : 1;
+  if (!qtyEl.dataset.typed) { const q = simSizeQty(entry, mult); qtyEl.value = q == null ? '' : String(q); }
+  const qty = Number(qtyEl.value);
+  if (!(entry > 0 && Number.isInteger(qty) && qty > 0)) {
+    out.textContent = 'Sized to about ' + fmtUsd0(mult > 1 ? SIM_BUDGET.option : SIM_BUDGET.stock) + ' once the entry price is in.';
+    return;
+  }
+  out.textContent = 'Worth ' + fmtUsd0(qty * entry * mult) + ' (' + qty + (mult > 1 ? ' contract' : ' share') + (qty === 1 ? '' : 's')
+    + ' × ' + simPx(entry) + (mult > 1 ? ' × 100' : '') + ')' + (qtyEl.dataset.typed ? ', your size.' : ', sized to about ' + fmtUsd0(mult > 1 ? SIM_BUDGET.option : SIM_BUDGET.stock) + '.');
+}
 async function simFormLookup() {
   const sym = simFormSym(), out = document.getElementById('simQuote'), entry = document.getElementById('simEntry');
   simFormPaint();
@@ -12313,7 +12328,7 @@ async function simFormLookup() {
     return;
   }
   out.textContent = 'Last ' + simPx(q.price) + (Number.isFinite(q.bid) && Number.isFinite(q.ask) ? ' · bid ' + simPx(q.bid) + ' · ask ' + simPx(q.ask) : '') + (DESK.mode === 'demo' ? ' (demo)' : ' (~15 min delayed)');
-  if (!entry.dataset.typed) entry.value = String(q.price);
+  if (!entry.dataset.typed) { entry.value = String(q.price); simFormSize(); }
 }
 function openSimTrade(sym, opener) {
   const back = document.getElementById('simTradeBackdrop');
@@ -12322,7 +12337,7 @@ function openSimTrade(sym, opener) {
   simForm.kind = p && p.kind === 'option' ? 'option' : 'stock'; simForm.side = 'buy';
   document.getElementById('simTradeForm').reset();
   document.getElementById('simEntry').dataset.typed = '';
-  document.getElementById('simQty').value = simForm.kind === 'option' ? '1' : '100';
+  const qtyEl = document.getElementById('simQty'); qtyEl.value = ''; qtyEl.dataset.typed = '';
   if (p && p.kind === 'stock') document.getElementById('simSym').value = p.sym;
   if (p && p.kind === 'option') {
     document.getElementById('simUnder').value = p.under; document.getElementById('simExp').value = p.exp;
@@ -12331,6 +12346,7 @@ function openSimTrade(sym, opener) {
   document.getElementById('simQuote').textContent = '';
   const err = document.getElementById('simTradeErr'); err.hidden = true; err.textContent = '';
   simFormPaint();
+  simFormSize();
   openModal(back, { restoreFocusTo: opener, initialFocus: p ? document.getElementById('simQty') : document.getElementById('simSym') });
   if (p) simFormLookup();
 }
@@ -12379,14 +12395,17 @@ function wireSim() {
     form.addEventListener('submit', submitSimTrade);
     form.addEventListener('click', ev => {
       const k = ev.target.closest('[data-kind]'), s = ev.target.closest('[data-side]');
-      if (k) { simForm.kind = k.dataset.kind; simFormPaint(); simFormLookup(); }
+      if (k) { simForm.kind = k.dataset.kind; document.getElementById('simQty').dataset.typed = ''; simFormPaint(); simFormSize(); simFormLookup(); }
       if (s) { simForm.side = s.dataset.side; simFormPaint(); }
     });
     for (const id of ['simSym', 'simUnder', 'simExp', 'simStrike', 'simRight']) {
       const f = document.getElementById(id);
       if (f) f.addEventListener('change', simFormLookup);
     }
-    document.getElementById('simEntry').addEventListener('input', ev => { ev.target.dataset.typed = ev.target.value ? '1' : ''; });
+    document.getElementById('simEntry').addEventListener('input', ev => { ev.target.dataset.typed = ev.target.value ? '1' : ''; simFormSize(); });
+    /* any edit of the quantity makes it the owner's own (emptying it too: refilling it under the caret would turn a
+       typed 5 into 8115); switching stock/option or reopening the form sizes it again */
+    document.getElementById('simQty').addEventListener('input', ev => { ev.target.dataset.typed = '1'; simFormSize(); });
   }
   const close = () => closeModal(document.getElementById('simTradeBackdrop'));
   document.getElementById('simTradeClose').addEventListener('click', close);
