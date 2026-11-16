@@ -13298,6 +13298,9 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   await page.fill('#simEntry', '123.45');
   await expect(page.locator('#simQty')).toHaveValue('7');
   await expect(page.locator('#simSize')).toHaveText('Worth $864 (7 shares × 123.45), your size.');
+  // pressing the kind already chosen is not a switch: the owner's quantity stays (Codex P2, PR #379)
+  await page.click('#simTradeForm [data-kind="stock"]');
+  await expect(page.locator('#simQty')).toHaveValue('7');
   // an option: contracts of 100 shares, the count closest to $10,000 (switching to Option sizes it again)
   await page.click('#simTradeForm [data-kind="option"]');
   await page.fill('#simEntry', '3.20');
@@ -13307,6 +13310,10 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   await expect(page.locator('#simQty'), 'one contract is $15,000: never fewer than one').toHaveValue('1');
   // back to the stock: the lookup's price again, sized again
   await page.click('#simTradeForm [data-kind="stock"]');
+  // a price under $0.10 sizes to the most a trade may hold, never to a quantity that would not save (Codex P2, PR #379)
+  await page.fill('#simEntry', '0.05');
+  await expect(page.locator('#simQty')).toHaveValue('1000000');
+  await expect(page.locator('#simSize')).toContainText('the most a simulated trade can hold');
   await page.fill('#simEntry', '');
   await page.locator('#simSym').dispatchEvent('change');
   await expect(page.locator('#simEntry')).not.toHaveValue('');

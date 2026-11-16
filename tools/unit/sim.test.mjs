@@ -125,4 +125,9 @@ test('a new trade is sized to about $100,000 of stock or $10,000 of options, in 
   assert.equal(d.simSizeQty('123.45', 1), 810);
   for (const bad of [0, -5, NaN, Infinity, null, undefined, '', 'abc']) assert.equal(d.simSizeQty(bad, 1), null, String(bad));
   assert.deepEqual({ ...d.SIM_BUDGET }, { stock: 100000, option: 10000 });
+  /* never more than a trade may hold (the form and desk_028 both refuse over 1,000,000; Codex P2, PR #379) */
+  assert.equal(d.SIM_QTY_MAX, 1000000);
+  assert.equal(d.simSizeQty(0.10, 1), 1000000);     /* exactly the limit */
+  assert.equal(d.simSizeQty(0.05, 1), 1000000);     /* 2,000,000 would not save */
+  assert.equal(d.simSizeQty(0.0001, 100), 1000000);
 });

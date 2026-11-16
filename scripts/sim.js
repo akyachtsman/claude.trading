@@ -122,14 +122,17 @@ function simTotals(nums, k) {
 /* How big a new trade is (owner 2026-11-16: "when you buy the stock by $100,000 worth, but with rounded number of
    shares, and with regarding options, buy $10,000 worth, as close as you can get to 10,000 rounded number of
    contracts"). The budget is the trade's VALUE at its entry price, BUY or SELL alike; the size is the whole number of
-   shares (mult 1) or contracts (mult 100) whose value is closest to it — never fewer than one. null when there is no
+   shares (mult 1) or contracts (mult 100) whose value is closest to it — never fewer than one, never more than SIM_QTY_MAX. null when there is no
    usable price to size against. */
 const SIM_BUDGET = Object.freeze({ stock: 100000, option: 10000 });
+/* The largest quantity a trade may hold: the form refuses more and so does desk_028's CHECK (qty <= 1000000), so a
+   price under $0.10 sizes to this, not to a quantity that could not be saved (Codex P2, PR #379). */
+const SIM_QTY_MAX = 1000000;
 function simSizeQty(entry, mult) {
   const px = Number(entry), m = Number(mult) || 1;
   if (!(Number.isFinite(px) && px > 0)) return null;
   const budget = m > 1 ? SIM_BUDGET.option : SIM_BUDGET.stock;
-  return Math.max(1, Math.round(budget / (px * m)));
+  return Math.min(SIM_QTY_MAX, Math.max(1, Math.round(budget / (px * m))));
 }
 
 /* Demo prices for an option contract, drawn from its underlying's bars (made-up numbers for ?demo=1 only): what it
