@@ -13280,11 +13280,42 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   await page.locator('#simSym').dispatchEvent('change');
   await expect(page.locator('#simEntry')).not.toHaveValue('');
   await expect(page.locator('#simSnapNote'), 'it says what will be recorded').toContainText(/MSFT on the Strategies Chart/);
+  // the size follows the price (owner 2026-11-16): the whole number of shares closest to $100,000, said in words
+  const sized = async (budget, mult) => {
+    const entry = Number(await page.inputValue('#simEntry')), qty = Number(await page.inputValue('#simQty'));
+    expect(Number.isInteger(qty) && qty >= 1, 'a whole number').toBe(true);
+    expect(qty, `sized to about $${budget}`).toBe(Math.max(1, Math.round(budget / (entry * mult))));
+    for (const q of [qty - 1, qty + 1]) if (q >= 1) expect(Math.abs(qty * entry * mult - budget), 'no whole size is closer').toBeLessThanOrEqual(Math.abs(q * entry * mult - budget));
+    await expect(page.locator('#simSize')).toContainText(new RegExp('^Worth \\$[\\d,]+ \\(' + qty + (mult > 1 ? ' contract' : ' share')));
+    await expect(page.locator('#simSize')).toContainText('sized to about $' + budget.toLocaleString('en-US'));
+    return qty;
+  };
+  const msftQty = await sized(100000, 1);
+  // a price typed by hand sizes it again; a quantity typed by hand is the owner's and stays through a price change
+  await page.fill('#simEntry', '400');
+  await expect(page.locator('#simQty')).toHaveValue('250');
+  await page.fill('#simQty', '7');
+  await page.fill('#simEntry', '123.45');
+  await expect(page.locator('#simQty')).toHaveValue('7');
+  await expect(page.locator('#simSize')).toHaveText('Worth $864 (7 shares × 123.45), your size.');
+  // an option: contracts of 100 shares, the count closest to $10,000 (switching to Option sizes it again)
+  await page.click('#simTradeForm [data-kind="option"]');
+  await page.fill('#simEntry', '3.20');
+  await expect(page.locator('#simQty'), '10000 / 320 = 31.25').toHaveValue('31');
+  await sized(10000, 100);
+  await page.fill('#simEntry', '150');
+  await expect(page.locator('#simQty'), 'one contract is $15,000: never fewer than one').toHaveValue('1');
+  // back to the stock: the lookup's price again, sized again
+  await page.click('#simTradeForm [data-kind="stock"]');
+  await page.fill('#simEntry', '');
+  await page.locator('#simSym').dispatchEvent('change');
+  await expect(page.locator('#simEntry')).not.toHaveValue('');
+  await expect(page.locator('#simQty')).toHaveValue(String(msftQty));
   await page.click('#simTradeSubmit');
   await expect(page.locator('#simTradeBackdrop')).toBeHidden();
   await expect(rows).toHaveCount(4);
   const msft = rows.filter({ hasText: 'MSFT' }).first();
-  await expect(msft).toContainText('BUY 100');
+  await expect(msft).toContainText('BUY ' + msftQty);
   const snap = await page.evaluate(() => simTrades.find(t => t.sym === 'MSFT').snap);
   expect(Object.keys(snap.letters).join(''), 'every letter recorded').toBe('ABCDEFGHIJK');
   expect(typeof snap.buy === 'number' && typeof snap.sell === 'number' && typeof snap.verdict === 'string', 'scores and verdict recorded').toBe(true);

@@ -104,3 +104,25 @@ test('the close on or before a day, and strictly before it', () => {
   assert.ok(Number.isNaN(d.simCloseOn(series, '2025-01-01')));
   assert.ok(Number.isNaN(d.simCloseOn(null, '2026-11-11')));
 });
+
+test('a new trade is sized to about $100,000 of stock or $10,000 of options, in whole shares or contracts', () => {
+  const d = load();
+  /* stock: the whole number of shares whose value is closest to $100,000 */
+  assert.equal(d.simSizeQty(123.45, 1), 810);       /* 100000 / 123.45 = 810.04 → 810 ($99,994.50) */
+  assert.equal(d.simSizeQty(400, 1), 250);          /* exact */
+  assert.equal(d.simSizeQty(333.33, 1), 300);       /* 300.003 → 300 */
+  assert.equal(d.simSizeQty(70.4, 1), 1420);        /* 1420.45 → 1420 ($99,968), not 1421 ($100,038.40) */
+  assert.equal(d.simSizeQty(117, 1), 855);          /* 854.70 → 855 ($100,035), the nearer of 854 and 855: rounded, not cut */
+  assert.equal(d.simSizeQty(250000, 1), 1);         /* a price over the budget is still one share */
+  /* options: contracts of 100 shares, the count whose value is closest to $10,000 */
+  assert.equal(d.simSizeQty(3.20, 100), 31);        /* 10000 / 320 = 31.25 → 31 ($9,920) */
+  assert.equal(d.simSizeQty(3.30, 100), 30);        /* 30.30 → 30 ($9,900) */
+  assert.equal(d.simSizeQty(2.70, 100), 37);        /* 37.04 → 37 ($9,990) */
+  assert.equal(d.simSizeQty(6.30, 100), 16);        /* 15.87 → 16 ($10,080), not 15 ($9,450) */
+  assert.equal(d.simSizeQty(0.05, 100), 2000);      /* $10,000 exactly */
+  assert.equal(d.simSizeQty(150, 100), 1);          /* one contract is $15,000: never fewer than one */
+  /* a string from an input reads the same; no usable price is null */
+  assert.equal(d.simSizeQty('123.45', 1), 810);
+  for (const bad of [0, -5, NaN, Infinity, null, undefined, '', 'abc']) assert.equal(d.simSizeQty(bad, 1), null, String(bad));
+  assert.deepEqual({ ...d.SIM_BUDGET }, { stock: 100000, option: 10000 });
+});
