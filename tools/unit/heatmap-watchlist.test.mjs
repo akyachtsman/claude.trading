@@ -710,6 +710,13 @@ test('desk-watchlist: listsFromConfig is the bootstrap fallback — normalised, 
 function wlWorld({ table, config = null, quoteFor = (s) => ({ symbol: s, regularMarketPrice: 10, regularMarketChangePercent: 1, regularMarketTime: 1_760_000_000 }) }) {
   const quoteReqs = [];
   const s = stubFetch([
+    [(u) => u.endsWith('/rest/v1/rpc/desk_pin_who'), (u, init) => {
+      const pin = JSON.parse(init.body).pin;
+      if (pin === 'good') return json({ ok: true, id: 'u-owner', is_test: false });
+      if (pin === 'locked') return json({ ok: false, locked_until: '2026-10-14T16:00:00Z' });
+      if (pin === 'down') return json({ message: 'boom' }, 500);
+      return json({ ok: false, locked_until: null });
+    }],
     [(u) => u.includes('/rest/v1/desk_watchlists'), () => (typeof table === 'function' ? table() : json(table))],
     [(u) => u.endsWith('/config/watchlists.json'), () => (config ? json(config) : json({}, 404))],
     [(u) => u === 'https://fc.yahoo.com/', () => new Response('', { status: 404, headers: { 'set-cookie': 'A=1; path=/' } })],
@@ -723,7 +730,7 @@ function wlWorld({ table, config = null, quoteFor = (s) => ({ symbol: s, regular
   ]);
   const w = wl({ env: DB_ENV, fetch: s.fetch, now: at('2026-10-14T15:00:00Z') });
   const call = async (body = {}) => {
-    const res = await w.handler(new Request('https://fn.test/desk-watchlist', { method: 'POST', body: JSON.stringify(body) }));
+    const res = await w.handler(new Request('https://fn.test/desk-watchlist', { method: 'POST', body: JSON.stringify({ pin: 'good', ...body }) }));
     return { status: res.status, body: await res.json() };
   };
   return { w, s, call, quoteReqs };
@@ -771,6 +778,34 @@ test('desk-watchlist: a failed table read falls back to the config; with neither
   r = await world.call({});
   assert.equal(r.status, 502);
   assert.equal(r.body.ok, false);
+});
+
+test('desk-watchlist: every request needs the desk PIN, checked by desk_pin_who with the service key and NO user-agent (2026-11-16)', async () => {
+  const { call, s, quoteReqs } = wlWorld({ table: [{ id: 1, title: 'A', symbols: ['AAPL'], pos: 0, updated_at: 'u' }] });
+  const asked = () => s.calls.filter((c) => c.url.endsWith('/rpc/desk_pin_who'));
+  let r = await call({ pin: undefined });
+  assert.deepEqual([r.status, r.body.ok], [401, false], 'no PIN');
+  assert.equal(asked().length, 0, 'no PIN is refused without asking the database (nothing is counted)');
+  r = await call({ pin: '' });
+  assert.equal(r.status, 401, 'an empty PIN');
+  assert.equal(asked().length, 0);
+  r = await call({ pin: 'wrong' });
+  assert.deepEqual([r.status, r.body.error], [401, 'PIN not recognized.']);
+  r = await call({ pin: 'locked' });
+  assert.deepEqual([r.status, r.body.lockedUntil], [429, '2026-10-14T16:00:00Z']);
+  r = await call({ pin: 'down' });
+  assert.equal(r.status, 502, 'a failed check fails closed');
+  assert.equal(quoteReqs.length, 0, 'nothing reached Yahoo or the roster before the PIN');
+  assert.equal(s.calls.some((c) => c.url.includes('/rest/v1/desk_watchlists')), false);
+  const who = asked()[0];
+  assert.equal(who.init.method, 'POST');
+  assert.equal(who.init.headers.apikey, DB_ENV.SUPABASE_SERVICE_ROLE_KEY);
+  assert.equal(Object.keys(who.init.headers).some((k) => k.toLowerCase() === 'user-agent'), false, 'no user-agent on the secret-key call');
+  r = await call({});
+  assert.deepEqual([r.status, r.body.ok, r.body.lists[0].title], [200, true, 'A'], 'the right PIN gets the roster');
+  const w = wlWorld({ table: [] }).w;
+  const res = await w.handler(new Request('https://fn.test/desk-watchlist', { method: 'GET' }));
+  assert.equal(res.status, 405, 'a GET (which cannot carry the PIN) is refused');
 });
 
 // ── desk-maps ────────────────────────────────────────────────────────────────

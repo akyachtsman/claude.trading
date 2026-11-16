@@ -536,13 +536,10 @@ async function deskRpc(fn, pin, extra) {
   if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
   return res.json();
 }
-/* Same transport as deskRpc but sends NO pin key at all, rather than sending
-   one the function would ignore — the body should say what the call actually
-   is. Used only by the watchlist's open RPCs. */
-async function deskRpcOpen(fn, extra) {
-  const res = await deskPost('/rest/v1/rpc/' + fn, extra || {});
-  if (!res.ok) throw new Error(fn + ' → HTTP ' + res.status);
-  return res.json();
+/* The PIN this TAB holds (sessionStorage 'desk_pin', written by the unlock), or null. The watchlist calls read it
+   themselves (2026-11-16, desk_029): every caller of theirs predates the PIN and passes null. */
+function deskTabPin() {
+  try { return sessionStorage.getItem('desk_pin') || null; } catch { return null; }
 }
 /* The PIN RPCs whose panel only needs "did it work": anything but an `ok:true`
    reply — a refusal, a non-OK status, bad JSON, a rejected fetch — is
@@ -701,7 +698,7 @@ function deskSetAskSchedule(pin, rows) { return deskRpcOk('desk_set_ask_schedule
    so nothing about the request plumbing ends up inside the question the model
    reads or the history it replays.
    `pin` may be absent: the OPEN question (owner ruling 2026-10-04). Then NO pin key is
-   sent at all — like deskRpcOpen, the body says what the call is — and the server answers an
+   sent at all — the body says what the call is — and the server answers an
    anonymous visitor: counted against a daily cap, nothing saved, no accounts, no verify. */
 async function deskAsk(pin, question, context, signal, verify) {
   const res = await deskPost('/functions/v1/desk-ask', { ...(pin ? { pin } : {}), question, context, verify: verify === true }, { signal });
@@ -754,7 +751,9 @@ async function deskWatchlist(force, range) {
   /* `range` picks the tile sparkline's window (owner request 2026-07-30).
      The function validates it against its own allowlist, so an unknown token
      degrades to 1d rather than failing the panel. */
-  const res = await deskPost('/functions/v1/desk-watchlist', { force: force === true, range: range || '1d' });
+  /* The PIN rides along since 2026-11-16: the reply carries the owner's list names and symbols, so desk-watchlist
+     refuses a request without it (401, or 429 while the desk is locked). */
+  const res = await deskPost('/functions/v1/desk-watchlist', { pin: deskTabPin(), force: force === true, range: range || '1d' });
   const out = await res.json().catch(() => null);
   if (!out) throw new Error('desk-watchlist → HTTP ' + res.status);
   return out; /* {ok, source, asOf, missing, lists:[{title, rows:[…]}]} */
@@ -762,29 +761,22 @@ async function deskWatchlist(force, range) {
 
 /* PIN-gated roster read/write (desk_010). The panel's edit mode uses these;
    the quote feed above reads the same table server-side. */
-/* NO PIN (owner ruling 2026-07-30, stated twice: the watchlist is not to depend
-   on unlocking). These call the `_open` RPCs from desk_011, which carry the same
-   validation — symbol grammar, 50-list and 2000-symbol caps, replace-all — and
-   simply skip the PIN check.
-
-   The trade is explicit: the anon key ships in this very file's sibling
-   config.js, so anyone who loads the site can rewrite the roster. Reading was
-   already public (desk-watchlist serves the panel to unauthenticated visitors);
-   writing is what changed. Balances, positions, the assistant and the system
-   prompt remain PIN-gated — nothing here touches money or trading.
-
-   The PIN versions from desk_010 are still in the database, so reverting is
-   switching these two lines back. The `pin` parameter is kept in the signatures
-   for exactly that reason, and ignored. */
-async function deskGetWatchlists(_pin) { return deskRpcOpen('desk_get_watchlists_open'); }
+/* PIN ONLY on the server since 2026-11-16 (owner: "yes, everything PIN only"; desk_029). From 2026-07-30 to then the
+   roster was read and written through anon-callable `_open` RPCs with no PIN at all, so anyone holding the public anon
+   key could rewrite it; those two doors are now closed to the browser roles. The PIN doors call the same functions
+   once desk_pin_who has accepted the PIN (a wrong one is a counted miss; a locked desk answers {ok:false,
+   locked_until}), so the symbol grammar, the 50-list / 2000-symbol caps and the version guard are unchanged. Reading
+   takes any desk PIN; WRITING takes the owner's only (the CI test credential is refused with an error).
+   `pin` falls back to the tab's PIN: every caller passes null, from the days these doors were open. */
+async function deskGetWatchlists(pin) { return deskRpc('desk_get_watchlists_pin', pin || deskTabPin()); }
 /* `version` is the roster version read alongside the lists (desk_014). The
    write is a REPLACE-ALL, so naming the version it is replacing is what stops a
    save built from a stale snapshot from deleting a list created since. Always
    pass it: omitting it makes the RPC fall back to last-write-wins, which is how
    the Radar list was silently lost on 2026-08-01. A refusal comes back as
    {ok:false, error:'conflict', version:<current>} — not an exception. */
-async function deskSetWatchlists(_pin, lists, version) {
-  return deskRpcOpen('desk_set_watchlists_open', { new_lists: lists, expected_version: version ?? null });
+async function deskSetWatchlists(pin, lists, version) {
+  return deskRpc('desk_set_watchlists_pin', pin || deskTabPin(), { new_lists: lists, expected_version: version ?? null });
 }
 
 /* ── demo watchlist ────────────────────────────────────────────────────────

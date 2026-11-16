@@ -1801,9 +1801,9 @@ async function wlMutate(mutate) {
   finally { wlInFlight--; }
 }
 async function wlMutateRun(mutate) {
-  /* No PIN needed — the watchlist RPCs are open (desk_011). Still a
-     read-modify-write against the AUTHORITATIVE roster, never a patch of the
-     rendered payload: that omits unresolved symbols and can be an hour stale. */
+  /* The PIN is the tab's own (deskGetWatchlists / deskSetWatchlists read it when handed null; desk_029, 2026-11-16).
+     Still a read-modify-write against the AUTHORITATIVE roster, never a patch of the rendered payload: that omits
+     unresolved symbols and can be an hour stale. */
   const pin = null;
   let lists, version;
   try {
@@ -2774,7 +2774,7 @@ function renderWlEditor() {
 function wlEditErr(msg) { modalErr('wlEditErr', msg); }
 
 async function openWlEditor() {
-  const pin = null;   /* open RPCs — no PIN (desk_011) */
+  const pin = null;   /* the tab's PIN, read by deskGetWatchlists (desk_029) */
   if (!wlCanEdit()) return;
   const back = document.getElementById('wlEditBackdrop');
   wlEditErr('');
@@ -2837,9 +2837,9 @@ function closeWlEditor() {
 }
 
 async function saveWlEditor() {
-  const pin = null;   /* open RPCs — no PIN (desk_011) */
-  /* wlEditLoaded still gates this, and matters MORE now that no PIN does: a
-     replace-all built from a draft that never loaded would delete real lists. */
+  const pin = null;   /* the tab's PIN, read by deskSetWatchlists (desk_029) */
+  /* wlEditLoaded still gates this: a replace-all built from a draft that never
+     loaded would delete real lists. */
   if (!wlEdit || !wlEditLoaded) return;
   const lists = wlEdit
     .map(l => ({ title: String(l.title || '').trim(), symbols: l.symbols }))
