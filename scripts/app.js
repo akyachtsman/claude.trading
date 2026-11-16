@@ -12312,7 +12312,9 @@ function simFormSize() {
     return;
   }
   out.textContent = 'Worth ' + fmtUsd0(qty * entry * mult) + ' (' + qty + (mult > 1 ? ' contract' : ' share') + (qty === 1 ? '' : 's')
-    + ' × ' + simPx(entry) + (mult > 1 ? ' × 100' : '') + ')' + (qtyEl.dataset.typed ? ', your size.' : ', sized to about ' + fmtUsd0(mult > 1 ? SIM_BUDGET.option : SIM_BUDGET.stock) + '.');
+    + ' × ' + simPx(entry) + (mult > 1 ? ' × 100' : '') + ')' + (qtyEl.dataset.typed ? ', your size.'
+      : qty === SIM_QTY_MAX && qty * entry * mult < (mult > 1 ? SIM_BUDGET.option : SIM_BUDGET.stock) ? ', the most a simulated trade can hold.'
+      : ', sized to about ' + fmtUsd0(mult > 1 ? SIM_BUDGET.option : SIM_BUDGET.stock) + '.');
 }
 async function simFormLookup() {
   const sym = simFormSym(), out = document.getElementById('simQuote'), entry = document.getElementById('simEntry');
@@ -12359,7 +12361,7 @@ async function submitSimTrade(ev) {
   const p = simParseSym(sym);
   if (p.kind === 'option' && p.exp < simNyDay(new Date())) return say('That contract has already expired.', 'simExp');
   const qty = Number(document.getElementById('simQty').value);
-  if (!(Number.isInteger(qty) && qty > 0 && qty <= 1e6)) return say('The quantity is a whole number from 1.', 'simQty');
+  if (!(Number.isInteger(qty) && qty > 0 && qty <= SIM_QTY_MAX)) return say('The quantity is a whole number from 1 to 1,000,000.', 'simQty');
   const entry = Number(document.getElementById('simEntry').value);
   if (!(entry > 0)) return say('Enter the entry price.', 'simEntry');
   const note = document.getElementById('simNote').value.trim().slice(0, 200);
@@ -12395,7 +12397,8 @@ function wireSim() {
     form.addEventListener('submit', submitSimTrade);
     form.addEventListener('click', ev => {
       const k = ev.target.closest('[data-kind]'), s = ev.target.closest('[data-side]');
-      if (k) { simForm.kind = k.dataset.kind; document.getElementById('simQty').dataset.typed = ''; simFormPaint(); simFormSize(); simFormLookup(); }
+      /* only a real switch resets the owner's typed quantity: pressing the kind already chosen changes nothing (Codex P2, PR #379) */
+      if (k && k.dataset.kind !== simForm.kind) { simForm.kind = k.dataset.kind; document.getElementById('simQty').dataset.typed = ''; simFormPaint(); simFormSize(); simFormLookup(); }
       if (s) { simForm.side = s.dataset.side; simFormPaint(); }
     });
     for (const id of ['simSym', 'simUnder', 'simExp', 'simStrike', 'simRight']) {

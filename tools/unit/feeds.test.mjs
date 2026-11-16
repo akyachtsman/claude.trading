@@ -34,7 +34,7 @@ const dailyBars = (n, startSec = ET('2026-01-05T16:00:00-05:00') / 1000) =>
   Array.from({ length: n }, (_, i) => [startSec + i * 86400, 100 + i, 101 + i, 99 + i, 100.5 + i, 1000 + i]);
 
 // ═══ quote-proxy ═════════════════════════════════════════════════════════════
-const QP = ['toYahoo', 'pack', 'regularRanges', 'emptySeries', 'pricesMoving', 'ttlFor', 'extInfo', 'corsHeaders',
+const QP = ['toYahoo', 'isOccSymbol', 'pack', 'regularRanges', 'emptySeries', 'pricesMoving', 'ttlFor', 'extInfo', 'corsHeaders',
   'EXT_WICK_TOL', 'KEEP_BARS', 'KEEP_BARS_INTRADAY', 'CACHE_TTL_MS'];
 const qp = (opts) => loadEdge('quote-proxy', QP, opts);
 
@@ -200,6 +200,34 @@ test('quote-proxy handler: a daily lookup symbol is upper-cased and BRK.B goes t
   assert.equal(r.body.series.t.length, 40);
   assert.ok(r.body.series.x.every((x) => x === 0), 'a daily series is all regular');
   assert.match(r.body.series.t[0], /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('quote-proxy isOccSymbol: a real OCC contract, never an impossible date or a zero strike', () => {
+  const { isOccSymbol } = qp();
+  for (const s of ['AAPL261218C00200000', 'AMD261218P00195000', 'SPY270115C00600500', 'BRK.B261218C00500000', 'GOOGL280229P00150000', 'F261218C00012500'])
+    assert.equal(isOccSymbol(s), true, s);
+  for (const s of ['AAPL', 'AAPL261318C00200000', 'AAPL260230C00200000', 'AAPL270229C00200000', 'AAPL261200C00200000',
+    'AAPL261218X00200000', 'AAPL261218C00000000', 'AAPL261218C0020000', 'TOOLONG261218C00200000', '1AAPL261218C00200000', 'AAPL 261218C00200000'])
+    assert.equal(isOccSymbol(s), false, s);
+});
+
+test('quote-proxy handler: an option contract goes to Yahoo as it is, for bars and for the quote, and never to Stooq', async () => {
+  const urls = [];
+  const e = qp({ fetch: (u) => {
+    urls.push(String(u));
+    return Promise.resolve(String(u).includes('/chart/AAPL') ? json(yahooChartBody(dailyBars(40))) : new Response('', { status: 404 }));
+  } });
+  const r = await call(e, qpReq({ symbol: 'aapl261218c00200000' }));
+  assert.equal(r.status, 200); isJsonWithCors(r, true);
+  assert.equal(r.body.symbol, 'AAPL261218C00200000');
+  assert.match(urls[0], /\/chart\/AAPL261218C00200000\?range=5y&interval=1d/);
+  const before = urls.length;
+  const miss = await call(e, qpReq({ symbol: 'AMD261218P00195000' }));
+  assert.equal(miss.status, 404); isJsonWithCors(miss, true);
+  const after = urls.slice(before);
+  assert.ok(after.length >= 1 && after.every((u) => /query1\.finance\.yahoo\.com/.test(u)), 'a contract with no bars is never asked of Stooq: ' + after.join(' '));
+  const bad = await call(e, qpReq({ symbol: 'AAPL261318C00200000' }));
+  assert.equal(bad.status, 400, 'month 13 is refused before anything is fetched');
 });
 
 test('quote-proxy handler: a malformed bar timestamp skips that BAR, never the whole symbol (audit I7)', async () => {
