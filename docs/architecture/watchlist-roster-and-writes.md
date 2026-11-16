@@ -14,6 +14,12 @@ Where the roster lives (`desk_watchlists`), the version-guarded replace-all (`de
   list all land atomically in one replace-all; the seed is guarded on emptiness
   (not a fixed id) so a replay can't clobber later edits — the documented
   `desk_009` hazard.
+  **Since 2026-11-16 (`desk_029`, owner: "yes, everything PIN only") the browser reaches the roster only through two
+  PIN doors**, `desk_get_watchlists_pin(pin)` (any desk PIN) and `desk_set_watchlists_pin(pin, new_lists,
+  expected_version)` (the owner only), which call the `_open` functions below once `desk_pin_who` has accepted the PIN;
+  `anon` and `authenticated` can no longer call the `_open` ones. `deskGetWatchlists` / `deskSetWatchlists` send the
+  tab's PIN (`deskTabPin()`) when their caller hands null, which every caller does. `desk-watchlist` asks for the PIN
+  too.
   **A replace-all is version-guarded** (`desk_014`). `desk_get_watchlists_open`
   returns a `version` — `max(updated_at)` — and `desk_set_watchlists_open` takes
   `expected_version`, holds an exclusive table lock and REFUSES with

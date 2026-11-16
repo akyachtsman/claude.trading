@@ -16,8 +16,12 @@
 // index and the BRK-B share class). That is what makes an unbounded roster
 // affordable here, where desk-market's per-symbol v8/chart sweep would not be.
 //
-// Anon-callable: public market data, roster fixed in committed config, no
-// caller input reaches the upstream URL. Session-aware module cache (1 min
+// PIN-gated since 2026-11-16 (owner: "yes, everything PIN only"): the reply
+// carries the owner's list names and symbols, so every request must carry the
+// desk PIN, checked by the database's ONE PIN check (desk_pin_who, desk_026 —
+// a wrong PIN is a counted miss toward the desk-wide lockout). A request with
+// no PIN is refused WITHOUT asking the database (nothing to count). No caller
+// input but the PIN reaches anything; nothing but the range reaches Yahoo. Session-aware module cache (1 min
 // while the US session is open, through the 15-minute settle grace and the
 // 16:00–20:00 ET post-market, 60 min otherwise; a body taken mid-session is
 // dropped once the bell has rung) + single-flight, matching desk-market.
@@ -25,7 +29,7 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
@@ -555,21 +559,45 @@ async function rosterChanged(): Promise<boolean> {
   return cached.fp === null || fresh !== cached.fp;
 }
 
+/* THE PIN GATE (2026-11-16). Answers null when the PIN is accepted, else the
+   reply to send. Only `ok === true` with a string id admits; a lock is a 429
+   with `lockedUntil`, a plain refusal a 401, anything odd a 502 — fail closed.
+   The store call carries the service key and NO user-agent (a browser-shaped
+   UA on a secret key is refused — CLAUDE.md). */
+const PIN_TIMEOUT_MS = 5000;
+async function pinGate(pin: unknown): Promise<Response | null> {
+  if (typeof pin !== 'string' || !pin) return reply(401, { ok: false, error: 'The desk PIN is required.' });
+  const url = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) return reply(502, { ok: false, error: 'auth backend unavailable' });
+  const res = await fetch(`${url}/rest/v1/rpc/desk_pin_who`, {
+    method: 'POST', headers: { apikey: key, Authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ pin }), signal: AbortSignal.timeout(PIN_TIMEOUT_MS),
+  }).catch(() => null);
+  if (!res || !res.ok) return reply(502, { ok: false, error: 'auth backend unavailable' });
+  const who: { ok?: unknown; id?: unknown; locked_until?: unknown } | null = await res.json().catch(() => null);
+  if (who && who.ok === true && typeof who.id === 'string' && who.id) return null;
+  if (who && typeof who.locked_until === 'string') {
+    return reply(429, { ok: false, error: 'Too many wrong PINs — the desk is locked for now.', lockedUntil: who.locked_until });
+  }
+  if (!who || who.ok !== false) return reply(502, { ok: false, error: 'auth backend unavailable' });
+  return reply(401, { ok: false, error: 'PIN not recognized.' });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST' && req.method !== 'GET') return reply(405, { ok: false, error: 'GET or POST' });
+  // POST only since 2026-11-16: the PIN travels in the body.
+  if (req.method !== 'POST') return reply(405, { ok: false, error: 'POST with the desk PIN' });
 
   // force: the dashboard's "Refresh now" button bypasses the cache.
-  let force = false;
-  let tf = DEFAULT_RANGE;
-  if (req.method === 'POST') {
-    const body = await req.json().catch(() => ({}));
-    force = body?.force === true;
-    // Anything unrecognised falls back to 1d rather than erroring: an older
-    // cached client asking for a range this deploy doesn't know should still
-    // get a working panel.
-    tf = rangeKey(body?.range);
-  }
+  const body = await req.json().catch(() => ({}));
+  const refused = await pinGate(body?.pin);
+  if (refused) return refused;
+  let force = body?.force === true;
+  // Anything unrecognised falls back to 1d rather than erroring: an older
+  // cached client asking for a range this deploy doesn't know should still
+  // get a working panel.
+  const tf = rangeKey(body?.range);
 
   if (force) {
     const now = Date.now();

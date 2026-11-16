@@ -199,6 +199,9 @@ jobs:
   #   sim-trades-check.py             desk_028 (simulated trades, 2026-11-15)
   #                                   after desk_027 on the same replay: the
   #                                   verify probe, 16 mutants
+  #   watchlists-pin-check.py         desk_029 (the watchlists need the PIN,
+  #                                   2026-11-16) after desk_028: the verify
+  #                                   probe, 10 mutants
   # The page's half (S75 under 41 mutants) is the news-client-mutants job.
   news-checks:
     name: News helper checks (server + database)
@@ -267,6 +270,14 @@ jobs:
           PGPORT: '5432'
           PGUSER: postgres
         run: python3 tools/sim-trades-check.py
+      # desk_029 (2026-11-16): the watchlists' PIN doors, after desk_028 on the
+      # same replay — the probe, and every mutant must be caught.
+      - name: desk_029 watchlist PIN doors on a scratch Postgres, mutants
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+        run: python3 tools/watchlists-pin-check.py
 
   # ⚠️ LOCAL ADDITION — not in the upstream template. Keep it on every refresh.
   # The no-browser checks of the edge functions and scripts/data.js, on every

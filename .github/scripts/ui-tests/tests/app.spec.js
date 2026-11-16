@@ -73,14 +73,22 @@ const test = base.extend({
       if (req.method() !== 'POST' || !spendsAMiss(req, true)) return route.fallback();
       return refuse(route, { ok: false, error: 'PIN not recognized.' }, 401);
     });
+    /* desk-watchlist asks for the PIN too since desk_029 (2026-11-16); like desk-ask it refuses a null or '' PIN without
+       asking the database, so only a non-empty fake one would count. */
+    await context.route(`${LIVE_BACKEND}/functions/v1/desk-watchlist`, (route) => {
+      const req = route.request();
+      if (req.method() !== 'POST' || !spendsAMiss(req, true)) return route.fallback();
+      return refuse(route, { ok: false, error: 'PIN not recognized.' }, 401);
+    });
     /* And PROVE it: a scenario's own page route outranks this one, so a stub that calls route.continue() would send its
        fake PIN straight out. Any fake-PIN request answered by a real server (a response WITH a server address; a
        fulfilled route has none) fails the scenario at teardown, naming the call. */
     const leaks = [];
-    const isLive = (u) => u.startsWith(`${LIVE_BACKEND}/rest/v1/rpc/desk_`) || u.startsWith(`${LIVE_BACKEND}/functions/v1/desk-ask`);
+    const isLive = (u) => u.startsWith(`${LIVE_BACKEND}/rest/v1/rpc/desk_`) || u.startsWith(`${LIVE_BACKEND}/functions/v1/desk-ask`)
+      || u.startsWith(`${LIVE_BACKEND}/functions/v1/desk-watchlist`);
     const onResponse = async (res) => {
       const req = res.request();
-      if (req.method() !== 'POST' || !isLive(req.url()) || !spendsAMiss(req, req.url().includes('/functions/v1/desk-ask'))) return;
+      if (req.method() !== 'POST' || !isLive(req.url()) || !spendsAMiss(req, /\/functions\/v1\/desk-(ask|watchlist)/.test(req.url()))) return;
       if (await res.serverAddr().catch(() => null)) leaks.push(new URL(req.url()).pathname);
     };
     context.on('response', onResponse);
@@ -1910,7 +1918,7 @@ test('S20: watchlist timeframe control redraws the tile sparklines', async ({ pa
   await expect(page.locator('#wlTf button[aria-pressed="true"]'), 'exactly one span is pressed after the reload').toHaveCount(1);
 });
 
-/* A stateful stand-in for the PIN-free roster RPCs (desk_get/set_watchlists_open)
+/* A stateful stand-in for the roster RPCs (desk_get/set_watchlists_pin since desk_029; the PIN-free `_open` doors before)
    and the desk-watchlist feed, seeded from whatever the demo panel is showing.
    Scenarios that force `DESK.mode = 'live'` and then DROP a tile, remove one or
    quick-add another have to install this first, for two reasons. The write
@@ -1931,10 +1939,10 @@ async function installFakeRoster(page) {
     window.__rosterWrites = [];
     window.fetch = (url, init) => {
       const u = String(url);
-      if (u.endsWith('desk_get_watchlists_open'))
+      if (u.endsWith('desk_get_watchlists_pin'))
         return json({ ok: true, version: 'v' + window.__rosterWrites.length,
           lists: window.__roster.map(l => ({ title: l.title, symbols: l.symbols.slice() })) });
-      if (u.endsWith('desk_set_watchlists_open')) {
+      if (u.endsWith('desk_set_watchlists_pin')) {
         window.__roster = JSON.parse(init.body).new_lists
           .map(l => ({ title: l.title, symbols: (l.symbols || []).slice() }));
         window.__rosterWrites.push(window.__roster.map(l => ({ title: l.title, symbols: l.symbols.slice() })));
@@ -3450,7 +3458,7 @@ test('S29: the scheduled-ask roster round-trips by id, and the row cap holds', a
 // SCENARIO 30 — Watchlist writes are version-guarded
 // ─────────────────────────────────────────────────────────────────────────────
 /* Guards the CONTRACT, not the server rule. The refusal itself lives in
-   desk_set_watchlists_open (desk_014) and is exercised against the live table;
+   desk_set_watchlists_open (desk_014, behind desk_set_watchlists_pin since desk_029) and is exercised against the live table;
    what CI can hold is the half that broke: the CLIENT must send back the
    version it read, on BOTH write paths. Send nothing and the RPC silently falls
    back to last-write-wins — which is how the Radar list was deleted on
@@ -3469,7 +3477,7 @@ test('S30: watchlist writes carry the roster version they read', async ({ page, 
         bodies.push({ fn: u.split('/rpc/')[1], body: JSON.parse(init.body || '{}') });
         /* Answer as the RPC would, so the caller's own error handling runs
            instead of throwing and hiding what it sent. */
-        const payload = u.endsWith('desk_get_watchlists_open')
+        const payload = u.endsWith('desk_get_watchlists_pin')
           ? { ok: true, version: '2026-08-01T00:00:00+00:00', lists: [{ title: 'Radar', symbols: [] }] }
           : { ok: true, version: '2026-08-01T00:00:01+00:00', lists: 1, symbols: 0 };
         return Promise.resolve(new Response(JSON.stringify(payload), {
@@ -3487,13 +3495,18 @@ test('S30: watchlist writes carry the roster version they read', async ({ page, 
             and not one invented at write time. */
       bodies.length = 0;
       DESK.mode = 'live'; DESK.authed = true;
+      /* desk_029 (2026-11-16): both doors need the PIN, and every caller hands null — the wrappers send the TAB's. */
+      sessionStorage.setItem('desk_pin', 'tab-pin-s30');
       await wlMutate(lists => { lists.push({ title: 'X', symbols: [] }); return true; });
-      const read = bodies.find(b => b.fn === 'desk_get_watchlists_open');
-      const wrote = bodies.find(b => b.fn === 'desk_set_watchlists_open');
+      sessionStorage.removeItem('desk_pin');
+      const read = bodies.find(b => b.fn === 'desk_get_watchlists_pin');
+      const wrote = bodies.find(b => b.fn === 'desk_set_watchlists_pin');
 
       return {
         directHasVersion: direct && direct.body.expected_version === '2026-07-31T12:00:00+00:00',
         mutateRead: !!read,
+        pins: [read && read.body.pin, wrote && wrote.body.pin],
+        openDoors: bodies.filter(b => /_open$/.test(b.fn)).length,
         mutateSentVersion: wrote ? wrote.body.expected_version : 'NO WRITE',
         omittedIsNull: (await (async () => {
           bodies.length = 0;
@@ -3508,6 +3521,8 @@ test('S30: watchlist writes carry the roster version they read', async ({ page, 
 
   expect(out.directHasVersion, 'deskSetWatchlists forwards the version it was given').toBe(true);
   expect(out.mutateRead, 'wlMutate reads the authoritative roster first').toBe(true);
+  expect(out.pins, 'the read and the write both carry the tab\'s PIN (desk_029)').toEqual(['tab-pin-s30', 'tab-pin-s30']);
+  expect(out.openDoors, 'no call to a retired open door').toBe(0);
   /* The version the stubbed read handed out — proving it was carried through
      the mutate rather than dropped or regenerated. */
   expect(out.mutateSentVersion, 'wlMutate echoes the version it read').toBe('2026-08-01T00:00:00+00:00');
