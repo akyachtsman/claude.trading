@@ -12326,7 +12326,7 @@ async function simFormLookup() {
   if (seq !== simForm.seq) return;
   if (!Number.isFinite(q.price)) {
     const p = simParseSym(sym);
-    out.textContent = 'No price for ' + sym + (p && p.kind === 'option' && DESK.mode !== 'demo' ? ' — option prices are not connected yet.' : '.') + ' Type the entry price yourself.';
+    out.textContent = 'No price for ' + sym + (p && p.kind === 'option' && DESK.mode !== 'demo' ? ' — check the contract: expiry, strike and call or put.' : '.') + ' Type the entry price yourself.';
     return;
   }
   out.textContent = 'Last ' + simPx(q.price) + (Number.isFinite(q.bid) && Number.isFinite(q.ask) ? ' · bid ' + simPx(q.bid) + ' · ask ' + simPx(q.ask) : '') + (DESK.mode === 'demo' ? ' (demo)' : ' (~15 min delayed)');
