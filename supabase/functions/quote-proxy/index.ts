@@ -170,6 +170,22 @@ const EXT_WICK_TOL = 0.01;
 // helper (and the same reasoning) lives in desk-watchlist.
 const toYahoo = (s: string) => s.replace(/\.([A-Z])$/, '-$1');
 
+// An OCC option symbol in the compact form the simulated-trades panel sends
+// (owner 2026-11-15, "both options and stock purchases"; scripts/sim.js
+// SIM_OCC_RE): root (a letter, then up to five letters, '.' or '-'), YYMMDD,
+// C or P, and the strike × 1000 in eight digits — `AAPL261218C00200000`.
+// Yahoo prices the contract under exactly that name (chart and quote), so it
+// goes upstream unchanged. A date that cannot exist (month 13, Feb 30) or a
+// zero strike is not an option. Reads only the symbol: no account, no holding.
+const OCC_RE = /^[A-Z][A-Z.-]{0,5}(\d{2})(\d{2})(\d{2})[CP](\d{8})$/;
+function isOccSymbol(s: string): boolean {
+  const m = OCC_RE.exec(s);
+  if (!m) return false;
+  const y = 2000 + Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return mo >= 1 && mo <= 12 && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d && Number(m[4]) > 0;
+}
+
 // Yahoo v8 chart: primary daily source and the only intraday source.
 // `prepost` widens an intraday fetch to the 4:00am–8:00pm ET extended session
 // (owner request 2026-07-29). Indices carry `hasPrePostMarketData:false` — an
@@ -369,7 +385,9 @@ async function handle(req: Request, allowed: boolean, cors: Record<string, strin
   // desk-watchlist's: a symbol the chart box accepts and this proxy rejects
   // surfaces as a bare format error instead of a chart (Codex review, PR #192 —
   // '=' was widened upstream for futures like GC=F but not here).
-  if (!/^[A-Z0-9.^=-]{1,10}$/.test(symbol)) return reply(400, { ok: false, error: 'symbol format not recognized' }, cors);
+  // An OCC option contract is the one longer form accepted (isOccSymbol).
+  const option = isOccSymbol(symbol);
+  if (!option && !/^[A-Z0-9.^=-]{1,10}$/.test(symbol)) return reply(400, { ok: false, error: 'symbol format not recognized' }, cors);
 
   // Serve from the warm-instance cache when fresh. The prepost flag is part of
   // the key — the two variants are different bar sets, never interchangeable.
@@ -407,7 +425,8 @@ async function handle(req: Request, allowed: boolean, cors: Record<string, strin
     // request paid for that round-trip before reaching Yahoo anyway.
     series = await yahooChart(symbol, '5y', '1d', false);
     // Fallback only: its failure must not turn a plain not-found into a 502.
-    if (!series) series = await stooqDaily(symbol).catch(() => null);
+    // Stooq carries no options, so a contract is never sent there.
+    if (!series && !option) series = await stooqDaily(symbol).catch(() => null);
   }
   if (!series) {
     const body = { ok: false, error: `no ${kind} data found for ${symbol} — check the ticker` };
