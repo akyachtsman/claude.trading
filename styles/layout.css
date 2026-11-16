@@ -1435,9 +1435,14 @@
   .sim-head .panel-title { color: var(--ly-ink); overflow: visible; }
   .sim-add { margin-left: auto; }
   .sim-stamp { margin: 0; color: var(--ly-ink-2); }
-  .sim-sum { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 1px 10px; font: 500 var(--font-xs)/1.35 var(--font-mono); color: var(--ly-ink-2); }
+  .sim-pick { display: flex; gap: var(--space-1); }
+  .sim-pick .ly-btn { flex: 1 1 0; min-width: 0; padding-left: 2px; padding-right: 2px; }
+  .sim-pick .ly-btn[aria-pressed="true"] { border-color: var(--ly-accent); color: var(--ly-accent); }
+  .sim-pick[hidden] { display: none; }
+  .sim-sum { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 10px; margin: 0; font: 500 var(--font-xs)/1.35 var(--font-mono); color: var(--ly-ink-2); }
   .sim-sum > span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sim-sum > .sim-rl { text-align: left; font-family: var(--font-sans); text-transform: uppercase; letter-spacing: .04em; font-size: var(--font-2xs); }
+  .sim-sum > .sim-big { font-size: var(--font-base); font-weight: 600; }
   .sim-up { color: var(--sim-gain); } .sim-down { color: var(--sim-loss); }
   .sim-tabs { display: flex; gap: var(--space-1); }
   .sim-tabs .ly-btn[aria-pressed="true"], .sim-seg .ly-btn[aria-pressed="true"] { border-color: var(--ly-accent); color: var(--ly-accent); }
@@ -1482,7 +1487,7 @@
   @media (hover: none) and (pointer: coarse) {
     .sim-row { min-height: 48px; }
     .sim-field input, .sim-field select { min-height: 44px; font-size: 16px; }
-    .sim-tabs .ly-btn, .sim-seg .ly-btn, .sim-add { min-height: 44px; }
+    .sim-tabs .ly-btn, .sim-seg .ly-btn, .sim-pick .ly-btn, .sim-add { min-height: 44px; }
   }
 
 /* ── The desk lock (owner 2026-11-15: "a small button, on or off, red or green") ─────────────────────────────────

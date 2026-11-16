@@ -11946,6 +11946,11 @@ function lyDrawCharts(box, st) {
 let simTrades = [];                 /* [{ id, sym, side, qty, mult, entry, note, openedAt, snap, closedAt, exit, exitSnap }] */
 const simQuotes = new Map();        /* sym → { price, prev, bid, ask, series, at, err } */
 let simLoadAgain = false;
+/* the period the summary and each trade's second figure show (owner 2026-11-16: "a selector of day, week, year, month",
+   not all five at once); a per-viewer convenience, so it is kept in this browser and a bad stored value falls back */
+const SIM_PERIOD_KEY = 'sim_period_v1';
+let simPeriod = (() => { try { const v = localStorage.getItem(SIM_PERIOD_KEY); return SIM_PERIODS.some(([k]) => k === v) ? v : 'day'; } catch (_) { return 'day'; } })();
+const simPeriodLabel = (k) => (SIM_PERIODS.find(([x]) => x === k) || [k, k])[1];
 let simTab = 'open', simLoaded = false, simLoading = null, simErr = '', simDemoId = 0, simTimer = 0, simWired = false;
 let simFor = '';                    /* the mode simTrades was read for: demo trades never stay in memory once the page runs live */
 const SIM_POLL_OPEN_MS = 60_000, SIM_POLL_SHUT_MS = 15 * 60_000;
@@ -12115,10 +12120,10 @@ function renderSim() {
   if (!simOn()) {
     lamp.className = 'lamp lamp--locked'; lamp.textContent = 'Locked';
     stamp.textContent = 'Private — unlock the desk to see and open simulated trades.';
-    sum.textContent = ''; list.textContent = ''; add.hidden = true; tabs.hidden = true;
+    sum.textContent = ''; list.textContent = ''; add.hidden = true; tabs.hidden = true; if (document.getElementById('simPeriod')) document.getElementById('simPeriod').hidden = true;
     return;
   }
-  add.hidden = false; tabs.hidden = false;
+  add.hidden = false; tabs.hidden = false; if (document.getElementById('simPeriod')) document.getElementById('simPeriod').hidden = false;
   if (DESK.mode === 'demo') { lamp.className = 'lamp lamp--demo'; lamp.textContent = 'Demo'; }
   else if (simErr) { lamp.className = 'lamp lamp--stale'; lamp.textContent = 'Stale'; }
   else { lamp.className = 'lamp ' + (marketSessionOpen(new Date()) ? 'lamp--live' : 'lamp--eod'); lamp.textContent = marketSessionOpen(new Date()) ? 'Delayed' : 'EOD'; }
@@ -12127,15 +12132,17 @@ function renderSim() {
   const first = simTrades.reduce((m, t) => (!m || t.openedAt < m ? t.openedAt : m), null);
   stamp.textContent = (DESK.mode === 'demo' ? 'Demo data · ' : simErr ? simErr + ' · ' : 'Prices ~15 min delayed · ')
     + (first ? 'started ' + fmtShortDate(simNyDay(new Date(first))) + ', ' + first.slice(0, 4) : 'no trades yet');
-  /* the whole simulation: $ and % for each period */
-  /* one line a period (Today, Week, Month, YTD, Since start): the gain or loss in dollars and in percent */
+  /* the whole simulation, for the ONE period picked above it: the gain or loss in dollars and in percent */
+  const per = document.getElementById('simPeriod');
+  if (per) per.querySelectorAll('[data-period]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.period === simPeriod)));
   sum.textContent = '';
-  for (const [k, lab] of SIM_PERIODS) {
-    const t = simTotals([...nums.values()], k);
-    const name = el('span', 'sim-rl', lab), d = el('span', simTone(t.pnl), simSignedMoney(t.pnl)), pc = el('span', simTone(t.pct), t.pct == null ? '—' : fmtPct(t.pct));
-    if (t.missing) name.title = d.title = t.missing + ' trade(s) could not be priced and are left out';
-    sum.append(name, d, pc);
-  }
+  const tot = simTotals([...nums.values()], simPeriod);
+  const totName = el('span', 'sim-rl', simPeriodLabel(simPeriod));
+  const totD = el('span', 'sim-big ' + simTone(tot.pnl), simSignedMoney(tot.pnl));
+  const totP = el('span', 'sim-big ' + simTone(tot.pct), tot.pct == null ? '—' : fmtPct(tot.pct));
+  if (tot.missing) sum.title = tot.missing + ' trade(s) could not be priced and are left out';
+  else sum.removeAttribute('title');
+  sum.append(totName, totD, totP);
   /* the list */
   tabs.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === simTab)));
   const keep = list.scrollTop;
@@ -12158,8 +12165,9 @@ function simRow(t, n) {
   const now = t.closedAt ? 'closed ' + simPx(Number(t.exit)) : simPx(q.price) + (Number.isFinite(q.bid) && Number.isFinite(q.ask) ? ' (' + simPx(q.bid) + '–' + simPx(q.ask) + ')' : '');
   b.append(el('span', 'sim-muted', line || ' '), el('span', 'sim-r', q.err && !q.price ? 'no price' : now));
   const pl = el('span', simTone(n.pnl), simSignedMoney(n.pnl) + ' ' + (n.pct == null ? '' : fmtPct(n.pct)));
-  const day = n.periods.day;
-  b.append(pl, el('span', 'sim-r ' + simTone(day && day.pnl), t.closedAt ? 'avg ' + simPx(Number(t.entry)) : 'today ' + (day && day.pct != null ? fmtPct(day.pct) : '—')));
+  const pd = n.periods[simPeriod];
+  const pdTxt = simPeriodLabel(simPeriod).toLowerCase() + ' ' + (pd && pd.pct != null ? fmtPct(pd.pct) : '—');
+  b.append(pl, el('span', 'sim-r ' + simTone(pd && pd.pnl), t.closedAt ? 'avg ' + simPx(Number(t.entry)) : pdTxt));
   const when = askWhen(t.openedAt);
   const s = t.snap;
   const snapTxt = (when ? 'Opened ' + when.t : 'Opened —') + (s ? ' · BUY ' + s.buy + ' / SELL ' + s.sell + ' then' : ' · not on the chart then');
@@ -12356,6 +12364,14 @@ function wireSim() {
   if (add) add.addEventListener('click', () => openSimTrade(null, add));
   const tabs = document.getElementById('simTabs');
   if (tabs) tabs.addEventListener('click', ev => { const b = ev.target.closest('[data-tab]'); if (b) { simTab = b.dataset.tab; renderSim(); } });
+  const per = document.getElementById('simPeriod');
+  if (per) per.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-period]');
+    if (!b || b.dataset.period === simPeriod) return;
+    simPeriod = b.dataset.period;
+    try { localStorage.setItem(SIM_PERIOD_KEY, simPeriod); } catch (_) { /* kept for this page only */ }
+    renderSim();
+  });
   const list = document.getElementById('simList');
   if (list) list.addEventListener('click', ev => { const r = ev.target.closest('.sim-row'); if (r) openSimDetail(r.dataset.id, r); });
   const form = document.getElementById('simTradeForm');

@@ -13193,18 +13193,38 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   await expect(page.locator('#simStamp')).toContainText(/started/);
   await expect(page.locator('#deskLockBtn'), 'demo has no desk lock').toBeHidden();
 
-  // the whole simulation: one line a period, $ and %
-  const sum = await page.locator('#simSum > span').allTextContents();
-  expect(sum.filter((_, i) => i % 3 === 0)).toEqual(['Today', 'Week', 'Month', 'YTD', 'Since start']);
-  for (let i = 0; i < 15; i += 3) {
-    expect(sum[i + 1], sum[i] + ' in dollars').toMatch(/^([+−][\d,]+(\.\d\d)?|—)$/);
-    expect(sum[i + 2], sum[i] + ' in percent').toMatch(/^([+−-]?\d+\.\d\d%|—)$/);
+  // the whole simulation: ONE period at a time, picked from a selector (owner 2026-11-16: "a selector of day, week,
+  // year, month", not all five at once) — the line shows that period's $ and %, and each open trade's second figure follows it
+  const pick = page.locator('#simPeriod [data-period]');
+  expect(await pick.allTextContents(), 'the five periods, in order').toEqual(['Today', 'Week', 'Month', 'YTD', 'All']);
+  await expect(page.locator('#simPeriod [aria-pressed="true"]'), 'Today is picked first').toHaveText('Today');
+  const sumNow = () => page.locator('#simSum > span').allTextContents();
+  const seen = {};
+  for (const [key, label] of [['day', 'Today'], ['week', 'Week'], ['month', 'Month'], ['year', 'YTD'], ['all', 'Since start']]) {
+    await page.locator(`#simPeriod [data-period="${key}"]`).click();
+    await expect(page.locator(`#simPeriod [data-period="${key}"]`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#simPeriod [aria-pressed="true"]'), 'one period at a time').toHaveCount(1);
+    const sum = await sumNow();
+    expect(sum.length, label + ': one line, not five').toBe(3);
+    expect(sum[0], 'the line names its period').toBe(label);
+    expect(sum[1], label + ' in dollars').toMatch(/^([+−][\d,]+(\.\d\d)?|—)$/);
+    expect(sum[2], label + ' in percent').toMatch(/^([+−-]?\d+\.\d\d%|—)$/);
+    expect(sum[1], label + ' matches simTotals for that period').toBe(await page.evaluate((k) => simSignedMoney(simTotals(simTrades.map(t => simNumbersOf(t, simNyDay(new Date()))), k).pnl), key));
+    for (const sp of await page.locator('#simSum > span').all()) {
+      expect(await sp.evaluate(e => e.scrollWidth <= e.clientWidth + 1), 'the summary is never cut: ' + await sp.textContent()).toBe(true);
+    }
+    await expect(page.locator('#simList .sim-row').first(), 'an open trade\'s second figure follows the period').toContainText(label.toLowerCase() + ' ');
+    seen[key] = sum[1];
   }
-  expect(sum[13], 'since start is known on the demo').not.toBe('—');
-  for (const s of await page.locator('#simSum > span').all()) {
-    const fits = await s.evaluate(e => e.scrollWidth <= e.clientWidth + 1);
-    expect(fits, 'a summary number is never cut: ' + await s.textContent()).toBe(true);
-  }
+  expect(seen.all, 'since start is known on the demo').not.toBe('—');
+  for (const b of await pick.all()) expect(await b.evaluate(e => e.scrollWidth <= e.clientWidth + 1), 'a period button is not cut: ' + await b.textContent()).toBe(true);
+  await page.reload();
+  await page.waitForSelector('#simList .sim-row');
+  await expect(page.locator('#simPeriod [aria-pressed="true"]'), 'the pick survives a reload').toHaveText('All');
+  await page.evaluate(() => localStorage.setItem('sim_period_v1', 'junk'));
+  await page.reload();
+  await page.waitForSelector('#simList .sim-row');
+  await expect(page.locator('#simPeriod [aria-pressed="true"]'), 'a bad stored pick falls back to Today').toHaveText('Today');
 
   // the list: open trades, one of them an option, each saying what it was opened on; the closed tab holds the closed one
   const rows = page.locator('#simList .sim-row');
