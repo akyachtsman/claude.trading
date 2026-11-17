@@ -65,13 +65,14 @@ export function loadRules() {
 /* ── pure helpers (the unit test drives these) ─────────────────────────────── */
 export const yahooSymbol = s => String(s).replace(/^([A-Z0-9]+)\.([A-Z])$/, '$1-$2');   // BRK.B -> BRK-B
 
-/* Upper-case, dedupe, keep only well-formed tickers; an index (^VIX) is out of scope. */
+/* Upper-case, dedupe, keep only well-formed tickers; an index (^VIX) is out of scope. Two spellings of one Yahoo
+   instrument (BRK.B and BRK-B) are ONE stock: the first spelling met is kept, or the push would list it twice. */
 export function universe(list) {
   const out = [], seen = new Set();
   for (const raw of list) {
     const t = String(raw == null ? '' : raw).trim().toUpperCase();
-    if (!t || t.startsWith('^') || !TICKER_RE.test(t) || seen.has(t)) continue;
-    seen.add(t); out.push(t);
+    if (!t || t.startsWith('^') || !TICKER_RE.test(t) || seen.has(yahooSymbol(t))) continue;
+    seen.add(yahooSymbol(t)); out.push(t);
   }
   return out;
 }
@@ -106,6 +107,7 @@ export function parseChart(body) {
     }
     b.t.push(d); b.o.push(o); b.h.push(h); b.l.push(l); b.c.push(c);
   }
+  if (!b.t.length) throw new Error('no usable price bars');   // an empty history is a failed fetch, never a quiet day
   return b;
 }
 
@@ -211,7 +213,7 @@ async function getJson(url) {
 async function fetchBars(sym, deadline) {
   for (let a = 0; ; a++) {
     try { return parseChart(await getJson(CHART_URL(yahooSymbol(sym)))); } catch (e) {
-      const retry = e.status ? (e.status === 429 || e.status >= 500) : !/no chart|no quote/.test(e.message);
+      const retry = e.status ? (e.status === 429 || e.status >= 500) : !/no chart|no quote|no usable/.test(e.message);
       if (!retry || a >= RETRY_WAITS_MS.length || Date.now() + RETRY_WAITS_MS[a] > deadline) throw e;
       await sleep(RETRY_WAITS_MS[a]);
     }
