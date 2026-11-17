@@ -189,6 +189,12 @@ its topic file** — the reasoning behind each rule is there, not here.
   (`deskLockArm`, re-checked each minute and on a tab's return); the button, the accounts' Lock and the hour all go through `deskLockNow`
   (forget + reload). `?demo=1` is never locked (made-up data; the tests run on it). The SERVER side is the PIN on every private RPC and
   `desk_026`'s lockout; the public feed functions stay anon-callable.
+- **The 10 AM trading-signal push** (`tools/signal-alert.mjs`; owner 2026-11-17: INVEST's weekday 9:57 AM PT alert moved here,
+  built on "Dashboard's own rules") — the week's rule 1-3 signals (Monday through today, today on its live bar) for the S&P 500
+  plus the watchlist tickers, worded as ONE push; the rules are `layersSignals` / `layersRuleAt` loaded from `scripts/layers.js`,
+  never a copy. It sends nothing itself and no ticker list enters the repo (the run passes them in). Who sends and from which
+  environment is still open with chat.GIT; INVEST's task runs until code.TRADE's first push. Guarded by `tools/unit/signal-alert.test.mjs`.
+  → details: `docs/architecture/signal-alert.md`
 - `config/news-feeds.json` / `config/chart-watchlist.json` / `config/map-filters.json` —
   owner-editable rosters read by the edge functions at runtime (watchlist NEVER derived from
   holdings — public repo). `chart-watchlist.json` is a bare JSON array, deduped, capped at
