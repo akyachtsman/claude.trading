@@ -11144,6 +11144,8 @@ function lyTiming(st) {
   return st.tm === 'peak' ? 'Daily stochastic ' + dk + ', peaking' : st.tm === 'trough' ? 'Daily stochastic ' + dk + ', bottoming'
     : 'Daily stochastic ' + (dk == null ? 'not available' : dk) + ', mid-range';
 }
+/* A trade saved before 2026-11-17 recorded "Leans BUY/SELL"; it reads in today's words (owner: "Mild"). */
+const lyVerdictWords = v => (typeof v === 'string' ? v.replace(/^Leans (BUY|SELL)$/, 'Mild $1') : v);
 const lyHeldNote = st => (st.held ? 'Held back from ' + layersVerdict(st.lean) + ' because the daily stochastic is ' + (st.tm === 'peak' ? 'peaking' : 'bottoming') + '.' : '');
 const lySigBuy = g => g[0].includes('BUY');
 
@@ -11173,19 +11175,29 @@ function lyRows() {
   });
   const key = lyState.sort, d = lyState.dir;
   const val = s => key === 'vd' ? layersBand(s.eff) * 1000 + s.lean : key === 'lean' ? s.lean : key === 'L' ? s.L : key === 'S' ? s.S
-    : key === 'tk' ? s.sym : layersCell(s.g[key].L, s.g[key].S, lyMax(key), lyState.mode)[0];
+    : key === 'tk' ? s.sym : key === 'sec' ? lySecCell(s.sec)[0] : layersCell(s.g[key].L, s.g[key].S, lyMax(key), lyState.mode)[0];
   /* the desk's one comparator (sortCompare); the ticker breaks a tie, always A–Z */
   r.sort((a, b) => sortCompare(val(a), val(b), key !== 'tk') * d || sortCompare(a.sym, b.sym, false));
   return r;
 }
 
-/* ── the ledger: what stocks share (A–D, the eleven sectors, Labels) ── */
+/* ── the ledger: what every stock shares (A–D, Labels) ── */
 const lyParen = v => { const m = /\(([^)]*)\)/.exec(v); return m ? m[1].split(';')[0] : v; };
 const lyHead = v => v.split(' (')[0];
 const LY_SHORT = {
   A: [['Oil', lyParen], ['Dollar', lyParen]], B: [['World vs 200-day', lyHead], ['vs 50-day', lyHead]],
   C: [['10-year', lyParen], ['Core CPI', lyParen], ['Jobs', lyParen]], D: [['VIX', lyHead], ['Above 50-day', lyHead], ['Fear & Greed', lyHead]],
 };
+/* A sector's E + F, one reading for every stock in it (15 points): [value, tone] in the colour mode showing. */
+const LY_SEC_ABBR = { 'Information Technology': 'Tech', 'Communication Services': 'Comm', 'Consumer Discretionary': 'Disc',
+  'Consumer Staples': 'Stap', 'Health Care': 'Hlth', 'Financials': 'Fin', 'Industrials': 'Ind', 'Energy': 'Enrg',
+  'Utilities': 'Util', 'Real Estate': 'RE', 'Materials': 'Mat' };
+const lySecAbbr = i => { const n = lyData.sectors[i].name; return LY_SEC_ABBR[n] || n.slice(0, 4); };
+function lySecCell(i) {
+  const s = lyData.sectors[i];
+  return layersCell(s.E.L + s.F.L, s.E.S + s.F.S, LAYERS_RULES.colour.sectorMax, lyState.mode);
+}
+const lySecText = i => { const v = lySecCell(i)[0]; return lyState.mode === 'lean' ? lySgn(v) : String(v); };
 function lyBox(attrs, tone, lines) {
   const b = el('button', 'ly-box');
   b.type = 'button';
@@ -11208,21 +11220,11 @@ function renderLayersLedger() {
       ['ly-bm', x.comps.map((c, i) => LY_SHORT[k][i][0] + ' ' + LY_SHORT[k][i][1](c[1])).join(' · ')],
     ]));
   }
-  box.appendChild(outer);
-  box.appendChild(el('p', 'ly-lh', 'Sectors · letters E + F · the same for every stock in the sector · tap to filter'));
-  const secs = el('div', 'ly-secs');
-  lyData.sectors.forEach((s, i) => {
-    const L = s.E.L + s.F.L, S = s.E.S + s.F.S;
-    const b = lyBox({ 'data-sec': String(i), 'aria-pressed': String(lyState.sec === i) }, (L - S) / LAYERS_RULES.colour.sectorMax, [
-      ['ly-bn', s.name], ['ly-bv', 'B ' + L + ' · S ' + S + ' of ' + LAYERS_RULES.colour.sectorMax],
-      ['ly-bm', Number.isFinite(s.breadth) ? Math.round(s.breadth) + '% above 50-day' : 'breadth not available'],
-    ]);
-    b.title = s.name;
-    secs.appendChild(b);
-  });
-  secs.appendChild(lyBox({ 'data-out': 'labels', 'aria-expanded': String(lyState.card === 'labels'), 'aria-controls': 'layersCard', class: 'ly-box ly-box--labels' }, null,
+  // The sector is each stock's own (owner 2026-11-17): it is a column of the table and a line on each Tiles
+  // heading, not a box here. The ledger keeps what every stock shares, one box a row from 900px of panel up.
+  outer.appendChild(lyBox({ 'data-out': 'labels', 'aria-expanded': String(lyState.card === 'labels'), 'aria-controls': 'layersCard', class: 'ly-box ly-box--labels' }, null,
     [['ly-bn', 'Labels'], ['ly-bv', 'No points'], ['ly-bm', 'S&P 500 ' + (lyData.outer.labels[0] && /^[\d,.]+/.exec(lyData.outer.labels[0][1]) || ['—'])[0]]]));
-  box.appendChild(secs);
+  box.appendChild(outer);
   renderLayersCard();
 }
 function lyChips(L, S, max) {
@@ -11250,8 +11252,12 @@ function renderLayersCard() {
   card.hidden = !k;
   if (!k) return;
   const h = el('div', 'ly-card-h');
+  const x = el('button', 'ly-card-x', '×');
+  x.type = 'button';
+  x.dataset.close = k;
+  x.setAttribute('aria-label', 'Close the ' + (k === 'labels' ? 'Labels' : k + ' · ' + lyData.outer[k].name) + ' card');
   if (k === 'labels') {
-    h.append(el('b', null, 'Labels'), el('span', 'ly-muted', 'Shown for context, no points'));
+    h.append(el('b', null, 'Labels'), el('span', 'ly-muted', 'Shown for context, no points'), x);
     card.appendChild(h);
     const ul = el('ul', 'ly-labels');
     for (const [a, b] of lyData.outer.labels) { const li = el('li'); li.append(el('b', null, a + '. '), document.createTextNode(b)); ul.appendChild(li); }
@@ -11262,7 +11268,7 @@ function renderLayersCard() {
   const o = lyData.outer[k];
   const t = el('span');
   t.append(el('span', 'ly-badge', k), el('b', null, ' ' + o.name + ' '), el('span', 'ly-muted', 'Same for every stock'));
-  h.append(t, lyChips(o.L, o.S, o.max));
+  h.append(t, lyChips(o.L, o.S, o.max), x);
   card.append(h, lyCompTable(o.comps), el('p', 'ly-ev', LAYERS_EVIDENCE[k]));
 }
 
@@ -11324,7 +11330,7 @@ function lyTileValue(st) {
   return lySgn(st.lean);
 }
 function lyAria(st) {
-  return st.sym + ', ' + st.name + ', ' + layersVerdict(st.eff) + ', lean ' + lySgn(st.lean) + ', BUY ' + st.L + ', SELL ' + st.S
+  return st.sym + ', ' + st.name + ', ' + layersVerdict(st.eff) + ', net ' + lySgn(st.lean) + ', BUY ' + st.L + ', SELL ' + st.S
     + (st.held ? ', held back by the daily stochastic' : '') + (st.sig.length ? ', ' + st.sig.map(g => g[0]).join(' and ') + ' this week' : '');
 }
 function renderLayersTiles(grid, list) {
@@ -11336,7 +11342,11 @@ function renderLayersTiles(grid, list) {
     if (!l) return;
     const g = el('section', 'ly-tsec');
     const h = el('h3', 'ly-th', sec.name);
+    h.dataset.sec = String(i);
     h.appendChild(el('span', 'ly-muted', ' · ' + l.length + (l.length === 1 ? ' stock' : ' stocks')));
+    const sv = el('span', 'ly-thv', 'Sector B ' + (sec.E.L + sec.F.L) + ' · S ' + (sec.E.S + sec.F.S) + ' of ' + LAYERS_RULES.colour.sectorMax);
+    sv.style.background = lyHeat(lySecCell(i)[1]);
+    h.appendChild(sv);
     const tg = el('div', 'ly-tgrid');
     for (const s of l) {
       const b = el('button', 'ly-tile' + (s.held ? ' is-held' : ''));
@@ -11354,8 +11364,8 @@ function renderLayersTiles(grid, list) {
   });
   grid.appendChild(wrap);
 }
-const LY_COLS = [['tk', 'Stock', 'signals and flags', 'Sort by ticker'], ['vd', 'Verdict', 'today', 'Strong BUY first, then by lean within each verdict'],
-  ['lean', 'Lean', 'B − S', 'BUY score minus SELL score'], ['L', 'BUY', 'of 100', 'BUY score'], ['S', 'SELL', 'of 100', 'SELL score']];
+const LY_COLS = [['tk', 'Stock', 'signals and flags', 'Sort by ticker'], ['vd', 'Verdict', 'today', 'Strong BUY first, then by net within each verdict'],
+  ['lean', 'Net', 'B − S', 'Net: the BUY score minus the SELL score'], ['L', 'BUY', 'of 100', 'BUY score'], ['S', 'SELL', 'of 100', 'SELL score']];
 const LY_SHORTN = { G: 'Avgs', H: 'Vol.', I: 'Days', J: 'Stoch', K: 'Str.' };
 function lyFlagPills(st) {
   const out = [];
@@ -11370,14 +11380,14 @@ function renderLayersTable(grid, list) {
   const scroll = el('div', 'ly-scroll');
   const t = el('table', 'ly-table');
   const cg = el('colgroup');
-  ['ly-c-st', 'ly-c-vd', 'ly-c-n', 'ly-c-n', 'ly-c-n', 'ly-c-l', 'ly-c-l', 'ly-c-l', 'ly-c-l', 'ly-c-l'].forEach(c => cg.appendChild(el('col', c)));
+  ['ly-c-st', 'ly-c-vd', 'ly-c-n', 'ly-c-n', 'ly-c-n', 'ly-c-sec', 'ly-c-l', 'ly-c-l', 'ly-c-l', 'ly-c-l', 'ly-c-l'].forEach(c => cg.appendChild(el('col', c)));
   t.appendChild(cg);
   const head = t.createTHead();
   const grp = head.insertRow();
   grp.className = 'ly-grp';
-  [['', 1], ['Today', 4], ['This stock', 5]].forEach(([txt, n]) => { const th = el('th', null, txt); th.colSpan = n; th.scope = 'colgroup'; grp.appendChild(th); });
+  [['', 1], ['Today', 4], ['Its sector', 1], ['This stock', 5]].forEach(([txt, n]) => { const th = el('th', null, txt); th.colSpan = n; th.scope = 'colgroup'; grp.appendChild(th); });
   const hr = head.insertRow();
-  const cols = LY_COLS.concat('GHIJK'.split('').map(k => [k, k, LY_SHORTN[k], LAYERS_NAMES[k] + ', ' + lyMax(k) + ' points']));
+  const cols = LY_COLS.concat([['sec', 'Sector', 'E + F', 'Its sector\'s letters E and F, ' + LAYERS_RULES.colour.sectorMax + ' points, the same for every stock in it']], 'GHIJK'.split('').map(k => [k, k, LY_SHORTN[k], LAYERS_NAMES[k] + ', ' + lyMax(k) + ' points']));
   for (const [key, label, small, title] of cols) {
     const th = el('th');
     th.scope = 'col';
@@ -11421,6 +11431,9 @@ function renderLayersTable(grid, list) {
     cell('lean', lySgn(s.lean), s.eff / LAYERS_RULES.colour.lean);
     cell('L', String(s.L), layersTone(s, 'buy'));
     cell('S', String(s.S), layersTone(s, 'sell'));
+    const sc = cell('sec', '', lySecCell(s.sec)[1], 'ly-secc');
+    sc.append(el('span', 'ly-secn', lySecAbbr(s.sec)), el('span', 'ly-secv', lySecText(s.sec)));
+    sc.setAttribute('aria-label', lyData.sectors[s.sec].name + ', ' + lySecText(s.sec));
     for (const k of 'GHIJK') {
       const g = s.g[k], c = layersCell(g.L, g.S, lyMax(k), lyState.mode);
       cell(k, lyState.mode === 'lean' ? lySgn(c[0]) : String(c[0]), c[1], k === 'G' ? 'ly-gl' : '');
@@ -11482,15 +11495,23 @@ function lyMatchHeight() {
     + ledger.getBoundingClientRect().height + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
   lySetVar(sec, '--ly-left-h', Math.round(h) + 'px');
 }
-/* A detail card just opened is brought into the ledger's scroll box: as little as it takes to show its foot, never
-   past its top, and only that box scrolls (never the page). */
+/* A detail card just opened sits over the chart (beside the ledger, or under it when stacked: layout.css). Where it
+   runs below the screen the PAGE moves as little as it takes to show it, never past its top. */
 function lyRevealCard() {
-  const box = document.getElementById('layersLScroll'), card = document.getElementById('layersCard');
-  if (!box || !card || card.hidden) return;
-  const b = box.getBoundingClientRect(), c = card.getBoundingClientRect();
-  const pad = parseFloat(getComputedStyle(box).paddingBottom) || 0;
-  const down = Math.min(c.top - b.top, c.bottom - b.bottom + pad);
-  if (down > 0) box.scrollTop += down;
+  const card = document.getElementById('layersCard');
+  if (!card || card.hidden) return;
+  const c = card.getBoundingClientRect(), H = window.innerHeight;
+  const down = Math.min(c.top - 8, c.bottom - H + 8);
+  if (down > 0) window.scrollBy(0, down);
+}
+function lyCloseCard() {
+  const k = lyState.card;
+  if (!k) return false;
+  lyState.card = null;
+  renderLayers();
+  const nb = document.querySelector('#layersLedger [data-out="' + k + '"]');
+  if (nb) nb.focus({ preventScroll: true });
+  return true;
 }
 /* Writes a layout property on the panel ONLY when its value changes: a custom property is inherited, so every write
    restyles the whole panel (hundreds of tiles), and WebKit pays for it even when the value is the same. */
@@ -11553,13 +11574,14 @@ function lyTipRow(tip, a, b, v) {
   tip.appendChild(d);
 }
 function lyTipStock(st, k) {
+  if (k === 'sec') { lyTipSector(st.sec); return; }
   const tip = lyTipEl(); tip.textContent = '';
   const h = el('div', 'ly-tip-h');
   if (k === 'lean' || k === 'L' || k === 'S' || k === 'tile') {
     h.appendChild(el('span', null, st.sym + ' · ' + st.name));
     tip.appendChild(h);
     [['Today', layersVerdict(st.eff)], ['Timing', lyTiming(st)], ['BUY score', st.L + ' of 100'], ['SELL score', st.S + ' of 100'],
-      ['Lean (BUY minus SELL)', lySgn(st.lean)], ['Outer layers A to F', 'BUY ' + (st.L - st.sl) + ' · SELL ' + (st.S - st.ss) + ' of 40'],
+      ['Net (BUY minus SELL)', lySgn(st.lean)], ['Outer layers A to F', 'BUY ' + (st.L - st.sl) + ' · SELL ' + (st.S - st.ss) + ' of 40'],
       ['Stock letters G to K', 'BUY ' + st.sl + ' · SELL ' + st.ss + ' of 60']].forEach(([a, b]) => lyTipRow(tip, a, b));
     const on = lyOnLists(st, lyLists());
     if (on.length || !st.sp) tip.appendChild(el('div', 'ly-tip-f', (st.sp ? '' : 'Not in the S&P 500. ') + (on.length ? 'On your ' + on.join(', ') + ' list' + (on.length > 1 ? 's' : '') + '.' : '')));
@@ -11596,7 +11618,7 @@ function lyTipSector(i) {
     tip.appendChild(h);
     g.comps.forEach(c => lyTipRow(tip, c[0], 'B ' + c[2] + ' · S ' + c[3], c[1]));
   }
-  tip.appendChild(el('div', 'ly-tip-f', 'Same for every stock in ' + sec.name + ' (' + sec.fund + '). Tap to show only this sector.'));
+  tip.appendChild(el('div', 'ly-tip-f', 'Same for every stock in ' + sec.name + ' (' + sec.fund + ').'));
 }
 function lyPlaceTip(x, y) {
   const tip = lyTipEl();
@@ -11622,9 +11644,11 @@ function wireLayers() {
     if (tile) { lyTipStock(lyStock(tile.dataset.sym), 'tile'); lyPlaceTip(ev.clientX, ev.clientY); return; }
     const box = t.closest('.ly-box');
     if (box) {
-      if (box.dataset.out) lyTipOuter(box.dataset.out); else lyTipSector(Number(box.dataset.sec));
+      lyTipOuter(box.dataset.out);
       lyPlaceTip(ev.clientX, ev.clientY); return;
     }
+    const th = t.closest('.ly-thv');
+    if (th) { lyTipSector(Number(th.parentNode.dataset.sec)); lyPlaceTip(ev.clientX, ev.clientY); return; }
     const td = t.closest('td[data-k]'), tr = t.closest('tr[data-sym]');
     if (td && tr) { lyTipStock(lyStock(tr.dataset.sym), td.dataset.k); lyPlaceTip(ev.clientX, ev.clientY); return; }
     lyHideTip();
@@ -11635,15 +11659,14 @@ function wireLayers() {
     const box = t.closest('.ly-box');
     if (box) {
       lyHideTip();
-      let sel;
-      if (box.dataset.out) { lyState.card = lyState.card === box.dataset.out ? null : box.dataset.out; sel = '[data-out="' + box.dataset.out + '"]'; }
-      else { const i = Number(box.dataset.sec); lyState.sec = lyState.sec === i ? -1 : i; sel = '[data-sec="' + i + '"]'; }
+      lyState.card = lyState.card === box.dataset.out ? null : box.dataset.out;
       renderLayers();
-      if (box.dataset.out) lyRevealCard();
-      const nb = document.querySelector('#layersLedger ' + sel);
+      lyRevealCard();
+      const nb = document.querySelector('#layersLedger [data-out="' + box.dataset.out + '"]');
       if (nb) nb.focus({ preventScroll: true });
       return;
     }
+    if (t.closest('.ly-card-x')) { lyCloseCard(); return; }
     const sb = t.closest('[data-sort]');
     if (sb) {
       const k = sb.dataset.sort;
@@ -11674,7 +11697,8 @@ function wireLayers() {
   sec.addEventListener('keydown', ev => {
     if (ev.key !== 'Escape') return;
     const open = sec.querySelector('.ly-note > button[aria-expanded="true"]');
-    if (open) { open.setAttribute('aria-expanded', 'false'); open.focus(); }
+    if (open) { open.setAttribute('aria-expanded', 'false'); open.focus(); return; }
+    lyCloseCard();
   });
   const hov = document.getElementById('layersHover');
   if (hov) hov.addEventListener('click', () => { lyState.hover = !lyState.hover; lySavePrefs(); lySyncHover(); });
@@ -11989,7 +12013,7 @@ function openLayersDetail(st, opener) {
   const vt = el('p', 'ly-vline', layersVerdict(st.eff) + ' ');
   const chip = el('span', 'ly-leanchip', lySgn(st.lean));
   chip.style.background = lyHeat(st.eff / LAYERS_RULES.colour.lean);
-  chip.title = 'Lean: BUY minus SELL';
+  chip.title = 'Net: BUY minus SELL';
   vt.appendChild(chip);
   vb.appendChild(vt);
   if (st.held) vb.appendChild(el('p', 'ly-muted', lyHeldNote(st)));
@@ -12191,7 +12215,7 @@ function simDemoTrades() {
   const out = [];
   const a = pick(3, 4), b = pick(11, 18), c = pick(20, 9), d = pick(7, 30);
   out.push({ id: 'd1', sym: a.st.sym, side: 'buy', qty: 100, mult: 1, entry: a.px, note: 'Strong BUY on the chart', openedAt: at(a.day), snap: simSnapshot(a.st.sym), closedAt: null, exit: null, exitSnap: null });
-  out.push({ id: 'd2', sym: b.st.sym, side: 'sell', qty: 50, mult: 1, entry: b.px, note: 'Leans SELL, weekly %K over 80', openedAt: at(b.day), snap: simSnapshot(b.st.sym), closedAt: null, exit: null, exitSnap: null });
+  out.push({ id: 'd2', sym: b.st.sym, side: 'sell', qty: 50, mult: 1, entry: b.px, note: 'Mild SELL, weekly %K over 80', openedAt: at(b.day), snap: simSnapshot(b.st.sym), closedAt: null, exit: null, exitSnap: null });
   const exp = new Date(Date.UTC(new Date().getUTCFullYear() + 1, 0, 15)).toISOString().slice(0, 10);
   const occ = simOcc(c.st.sym, exp, 'C', Math.round(c.px / 5) * 5);
   if (occ) {
@@ -12380,10 +12404,10 @@ function openSimDetail(id, opener) {
     const rb = el('tbody');
     const row = (lab, a, b) => { const r = el('tr'); r.append(el('td', null, lab), el('td', null, a), el('td', null, b)); rb.appendChild(r); };
     const g = (x, f) => (x ? f(x) : '—');
-    row('Verdict', g(s, x => x.verdict + (x.held ? ' (held back)' : '')), g(now, x => x.verdict + (x.held ? ' (held back)' : '')));
+    row('Verdict', g(s, x => lyVerdictWords(x.verdict) + (x.held ? ' (held back)' : '')), g(now, x => lyVerdictWords(x.verdict) + (x.held ? ' (held back)' : '')));
     row('BUY score', g(s, x => x.buy + ' / 100'), g(now, x => x.buy + ' / 100'));
     row('SELL score', g(s, x => x.sell + ' / 100'), g(now, x => x.sell + ' / 100'));
-    row('Lean (BUY − SELL)', g(s, x => lySgn(x.lean)), g(now, x => lySgn(x.lean)));
+    row('Net (BUY − SELL)', g(s, x => lySgn(x.lean)), g(now, x => lySgn(x.lean)));
     row('Price on the chart', g(s, x => simPx(x.px)), g(now, x => simPx(x.px)));
     row('13-week %K', g(s, x => (x.k == null ? '—' : String(x.k))), g(now, x => (x.k == null ? '—' : String(x.k))));
     for (const k of LAYERS_LETTERS) row('Letter ' + k + ' B / S', g(s, x => (x.letters[k] ? x.letters[k].join(' / ') : '—')), g(now, x => (x.letters[k] ? x.letters[k].join(' / ') : '—')));

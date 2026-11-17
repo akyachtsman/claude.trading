@@ -122,17 +122,18 @@ const lyMonthName = d => ['January', 'February', 'March', 'April', 'May', 'June'
 function lyLetter(comps) { return { L: comps.reduce((s, c) => s + c[2], 0), S: comps.reduce((s, c) => s + c[3], 0), comps }; }
 const lyNA = (label) => [label, 'not available', 0, 0];
 
-/* Verdict words for a lean (BUY score minus SELL score). */
+/* Verdict words for a net score (BUY score minus SELL score; `lean` in the code). "Mild" was "Leans" until the owner's
+   2026-11-17 ruling ("I don't like the word lean"); the thresholds did not move. */
 function layersVerdict(lean, R = LAYERS_RULES) {
   const v = R.verdict;
-  return lean >= v.strong ? 'Strong BUY' : lean >= v.leans ? 'Leans BUY' : lean > -v.leans ? 'No edge today' : lean > -v.strong ? 'Leans SELL' : 'Strong SELL';
+  return lean >= v.strong ? 'Strong BUY' : lean >= v.leans ? 'Mild BUY' : lean > -v.leans ? 'No edge today' : lean > -v.strong ? 'Mild SELL' : 'Strong SELL';
 }
 function layersBand(lean, R = LAYERS_RULES) {
   const v = R.verdict;
   return lean >= v.strong ? 2 : lean >= v.leans ? 1 : lean > -v.leans ? 0 : lean > -v.strong ? -1 : -2;
 }
 /* The timing hold-back (owner's rule, OPEN QUESTION 2): while the daily stochastic is over 80 a Strong BUY is SHOWN as
-   Leans BUY, under 20 a Strong SELL as Leans SELL. The lean itself never changes; `eff` is the lean the verdict and colour use. */
+   Mild BUY, under 20 a Strong SELL as Mild SELL. The lean itself never changes; `eff` is the lean the verdict and colour use. */
 function layersHeld(lean, tm, R = LAYERS_RULES) {
   const cap = R.verdict.strong - 1;
   return tm === 'peak' ? Math.min(lean, cap) : tm === 'trough' ? Math.max(lean, -cap) : lean;
