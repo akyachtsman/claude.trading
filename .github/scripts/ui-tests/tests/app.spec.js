@@ -12769,7 +12769,8 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
 
   // 1. Place, lamp, stamp.
   // since 2026-11-15 it shares a row with the simulated trades (.ly-row); the ROW sits right above the charts
-  expect(await panel.evaluate(p => { const r = p.closest('.ly-row') || p; return !!r.nextElementSibling && r.nextElementSibling.classList.contains('area-charts'); }), 'right above the charts').toBe(true);
+  // since 2026-11-17 the Trading signals panel sits between the row and the charts (S86)
+  expect(await panel.evaluate(p => { const r = p.closest('.ly-row') || p; let n = r.nextElementSibling; if (n && n.id === 'sigPanel') n = n.nextElementSibling; return !!n && n.classList.contains('area-charts'); }), 'right above the charts').toBe(true);
   await expect(page.locator('#layersLamp')).toHaveText('Demo');
   await expect(page.locator('#layersStamp')).toContainText('Demo data · close of');
   const total = await page.evaluate(() => lyData.stocks.length);
@@ -12956,6 +12957,7 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
     fred: Object.fromEntries(Object.entries(demo.fred).map(([k, a]) => [k, a.map(x => [x.d, x.v])])),
     fg: (fgLast ? demo.fearGreed.filter(x => x.d <= fgLast) : demo.fearGreed).map(x => [x.d, x.v]),
     fgLast: fgLast || demo.fearGreed[demo.fearGreed.length - 1].d,
+    etfs: demo.etfs.map(s => ({ s: s.sym, n: s.name, b: lyEncode(s.bars) })),
     excluded: [{ sym: 'QQQ', name: 'Invesco QQQ Trust', why: 'a fund' }],
   });
   const CORS = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-layers-asof, x-layers-target, x-layers-done, x-layers-total, x-layers-failed' };
@@ -12990,6 +12992,7 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
   await live.waitForTimeout(1500);
   expect(calls.length, 'switched off: desk-layers is never called').toBe(0);
   await expect(live.locator('#layersPanel')).toBeHidden();
+  await expect(live.locator('#sigPanel'), 'switched off: the Trading signals panel stays hidden too').toBeHidden();
   await live.close();
 
   // 2. Switched on, the first sweep not finished: still hidden, nothing scored.
@@ -12998,6 +13001,7 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
   await expect.poll(() => calls.length, { timeout: 15000 }).toBe(1);
   await live.waitForTimeout(500);
   expect(await live.evaluate(() => [document.getElementById('layersPanel').hidden, lyData === null])).toEqual([true, true]);
+  expect(await live.evaluate(() => [document.getElementById('sigPanel').hidden, sgHist === null]), 'no payload: no signals panel').toEqual([true, true]);
 
   // 3. A payload: scored and shown, EOD, the close it is for; the demo's own line is not there.
   answers.push({ target: demo.asOf, done: 590, total: 590, payload: payload() });
@@ -13015,6 +13019,13 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
   await expect(notYet).toContainText('QQQ (a fund)');
   await expect(notYet).not.toContainText('this is the demo');
   await expect(notYet).not.toContainText('Fear & Greed');
+  // The Trading signals panel (S86) reads the same payload: shown, the same lamp and stamp, the watchlist ETF's rows in it.
+  await expect(live.locator('#sigPanel')).toBeVisible();
+  await expect(live.locator('#sigLamp')).toHaveText('EOD');
+  await expect(live.locator('#sigStamp')).toHaveText('Close of ' + day);
+  const want = await page.evaluate(() => { const h = layersSignalHistory(buildDemoLayersInput(new Date())); return [h.rows.length, h.rows.filter(r => r.etf).length]; });
+  expect(await live.evaluate(() => [sgHist.rows.length, sgHist.rows.filter(r => r.etf).length]), 'the payload gives the demo\'s own signals, the ETF\'s included').toEqual(want);
+  expect(want[1], 'the demo ETF has signals to carry').toBeGreaterThan(0);
 
   // 4. The next session is still being gathered: named in the stamp, nothing rescored.
   const next = prev(demo.asOf, -1);
@@ -13033,6 +13044,8 @@ test('S83: the Layers panel loads its live feed only when switched on, and shows
   await expect(live.locator('#layersLamp')).toHaveText('STALE');
   await expect(live.locator('#layersLamp')).toHaveClass(/\blamp--stale\b/);
   await expect(live.locator('#layersStamp')).toContainText('feed unreachable');
+  await expect(live.locator('#sigLamp'), 'the signals panel follows the feed\'s lamp').toHaveText('STALE');
+  await expect(live.locator('#sigStamp')).toContainText('feed unreachable');
   await expect(live.locator('#layersPanel')).toBeVisible();
   await expect(live.locator('#layersGrid .ly-tile').first()).toBeVisible();
 
@@ -13431,4 +13444,94 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   await expect(live.locator('#simStamp')).toContainText('Could not read');
   await expect(live.locator('#simList .sim-row')).toHaveCount(0);
   await live.close();
+});
+
+// S86 — Trading signals (owner 2026-11-17: INVEST's 10 AM "Trading this week" email as a panel, "keep a history of 1 year",
+// "I don't want to use a toggle to flip through the different days"). On the demo: the panel sits between the Strategies
+// Chart row and the charts; ONE list, newest week first, each week headed like the email ("This week: 2 LONG, 3 SHORT")
+// with its LONG and SHORT lists; the rows are exactly layersSignalHistory() over the demo input (the rules themselves are
+// tools/unit/layers.test.mjs); "Jump to week" scrolls the list to that week and follows a scroll; the side and rule
+// filters narrow it; a ticker charts the stock; nothing scrolls sideways. Live it rides on the Strategies Chart's feed (S83).
+test('S86: the Trading signals panel lists a year of rule signals, newest week first, with jump, filters and charting', async ({ page, renderWitness }) => {
+  renderWitness();
+  test.setTimeout(90_000);
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  await gotoDemo(page, '#sigList .sig-row', 20000);
+  const panel = page.locator('#sigPanel');
+
+  // 1. Place, lamp, stamp.
+  expect(await panel.evaluate(p => [p.previousElementSibling && p.previousElementSibling.id, p.nextElementSibling && p.nextElementSibling.classList.contains('area-charts')]),
+    'between the Strategies Chart row and the charts').toEqual(['layersRow', true]);
+  await expect(page.locator('#sigLamp')).toHaveText('Demo');
+  await expect(page.locator('#sigStamp')).toContainText('Demo data · close of');
+  await expect(page.locator('#sigSub')).toContainText('newest first');
+
+  // 2. The rows are the history, in its order; every week from the latest back, newest first, headed with its counts.
+  const want = await page.evaluate(() => {
+    const h = layersSignalHistory(buildDemoLayersInput(new Date()));
+    return { rows: h.rows.map(r => r.sym + '|' + r.d + '|' + r.rule), weeks: layersSignalWeeks(h).map(w => [w.week, w.long.length, w.short.length]), asOf: h.asOf };
+  });
+  expect(want.rows.length, 'a year of demo signals').toBeGreaterThan(50);
+  expect(want.weeks.length, 'about a year of weeks').toBeGreaterThanOrEqual(50);
+  const drawn = await page.evaluate(() => [...document.querySelectorAll('#sigList .sig-week')].map(s => ({
+    week: s.dataset.week, head: s.querySelector('.sig-wh').textContent,
+    long: [...s.querySelectorAll('.sig-col--long .sig-row')].map(r => r.dataset.sym + '|' + r.dataset.d + '|' + r.dataset.rule),
+    short: [...s.querySelectorAll('.sig-col--short .sig-row')].map(r => r.dataset.sym + '|' + r.dataset.d + '|' + r.dataset.rule),
+    nums: [...s.querySelectorAll('.sig-row')].map(r => r.value),
+  })));
+  expect(drawn.map(w => [w.week, w.long.length, w.short.length]), 'every week, newest first').toEqual(want.weeks);
+  for (let i = 1; i < drawn.length; i++) expect(drawn[i - 1].week > drawn[i].week).toBe(true);
+  expect(drawn[0].head, 'the newest week reads like the email').toBe('This week: ' + want.weeks[0][1] + ' LONG, ' + want.weeks[0][2] + ' SHORT');
+  expect(drawn[1].head).toMatch(/^Week of [A-Z][a-z]{2} \d{1,2}(, \d{4})?: \d+ LONG, \d+ SHORT$/);
+  const all = drawn.flatMap(w => [...w.long, ...w.short]);
+  expect(all.slice().sort(), 'exactly the history\'s rows').toEqual(want.rows.slice().sort());
+  for (const w of drawn) expect(w.nums, w.week + ': numbered 1… across LONG then SHORT, like the email').toEqual(w.nums.map((_, i) => i + 1));
+  const first = page.locator('#sigList .sig-row').first();
+  await expect(first).toHaveText(/^[A-Z.\-]+ · \$[\d,]+\.\d{2} · rule [123] · (Mon|Tue|Wed|Thu|Fri) \d{1,2}\/\d{1,2} · %K \d{1,3}$/);
+  await expect(page.locator('#sigCount')).toHaveText(want.rows.length + ' signals in ' + want.weeks.length + ' weeks');
+
+  // 3. Jump to week: the picker lists every week; choosing one brings its heading to the top of the list, and a scroll
+  //    moves the picker with it. The page itself does not move.
+  const pick = page.locator('#sigWeek');
+  expect(await pick.locator('option').count()).toBe(want.weeks.length);
+  const target = want.weeks[10][0];
+  const pageY = await page.evaluate(() => scrollY);
+  await pick.selectOption(target);
+  const gap = await page.evaluate(w => { const l = document.getElementById('sigList'), s = l.querySelector(`.sig-week[data-week="${w}"]`); return s.getBoundingClientRect().top - l.getBoundingClientRect().top; }, target);
+  expect(Math.abs(gap), 'the chosen week sits at the top of the list').toBeLessThanOrEqual(2);
+  expect(await page.evaluate(() => scrollY), 'the page did not move').toBe(pageY);
+  await page.evaluate(() => { const l = document.getElementById('sigList'); l.scrollTop = 0; l.dispatchEvent(new Event('scroll')); });
+  await expect(pick).toHaveValue(want.weeks[0][0]);
+
+  // 4. Filters: LONG only, SHORT only, one rule; All brings everything back.
+  await page.locator('#sigSide button[data-side="LONG"]').click();
+  await expect(page.locator('#sigSide button[data-side="LONG"]')).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.locator('#sigList .sig-row--short').count()).toBe(0);
+  expect(await page.locator('#sigList .sig-row--long').count()).toBe(want.weeks.reduce((a, w) => a + w[1], 0));
+  await expect(page.locator('#sigList .sig-wh').first(), 'the heading counts what is shown').toHaveText('This week: ' + want.weeks[0][1] + ' LONG, 0 SHORT');
+  await expect(page.locator('#sigCount')).toHaveText(want.weeks.reduce((a, w) => a + w[1], 0) + ' signals in ' + want.weeks.length + ' weeks');
+  await page.locator('#sigSide button[data-side="SHORT"]').click();
+  expect(await page.locator('#sigList .sig-row--long').count()).toBe(0);
+  expect(await page.evaluate(() => [...document.querySelectorAll('#sigList .sig-week')].every(s => [...s.querySelectorAll('.sig-row')].every((r, i) => r.value === i + 1))),
+    'a SHORT-only list numbers from 1').toBe(true);
+  await page.locator('#sigSide button[data-side="all"]').click();
+  await page.locator('#sigRule').selectOption('1');
+  const r1 = await page.evaluate(() => [...document.querySelectorAll('#sigList .sig-row')].map(r => r.dataset.rule));
+  expect(r1.length).toBe(want.rows.filter(x => x.endsWith('|1')).length);
+  expect(r1.every(x => x === '1')).toBe(true);
+  await page.locator('#sigRule').selectOption('0');
+  expect(await page.locator('#sigList .sig-row').count()).toBe(want.rows.length);
+
+  // 5. A ticker charts the stock.
+  await page.evaluate(() => { window.__sgLoads = []; const orig = window.wbLoadSymbol; window.wbLoadSymbol = (s, n) => { window.__sgLoads.push(s); return orig(s, n); }; });
+  const sym = await first.getAttribute('data-sym');
+  await first.locator('.sig-tk').click();
+  expect(await page.evaluate(() => window.__sgLoads)).toEqual([sym]);
+
+  // 6. Nothing runs past the panel or the page.
+  const over = await page.evaluate(() => { const l = document.getElementById('sigList'); return [l.scrollWidth, l.clientWidth, document.documentElement.scrollWidth, document.documentElement.clientWidth]; });
+  expect(over[0], 'the list does not scroll sideways').toBeLessThanOrEqual(over[1] + 1);
+  expect(over[2], 'the page does not scroll sideways').toBeLessThanOrEqual(over[3] + 1);
+  expect(errs, 'no page errors').toEqual([]);
 });

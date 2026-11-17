@@ -417,6 +417,66 @@ function layersSignals(b, wk, asOf, R = LAYERS_RULES) {
   return sig;
 }
 
+/* ── Trading signals, day by day (owner 2026-11-17: "can we create a new panel in code.trade and list these on a daily basis
+   ... keep a history of 1 year" — INVEST's 10 AM email as a panel). Rules 1 to 3 are layersRuleAt, the SAME function the
+   Strategies Chart marks its dots with, run on every session of the last year; nothing here is a second copy of a rule.
+   Scope: every stock in the input plus the watchlist ETFs (`etfs`), each ticker once, no index symbol (a `^`). A past day
+   uses its final close (the bars hold finished sessions only). The history reaches back as far as the 13-week stochastic
+   has a line for most of them (`since`), never further than a year, and the panel says which. Pure: the unit test and
+   the page call it alike. */
+const SIGNALS_DAYS = 365;
+function layersIsoBack(iso, days) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+function layersSignalHistory(input, R = LAYERS_RULES, days = SIGNALS_DAYS) {
+  const asOf = input && input.asOf;
+  if (!LY_ISO.test(String(asOf))) return { asOf: null, since: null, from: null, rows: [], symbols: 0 };
+  const from = layersIsoBack(asOf, days), seen = new Set(), rows = [], firsts = [];
+  const list = [...((input.stocks || []).map(s => [s, false])), ...((input.etfs || []).map(s => [s, true]))];
+  for (const [s, etf] of list) {
+    if (!s || typeof s.sym !== 'string' || !s.sym || s.sym.charAt(0) === '^' || seen.has(s.sym)) continue;
+    const b = s.bars;
+    if (!b || !Array.isArray(b.c) || !Array.isArray(b.t) || b.c.length < 2) continue;
+    seen.add(s.sym);
+    const wk = stochSeries(b, WSTOCH);
+    /* the first session a cross can be read on: %K on it AND on the session before */
+    let first = -1;
+    for (let i = 1; i < b.c.length; i++) if (Number.isFinite(lyNum(wk.k[i - 1])) && Number.isFinite(lyNum(wk.k[i]))) { first = i; break; }
+    if (first < 0) continue;
+    firsts.push(b.t[first]);
+    for (let i = first; i < b.c.length; i++) {
+      const d = b.t[i];
+      if (d < from || d > asOf) continue;
+      for (const name of layersRuleAt(b, wk, i, R)) {
+        rows.push({ d, sym: s.sym, name: String(s.name || s.sym), etf, side: / BUY$/.test(name) ? 'LONG' : 'SHORT', rule: Number(name.charAt(5)), px: lyNum(b.c[i]), k: lyNum(wk.k[i]) });
+      }
+    }
+  }
+  /* since = the day by which half the tickers can be read (a few recent listings start later; they are not the panel's
+     start), clamped to a year back */
+  firsts.sort();
+  const mid = firsts.length ? firsts[Math.floor((firsts.length - 1) / 2)] : null;
+  const since = mid ? (mid > from ? mid : from) : null;
+  const kept = since ? rows.filter(r => r.d >= since) : [];
+  kept.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : a.side !== b.side ? (a.side === 'LONG' ? -1 : 1) : a.sym < b.sym ? -1 : a.sym > b.sym ? 1 : a.rule - b.rule));
+  return { asOf, since, from, rows: kept, symbols: seen.size };
+}
+/* The rows above, a week at a time (Monday to Friday, newest week first). Every week from `since` to the as-of day is
+   listed, an empty one too, so "Jump to week" can land on any week. */
+function layersSignalWeeks(hist) {
+  if (!hist || !hist.asOf || !hist.since) return [];
+  const by = new Map();
+  for (const r of hist.rows) { const w = layersWeekStart(r.d); if (!by.has(w)) by.set(w, []); by.get(w).push(r); }
+  const out = [];
+  for (let w = layersWeekStart(hist.asOf), stop = layersWeekStart(hist.since); w >= stop; w = layersIsoBack(w, 7)) {
+    const rows = by.get(w) || [];
+    out.push({ week: w, long: rows.filter(r => r.side === 'LONG'), short: rows.filter(r => r.side === 'SHORT') });
+  }
+  return out;
+}
+
 /* ── the live feed's payload → the input above (step 2; desk-layers encodes, this decodes) ──
    desk-layers sends whole cents: the close as a running difference from the bar before, open/high/low as a difference
    from their own close, the adjusted close as the close times a factor sent in runs [first index, factor], and the
@@ -469,12 +529,20 @@ function layersDecode(p) {
     if (!bars || typeof s.s !== 'string') continue;
     stocks.push({ sym: s.s, name: String(s.n || s.s), sector: String(s.sec || ''), sub: String(s.sub || ''), sp: s.sp === 1 || s.sp === true, bars });
   }
+  /* watchlist ETFs (desk-layers v2): for the Trading signals panel only — the scorer never sees them (its letters are
+     built for single stocks), so they stay in `excluded` as "a fund" too */
+  const etfs = [];
+  for (const s of Array.isArray(p.etfs) ? p.etfs : []) {
+    const bars = layersDecodeBars(s && s.b, cal);
+    if (!bars || typeof s.s !== 'string') continue;
+    etfs.push({ sym: s.s, name: String(s.n || s.s), bars });
+  }
   const excluded = (Array.isArray(p.excluded) ? p.excluded : []).filter(x => x && typeof x.sym === 'string').map(x => ({ sym: x.sym, name: String(x.name || x.sym), why: String(x.why || '') }));
   return {
     asOf: p.asOf, source: 'live', built: p.built || null, fgLast: LY_ISO.test(String(p.fgLast)) ? p.fgLast : null,
     market: series(p.market), funds: series(p.funds),
     fred: { core: pairs(f.core), unrate: pairs(f.unrate), payems: pairs(f.payems) },
-    fearGreed: pairs(p.fg), stocks, excluded,
+    fearGreed: pairs(p.fg), stocks, etfs, excluded,
   };
 }
 
@@ -655,8 +723,10 @@ function buildDemoLayersInput(now = new Date()) {
   const young = layersDemoBars(t, 760, 18, 0.002, 0.04, 3);
   for (const k of Object.keys(young)) young[k] = young[k].slice(-80);
   stocks.push({ sym: 'NWCO', name: 'Newco Holdings (demo)', sector: 'Industrials', sub: 'Aerospace & Defense', sp: false, bars: young });
+  /* a watchlist ETF: the scorer leaves it out ("a fund"), the Trading signals panel lists its signals */
+  const etfs = [{ sym: 'QQQ', name: 'Invesco QQQ Trust', bars: layersDemoBars(t, 777, 380, 0.0006, 0.011, 40) }];
   return {
-    asOf, source: 'demo', market, funds, fred, fearGreed, stocks,
+    asOf, source: 'demo', market, funds, fred, fearGreed, stocks, etfs,
     excluded: [{ sym: 'QQQ', name: 'Invesco QQQ Trust', why: 'a fund' }, { sym: '^VIX', name: 'CBOE Volatility Index', why: 'an index' }],
   };
 }

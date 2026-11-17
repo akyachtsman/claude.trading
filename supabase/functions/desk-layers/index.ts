@@ -9,10 +9,12 @@
 //
 // What it gathers, once a day after the close (16:15 ET; "today" is the last
 // completed session):
-//   - daily bars (~300 sessions) for every S&P 500 member (the constituents CSV:
+//   - daily bars (~370 sessions) for every S&P 500 member (the constituents CSV:
 //     name, GICS sector, sub-industry) and every single stock on the dashboard's
 //     own watchlists that is not in the S&P 500 (sector from Yahoo's company
 //     profile, mapped to the eleven GICS sectors by a fixed table);
+//   - since v2, the watchlist ETFs' bars too (`etfs`), for the Trading signals
+//     panel only: the scorer still leaves a fund out (`excluded`, "a fund");
 //   - the market series: Brent, the dollar index, ACWX, the 10-year yield, the
 //     VIX, HYG, IEF, SPY, the S&P 500 index and the eleven sector funds;
 //   - FRED core CPI, unemployment and payrolls, and the CNN Fear & Greed history
@@ -67,7 +69,9 @@ const STORE_TIMEOUT_MS = 8000;     // the assembly reads ~600 rows, a few MB
    ~10–20 page requests (the page asks again every minute while it is open). */
 const STEP_BUDGET_MS = 3500;
 const LANES = 6;
-const KEEP_BARS = 300;             // ≥ 205 for a 200-day cross within 5 sessions, with room
+/* 370 since v2 (2026-11-17, the Trading signals panel: a full year of rule signals needs ~252 sessions after the
+   13-week stochastic's ~110-session warm-up); the scorer needed ≥ 205 (a 200-day cross within 5 sessions). */
+const KEEP_BARS = 370;
 const SETTLE_MIN = 16 * 60 + 15;   // the rules file's 16:15 ET
 /* A row fetched after the settle that does not yet carry the target day is asked
    again until this long after the settle (Yahoo can be minutes late); after that
@@ -530,6 +534,7 @@ export function buildPayload(target: string, roster: { members: Member[]; watch:
   const metaOf = (sym: string): Meta => (rows.get(sym)?.meta || { type: '', currency: '', name: '' });
   const excluded: Excluded[] = [];
   const stocks: { s: string; n: string; sec: string; sub: string; sp: number; b: Bars }[] = [];
+  const etfs: { s: string; n: string; b: Bars }[] = [];
   for (const m of roster.members) {
     const b = bars(m.sym);
     if (!b) { excluded.push({ sym: m.sym, name: m.name, why: 'no price data' }); continue; }
@@ -538,7 +543,12 @@ export function buildPayload(target: string, roster: { members: Member[]; watch:
   for (const sym of roster.watch) {
     const p = rows.get(sym), meta = metaOf(sym), name = meta.name || sym, b = bars(sym);
     const type = meta.type;
-    if (type === 'ETF' || type === 'MUTUALFUND') { excluded.push({ sym, name, why: 'a fund' }); continue; }
+    if (type === 'ETF' || type === 'MUTUALFUND') {
+      excluded.push({ sym, name, why: 'a fund' });
+      /* the Trading signals panel lists a watchlist ETF's rule signals (owner 2026-11-17); a dollar-priced ETF only */
+      if (type === 'ETF' && b && meta.currency === 'USD') etfs.push({ s: sym, n: name, b });
+      continue;
+    }
     if (type === 'INDEX') { excluded.push({ sym, name, why: 'an index' }); continue; }
     if (!b) { excluded.push({ sym, name, why: 'no price data' }); continue; }
     if (type !== 'EQUITY') { excluded.push({ sym, name, why: 'not a single stock' }); continue; }
@@ -547,7 +557,7 @@ export function buildPayload(target: string, roster: { members: Member[]; watch:
     if (!sector) { excluded.push({ sym, name, why: 'its sector does not map to one of the eleven' }); continue; }
     stocks.push({ s: sym, n: name, sec: sector, sub: String(p?.ind || ''), sp: 0, b });
   }
-  const cal = [...new Set(stocks.flatMap((s) => s.b.t))].sort();
+  const cal = [...new Set([...stocks, ...etfs].flatMap((s) => s.b.t))].sort();
   const calIdx = new Map(cal.map((d, i) => [d, i]));
   const market: Record<string, Enc> = {};
   for (const [k, sym] of Object.entries(MARKET)) { const b = bars(sym); if (b) market[k] = encodeBars(b, calIdx); }
@@ -557,6 +567,7 @@ export function buildPayload(target: string, roster: { members: Member[]; watch:
   return {
     ok: true, v: 1, asOf: target, built, cal, market, funds,
     stocks: stocks.map((s) => ({ s: s.s, n: s.n, sec: s.sec, sub: s.sub, sp: s.sp, b: encodeBars(s.b, calIdx) })),
+    etfs: etfs.map((s) => ({ s: s.s, n: s.n, b: encodeBars(s.b, calIdx) })),
     fred: { core: macro?.fred?.core || [], unrate: macro?.fred?.unrate || [], payems: macro?.fred?.payems || [] },
     fg, fgLast: fg.length ? fg[fg.length - 1][0] : null,
     excluded,

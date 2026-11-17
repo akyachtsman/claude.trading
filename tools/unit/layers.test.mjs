@@ -400,3 +400,90 @@ test('the panel\'s text colours clear 4.5:1 on its own backgrounds', () => {
     assert.ok(r >= 4.5, `${fg} ${tok[fg]} on ${bg} ${tok[bg]}: ${r.toFixed(2)}:1`);
   }
 });
+
+// ── the Trading signals panel's history (owner 2026-11-17) ──────────────────
+/* A stock whose high is always 100 and low always 0, so the raw 92-session %K IS the close, and the slow %K is the
+   15-session mean of the closes. Closes of 20, then 50 from session 200: the mean is (20·(15−j) + 50·j)/15, under 30
+   at j = 4 (28) and exactly 30 at j = 5, so rule 3 (LONG) fires on session 204 and nowhere else. The open equals the
+   close, so no session is a strong candle and rules 1 and 2 cannot fire. */
+function weekdays(n, last) {
+  const out = [], d = new Date(last + 'T00:00:00Z');
+  while (out.length < n) { const w = d.getUTCDay(); if (w && w < 6) out.unshift(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() - 1); }
+  return out;
+}
+function crossing(n = 260, last = '2026-11-13') {
+  const t = weekdays(n, last), c = t.map((_, i) => (i >= 200 ? 50 : 20));
+  return { t, o: c.slice(), h: t.map(() => 100), l: t.map(() => 0), c, v: t.map(() => 1e6) };
+}
+test('signal history: a rule 3 cross is listed once, on its day, with its close and its %K', () => {
+  const d = load();
+  const b = crossing();
+  const h = J_(d.layersSignalHistory({ asOf: b.t.at(-1), stocks: [{ sym: 'AAA', name: 'Aaa Corp', bars: b }] }));
+  assert.equal(h.asOf, '2026-11-13');
+  assert.equal(h.since, b.t[106]);            // %K first exists on session 105 (92 + 15 − 2), a cross can first be read on 106
+  assert.equal(h.symbols, 1);
+  assert.equal(h.rows.length, 1);
+  const r = h.rows[0];
+  assert.deepEqual([r.d, r.sym, r.name, r.side, r.rule, r.px, r.etf], [b.t[204], 'AAA', 'Aaa Corp', 'LONG', 3, 50, false]);
+  assert.ok(Math.abs(r.k - 30) < 1e-9);
+});
+test('signal history: each ticker once, ETFs listed and marked, an index symbol never', () => {
+  const d = load();
+  const b = crossing();
+  const input = { asOf: b.t.at(-1), stocks: [{ sym: 'AAA', bars: b }],
+    etfs: [{ sym: 'AAA', bars: b }, { sym: 'FUND', name: 'A Fund', bars: b }, { sym: '^VIX', bars: b }] };
+  const h = J_(d.layersSignalHistory(input));
+  assert.equal(h.symbols, 2);
+  assert.deepEqual(h.rows.map(r => [r.sym, r.etf]), [['AAA', false], ['FUND', true]]);
+});
+test('signal history: nothing older than the window, and nothing past the as-of day', () => {
+  const d = load();
+  const b = crossing();
+  const asOf = b.t.at(-1);
+  // 30 days back from the as-of day is long after session 204, so the cross is left out and `since` is the window's start
+  const h = J_(d.layersSignalHistory({ asOf, stocks: [{ sym: 'AAA', bars: b }] }, d.LAYERS_RULES, 30));
+  assert.equal(h.rows.length, 0);
+  assert.equal(h.since, d.layersIsoBack(asOf, 30));
+  // an as-of day before the cross: the bars after it are not read
+  const h2 = J_(d.layersSignalHistory({ asOf: b.t[203], stocks: [{ sym: 'AAA', bars: b }] }));
+  assert.equal(h2.rows.length, 0);
+  assert.deepEqual(J_(d.layersSignalHistory({ asOf: 'junk', stocks: [] })), { asOf: null, since: null, from: null, rows: [], symbols: 0 });
+});
+test('signal weeks: every week from the latest back to `since`, Monday-dated, the row in its own week', () => {
+  const d = load();
+  const b = crossing();
+  const h = d.layersSignalHistory({ asOf: b.t.at(-1), stocks: [{ sym: 'AAA', bars: b }] });
+  const w = J_(d.layersSignalWeeks(h));
+  assert.equal(w[0].week, '2026-11-09');
+  assert.equal(w.at(-1).week, d.layersWeekStart(h.since));
+  for (let i = 1; i < w.length; i++) assert.equal((Date.parse(w[i - 1].week) - Date.parse(w[i].week)) / 864e5, 7);
+  const hit = w.filter(x => x.long.length || x.short.length);
+  assert.equal(hit.length, 1);
+  assert.equal(hit[0].week, d.layersWeekStart(b.t[204]));
+  assert.deepEqual(hit[0].long.map(r => r.sym), ['AAA']);
+});
+test('signal history on the demo: every row is a rule the Strategies Chart itself reports that day, and none is missed', () => {
+  const d = load(Date.parse('2026-11-17T22:00:00Z'));
+  const input = d.buildDemoLayersInput(new d.Date());
+  const h = J_(d.layersSignalHistory(input));
+  assert.ok(h.rows.length > 50);
+  assert.ok(h.rows.some(r => r.etf), 'the demo ETF has a signal');
+  // newest first; within a day LONG before SHORT
+  for (let i = 1; i < h.rows.length; i++) assert.ok(h.rows[i - 1].d >= h.rows[i].d);
+  const want = [];
+  for (const s of [...input.stocks, ...input.etfs]) {
+    const wk = d.stochSeries(s.bars, d.WSTOCH);
+    for (let i = 1; i < s.bars.c.length; i++) {
+      if (s.bars.t[i] < h.since || s.bars.t[i] > h.asOf) continue;
+      for (const n of d.layersRuleAt(s.bars, wk, i)) want.push(s.sym + ' ' + s.bars.t[i] + ' ' + n);
+    }
+  }
+  const got = h.rows.map(r => r.sym + ' ' + r.d + ' Rule ' + r.rule + ' ' + (r.side === 'LONG' ? 'BUY' : 'SELL'));
+  assert.deepEqual(got.slice().sort(), want.slice().sort());
+  // the Strategies Chart's "this week" dots are exactly the history's rows since Monday
+  const scored = d.layersScore(input);
+  const mon = d.layersWeekStart(h.asOf);
+  const dots = scored.stocks.flatMap(s => J_(s.sig).map(g => s.sym + ' ' + g[1] + ' ' + g[0])).sort();
+  const sp = new Set(scored.stocks.map(s => s.sym));
+  assert.deepEqual(J_(got.filter((x, i) => h.rows[i].d >= mon && sp.has(h.rows[i].sym)).sort()), J_(dots));
+});
