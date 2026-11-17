@@ -17,6 +17,10 @@ test('universe: upper-cases, dedupes, drops indices and anything that is not a t
   assert.deepEqual(universe(['aaa', ' BBB ', 'AAA', '^VIX', '', null, 'C.D', 'bad ticker', '<b>', 'ABCDEFGHIJK']), ['AAA', 'BBB', 'C.D']);
 });
 
+test('universe: two spellings of one Yahoo instrument are one stock, the first spelling kept', () => {
+  assert.deepEqual(universe(['BRK.B', 'brk-b', 'BF-B', 'BF.B']), ['BRK.B', 'BF-B']);
+});
+
 test('yahooSymbol: a class share uses a dash', () => {
   assert.equal(yahooSymbol('BRK.B'), 'BRK-B');
   assert.equal(yahooSymbol('AAA'), 'AAA');
@@ -39,6 +43,11 @@ test('parseChart: dates each bar on the exchange clock, skips a missing or zero 
   assert.deepEqual([...b.t], ['2025-11-17', '2025-11-18']);
   assert.deepEqual([...b.c], [11, 11.5]);
   assert.throws(() => parseChart({ chart: { result: null } }), /no chart/);
+  /* an empty history, or one whose every row is unusable, is a FAILED fetch: never counted as priced (a quiet day) */
+  const empty = { chart: { result: [{ meta: { gmtoffset: -18000 }, timestamp: [], indicators: { quote: [{ open: [], high: [], low: [], close: [] }] } }] } };
+  assert.throws(() => parseChart(empty), /no usable price bars/);
+  const junk = { chart: { result: [{ meta: { gmtoffset: -18000 }, timestamp: [1763389800], indicators: { quote: [{ open: [null], high: [1], low: [1], close: [0] }] } }] } };
+  assert.throws(() => parseChart(junk), /no usable price bars/);
 });
 
 test('isLive: only today, on a weekday, between the 9:30 and 16:00 ET bell', () => {
