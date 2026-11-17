@@ -257,6 +257,25 @@ async function blockRosterWrites(page) {
 // A scenario that needs a variation passes a parameter; it does not fork the copy.
 // ─────────────────────────────────────────────────────────────────────────────
 /** Opens the demo desk, waits for `sel`'s first match to be visible, then `settle` ms more (charts need the beat). */
+/* A REAL double-click on a watchlist tile that has to reach the removal dialog. On a loaded runner (the
+   iPhone's WebKit above all) the two clicks of the pair can land more than WL_CLICK_MS apart, or a repaint
+   can replace the tile between them: the pair is then two single clicks, the first opens the symbol's
+   detail window, and its backdrop swallows the rest (S21 and S35 failed every attempt on the iPhone in
+   PR #383's runs, and flaked on #375 and #382). The gesture is retried AS A WHOLE, closing a window a split
+   pair left open first, so a regression (no `dblclick` wired, the dialog never opening) still fails every
+   attempt. S26 found and fixed this first (PR #371); it now uses this helper too. */
+async function dblclickToRemove(page, tile, msg) {
+  const detail = page.locator('#wlDetailBackdrop');
+  await expect(async () => {
+    if (await detail.isVisible()) {
+      await page.keyboard.press('Escape');
+      await expect(detail).toBeHidden({ timeout: 2000 });
+    }
+    await tile.dblclick();
+    await expect(page.locator('#wlRmBackdrop'), msg).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 15000, intervals: [250, 500, 1000] });
+}
+
 async function gotoDemo(page, sel, timeout, settle = 0) {
   await page.goto('./?demo=1');
   await expect(page.locator(sel).first()).toBeVisible({ timeout });
@@ -2120,8 +2139,7 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await expect(page.locator('#wlDetailBackdrop')).toBeHidden();
 
   // ...but a double-click reaches the confirm dialog
-  await tile.dblclick();
-  await expect(page.locator('#wlRmBackdrop')).toBeVisible();
+  await dblclickToRemove(page, tile, 'a double-click reaches the confirm dialog');
   await expect(page.locator('#wlRmText')).toContainText(/^Remove .+ from/);
   // a destructive dialog opens on the SAFE choice, so a stray Enter keeps the symbol
   expect(await page.evaluate(() => document.activeElement?.id)).toBe('wlRmCancelBtn');
@@ -2668,15 +2686,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // window (WL_CLICK_MS later), whose backdrop then covers every tile: each retry first closes a
   // window a failed attempt left open (iPhone failed both runs on exactly that, PR #371), so a
   // split pair costs one attempt, not all of them.
-  await expect(async () => {
-    const detail = page.locator('#wlDetailBackdrop');
-    if (await detail.isVisible()) {
-      await page.keyboard.press('Escape');
-      await expect(detail).toBeHidden({ timeout: 2000 });
-    }
-    await page.locator('.wl-strip .wl-tile').first().dblclick();
-    await expect(page.locator('#wlRmBackdrop'), 'double-click still removes').toBeVisible({ timeout: 2000 });
-  }).toPass({ timeout: 15000, intervals: [250, 500, 1000] });
+  await dblclickToRemove(page, page.locator('.wl-strip .wl-tile').first(), 'double-click still removes');
   await page.keyboard.press('Escape');
   expect(await page.locator('#wlTrash').count(), 'the trash is a real button, reachable without a pointer').toBe(1);
 
@@ -3811,8 +3821,7 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
   const live = page.locator('.wl-strip .wl-tile').first();
 
   // A double-click removes, and must NOT leave a detail window behind it.
-  await live.dblclick();
-  await expect(page.locator('#wlRmBackdrop'), 'double-click still reaches removal').toBeVisible();
+  await dblclickToRemove(page, live, 'double-click still reaches removal');
   // Waited past the deferred-open window: a leaked timer would have fired by now.
   await page.waitForTimeout(600);
   await expect(detail, 'the removal gesture must not open the detail window').toBeHidden();
