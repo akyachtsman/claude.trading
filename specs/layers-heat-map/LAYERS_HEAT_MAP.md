@@ -1,6 +1,6 @@
 # Layers Heat Map: the rules in one file
 
-Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Live on real data since 2026-11-14 (steps 1–3, section 13); the made-up data is the demo page only. Last change: 2026-11-15 (section 12).
+Status: layout and design rulings approved for the build on 2026-11-13. The scoring is still a DRAFT (section 8). Live on real data since 2026-11-14 (steps 1–3, section 13); the made-up data is the demo page only. Last change: 2026-11-17 (section 12).
 The master copy is this file, `specs/layers-heat-map/LAYERS_HEAT_MAP.md` in claude.trading. The rules were written in project INVEST; the panel is built and kept by project code.TRADE.
 
 ## 0. How this file is used
@@ -21,7 +21,7 @@ The master copy is this file, `specs/layers-heat-map/LAYERS_HEAT_MAP.md` in clau
 
 It is its own panel. It is not the existing Heatmap panel (the finviz-style map coloured by the day's price change), and it does not show performance.
 
-Words (fixed): BUY and SELL, never LONG and SHORT. Verdicts: Strong BUY, Leans BUY, No edge today, Leans SELL, Strong SELL.
+Words (fixed): BUY and SELL, never LONG and SHORT. Verdicts: Strong BUY, Mild BUY, No edge today, Mild SELL, Strong SELL. The BUY score minus the SELL score is called the **bias** (owner, 2026-11-17: "I don't like the word lean", then "call it BIAS"; it was "lean", and the verdicts "Leans BUY" and "Leans SELL"). The rest of this file still says "lean" where it means the bias; the code keeps `lean` as the field's name.
 
 ## 2. Stocks covered
 
@@ -186,7 +186,7 @@ Rules 1 and 2. Days 1 to 3 are the run, day 3 is the session tested, and day 0 i
 
 - The dashboard's own heat scale, seven stops: #F63538, #BF4045, #8B444E, #414554 (zero), #35764E, #2F9E4F, #30CC5A. Canvas #262931. Labels white with a dark halo, as on the existing Heatmap.
 - Lean view: colour = shown lean / 42, limited to -1 to +1, spread over the seven stops. BUY points view: (BUY - 15) / 60. SELL points view: (SELL - 15) / 60 on the red side.
-- A ledger box A to D is coloured by (BUY - SELL) / its maximum. A sector box by (BUY - SELL) / 15.
+- A ledger box A to D is coloured by (BUY - SELL) / its maximum. A sector's reading (the Sector column, a Tiles heading) by the colour view showing, over 15 points: the bias / 15, or BUY / 15, or SELL / 15.
 - IBM Plex Sans for words, IBM Plex Mono for numbers.
 
 ## 6. Layout (owner's decisions, all 2026-11-12)
@@ -196,22 +196,22 @@ One self-contained dark panel with a thin outline. Nothing reaches past the edge
 Both views (tiles and table), on a wide screen, are two halves side by side; switching views never changes the panel's size (owner, 2026-11-13):
 - LEFT half, top to bottom: title with the draft mark and the "as of" line; a Hover on/off switch and three note buttons at the top right (How to read it, Cautions, Not in yet) that open on hover, on keyboard focus and on tap; the ledger; the colour scale and one line of footnote at the bottom.
 - RIGHT half: the filter row as the chart's heading, then the tiles or the table. They scroll inside the half; the table's header stays in view. The left half sets the height. That height is the left half at its SMALLEST, with no ledger card open, and no button in the panel changes it, in any layout (owner, 2026-11-15: "I don't want the panel to resize when clicking buttons. Keep it the same length in the smallest configuration"): a card opened from A to D or Labels scrolls inside the ledger's own box, and "Clear filters" keeps its place in the filter row while it is off.
-- The panel starts on the Stochastic charts' left edge and, on a screen 1120 pixels or wider (where the Markets, News, Ask and Economy panels sit in one row), ends on the right edge of the Ask the desk panel (owner, 2026-11-13: "shrink its width so that it lines up with the ask desk"; it was 1356 pixels at most). Narrower, it is as wide as the charts. The right half is never narrower than the table needs (604 pixels, so the table never scrolls sideways): where the panel is too narrow for two equal halves of that width, the left half (the ledger) gives up the room (owner, 2026-11-13: "shorten the left side of the panel to give the right side enough space"), and a left half under 340 pixels carries the sector boxes three to a row; otherwise the halves are equal. The table columns keep their proportions (29%, 16.5%, three at 7.5%, five at 6.4%). On a panel under 880 pixels wide the halves stack and the tiles or the table sit in a box of the same fixed height, scrolling inside it. On a phone the panel is full width and the ledger wraps into rows of two boxes, with no sideways swipe (owner, 2026-11-13).
+- The panel starts on the Stochastic charts' left edge and, on a screen 1120 pixels or wider (where the Markets, News, Ask and Economy panels sit in one row), ends on the right edge of the Ask the desk panel (owner, 2026-11-13: "shrink its width so that it lines up with the ask desk"; it was 1356 pixels at most). Narrower, it is as wide as the charts. The left half is a fixed 236 pixels (owner, 2026-11-17: the sector boxes left it, "every stock has its own sector"), A to D and Labels one box a row; the right half takes the rest and is never narrower than the table needs (660 pixels, so the table never scrolls sideways). The table columns keep their proportions (Stock 26.5%, Verdict 15%, Bias, BUY and SELL 7% each, Sector 8.5%, G to K 5.8% each). On a panel under 900 pixels wide the halves stack, A to D sit two to a row with Labels on a row of its own, and the tiles or the table sit in a box of the same fixed height, scrolling inside it. On a phone the panel is full width, with no sideways swipe (owner, 2026-11-13).
 
-The ledger (the layers that stocks share):
-- "Global and national": four equal boxes, A and B on the first row, C and D on the second. Each shows its name, its points ("B 5 · S 1 of 8") and its readings in short form.
-- "Sectors": twelve equal boxes, four to a row: the eleven sectors, each with "B x · S y of 15" and the share of its stocks above their 50-day average, and a Labels box (S&P 500 level, Fed, AAII survey: shown for context, no points).
-- Hover over a box shows its readings and the evidence behind it. Tap A to D or Labels to open the full card under the ledger, inside the ledger's own scrolling box (the panel keeps its size). Tap a sector to filter the chart to it.
+The ledger (the layers EVERY stock shares):
+- "Global and national": A, B, C and D, then Labels (S&P 500 level, Fed, AAII survey: shown for context, no points). Each box shows its name, its points ("B 5 · S 1 of 8") and its readings in short form.
+- There are no sector boxes (owner, 2026-11-17). A stock's sector (letters E and F, 15 points, the same for every stock in that sector) is the Sector column of the table and a reading on each sector's Tiles heading ("Sector B 9 · S 3 of 15").
+- Hover over a box shows its readings and the evidence behind it. Tap A to D or Labels to open the full card under the ledger, inside the ledger's own scrolling box (the panel keeps its size).
 
-Filter row: search by ticker or name; sector; watchlist (all stocks, S&P 500 only, any watchlist, or one named list); colour by Lean, BUY points or SELL points; Tiles or Table; "Signals this week only" with the count; "N of M stocks".
+Filter row: search by ticker or name; sector; watchlist (all stocks, S&P 500 only, any watchlist, or one named list); colour by Bias, BUY points or SELL points; the sector dropdown is the only sector filter; Tiles or Table; "Signals this week only" with the count; "N of M stocks".
 
-Table: one row per stock. Columns: Stock (ticker, signal dot, flags beside the ticker, company name under it), Verdict, Lean, BUY, SELL, then G, H, I, J, K. No flags column and no outer-letter columns (they live in the ledger). Column widths: 190, 112, 52, 52, 52, 44, 44, 44, 44, 44. The table keeps this tight size and never stretches to fill space. Every header sorts.
+Table: one row per stock. Columns: Stock (ticker, signal dot, flags beside the ticker, company name under it), Verdict, Bias, BUY, SELL, Sector, then G, H, I, J, K. Sector (owner, 2026-11-17: "I wanted to display the weight and abbreviate the name") sits right before G: the sector's short name (Tech, Comm, Disc, Stap, Hlth, Fin, Ind, Enrg, Util, RE, Mat) over its E + F reading in the colour view showing (the bias, or BUY or SELL points, of 15), coloured like a letter cell; hover shows its E and F readings; it sorts by that number. No flags column and no A to D columns (they live in the ledger). Every header sorts.
 
-Tiles view (the opening view; "the rows are for testing"): the stocks are tiles grouped by sector, in the right half like the table, each tile shows the ticker and the number for the chosen colour view, with a ring for a held-back verdict and a dot for a signal.
+Tiles view (the opening view; "the rows are for testing"): the stocks are tiles grouped by sector, each group headed by its sector's name, its count and its E + F reading ("Sector B 9 · S 3 of 15", coloured, hover for the readings), in the right half like the table, each tile shows the ticker and the number for the chosen colour view, with a ring for a held-back verdict and a dot for a signal.
 
 The Hover switch (on by default, remembered on the device) turns every hover-over display on or off: the readings on tiles, cells and ledger boxes, and the notes. With it off, the notes still open on a click and a stock still opens its write-up.
 
-Hover over a tile or a cell shows the readings behind it. Click a stock for its full write-up: verdict and lean, BUY and SELL bars, a plain-words reading, the flags L to P, a chart of price with the 25, 50 and 200-day averages, the 13-week stochastic and the daily stochastic, then every letter with its readings and points.
+Hover over a tile or a cell shows the readings behind it. Click a stock for its full write-up: verdict and bias, BUY and SELL bars, a plain-words reading, the flags L to P, a chart of price with the 25, 50 and 200-day averages, the 13-week stochastic and the daily stochastic, then every letter with its readings and points.
 
 ## 7. What the trading app's own rules require
 
@@ -300,6 +300,7 @@ What rests on the owner's judgement, not on a test: the timing hold-back, the ve
 
 ## 12. Changes
 
+- 2026-11-17, code.TRADE, the owner's asks ("every stock has its own sector, and it's not shared with other stocks", "Shouldn't sector have a value or weight? And should it be next to G?", "I wanted to display the weight and abbreviate the name", then "yes" to the plan; and "I don't like the word lean"): the eleven sector boxes left the ledger, whose half is now a fixed 236 pixels (A to D and Labels one a row); a Sector column right before G carries each stock's sector, its short name over its E + F reading, sortable; each Tiles heading carries the same reading; the sector dropdown is the only sector filter. The BUY score minus the SELL score is now called the **bias**, and the verdicts Leans BUY / Leans SELL are Mild BUY / Mild SELL (a simulated trade saved earlier reads in the new words). Section 1, 5 and 6 updated. Layout and words only: no scoring rule or number changed.
 - 2026-11-17, code.TRADE, the owner's ask (relayed by INVEST, then confirmed with a screenshot of INVEST's 10 AM email: "basically, I'm asking for this email is to be another panel"): a **Trading signals** panel under the Strategies Chart row lists rules 1 to 3 (section 4, Rule signals) for every session of the last year, newest week first, a week drawn as the email reads it. It runs the SAME `layersRuleAt` over the same feed, so it and the Strategies Chart's dots cannot disagree; it adds the watchlist ETFs, which the scorer still leaves out. For a full year the feed keeps 370 sessions instead of 300 and sends the watchlist ETFs' bars (`desk-layers` v2, section 13; built, deployed only on the owner's OK). No scoring rule changed.
 - 2026-11-15, code.TRADE, the owner's ask ("That's the new name for our layers heat map. It's going to be called strategies chart"): the panel's title on the page is now **Strategies Chart**; the code, ids, files and this file keep the `layers` name. The same day the owner asked for simulated trades beside it: a panel to the right of the chart (from 1120px up) records each made-up trade with every Strategies Chart reading for that stock at the moment it was opened, and a stock's write-up gains a "Simulate trade" button. The panel only READS the scores; no scoring rule changed.
 - 2026-11-15, code.TRADE, the owner's ask ("I don't want the panel to resize when clicking buttons. Keep it the same length in the smallest configuration"): the panel's height is the left half with no ledger card open, held in every layout; an opened card scrolls inside the ledger's own box, which brings its foot into view, and "Clear filters" keeps its place while off. Section 6 updated. No scoring rule changed.

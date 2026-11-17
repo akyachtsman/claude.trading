@@ -257,6 +257,25 @@ async function blockRosterWrites(page) {
 // A scenario that needs a variation passes a parameter; it does not fork the copy.
 // ─────────────────────────────────────────────────────────────────────────────
 /** Opens the demo desk, waits for `sel`'s first match to be visible, then `settle` ms more (charts need the beat). */
+/* A REAL double-click on a watchlist tile that has to reach the removal dialog. On a loaded runner (the
+   iPhone's WebKit above all) the two clicks of the pair can land more than WL_CLICK_MS apart, or a repaint
+   can replace the tile between them: the pair is then two single clicks, the first opens the symbol's
+   detail window, and its backdrop swallows the rest (S21 and S35 failed every attempt on the iPhone in
+   PR #383's runs, and flaked on #375 and #382). The gesture is retried AS A WHOLE, closing a window a split
+   pair left open first, so a regression (no `dblclick` wired, the dialog never opening) still fails every
+   attempt. S26 found and fixed this first (PR #371); it now uses this helper too. */
+async function dblclickToRemove(page, tile, msg) {
+  const detail = page.locator('#wlDetailBackdrop');
+  await expect(async () => {
+    if (await detail.isVisible()) {
+      await page.keyboard.press('Escape');
+      await expect(detail).toBeHidden({ timeout: 2000 });
+    }
+    await tile.dblclick();
+    await expect(page.locator('#wlRmBackdrop'), msg).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 15000, intervals: [250, 500, 1000] });
+}
+
 async function gotoDemo(page, sel, timeout, settle = 0) {
   await page.goto('./?demo=1');
   await expect(page.locator(sel).first()).toBeVisible({ timeout });
@@ -2120,8 +2139,7 @@ test('S21: watchlist edits need no unlock; removal needs a double-click', async 
   await expect(page.locator('#wlDetailBackdrop')).toBeHidden();
 
   // ...but a double-click reaches the confirm dialog
-  await tile.dblclick();
-  await expect(page.locator('#wlRmBackdrop')).toBeVisible();
+  await dblclickToRemove(page, tile, 'a double-click reaches the confirm dialog');
   await expect(page.locator('#wlRmText')).toContainText(/^Remove .+ from/);
   // a destructive dialog opens on the SAFE choice, so a stray Enter keeps the symbol
   expect(await page.evaluate(() => document.activeElement?.id)).toBe('wlRmCancelBtn');
@@ -2668,15 +2686,7 @@ test('S26: tiles drag to arrange; sort snaps to Manual; a drop writes once, Esca
   // window (WL_CLICK_MS later), whose backdrop then covers every tile: each retry first closes a
   // window a failed attempt left open (iPhone failed both runs on exactly that, PR #371), so a
   // split pair costs one attempt, not all of them.
-  await expect(async () => {
-    const detail = page.locator('#wlDetailBackdrop');
-    if (await detail.isVisible()) {
-      await page.keyboard.press('Escape');
-      await expect(detail).toBeHidden({ timeout: 2000 });
-    }
-    await page.locator('.wl-strip .wl-tile').first().dblclick();
-    await expect(page.locator('#wlRmBackdrop'), 'double-click still removes').toBeVisible({ timeout: 2000 });
-  }).toPass({ timeout: 15000, intervals: [250, 500, 1000] });
+  await dblclickToRemove(page, page.locator('.wl-strip .wl-tile').first(), 'double-click still removes');
   await page.keyboard.press('Escape');
   expect(await page.locator('#wlTrash').count(), 'the trash is a real button, reachable without a pointer').toBe(1);
 
@@ -3811,8 +3821,7 @@ test('S35: a tile opens a detail window; double-click still removes', async ({ p
   const live = page.locator('.wl-strip .wl-tile').first();
 
   // A double-click removes, and must NOT leave a detail window behind it.
-  await live.dblclick();
-  await expect(page.locator('#wlRmBackdrop'), 'double-click still reaches removal').toBeVisible();
+  await dblclickToRemove(page, live, 'double-click still reaches removal');
   // Waited past the deferred-open window: a leaked timer would have fired by now.
   await page.waitForTimeout(600);
   await expect(detail, 'the removal gesture must not open the detail window').toBeHidden();
@@ -12745,8 +12754,9 @@ test('S81: the owner changes the desk PIN to a passphrase — only while unlocke
 });
 
 // S82 — The Layers Heat Map (step 1, 2026-11-13; specs/layers-heat-map/LAYERS_HEAT_MAP.md). On the demo: it sits
-// right above the Stochastic charts, carries its lamp and stamp, the ledger (A–D, eleven sectors, Labels), the
-// filters (sector box, search, signals only), the BUY / SELL views, the sortable table, the hover card, a note and
+// right above the Stochastic charts, carries its lamp and stamp, the ledger (A–D and Labels; since 2026-11-17 no
+// sector boxes: each stock's sector is a column of the table and a reading on its Tiles heading), the filters (the
+// sector dropdown, search, signals only), the BUY / SELL views, the sortable table, the hover card, a note and
 // the write-up dialog (through openModal: focus in, Escape out, focus back) — and nothing scrolls the page sideways.
 // In live it stays HIDDEN until its feed is deployed (real data or nothing).
 test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its write-up, and stays hidden in live', async ({ page, renderWitness, browser }, testInfo) => {
@@ -12778,9 +12788,22 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(total);
   await expect(page.locator('#layersCount')).toHaveText(`${total} of ${total} stocks`);
 
-  // 2. The ledger: A–D and Labels, eleven sectors; a box opens its detail, a sector filters.
+  // 2. The ledger: A–D and Labels and nothing else (owner 2026-11-17: "every stock has its own sector"); a box opens its
+  // detail; the sector dropdown filters. Beside the table (a panel of 900px or more) the left half is 236px, one box a row.
   await expect(page.locator('#layersLedger [data-out]')).toHaveCount(5);
-  await expect(page.locator('#layersLedger [data-sec]')).toHaveCount(11);
+  await expect(page.locator('#layersLedger [data-sec], #layersLedger .ly-secs')).toHaveCount(0);
+  const leftW = await page.evaluate(() => {
+    const p = document.getElementById('layersPanel').getBoundingClientRect().width, l = document.getElementById('layersLeft').getBoundingClientRect().width;
+    const xs = [...document.querySelectorAll('#layersLedger [data-out]')].map(b => Math.round(b.getBoundingClientRect().left));
+    return { p: Math.round(p), l: Math.round(l), cols: new Set(xs).size };
+  });
+  if (leftW.p >= 900) expect([leftW.l, leftW.cols], 'beside the table: a 236px left half, one box a row').toEqual([236, 1]);
+  else expect(leftW.cols, 'stacked: A to D two to a row').toBe(2);
+  // every Tiles heading carries its sector's E + F reading
+  expect(await page.evaluate(() => [...document.querySelectorAll('#layersGrid .ly-th')].every(h => {
+    const s = lyData.sectors[Number(h.dataset.sec)], v = h.querySelector('.ly-thv');
+    return !!v && v.textContent === 'Sector B ' + (s.E.L + s.F.L) + ' · S ' + (s.E.S + s.F.S) + ' of 15';
+  })), 'each sector heading: Sector B x · S y of 15').toBe(true);
   // No button changes the panel's size (owner 2026-11-15: "I don't want the panel to resize when clicking buttons.
   // Keep it the same length in the smallest configuration"): a detail card scrolls inside the ledger's own box, which
   // brings the card's foot into view, and "Clear filters" keeps its place while off.
@@ -12792,10 +12815,17 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await expect(page.locator('#layersCard')).toBeVisible();
   await expect(page.locator('#layersCard')).toContainText('Brent oil');
   expect(await lyH(), 'a detail card open: the panel keeps its smallest height').toBe(h0);
-  expect(await page.evaluate(() => {
-    const b = document.getElementById('layersLScroll').getBoundingClientRect(), c = document.getElementById('layersCard').getBoundingClientRect();
-    return Math.round(c.bottom - b.bottom);
-  }), 'the open card is scrolled into the ledger\'s box').toBeLessThanOrEqual(0);
+  // Since 2026-11-17 the card opens OVER the chart (the 236px ledger would make it two screens tall): beside the ledger on
+  // a wide panel, under it when stacked; inside the panel, on screen, never clipped by the ledger's box.
+  const cardAt = () => page.evaluate(() => {
+    const p = document.getElementById('layersPanel').getBoundingClientRect(), c = document.getElementById('layersCard').getBoundingClientRect();
+    const l = document.getElementById('layersLeft').getBoundingClientRect(), wide = p.width >= 900;
+    const hit = document.elementFromPoint(Math.round(c.left + c.width / 2), Math.round(c.top + 12));
+    return { inPanel: c.left >= p.left - 1 && c.right <= p.right + 1 && c.top >= p.top - 1 && (!wide || c.bottom <= p.bottom + 1),
+      placed: wide ? c.left >= l.right - 1 : c.top >= l.bottom - 1, onScreen: c.top >= 0 && c.top < window.innerHeight,
+      seen: !!hit && !!hit.closest('#layersCard') };
+  });
+  expect(await cardAt(), 'the card sits over the chart, inside the panel, on screen').toEqual({ inPanel: true, placed: true, onScreen: true, seen: true });
   for (const k of ['C', 'labels']) {
     await page.locator(`#layersLedger [data-out="${k}"]`).click();
     expect(await lyH(), `card ${k}: the same height`).toBe(h0);
@@ -12803,9 +12833,17 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await page.locator('#layersLedger [data-out="labels"]').click();
   await expect(page.locator('#layersCard')).toBeHidden();
   expect(await lyH(), 'card closed: the same height').toBe(h0);
-  const energy = page.locator('#layersLedger [data-sec="7"]');
-  await energy.click();
-  await expect(energy).toHaveAttribute('aria-pressed', 'true');
+  // its × and Escape close it too, with focus back on its box
+  await page.locator('#layersLedger [data-out="B"]').click();
+  await page.locator('#layersCard .ly-card-x').click();
+  await expect(page.locator('#layersCard')).toBeHidden();
+  await expect(page.locator('#layersLedger [data-out="B"]')).toBeFocused();
+  await page.locator('#layersLedger [data-out="D"]').click();
+  await expect(page.locator('#layersCard')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#layersCard')).toBeHidden();
+  await expect(page.locator('#layersLedger [data-out="D"]')).toBeFocused();
+  await page.locator('#layersSec').selectOption('7');
   expect(await lyH(), 'a sector filter on: the same height').toBe(h0);
   const nEnergy = await page.evaluate(() => lyData.stocks.filter(s => s.sec === 7).length);
   await expect(page.locator('#layersGrid .ly-tile')).toHaveCount(nEnergy);
@@ -12900,6 +12938,28 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
   await expect(page.locator('#layersGrid th:has([data-sort="L"])')).toHaveAttribute('aria-sort', 'ascending');
   v = (await buyCol()).map(Number);
   expect(v, 'BUY, lowest first').toEqual([...v].sort((x, y) => x - y));
+  // The Sector column, right before G: the sector's short name over its E + F (15 points), in the colour mode showing,
+  // the same for every stock of a sector, sortable by that number (owner 2026-11-17: "display the weight and abbreviate the name").
+  const heads = await page.evaluate(() => [...document.querySelectorAll('#layersGrid thead tr:last-child [data-sort]')].map(b => b.dataset.sort));
+  expect(heads.slice(heads.indexOf('S'), heads.indexOf('G') + 1), 'Sector sits between SELL and G').toEqual(['S', 'sec', 'G']);
+  const secOk = await page.evaluate(() => {
+    const AB = ['Tech', 'Fin', 'Hlth', 'Disc', 'Comm', 'Ind', 'Stap', 'Enrg', 'Util', 'RE', 'Mat'];
+    return [...document.querySelectorAll('#layersGrid tbody tr')].every(tr => {
+      const st = lyData.stocks.find(s => s.sym === tr.dataset.sym), sec = lyData.sectors[st.sec], td = tr.querySelector('td[data-k="sec"]');
+      const net = (sec.E.L + sec.F.L) - (sec.E.S + sec.F.S);
+      return td.querySelector('.ly-secn').textContent === AB[st.sec] && td.querySelector('.ly-secv').textContent === lySgn(net);
+    });
+  });
+  expect(secOk, 'each row: its sector\'s short name over its bias E + F').toBe(true);
+  await page.locator('#layersGrid [data-sort="sec"]').click();
+  await expect(page.locator('#layersGrid th:has([data-sort="sec"])')).toHaveAttribute('aria-sort', 'descending');
+  const secVals = (await page.locator('#layersGrid tbody td[data-k="sec"] .ly-secv').allTextContents()).map(t => Number(t.replace('−', '-')));
+  expect(secVals, 'Sector, highest first').toEqual([...secVals].sort((x, y) => y - x));
+  if (!testInfo.project.use.hasTouch) {
+    await page.locator('#layersGrid tbody td[data-k="sec"]').first().hover();
+    await expect(page.locator('#layersTip')).toContainText('Sector trend');
+    await page.mouse.move(1, 1);
+  }
   await noSideways('table');
 
   // 8. The write-up opens through openModal: focus inside, the page behind inert, Escape closes, focus returns.
@@ -13274,7 +13334,7 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   for (const p of ['Today', 'Week', 'Month', 'YTD', 'Since start']) await expect(body.locator('tr', { hasText: p }).first()).toBeVisible();
   await expect(body.locator('th', { hasText: /^Opened$/ })).toHaveCount(1);
   await expect(body.locator('th', { hasText: /^Now$/ })).toHaveCount(1);
-  for (const r of ['Verdict', 'BUY score', 'SELL score', 'Lean', '13-week %K', 'Letter A', 'Letter K', 'Signals that week']) await expect(body.locator('tr', { hasText: r }).first(), r).toHaveCount(1);
+  for (const r of ['Verdict', 'BUY score', 'SELL score', 'Bias', '13-week %K', 'Letter A', 'Letter K', 'Signals that week']) await expect(body.locator('tr', { hasText: r }).first(), r).toHaveCount(1);
   expect(await fitChecked(page.locator('#simDetailPanel')), 'the write-up fits the screen').toEqual([]);
   await page.keyboard.press('Escape');
   await expect(det).toBeHidden();

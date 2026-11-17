@@ -30,18 +30,18 @@ test('the letter maxima add up to 100 a side, and the table is frozen', () => {
 });
 
 // ── verdicts and the hold-back ───────────────────────────────────────────────
-test('verdict lines: 25 Strong, 10 Leans, inside ±10 no edge', () => {
+test('verdict lines: 25 Strong, 10 Mild, inside ±10 no edge', () => {
   const d = load();
-  const cases = [[40, 'Strong BUY'], [25, 'Strong BUY'], [24, 'Leans BUY'], [10, 'Leans BUY'], [9, 'No edge today'], [0, 'No edge today'],
-    [-9, 'No edge today'], [-10, 'Leans SELL'], [-24, 'Leans SELL'], [-25, 'Strong SELL'], [-60, 'Strong SELL']];
+  const cases = [[40, 'Strong BUY'], [25, 'Strong BUY'], [24, 'Mild BUY'], [10, 'Mild BUY'], [9, 'No edge today'], [0, 'No edge today'],
+    [-9, 'No edge today'], [-10, 'Mild SELL'], [-24, 'Mild SELL'], [-25, 'Strong SELL'], [-60, 'Strong SELL']];
   for (const [lean, word] of cases) assert.equal(d.layersVerdict(lean), word, String(lean));
   assert.deepEqual([25, 24, 10, 9, -9, -10, -24, -25].map(x => d.layersBand(x)), [2, 1, 1, 0, 0, -1, -1, -2]);
 });
 
-test('hold-back: a daily peak caps a Strong BUY at Leans, a trough a Strong SELL; the lean never changes otherwise', () => {
+test('hold-back: a daily peak caps a Strong BUY at Mild, a trough a Strong SELL; the lean never changes otherwise', () => {
   const d = load();
   assert.equal(d.layersHeld(40, 'peak'), 24);
-  assert.equal(d.layersHeld(20, 'peak'), 20, 'a Leans BUY is not touched');
+  assert.equal(d.layersHeld(20, 'peak'), 20, 'a Mild BUY is not touched');
   assert.equal(d.layersHeld(-40, 'peak'), -40, 'a peak never holds back a SELL');
   assert.equal(d.layersHeld(-40, 'trough'), -24);
   assert.equal(d.layersHeld(40, 'trough'), 40);
@@ -352,7 +352,7 @@ test('the demo scores within every limit and shows every kind of mark', () => {
   assert.ok(out.stocks.some(s => s.thin), 'a thin stock');
   assert.ok(out.excluded.length >= 1, 'something is left out, and named');
   assert.equal(new Set(out.stocks.map(s => s.sec)).size, 11, 'every sector has stocks');
-  for (const v of ['Strong BUY', 'Leans BUY', 'No edge today', 'Leans SELL', 'Strong SELL']) {
+  for (const v of ['Strong BUY', 'Mild BUY', 'No edge today', 'Mild SELL', 'Strong SELL']) {
     assert.ok(out.stocks.some(s => d.layersVerdict(s.eff) === v), v);
   }
 });
