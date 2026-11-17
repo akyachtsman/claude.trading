@@ -38,8 +38,8 @@
      `position: fixed; inset: 0`, and a max-width with auto margins centres such a
      box at 1880px, so on a wider window the scrim stopped short of both edges and,
      the page behind being inert, the strips either side did nothing (audit 2026-10-06). */
-  .shell > *:not(.area-charts):not(.area-layers):not(.ly-row):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(:where(main)),
-  .shell > :where(main) > *:not(.area-charts):not(.area-layers):not(.ly-row):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(.modal-backdrop) { max-width: 1880px; margin-inline: auto; }
+  .shell > *:not(.area-charts):not(.area-layers):not(.ly-row):not(.area-signals):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(:where(main)),
+  .shell > :where(main) > *:not(.area-charts):not(.area-layers):not(.ly-row):not(.area-signals):not(.heat-panel):not(.area-accounts):not(.masthead):not(.wl-area):not(.modal-backdrop) { max-width: 1880px; margin-inline: auto; }
 
   /* masthead */
   .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-2) 0 var(--space-4); }
@@ -1511,3 +1511,47 @@
 .desk-lock-form .legacy-input { flex: 0 1 280px; min-width: 0; }
 .desk-lock-small { font-size: var(--font-xs); color: var(--color-text-secondary); }
 @media (pointer: coarse) { .desk-lock-form .legacy-input, .desk-lock-form .legacy-btn { min-height: 44px; } }
+
+/* ── Trading signals (owner 2026-11-17: INVEST's 10 AM email as a panel, a year of history, no toggle) ─────────────────
+   Full width under the Strategies Chart row, with that row's inset, so its edges are the charts' below. Dark like the
+   Strategies Chart (.ly-scope): green and red are LONG and SHORT, the Strategies Chart's own BUY/SELL inks (ruling A's
+   scope; never P&L). One list, newest week first, scrolling inside a fixed 560px box (no overscroll-behavior: the
+   page-wide ban, S42); each week's LONG and SHORT lists sit side by side and stack on a narrow panel. */
+.area-signals { min-width: 0; margin-block: 0 0.5in; margin-inline: calc(0.5in - var(--space-4)); border-color: var(--ly-border); }
+.area-signals[hidden] { display: none; }
+.sig-in { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4); min-width: 0; }
+.sig-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.sig-head .panel-title { color: var(--ly-ink); overflow: visible; }
+.sig-head .stamp { color: var(--ly-ink-2); }
+.sig-sub { margin: 0; font: 400 var(--font-2xs)/1.4 var(--font-mono); color: var(--ly-ink-2); }
+.sig-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sig-controls select {
+  min-height: 36px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--ly-border); border-radius: var(--radius-md);
+  background: var(--ly-panel-2); color: var(--ly-ink); font: 500 var(--font-xs)/1.2 var(--font-sans);
+}
+.sig-controls select:focus-visible, .sig-tk:focus-visible, .sig-list:focus-visible { outline: 2px solid var(--ly-accent); outline-offset: 1px; }
+.sig-count { font: 400 var(--font-2xs)/1.4 var(--font-mono); color: var(--ly-ink-2); }
+.sig-list { height: 560px; overflow-y: auto; border-top: 1px solid var(--ly-border); padding-right: 4px; }
+.sig-week { padding: var(--space-3) 0; border-bottom: 1px solid var(--ly-border); }
+.sig-wh { margin: 0 0 var(--space-2); font: 600 var(--font-sm)/1.3 var(--font-sans); color: var(--ly-ink); }
+.sig-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--space-2) var(--space-6, 24px); }
+.sig-ch { margin: 0 0 4px; font: 600 var(--font-2xs)/1.3 var(--font-sans); letter-spacing: .06em; text-transform: uppercase; }
+.sig-col--long .sig-ch { color: var(--ly-buy-ink); }
+.sig-col--short .sig-ch { color: var(--ly-sell-ink); }
+.sig-ol { margin: 0; padding-left: 2.6em; font: 400 var(--font-xs)/1.5 var(--font-mono); color: var(--ly-ink-2); }
+.sig-row { padding: 1px 0; }
+.sig-row::marker { color: var(--ly-ink-2); }
+.sig-row > span { white-space: nowrap; }
+.sig-tk {
+  padding: 0 2px; border: 0; background: none; font: 700 var(--font-xs)/1.5 var(--font-mono); cursor: pointer; text-decoration: underline dotted transparent;
+}
+.sig-tk:hover { text-decoration-color: currentColor; }
+.sig-row--long .sig-tk { color: var(--ly-buy-ink); }
+.sig-row--short .sig-tk { color: var(--ly-sell-ink); }
+.sig-px { color: var(--ly-ink); }
+.sig-none, .sig-empty { margin: 0; font: 400 var(--font-xs)/1.4 var(--font-sans); color: var(--ly-ink-2); }
+@media (max-width: 640px) { .area-signals { margin-inline: 0; } }
+@media (pointer: coarse) {
+  .sig-controls select, #sigSide button { min-height: 44px; font-size: 16px; }
+  .sig-tk { min-height: 44px; min-width: 44px; }
+}

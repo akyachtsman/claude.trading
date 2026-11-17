@@ -11707,13 +11707,15 @@ function startLayers() {
   lyWireOnce();
   /* scored off the first paint: the rest of the page draws first, then ~50 demo stocks are scored in the browser */
   setTimeout(() => {
-    lyData = layersScore(buildDemoLayersInput(new Date()));
+    const input = buildDemoLayersInput(new Date());
+    lyData = layersScore(input);
     const lamp = document.getElementById('layersLamp'), stamp = document.getElementById('layersStamp');
     if (lamp) { lamp.className = 'lamp lamp--demo'; lamp.textContent = 'Demo'; }
     if (stamp) stamp.textContent = 'Demo data · close of ' + lyDay(lyData.asOf);
     renderLayersNotYet();
     renderLayers();
     simRepaint();   /* the simulated trades' demo trades are opened on these demo stocks */
+    sgSetInput(input);   /* the Trading signals panel: the same input, every session of the last year */
   }, 0);
 }
 
@@ -11746,12 +11748,12 @@ function lyLiveSchedule(ms) {
 async function lyLivePoll() {
   if (lyPolling) return;
   lyPolling = true;
-  let r = null, fresh = false;
+  let r = null, fresh = false, input = null;
   try { r = await deskLayers(); } catch (e) { r = null; }
   lyPolling = false;
   if (r && r.payload && (!lyData || lyData.asOf !== r.payload.asOf)) {
     try {
-      const input = layersDecode(r.payload);
+      input = layersDecode(r.payload);
       const scored = layersScore(input);
       if (scored.stocks.length) { lyData = scored; lyLive.fgLast = input.fgLast; fresh = true; }
     } catch (e) { console.warn('Layers: the feed did not decode', e && e.message); }
@@ -11768,6 +11770,8 @@ async function lyLivePoll() {
        back on every poll while the next one gathers, and a rebuild would throw
        the reader back to the top and drop keyboard focus each minute. */
     if (first || fresh) { renderLayersNotYet(); renderLayers(); }
+    /* the Trading signals panel reads the same payload, once per new session (off the paint: ~600 tickers × a year) */
+    if (fresh && input) { const inp = input; setTimeout(() => { sgSetInput(inp); sgPaintLamp(); }, 0); }
   }
   lyLiveSchedule(behind ? LY_POLL_BEHIND_MS : LY_POLL_CURRENT_MS);
 }
@@ -11779,6 +11783,151 @@ function lyPaintLiveLamp() {
   const gathering = lyLive.ok && lyLive.target && lyData.asOf < lyLive.target && lyLive.total
     ? ' · gathering ' + lyDay(lyLive.target) + ': ' + lyLive.done + ' of ' + lyLive.total : '';
   stamp.textContent = 'Close of ' + lyDay(lyData.asOf) + gathering + (lyLive.ok ? '' : lyLive.answered ? ' · feed failing' : ' · feed unreachable');
+  sgPaintLamp();
+}
+
+/* ── Trading signals (owner 2026-11-17: INVEST's 10 AM "Trading this week" email as a panel, "keep a history of 1 year",
+   "I don't want to use a toggle to flip through the different days of the week and weeks") ──────────────────────────
+   ONE list, newest week first, each week drawn the way the email reads: "This week: 8 LONG, 5 SHORT", then the LONG and
+   SHORT lists side by side, each row `APP · $399.32 · rule 3 · Tue 11/17 · %K 31`. "Jump to week" scrolls the list; the
+   side and rule filters narrow it. The rows are layersSignalHistory() over the SAME input the Strategies Chart scores
+   (demo: buildDemoLayersInput; live: the desk-layers payload), so the two panels can never disagree about a signal. It
+   rides on that feed: hidden in live until it has served a real payload, its lamp and stamp follow the Strategies
+   Chart's. Green and red mean LONG and SHORT here, the Strategies Chart's own BUY/SELL inks (ruling A's scope). Every
+   text is set with textContent. */
+let sgHist = null, sgWeeks = [], sgWired = false;
+const sgState = { side: 'all', rule: 0 };
+const SG_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const sgDay = iso => SG_DOW[new Date(iso + 'T00:00:00Z').getUTCDay()] + ' ' + lyShortDay(iso);
+/* Called with every NEW scored input (demo once; live once per new session). */
+function sgSetInput(input) {
+  const sec = document.getElementById('sigPanel');
+  if (!sec || !input) return;
+  try { sgHist = layersSignalHistory(input); } catch (e) { console.warn('Trading signals: history failed', e && e.message); return; }
+  sgWeeks = layersSignalWeeks(sgHist);
+  sec.hidden = false;
+  sgWireOnce();
+  renderSignals();
+  sgPaintLamp();
+}
+function sgPaintLamp() {
+  const lamp = document.getElementById('sigLamp'), stamp = document.getElementById('sigStamp');
+  const ll = document.getElementById('layersLamp'), ls = document.getElementById('layersStamp');
+  if (!lamp || !stamp || !sgHist) return;
+  /* the same feed as the Strategies Chart, so the same lamp and stamp */
+  if (ll) { lamp.className = ll.className; lamp.textContent = ll.textContent; }
+  if (ls) stamp.textContent = ls.textContent;
+}
+function sgRowsOf(list) {
+  return list.filter(r => (sgState.side === 'all' || r.side === sgState.side) && (!sgState.rule || r.rule === sgState.rule));
+}
+function sgRow(r, n) {
+  const li = el('li', 'sig-row sig-row--' + (r.side === 'LONG' ? 'long' : 'short'));
+  li.value = n;
+  li.dataset.sym = r.sym;
+  li.dataset.d = r.d;
+  li.dataset.rule = String(r.rule);
+  const b = el('button', 'sig-tk', r.sym);
+  b.type = 'button';
+  b.title = r.name + (r.etf ? ' (ETF)' : '') + ': chart it';
+  b.setAttribute('aria-label', r.sym + ', ' + r.side + ', rule ' + r.rule + ', ' + lyDay(r.d) + ' — chart ' + r.sym);
+  /* the separators are text (they copy, and a line can break at them); each item itself never breaks */
+  li.append(b, ' · ', el('span', 'sig-px', fmtUsd(r.px)), ' · ', el('span', 'sig-rule', 'rule ' + r.rule), ' · ', el('span', 'sig-day', sgDay(r.d)),
+    ' · ', el('span', 'sig-k', '%K ' + (Number.isFinite(r.k) ? Math.round(r.k) : '—')));
+  li.title = r.name + ' · ' + r.side + ' · rule ' + r.rule + ' · close ' + fmtUsd(r.px) + ' on ' + lyDay(r.d) + ' · 13-week slow %K ' + (Number.isFinite(r.k) ? r.k.toFixed(1) : '—');
+  return li;
+}
+function sgColumn(side, rows, start) {
+  const col = el('div', 'sig-col sig-col--' + side.toLowerCase());
+  col.appendChild(el('h4', 'sig-ch', side + ' · ' + rows.length));
+  if (!rows.length) { col.appendChild(el('p', 'sig-none', 'None')); return col; }
+  const ol = el('ol', 'sig-ol');
+  ol.start = start;
+  rows.forEach((r, i) => ol.appendChild(sgRow(r, start + i)));
+  col.appendChild(ol);
+  return col;
+}
+function renderSignals() {
+  const list = document.getElementById('sigList'), sub = document.getElementById('sigSub');
+  if (!list || !sgHist) return;
+  if (sub) sub.textContent = 'Rules 1–3 on ' + sgHist.symbols + ' S&P 500 and watchlist tickers · close of each day · since ' + lyDay(sgHist.since || sgHist.asOf) + ' · newest first';
+  const keepTop = list.scrollTop;
+  list.textContent = '';
+  const thisWeek = layersWeekStart(sgHist.asOf);
+  let total = 0;
+  const pick = document.getElementById('sigWeek');
+  const prev = pick ? pick.value : '';
+  if (pick) pick.textContent = '';
+  for (const w of sgWeeks) {
+    const L = sgRowsOf(w.long), S = sgRowsOf(w.short);
+    total += L.length + S.length;
+    const sec = el('section', 'sig-week');
+    sec.dataset.week = w.week;
+    const label = (w.week === thisWeek ? 'This week' : 'Week of ' + lyDay(w.week).replace(/, \d{4}$/, w.week.slice(0, 4) === sgHist.asOf.slice(0, 4) ? '' : ', ' + w.week.slice(0, 4)));
+    const h = el('h3', 'sig-wh', label + ': ' + L.length + ' LONG, ' + S.length + ' SHORT');
+    sec.appendChild(h);
+    if (!L.length && !S.length) sec.appendChild(el('p', 'sig-none', 'No signals' + (sgState.side !== 'all' || sgState.rule ? ' that match' : '') + '.'));
+    else {
+      const cols = el('div', 'sig-cols');
+      if (sgState.side !== 'SHORT') cols.appendChild(sgColumn('LONG', L, 1));
+      if (sgState.side !== 'LONG') cols.appendChild(sgColumn('SHORT', S, sgState.side === 'SHORT' ? 1 : L.length + 1));
+      sec.appendChild(cols);
+    }
+    list.appendChild(sec);
+    if (pick) {
+      const o = el('option', null, label + ' · ' + L.length + ' LONG, ' + S.length + ' SHORT');
+      o.value = w.week;
+      pick.appendChild(o);
+    }
+  }
+  if (pick && prev && sgWeeks.some(w => w.week === prev)) pick.value = prev;
+  const cnt = document.getElementById('sigCount');
+  if (cnt) cnt.textContent = total + (total === 1 ? ' signal' : ' signals') + ' in ' + sgWeeks.length + ' weeks';
+  list.scrollTop = keepTop;
+}
+function sgJump(week) {
+  const list = document.getElementById('sigList');
+  const sec = list && [...list.querySelectorAll('.sig-week')].find(s => s.dataset.week === week);
+  if (!sec) return;
+  list.scrollTop = sec.offsetTop - list.offsetTop;
+}
+/* The week whose heading sits at the top of the list, so the picker follows a scroll. */
+function sgSyncPick() {
+  const list = document.getElementById('sigList'), pick = document.getElementById('sigWeek');
+  if (!list || !pick) return;
+  const top = list.scrollTop + list.offsetTop + 4;
+  let cur = null;
+  for (const s of list.querySelectorAll('.sig-week')) { if (s.offsetTop <= top) cur = s.dataset.week; else break; }
+  if (cur && pick.value !== cur) pick.value = cur;
+}
+function sgWireOnce() {
+  if (sgWired) return;
+  sgWired = true;
+  const pick = document.getElementById('sigWeek'), list = document.getElementById('sigList');
+  if (pick) pick.addEventListener('change', () => sgJump(pick.value));
+  if (list) {
+    list.addEventListener('scroll', () => sgSyncPick(), { passive: true });
+    /* ONE delegated listener: a ticker charts the stock and brings the charts into view */
+    list.addEventListener('click', ev => {
+      const b = ev.target.closest('.sig-tk');
+      if (!b) return;
+      const li = b.closest('.sig-row');
+      if (!li) return;
+      wbLoadSymbol(li.dataset.sym);
+      const charts = document.querySelector('.area-charts');
+      if (charts) charts.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+  }
+  const side = document.getElementById('sigSide');
+  if (side) side.addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-side]');
+    if (!b) return;
+    sgState.side = b.dataset.side;
+    side.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    renderSignals();
+  });
+  const rule = document.getElementById('sigRule');
+  if (rule) rule.addEventListener('change', () => { sgState.rule = Number(rule.value) || 0; renderSignals(); });
 }
 
 /* ── the write-up (ruling E: a dialog through openModal, like the symbol window) ── */

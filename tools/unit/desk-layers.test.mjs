@@ -191,6 +191,8 @@ test('the payload: S&P members by the CSV, watchlist names by Yahoo, and every l
     ['BBB', 'no price data'], ['QQQ', 'a fund'], ['^GSPC', 'an index'], ['SHOP', 'not priced in dollars'],
     ['ODD', 'its sector does not map to one of the eleven'], ['BTC-USD', 'not a single stock'], ['GONE', 'no price data']]);
   assert.deepEqual(J_(p.cal), t);
+  // a watchlist ETF stays out of the scored stocks ("a fund") but its bars go out for the Trading signals panel
+  assert.deepEqual(J_(p.etfs.map((s) => [s.s, s.n])), [['QQQ', 'Invesco QQQ']]);
   assert.ok(p.market.spy && p.market.brent && p.funds.XLK && !p.funds.XLF);
   assert.equal(p.fgLast, '2026-11-13');
   const input = J_(d.layersDecode(J_(p)));
@@ -200,6 +202,20 @@ test('the payload: S&P members by the CSV, watchlist names by Yahoo, and every l
   assert.deepEqual(input.fred.core, [{ d: '2026-09-01', v: 330 }]);
   assert.deepEqual(input.fearGreed, [{ d: '2026-11-13', v: 38.6 }]);
   assert.deepEqual(input.market.spy.c, [100.5, 101.5, 102.5]);
+  assert.deepEqual(J_(input.etfs.map((s) => [s.sym, s.name, s.bars.c])), [['QQQ', 'Invesco QQQ', [100.5, 101.5, 102.5]]]);
+});
+test('a fund priced in another currency, or with no bars, is not sent as an ETF', () => {
+  const e = edge();
+  const t = ['2026-11-12', '2026-11-13'];
+  const rows = new Map([
+    ['EWC', { ...row('ETF', t, { name: 'Canada fund' }), meta: { type: 'ETF', currency: 'CAD', name: 'Canada fund' } }],
+    ['VFIAX', row('MUTUALFUND', t, { name: 'A mutual fund' })], ['NOBARS', { last: '', meta: { type: 'ETF', currency: 'USD', name: 'x' } }],
+    ['SPYV', row('ETF', ['2026-11-11', ...t], { name: 'Value fund' })],
+  ]);
+  const p = e.buildPayload('2026-11-13', { members: [], watch: ['EWC', 'VFIAX', 'NOBARS', 'SPYV'] }, rows, {}, 'now');
+  assert.deepEqual(J_(p.etfs.map((s) => s.s)), ['SPYV']);
+  assert.deepEqual(J_(p.excluded.map((x) => x.why)), ['a fund', 'a fund', 'a fund', 'a fund']);
+  assert.deepEqual(J_(p.cal), ['2026-11-11', '2026-11-12', '2026-11-13']);   // the ETF's own dates are in the calendar
 });
 test('round trip: the demo input, encoded by the feed and decoded by the page, scores exactly the same', () => {
   const e = edge(), d = page();
