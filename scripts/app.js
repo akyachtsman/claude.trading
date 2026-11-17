@@ -11330,7 +11330,7 @@ function lyTileValue(st) {
   return lySgn(st.lean);
 }
 function lyAria(st) {
-  return st.sym + ', ' + st.name + ', ' + layersVerdict(st.eff) + ', net ' + lySgn(st.lean) + ', BUY ' + st.L + ', SELL ' + st.S
+  return st.sym + ', ' + st.name + ', ' + layersVerdict(st.eff) + ', bias ' + lySgn(st.lean) + ', BUY ' + st.L + ', SELL ' + st.S
     + (st.held ? ', held back by the daily stochastic' : '') + (st.sig.length ? ', ' + st.sig.map(g => g[0]).join(' and ') + ' this week' : '');
 }
 function renderLayersTiles(grid, list) {
@@ -11364,8 +11364,8 @@ function renderLayersTiles(grid, list) {
   });
   grid.appendChild(wrap);
 }
-const LY_COLS = [['tk', 'Stock', 'signals and flags', 'Sort by ticker'], ['vd', 'Verdict', 'today', 'Strong BUY first, then by net within each verdict'],
-  ['lean', 'Net', 'B − S', 'Net: the BUY score minus the SELL score'], ['L', 'BUY', 'of 100', 'BUY score'], ['S', 'SELL', 'of 100', 'SELL score']];
+const LY_COLS = [['tk', 'Stock', 'signals and flags', 'Sort by ticker'], ['vd', 'Verdict', 'today', 'Strong BUY first, then by bias within each verdict'],
+  ['lean', 'Bias', 'B − S', 'Bias: the BUY score minus the SELL score'], ['L', 'BUY', 'of 100', 'BUY score'], ['S', 'SELL', 'of 100', 'SELL score']];
 const LY_SHORTN = { G: 'Avgs', H: 'Vol.', I: 'Days', J: 'Stoch', K: 'Str.' };
 function lyFlagPills(st) {
   const out = [];
@@ -11581,7 +11581,7 @@ function lyTipStock(st, k) {
     h.appendChild(el('span', null, st.sym + ' · ' + st.name));
     tip.appendChild(h);
     [['Today', layersVerdict(st.eff)], ['Timing', lyTiming(st)], ['BUY score', st.L + ' of 100'], ['SELL score', st.S + ' of 100'],
-      ['Net (BUY minus SELL)', lySgn(st.lean)], ['Outer layers A to F', 'BUY ' + (st.L - st.sl) + ' · SELL ' + (st.S - st.ss) + ' of 40'],
+      ['Bias (BUY minus SELL)', lySgn(st.lean)], ['Outer layers A to F', 'BUY ' + (st.L - st.sl) + ' · SELL ' + (st.S - st.ss) + ' of 40'],
       ['Stock letters G to K', 'BUY ' + st.sl + ' · SELL ' + st.ss + ' of 60']].forEach(([a, b]) => lyTipRow(tip, a, b));
     const on = lyOnLists(st, lyLists());
     if (on.length || !st.sp) tip.appendChild(el('div', 'ly-tip-f', (st.sp ? '' : 'Not in the S&P 500. ') + (on.length ? 'On your ' + on.join(', ') + ' list' + (on.length > 1 ? 's' : '') + '.' : '')));
@@ -12013,7 +12013,7 @@ function openLayersDetail(st, opener) {
   const vt = el('p', 'ly-vline', layersVerdict(st.eff) + ' ');
   const chip = el('span', 'ly-leanchip', lySgn(st.lean));
   chip.style.background = lyHeat(st.eff / LAYERS_RULES.colour.lean);
-  chip.title = 'Net: BUY minus SELL';
+  chip.title = 'Bias: BUY minus SELL';
   vt.appendChild(chip);
   vb.appendChild(vt);
   if (st.held) vb.appendChild(el('p', 'ly-muted', lyHeldNote(st)));
@@ -12407,7 +12407,7 @@ function openSimDetail(id, opener) {
     row('Verdict', g(s, x => lyVerdictWords(x.verdict) + (x.held ? ' (held back)' : '')), g(now, x => lyVerdictWords(x.verdict) + (x.held ? ' (held back)' : '')));
     row('BUY score', g(s, x => x.buy + ' / 100'), g(now, x => x.buy + ' / 100'));
     row('SELL score', g(s, x => x.sell + ' / 100'), g(now, x => x.sell + ' / 100'));
-    row('Net (BUY − SELL)', g(s, x => lySgn(x.lean)), g(now, x => lySgn(x.lean)));
+    row('Bias (BUY − SELL)', g(s, x => lySgn(x.lean)), g(now, x => lySgn(x.lean)));
     row('Price on the chart', g(s, x => simPx(x.px)), g(now, x => simPx(x.px)));
     row('13-week %K', g(s, x => (x.k == null ? '—' : String(x.k))), g(now, x => (x.k == null ? '—' : String(x.k))));
     for (const k of LAYERS_LETTERS) row('Letter ' + k + ' B / S', g(s, x => (x.letters[k] ? x.letters[k].join(' / ') : '—')), g(now, x => (x.letters[k] ? x.letters[k].join(' / ') : '—')));

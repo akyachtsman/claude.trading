@@ -427,8 +427,8 @@
             <span class="ly-note"><button type="button" class="ly-btn" aria-expanded="false" aria-controls="layersNoteRead">How to read it</button><span class="ly-pop" id="layersNoteRead" role="note">
               <span class="ly-pp">Is today the right time for this stock? Each stock is scored for a BUY and for a SELL on eleven letters. Hover over a box, tile or cell for the reading behind it. Click a stock for its full write-up.</span>
               <span class="ly-li">Every stock gets two scores from 0 to 100: one for a BUY, one for a SELL. They are scored separately because the tests showed they are not mirror images.</span>
-              <span class="ly-li">Net is the BUY score minus the SELL score: BUY 52 and SELL 34 is a net of +18. Green favours a BUY, red a SELL, slate means neither stands out.</span>
-              <span class="ly-li">The verdict puts the net in words: Strong BUY at +25 or more, Mild BUY from +10, No edge today in between, and the same on the SELL side. Those cut-offs are a first guess, not tested.</span>
+              <span class="ly-li">Bias is the BUY score minus the SELL score: BUY 52 and SELL 34 is a bias of +18. Green favours a BUY, red a SELL, slate means neither stands out.</span>
+              <span class="ly-li">The verdict puts the bias in words: Strong BUY at +25 or more, Mild BUY from +10, No edge today in between, and the same on the SELL side. Those cut-offs are a first guess, not tested.</span>
               <span class="ly-li">Timing: a ring marks a stock held back one step. A Strong BUY becomes Mild BUY while the daily stochastic is over 80, and a Strong SELL becomes Mild SELL while it is under 20.</span>
               <span class="ly-li">The boxes on the left are the layers every stock shares (letters A to D, 25 points). Each stock's sector is the Sector column (letters E and F, 15 points, the same for every stock in that sector). Letters G to K are the stock itself (60 points).</span>
               <span class="ly-li">A dot beside a ticker means rule 1, 2 or 3 fired this week.</span>
@@ -450,7 +450,7 @@
         </div>
         <div class="ly-foot">
           <div class="ly-legend" aria-hidden="true"><span>Favours a SELL</span><span class="ly-bar"></span><span>Favours a BUY</span></div>
-          <p class="ly-fnote">Colour is the net, BUY minus SELL. A ring marks a verdict held back by the daily stochastic, a dot a rule that fired this week. A score is a ranking aid, never an order.</p>
+          <p class="ly-fnote">Colour is the bias, BUY minus SELL. A ring marks a verdict held back by the daily stochastic, a dot a rule that fired this week. A score is a ranking aid, never an order.</p>
         </div>
       </div>
       <div class="ly-half ly-b">
@@ -459,7 +459,7 @@
           <select id="layersSec" aria-label="Sector"><option value="-1">All sectors</option></select>
           <select id="layersWl" aria-label="Watchlist"><option value="all">All stocks</option></select>
           <div class="seg ly-seg" role="group" aria-label="What the colour shows" id="layersMode">
-            <button type="button" data-m="lean" aria-pressed="true">Net</button><button type="button" data-m="buy" aria-pressed="false">BUY points</button><button type="button" data-m="sell" aria-pressed="false">SELL points</button>
+            <button type="button" data-m="lean" aria-pressed="true">Bias</button><button type="button" data-m="buy" aria-pressed="false">BUY points</button><button type="button" data-m="sell" aria-pressed="false">SELL points</button>
           </div>
           <div class="seg ly-seg" role="group" aria-label="View" id="layersView">
             <button type="button" data-v="tiles" aria-pressed="true">Tiles</button><button type="button" data-v="table" aria-pressed="false">Table</button>

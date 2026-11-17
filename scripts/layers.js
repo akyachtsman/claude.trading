@@ -122,7 +122,7 @@ const lyMonthName = d => ['January', 'February', 'March', 'April', 'May', 'June'
 function lyLetter(comps) { return { L: comps.reduce((s, c) => s + c[2], 0), S: comps.reduce((s, c) => s + c[3], 0), comps }; }
 const lyNA = (label) => [label, 'not available', 0, 0];
 
-/* Verdict words for a net score (BUY score minus SELL score; `lean` in the code). "Mild" was "Leans" until the owner's
+/* Verdict words for the bias (BUY score minus SELL score; `lean` in the code). "Mild" was "Leans" until the owner's
    2026-11-17 ruling ("I don't like the word lean"); the thresholds did not move. */
 function layersVerdict(lean, R = LAYERS_RULES) {
   const v = R.verdict;

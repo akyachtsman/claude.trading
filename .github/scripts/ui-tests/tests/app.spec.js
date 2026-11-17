@@ -12941,7 +12941,7 @@ test('S82: the Layers Heat Map draws on the demo, filters, sorts, opens its writ
       return td.querySelector('.ly-secn').textContent === AB[st.sec] && td.querySelector('.ly-secv').textContent === lySgn(net);
     });
   });
-  expect(secOk, 'each row: its sector\'s short name over its net E + F').toBe(true);
+  expect(secOk, 'each row: its sector\'s short name over its bias E + F').toBe(true);
   await page.locator('#layersGrid [data-sort="sec"]').click();
   await expect(page.locator('#layersGrid th:has([data-sort="sec"])')).toHaveAttribute('aria-sort', 'descending');
   const secVals = (await page.locator('#layersGrid tbody td[data-k="sec"] .ly-secv').allTextContents()).map(t => Number(t.replace('−', '-')));
@@ -13325,7 +13325,7 @@ test('S85: the simulated trades panel sits beside the Strategies Chart, sums $ a
   for (const p of ['Today', 'Week', 'Month', 'YTD', 'Since start']) await expect(body.locator('tr', { hasText: p }).first()).toBeVisible();
   await expect(body.locator('th', { hasText: /^Opened$/ })).toHaveCount(1);
   await expect(body.locator('th', { hasText: /^Now$/ })).toHaveCount(1);
-  for (const r of ['Verdict', 'BUY score', 'SELL score', 'Net', '13-week %K', 'Letter A', 'Letter K', 'Signals that week']) await expect(body.locator('tr', { hasText: r }).first(), r).toHaveCount(1);
+  for (const r of ['Verdict', 'BUY score', 'SELL score', 'Bias', '13-week %K', 'Letter A', 'Letter K', 'Signals that week']) await expect(body.locator('tr', { hasText: r }).first(), r).toHaveCount(1);
   expect(await fitChecked(page.locator('#simDetailPanel')), 'the write-up fits the screen').toEqual([]);
   await page.keyboard.press('Escape');
   await expect(det).toBeHidden();
