@@ -163,7 +163,8 @@ its topic file** — the reasoning behind each rule is there, not here.
   (finished sessions only, so today's rows appear after 16:15 ET — INVEST's 10 AM live check is NOT in it). The history starts where the
   13-week %K can be read for half the tickers, at most a year back (`since`, named on the panel). Green and red are LONG and SHORT, the
   Strategies Chart's own inks (ruling A's scope). **For a full year `desk-layers` v2 keeps 370 sessions (was 300) and sends the watchlist
-  ETFs' bars** — built and tested; v1 stays LIVE until the owner approves the deploy, and until then the panel shows ~9 months and no ETF.
+  ETFs' bars** — **v2 DEPLOYED 2026-11-17** (owner: "Deploy it now"; record under `desk-layers` below). It serves the body it already
+  holds until the next session's sweep, so the full year and the ETFs first show after the 2026-11-18 close.
   Guarded by `tools/unit/layers.test.mjs` (the history equals `layersRuleAt` everywhere and the week's dots), `desk-layers.test.mjs` (the
   `etfs` list) and S86 (S83 for its live feed).
 - **Simulated trades** (owner 2026-11-15: "a non-funded testing of our strategies, both options and stock purchases"; `scripts/sim.js`, the PURE
@@ -190,10 +191,11 @@ its topic file** — the reasoning behind each rule is there, not here.
   (forget + reload). `?demo=1` is never locked (made-up data; the tests run on it). The SERVER side is the PIN on every private RPC and
   `desk_026`'s lockout; the public feed functions stay anon-callable.
 - **The 10 AM trading-signal push** (`tools/signal-alert.mjs`; owner 2026-11-17: INVEST's weekday 9:57 AM PT alert moved here,
-  built on "Dashboard's own rules") — the week's rule 1-3 signals (Monday through today, today on its live bar) for the S&P 500
+  built on "Dashboard's own rules"; DROPPED the same day, below) — the week's rule 1-3 signals (Monday through today, today on its live bar) for the S&P 500
   plus the watchlist tickers, worded as ONE push; the rules are `layersSignals` / `layersRuleAt` loaded from `scripts/layers.js`,
   never a copy. It sends nothing itself and no ticker list enters the repo (the run passes them in). Who sends and from which
-  environment is still open with chat.GIT; INVEST's task runs until code.TRADE's first push. Guarded by `tools/unit/signal-alert.test.mjs`.
+  environment is MOOT: **the owner dropped the push on 2026-11-17** ("No need to push anything. I'm just going to look into the
+  trade dashboard"), so no task runs it and the tool sits unused. Guarded by `tools/unit/signal-alert.test.mjs`.
   → details: `docs/architecture/signal-alert.md`
 - `config/news-feeds.json` / `config/chart-watchlist.json` / `config/map-filters.json` —
   owner-editable rosters read by the edge functions at runtime (watchlist NEVER derived from
@@ -254,6 +256,14 @@ its topic file** — the reasoning behind each rule is there, not here.
     `DESK_LAYERS_LIVE` to false (the panel hides, the page stops asking; no deploy); taking the function out of service means
     deleting it in the Supabase dashboard (the tools cannot delete one) and is the owner's call, as is deleting its
     `layers:%` rows in `desk_feed_cache`.
+    **v2 DEPLOYED 2026-11-17** (owner: "Deploy it now" on the offered deploy; `verify_jwt` ON as before; Supabase version 2 → 3;
+    from `main` at `9cffb18`, the file PR #382, squash `7352133`, left it): 370 sessions kept (was 300) and the watchlist ETFs' bars
+    in their own `etfs` list, for the Trading signals panel. Before the deploy the live v2 listing read back byte-identical to the
+    v1 file (md5 `cf57df8b43b6c70a9c2f5098ca61531a`); after it, read back byte-identical to `main`'s file (38,482 bytes, md5
+    `0b2af8b6cdf38fdf56aac26cedafd048`). Live checks: preflight 200, no key 401, the page's publishable key 200 in 1.4 s with the
+    session-2026-11-17 body (561 of 561, 2.0 MB) — a body already built for the target session is served as it is, so the first
+    370-session payload is the 2026-11-18 sweep's. Rollback = redeploy `supabase/functions/desk-layers/index.ts` as of `7352133^`
+    (md5 `cf57df8b43b6c70a9c2f5098ca61531a`) with `verify_jwt` ON; the page reads a payload without `etfs` and shows ~9 months.
     → details: `specs/layers-heat-map/LAYERS_HEAT_MAP.md` (section 13)
   - **Economy indicators** — `desk-econ` (anon-callable, like the public feeds): FRED
     base history for every row, plus U.S. Treasury's same-day par-yield RATE (a 3:30 pm ET snapshot) as a
