@@ -28,15 +28,16 @@ as soon as the 13-week %K has two readings (about 106 bars). Only a stock listed
 
 ## Sending, and the scheduled task
 
-Nothing in this repository holds a key or sends anything: the run sends the push. Who may send it, and from which cloud
-environment, is the owner's call with chat.GIT (its GLOBAL 3.1 lists the senders of `push.sh`, and the Pushover keys live
-only on `chat.workspaces.env`). Open as of 2026-11-17; the decision and the task's prompt go here once made.
+**Dropped by the owner on 2026-11-17** ("No need to push anything. I'm just going to look into the trade dashboard"):
+no task runs this tool and nothing sends its message. It stays in the repository, tested, in case the push comes back.
+Nothing in this repository holds a key or sends anything. Had it gone ahead, who sends, and from which cloud environment,
+was the owner's call with chat.GIT (its GLOBAL 3.1 lists the senders of `push.sh`, and the Pushover keys live only on
+`chat.workspaces.env`); that question was withdrawn the same day.
 
 ## Cutover
 
-INVEST's task (`Weekdays – Trading-signal alert (9:57 AM PT)`) runs until code.TRADE's sends its first push. code.TRADE
-mails INVEST the first day; INVEST switches its own off after its last run before that day, so arash never gets two
-pushes on one day, nor none.
+None: with the push dropped, there is no hand-over. Whether INVEST's own task (`Weekdays – Trading-signal alert
+(9:57 AM PT)`) keeps running is the owner's call with INVEST, not this repository's.
 
 ## Checks
 
